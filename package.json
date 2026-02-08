@@ -1,0 +1,20 @@
+{
+    "name": "quantumjs",
+    "version": "0.0.1",
+    "description": "The framework that thinks ahead",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "test": "vitest"
+    },
+    "author": "IntelligentQuantum",
+    "license": "MIT",
+    "devDependencies": {
+        "@types/node": "^25.2.1",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.18"
+    }
+}
