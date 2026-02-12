@@ -26,8 +26,8 @@
 //
 // ============================================================================
 
-import type { EffectFn, CleanupFn, Subscriber, EffectOptions } from './types.js';
-import { getCurrentEffect, setCurrentEffect } from './signal.js';
+import type { EffectFn, CleanupFn, DisposeFn, Subscriber, EffectOptions } from './types.ts';
+import { getCurrentEffect, setCurrentEffect } from './signal.ts';
 
 /**
  * Creates a reactive effect that automatically re-runs when its
@@ -41,7 +41,7 @@ import { getCurrentEffect, setCurrentEffect } from './signal.js';
  *             return a {@link CleanupFn} for resource teardown.
  * @param options - Optional configuration (e.g., defer initial run)
  *
- * @returns A dispose function that permanently stops the effect
+ * @returns A {@link DisposeFn} that permanently stops the effect
  *          and runs its cleanup. Once disposed, the effect will
  *          never run again, even if its signals change.
  *
@@ -65,7 +65,8 @@ import { getCurrentEffect, setCurrentEffect } from './signal.js';
  *
  * @example
  * ```ts
- * // Effect with cleanup
+ * // Effect with cleanup — cleanup runs before each re-execution
+ * // and when the effect is disposed
  * createEffect(() =>
  * {
  *     const id = setInterval(() => console.log(count()), 1000);
@@ -85,7 +86,7 @@ import { getCurrentEffect, setCurrentEffect } from './signal.js';
  * setCount(1);  // NOW it runs: "Count changed to: 1"
  * ```
  */
-export function createEffect(fn: EffectFn, options?: EffectOptions): CleanupFn
+export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 {
     let cleanup: CleanupFn | void;
 
@@ -103,20 +104,16 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): CleanupFn
             cleanup();
         }
 
-        // Save the parent effect (for nested effects)
         const parentEffect = getCurrentEffect();
 
-        // Set this effect as the current tracker
         setCurrentEffect(effect);
 
         try
         {
-            // Run the user's function — signals inside will track this effect
             cleanup = fn();
         }
         finally
         {
-            // Restore the parent effect (even if fn() throws an error)
             setCurrentEffect(parentEffect);
         }
     };

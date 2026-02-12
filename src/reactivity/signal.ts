@@ -26,10 +26,39 @@
 //
 // ============================================================================
 
-import type { Getter, Setter, Signal, SignalOptions, Subscriber } from './types.js';
+import type {Getter, Setter, Signal, SignalOptions, Subscriber} from './types.ts';
+
+import { getIsBatching, enqueueEffect } from './batch.ts';
 
 // ============================================================================
 // EFFECT TRACKING
+// ============================================================================
+//
+// This variable is the KEY to automatic dependency tracking.
+//
+// PROBLEM IT SOLVES:
+//   When an effect reads a signal, the signal needs to know
+//   "WHO is reading me?" so it can notify them later.
+//   But the signal's read() function doesn't receive the effect
+//   as a parameter. So how does the signal know who's calling?
+//
+// SOLUTION:
+//   Before an effect runs, it sets itself as `currentEffect`.
+//   When a signal is read, it checks this variable.
+//   If someone is there → "this effect depends on me" → subscribe it.
+//   If nobody is there → "just a normal read, no tracking needed".
+//
+// VISUAL FLOW:
+//
+//   createEffect(() =>           // Step 1: effect sets currentEffect = itself
+//   {
+//       console.log(count());    // Step 2: count() checks currentEffect
+//   });                          //          → finds the effect → subscribes it
+//                                // Step 3: effect clears currentEffect = null
+//
+//   setCount(5);                 // Step 4: count notifies subscribers
+//                                //          → the effect re-runs (back to Step 1)
+//
 // ============================================================================
 
 /**
@@ -51,6 +80,15 @@ let currentEffect: Subscriber | null = null;
  * @internal This is an internal API — not exposed to framework users.
  *
  * @returns The current tracking effect, or null if none is active
+ *
+ * @example
+ * ```ts
+ * // Inside effect.ts:
+ * const parentEffect = getCurrentEffect();  // Save parent
+ * setCurrentEffect(thisEffect);             // Set self as tracker
+ * fn();                                     // Run effect (signals track this)
+ * setCurrentEffect(parentEffect);           // Restore parent
+ * ```
  */
 export function getCurrentEffect(): Subscriber | null
 {
@@ -145,8 +183,14 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
         for (const subscriber of subscribers)
         {
-
-            subscriber();
+            if (getIsBatching())
+            {
+                enqueueEffect(subscriber);
+            }
+            else
+            {
+                subscriber();
+            }
         }
     };
 

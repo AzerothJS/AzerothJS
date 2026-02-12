@@ -37,7 +37,7 @@
  * createEffect(() =>
  * {
  *     const id = setInterval(() => console.log('tick'), 1000);
- *     return () => clearInterval(id); // ← CleanupFn
+ *     return () => clearInterval(id);  // ← CleanupFn
  * });
  *
  * // Effect that adds an event listener — cleanup removes it
@@ -45,7 +45,7 @@
  * {
  *     const handler = () => console.log('clicked');
  *     window.addEventListener('click', handler);
- *     return () => window.removeEventListener('click', handler); // ← CleanupFn
+ *     return () => window.removeEventListener('click', handler);  // ← CleanupFn
  * });
  * ```
  *
@@ -69,15 +69,15 @@ export type CleanupFn = () => void;
  * const [count, setCount] = createSignal(0);
  * // count is Getter<number>
  *
- * count(); // Returns 0
+ * count();  // Returns 0
  *
  * // Inside an effect, reading a getter creates a subscription:
  * createEffect(() =>
  * {
- *     console.log(count()); // Subscribes to count, re-runs on change
+ *     console.log(count());  // Subscribes to count, re-runs on change
  * });
  *
- * setCount(5); // Effect re-runs, logs 5
+ * setCount(5);  // Effect re-runs, logs 5
  * ```
  *
  * @see {@link Signal} — The tuple that contains a Getter and Setter pair
@@ -209,7 +209,7 @@ export type Subscriber = () => void;
  * const timerEffect: EffectFn = () =>
  * {
  *     const id = setInterval(() => console.log(count()), 1000);
- *     return () => clearInterval(id); // ← CleanupFn returned
+ *     return () => clearInterval(id);   // ← CleanupFn returned
  * };
  *
  * // Both are valid arguments to createEffect:
@@ -221,6 +221,40 @@ export type Subscriber = () => void;
  * @see {@link createEffect} — The function that accepts an EffectFn
  */
 export type EffectFn = () => void | CleanupFn;
+
+/**
+ * A dispose function that permanently stops a reactive effect.
+ *
+ * Returned by {@link createEffect}. Once called:
+ *   - The effect will never run again, even if its signals change
+ *   - The cleanup function (if any) is executed one final time
+ *   - The effect remains in signal subscriber sets but is guarded
+ *     by an internal `isDisposed` flag that prevents execution
+ *
+ * This is different from {@link CleanupFn}:
+ *   - CleanupFn: tears down resources from ONE run (called before re-run)
+ *   - DisposeFn: permanently kills the ENTIRE effect (called once, forever)
+ *
+ * @example
+ * ```ts
+ * const dispose = createEffect(() =>
+ * {
+ *     console.log(count());
+ * });
+ * // Console: 0 (initial run)
+ *
+ * setCount(1);   // Console: 1
+ * setCount(2);   // Console: 2
+ *
+ * dispose();     // Effect permanently stopped, cleanup runs
+ * setCount(3);   // Nothing happens — effect is dead
+ * setCount(100); // Still nothing — dispose is permanent
+ * ```
+ *
+ * @see {@link createEffect} — The function that returns a DisposeFn
+ * @see {@link CleanupFn} — The per-run cleanup function (different purpose)
+ */
+export type DisposeFn = () => void;
 
 /**
  * A comparison function that determines if two values are equal.
@@ -321,16 +355,16 @@ export interface SignalOptions<T>
  * // Default: effect runs immediately
  * createEffect(() =>
  * {
- *     console.log(count()); // Logs "0" right away
+ *     console.log(count());  // Logs "0" right away
  * });
  *
  * // Deferred: effect only runs when a dependency changes
  * createEffect(() =>
  * {
- *     console.log(count()); // Does NOT log on creation
+ *     console.log(count());  // Does NOT log on creation
  * }, { defer: true });
  *
- * setCount(1); // NOW it logs "1" (first run)
+ * setCount(1);  // NOW it logs "1" (first run)
  * ```
  *
  * @see {@link createEffect} — The function that accepts these options

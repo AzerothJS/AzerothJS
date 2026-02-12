@@ -13,7 +13,9 @@
         "sourceMap": true,
         "outDir": "./dist",
         "rootDir": "./src",
-        "lib": ["ESNext", "DOM", "DOM.Iterable"]
+        "lib": ["ESNext", "DOM", "DOM.Iterable"],
+        "allowImportingTsExtensions": true,
+        "noEmit": true
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules", "dist", "test"]

@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
-import { createSignal } from '../src/reactivity/signal.js';
-import { createEffect } from '../src/reactivity/effect.js';
-import { createMemo } from '../src/reactivity/memo.js';
+import { createSignal } from '../src/reactivity/signal.ts';
+import { createEffect } from '../src/reactivity/effect.ts';
+import { createMemo } from '../src/reactivity/memo.ts';
 
 describe('createMemo', () =>
 {

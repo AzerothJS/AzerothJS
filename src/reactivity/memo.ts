@@ -37,9 +37,9 @@
 //
 // ============================================================================
 
-import type { Getter, SignalOptions } from './types.js';
-import { createSignal } from './signal.js';
-import { createEffect } from './effect.js';
+import type { Getter, SignalOptions } from './types.ts';
+import { createSignal } from './signal.ts';
+import { createEffect } from './effect.ts';
 
 /**
  * Creates a memoized (cached) reactive value derived from other signals.
@@ -47,6 +47,12 @@ import { createEffect } from './effect.js';
  * A memo is read-only — you can read it like a signal, but you cannot
  * set its value directly. Its value is always the result of the
  * computation function, which re-runs when any signal it reads changes.
+ *
+ * Memos are useful for:
+ *   - Derived calculations (total = price + tax)
+ *   - Expensive computations that should only re-run when inputs change
+ *   - Creating a reactive value that depends on other reactive values
+ *   - Avoiding redundant computations across multiple effects
  *
  * @typeParam T - The type of the computed value.
  *               Inferred from the return type of the computation function.
@@ -73,7 +79,7 @@ import { createEffect } from './effect.js';
  *
  * @example
  * ```ts
- * // Chaining memos
+ * // Chaining memos — each one reacts to the one before it
  * const [price, setPrice] = createSignal(100);
  * const tax = createMemo(() => price() * 0.2);
  * const total = createMemo(() => price() + tax());
@@ -85,7 +91,7 @@ import { createEffect } from './effect.js';
  *
  * @example
  * ```ts
- * // Using inside effects
+ * // Using inside effects — the effect re-runs when the memo updates
  * const [items, setItems] = createSignal([1, 2, 3]);
  * const sum = createMemo(() => items().reduce((a, b) => a + b, 0));
  *
