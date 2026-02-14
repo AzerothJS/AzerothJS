@@ -130,4 +130,39 @@ describe('h()', () =>
         expect(el.children[0].textContent).toBe('Goodbye');
         expect(el.children[1].textContent).toBe('Quantum');
     });
+
+    it('should set value as DOM property for input elements', () =>
+    {
+        const el = h('input', { value: 'hello' }) as HTMLInputElement;
+
+        expect(el.value).toBe('hello');
+    });
+
+    it('should reactively update input value', () =>
+    {
+        const [text, setText] = createSignal('initial');
+        const el = h('input', { value: () => text() }) as HTMLInputElement;
+
+        expect(el.value).toBe('initial');
+
+        setText('updated');
+        expect(el.value).toBe('updated');
+
+        setText('');
+        expect(el.value).toBe('');
+    });
+
+    it('should set checked as DOM property for checkboxes', () =>
+    {
+        const [checked, setChecked] = createSignal(false);
+        const el = h('input', {
+            type: 'checkbox',
+            checked: () => checked(),
+        }) as HTMLInputElement;
+
+        expect(el.checked).toBe(false);
+
+        setChecked(true);
+        expect(el.checked).toBe(true);
+    });
 });

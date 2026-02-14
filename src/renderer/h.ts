@@ -26,6 +26,35 @@
 import type { Props, Child } from './types.ts';
 import { createEffect } from '../reactivity/effect.ts';
 
+// ============================================================================
+// DOM PROPERTIES vs HTML ATTRIBUTES
+// ============================================================================
+//
+// Some props must be set as DOM PROPERTIES (el.value = x) instead of
+// HTML ATTRIBUTES (el.setAttribute('value', x)).
+//
+// Why? Because attributes only set the INITIAL state, while properties
+// control the LIVE state of the element.
+//
+//   el.setAttribute('value', 'hello')  → Sets initial value only
+//   el.value = 'hello'                 → Updates what the user sees!
+//
+//   el.setAttribute('checked', '')     → Sets initial checked only
+//   el.checked = true                  → Updates the actual checkbox!
+//
+// This Set contains all prop names that must be set as DOM properties.
+// ============================================================================
+
+const DOM_PROPERTIES = new Set
+([
+    'value',
+    'checked',
+    'selected',
+    'disabled',
+    'innerHTML',
+    'textContent',
+]);
+
 /**
  * Creates a real DOM element with attributes, event handlers,
  * and children — wiring up reactive signals immediately.
@@ -70,10 +99,11 @@ import { createEffect } from '../reactivity/effect.ts';
  * // Returns: <p>Count: 0</p>
  * // After setCount(5): <p>Count: 5</p>  (direct update, no diffing!)
  *
- * // Reactive attribute — updates ONLY this attribute when signal changes
- * h('div', { class: () => isActive() ? 'active' : 'inactive' });
- * // Returns: <div class="inactive"></div>
- * // After setIsActive(true): <div class="active"></div>
+ * // Two-way input binding — signal updates the input, input updates the signal
+ * h('input', {
+ *   value: () => inputText(),
+ *   onInput: (e) => setInputText(e.target.value),
+ * });
  * ```
  */
 export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
@@ -96,7 +126,7 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
  * Handles three categories:
  *   1. Event handlers — props starting with "on" (onClick → click event)
  *   2. Reactive attributes — function values wrapped in effects
- *   3. Static attributes — set once with setAttribute()
+ *   3. Static attributes — set once with setAttribute() or as DOM property
  *
  * @param el - The real DOM element to apply props to
  * @param props - The props object passed to h()
@@ -109,6 +139,7 @@ function applyProps(el: HTMLElement, props: Props): void
         {
             const eventName = key.slice(2).toLowerCase();
             el.addEventListener(eventName, value as EventListener);
+
             continue;
         }
 
@@ -117,30 +148,35 @@ function applyProps(el: HTMLElement, props: Props): void
             createEffect(() =>
             {
                 const resolved = (value as () => unknown)();
-                setAttribute(el, key, resolved);
+                setProperty(el, key, resolved);
             });
 
             continue;
         }
 
-        setAttribute(el, key, value);
+        setProperty(el, key, value);
     }
 }
 
 /**
- * Sets a single attribute on a DOM element.
+ * Sets a single property or attribute on a DOM element.
  *
- * Special handling:
- *   - false/null/undefined → removes the attribute
- *   - true → sets attribute with empty value (for boolean attributes)
- *   - everything else → converts to string and sets
+ * Some properties (value, checked, selected, etc.) must be set as
+ * DOM properties rather than HTML attributes, because attributes only
+ * set the initial state while properties control the live state.
  *
  * @param el - The DOM element
- * @param key - The attribute name
- * @param value - The attribute value
+ * @param key - The property/attribute name
+ * @param value - The value to set
  */
-function setAttribute(el: HTMLElement, key: string, value: unknown): void
+function setProperty(el: HTMLElement, key: string, value: unknown): void
 {
+    if (DOM_PROPERTIES.has(key))
+    {
+        (el as unknown as Record<string, unknown>)[key] = value;
+        return;
+    }
+
     if (value === false || value === null || value === undefined)
     {
         el.removeAttribute(key);
@@ -165,19 +201,11 @@ function setAttribute(el: HTMLElement, key: string, value: unknown): void
  *   - string/number → create and append a Text node
  *   - function → reactive child, wrapped in effect for auto-updates
  *
- * For reactive children (functions), this is where the magic happens:
- *   1. A placeholder Text node is created
- *   2. An effect wraps the function
- *   3. When signals inside the function change, the effect re-runs
- *   4. The effect updates ONLY that specific DOM node
- *   5. No diffing, no tree walking, no re-rendering
- *
  * @param parent - The DOM element to append to
  * @param child - The child to render
  */
 function appendChild(parent: HTMLElement, child: Child): void
 {
-    //   h('div', {}, isLoggedIn ? h('p', {}, 'Welcome') : null)
     if (child === null || child === undefined || child === false)
     {
         return;
