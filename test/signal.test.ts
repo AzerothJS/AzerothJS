@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-
-import { createSignal } from '../src/reactivity/signal.ts';
+import { createSignal } from '../src';
 
 describe('createSignal', () =>
 {

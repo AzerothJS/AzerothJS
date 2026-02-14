@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, createMemo, batch } from '../src';
+import { createSignal, createEffect, createMemo, batch, h, render } from '../src';
 
 describe('Quantum Public API', () =>
 {
@@ -55,5 +55,24 @@ describe('Quantum Public API', () =>
         dispose();
         setPrice(999);
         expect(results[results.length - 1]).toBe(600);
+    });
+
+    it('should render reactive UI through the public API', () =>
+    {
+        const [count, setCount] = createSignal(0);
+        const container = document.createElement('div');
+
+        render(
+            () => h('div', {},
+                h('p', {}, () => `Count: ${count()}`),
+                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1'),
+            ),
+            container,
+        );
+
+        expect(container.querySelector('p')?.textContent).toBe('Count: 0');
+
+        container.querySelector('button')?.click();
+        expect(container.querySelector('p')?.textContent).toBe('Count: 1');
     });
 });

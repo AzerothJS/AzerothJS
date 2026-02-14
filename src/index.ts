@@ -9,7 +9,7 @@
 //   ✅ Reactivity — Signals, Effects, Memos, Batch
 //
 // FUTURE MODULES (will be added as we build them):
-//   ⬜ Renderer   — DOM rendering engine
+//   ✅ Renderer   — DOM rendering engine
 //   ⬜ Component  — Component system (.quantum files)
 //   ⬜ Router     — File-based and code-based routing
 //   ⬜ Store      — Global state management
@@ -39,3 +39,13 @@ export {
     type SignalOptions,
     type EffectOptions,
 } from './reactivity/index.ts';
+
+export {
+    // ── Functions ──
+    h,
+    render,
+
+    // ── Types ──
+    type Props,
+    type Child,
+} from './renderer/index.ts';

@@ -1,0 +1,226 @@
+// ============================================================================
+// QUANTUM FRAMEWORK — h() Direct DOM Creation
+// ============================================================================
+//
+// The h() function creates REAL DOM elements directly.
+// There is no virtual DOM, no intermediate objects, no diffing.
+//
+// COMPARISON WITH OTHER FRAMEWORKS:
+//
+//   React h() / createElement():
+//     Returns a virtual node → { type: 'div', props: {...}, children: [...] }
+//     Later, React's reconciler diffs VNodes and patches the DOM.
+//
+//   Quantum h():
+//     Returns a REAL HTMLElement → <div class="box">Hello</div>
+//     Reactive effects are wired up IMMEDIATELY during creation.
+//     When signals change, effects update the DOM node DIRECTLY.
+//
+// WHY "h"?
+//   "h" stands for "hyperscript" — a convention used by Preact, Vue,
+//   Mithril, and others. It means "create an HTML element".
+//   Short name because it's called frequently in UI code.
+//
+// ============================================================================
+
+import type { Props, Child } from './types.ts';
+import { createEffect } from '../reactivity/effect.ts';
+
+/**
+ * Creates a real DOM element with attributes, event handlers,
+ * and children — wiring up reactive signals immediately.
+ *
+ * Unlike React's createElement which returns a virtual node,
+ * Quantum's h() returns an actual HTMLElement. Reactive children
+ * and attributes are connected via effects at creation time,
+ * so updates go DIRECTLY to the DOM node — no diffing needed.
+ *
+ * @param tag - The HTML tag name ('div', 'p', 'span', 'button', etc.)
+ * @param props - Attributes and event handlers for the element.
+ *                Pass an empty object {} if no attributes are needed.
+ * @param children - Zero or more children: strings, numbers,
+ *                   other h() elements, reactive functions, or null.
+ *
+ * @returns A real HTMLElement with all attributes, events, and
+ *          children already attached and reactive bindings active.
+ *
+ * @example
+ * ```ts
+ * // Simple text element — creates a real <p> immediately
+ * h('p', {}, 'Hello World');
+ * // Returns: <p>Hello World</p>  (real DOM node!)
+ *
+ * // Element with attributes
+ * h('a', { href: '/about', class: 'link' }, 'About Us');
+ * // Returns: <a href="/about" class="link">About Us</a>
+ *
+ * // Element with event handler
+ * h('button', { onClick: () => setCount(prev => prev + 1) }, 'Click me');
+ * // Returns: <button>Click me</button>  (with click handler attached)
+ *
+ * // Nested elements — inner h() calls return real elements too
+ * h('div', { class: 'card' },
+ *   h('h2', {}, 'Card Title'),
+ *   h('p', {}, 'Description'),
+ * );
+ * // Returns: <div class="card"><h2>Card Title</h2><p>Description</p></div>
+ *
+ * // Reactive text — updates ONLY this text node when signal changes
+ * h('p', {}, () => `Count: ${count()}`);
+ * // Returns: <p>Count: 0</p>
+ * // After setCount(5): <p>Count: 5</p>  (direct update, no diffing!)
+ *
+ * // Reactive attribute — updates ONLY this attribute when signal changes
+ * h('div', { class: () => isActive() ? 'active' : 'inactive' });
+ * // Returns: <div class="inactive"></div>
+ * // After setIsActive(true): <div class="active"></div>
+ * ```
+ */
+export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
+{
+    const el = document.createElement(tag);
+
+    applyProps(el, props);
+
+    for (const child of children)
+    {
+        appendChild(el, child);
+    }
+
+    return el;
+}
+
+/**
+ * Applies properties, attributes, and event handlers to a DOM element.
+ *
+ * Handles three categories:
+ *   1. Event handlers — props starting with "on" (onClick → click event)
+ *   2. Reactive attributes — function values wrapped in effects
+ *   3. Static attributes — set once with setAttribute()
+ *
+ * @param el - The real DOM element to apply props to
+ * @param props - The props object passed to h()
+ */
+function applyProps(el: HTMLElement, props: Props): void
+{
+    for (const [key, value] of Object.entries(props))
+    {
+        if (key.startsWith('on') && typeof value === 'function')
+        {
+            const eventName = key.slice(2).toLowerCase();
+            el.addEventListener(eventName, value as EventListener);
+            continue;
+        }
+
+        if (typeof value === 'function')
+        {
+            createEffect(() =>
+            {
+                const resolved = (value as () => unknown)();
+                setAttribute(el, key, resolved);
+            });
+
+            continue;
+        }
+
+        setAttribute(el, key, value);
+    }
+}
+
+/**
+ * Sets a single attribute on a DOM element.
+ *
+ * Special handling:
+ *   - false/null/undefined → removes the attribute
+ *   - true → sets attribute with empty value (for boolean attributes)
+ *   - everything else → converts to string and sets
+ *
+ * @param el - The DOM element
+ * @param key - The attribute name
+ * @param value - The attribute value
+ */
+function setAttribute(el: HTMLElement, key: string, value: unknown): void
+{
+    if (value === false || value === null || value === undefined)
+    {
+        el.removeAttribute(key);
+        return;
+    }
+
+    if (value === true)
+    {
+        el.setAttribute(key, '');
+        return;
+    }
+
+    el.setAttribute(key, String(value));
+}
+
+/**
+ * Appends a child to a parent DOM element.
+ *
+ * Handles all child types:
+ *   - null/undefined/false → skip (enables conditional rendering)
+ *   - HTMLElement → append directly (from nested h() calls)
+ *   - string/number → create and append a Text node
+ *   - function → reactive child, wrapped in effect for auto-updates
+ *
+ * For reactive children (functions), this is where the magic happens:
+ *   1. A placeholder Text node is created
+ *   2. An effect wraps the function
+ *   3. When signals inside the function change, the effect re-runs
+ *   4. The effect updates ONLY that specific DOM node
+ *   5. No diffing, no tree walking, no re-rendering
+ *
+ * @param parent - The DOM element to append to
+ * @param child - The child to render
+ */
+function appendChild(parent: HTMLElement, child: Child): void
+{
+    //   h('div', {}, isLoggedIn ? h('p', {}, 'Welcome') : null)
+    if (child === null || child === undefined || child === false)
+    {
+        return;
+    }
+
+    if (typeof child === 'function')
+    {
+        const textNode = document.createTextNode('');
+        parent.appendChild(textNode);
+
+        let currentNode: ChildNode = textNode;
+
+        createEffect(() =>
+        {
+            const value = child();
+
+            if (value === null || value === undefined || value === false)
+            {
+                const empty = document.createTextNode('');
+                parent.replaceChild(empty, currentNode);
+                currentNode = empty;
+            }
+            else if (value instanceof HTMLElement)
+            {
+                parent.replaceChild(value, currentNode);
+                currentNode = value;
+            }
+            else
+            {
+                const newText = document.createTextNode(String(value));
+                parent.replaceChild(newText, currentNode);
+                currentNode = newText;
+            }
+        });
+
+        return;
+    }
+
+    if (child instanceof HTMLElement)
+    {
+        parent.appendChild(child);
+        return;
+    }
+
+    parent.appendChild(document.createTextNode(String(child)));
+}

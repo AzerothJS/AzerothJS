@@ -1,8 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-
-import { createSignal } from '../src/reactivity/signal.ts';
-import { createEffect } from '../src/reactivity/effect.ts';
-import { createMemo } from '../src/reactivity/memo.ts';
+import { describe, it, expect } from 'vitest';
+import { createSignal, createEffect, createMemo } from '../src';
 
 describe('createMemo', () =>
 {
