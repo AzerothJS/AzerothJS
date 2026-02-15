@@ -7,19 +7,24 @@
 //
 // CURRENT MODULES:
 //   ✅ Reactivity — Signals, Effects, Memos, Batch
+//   ✅ Renderer   — h(), render() — Direct DOM, no Virtual DOM
+//   ✅ Component  — defineComponent(), lifecycle hooks
 //
 // FUTURE MODULES (will be added as we build them):
-//   ✅ Renderer   — DOM rendering engine
-//   ⬜ Component  — Component system (.quantum files)
-//   ⬜ Router     — File-based and code-based routing
+//   ⬜ Router     — createRouter(), Link, SPA navigation
 //   ⬜ Store      — Global state management
 //   ⬜ Stream     — AI streaming primitives
 //
 // USAGE:
-//   import { createSignal, createEffect, createMemo, batch } from 'quantumjs';
+//   import {
+//     createSignal, createEffect, createMemo, batch,
+//     h, render,
+//     defineComponent, onMount, onDestroy,
+//   } from 'quantumjs';
 //
 // ============================================================================
 
+// ── Reactivity ───────────────────────────────────────────────────────────────
 export {
     // ── Functions ──
     createSignal,
@@ -40,6 +45,7 @@ export {
     type EffectOptions,
 } from './reactivity/index.ts';
 
+// ── Renderer ─────────────────────────────────────────────────────────────────
 export {
     // ── Functions ──
     h,
@@ -49,3 +55,17 @@ export {
     type Props,
     type Child,
 } from './renderer/index.ts';
+
+// ── Component ────────────────────────────────────────────────────────────────
+export {
+    // ── Functions ──
+    defineComponent,
+    destroyComponent,
+    onMount,
+    onDestroy,
+
+    // ── Types ──
+    type Component,
+    type ComponentSetup,
+    type LifecycleHook,
+} from './component/index.ts';

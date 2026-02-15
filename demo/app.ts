@@ -2,24 +2,52 @@
 // QUANTUM FRAMEWORK — Demo Application
 // ============================================================================
 //
-// This demo showcases every feature of the Quantum reactivity system:
-//   - createSignal — Reactive state
-//   - createEffect — Side effects
-//   - createMemo — Computed values
-//   - batch — Grouped updates
-//   - h — Direct DOM creation
-//   - render — Mount to DOM
+// This demo showcases every feature of the Quantum framework:
+//   - createSignal   — Reactive state
+//   - createEffect   — Side effects
+//   - createMemo     — Computed values
+//   - batch          — Grouped updates
+//   - h              — Direct DOM creation
+//   - render         — Mount to DOM
+//   - defineComponent — Reusable components with lifecycle
+//   - onMount        — Lifecycle hook
+//   - onDestroy      — Lifecycle hook
 //
 // Open this with: npx vite demo
 // ============================================================================
 
-import { createSignal, createEffect, createMemo, batch, h, render } from '../src';
+import {
+    createSignal,
+    createEffect,
+    createMemo,
+    batch,
+    h,
+    render,
+    defineComponent,
+    onMount,
+    onDestroy,
+} from '../src';
 
-function Counter(): HTMLElement
+interface CounterProps
 {
-    const [count, setCount] = createSignal(0);
+    initial: number;
+}
+
+const Counter = defineComponent<CounterProps>((props) =>
+{
+    const [count, setCount] = createSignal(props.initial);
     const doubled = createMemo(() => count() * 2);
     const isEven = createMemo(() => count() % 2 === 0);
+
+    onMount(() =>
+    {
+        console.log('⚡ Counter mounted!');
+    });
+
+    onDestroy(() =>
+    {
+        console.log('⚡ Counter destroyed!');
+    });
 
     return h('div', { class: 'card' },
         h('h2', {}, '⚡ Reactive Counter'),
@@ -32,11 +60,14 @@ function Counter(): HTMLElement
             h('span', {}, () => `Doubled: ${doubled()}`),
             h('span', {}, () => `${isEven() ? 'Even' : 'Odd'}`),
         ),
-        h('button', { class: 'reset-btn', onClick: () => setCount(0) }, 'Reset'),
+        h('button', {
+            class: 'reset-btn',
+            onClick: () => setCount(props.initial),
+        }, 'Reset'),
     );
-}
+});
 
-function Greeting(): HTMLElement
+const Greeting = defineComponent(() =>
 {
     const [name, setName] = createSignal('');
     const greeting = createMemo(() =>
@@ -45,18 +76,26 @@ function Greeting(): HTMLElement
         return n.length > 0 ? `Hello, ${n}! 👋` : '';
     });
 
+    onMount(() =>
+    {
+        console.log('🎤 Greeting mounted!');
+    });
+
     return h('div', { class: 'card' },
         h('h2', {}, '🎤 Reactive Input'),
         h('div', { class: 'input-section' },
             h('input', {
                 type: 'text',
                 placeholder: 'Type your name...',
-                onInput: (e: Event) => setName((e.target as HTMLInputElement).value),
+                onInput: (e: Event) =>
+                {
+                    setName((e.target as HTMLInputElement).value);
+                },
             }),
             h('p', { class: 'greeting' }, () => greeting()),
         ),
     );
-}
+});
 
 interface Todo
 {
@@ -64,7 +103,7 @@ interface Todo
     text: string;
 }
 
-function TodoApp(): HTMLElement
+const TodoApp = defineComponent(() =>
 {
     const [todos, setTodos] = createSignal<Todo[]>([]);
     const [inputText, setInputText] = createSignal('');
@@ -93,6 +132,16 @@ function TodoApp(): HTMLElement
     createEffect(() =>
     {
         console.log(`📝 Todo count: ${todoCount()}`);
+    });
+
+    onMount(() =>
+    {
+        console.log('📋 TodoApp mounted!');
+    });
+
+    onDestroy(() =>
+    {
+        console.log('📋 TodoApp destroyed!');
     });
 
     return h('div', { class: 'card' },
@@ -139,22 +188,59 @@ function TodoApp(): HTMLElement
         }),
         h('p', { class: 'todo-count' }, () => `${todoCount()} item${todoCount() === 1 ? '' : 's'}`),
     );
-}
+});
 
-function App(): HTMLElement
+const Timer = defineComponent(() =>
 {
+    const [seconds, setSeconds] = createSignal(0);
+
+    onMount(() =>
+    {
+        console.log('⏱️ Timer mounted!');
+
+        const id = setInterval(() =>
+        {
+            setSeconds(prev => prev + 1);
+        }, 1000);
+
+        return () =>
+        {
+            console.log('⏱️ Timer interval cleared!');
+            clearInterval(id);
+        };
+    });
+
+    return h('div', { class: 'card' },
+        h('h2', {}, '⏱️ Lifecycle Timer'),
+        h('p', { class: 'counter-value', style: 'font-size: 1.5rem; text-align: center;' },
+            () => `${seconds()}s elapsed`,
+        ),
+        h('p', { class: 'info', style: 'justify-content: center;' },
+            'Started on mount. Open console to see lifecycle logs.',
+        ),
+    );
+});
+
+const App = defineComponent(() =>
+{
+    onMount(() =>
+    {
+        console.log('🚀 Quantum App mounted!');
+    });
+
     return h('div', { class: 'app' },
         h('div', { class: 'header' },
             h('h1', {}, 'QuantumJS'),
             h('p', {}, 'Fine-grained reactivity. No virtual DOM. Direct DOM updates.'),
         ),
-        Counter(),
-        Greeting(),
-        TodoApp(),
+        Counter({ initial: 0 }),
+        Greeting({}),
+        TodoApp({}),
+        Timer({}),
         h('div', { class: 'footer' },
             h('p', {}, 'Built with Quantum Framework — 0 dependencies'),
         ),
     );
-}
+});
 
-render(App, document.getElementById('app')!);
+render(() => App({}), document.getElementById('app')!);
