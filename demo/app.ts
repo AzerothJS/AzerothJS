@@ -3,15 +3,16 @@
 // ============================================================================
 //
 // This demo showcases every feature of the Quantum framework:
-//   - createSignal   — Reactive state
-//   - createEffect   — Side effects
-//   - createMemo     — Computed values
-//   - batch          — Grouped updates
-//   - h              — Direct DOM creation
-//   - render         — Mount to DOM
+//   - createSignal    — Reactive state
+//   - createEffect    — Side effects
+//   - createMemo      — Computed values
+//   - batch           — Grouped updates
+//   - h               — Direct DOM creation
+//   - render          — Mount to DOM
 //   - defineComponent — Reusable components with lifecycle
-//   - onMount        — Lifecycle hook
-//   - onDestroy      — Lifecycle hook
+//   - onMount         — Lifecycle hook
+//   - onDestroy       — Lifecycle hook
+//   - destroyComponent — Manual cleanup
 //
 // Open this with: npx vite demo
 // ============================================================================
@@ -24,6 +25,7 @@ import {
     h,
     render,
     defineComponent,
+    destroyComponent,
     onMount,
     onDestroy,
 } from '../src';
@@ -49,14 +51,14 @@ const Counter = defineComponent<CounterProps>((props) =>
         console.log('⚡ Counter destroyed!');
     });
 
-    return h('div', { class: 'card' },
+    return h('div', {class: 'card'},
         h('h2', {}, '⚡ Reactive Counter'),
-        h('div', { class: 'counter' },
-            h('button', { onClick: () => setCount(prev => prev - 1) }, '−'),
-            h('span', { class: 'counter-value' }, () => `${count()}`),
-            h('button', { onClick: () => setCount(prev => prev + 1) }, '+'),
+        h('div', {class: 'counter'},
+            h('button', {onClick: () => setCount(prev => prev - 1)}, '−'),
+            h('span', {class: 'counter-value'}, () => `${count()}`),
+            h('button', {onClick: () => setCount(prev => prev + 1)}, '+'),
         ),
-        h('div', { class: 'info' },
+        h('div', {class: 'info'},
             h('span', {}, () => `Doubled: ${doubled()}`),
             h('span', {}, () => `${isEven() ? 'Even' : 'Odd'}`),
         ),
@@ -81,10 +83,16 @@ const Greeting = defineComponent(() =>
         console.log('🎤 Greeting mounted!');
     });
 
-    return h('div', { class: 'card' },
+    onDestroy(() =>
+    {
+        console.log('🎤 Greeting destroyed!');
+    });
+
+    return h('div', {class: 'card'},
         h('h2', {}, '🎤 Reactive Input'),
-        h('div', { class: 'input-section' },
-            h('input', {
+        h('div', {class: 'input-section'},
+            h('input',
+            {
                 type: 'text',
                 placeholder: 'Type your name...',
                 onInput: (e: Event) =>
@@ -92,7 +100,7 @@ const Greeting = defineComponent(() =>
                     setName((e.target as HTMLInputElement).value);
                 },
             }),
-            h('p', { class: 'greeting' }, () => greeting()),
+            h('p', {class: 'greeting'}, () => greeting()),
         ),
     );
 });
@@ -114,12 +122,11 @@ const TodoApp = defineComponent(() =>
     function addTodo(): void
     {
         const text = inputText().trim();
-        if (text.length === 0)
-            return;
+        if (text.length === 0) return;
 
         batch(() =>
         {
-            setTodos(prev => [...prev, { id: nextId++, text }]);
+            setTodos(prev => [...prev, {id: nextId++, text}]);
             setInputText('');
         });
     }
@@ -144,9 +151,9 @@ const TodoApp = defineComponent(() =>
         console.log('📋 TodoApp destroyed!');
     });
 
-    return h('div', { class: 'card' },
+    return h('div', {class: 'card'},
         h('h2', {}, '📋 Reactive Todo List'),
-        h('div', { class: 'todo-input' },
+        h('div', {class: 'todo-input'},
             h('input', {
                 type: 'text',
                 placeholder: 'Add a todo...',
@@ -157,26 +164,25 @@ const TodoApp = defineComponent(() =>
                 },
                 onKeydown: (e: KeyboardEvent) =>
                 {
-                    if (e.key === 'Enter')
-                        addTodo();
+                    if (e.key === 'Enter') addTodo();
                 },
             }),
-            h('button', { onClick: addTodo }, 'Add'),
+            h('button', {onClick: addTodo}, 'Add'),
         ),
         h('div', {}, () =>
         {
             const list = todos();
             if (list.length === 0)
             {
-                return h('p', { class: 'todo-count' }, 'No todos yet. Add one above!');
+                return h('p', {class: 'todo-count'}, 'No todos yet. Add one above!');
             }
 
-            const ul = h('div', { class: 'todo-list' });
+            const ul = h('div', {class: 'todo-list'});
             for (const todo of list)
             {
                 ul.appendChild(
-                    h('div', { class: 'todo-item' },
-                        h('span', { class: 'todo-text' }, todo.text),
+                    h('div', {class: 'todo-item'},
+                        h('span', {class: 'todo-text'}, todo.text),
                         h('button', {
                             class: 'todo-delete',
                             onClick: () => removeTodo(todo.id),
@@ -186,7 +192,7 @@ const TodoApp = defineComponent(() =>
             }
             return ul;
         }),
-        h('p', { class: 'todo-count' }, () => `${todoCount()} item${todoCount() === 1 ? '' : 's'}`),
+        h('p', {class: 'todo-count'}, () => `${todoCount()} item${todoCount() === 1 ? '' : 's'}`),
     );
 });
 
@@ -196,7 +202,7 @@ const Timer = defineComponent(() =>
 
     onMount(() =>
     {
-        console.log('⏱️ Timer mounted!');
+        console.log('⏱️ Timer mounted! Interval started.');
 
         const id = setInterval(() =>
         {
@@ -205,21 +211,71 @@ const Timer = defineComponent(() =>
 
         return () =>
         {
-            console.log('⏱️ Timer interval cleared!');
+            console.log('⏱️ Timer interval cleared! (onMount cleanup)');
             clearInterval(id);
         };
     });
 
-    return h('div', { class: 'card' },
+    onDestroy(() =>
+    {
+        console.log('⏱️ Timer destroyed!');
+    });
+
+    return h('div', {class: 'card'},
         h('h2', {}, '⏱️ Lifecycle Timer'),
-        h('p', { class: 'counter-value', style: 'font-size: 1.5rem; text-align: center;' },
+        h('p', {class: 'counter-value', style: 'font-size: 1.5rem; text-align: center;'},
             () => `${seconds()}s elapsed`,
         ),
-        h('p', { class: 'info', style: 'justify-content: center;' },
-            'Started on mount. Open console to see lifecycle logs.',
+        h('p', {class: 'info', style: 'justify-content: center;'},
+            'Interval started on mount. Cleared on destroy.',
         ),
     );
 });
+
+function Toggleable(label: string, create: () => HTMLElement): HTMLElement
+{
+    const [isVisible, setIsVisible] = createSignal(true);
+
+    const slot = h('div', {});
+    let currentEl: HTMLElement | null = null;
+
+    function mount(): void
+    {
+        currentEl = create();
+        slot.appendChild(currentEl);
+    }
+
+    function unmount(): void
+    {
+        if (currentEl)
+        {
+            destroyComponent(currentEl);
+            slot.removeChild(currentEl);
+            currentEl = null;
+        }
+    }
+
+    createEffect(() =>
+    {
+        if (isVisible())
+        {
+            mount();
+        }
+        else
+        {
+            unmount();
+        }
+    });
+
+    return h('div', {},
+        h('button', {
+            class: 'reset-btn',
+            style: 'margin-bottom: 8px; background: #1a1a2e; border-color: #7c3aed;',
+            onClick: () => setIsVisible(prev => !prev),
+        }, () => `${isVisible() ? '🔽 Hide' : '▶️ Show'} ${label}`),
+        slot,
+    );
+}
 
 const App = defineComponent(() =>
 {
@@ -228,16 +284,19 @@ const App = defineComponent(() =>
         console.log('🚀 Quantum App mounted!');
     });
 
-    return h('div', { class: 'app' },
-        h('div', { class: 'header' },
+    return h('div', {class: 'app'},
+        h('div', {class: 'header'},
             h('h1', {}, 'QuantumJS'),
             h('p', {}, 'Fine-grained reactivity. No virtual DOM. Direct DOM updates.'),
+            h('p', {style: 'color: #7c3aed; margin-top: 8px; font-size: 0.85rem;'},
+                '💡 Toggle components below and check the browser console to see lifecycle logs!',
+            ),
         ),
-        Counter({ initial: 0 }),
-        Greeting({}),
-        TodoApp({}),
-        Timer({}),
-        h('div', { class: 'footer' },
+        Toggleable('Counter', () => Counter({initial: 0})),
+        Toggleable('Greeting', () => Greeting({})),
+        Toggleable('Todo List', () => TodoApp({})),
+        Toggleable('Timer', () => Timer({})),
+        h('div', {class: 'footer'},
             h('p', {}, 'Built with Quantum Framework — 0 dependencies'),
         ),
     );
