@@ -2,197 +2,128 @@
 // QUANTUM FRAMEWORK — Signal (Reactive State)
 // ============================================================================
 //
-// The Signal is the most fundamental building block of Quantum's reactivity.
-// It holds a value that can be read and written. When the value changes,
-// all subscribers (effects, memos) are automatically notified.
+// A signal is a reactive value that notifies its subscribers
+// when it changes. It's the atomic unit of state in Quantum.
 //
-// This file exports:
-//   - createSignal()     — Creates a reactive signal
-//   - getCurrentEffect() — Gets the currently tracking effect (internal)
-//   - setCurrentEffect() — Sets the currently tracking effect (internal)
+// MEMORY MANAGEMENT:
 //
-// INTERNAL ARCHITECTURE:
+//   Signals and effects have a TWO-WAY relationship:
 //
-//   createSignal(initialValue)
-//         │
-//         ├── read()  — Returns value, tracks current effect as subscriber
-//         └── write() — Updates value, notifies all subscribers
+//     Signal ──► knows which effects subscribe to it
+//     Effect ──► knows which signals it depends on
 //
-//   The tracking works through a module-level variable `currentEffect`:
-//     1. An effect starts running → sets currentEffect = itself
-//     2. Effect calls signal.read() → signal sees currentEffect → adds it
-//     3. Effect finishes → clears currentEffect
-//     4. Signal.write() called → loops subscribers → re-runs effects
+//   When an effect is disposed:
+//     1. Effect calls all its dependency cleanup functions
+//     2. Each cleanup function removes the effect from that signal's Set
+//     3. The effect is fully detached — no references remain
+//     4. Garbage collector can free the memory
+//
+//   This prevents the memory leak where disposed effects stay
+//   in signal subscriber Sets forever.
 //
 // ============================================================================
 
-import type {Getter, Setter, Signal, SignalOptions, Subscriber} from './types.ts';
-
-import { getIsBatching, enqueueEffect } from './batch.ts';
-
-// ============================================================================
-// EFFECT TRACKING
-// ============================================================================
-//
-// This variable is the KEY to automatic dependency tracking.
-//
-// PROBLEM IT SOLVES:
-//   When an effect reads a signal, the signal needs to know
-//   "WHO is reading me?" so it can notify them later.
-//   But the signal's read() function doesn't receive the effect
-//   as a parameter. So how does the signal know who's calling?
-//
-// SOLUTION:
-//   Before an effect runs, it sets itself as `currentEffect`.
-//   When a signal is read, it checks this variable.
-//   If someone is there → "this effect depends on me" → subscribe it.
-//   If nobody is there → "just a normal read, no tracking needed".
-//
-// VISUAL FLOW:
-//
-//   createEffect(() =>           // Step 1: effect sets currentEffect = itself
-//   {
-//       console.log(count());    // Step 2: count() checks currentEffect
-//   });                          //          → finds the effect → subscribes it
-//                                // Step 3: effect clears currentEffect = null
-//
-//   setCount(5);                 // Step 4: count notifies subscribers
-//                                //          → the effect re-runs (back to Step 1)
-//
-// ============================================================================
+import type { Getter, Setter, Signal, Subscriber, SignalOptions, EqualsFn } from './types.ts';
 
 /**
- * The currently running effect that is tracking signal dependencies.
+ * The currently running effect.
  *
- * - `null` when no effect is running (reads won't track)
- * - Set to an effect's subscriber function when that effect is executing
+ * When an effect runs, it sets this variable to itself.
+ * When a signal's getter is called, it checks this variable
+ * to know "who is reading me?" and subscribes that effect.
  *
- * @internal Managed by effect.ts, read by signal.ts
+ * Set to `null` when no effect is running (e.g., reading a
+ * signal in regular code outside an effect).
+ *
+ * @internal Managed by createEffect, read by createSignal
  */
-let currentEffect: Subscriber | null = null;
+export let currentSubscriber: Subscriber | null = null;
 
 /**
- * Returns the currently running effect.
+ * Sets the current subscriber.
  *
- * Used by {@link createEffect} in effect.ts to save and restore
- * the parent effect when effects are nested inside each other.
+ * Called by createEffect before running the effect function,
+ * and cleared after it finishes.
  *
- * @internal This is an internal API — not exposed to framework users.
- *
- * @returns The current tracking effect, or null if none is active
- *
- * @example
- * ```ts
- * // Inside effect.ts:
- * const parentEffect = getCurrentEffect();  // Save parent
- * setCurrentEffect(thisEffect);             // Set self as tracker
- * fn();                                     // Run effect (signals track this)
- * setCurrentEffect(parentEffect);           // Restore parent
- * ```
+ * @internal
+ * @param sub - The subscriber to set, or null to clear
  */
-export function getCurrentEffect(): Subscriber | null
+export function setCurrentSubscriber(sub: Subscriber | null): void
 {
-    return currentEffect;
+    currentSubscriber = sub;
 }
 
 /**
- * Sets the currently running effect.
+ * Creates a reactive signal — a getter/setter pair that
+ * automatically tracks dependencies and notifies subscribers.
  *
- * Called by {@link createEffect} in effect.ts to register which
- * effect is currently executing, so signals can track it.
- *
- * @internal This is an internal API — not exposed to framework users.
- *
- * @param effect - The effect to set as current tracker, or null to clear
- */
-export function setCurrentEffect(effect: Subscriber | null): void
-{
-    currentEffect = effect;
-}
-
-// ============================================================================
-// CREATE SIGNAL
-// ============================================================================
-
-/**
- * Creates a reactive signal — a piece of state that can be tracked.
- *
- * A signal stores a value and keeps track of which effects depend on it.
- * When the value changes, all dependent effects are automatically
- * re-executed. This is the foundation of Quantum's reactivity system.
- *
- * @typeParam T - The type of value stored in the signal.
- *               Inferred automatically from the initial value.
+ * @typeParam T - The type of the signal's value
  *
  * @param initialValue - The starting value of the signal
- * @param options - Optional configuration (equality function, debug name)
+ * @param options - Optional configuration (custom equality function)
  *
- * @returns A {@link Signal} tuple of `[getter, setter]`
+ * @returns A tuple [getter, setter] to read and write the value
  *
  * @example
  * ```ts
- * // Basic usage:
  * const [count, setCount] = createSignal(0);
- * console.log(count());  // 0
+ *
+ * count();  // → 0
+ *
  * setCount(5);
- * console.log(count());  // 5
+ * count();  // → 5
  *
- * // Functional updates:
  * setCount(prev => prev + 1);
- * console.log(count());  // 6
- *
- * // With options:
- * const [user, setUser] = createSignal({ name: 'Alice', age: 30 }, { equals: false });
- *
- * // Automatic tracking with effects:
- * createEffect(() =>
- * {
- *     console.log(count());  // Re-runs whenever count changes
- * });
+ * count();  // → 6
  * ```
  */
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Signal<T>
 {
     let value: T = initialValue;
-
-    /** Set of effects that depend on (read) this signal */
     const subscribers = new Set<Subscriber>();
+    const equals: EqualsFn<T> = options?.equals ?? Object.is;
 
-    const equals = options?.equals === false ? () => false : (options?.equals ?? Object.is);
-
-    const read: Getter<T> = (): T =>
+    const getter: Getter<T> = () =>
     {
-        if (currentEffect)
+        if (currentSubscriber !== null && !currentSubscriber.isDisposed)
         {
-            subscribers.add(currentEffect);
+            subscribers.add(currentSubscriber);
+
+            // Register a cleanup function on the subscriber
+            // so it can remove itself from this signal later
+            const sub = currentSubscriber;
+            sub.dependencies.add(() =>
+            {
+                subscribers.delete(sub);
+            });
         }
 
         return value;
     };
 
-    const write: Setter<T> = (nextValue: T | ((prev: T) => T)): void =>
+    const setter: Setter<T> = (newValue: T | ((prev: T) => T)) =>
     {
-        const newValue = typeof nextValue === 'function' ? (nextValue as (prev: T) => T)(value) : nextValue;
+        const resolved = typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue;
 
-        if (equals(value, newValue))
+        if (equals(value, resolved))
         {
             return;
         }
 
-        value = newValue;
+        value = resolved;
 
-        for (const subscriber of subscribers)
+        for (const subscriber of Array.from(subscribers))
         {
-            if (getIsBatching())
+            if (!subscriber.isDisposed)
             {
-                enqueueEffect(subscriber);
+                subscriber.execute();
             }
             else
             {
-                subscriber();
+                subscribers.delete(subscriber);
             }
         }
     };
 
-    return [read, write];
+    return [getter, setter];
 }

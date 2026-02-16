@@ -2,194 +2,104 @@
 // QUANTUM FRAMEWORK — Batch (Grouped Updates)
 // ============================================================================
 //
-// Batching groups multiple signal updates into a single reaction cycle.
-// Without batching, each signal.write() immediately notifies subscribers.
-// With batching, notifications are deferred until the batch completes,
-// then all unique subscribers are called exactly once.
+// Batch allows multiple signal updates to be grouped together,
+// deferring effect execution until all updates are complete.
 //
-// This file exports:
-//   - batch()           — Groups multiple updates into one reaction
-//   - getIsBatching()   — Checks if currently inside a batch (internal)
-//   - enqueueEffect()   — Adds an effect to the batch queue (internal)
+// Without batch:
+//   setFirstName('John');   → effect runs (unnecessary!)
+//   setLastName('Doe');     → effect runs (with correct values)
 //
-// HOW IT WORKS:
-//
+// With batch:
 //   batch(() =>
 //   {
-//       setA(1);   // signal.write() sees isBatching=true → queues effect
-//       setB(2);   // signal.write() sees isBatching=true → queues effect
-//       setC(3);   // signal.write() sees isBatching=true → queues effect
-//   });
-//   // batch ends → flush queue → each unique effect runs once
-//
-// WHY A SET FOR THE QUEUE:
-//
-//   If setA and setB both trigger the SAME effect, that effect
-//   should only run ONCE after the batch. Using a Set guarantees
-//   no duplicates — the effect is queued once, runs once.
+//       setFirstName('John'); → queued
+//       setLastName('Doe');   → queued
+//   });                     → effects run ONCE with both values correct
 //
 // ============================================================================
 
 import type { Subscriber } from './types.ts';
 
-// ============================================================================
-// INTERNAL STATE
-// ============================================================================
+/**
+ * Whether we're currently inside a batch() call.
+ * When true, effects are queued instead of running immediately.
+ *
+ * @internal
+ */
+let batching = false;
 
 /**
- * Whether we are currently inside a batch() call.
+ * The queue of effects waiting to run after the batch completes.
+ * Uses a Set to automatically deduplicate — if the same effect
+ * is triggered multiple times during a batch, it only runs once.
  *
- * When true, signal.write() will queue effects instead of running
- * them immediately. When false, effects run synchronously on each
- * signal change (the default behavior).
- *
- * @internal Used by signal.ts to decide: run now or queue?
+ * @internal
  */
-let isBatching = false;
+const queue = new Set<Subscriber>();
 
 /**
- * Queue of effects waiting to run after the batch completes.
+ * Returns whether we're currently inside a batch.
  *
- * - `null` when not batching (no queue needed)
- * - `Set<Subscriber>` when batching (collecting effects to run later)
+ * Used by createEffect to decide whether to run immediately
+ * or queue for later.
  *
- * Why null instead of an empty Set:
- *   To clearly distinguish "not batching" from "batching with no effects yet".
- *   When isBatching is false, batchQueue should always be null.
- *
- * Why Set instead of Array:
- *   If two signals both trigger the same effect:
- *     Array: [effectA, effectA] → effectA runs TWICE (wasteful!)
- *     Set:   {effectA}          → effectA runs ONCE  (correct!)
- *
- * @internal Used by signal.ts via enqueueEffect()
+ * @internal
+ * @returns true if inside a batch() call
  */
-let batchQueue: Set<Subscriber> | null = null;
-
-// ============================================================================
-// INTERNAL API (used by signal.ts)
-// ============================================================================
-
-/**
- * Checks if we are currently inside a batch.
- *
- * Called by signal.ts in the write function to decide whether to
- * run a subscriber immediately or add it to the batch queue.
- *
- * @internal Not exposed to framework users.
- *
- * @returns `true` if inside a batch() call, `false` otherwise
- *
- * @example
- * ```ts
- * // Inside signal.ts write function:
- * for (const subscriber of subscribers)
- * {
- *   if (getIsBatching())
- *   {
- *       enqueueEffect(subscriber);  // Queue it for later
- *   }
- *   else
- *   {
- *       subscriber();               // Run it now
- *   }
- * }
- * ```
- */
-export function getIsBatching(): boolean
+export function isBatching(): boolean
 {
-    return isBatching;
+    return batching;
 }
 
 /**
  * Adds an effect to the batch queue.
  *
- * Called by signal.ts when a signal changes during a batch.
- * Instead of running the effect immediately, it's stored in the
- * queue and will be executed when the batch completes.
+ * Called by effect's execute function when isBatching() is true.
+ * The effect will run after the batch() call completes.
  *
- * If the same effect is enqueued multiple times (because multiple
- * signals it depends on changed), the Set ensures it only appears
- * once and will only run once when the batch flushes.
- *
- * @internal Not exposed to framework users.
- *
- * @param effect - The subscriber function to queue
+ * @internal
+ * @param subscriber - The subscriber to queue
  */
-export function enqueueEffect(effect: Subscriber): void
+export function queueEffect(subscriber: Subscriber): void
 {
-    batchQueue?.add(effect);
+    queue.add(subscriber);
 }
 
-// ============================================================================
-// PUBLIC API
-// ============================================================================
-
 /**
- * Batches multiple signal updates into a single reaction cycle.
+ * Groups multiple signal updates together, deferring effect
+ * execution until all updates are complete.
  *
- * Without batching, each signal setter immediately notifies all
- * subscribers. This can cause unnecessary re-runs and intermediate
- * states. Batching defers all notifications until after every
- * update in the batch has been applied, then runs each affected
- * subscriber exactly once.
- *
- * Nested batch() calls are safe — only the outermost batch
- * triggers the flush. Inner batches simply run their function
- * without creating a new queue.
- *
- * @param fn - A function containing one or more signal updates.
- *             All updates inside this function are batched together.
+ * @param fn - A function containing multiple signal updates
  *
  * @example
  * ```ts
- * const [a, setA] = createSignal(1);
- * const [b, setB] = createSignal(2);
+ * const [first, setFirst] = createSignal('Jane');
+ * const [last, setLast] = createSignal('Smith');
  *
  * createEffect(() =>
  * {
- *     console.log(a() + b());
+ *     console.log(`${first()} ${last()}`);
  * });
- * // Console: 3 (initial run)
+ * // Logs: "Jane Smith"
  *
- * // Without batch — effect runs twice:
- * setA(10);  // Console: 12
- * setB(20);  // Console: 30
- *
- * // With batch — effect runs once:
  * batch(() =>
  * {
- *     setA(10);
- *     setB(20);
+ *     setFirst('John');
+ *     setLast('Doe');
  * });
- * // Console: 30
- * ```
- *
- * @example
- * ```ts
- * // Nested batches are safe — only the outermost batch flushes
- * batch(() =>
- * {
- *   setA(1);
- *   batch(() =>  // Inner batch — just runs fn(), no new queue
- *   {
- *       setB(2);
- *   });
- *   setC(3);
- * });
- * // All three updates flushed together by the outer batch
+ * // Logs: "John Doe" (only ONCE, not twice)
  * ```
  */
 export function batch(fn: () => void): void
 {
-    if (isBatching)
+    // If already batching (nested batch), just run the function
+    if (batching)
     {
         fn();
         return;
     }
 
-    isBatching = true;
-    batchQueue = new Set();
+    batching = true;
 
     try
     {
@@ -197,14 +107,20 @@ export function batch(fn: () => void): void
     }
     finally
     {
-        isBatching = false;
+        batching = false;
 
-        const queue: Set<Subscriber> = batchQueue ?? new Set();
-        batchQueue = null;
+        // Flush the queue — run all queued effects
+        // Use a copy because effects might trigger new signals
+        // which queue more effects
+        const effects = Array.from(queue);
+        queue.clear();
 
-        for (const effect of queue)
+        for (const subscriber of effects)
         {
-            effect();
+            if (!subscriber.isDisposed)
+            {
+                subscriber.execute();
+            }
         }
     }
 }

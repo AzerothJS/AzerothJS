@@ -2,134 +2,182 @@
 // QUANTUM FRAMEWORK — Effect (Reactive Side Effects)
 // ============================================================================
 //
-// An effect is a function that runs automatically when the signals it
-// reads change. It is the bridge between reactive state (signals) and
-// the outside world (DOM updates, logging, network requests, etc.).
+// An effect is a function that re-runs whenever the signals
+// it reads change. Effects are the bridge between reactive
+// state and the outside world (DOM updates, console logs,
+// network requests, etc.).
 //
-// This file exports:
-//   - createEffect() — Creates a reactive effect
-//
-// HOW IT WORKS:
+// LIFECYCLE OF AN EFFECT:
 //
 //   1. createEffect(fn) is called
-//   2. The effect sets itself as `currentEffect` (via setCurrentEffect)
-//   3. fn() runs — any signals read inside will subscribe this effect
-//   4. The effect clears `currentEffect`
-//   5. Later, when a signal changes, it calls this effect (subscriber)
-//   6. The effect re-runs (back to step 2)
+//   2. fn runs immediately
+//   3. During fn, any signal.getter() calls subscribe this effect
+//   4. Each subscription adds a cleanup function to effect.dependencies
+//   5. When a subscribed signal changes → effect re-runs:
+//      a. Previous cleanup function runs (if any)
+//      b. All dependency cleanups run (unsubscribe from all signals)
+//      c. dependencies set is cleared
+//      d. fn runs again → re-subscribes to signals it reads THIS time
+//   6. When dispose() is called → same cleanup, but fn doesn't re-run
 //
-// LIFECYCLE:
+// WHY RE-SUBSCRIBE EVERY RUN?
 //
-//   Created → Runs immediately → Waits for signal changes → Re-runs → ...
-//                                                                     │
-//   dispose() called → Cleanup runs → Effect is permanently stopped ──┘
+//   Because the signals an effect depends on can CHANGE between runs:
+//
+//     createEffect(() =>
+//     {
+//         if (showDetails())
+//         {
+//             console.log(details());  // subscribes to details
+//         }
+//         else
+//         {
+//             console.log(summary());  // subscribes to summary
+//         }
+//     });
+//
+//   When showDetails changes from true to false:
+//     - Old run was subscribed to: showDetails + details
+//     - New run should subscribe to: showDetails + summary
+//     - We must UNSUBSCRIBE from details and SUBSCRIBE to summary
+//
+//   By clearing all dependencies and re-subscribing each run,
+//   we always have the correct subscriptions. No stale listeners.
 //
 // ============================================================================
 
-import type { EffectFn, CleanupFn, DisposeFn, Subscriber, EffectOptions } from './types.ts';
-import { getCurrentEffect, setCurrentEffect } from './signal.ts';
+import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from './types.ts';
+import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
+import { isBatching, queueEffect } from './batch.ts';
 
 /**
- * Creates a reactive effect that automatically re-runs when its
+ * Creates a reactive effect that re-runs whenever its
  * signal dependencies change.
  *
- * Effects are the primary way to perform side effects in response
- * to state changes: updating the DOM, logging, making API calls,
- * setting up subscriptions, etc.
+ * The effect function runs immediately upon creation, and
+ * then re-runs whenever any signal it reads changes.
  *
- * @param fn - The effect function to run reactively. Can optionally
- *             return a {@link CleanupFn} for resource teardown.
- * @param options - Optional configuration (e.g., defer initial run)
+ * Returns a dispose function that stops the effect and
+ * cleans up all subscriptions.
  *
- * @returns A {@link DisposeFn} that permanently stops the effect
- *          and runs its cleanup. Once disposed, the effect will
- *          never run again, even if its signals change.
+ * @param fn - The effect function. Can optionally return a
+ *             cleanup function that runs before re-execution
+ *             or on dispose.
+ * @param options - Optional configuration (name for debugging)
+ *
+ * @returns A {@link DisposeFn} that stops and cleans up the effect
  *
  * @example
  * ```ts
  * const [count, setCount] = createSignal(0);
  *
- * // Basic effect — runs immediately, then on every change
  * const dispose = createEffect(() =>
  * {
- *     console.log('Count is:', count());
+ *     console.log('Count:', count());
  * });
- * // Console: "Count is: 0"
+ * // Logs: "Count: 0" immediately
  *
- * setCount(1);  // Console: "Count is: 1"
- * setCount(2);  // Console: "Count is: 2"
+ * setCount(5);
+ * // Logs: "Count: 5"
  *
- * dispose();    // Effect is permanently stopped
- * setCount(3);  // Nothing happens — effect is disposed
+ * dispose();
+ * setCount(10);
+ * // Nothing logged — effect is disposed
  * ```
  *
  * @example
  * ```ts
- * // Effect with cleanup — cleanup runs before each re-execution
- * // and when the effect is disposed
- * createEffect(() =>
+ * // Effect with cleanup
+ * const dispose = createEffect(() =>
  * {
  *     const id = setInterval(() => console.log(count()), 1000);
- *     return () => clearInterval(id);  // Cleanup on re-run or dispose
+ *     return () => clearInterval(id);  // cleanup on re-run or dispose
  * });
  * ```
- *
- * @example
- * ```ts
- * // Deferred effect — doesn't run until first signal change
- * createEffect(() =>
- * {
- *     console.log('Count changed to:', count());
- * }, { defer: true });
- * // Console: (nothing — deferred!)
- *
- * setCount(1);  // NOW it runs: "Count changed to: 1"
- * ```
  */
-export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
+export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 {
     let cleanup: CleanupFn | void;
 
-    let isDisposed = false;
-
-    const effect: Subscriber = (): void =>
+    const subscriber: Subscriber =
     {
-        if (isDisposed)
+        execute: runEffect,
+        isDisposed: false,
+        dependencies: new Set(),
+    };
+
+    function runEffect(): void
+    {
+        if (subscriber.isDisposed)
         {
+            return;
+        }
+
+        // If we're inside a batch, queue this effect for later
+        if (isBatching())
+        {
+            queueEffect(subscriber);
             return;
         }
 
         if (cleanup)
         {
             cleanup();
+            cleanup = undefined;
         }
 
-        const parentEffect = getCurrentEffect();
+        cleanupDependencies(subscriber);
 
-        setCurrentEffect(effect);
+        // Save previous for nested effect support
+        const previousSubscriber = currentSubscriber;
+        setCurrentSubscriber(subscriber);
 
         try
         {
-            cleanup = fn();
+            cleanup = fn() ?? undefined;
         }
         finally
         {
-            setCurrentEffect(parentEffect);
+            setCurrentSubscriber(previousSubscriber);
         }
-    };
-
-    if (!options?.defer)
-    {
-        effect();
     }
 
-    return (): void =>
+    runEffect();
+
+    function dispose(): void
     {
-        isDisposed = true;
+        if (subscriber.isDisposed)
+        {
+            return;
+        }
+
+        subscriber.isDisposed = true;
 
         if (cleanup)
         {
             cleanup();
+            cleanup = undefined;
         }
-    };
+
+        cleanupDependencies(subscriber);
+    }
+
+    return dispose;
+}
+
+/**
+ * Removes a subscriber from all signals it's subscribed to
+ * and clears the dependencies set.
+ *
+ * @param subscriber - The subscriber to clean up
+ * @internal
+ */
+function cleanupDependencies(subscriber: Subscriber): void
+{
+    for (const unsubscribe of subscriber.dependencies)
+    {
+        unsubscribe();
+    }
+
+    subscriber.dependencies.clear();
 }
