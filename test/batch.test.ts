@@ -7,10 +7,10 @@ describe('batch', () =>
     {
         const [a, setA] = createSignal(1);
         const [b, setB] = createSignal(2);
-        let result = 0;
+        let _result = 0;
         const fn = vi.fn(() =>
         {
-            result = a() + b();
+            _result = a() + b();
         });
 
         createEffect(fn);
@@ -33,7 +33,7 @@ describe('batch', () =>
 
         createEffect(() =>
         {
-            values.push(`${firstName()} ${lastName()}`);
+            values.push(`${ firstName() } ${ lastName() }`);
         });
 
         expect(values).toEqual(['John Doe']);
@@ -52,10 +52,10 @@ describe('batch', () =>
         const [a, setA] = createSignal(0);
         const [b, setB] = createSignal(0);
         const [c, setC] = createSignal(0);
-        let result = 0;
+        let _result = 0;
         const fn = vi.fn(() =>
         {
-            result = a() + b() + c();
+            _result = a() + b() + c();
         });
 
         createEffect(fn);
@@ -123,13 +123,15 @@ describe('batch', () =>
         const total = createMemo(() => price() * quantity());
         const values: number[] = [];
 
-        createEffect(() => {
+        createEffect(() =>
+        {
             values.push(total());
         });
 
         expect(values).toEqual([100]);
 
-        batch(() => {
+        batch(() =>
+        {
             setPrice(200);
             setQuantity(3);
         });

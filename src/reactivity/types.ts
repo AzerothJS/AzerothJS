@@ -15,7 +15,7 @@
 //     │  notifies on change
 //     ├───────────────►  Effect re-runs
 //     ├───────────────►  Effect re-runs
-//     └─────────────��─►  Effect re-runs
+//     └───────────────►  Effect re-runs
 //
 //   Each signal tracks which effects depend on it.
 //   Each effect tracks which signals it depends on.

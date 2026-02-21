@@ -13,9 +13,14 @@
     "author": "IntelligentQuantum",
     "license": "MIT",
     "devDependencies": {
+        "@eslint/js": "^10.0.1",
         "@types/node": "^25.2.1",
+        "eslint": "^10.0.0",
+        "globals": "^17.3.0",
+        "jiti": "^2.6.1",
         "jsdom": "^28.0.0",
         "typescript": "^5.9.3",
+        "typescript-eslint": "^8.56.0",
         "vitest": "^4.0.18"
     }
 }

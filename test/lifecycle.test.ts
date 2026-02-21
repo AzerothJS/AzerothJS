@@ -24,9 +24,18 @@ describe('onMount()', () =>
 
         const App = defineComponent(() =>
         {
-            onMount(() => { order.push(1); });
-            onMount(() => { order.push(2); });
-            onMount(() => { order.push(3); });
+            onMount(() =>
+            {
+                order.push(1);
+            });
+            onMount(() =>
+            {
+                order.push(2);
+            });
+            onMount(() =>
+            {
+                order.push(3);
+            });
 
             return h('div', {});
         });
@@ -39,7 +48,8 @@ describe('onMount()', () =>
     {
         expect(() =>
         {
-            onMount(() => {});
+            onMount(() =>
+            {});
         }).toThrow('onMount() can only be called inside a component setup function');
     });
 
@@ -90,9 +100,18 @@ describe('onDestroy()', () =>
 
         const App = defineComponent(() =>
         {
-            onDestroy(() => { order.push(1); });
-            onDestroy(() => { order.push(2); });
-            onDestroy(() => { order.push(3); });
+            onDestroy(() =>
+            {
+                order.push(1);
+            });
+            onDestroy(() =>
+            {
+                order.push(2);
+            });
+            onDestroy(() =>
+            {
+                order.push(3);
+            });
             return h('div', {});
         });
 
@@ -105,7 +124,8 @@ describe('onDestroy()', () =>
     {
         expect(() =>
         {
-            onDestroy(() => {});
+            onDestroy(() =>
+            {});
         }).toThrow('onDestroy() can only be called inside a component setup function');
     });
 
@@ -117,11 +137,20 @@ describe('onDestroy()', () =>
         {
             onMount(() =>
             {
-                return () => { order.push('mount-cleanup'); };
+                return () =>
+                {
+                    order.push('mount-cleanup');
+                };
             });
 
-            onDestroy(() => { order.push('destroy-1'); });
-            onDestroy(() => { order.push('destroy-2'); });
+            onDestroy(() =>
+            {
+                order.push('destroy-1');
+            });
+            onDestroy(() =>
+            {
+                order.push('destroy-2');
+            });
 
             return h('div', {});
         });

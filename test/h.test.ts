@@ -37,7 +37,7 @@ describe('h()', () =>
     {
         const el = h('div', {},
             h('p', {}, 'First'),
-            h('span', {}, 'Second'),
+            h('span', {}, 'Second')
         );
 
         expect(el.children.length).toBe(2);
@@ -57,7 +57,10 @@ describe('h()', () =>
     it('should attach event handlers', () =>
     {
         let clicked = false;
-        const el = h('button', { onClick: () => { clicked = true; } }, 'Click');
+        const el = h('button', { onClick: () =>
+        {
+            clicked = true;
+        } }, 'Click');
 
         el.click();
         expect(clicked).toBe(true);
@@ -87,7 +90,7 @@ describe('h()', () =>
     it('should render reactive text children', () =>
     {
         const [count, setCount] = createSignal(0);
-        const el = h('p', {}, () => `Count: ${count()}`);
+        const el = h('p', {}, () => `Count: ${ count() }`);
 
         expect(el.textContent).toBe('Count: 0');
 
@@ -116,7 +119,7 @@ describe('h()', () =>
 
         const el = h('div', {},
             h('span', {}, () => first()),
-            h('span', {}, () => second()),
+            h('span', {}, () => second())
         );
 
         expect(el.children[0].textContent).toBe('Hello');
@@ -157,7 +160,7 @@ describe('h()', () =>
         const [checked, setChecked] = createSignal(false);
         const el = h('input', {
             type: 'checkbox',
-            checked: () => checked(),
+            checked: () => checked()
         }) as HTMLInputElement;
 
         expect(el.checked).toBe(false);

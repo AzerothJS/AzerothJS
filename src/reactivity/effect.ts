@@ -103,7 +103,7 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
     {
         execute: runEffect,
         isDisposed: false,
-        dependencies: new Set(),
+        dependencies: new Set()
     };
 
     function runEffect(): void

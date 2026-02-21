@@ -82,7 +82,7 @@ export function on<T extends readonly Getter<unknown>[]>(
         values: { [K in keyof T]: T[K] extends Getter<infer V> ? V : never },
         prevValues: { [K in keyof T]: T[K] extends Getter<infer V> ? V : never },
     ) => void,
-    options?: { defer?: boolean },
+    options?: { defer?: boolean }
 ): DisposeFn
 {
     type Values = { [K in keyof T]: T[K] extends Getter<infer V> ? V : never };

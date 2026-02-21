@@ -57,11 +57,11 @@ describe('createEffect()', () =>
         createEffect(() =>
         {
             const val = count();
-            order.push(`run:${val}`);
+            order.push(`run:${ val }`);
 
             return () =>
             {
-                order.push(`cleanup:${val}`);
+                order.push(`cleanup:${ val }`);
             };
         });
 
@@ -97,11 +97,11 @@ describe('createEffect()', () =>
         {
             if (showName())
             {
-                results.push(`name: ${name()}`);
+                results.push(`name: ${ name() }`);
             }
             else
             {
-                results.push(`age: ${age()}`);
+                results.push(`age: ${ age() }`);
             }
         });
 

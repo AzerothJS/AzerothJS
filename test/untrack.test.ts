@@ -22,7 +22,7 @@ describe('untrack()', () =>
         {
             const t = tracked();
             const u = untrack(() => untracked());
-            results.push(`${t}-${u}`);
+            results.push(`${ t }-${ u }`);
         });
 
         expect(results).toEqual(['0-hello']);
@@ -70,7 +70,7 @@ describe('untrack()', () =>
             const aVal = a();
             const bVal = untrack(() => b());
             const cVal = c();
-            results.push(`${aVal}-${bVal}-${cVal}`);
+            results.push(`${ aVal }-${ bVal }-${ cVal }`);
         });
 
         expect(results).toEqual(['1-2-3']);

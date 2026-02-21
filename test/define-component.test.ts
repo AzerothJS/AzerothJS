@@ -26,8 +26,8 @@ describe('defineComponent()', () =>
         const UserCard = defineComponent<Props>((props) =>
         {
             return h('div', {},
-                h('p', {}, `Name: ${props.name}`),
-                h('p', {}, `Age: ${props.age}`),
+                h('p', {}, `Name: ${ props.name }`),
+                h('p', {}, `Age: ${ props.age }`)
             );
         });
 
@@ -43,8 +43,8 @@ describe('defineComponent()', () =>
             const [count, setCount] = createSignal(0);
 
             return h('div', {},
-                h('span', {}, () => `${count()}`),
-                h('button', { onClick: () => setCount(prev => prev + 1) }, '+'),
+                h('span', {}, () => `${ count() }`),
+                h('button', { onClick: () => setCount(prev => prev + 1) }, '+')
             );
         });
 
@@ -67,8 +67,8 @@ describe('defineComponent()', () =>
             const [count, setCount] = createSignal(props.initial);
 
             return h('div', {},
-                h('span', {}, () => `${count()}`),
-                h('button', { onClick: () => setCount(prev => prev + 1) }, '+'),
+                h('span', {}, () => `${ count() }`),
+                h('button', { onClick: () => setCount(prev => prev + 1) }, '+')
             );
         });
 

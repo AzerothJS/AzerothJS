@@ -28,7 +28,7 @@ export {
     type DisposeFn,
     type EqualsFn,
     type SignalOptions,
-    type EffectOptions,
+    type EffectOptions
 } from './reactivity/index.ts';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ export {
     render,
 
     type Props,
-    type Child,
+    type Child
 } from './renderer/index.ts';
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -51,5 +51,5 @@ export {
 
     type Component,
     type ComponentSetup,
-    type LifecycleHook,
+    type LifecycleHook
 } from './component/index.ts';

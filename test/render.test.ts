@@ -9,7 +9,7 @@ describe('render()', () =>
 
         render(
             () => h('p', {}, 'Hello Quantum'),
-            container,
+            container
         );
 
         expect(container.innerHTML).toBe('<p>Hello Quantum</p>');
@@ -22,7 +22,7 @@ describe('render()', () =>
 
         render(
             () => h('p', {}, 'App loaded'),
-            container,
+            container
         );
 
         expect(container.innerHTML).toBe('<p>App loaded</p>');
@@ -34,8 +34,8 @@ describe('render()', () =>
         const container = document.createElement('div');
 
         render(
-            () => h('p', {}, () => `Count: ${count()}`),
-            container,
+            () => h('p', {}, () => `Count: ${ count() }`),
+            container
         );
 
         expect(container.textContent).toBe('Count: 0');
@@ -54,7 +54,7 @@ describe('render()', () =>
 
         render(
             () => h('div', { class: () => isActive() ? 'active' : 'inactive' }),
-            container,
+            container
         );
 
         expect(container.children[0].getAttribute('class')).toBe('inactive');
@@ -70,10 +70,10 @@ describe('render()', () =>
 
         render(
             () => h('div', {},
-                h('p', {}, () => `Count: ${count()}`),
-                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1'),
+                h('p', {}, () => `Count: ${ count() }`),
+                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1')
             ),
-            container,
+            container
         );
 
         expect(container.querySelector('p')?.textContent).toBe('Count: 0');
@@ -92,16 +92,16 @@ describe('render()', () =>
         render(
             () => h('div', { class: 'app' },
                 h('header', {},
-                    h('h1', {}, 'Quantum App'),
+                    h('h1', {}, 'Quantum App')
                 ),
                 h('main', {},
-                    h('p', {}, 'Hello World'),
+                    h('p', {}, 'Hello World')
                 ),
                 h('footer', {},
-                    h('span', {}, '© 2026'),
-                ),
+                    h('span', {}, '© 2026')
+                )
             ),
-            container,
+            container
         );
 
         expect(container.querySelector('h1')?.textContent).toBe('Quantum App');

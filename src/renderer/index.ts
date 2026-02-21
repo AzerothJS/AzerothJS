@@ -15,5 +15,5 @@ export { render } from './render.ts';
 
 export type {
     Props,
-    Child,
+    Child
 } from './types.ts';

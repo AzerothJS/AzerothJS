@@ -78,7 +78,7 @@ describe('createMemo', () =>
     {
         const [firstName, setFirstName] = createSignal('John');
         const [lastName, setLastName] = createSignal('Doe');
-        const fullName = createMemo(() => `${firstName()} ${lastName()}`);
+        const fullName = createMemo(() => `${ firstName() } ${ lastName() }`);
 
         expect(fullName()).toBe('John Doe');
 

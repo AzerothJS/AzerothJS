@@ -52,7 +52,7 @@ const DOM_PROPERTIES = new Set
     'selected',
     'disabled',
     'innerHTML',
-    'textContent',
+    'textContent'
 ]);
 
 /**

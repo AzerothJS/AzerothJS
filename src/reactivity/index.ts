@@ -29,5 +29,5 @@ export type {
     DisposeFn,
     EqualsFn,
     SignalOptions,
-    EffectOptions,
+    EffectOptions
 } from './types.ts';

@@ -20,5 +20,5 @@ export { onMount, onDestroy } from './lifecycle.ts';
 export type {
     Component,
     ComponentSetup,
-    LifecycleHook,
+    LifecycleHook
 } from './types.ts';

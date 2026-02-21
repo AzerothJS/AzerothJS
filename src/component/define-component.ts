@@ -113,12 +113,13 @@ import { setCurrentLifecycle } from './lifecycle.ts';
  */
 export function defineComponent<P extends object = object>(setup: ComponentSetup<P>): Component<P>
 {
-    return (props: P): HTMLElement => {
+    return (props: P): HTMLElement =>
+    {
 
         const lifecycle =
         {
             mount: [] as (() => void | (() => void))[],
-            destroy: [] as (() => void)[],
+            destroy: [] as (() => void)[]
         };
 
         setCurrentLifecycle(lifecycle);

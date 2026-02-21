@@ -64,10 +64,10 @@ describe('Quantum Public API', () =>
 
         render(
             () => h('div', {},
-                h('p', {}, () => `Count: ${count()}`),
-                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1'),
+                h('p', {}, () => `Count: ${ count() }`),
+                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1')
             ),
-            container,
+            container
         );
 
         expect(container.querySelector('p')?.textContent).toBe('Count: 0');

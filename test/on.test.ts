@@ -24,7 +24,7 @@ describe('on()', () =>
 
         on([count], ([countVal]) =>
         {
-            results.push(`count: ${countVal}, name: ${name()}`);
+            results.push(`count: ${ countVal }, name: ${ name() }`);
         });
 
         expect(results).toEqual(['count: 0, name: Alice']);
@@ -33,7 +33,7 @@ describe('on()', () =>
         expect(results).toEqual(['count: 0, name: Alice']);
 
         setCount(1);
-        expect(results).toEqual(['count: 0, name: Alice', 'count: 1, name: Bob',]);
+        expect(results).toEqual(['count: 0, name: Alice', 'count: 1, name: Bob']);
     });
 
     it('should provide previous values', () =>
@@ -52,7 +52,7 @@ describe('on()', () =>
         expect(changes).toEqual([
             { prev: undefined, curr: 0 },
             { prev: 0, curr: 5 },
-            { prev: 5, curr: 10 },
+            { prev: 5, curr: 10 }
         ]);
     });
 
