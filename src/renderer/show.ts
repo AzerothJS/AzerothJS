@@ -27,6 +27,12 @@
 //   4. When false → renders fallback (or empty) into the container
 //   5. When condition changes → swaps content
 //
+// CLEANUP:
+//   When swapping content, Show properly removes child nodes
+//   one by one (not innerHTML = '') so that MutationObserver
+//   and other watchers can detect removal. This is important
+//   for Portal auto-cleanup.
+//
 // ============================================================================
 
 import { createEffect } from '../reactivity/effect.ts';
@@ -37,26 +43,19 @@ import { createEffect } from '../reactivity/effect.ts';
 export interface ShowProps
 {
     /**
-     * Reactive condition. When this returns true, children are shown.
+     * Reactive condition. When true, children are shown.
      * When false, fallback is shown (or nothing).
-     *
-     * Must be a function (getter) so it can be reactive.
      */
     when: () => boolean;
 
     /**
      * Optional fallback to render when `when` returns false.
-     * If not provided, nothing is rendered when condition is false.
      */
     fallback?: () => HTMLElement;
 }
 
 /**
  * Conditionally renders content based on a reactive condition.
- *
- * When the condition is true, renders the children.
- * When false, renders the fallback (or nothing).
- * Automatically swaps when the condition changes.
  *
  * @param props - ShowProps with `when` condition and optional `fallback`
  * @param children - A function that returns the content to show when true
@@ -83,21 +82,26 @@ export interface ShowProps
  *   h('div', { class: 'details' },
  *     h('p', {}, () => `Email: ${email()}`),
  *     h('p', {}, () => `Phone: ${phone()}`),
+ *
+ * // Works with Portal — auto-cleanup when condition becomes false
+ * Show(
+ *   { when: isOpen },
+ *   () => Portal({}, () =>
+ *     h('div', { class: 'modal' }, 'I auto-clean on close!'),
  *   ),
  * );
  * ```
  */
 export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
 {
-    // Container uses display:contents so it's invisible in the layout.
-    // It doesn't create a box — its children appear as if they're
-    // direct children of the container's parent.
     const container = document.createElement('span');
     container.style.display = 'contents';
 
     createEffect(() =>
     {
-        container.innerHTML = '';
+        // Remove children properly (not innerHTML) so
+        // MutationObserver can detect removals (needed for Portal)
+        clearChildren(container);
 
         if (props.when())
         {
@@ -110,4 +114,22 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
     });
 
     return container as unknown as HTMLElement;
+}
+
+/**
+ * Removes all child nodes from an element one by one.
+ *
+ * This is used instead of innerHTML = '' because removing
+ * nodes individually triggers MutationObserver callbacks,
+ * which is necessary for Portal auto-cleanup.
+ *
+ * @param el - The element to clear
+ * @internal
+ */
+function clearChildren(el: HTMLElement): void
+{
+    while (el.firstChild)
+    {
+        el.removeChild(el.firstChild);
+    }
 }

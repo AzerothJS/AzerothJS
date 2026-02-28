@@ -52,14 +52,15 @@ export interface ForProps<T>
     /**
      * A function that returns a unique key for each item.
      *
-     * Keys are used to track identity across updates:
+     * Receives the item and its index. Keys are used to track
+     * identity across updates:
      *   - Same key = same item (reuse DOM element)
      *   - New key = new item (create DOM element)
      *   - Missing key = removed item (remove DOM element)
      *
-     * Keys must be unique within the list. Strings and numbers work best.
+     * Keys must be unique within the list.
      */
-    key: (item: T) => string | number;
+    key: (item: T, index: number) => string | number;
 }
 
 /**
@@ -78,37 +79,16 @@ export interface ForProps<T>
  *
  * @example
  * ```ts
- * interface Todo
- * {
- *     id: number;
- *     text: string;
- * }
- *
- * const [todos, setTodos] = createSignal<Todo[]>
- * ([
- *     { id: 1, text: 'Buy milk' },
- *     { id: 2, text: 'Walk dog' },
- * ]);
- *
+ * // With item key
  * For(
  *   { each: todos, key: (todo) => todo.id },
- *   (todo, index) => h('div', { class: 'todo-item' },
- *     h('span', {}, `${index + 1}. ${todo.text}`),
- *     h('button', {
- *       onClick: () => removeTodo(todo.id),
- *     }, '✕'),
- *   ),
+ *   (todo, index) => h('div', {}, `${index + 1}. ${todo.text}`),
  * );
- * ```
  *
- * @example
- * ```ts
- * // Simple string list
- * const [names, setNames] = createSignal(['Alice', 'Bob', 'Charlie']);
- *
+ * // With index as key
  * For(
- *   { each: names, key: (name) => name },
- *   (name) => h('p', {}, name),
+ *   { each: items, key: (_, i) => i },
+ *   (item) => h('p', {}, item),
  * );
  * ```
  */
@@ -130,7 +110,7 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
         for (let i = 0; i < items.length; i++)
         {
             const item = items[i];
-            const key = props.key(item);
+            const key = props.key(item, i);
 
             const existing = keyToElement.get(key);
 

@@ -122,7 +122,10 @@ export function Switch(...cases: MatchCase[]): HTMLElement
 
     createEffect(() =>
     {
-        container.innerHTML = '';
+        while (container.firstChild)
+        {
+            container.removeChild(container.firstChild);
+        }
 
         for (const matchCase of cases)
         {
