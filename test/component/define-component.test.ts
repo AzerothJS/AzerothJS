@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h, onMount, onDestroy, defineComponent, destroyComponent } from '../src';
+import { createSignal, h, onMount, onDestroy, defineComponent, destroyComponent } from '../../src';
 
 describe('defineComponent()', () =>
 {

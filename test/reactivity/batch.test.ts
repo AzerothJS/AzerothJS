@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, createEffect, batch } from '../src';
+import { createSignal, createEffect, batch } from '../../src';
 
 describe('batch', () =>
 {
@@ -116,7 +116,7 @@ describe('batch', () =>
 
     it('should work with memos inside batch', async () =>
     {
-        const { createMemo } = await import('../src/reactivity/memo.ts');
+        const { createMemo } = await import('../../src/reactivity/memo.ts');
 
         const [price, setPrice] = createSignal(100);
         const [quantity, setQuantity] = createSignal(1);

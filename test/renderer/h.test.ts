@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h } from '../src';
+import { createSignal, h } from '../../src';
 
 describe('h()', () =>
 {

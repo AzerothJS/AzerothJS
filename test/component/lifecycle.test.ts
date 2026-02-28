@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { h, onMount, onDestroy, defineComponent, destroyComponent } from '../src';
+import { h, onMount, onDestroy, defineComponent, destroyComponent } from '../../src';
 
 describe('onMount()', () =>
 {

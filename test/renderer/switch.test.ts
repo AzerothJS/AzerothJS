@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, Switch, Match } from '../src';
+import { createSignal, h, Switch, Match } from '../../src';
 
 describe('Switch() and Match()', () =>
 {

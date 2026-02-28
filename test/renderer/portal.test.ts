@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { h, Portal, destroyPortal } from '../src';
+import { h, Portal, destroyPortal } from '../../src';
 
 describe('Portal()', () =>
 {

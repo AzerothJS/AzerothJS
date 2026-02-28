@@ -4,7 +4,8 @@
 //
 // CURRENT MODULES:
 //   ✅ Reactivity — Signals, Effects, Memos, Batch, Untrack, On
-//   ✅ Renderer   — h(), render(), Show, For, Switch, Portal, Ref
+//   ✅ Renderer   — h(), render(), Show, For, Switch, Portal, Dynamic, Ref,
+//                    classList, styleMap
 //   ✅ Component  — defineComponent(), lifecycle hooks
 //
 // ============================================================================
@@ -42,7 +43,10 @@ export {
     Match,
     Portal,
     destroyPortal,
+    Dynamic,
     createRef,
+    classList,
+    styleMap,
 
     type Props,
     type Child,
@@ -50,7 +54,10 @@ export {
     type ForProps,
     type MatchCase,
     type PortalProps,
-    type Ref
+    type DynamicProps,
+    type Ref,
+    type ClassObject,
+    type StyleObject
 } from './renderer/index.ts';
 
 // ── Component ────────────────────────────────────────────────────────────────
