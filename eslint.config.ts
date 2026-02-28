@@ -13,6 +13,7 @@ export default defineConfig([
         languageOptions: { globals: globals.browser },
         rules:
         {
+            'no-undef': 'off',
             'space-before-blocks': 'error',
             'quotes': ['error', 'single'],
             'key-spacing': 'error',

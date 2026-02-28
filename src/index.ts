@@ -4,7 +4,7 @@
 //
 // CURRENT MODULES:
 //   ✅ Reactivity — Signals, Effects, Memos, Batch, Untrack, On
-//   ✅ Renderer   — h(), render() — Direct DOM, no Virtual DOM
+//   ✅ Renderer   — h(), render(), Show, For, Switch, Portal, Ref
 //   ✅ Component  — defineComponent(), lifecycle hooks
 //
 // ============================================================================
@@ -36,9 +36,21 @@ export {
 export {
     h,
     render,
+    Show,
+    For,
+    Switch,
+    Match,
+    Portal,
+    destroyPortal,
+    createRef,
 
     type Props,
-    type Child
+    type Child,
+    type ShowProps,
+    type ForProps,
+    type MatchCase,
+    type PortalProps,
+    type Ref
 } from './renderer/index.ts';
 
 // ── Component ────────────────────────────────────────────────────────────────
