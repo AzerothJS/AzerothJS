@@ -5,16 +5,18 @@
 // Batch allows multiple signal updates to be grouped together,
 // deferring effect execution until all updates are complete.
 //
-// Without batch:
+// WITHOUT batch:
 //   setFirstName('John');   → effect runs (unnecessary!)
 //   setLastName('Doe');     → effect runs (with correct values)
+//   Result: effect ran TWICE
 //
-// With batch:
+// WITH batch:
 //   batch(() =>
 //   {
 //       setFirstName('John'); → queued
 //       setLastName('Doe');   → queued
-//   });                     → effects run ONCE with both values correct
+//   });                     → effects run ONCE
+//   Result: effect ran ONCE with both values correct
 //
 // ============================================================================
 
@@ -29,7 +31,7 @@ import type { Subscriber } from './types.ts';
 let batching = false;
 
 /**
- * The queue of effects waiting to run after the batch completes.
+ * Queue of effects waiting to run after the batch completes.
  * Uses a Set to automatically deduplicate — if the same effect
  * is triggered multiple times during a batch, it only runs once.
  *
@@ -43,8 +45,9 @@ const queue = new Set<Subscriber>();
  * Used by createEffect to decide whether to run immediately
  * or queue for later.
  *
- * @internal
  * @returns true if inside a batch() call
+ *
+ * @internal
  */
 export function isBatching(): boolean
 {
@@ -57,8 +60,9 @@ export function isBatching(): boolean
  * Called by effect's execute function when isBatching() is true.
  * The effect will run after the batch() call completes.
  *
- * @internal
  * @param subscriber - The subscriber to queue
+ *
+ * @internal
  */
 export function queueEffect(subscriber: Subscriber): void
 {
@@ -69,6 +73,12 @@ export function queueEffect(subscriber: Subscriber): void
  * Groups multiple signal updates together, deferring effect
  * execution until all updates are complete.
  *
+ * Effects only run once after the batch, even if their
+ * dependencies were updated multiple times.
+ *
+ * Supports nesting — inner batch() calls just run their
+ * function, only the outermost batch flushes effects.
+ *
  * @param fn - A function containing multiple signal updates
  *
  * @example
@@ -78,7 +88,7 @@ export function queueEffect(subscriber: Subscriber): void
  *
  * createEffect(() =>
  * {
- *     console.log(`${first()} ${last()}`);
+ *     console.log(`${ first() } ${ last() }`);
  * });
  * // Logs: "Jane Smith"
  *
@@ -89,10 +99,26 @@ export function queueEffect(subscriber: Subscriber): void
  * });
  * // Logs: "John Doe" (only ONCE, not twice)
  * ```
+ *
+ * @example
+ * ```ts
+ * // Nested batches — only outermost flushes
+ * batch(() =>
+ * {
+ *     setA(1);
+ *     batch(() =>
+ *     {
+ *         setB(2);
+ *         setC(3);
+ *     });
+ *     setD(4);
+ * });
+ * // All effects run once after the outer batch completes
+ * ```
  */
 export function batch(fn: () => void): void
 {
-    // If already batching (nested batch), just run the function
+    // If already batching (nested), just run the function
     if (batching)
     {
         fn();
@@ -110,8 +136,7 @@ export function batch(fn: () => void): void
         batching = false;
 
         // Flush the queue — run all queued effects
-        // Use a copy because effects might trigger new signals
-        // which queue more effects
+        // Copy because effects might trigger new signals
         const effects = Array.from(queue);
         queue.clear();
 

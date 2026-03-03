@@ -8,31 +8,34 @@
 // COMPARISON WITH OTHER FRAMEWORKS:
 //
 //   React h() / createElement():
-//     Returns a virtual node → { type: 'div', props: {...}, children: [...] }
-//     Later, React's reconciler diffs VNodes and patches the DOM.
+//     Returns virtual node → { type, props, children }
+//     Later, reconciler diffs VNodes and patches the DOM.
 //
 //   Quantum h():
-//     Returns a REAL HTMLElement → <div class="box">Hello</div>
+//     Returns REAL HTMLElement → <div class="box">Hello</div>
 //     Reactive effects are wired up IMMEDIATELY during creation.
 //     When signals change, effects update the DOM node DIRECTLY.
+//     No diffing. No reconciliation. Just direct DOM mutations.
+//
+// DOM PROPERTIES vs HTML ATTRIBUTES:
+//
+//   Some props must be set as DOM PROPERTIES (el.value = x)
+//   instead of HTML ATTRIBUTES (el.setAttribute('value', x)).
+//
+//   Why? Attributes set the INITIAL state. Properties control
+//   the LIVE state. For inputs, el.value is the current value,
+//   while getAttribute('value') is the initial value.
 //
 // ============================================================================
 
 import type { Props, Child } from './types.ts';
 import { createEffect } from '../reactivity/effect.ts';
 
-// ============================================================================
-// DOM PROPERTIES vs HTML ATTRIBUTES
-// ============================================================================
-//
-// Some props must be set as DOM PROPERTIES (el.value = x) instead of
-// HTML ATTRIBUTES (el.setAttribute('value', x)).
-//
-// Why? Because attributes only set the INITIAL state, while properties
-// control the LIVE state of the element.
-//
-// ============================================================================
-
+/**
+ * Set of props that must be set as DOM properties, not attributes.
+ *
+ * @internal
+ */
 const DOM_PROPERTIES = new Set
 ([
     'value',
@@ -47,26 +50,58 @@ const DOM_PROPERTIES = new Set
  * Creates a real DOM element with attributes, event handlers,
  * and children — wiring up reactive signals immediately.
  *
- * @param tag - The HTML tag name ('div', 'p', 'span', 'button', etc.)
- * @param props - Attributes and event handlers for the element.
- * @param children - Zero or more children: strings, numbers,
- *                   other h() elements, reactive functions, arrays, or null.
+ * @param tag - The HTML tag name ('div', 'p', 'span', etc.)
+ * @param props - Attributes, event handlers, DOM properties
+ * @param children - Zero or more children to append
  *
- * @returns A real HTMLElement with all bindings active.
+ * @returns A real HTMLElement with all bindings active
  *
  * @example
  * ```ts
- * // Array children — map items to elements
+ * // Basic element with attributes
+ * h('div', { class: 'card', id: 'main' }, 'Hello');
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Reactive text
+ * const [count, setCount] = createSignal(0);
+ * h('span', {}, () => `Count: ${ count() }`);
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Event handlers
+ * h('button', {
+ *   onClick: () => setCount(prev => prev + 1)
+ * }, 'Click me');
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Reactive attributes
+ * h('div', {
+ *   class: () => isActive() ? 'active' : 'inactive',
+ *   disabled: () => isLoading()
+ * });
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Array children
  * const items = ['Apple', 'Banana', 'Cherry'];
  * h('ul', {},
- *   items.map(item => h('li', {}, item)),
+ *   items.map(item => h('li', {}, item))
  * );
+ * ```
  *
- * // Mixed children — arrays are flattened automatically
- * h('div', {},
+ * @example
+ * ```ts
+ * // Nested elements
+ * h('div', { class: 'card' },
  *   h('h1', {}, 'Title'),
- *   ['one', 'two', 'three'].map(s => h('p', {}, s)),
- *   h('footer', {}, 'End'),
+ *   h('p', {}, 'Description'),
+ *   h('button', { onClick: handleClick }, 'Action')
  * );
  * ```
  */
@@ -82,16 +117,24 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 }
 
 /**
- * Applies properties, attributes, and event handlers to a DOM element.
+ * Applies properties, attributes, and event handlers
+ * to a DOM element.
+ *
+ * Handles three categories:
+ *   1. Event handlers (onClick, onInput, etc.)
+ *   2. Reactive attributes (functions that return values)
+ *   3. Static attributes (strings, numbers, booleans)
  *
  * @param el - The real DOM element to apply props to
  * @param props - The props object passed to h()
+ *
+ * @internal
  */
 function applyProps(el: HTMLElement, props: Props): void
 {
     for (const [key, value] of Object.entries(props))
     {
-        // ── Event handlers ─────────────────────────────────────────
+        // ── Event handlers ───────────────────────────────────
         if (key.startsWith('on') && typeof value === 'function')
         {
             const eventName = key.slice(2).toLowerCase();
@@ -99,7 +142,7 @@ function applyProps(el: HTMLElement, props: Props): void
             continue;
         }
 
-        // ── Reactive attributes ────────────────────────────────────
+        // ── Reactive attributes ───────────────────────────────────
         if (typeof value === 'function')
         {
             createEffect(() =>
@@ -107,11 +150,10 @@ function applyProps(el: HTMLElement, props: Props): void
                 const resolved = (value as () => unknown)();
                 setProperty(el, key, resolved);
             });
-
             continue;
         }
 
-        // ── Static attributes ──────────────────────────────────────
+        // ── Static attributes ───────────────────────────────────
         setProperty(el, key, value);
     }
 }
@@ -119,9 +161,17 @@ function applyProps(el: HTMLElement, props: Props): void
 /**
  * Sets a single property or attribute on a DOM element.
  *
+ * Routes to the correct method based on the property name:
+ *   - DOM properties → set directly (el.value = x)
+ *   - false/null/undefined → remove attribute
+ *   - true → set empty attribute (disabled="")
+ *   - everything else → setAttribute(key, String(value))
+ *
  * @param el - The DOM element
  * @param key - The property/attribute name
  * @param value - The value to set
+ *
+ * @internal
  */
 function setProperty(el: HTMLElement, key: string, value: unknown): void
 {
@@ -151,6 +201,8 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
  *
  * @param parent - The DOM element to append to
  * @param children - The children to append (may contain arrays)
+ *
+ * @internal
  */
 function appendChildren(parent: HTMLElement, children: Child[]): void
 {
@@ -172,6 +224,8 @@ function appendChildren(parent: HTMLElement, children: Child[]): void
  *
  * @param parent - The DOM element to append to
  * @param child - The child to render
+ *
+ * @internal
  */
 function appendChild(parent: HTMLElement, child: Child): void
 {
@@ -210,8 +264,10 @@ function appendChild(parent: HTMLElement, child: Child): void
             }
             else if (Array.isArray(value))
             {
+                // Reactive function returned an array
                 const container = document.createElement('span');
                 container.style.display = 'contents';
+
                 for (const item of value as Child[])
                 {
                     if (item instanceof HTMLElement)
@@ -223,6 +279,7 @@ function appendChild(parent: HTMLElement, child: Child): void
                         container.appendChild(document.createTextNode(String(item)));
                     }
                 }
+
                 parent.replaceChild(container, currentNode);
                 currentNode = container;
             }

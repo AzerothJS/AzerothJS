@@ -5,13 +5,6 @@
 // Portal renders children into a different part of the DOM tree,
 // outside of the component's parent hierarchy.
 //
-// WHY?
-//   Modals, tooltips, dropdowns, and toasts need to render at the
-//   top level of the page (usually document.body) to avoid:
-//     - overflow: hidden clipping
-//     - z-index stacking context issues
-//     - CSS transform breaking position: fixed
-//
 //   Without Portal:
 //     <div class="card" style="overflow: hidden">
 //       <Modal>  ← Gets clipped! Can't escape parent's overflow.
@@ -23,11 +16,27 @@
 //       ← Modal renders in document.body, not inside .card
 //     </div>
 //
+// WHY?
+//   Modals, tooltips, dropdowns, and toasts need to render at the
+//   top level of the page (usually document.body) to avoid:
+//     - overflow: hidden clipping
+//     - z-index stacking context issues
+//     - CSS transform breaking position: fixed
+//
 // CLEANUP:
 //   Portal uses MutationObserver to watch its placeholder element.
 //   When the placeholder is removed from the DOM (e.g., by Show
 //   toggling to false), the portaled content is automatically
 //   removed from the target. No manual cleanup needed.
+//
+//   Show(
+//     { when: isOpen },
+//     () => Portal({}, () => h('div', { class: 'modal' }, '...'))
+//   )
+//
+//   OPEN:   Show renders Portal → Portal appends modal to body ✅
+//   CLOSE:  Show removes placeholder → MutationObserver fires
+//           → Portal removes modal from body ✅
 //
 // ============================================================================
 
@@ -50,13 +59,37 @@ export interface PortalProps
  * component's parent hierarchy.
  *
  * Returns a placeholder element in the original tree. When
- * the placeholder is removed from the DOM, the portaled
- * content is automatically cleaned up.
+ * the placeholder is removed from the DOM (e.g., by Show),
+ * the portaled content is automatically cleaned up via
+ * MutationObserver.
  *
  * @param props - PortalProps with optional target element
  * @param children - Function that returns the content to portal
  *
- * @returns A placeholder element in the original tree
+ * @returns A hidden placeholder element in the original tree
+ *
+ * @example
+ * ```ts
+ * // Render a modal into document.body
+ * Portal({}, () =>
+ *   h('div', { class: 'modal-overlay' },
+ *     h('div', { class: 'modal' },
+ *       h('h2', {}, 'Are you sure?'),
+ *       h('button', { onClick: closeModal }, 'Close')
+ *     )
+ *   )
+ * );
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Render into a specific container
+ * const tooltipLayer = document.getElementById('tooltip-layer')!;
+ *
+ * Portal({ target: tooltipLayer }, () =>
+ *   h('div', { class: 'tooltip' }, 'Helpful tip!')
+ * );
+ * ```
  *
  * @example
  * ```ts
@@ -64,8 +97,8 @@ export interface PortalProps
  * Show(
  *   { when: isOpen },
  *   () => Portal({}, () =>
- *     h('div', { class: 'modal' }, 'Hello!'),
- *   ),
+ *     h('div', { class: 'modal' }, 'I auto-clean on close!')
+ *   )
  * );
  * ```
  */
@@ -74,6 +107,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
     const target = props.target ?? document.body;
     const content = children();
 
+    // Append the content to the target (outside parent tree)
     target.appendChild(content);
 
     // Create an invisible placeholder in the original tree
@@ -81,6 +115,13 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
     placeholder.style.display = 'none';
     placeholder.setAttribute('data-quantum-portal', '');
 
+    // ── Auto-cleanup with MutationObserver ───────────────────
+    //
+    // Watch for the placeholder being removed from the DOM.
+    // When Show() toggles to false, it clears its container
+    // which removes the placeholder. We detect that and clean
+    // up the portaled content automatically.
+    //
     const observer = new MutationObserver((mutations) =>
     {
         for (const mutation of mutations)
@@ -89,7 +130,6 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
             {
                 if (removed === placeholder || removed.contains(placeholder))
                 {
-                    // Placeholder was removed → clean up portaled content
                     cleanup();
                     return;
                 }
@@ -97,8 +137,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
         }
     });
 
-    // Start observing — we need to wait until placeholder is in the DOM
-    // Use requestAnimationFrame to defer until after current render
+    // Start observing — defer until placeholder is in the DOM
     requestAnimationFrame(() =>
     {
         const root = placeholder.parentElement;
@@ -108,6 +147,10 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
         }
     });
 
+    /**
+     * Removes the portaled content from the target and
+     * disconnects the MutationObserver.
+     */
     function cleanup(): void
     {
         observer.disconnect();
@@ -119,8 +162,8 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
         }
     }
 
-    // Store cleanup function for manual use
-    (placeholder as unknown as { __quantum_portal_cleanup: () => void }).__quantum_portal_cleanup = cleanup;
+    // Store cleanup function for manual use via destroyPortal()
+    (placeholder as any).__quantum_portal_cleanup = cleanup;
 
     return placeholder;
 }
@@ -132,11 +175,17 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
  * is removed from the DOM. But available for edge cases.
  *
  * @param placeholder - The placeholder element returned by Portal()
+ *
+ * @example
+ * ```ts
+ * const el = Portal({}, () => h('div', {}, 'Modal'));
+ * // Later:
+ * destroyPortal(el);  // Removes the modal from document.body
+ * ```
  */
 export function destroyPortal(placeholder: HTMLElement): void
 {
-    const cleanup = (placeholder as unknown as { __quantum_portal_cleanup?: () => void })
-        .__quantum_portal_cleanup;
+    const cleanup = (placeholder as any).__quantum_portal_cleanup as (() => void) | undefined;
 
     if (cleanup)
     {

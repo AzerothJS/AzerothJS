@@ -72,14 +72,11 @@ describe('For()', () =>
             (item) => h('p', {}, item)
         );
 
-        // Capture references to existing DOM elements
         const firstChild = el.children[0];
         const thirdChild = el.children[2];
 
-        // Reorder — B removed, same A and C
         setItems(['A', 'C']);
 
-        // Same DOM elements should be reused
         expect(el.children[0]).toBe(firstChild);
         expect(el.children[1]).toBe(thirdChild);
     });
@@ -92,8 +89,7 @@ describe('For()', () =>
             text: string;
         }
 
-        const [todos, setTodos] = createSignal<Todo[]>
-        ([
+        const [todos, setTodos] = createSignal<Todo[]>([
             { id: 1, text: 'Buy milk' },
             { id: 2, text: 'Walk dog' }
         ]);
@@ -123,5 +119,18 @@ describe('For()', () =>
         expect(el.children[0].textContent).toBe('0: A');
         expect(el.children[1].textContent).toBe('1: B');
         expect(el.children[2].textContent).toBe('2: C');
+    });
+
+    it('should support index as key', () =>
+    {
+        const [items] = createSignal(['X', 'Y', 'Z']);
+
+        const el = For(
+            { each: items, key: (_item, i) => i },
+            (item) => h('p', {}, item)
+        );
+
+        expect(el.children.length).toBe(3);
+        expect(el.children[0].textContent).toBe('X');
     });
 });

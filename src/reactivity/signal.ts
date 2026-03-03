@@ -14,7 +14,8 @@
 //
 //   When an effect is disposed:
 //     1. Effect calls all its dependency cleanup functions
-//     2. Each cleanup function removes the effect from that signal's Set
+//     2. Each cleanup function removes the effect from that
+//        signal's subscriber Set
 //     3. The effect is fully detached — no references remain
 //     4. Garbage collector can free the memory
 //
@@ -26,7 +27,7 @@
 import type { Getter, Setter, Signal, Subscriber, SignalOptions, EqualsFn } from './types.ts';
 
 /**
- * The currently running effect.
+ * The currently running subscriber (effect/memo).
  *
  * When an effect runs, it sets this variable to itself.
  * When a signal's getter is called, it checks this variable
@@ -45,8 +46,9 @@ export let currentSubscriber: Subscriber | null = null;
  * Called by createEffect before running the effect function,
  * and cleared after it finishes.
  *
- * @internal
  * @param sub - The subscriber to set, or null to clear
+ *
+ * @internal
  */
 export function setCurrentSubscriber(sub: Subscriber | null): void
 {
@@ -57,24 +59,37 @@ export function setCurrentSubscriber(sub: Subscriber | null): void
  * Creates a reactive signal — a getter/setter pair that
  * automatically tracks dependencies and notifies subscribers.
  *
+ * The getter returns the current value. When called inside
+ * an effect, it subscribes that effect to this signal.
+ *
+ * The setter updates the value. If the new value is different
+ * (checked with Object.is or a custom equals function), all
+ * subscribed effects are notified and re-run.
+ *
  * @typeParam T - The type of the signal's value
  *
  * @param initialValue - The starting value of the signal
- * @param options - Optional configuration (custom equality function)
+ * @param options - Optional configuration (custom equality)
  *
  * @returns A tuple [getter, setter] to read and write the value
  *
  * @example
  * ```ts
+ * // Basic usage
  * const [count, setCount] = createSignal(0);
- *
  * count();  // → 0
- *
  * setCount(5);
  * count();  // → 5
  *
+ * // Function updater
  * setCount(prev => prev + 1);
  * count();  // → 6
+ *
+ * // Custom equality
+ * const [price, setPrice] = createSignal(9.99, {
+ *   equals: (a, b) => Math.floor(a) === Math.floor(b)
+ * });
+ * setPrice(9.50);  // No notification (same floor)
  * ```
  */
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Signal<T>
@@ -83,8 +98,9 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
     const subscribers = new Set<Subscriber>();
     const equals: EqualsFn<T> = options?.equals ?? Object.is;
 
-    const getter: Getter<T> = () =>
+    const getter: Getter<T> = (): T =>
     {
+        // If an effect is currently running, subscribe it
         if (currentSubscriber !== null && !currentSubscriber.isDisposed)
         {
             subscribers.add(currentSubscriber);
@@ -101,10 +117,12 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
         return value;
     };
 
-    const setter: Setter<T> = (newValue: T | ((prev: T) => T)) =>
+    const setter: Setter<T> = (newValue: T | ((prev: T) => T)): void =>
     {
+        // Resolve the new value (handle function updaters)
         const resolved = typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue;
 
+        // Skip if value hasn't changed
         if (equals(value, resolved))
         {
             return;
@@ -112,6 +130,9 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
         value = resolved;
 
+        // Notify all subscribers
+        // Array.from() snapshots the set — subscribers might
+        // modify the set during notification
         for (const subscriber of Array.from(subscribers))
         {
             if (!subscriber.isDisposed)
@@ -120,6 +141,7 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
             }
             else
             {
+                // Extra safety: remove disposed subscribers
                 subscribers.delete(subscriber);
             }
         }

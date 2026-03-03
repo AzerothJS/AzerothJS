@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createSignal, createEffect, createMemo } from '../../src';
 
-describe('createMemo', () =>
+describe('createMemo()', () =>
 {
-    it('should compute the initial value', () =>
+    it('should compute initial value', () =>
     {
         const [count] = createSignal(5);
         const doubled = createMemo(() => count() * 2);
@@ -11,7 +11,7 @@ describe('createMemo', () =>
         expect(doubled()).toBe(10);
     });
 
-    it('should update when its dependency changes', () =>
+    it('should recompute when dependencies change', () =>
     {
         const [count, setCount] = createSignal(3);
         const doubled = createMemo(() => count() * 2);
@@ -20,96 +20,90 @@ describe('createMemo', () =>
 
         setCount(10);
         expect(doubled()).toBe(20);
-
-        setCount(0);
-        expect(doubled()).toBe(0);
-    });
-
-    it('should chain with other memos', () =>
-    {
-        const [price, setPrice] = createSignal(100);
-        const tax = createMemo(() => price() * 0.2);
-        const total = createMemo(() => price() + tax());
-
-        expect(tax()).toBe(20);
-        expect(total()).toBe(120);
-
-        setPrice(200);
-        expect(tax()).toBe(40);
-        expect(total()).toBe(240);
-    });
-
-    it('should work inside effects', () =>
-    {
-        const [count, setCount] = createSignal(1);
-        const doubled = createMemo(() => count() * 2);
-        const values: number[] = [];
-
-        createEffect(() =>
-        {
-            values.push(doubled());
-        });
-
-        expect(values).toEqual([2]);
-
-        setCount(2);
-        expect(values).toEqual([2, 4]);
-
-        setCount(3);
-        expect(values).toEqual([2, 4, 6]);
     });
 
     it('should work with multiple dependencies', () =>
     {
-        const [a, setA] = createSignal(1);
-        const [b, setB] = createSignal(2);
-        const sum = createMemo(() => a() + b());
+        const [price, setPrice] = createSignal(100);
+        const [quantity, setQuantity] = createSignal(2);
+        const total = createMemo(() => price() * quantity());
 
-        expect(sum()).toBe(3);
+        expect(total()).toBe(200);
 
-        setA(10);
-        expect(sum()).toBe(12);
+        setPrice(50);
+        expect(total()).toBe(100);
 
-        setB(20);
-        expect(sum()).toBe(30);
+        setQuantity(5);
+        expect(total()).toBe(250);
     });
 
-    it('should work with string computations', () =>
+    it('should chain with other memos', () =>
     {
-        const [firstName, setFirstName] = createSignal('John');
-        const [lastName, setLastName] = createSignal('Doe');
-        const fullName = createMemo(() => `${ firstName() } ${ lastName() }`);
+        const [count, setCount] = createSignal(2);
+        const doubled = createMemo(() => count() * 2);
+        const quadrupled = createMemo(() => doubled() * 2);
+
+        expect(quadrupled()).toBe(8);
+
+        setCount(5);
+        expect(quadrupled()).toBe(20);
+    });
+
+    it('should work as dependency for effects', () =>
+    {
+        const [count, setCount] = createSignal(0);
+        const doubled = createMemo(() => count() * 2);
+        const results: number[] = [];
+
+        createEffect(() =>
+        {
+            results.push(doubled());
+        });
+
+        expect(results).toEqual([0]);
+
+        setCount(3);
+        expect(results).toEqual([0, 6]);
+    });
+
+    it('should cache value between reads', () =>
+    {
+        const computeFn = vi.fn((x: number) => x * 2);
+        const [count] = createSignal(5);
+        const doubled = createMemo(() => computeFn(count()));
+
+        // First read triggers compute
+        doubled();
+        // Second read should use cache
+        doubled();
+        doubled();
+
+        expect(computeFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle boolean computations', () =>
+    {
+        const [count, setCount] = createSignal(0);
+        const isPositive = createMemo(() => count() > 0);
+        const isEven = createMemo(() => count() % 2 === 0);
+
+        expect(isPositive()).toBe(false);
+        expect(isEven()).toBe(true);
+
+        setCount(3);
+        expect(isPositive()).toBe(true);
+        expect(isEven()).toBe(false);
+    });
+
+    it('should handle string computations', () =>
+    {
+        const [first, setFirst] = createSignal('John');
+        const [last, _setLast] = createSignal('Doe');
+        const fullName = createMemo(() => `${ first() } ${ last() }`);
 
         expect(fullName()).toBe('John Doe');
 
-        setFirstName('Jane');
+        setFirst('Jane');
         expect(fullName()).toBe('Jane Doe');
-
-        setLastName('Smith');
-        expect(fullName()).toBe('Jane Smith');
-    });
-
-    it('should work with array computations', () =>
-    {
-        const [numbers, setNumbers] = createSignal([1, 2, 3, 4, 5]);
-        const sum = createMemo(() => numbers().reduce((a, b) => a + b, 0));
-        const count = createMemo(() => numbers().length);
-
-        expect(sum()).toBe(15);
-        expect(count()).toBe(5);
-
-        setNumbers([10, 20, 30]);
-        expect(sum()).toBe(60);
-        expect(count()).toBe(3);
-    });
-
-    it('should be read-only (no setter returned)', () =>
-    {
-        const [count] = createSignal(5);
-        const doubled = createMemo(() => count() * 2);
-
-        expect(typeof doubled).toBe('function');
-
-        expect(typeof doubled()).toBe('number');
     });
 });

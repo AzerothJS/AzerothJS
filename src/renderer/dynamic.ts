@@ -26,6 +26,13 @@
 //   - Role-based rendering (Admin vs User component)
 //   - Plugin systems (load components dynamically)
 //   - Wizard/stepper UIs (step 1, step 2, step 3...)
+//   - Nullable modals (null = hidden, Component = shown)
+//
+// NOTE ON STORING FUNCTIONS IN SIGNALS:
+//   When using setView(NewComponent), you must wrap it:
+//     setView(() => NewComponent)
+//   Because the setter can't distinguish "store this function"
+//   from "use this function to compute next value."
 //
 // ============================================================================
 
@@ -41,13 +48,14 @@ export interface DynamicProps
      *
      * When this signal changes, the old component is removed and
      * the new component is rendered in its place.
+     *
+     * Return null to render nothing.
      */
     component: () => ((props: Record<string, unknown>) => HTMLElement) | null;
 
     /**
-     * Optional reactive getter that returns props to pass to the component.
-     *
-     * Re-evaluated when the component changes.
+     * Optional reactive getter that returns props to pass
+     * to the component. Re-evaluated when the component changes.
      */
     props?: () => Record<string, unknown>;
 }
@@ -64,28 +72,26 @@ export interface DynamicProps
  *
  * @example
  * ```ts
+ * // Basic tab switching
  * const Home = () => h('div', {}, 'Home Page');
  * const About = () => h('div', {}, 'About Page');
- * const Contact = () => h('div', {}, 'Contact Page');
  *
  * const [currentView, setCurrentView] = createSignal(Home);
  *
- * // This renders Home. When currentView changes, it swaps.
  * Dynamic({ component: currentView });
  *
- * // Switch to About page:
- * setCurrentView(About);
+ * // Switch to About page (wrap in arrow function!):
+ * setCurrentView(() => About);
  * ```
  *
  * @example
  * ```ts
  * // With props
  * const [activeTab, setActiveTab] = createSignal(TabOne);
- * const [tabData, setTabData] = createSignal({ title: 'Tab 1' });
  *
  * Dynamic({
  *   component: activeTab,
- *   props: tabData,
+ *   props: () => ({ title: 'My Tab' })
  * });
  * ```
  *
@@ -96,11 +102,8 @@ export interface DynamicProps
  *
  * Dynamic({ component: modal });
  *
- * // Show modal:
- * setModal(ConfirmDialog);
- *
- * // Hide modal:
- * setModal(null);
+ * setModal(() => ConfirmDialog);  // Show
+ * setModal(null);                  // Hide
  * ```
  */
 export function Dynamic(dynamicProps: DynamicProps): HTMLElement
@@ -110,14 +113,20 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
 
     createEffect(() =>
     {
-        container.innerHTML = '';
+        // Clear previous component properly
+        while (container.firstChild)
+        {
+            container.removeChild(container.firstChild);
+        }
 
         const Component = dynamicProps.component();
 
         if (Component)
         {
+            // Get props (or empty object)
             const props = dynamicProps.props ? dynamicProps.props() : {};
 
+            // Render the new component
             container.appendChild(Component(props));
         }
     });

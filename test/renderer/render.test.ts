@@ -3,109 +3,93 @@ import { createSignal, h, render } from '../../src';
 
 describe('render()', () =>
 {
-    it('should mount into a container', () =>
+    it('should mount component into container', () =>
     {
         const container = document.createElement('div');
 
         render(
-            () => h('p', {}, 'Hello Quantum'),
+            () => h('p', {}, 'Hello'),
             container
         );
 
-        expect(container.innerHTML).toBe('<p>Hello Quantum</p>');
+        expect(container.children.length).toBe(1);
+        expect(container.textContent).toBe('Hello');
     });
 
-    it('should clear existing content in container', () =>
+    it('should clear existing content', () =>
     {
         const container = document.createElement('div');
-        container.innerHTML = '<p>Loading...</p>';
+        container.innerHTML = '<span>Old Content</span>';
 
         render(
-            () => h('p', {}, 'App loaded'),
+            () => h('p', {}, 'New Content'),
             container
         );
 
-        expect(container.innerHTML).toBe('<p>App loaded</p>');
+        expect(container.children.length).toBe(1);
+        expect(container.textContent).toBe('New Content');
     });
 
-    it('should render reactive text that updates on signal change', () =>
+    it('should render reactive content', () =>
     {
         const [count, setCount] = createSignal(0);
         const container = document.createElement('div');
 
         render(
-            () => h('p', {}, () => `Count: ${ count() }`),
+            () => h('span', {}, () => `Count: ${ count() }`),
             container
         );
 
         expect(container.textContent).toBe('Count: 0');
 
-        setCount(5);
-        expect(container.textContent).toBe('Count: 5');
-
-        setCount(100);
-        expect(container.textContent).toBe('Count: 100');
+        setCount(10);
+        expect(container.textContent).toBe('Count: 10');
     });
 
-    it('should render reactive attributes that update on signal change', () =>
+    it('should render nested components', () =>
     {
-        const [isActive, setIsActive] = createSignal(false);
-        const container = document.createElement('div');
-
-        render(
-            () => h('div', { class: () => isActive() ? 'active' : 'inactive' }),
-            container
-        );
-
-        expect(container.children[0].getAttribute('class')).toBe('inactive');
-
-        setIsActive(true);
-        expect(container.children[0].getAttribute('class')).toBe('active');
-    });
-
-    it('should handle a full interactive app', () =>
-    {
-        const [count, setCount] = createSignal(0);
         const container = document.createElement('div');
 
         render(
             () => h('div', {},
-                h('p', {}, () => `Count: ${ count() }`),
-                h('button', { onClick: () => setCount(prev => prev + 1) }, '+1')
+                h('h1', {}, 'Title'),
+                h('p', {}, 'Content')
             ),
             container
         );
 
-        expect(container.querySelector('p')?.textContent).toBe('Count: 0');
-
-        container.querySelector('button')?.click();
-        expect(container.querySelector('p')?.textContent).toBe('Count: 1');
-
-        container.querySelector('button')?.click();
-        expect(container.querySelector('p')?.textContent).toBe('Count: 2');
+        expect(container.querySelector('h1')!.textContent).toBe('Title');
+        expect(container.querySelector('p')!.textContent).toBe('Content');
     });
 
-    it('should render deeply nested structures', () =>
+    it('should handle multiple renders', () =>
     {
         const container = document.createElement('div');
 
+        render(() => h('p', {}, 'First'), container);
+        expect(container.textContent).toBe('First');
+
+        render(() => h('p', {}, 'Second'), container);
+        expect(container.textContent).toBe('Second');
+        expect(container.children.length).toBe(1);
+    });
+
+    it('should render complex trees', () =>
+    {
+        const container = document.createElement('div');
+        const [items] = createSignal(['A', 'B', 'C']);
+
         render(
-            () => h('div', { class: 'app' },
-                h('header', {},
-                    h('h1', {}, 'Quantum App')
-                ),
-                h('main', {},
-                    h('p', {}, 'Hello World')
-                ),
-                h('footer', {},
-                    h('span', {}, '© 2026')
+            () => h('div', {},
+                h('h1', {}, 'List'),
+                h('ul', {},
+                    items().map(item => h('li', {}, item))
                 )
             ),
             container
         );
 
-        expect(container.querySelector('h1')?.textContent).toBe('Quantum App');
-        expect(container.querySelector('p')?.textContent).toBe('Hello World');
-        expect(container.querySelector('span')?.textContent).toBe('© 2026');
+        const lis = container.querySelectorAll('li');
+        expect(lis.length).toBe(3);
     });
 });

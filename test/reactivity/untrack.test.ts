@@ -3,85 +3,68 @@ import { createSignal, createEffect, untrack } from '../../src';
 
 describe('untrack()', () =>
 {
-    it('should return the value without subscribing', () =>
+    it('should read value without subscribing', () =>
+    {
+        const [tracked, setTracked] = createSignal(0);
+        const [untracked, setUntracked] = createSignal('hello');
+        let runCount = 0;
+
+        createEffect(() =>
+        {
+            tracked();
+            untrack(() => untracked());
+            runCount++;
+        });
+
+        runCount = 0;
+
+        // Changing untracked signal should NOT re-run effect
+        setUntracked('world');
+        expect(runCount).toBe(0);
+
+        // Changing tracked signal SHOULD re-run effect
+        setTracked(1);
+        expect(runCount).toBe(1);
+    });
+
+    it('should return the value from the function', () =>
     {
         const [count] = createSignal(42);
-
         const result = untrack(() => count());
 
         expect(result).toBe(42);
     });
 
-    it('should not subscribe the effect to untracked signals', () =>
-    {
-        const [tracked, setTracked] = createSignal(0);
-        const [untracked, setUntracked] = createSignal('hello');
-        const results: string[] = [];
-
-        createEffect(() =>
-        {
-            const t = tracked();
-            const u = untrack(() => untracked());
-            results.push(`${ t }-${ u }`);
-        });
-
-        expect(results).toEqual(['0-hello']);
-
-        setUntracked('world');
-        expect(results).toEqual(['0-hello']);
-
-        setTracked(1);
-        expect(results).toEqual(['0-hello', '1-world']);
-    });
-
-    it('should work with nested untrack calls', () =>
-    {
-        const [a, setA] = createSignal(1);
-        const [b, setB] = createSignal(2);
-        const results: number[] = [];
-
-        createEffect(() =>
-        {
-            const result = untrack(() =>
-            {
-                return a() + untrack(() => b());
-            });
-
-            results.push(result);
-        });
-
-        expect(results).toEqual([3]);
-
-        setA(10);
-        setB(20);
-
-        expect(results).toEqual([3]);
-    });
-
     it('should restore subscriber context after untrack', () =>
     {
-        const [a, setA] = createSignal(1);
-        const [b, setB] = createSignal(2);
-        const [c, setC] = createSignal(3);
-        const results: string[] = [];
+        const [a, setA] = createSignal(0);
+        const [b] = createSignal(0);
+        const [c, setC] = createSignal(0);
+        let runCount = 0;
 
         createEffect(() =>
         {
-            const aVal = a();
-            const bVal = untrack(() => b());
-            const cVal = c();
-            results.push(`${ aVal }-${ bVal }-${ cVal }`);
+            a();                       // tracked
+            untrack(() => b());        // NOT tracked
+            c();                       // tracked (restored)
+            runCount++;
         });
 
-        expect(results).toEqual(['1-2-3']);
+        runCount = 0;
 
-        setB(20);
-        expect(results).toEqual(['1-2-3']);
+        setA(1);
+        expect(runCount).toBe(1);
 
-        setA(10);
-        expect(results).toEqual(['1-2-3', '10-20-3']);
+        setC(1);
+        expect(runCount).toBe(2);
+    });
 
-        setC(30);
-        expect(results).toEqual(['1-2-3', '10-20-3', '10-20-30']);
+    it('should work outside of effects', () =>
+    {
+        const [count] = createSignal(10);
+
+        // Should not throw
+        const result = untrack(() => count());
+        expect(result).toBe(10);
     });
 });

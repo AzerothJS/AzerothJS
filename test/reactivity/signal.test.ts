@@ -19,7 +19,7 @@ describe('createSignal()', () =>
     it('should update with a function', () =>
     {
         const [count, setCount] = createSignal(10);
-        setCount(prev => prev + 5);
+        setCount((prev: number) => prev + 5);
         expect(count()).toBe(15);
     });
 
@@ -36,10 +36,12 @@ describe('createSignal()', () =>
 
     it('should support custom equality', () =>
     {
-        const [value, setValue] = createSignal(1.4, { equals: (prev, next) => Math.floor(prev) === Math.floor(next) });
+        const [value, setValue] = createSignal(1.4, { equals: (prev: number, next: number) => Math.floor(prev) === Math.floor(next) });
 
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-expect-error
         setValue(1.9);
-        expect(value()).toBe(1.4);
+        expect(value()).toBe(1.4); // Same floor, not updated
     });
 
     it('should handle various types', () =>

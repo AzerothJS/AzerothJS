@@ -2,8 +2,8 @@
 // QUANTUM FRAMEWORK — Class Binding
 // ============================================================================
 //
-// classList() converts objects and arrays into CSS class strings.
-// Works with reactive signals for dynamic class toggling.
+// classList() converts objects and arrays into reactive CSS
+// class string getters.
 //
 // WITHOUT classList:
 //   h('div', {
@@ -13,7 +13,7 @@
 //       if (isDisabled()) c += ' btn-disabled';
 //       if (isLarge()) c += ' btn-lg';
 //       return c;
-//     },
+//     }
 //   })
 //   // Ugly string concatenation. Error-prone.
 //
@@ -23,8 +23,8 @@
 //       'btn': true,
 //       'btn-primary': isPrimary,
 //       'btn-disabled': isDisabled,
-//       'btn-lg': isLarge,
-//     }),
+//       'btn-lg': isLarge
+//     })
 //   })
 //   // Clean, readable, reactive.
 //
@@ -32,7 +32,7 @@
 
 /**
  * A class binding value. Can be:
- *   - boolean → include/exclude the class
+ *   - boolean → static include/exclude
  *   - () => boolean → reactive include/exclude
  */
 type ClassValue = boolean | (() => boolean);
@@ -40,12 +40,15 @@ type ClassValue = boolean | (() => boolean);
 /**
  * An object mapping class names to conditions.
  *
+ * Each key is a CSS class name. Each value determines
+ * whether that class is included.
+ *
  * @example
  * ```ts
  * {
  *   'btn': true,              // always included
- *   'btn-primary': isPrimary, // reactive — included when isPrimary() is true
- *   'btn-disabled': false,    // never included
+ *   'btn-primary': isPrimary, // reactive — signal getter
+ *   'btn-disabled': false     // never included
  * }
  * ```
  */
@@ -59,14 +62,14 @@ export type ClassObject = Record<string, ClassValue>;
  * to h(). The function re-evaluates whenever its reactive
  * conditions change (because it reads signals).
  *
- * @param classes - An object mapping class names to boolean conditions,
- *                  or an array of class names, objects, and getters.
+ * @param classes - Object mapping class names to conditions,
+ *                  or array of strings and objects.
  *
  * @returns A getter function that returns the resolved class string
  *
  * @example
  * ```ts
- * // Object syntax — key is class name, value is condition
+ * // Object syntax
  * const [isActive, setIsActive] = createSignal(false);
  * const [isLarge, setIsLarge] = createSignal(true);
  *
@@ -74,8 +77,8 @@ export type ClassObject = Record<string, ClassValue>;
  *   class: classList({
  *     'btn': true,
  *     'btn-active': isActive,
- *     'btn-lg': isLarge,
- *   }),
+ *     'btn-lg': isLarge
+ *   })
  * }, 'Click me');
  *
  * // Renders: <button class="btn btn-lg">
@@ -85,19 +88,19 @@ export type ClassObject = Record<string, ClassValue>;
  *
  * @example
  * ```ts
- * // Array syntax — mix strings, objects, and getters
+ * // Array syntax — mix strings and objects
  * h('div', {
  *   class: classList([
  *     'card',
  *     { 'card-hover': isHovered },
- *     { 'card-selected': isSelected },
- *   ]),
+ *     { 'card-selected': isSelected }
+ *   ])
  * });
  * ```
  */
 export function classList(classes: ClassObject | (string | ClassObject)[]): () => string
 {
-    return () =>
+    return (): string =>
     {
         const result: string[] = [];
 
@@ -129,6 +132,10 @@ export function classList(classes: ClassObject | (string | ClassObject)[]): () =
 /**
  * Resolves a ClassObject into an array of active class names.
  *
+ * Each entry's condition is evaluated — if it's a function,
+ * it's called (reading the signal). If the result is truthy,
+ * the class name is added to the result array.
+ *
  * @param obj - The class object to resolve
  * @param result - The array to push active class names into
  *
@@ -138,7 +145,6 @@ function resolveClassObject(obj: ClassObject, result: string[]): void
 {
     for (const [className, condition] of Object.entries(obj))
     {
-        // Resolve the condition — it might be a boolean or a getter
         const isActive = typeof condition === 'function' ? condition() : condition;
 
         if (isActive)

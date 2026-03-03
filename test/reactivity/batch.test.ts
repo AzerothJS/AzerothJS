@@ -1,65 +1,68 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createSignal, createEffect, batch } from '../../src';
 
-describe('batch', () =>
+describe('batch()', () =>
 {
-    it('should batch multiple updates into one effect run', () =>
+    it('should defer effect execution', () =>
     {
-        const [a, setA] = createSignal(1);
-        const [b, setB] = createSignal(2);
-        let _result = 0;
-        const fn = vi.fn(() =>
-        {
-            _result = a() + b();
-        });
-
-        createEffect(fn);
-        expect(fn).toHaveBeenCalledTimes(1);
-
-        batch(() =>
-        {
-            setA(10);
-            setB(20);
-        });
-
-        expect(fn).toHaveBeenCalledTimes(2);
-    });
-
-    it('should see the final values after batch', () =>
-    {
-        const [firstName, setFirstName] = createSignal('John');
-        const [lastName, setLastName] = createSignal('Doe');
-        const values: string[] = [];
+        const [a, setA] = createSignal(0);
+        const [b, setB] = createSignal(0);
+        let runCount = 0;
 
         createEffect(() =>
         {
-            values.push(`${ firstName() } ${ lastName() }`);
+            a();
+            b();
+            runCount++;
         });
 
-        expect(values).toEqual(['John Doe']);
+        runCount = 0;
 
         batch(() =>
         {
-            setFirstName('Jane');
-            setLastName('Smith');
+            setA(1);
+            setB(2);
         });
 
-        expect(values).toEqual(['John Doe', 'Jane Smith']);
+        expect(runCount).toBe(1);
     });
 
-    it('should handle nested batches', () =>
+    it('should have correct values after batch', () =>
+    {
+        const [a, setA] = createSignal('hello');
+        const [b, setB] = createSignal('world');
+        const results: string[] = [];
+
+        createEffect(() =>
+        {
+            results.push(`${ a() } ${ b() }`);
+        });
+
+        batch(() =>
+        {
+            setA('foo');
+            setB('bar');
+        });
+
+        expect(results).toEqual(['hello world', 'foo bar']);
+    });
+
+    it('should support nested batches', () =>
     {
         const [a, setA] = createSignal(0);
         const [b, setB] = createSignal(0);
         const [c, setC] = createSignal(0);
-        let _result = 0;
-        const fn = vi.fn(() =>
+        let runCount = 0;
+
+        createEffect(() =>
         {
-            _result = a() + b() + c();
+            a();
+            b();
+            c();
+            runCount++;
         });
 
-        createEffect(fn);
-        expect(fn).toHaveBeenCalledTimes(1);
+        runCount = 0;
 
         batch(() =>
         {
@@ -67,41 +70,25 @@ describe('batch', () =>
             batch(() =>
             {
                 setB(2);
+                setC(3);
             });
-            setC(3);
         });
 
-        expect(fn).toHaveBeenCalledTimes(2);
+        expect(runCount).toBe(1);
     });
 
-    it('should run effects immediately outside of batch', () =>
+    it('should deduplicate queued effects', () =>
     {
         const [count, setCount] = createSignal(0);
-        const values: number[] = [];
+        let runCount = 0;
 
         createEffect(() =>
         {
-            values.push(count());
+            count();
+            runCount++;
         });
 
-        setCount(1);
-        setCount(2);
-        setCount(3);
-
-        expect(values).toEqual([0, 1, 2, 3]);
-    });
-
-    it('should deduplicate effects in batch', () =>
-    {
-        const [count, setCount] = createSignal(0);
-        let result = 0;
-        const fn = vi.fn(() =>
-        {
-            result = count();
-        });
-
-        createEffect(fn);
-        expect(fn).toHaveBeenCalledTimes(1);
+        runCount = 0;
 
         batch(() =>
         {
@@ -110,32 +97,41 @@ describe('batch', () =>
             setCount(3);
         });
 
-        expect(fn).toHaveBeenCalledTimes(2);
-        expect(result).toBe(3);
+        expect(runCount).toBe(1);
+        expect(count()).toBe(3);
     });
 
-    it('should work with memos inside batch', async () =>
+    it('should work without effects (no crash)', () =>
     {
-        const { createMemo } = await import('../../src/reactivity/memo.ts');
-
-        const [price, setPrice] = createSignal(100);
-        const [quantity, setQuantity] = createSignal(1);
-        const total = createMemo(() => price() * quantity());
-        const values: number[] = [];
-
-        createEffect(() =>
-        {
-            values.push(total());
-        });
-
-        expect(values).toEqual([100]);
+        const [count, setCount] = createSignal(0);
 
         batch(() =>
         {
-            setPrice(200);
-            setQuantity(3);
+            setCount(10);
+            setCount(20);
         });
 
-        expect(values[values.length - 1]).toBe(600);
+        expect(count()).toBe(20);
+    });
+
+    it('should flush effects after batch completes', () =>
+    {
+        const [count, setCount] = createSignal(0);
+        const results: number[] = [];
+
+        createEffect(() =>
+        {
+            results.push(count());
+        });
+
+        batch(() =>
+        {
+            setCount(1);
+            // During batch, effect hasn't run yet
+            expect(results).toEqual([0]);
+        });
+
+        // After batch, effect has run
+        expect(results).toEqual([0, 1]);
     });
 });

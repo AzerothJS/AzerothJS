@@ -1,56 +1,45 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Render (Mount to DOM)
+// QUANTUM FRAMEWORK — render() (Mount Component to DOM)
 // ============================================================================
 //
-// The render function mounts an application into a DOM container.
-// It takes a function that returns an HTMLElement (from h()) and
-// appends it to the target container.
+// render() takes a component factory function and a container
+// element, then mounts the component into the container.
 //
-// Since h() already creates REAL DOM elements with reactive bindings
-// wired up, render() is intentionally simple — it just mounts the tree.
+// This is the entry point for every Quantum app:
+//
+//   render(() => App({}), document.getElementById('app')!);
 //
 // ============================================================================
 
 /**
- * Mounts an application into a DOM container element.
+ * Mounts a component into a container DOM element.
  *
- * Takes a function that returns the root element of your app
- * (built with h()) and appends it to the specified container.
+ * Clears the container and appends the component's element.
+ * This is the main entry point for every Quantum app.
  *
- * Since Quantum's h() function returns real DOM elements with
- * reactive effects already wired up, render() simply clears the
- * container and appends the root element. All reactivity is
- * handled by the signals and effects inside h().
- *
- * @param app - A function that returns the root HTMLElement.
- *              Wrapped in a function to support future features
- *              like hot module replacement and re-mounting.
- * @param container - The DOM element to mount the app into.
- *                    Usually `document.getElementById('app')`.
+ * @param component - A function that returns the root HTMLElement
+ * @param container - The DOM element to mount into
  *
  * @example
  * ```ts
- * import { createSignal } from 'quantumjs';
- * import { h, render } from 'quantumjs';
+ * const App = defineComponent(() =>
+ * {
+ *     return h('div', {},
+ *       h('h1', {}, 'Hello Quantum!'),
+ *     );
+ * });
  *
- * const [count, setCount] = createSignal(0);
- *
- * render(
- *   () => h('div', {},
- *     h('p', {}, () => `Count: ${count()}`),
- *     h('button', { onClick: () => setCount(prev => prev + 1) }, '+1'),
- *   ),
- *   document.getElementById('app')!,
- * );
- *
- * // The <p> updates automatically when button is clicked.
+ * render(() => App({}), document.getElementById('app')!);
  * ```
  */
-export function render(app: () => HTMLElement, container: HTMLElement): void
+export function render(component: () => HTMLElement, container: HTMLElement): void
 {
-    container.innerHTML = '';
+    // Clear the container
+    while (container.firstChild)
+    {
+        container.removeChild(container.firstChild);
+    }
 
-    const rootElement = app();
-
-    container.appendChild(rootElement);
+    // Mount the component
+    container.appendChild(component());
 }

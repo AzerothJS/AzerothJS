@@ -3,12 +3,18 @@
 // ============================================================================
 //
 // EXPORTED (public):
-//   createSignal()  — Reactive state
-//   createEffect()  — Reactive side effects
+//   createSignal()  — Reactive state (getter/setter pair)
+//   createEffect()  — Reactive side effects (auto re-run)
 //   createMemo()    — Cached computed values
-//   batch()         — Grouped signal updates
+//   batch()         — Grouped signal updates (single flush)
 //   untrack()       — Read signals without subscribing
 //   on()            — Explicit dependency tracking
+//
+// NOT EXPORTED (internal):
+//   currentSubscriber   — Used by signal/effect wiring
+//   setCurrentSubscriber — Used by effect/untrack
+//   isBatching          — Used by effect
+//   queueEffect         — Used by effect
 //
 // ============================================================================
 

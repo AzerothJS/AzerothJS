@@ -28,10 +28,11 @@
 //   5. When condition changes → swaps content
 //
 // CLEANUP:
-//   When swapping content, Show properly removes child nodes
-//   one by one (not innerHTML = '') so that MutationObserver
-//   and other watchers can detect removal. This is important
-//   for Portal auto-cleanup.
+//
+//   When swapping content, Show removes child nodes one by one
+//   (not innerHTML = '') so that MutationObserver and other
+//   watchers can detect removal. This is important for Portal
+//   auto-cleanup.
 //
 // ============================================================================
 
@@ -45,11 +46,14 @@ export interface ShowProps
     /**
      * Reactive condition. When true, children are shown.
      * When false, fallback is shown (or nothing).
+     *
+     * Must be a function (getter) so it can be reactive.
      */
     when: () => boolean;
 
     /**
      * Optional fallback to render when `when` returns false.
+     * If not provided, nothing is rendered.
      */
     fallback?: () => HTMLElement;
 }
@@ -57,38 +61,47 @@ export interface ShowProps
 /**
  * Conditionally renders content based on a reactive condition.
  *
+ * When true, renders the children. When false, renders the
+ * fallback (or nothing). Automatically swaps when the
+ * condition changes.
+ *
  * @param props - ShowProps with `when` condition and optional `fallback`
- * @param children - A function that returns the content to show when true
+ * @param children - Function that returns content to show when true
  *
  * @returns An HTMLElement that reactively shows/hides content
  *
  * @example
  * ```ts
+ * // With fallback
  * const [isLoggedIn, setIsLoggedIn] = createSignal(false);
  *
  * Show({
  *   when: isLoggedIn,
- *   fallback: () => h('p', {}, 'Please log in'),
+ *   fallback: () => h('p', {}, 'Please log in')
  * }, () => h('div', {},
  *   h('p', {}, 'Welcome back!'),
- *   h('button', { onClick: logout }, 'Logout'),
+ *   h('button', { onClick: logout }, 'Logout')
  * ));
  * ```
  *
  * @example
  * ```ts
- * // Without fallback — just hides when false
+ * // Without fallback — hides when false
  * Show({ when: showDetails }, () =>
  *   h('div', { class: 'details' },
- *     h('p', {}, () => `Email: ${email()}`),
- *     h('p', {}, () => `Phone: ${phone()}`),
+ *     h('p', {}, () => `Email: ${ email() }`)
+ *   )
+ * );
+ * ```
  *
+ * @example
+ * ```ts
  * // Works with Portal — auto-cleanup when condition becomes false
  * Show(
  *   { when: isOpen },
  *   () => Portal({}, () =>
- *     h('div', { class: 'modal' }, 'I auto-clean on close!'),
- *   ),
+ *     h('div', { class: 'modal' }, 'I auto-clean on close!')
+ *   )
  * );
  * ```
  */
@@ -100,7 +113,7 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
     createEffect(() =>
     {
         // Remove children properly (not innerHTML) so
-        // MutationObserver can detect removals (needed for Portal)
+        // MutationObserver can detect removals (Portal support)
         clearChildren(container);
 
         if (props.when())
@@ -119,11 +132,12 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
 /**
  * Removes all child nodes from an element one by one.
  *
- * This is used instead of innerHTML = '' because removing
- * nodes individually triggers MutationObserver callbacks,
- * which is necessary for Portal auto-cleanup.
+ * Used instead of innerHTML = '' because removing nodes
+ * individually triggers MutationObserver callbacks, which
+ * is necessary for Portal auto-cleanup.
  *
  * @param el - The element to clear
+ *
  * @internal
  */
 function clearChildren(el: HTMLElement): void

@@ -58,7 +58,6 @@ describe('createEffect()', () =>
         {
             const val = count();
             order.push(`run:${ val }`);
-
             return () =>
             {
                 order.push(`cleanup:${ val }`);
@@ -113,9 +112,11 @@ describe('createEffect()', () =>
         setShowName(false);
         expect(results).toEqual(['name: Alice', 'name: Bob', 'age: 30']);
 
+        // Name no longer tracked
         setName('Charlie');
         expect(results.length).toBe(3);
 
+        // Age now tracked
         setAge(25);
         expect(results).toEqual(['name: Alice', 'name: Bob', 'age: 30', 'age: 25']);
     });

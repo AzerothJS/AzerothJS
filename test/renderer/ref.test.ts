@@ -6,7 +6,6 @@ describe('createRef()', () =>
     it('should start with current as null', () =>
     {
         const ref = createRef();
-
         expect(ref.current).toBeNull();
     });
 

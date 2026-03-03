@@ -6,19 +6,16 @@
 // to track which items were added, removed, or reordered.
 //
 // WITHOUT For:
-//   h('ul', {}, () => {
-//     return items().map(item => h('li', {}, item.name));
-//   })
-//   // This RE-CREATES every <li> on every change!
-//   // Even if only one item was added. Terrible performance.
+//   h('ul', {}, () => items().map(item => h('li', {}, item.name)))
+//   // RE-CREATES every <li> on every change! Terrible perf.
 //
 // WITH For:
-//   For({
-//     each: items,
-//     key: (item) => item.id,
-//   }, (item) => h('li', {}, item.name))
-//   // Only creates/removes the items that actually changed.
-//   // Existing items are REUSED. Great performance.
+//   For(
+//     { each: items, key: (item) => item.id },
+//     (item) => h('li', {}, item.name)
+//   )
+//   // Only creates/removes items that actually changed.
+//   // Existing items are REUSED. Great perf.
 //
 // HOW KEYED RENDERING WORKS:
 //
@@ -28,8 +25,6 @@
 //   B (key 2) → REMOVED (DOM element removed)
 //   E (key 5) → CREATED (new DOM element)
 //   A, C, D   → KEPT (same DOM elements, no re-creation!)
-//
-//   This is MUCH faster than recreating all 4 elements.
 //
 // ============================================================================
 
@@ -72,23 +67,49 @@ export interface ForProps<T>
  * @typeParam T - The type of items in the list
  *
  * @param props - ForProps with `each` (items signal) and `key` (identity fn)
- * @param renderItem - A function that creates a DOM element for one item.
+ * @param renderItem - Function that creates a DOM element for one item.
  *                     Receives the item and its index.
  *
  * @returns An HTMLElement containing the rendered list
  *
  * @example
  * ```ts
- * // With item key
+ * // With item property as key
+ * interface Todo { id: number; text: string }
+ *
+ * const [todos, setTodos] = createSignal<Todo[]>
+ * ([
+ *     { id: 1, text: 'Buy milk' },
+ *     { id: 2, text: 'Walk dog' }
+ * ]);
+ *
  * For(
  *   { each: todos, key: (todo) => todo.id },
- *   (todo, index) => h('div', {}, `${index + 1}. ${todo.text}`),
+ *   (todo, index) => h('div', {},
+ *     `${ index + 1 }. ${ todo.text }`
+ *   )
  * );
+ * ```
  *
+ * @example
+ * ```ts
  * // With index as key
+ * const [items] = createSignal(['A', 'B', 'C']);
+ *
  * For(
  *   { each: items, key: (_, i) => i },
- *   (item) => h('p', {}, item),
+ *   (item) => h('p', {}, item)
+ * );
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Simple string list
+ * const [names] = createSignal(['Alice', 'Bob']);
+ *
+ * For(
+ *   { each: names, key: (name) => name },
+ *   (name) => h('p', {}, name)
  * );
  * ```
  */
@@ -104,7 +125,6 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
     {
         const items = props.each();
         const newKeyToElement = new Map<string | number, HTMLElement>();
-
         const newElements: HTMLElement[] = [];
 
         for (let i = 0; i < items.length; i++)
@@ -112,27 +132,37 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
             const item = items[i];
             const key = props.key(item, i);
 
+            // Check if we already have a DOM element for this key
             const existing = keyToElement.get(key);
 
             if (existing)
             {
+                // REUSE existing DOM element
                 newElements.push(existing);
                 newKeyToElement.set(key, existing);
             }
             else
             {
+                // CREATE new DOM element
                 const el = renderItem(item, i);
                 newElements.push(el);
                 newKeyToElement.set(key, el);
             }
         }
 
-        container.innerHTML = '';
+        // Clear the container properly (not innerHTML)
+        while (container.firstChild)
+        {
+            container.removeChild(container.firstChild);
+        }
+
+        // Append in new order
         for (const el of newElements)
         {
             container.appendChild(el);
         }
 
+        // Update the key map for next time
         keyToElement = newKeyToElement;
     });
 

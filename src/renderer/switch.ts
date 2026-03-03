@@ -49,14 +49,14 @@ export interface MatchCase
  * Creates a single case for use inside Switch().
  *
  * @param props - Object with a `when` condition function
- * @param render - Function that creates the DOM element for this case
+ * @param render - Function that creates the DOM element
  *
  * @returns A MatchCase object for use in Switch()
  *
  * @example
  * ```ts
  * Match({ when: () => status() === 'loading' },
- *   () => h('div', { class: 'spinner' }, 'Loading...'),
+ *   () => h('div', {}, 'Loading...')
  * );
  * ```
  */
@@ -75,8 +75,7 @@ export function Match(props: { when: () => boolean }, render: () => HTMLElement)
  * automatically swaps to the correct case. Only ONE case is
  * rendered at a time.
  *
- * If no case matches, nothing is rendered (or provide a
- * fallback as the last Match with `when: () => true`).
+ * If no case matches, nothing is rendered.
  *
  * @param cases - One or more MatchCase objects created by Match()
  *
@@ -84,34 +83,21 @@ export function Match(props: { when: () => boolean }, render: () => HTMLElement)
  *
  * @example
  * ```ts
- * const [status, setStatus] = createSignal<'idle' | 'loading' | 'error' | 'success'>('idle');
+ * const [status, setStatus] = createSignal('idle');
  *
  * Switch(
  *   Match({ when: () => status() === 'loading' },
- *     () => h('div', { class: 'spinner' }, 'Loading...')),
+ *     () => h('div', {}, 'Loading...')),
  *
  *   Match({ when: () => status() === 'error' },
- *     () => h('div', { class: 'error' }, 'Something went wrong!')),
+ *     () => h('div', {}, 'Error!')),
  *
  *   Match({ when: () => status() === 'success' },
- *     () => h('div', { class: 'success' }, 'Data loaded!')),
+ *     () => h('div', {}, 'Done!')),
  *
- *   // Default fallback — always true, catches everything else
+ *   // Default fallback
  *   Match({ when: () => true },
- *     () => h('div', {}, 'Idle — click to start')),
- * );
- * ```
- *
- * @example
- * ```ts
- * // User role based rendering
- * Switch(
- *   Match({ when: () => role() === 'admin' },
- *     () => AdminDashboard({})),
- *   Match({ when: () => role() === 'editor' },
- *     () => EditorPanel({})),
- *   Match({ when: () => role() === 'viewer' },
- *     () => ReadOnlyView({})),
+ *     () => h('div', {}, 'Idle'))
  * );
  * ```
  */
@@ -122,11 +108,13 @@ export function Switch(...cases: MatchCase[]): HTMLElement
 
     createEffect(() =>
     {
+        // Remove children properly (not innerHTML) for Portal support
         while (container.firstChild)
         {
             container.removeChild(container.firstChild);
         }
 
+        // Find the FIRST matching case
         for (const matchCase of cases)
         {
             if (matchCase.when())

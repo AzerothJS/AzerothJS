@@ -41,10 +41,21 @@
 export type CleanupFn = () => void;
 
 /**
- * A subscriber function that gets called when a signal changes.
+ * A subscriber is the internal representation of a reactive
+ * consumer (effect, memo, etc.) that gets notified when
+ * signals it depends on change.
  *
- * This is the internal representation of a reactive subscriber.
- * It includes metadata for lifecycle management.
+ * WHY AN INTERFACE AND NOT JUST A FUNCTION?
+ *
+ *   We need metadata (isDisposed, dependencies) to properly
+ *   manage the subscriber's lifecycle. A plain function can't
+ *   carry this metadata.
+ *
+ * WHY DEPENDENCIES?
+ *
+ *   Without dependencies, disposing an effect leaves it in
+ *   every signal's subscriber Set → memory leak. With
+ *   dependencies, we can remove it from ALL signals in one call.
  */
 export interface Subscriber
 {
@@ -55,24 +66,22 @@ export interface Subscriber
     isDisposed: boolean;
 
     /**
-     * Set of cleanup callbacks for all signals this subscriber depends on.
-     * Each entry is a function that removes this subscriber from a signal's
-     * subscriber set. Called during cleanup to prevent memory leaks.
+     * Set of cleanup callbacks for all signals this subscriber
+     * depends on. Each entry is a function that removes this
+     * subscriber from one signal's subscriber Set.
      *
-     * WHY THIS EXISTS:
-     *   Without this, disposing an effect leaves it in every signal's
-     *   subscriber Set → memory leak. With this, we can remove it
-     *   from ALL signals it was subscribed to in one call.
+     * Called during cleanup to prevent memory leaks.
      */
     dependencies: Set<() => void>;
 }
 
 /**
- * A getter function that reads and returns the current value of a signal.
+ * A getter function that reads and returns the current value
+ * of a signal.
  *
- * When called inside an effect or memo, it automatically subscribes
- * that effect to this signal — the effect will re-run when the
- * signal's value changes.
+ * When called inside an effect or memo, it automatically
+ * subscribes that effect — the effect will re-run when
+ * the signal's value changes.
  *
  * @typeParam T - The type of the signal's value
  *
@@ -89,14 +98,20 @@ export type Getter<T> = () => T;
  *
  * Can accept either:
  *   - A new value directly: `setCount(5)`
- *   - A function that receives the previous value: `setCount(prev => prev + 1)`
+ *   - A function that receives the previous value:
+ *     `setCount(prev => prev + 1)`
+ *
+ * NOTE: When storing a function as a signal value, you must
+ * wrap it: `setView(() => MyComponent)` because the setter
+ * can't distinguish between "store this function" and "use
+ * this function to compute the next value."
  *
  * @typeParam T - The type of the signal's value
  *
  * @example
  * ```ts
  * const [count, setCount] = createSignal(0);
- * setCount(5);              // Direct value
+ * setCount(5);                // Direct value
  * setCount(prev => prev + 1); // Function updater
  * ```
  */
@@ -143,9 +158,8 @@ export type DisposeFn = () => void;
  *
  * @example
  * ```ts
- * // Only update when the rounded value changes
  * const [price, setPrice] = createSignal(9.99, {
- *   equals: (prev, next) => Math.round(prev) === Math.round(next),
+ *   equals: (prev, next) => Math.round(prev) === Math.round(next)
  * });
  * ```
  */

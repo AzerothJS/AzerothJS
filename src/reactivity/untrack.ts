@@ -8,22 +8,22 @@
 //
 // USE CASES:
 //
-//   1. Reading a signal for logging only:
+//   1. Read a signal for logging only:
 //      createEffect(() =>
 //      {
 //          console.log('Count changed:', count());
-//          console.log('Current user:', untrack(() => user()));
+//          console.log('User:', untrack(() => user()));
 //          // Re-runs when count changes, NOT when user changes
 //      });
 //
-//   2. Conditional reads where you don't want dependency:
+//   2. Prevent unnecessary re-runs:
 //      createEffect(() =>
 //      {
-//          const data = fetchData(query());  // subscribe to query
-//          const limit = untrack(() => pageSize());  // DON'T subscribe
+//          const data = fetchData(query());       // subscribe
+//          const limit = untrack(() => pageSize()); // don't subscribe
 //      });
 //
-//   3. Preventing infinite loops:
+//   3. Prevent infinite loops:
 //      createEffect(() =>
 //      {
 //          const val = count();
@@ -41,6 +41,9 @@ import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
  * the current effect. The effect will NOT re-run when those
  * signals change.
  *
+ * The subscriber context is properly restored after untrack
+ * completes, even if the function throws.
+ *
  * @typeParam T - The return type of the function
  *
  * @param fn - The function to run without tracking
@@ -54,16 +57,40 @@ import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
  *
  * createEffect(() =>
  * {
- *     // This effect subscribes to count
+ *     // Tracked — effect re-runs when count changes
  *     console.log('Count:', count());
  *
- *     // This read is untracked — changing name won't re-run this effect
+ *     // Untracked — changing name does NOT re-run this effect
  *     const currentName = untrack(() => name());
- *     console.log('Name (untracked):', currentName);
+ *     console.log('Name:', currentName);
  * });
  *
- * setCount(1);  // Effect re-runs ✅
+ * setCount(1);   // Effect re-runs ✅
  * setName('Bob'); // Effect does NOT re-run ✅
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Nested untrack — all reads are untracked
+ * createEffect(() =>
+ * {
+ *   const result = untrack(() =>
+ *   {
+ *       return a() + untrack(() => b());
+ *   });
+ *   // Effect is subscribed to NOTHING — won't re-run
+ * });
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Context restored after untrack
+ * createEffect(() =>
+ * {
+ *     const aVal = a();                     // tracked
+ *     const bVal = untrack(() => b());      // NOT tracked
+ *     const cVal = c();                     // tracked (restored)
+ * });
  * ```
  */
 export function untrack<T>(fn: () => T): T

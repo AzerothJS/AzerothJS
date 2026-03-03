@@ -2,11 +2,16 @@
 // QUANTUM FRAMEWORK — Main Entry Point
 // ============================================================================
 //
-// CURRENT MODULES:
-//   ✅ Reactivity — Signals, Effects, Memos, Batch, Untrack, On
-//   ✅ Renderer   — h(), render(), Show, For, Switch, Portal, Dynamic, Ref,
-//                    classList, styleMap
-//   ✅ Component  — defineComponent(), lifecycle hooks
+// THREE WAYS TO BUILD COMPONENTS:
+//   ✅ Function:  defineComponent((props) => h(...))
+//   ✅ Class:     class MyComp extends QuantumComponent { render() {...} }
+//   🔜 SFC:       .quantum files (coming soon)
+//
+// API CONSISTENCY:
+//   Function:  createSignal, createEffect, createMemo, onMount, onDestroy
+//   Class:     this.createSignal, this.createEffect, this.createMemo,
+//              onMount(), onDestroy()
+//   Standalone: batch, untrack, on — work everywhere, just import
 //
 // ============================================================================
 
@@ -18,18 +23,20 @@ export {
     createMemo,
     batch,
     untrack,
-    on,
+    on
+} from './reactivity/index.ts';
 
-    type CleanupFn,
-    type Getter,
-    type Setter,
-    type Signal,
-    type Subscriber,
-    type EffectFn,
-    type DisposeFn,
-    type EqualsFn,
-    type SignalOptions,
-    type EffectOptions
+export type {
+    CleanupFn,
+    Getter,
+    Setter,
+    Signal,
+    Subscriber,
+    EffectFn,
+    DisposeFn,
+    EqualsFn,
+    SignalOptions,
+    EffectOptions
 } from './reactivity/index.ts';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
@@ -46,29 +53,35 @@ export {
     Dynamic,
     createRef,
     classList,
-    styleMap,
-
-    type Props,
-    type Child,
-    type ShowProps,
-    type ForProps,
-    type MatchCase,
-    type PortalProps,
-    type DynamicProps,
-    type Ref,
-    type ClassObject,
-    type StyleObject
+    styleMap
 } from './renderer/index.ts';
 
-// ── Component ────────────────────────────────────────────────────────────────
+export type {
+    Props,
+    Child,
+    ShowProps,
+    ForProps,
+    MatchCase,
+    PortalProps,
+    DynamicProps,
+    Ref,
+    ClassObject,
+    StyleObject
+} from './renderer/index.ts';
+
+// ── Component ��───────────────────────────────────────────────────────────────
 
 export {
     defineComponent,
     destroyComponent,
     onMount,
     onDestroy,
+    QuantumComponent
+} from './component/index.ts';
 
-    type Component,
-    type ComponentSetup,
-    type LifecycleHook
+export type {
+    Component,
+    ComponentSetup,
+    LifecycleHook,
+    ReactiveState
 } from './component/index.ts';

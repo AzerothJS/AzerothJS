@@ -5,7 +5,7 @@ describe('Dynamic()', () =>
 {
     it('should render the initial component', () =>
     {
-        const Home = () => h('div', {}, 'Home Page');
+        const Home = (): HTMLElement => h('div', {}, 'Home Page');
         const [view] = createSignal(Home);
 
         const el = Dynamic({ component: view });
@@ -15,14 +15,15 @@ describe('Dynamic()', () =>
 
     it('should swap components when signal changes', () =>
     {
-        const Home = () => h('div', {}, 'Home');
-        const About = () => h('div', {}, 'About');
+        const Home = (): HTMLElement => h('div', {}, 'Home');
+        const About = (): HTMLElement => h('div', {}, 'About');
         const [view, setView] = createSignal(Home);
 
         const el = Dynamic({ component: view });
 
         expect(el.textContent).toBe('Home');
 
+        // Must wrap in arrow function — setter treats functions as updaters
         setView(() => About);
         expect(el.textContent).toBe('About');
     });
@@ -39,7 +40,7 @@ describe('Dynamic()', () =>
 
     it('should swap from null to component', () =>
     {
-        const Modal = () => h('div', {}, 'Modal Content');
+        const Modal = (): HTMLElement => h('div', {}, 'Modal Content');
         const [view, setView] = createSignal<(() => HTMLElement) | null>(null);
 
         const el = Dynamic({ component: view });
@@ -55,7 +56,7 @@ describe('Dynamic()', () =>
 
     it('should pass props to the component', () =>
     {
-        const Greeting = (props: Record<string, unknown>) =>
+        const Greeting = (props: Record<string, unknown>): HTMLElement =>
             h('p', {}, `Hello, ${ props.name }!`);
         const [view] = createSignal(Greeting);
 
@@ -69,9 +70,9 @@ describe('Dynamic()', () =>
 
     it('should handle multiple swaps', () =>
     {
-        const A = () => h('div', {}, 'A');
-        const B = () => h('div', {}, 'B');
-        const C = () => h('div', {}, 'C');
+        const A = (): HTMLElement => h('div', {}, 'A');
+        const B = (): HTMLElement => h('div', {}, 'B');
+        const C = (): HTMLElement => h('div', {}, 'C');
         const [view, setView] = createSignal(A);
 
         const el = Dynamic({ component: view });

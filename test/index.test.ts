@@ -26,22 +26,21 @@ import {
     defineComponent,
     destroyComponent,
     onMount,
-    onDestroy
-} from '../src';
+    onDestroy,
+    QuantumComponent
+} from '../src/index.ts';
 
 describe('Quantum Framework — Public API', () =>
 {
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
     // REACTIVITY EXPORTS
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
 
     describe('Reactivity', () =>
     {
         it('should export createSignal', () =>
         {
             expect(createSignal).toBeDefined();
-            expect(typeof createSignal).toBe('function');
-
             const [count, setCount] = createSignal(0);
             expect(count()).toBe(0);
             setCount(5);
@@ -51,8 +50,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export createEffect', () =>
         {
             expect(createEffect).toBeDefined();
-            expect(typeof createEffect).toBe('function');
-
             const [count] = createSignal(0);
             let ran = false;
             const dispose = createEffect(() =>
@@ -67,8 +64,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export createMemo', () =>
         {
             expect(createMemo).toBeDefined();
-            expect(typeof createMemo).toBe('function');
-
             const [count] = createSignal(5);
             const doubled = createMemo(() => count() * 2);
             expect(doubled()).toBe(10);
@@ -77,8 +72,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export batch', () =>
         {
             expect(batch).toBeDefined();
-            expect(typeof batch).toBe('function');
-
             const [a, setA] = createSignal(0);
             const [b, setB] = createSignal(0);
             let runCount = 0;
@@ -96,14 +89,12 @@ describe('Quantum Framework — Public API', () =>
                 setA(1);
                 setB(2);
             });
-            expect(runCount).toBe(1); // Ran once, not twice
+            expect(runCount).toBe(1);
         });
 
         it('should export untrack', () =>
         {
             expect(untrack).toBeDefined();
-            expect(typeof untrack).toBe('function');
-
             const [tracked, setTracked] = createSignal(0);
             const [untracked, setUntracked] = createSignal('hello');
             let runCount = 0;
@@ -117,48 +108,44 @@ describe('Quantum Framework — Public API', () =>
 
             runCount = 0;
             setUntracked('world');
-            expect(runCount).toBe(0); // Untracked — no re-run
+            expect(runCount).toBe(0);
 
             setTracked(1);
-            expect(runCount).toBe(1); // Tracked — re-runs
+            expect(runCount).toBe(1);
         });
 
         it('should export on', () =>
         {
             expect(on).toBeDefined();
-            expect(typeof on).toBe('function');
-
             const [count, setCount] = createSignal(0);
             const [name, setName] = createSignal('Alice');
             const results: number[] = [];
 
             const dispose = on([count], ([val]) =>
             {
-                name(); // Read but NOT tracked
+                name();
                 results.push(val as number);
             });
 
             setName('Bob');
-            expect(results.length).toBe(1); // Only initial run
+            expect(results.length).toBe(1);
 
             setCount(5);
-            expect(results.length).toBe(2); // Re-ran for count change
+            expect(results.length).toBe(2);
 
             dispose();
         });
     });
 
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
     // RENDERER EXPORTS
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
 
     describe('Renderer', () =>
     {
         it('should export h', () =>
         {
             expect(h).toBeDefined();
-            expect(typeof h).toBe('function');
-
             const el = h('div', { class: 'test' }, 'Hello');
             expect(el.tagName).toBe('DIV');
             expect(el.getAttribute('class')).toBe('test');
@@ -168,8 +155,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export render', () =>
         {
             expect(render).toBeDefined();
-            expect(typeof render).toBe('function');
-
             const container = document.createElement('div');
             render(() => h('p', {}, 'Mounted'), container);
             expect(container.textContent).toBe('Mounted');
@@ -178,8 +163,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export Show', () =>
         {
             expect(Show).toBeDefined();
-            expect(typeof Show).toBe('function');
-
             const [visible, setVisible] = createSignal(true);
             const el = Show(
                 { when: visible, fallback: () => h('p', {}, 'Hidden') },
@@ -194,8 +177,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export For', () =>
         {
             expect(For).toBeDefined();
-            expect(typeof For).toBe('function');
-
             const [items, setItems] = createSignal(['A', 'B', 'C']);
             const el = For(
                 { each: items, key: (item) => item },
@@ -214,8 +195,6 @@ describe('Quantum Framework — Public API', () =>
         {
             expect(Switch).toBeDefined();
             expect(Match).toBeDefined();
-            expect(typeof Switch).toBe('function');
-            expect(typeof Match).toBe('function');
 
             const [status, setStatus] = createSignal('loading');
             const el = Switch(
@@ -234,8 +213,6 @@ describe('Quantum Framework — Public API', () =>
         {
             expect(Portal).toBeDefined();
             expect(destroyPortal).toBeDefined();
-            expect(typeof Portal).toBe('function');
-            expect(typeof destroyPortal).toBe('function');
 
             const target = document.createElement('div');
             const placeholder = Portal({ target }, () => h('p', {}, 'Portaled'));
@@ -250,10 +227,9 @@ describe('Quantum Framework — Public API', () =>
         it('should export Dynamic', () =>
         {
             expect(Dynamic).toBeDefined();
-            expect(typeof Dynamic).toBe('function');
 
-            const CompA = () => h('div', {}, 'A');
-            const CompB = () => h('div', {}, 'B');
+            const CompA = (): HTMLElement => h('div', {}, 'A');
+            const CompB = (): HTMLElement => h('div', {}, 'B');
             const [view, setView] = createSignal(CompA);
 
             const el = Dynamic({ component: view });
@@ -266,7 +242,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export createRef', () =>
         {
             expect(createRef).toBeDefined();
-            expect(typeof createRef).toBe('function');
 
             const ref = createRef<HTMLInputElement>();
             expect(ref.current).toBeNull();
@@ -278,7 +253,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export classList', () =>
         {
             expect(classList).toBeDefined();
-            expect(typeof classList).toBe('function');
 
             const [isActive, setIsActive] = createSignal(false);
             const cls = classList({
@@ -294,7 +268,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export styleMap', () =>
         {
             expect(styleMap).toBeDefined();
-            expect(typeof styleMap).toBe('function');
 
             const [color, setColor] = createSignal('red');
             const style = styleMap({
@@ -321,16 +294,15 @@ describe('Quantum Framework — Public API', () =>
         });
     });
 
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
     // COMPONENT EXPORTS
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
 
     describe('Component', () =>
     {
         it('should export defineComponent', () =>
         {
             expect(defineComponent).toBeDefined();
-            expect(typeof defineComponent).toBe('function');
 
             const MyComp = defineComponent(() =>
             {
@@ -344,13 +316,11 @@ describe('Quantum Framework — Public API', () =>
         it('should export destroyComponent', () =>
         {
             expect(destroyComponent).toBeDefined();
-            expect(typeof destroyComponent).toBe('function');
         });
 
         it('should export onMount', () =>
         {
             expect(onMount).toBeDefined();
-            expect(typeof onMount).toBe('function');
 
             let mounted = false;
             const Comp = defineComponent(() =>
@@ -369,7 +339,6 @@ describe('Quantum Framework — Public API', () =>
         it('should export onDestroy', () =>
         {
             expect(onDestroy).toBeDefined();
-            expect(typeof onDestroy).toBe('function');
 
             let destroyed = false;
             const Comp = defineComponent(() =>
@@ -390,7 +359,8 @@ describe('Quantum Framework — Public API', () =>
 
         it('should support props in defineComponent', () =>
         {
-            interface Props {
+            interface Props
+            {
                 name: string;
                 age: number;
             }
@@ -405,15 +375,80 @@ describe('Quantum Framework — Public API', () =>
             const el = Profile({ name: 'Alice', age: 30 });
             expect(el.textContent).toBe('Alice, 30');
         });
+
+        it('should export QuantumComponent', () =>
+        {
+            expect(QuantumComponent).toBeDefined();
+
+            class TestClass extends QuantumComponent
+            {
+                public render(): HTMLElement
+                {
+                    return h('div', {}, 'Class Component');
+                }
+            }
+
+            const comp = new TestClass({});
+            expect(comp.element.textContent).toBe('Class Component');
+        });
+
+        it('should support QuantumComponent with createSignal', () =>
+        {
+            class Counter extends QuantumComponent<{ initial: number }>
+            {
+                public count = this.createSignal(this.props.initial);
+
+                public render(): HTMLElement
+                {
+                    return h('div', {},
+                        h('span', { class: 'val' }, () => `${ this.count() }`)
+                    );
+                }
+            }
+
+            const comp = new Counter({ initial: 7 });
+            expect(comp.element.querySelector('.val')!.textContent).toBe('7');
+
+            comp.count.set(99);
+            expect(comp.element.querySelector('.val')!.textContent).toBe('99');
+        });
+
+        it('should support QuantumComponent with standalone utilities', () =>
+        {
+            class BatchComp extends QuantumComponent
+            {
+                public a = this.createSignal(0);
+                public b = this.createSignal(0);
+                public sum = this.createMemo(() => this.a() + this.b());
+
+                public render(): HTMLElement
+                {
+                    return h('div', {},
+                        h('span', { class: 'sum' }, () => `${ this.sum() }`)
+                    );
+                }
+            }
+
+            const comp = new BatchComp({});
+            expect(comp.element.querySelector('.sum')!.textContent).toBe('0');
+
+            batch(() =>
+            {
+                comp.a.set(10);
+                comp.b.set(20);
+            });
+
+            expect(comp.element.querySelector('.sum')!.textContent).toBe('30');
+        });
     });
 
-    // ═══════════════════════════════════════════════════════════════
-    // INTEGRATION — Full app scenario
-    // ═══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════
+    // INTEGRATION
+    // ══════════════════════════════════════════════════════════
 
     describe('Integration', () =>
     {
-        it('should build a full reactive app with all features', () =>
+        it('should build a full reactive app with function components', () =>
         {
             const [items, setItems] = createSignal([
                 { id: 1, text: 'Buy milk' },
@@ -451,34 +486,115 @@ describe('Quantum Framework — Public API', () =>
                 });
                 inputRef.current = input as HTMLInputElement;
 
-                return h('div', { class: classList({ 'app': true, 'loaded': () => true }) },
-                    input,
-                    h('p', { style: styleMap({ color: 'green', fontWeight: 'bold' }) },
-                        () => `${ count() } items`
-                    ),
-                    For(
-                        { each: filteredItems, key: (item) => item.id },
-                        (item) => h('div', {}, item.text)
-                    ),
-                    Show(
-                        { when: () => count() === 0 },
-                        () => h('p', {}, 'No items match your filter')
-                    )
+                return h('div', {
+                    class: classList({ 'app': true, 'loaded': () => true })
+                },
+                input,
+                h('p', {
+                    style: styleMap({ color: 'green', fontWeight: 'bold' })
+                }, () => `${ count() } items`),
+                For(
+                    { each: filteredItems, key: (item) => item.id },
+                    (item) => h('div', {}, item.text)
+                ),
+                Show(
+                    { when: () => count() === 0 },
+                    () => h('p', {}, 'No items match your filter')
+                )
                 );
             });
 
             const container = document.createElement('div');
             render(() => App({}), container);
 
-            // Verify initial render
             expect(container.textContent).toContain('2 items');
             expect(container.textContent).toContain('Buy milk');
             expect(container.textContent).toContain('Walk dog');
 
-            // Add an item
             setItems(prev => [...prev, { id: 3, text: 'Cook dinner' }]);
             expect(container.textContent).toContain('3 items');
             expect(container.textContent).toContain('Cook dinner');
+        });
+
+        it('should build a full reactive app with class components', () =>
+        {
+            class TodoApp extends QuantumComponent
+            {
+                public todos = this.createSignal([
+                    { id: 1, text: 'Learn Quantum' },
+                    { id: 2, text: 'Build app' }
+                ]);
+                public count = this.createMemo(() => this.todos().length);
+
+                public addTodo(text: string): void
+                {
+                    this.todos.set(prev =>
+                        [...prev, { id: Date.now(), text }]
+                    );
+                }
+
+                public render(): HTMLElement
+                {
+                    return h('div', {},
+                        h('span', { class: 'count' },
+                            () => `${ this.count() } todos`),
+                        h('button', {
+                            class: 'add',
+                            onClick: () => this.addTodo('New task')
+                        }, 'Add')
+                    );
+                }
+            }
+
+            const app = new TodoApp({});
+            expect(app.element.querySelector('.count')!.textContent)
+                .toBe('2 todos');
+
+            (app.element.querySelector('.add') as HTMLButtonElement).click();
+            expect(app.element.querySelector('.count')!.textContent)
+                .toBe('3 todos');
+        });
+
+        it('should mix function and class components', () =>
+        {
+            class ClassCounter extends QuantumComponent<{ initial: number }>
+            {
+                public count = this.createSignal(this.props.initial);
+
+                public render(): HTMLElement
+                {
+                    return h('div', { class: 'class-counter' },
+                        h('span', { class: 'val' }, () => `${ this.count() }`),
+                        h('button', {
+                            class: 'inc',
+                            onClick: () => this.count.set(prev => prev + 1)
+                        }, '+')
+                    );
+                }
+            }
+
+            const FnWrapper = defineComponent(() =>
+            {
+                onMount(() =>
+                {
+                    // Function component wrapping a class component
+                });
+
+                const counter = new ClassCounter({ initial: 10 });
+
+                return h('div', {},
+                    h('h1', {}, 'Mixed Components'),
+                    counter.element
+                );
+            });
+
+            const container = document.createElement('div');
+            render(() => FnWrapper({}), container);
+
+            expect(container.querySelector('.val')!.textContent).toBe('10');
+
+            (container.querySelector('.inc') as HTMLButtonElement).click();
+            expect(container.querySelector('.val')!.textContent).toBe('11');
         });
     });
 });

@@ -8,14 +8,14 @@
 //   Sometimes you need the actual DOM element:
 //     - Focus an input programmatically
 //     - Measure element dimensions
-//     - Integrate with third-party libraries
+//     - Integrate with third-party libraries (charts, maps)
 //     - Scroll to an element
 //     - Draw on a canvas
 //
 // HOW IT WORKS:
-//   1. createRef() returns a ref object: { current: null }
-//   2. Pass ref.current = el after h() creates the element
-//   3. After mount, ref.current points to the real DOM element
+//   1. createRef() returns { current: null }
+//   2. Assign the DOM element after h() creates it
+//   3. After that, ref.current points to the real DOM element
 //
 // ============================================================================
 
@@ -26,7 +26,7 @@
  */
 export interface Ref<T extends HTMLElement = HTMLElement>
 {
-    /** The referenced DOM element. null until the element is created. */
+    /** The referenced DOM element. null until assigned. */
     current: T | null;
 }
 
@@ -42,41 +42,50 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *
  * @example
  * ```ts
+ * // Focus an input
  * const inputRef = createRef<HTMLInputElement>();
  *
- * const el = h('div', {},
- *   h('input', { type: 'text' }),
- *   h('button', {
- *     onClick: () => inputRef.current?.focus(),
- *   }, 'Focus Input'),
- * );
+ * const input = h('input', { type: 'text' });
+ * inputRef.current = input as HTMLInputElement;
  *
- * // Assign the ref to the input element
- * inputRef.current = el.querySelector('input');
+ * onMount(() =>
+ * {
+ *     inputRef.current?.focus();
+ * });
  * ```
  *
  * @example
  * ```ts
- * // With defineComponent and onMount
- * const Canvas = defineComponent(() =>
+ * // Draw on a canvas
+ * const canvasRef = createRef<HTMLCanvasElement>();
+ *
+ * onMount(() =>
  * {
- *     const canvasRef = createRef<HTMLCanvasElement>();
- *
- *     onMount(() =>
+ *     const ctx = canvasRef.current?.getContext('2d');
+ *     if (ctx)
  *     {
- *         const ctx = canvasRef.current?.getContext('2d');
- *         if (ctx)
- *         {
- *             ctx.fillStyle = 'red';
- *             ctx.fillRect(0, 0, 100, 100);
- *         }
- *     });
- *
- *     const canvas = h('canvas', { width: '400', height: '300' });
- *     canvasRef.current = canvas as HTMLCanvasElement;
- *
- *     return canvas;
+ *         ctx.fillStyle = 'red';
+ *         ctx.fillRect(0, 0, 100, 100);
+ *      }
  * });
+ *
+ * const canvas = h('canvas', { width: '400', height: '300' });
+ * canvasRef.current = canvas as HTMLCanvasElement;
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Measure element dimensions
+ * const boxRef = createRef();
+ *
+ * onMount(() =>
+ * {
+ *     const rect = boxRef.current?.getBoundingClientRect();
+ *     console.log('Width:', rect?.width, 'Height:', rect?.height);
+ * });
+ *
+ * const box = h('div', { class: 'box' }, 'Measure me');
+ * boxRef.current = box;
  * ```
  */
 export function createRef<T extends HTMLElement = HTMLElement>(): Ref<T>

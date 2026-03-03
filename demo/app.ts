@@ -1,14 +1,6 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Full Feature Demo
+// QUANTUM FRAMEWORK — Full Feature Demo (9 Demos)
 // ============================================================================
-//
-// This demo showcases EVERY feature built into Quantum:
-//
-//   REACTIVITY:   createSignal, createEffect, createMemo, batch, untrack, on
-//   RENDERER:     h, render, Show, For, Switch, Match, Portal, Dynamic,
-//                 createRef, classList, styleMap
-//   COMPONENTS:   defineComponent, onMount, onDestroy, destroyComponent
-//
 // Run: npx vite demo
 // ============================================================================
 
@@ -33,7 +25,8 @@ import {
     defineComponent,
     destroyComponent,
     onMount,
-    onDestroy
+    onDestroy,
+    QuantumComponent
 } from '../src';
 
 function FeatureTags(...tags: string[]): HTMLElement
@@ -184,14 +177,18 @@ const GreetingDemo = defineComponent(() =>
         Show(
             {
                 when: hasName,
-                fallback: () => h('p', { class: 'empty-state', style: 'padding: 1rem;' },
-                    'Start typing to see the greeting...')
+                fallback: () => h('p', {
+                    class: 'empty-state',
+                    style: 'padding: 1rem;'
+                }, 'Start typing to see the greeting...')
             },
             () => h('div', { style: 'margin-top: 12px;' },
-                h('p', { style: 'font-size: 1.25rem; color: var(--teal); font-weight: 500;' },
-                    () => greeting()),
-                h('p', { style: 'color: var(--text-muted); font-size: 0.78rem; margin-top: 4px;' },
-                    () => `${ nameLength() } characters typed`)
+                h('p', {
+                    style: 'font-size: 1.25rem; color: var(--teal); font-weight: 500;'
+                }, () => greeting()),
+                h('p', {
+                    style: 'color: var(--text-muted); font-size: 0.78rem; margin-top: 4px;'
+                }, () => `${ nameLength() } characters typed`)
             )
         )
     );
@@ -241,8 +238,7 @@ const TodoDemo = defineComponent(() =>
     function addTodo(): void
     {
         const text = inputText().trim();
-        if (text.length === 0)
-            return;
+        if (text.length === 0) return;
 
         batch(() =>
         {
@@ -253,7 +249,9 @@ const TodoDemo = defineComponent(() =>
 
     function toggleTodo(id: number): void
     {
-        setTodos(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+        setTodos(prev => prev.map(t =>
+            t.id === id ? { ...t, done: !t.done } : t
+        ));
     }
 
     function removeTodo(id: number): void
@@ -266,18 +264,15 @@ const TodoDemo = defineComponent(() =>
         setTodos(prev => prev.filter(t => !t.done));
     }
 
-    onMount(() => console.log('📋 TodoApp mounted!'));
-    onDestroy(() => console.log('📋 TodoApp destroyed!'));
-
     function TodoItem(todoId: number): HTMLElement
     {
-        const isDone = () =>
+        const isDone = (): boolean =>
         {
             const todo = todos().find(t => t.id === todoId);
             return todo ? todo.done : false;
         };
 
-        const text = () =>
+        const text = (): string =>
         {
             const todo = todos().find(t => t.id === todoId);
             return todo ? todo.text : '';
@@ -285,9 +280,7 @@ const TodoDemo = defineComponent(() =>
 
         return h('div', {
             class: 'todo-item',
-            style: styleMap({
-                opacity: () => isDone() ? 0.5 : 1
-            })
+            style: styleMap({ opacity: () => isDone() ? 0.5 : 1 })
         },
         h('span', {
             class: 'todo-text',
@@ -303,10 +296,12 @@ const TodoDemo = defineComponent(() =>
         );
     }
 
+    onMount(() => console.log('📋 TodoApp mounted!'));
+    onDestroy(() => console.log('📋 TodoApp destroyed!'));
+
     return h('div', { class: 'glass' },
         FeatureTags('For', 'Show', 'batch', 'createMemo', 'on', 'classList'),
         h('h2', {}, '📋 Todo List'),
-
         h('div', { class: 'todo-input' },
             h('input', {
                 type: 'text',
@@ -323,7 +318,6 @@ const TodoDemo = defineComponent(() =>
             }),
             h('button', { class: 'btn-primary', onClick: addTodo }, 'Add')
         ),
-
         h('div', { class: 'tabs' },
             ...(['all', 'active', 'done'] as const).map(f =>
                 h('button', {
@@ -335,12 +329,10 @@ const TodoDemo = defineComponent(() =>
                 }, f.charAt(0).toUpperCase() + f.slice(1))
             )
         ),
-
         For(
             { each: filteredTodos, key: (todo) => todo.id },
             (todo) => TodoItem(todo.id)
         ),
-
         Show(
             { when: () => filteredTodos().length === 0 },
             () => h('div', { class: 'empty-state' },
@@ -349,7 +341,6 @@ const TodoDemo = defineComponent(() =>
                     : `No ${ filter() } todos.`
             )
         ),
-
         h('div', { class: 'todo-footer' },
             h('span', { class: 'todo-count' },
                 () => `${ activeCount() } active · ${ doneCount() } done`
@@ -387,7 +378,6 @@ const StatusDemo = defineComponent(() =>
     return h('div', { class: 'glass' },
         FeatureTags('Switch', 'Match', 'classList'),
         h('h2', {}, '📡 Async Status'),
-
         h('div', { style: 'margin: 1.25rem 0;' },
             Switch(
                 Match({ when: () => status() === 'idle' },
@@ -416,7 +406,6 @@ const StatusDemo = defineComponent(() =>
                     ))
             )
         ),
-
         h('div', { style: 'display: flex; gap: 8px;' },
             h('button', {
                 class: 'btn-primary',
@@ -437,7 +426,7 @@ const StatusDemo = defineComponent(() =>
 
 const DynamicTabsDemo = defineComponent(() =>
 {
-    const ProfileTab = () => h('div', { style: 'padding: 4px 0;' },
+    const ProfileTab = (): HTMLElement => h('div', { style: 'padding: 4px 0;' },
         h('h3', {}, '👤 Profile'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;' },
             'Name: Quantum Developer'),
@@ -447,7 +436,7 @@ const DynamicTabsDemo = defineComponent(() =>
             'Role: Framework Architect')
     );
 
-    const SettingsTab = () => h('div', { style: 'padding: 4px 0;' },
+    const SettingsTab = (): HTMLElement => h('div', { style: 'padding: 4px 0;' },
         h('h3', {}, '⚙️ Settings'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;' },
             'Theme: Dark Glass'),
@@ -457,7 +446,7 @@ const DynamicTabsDemo = defineComponent(() =>
             'Notifications: Enabled')
     );
 
-    const StatsTab = () => h('div', { style: 'padding: 4px 0;' },
+    const StatsTab = (): HTMLElement => h('div', { style: 'padding: 4px 0;' },
         h('h3', {}, '📊 Statistics'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;' },
             'Components: 42'),
@@ -468,7 +457,6 @@ const DynamicTabsDemo = defineComponent(() =>
     );
 
     type TabName = 'profile' | 'settings' | 'stats';
-
     const tabs: Record<TabName, () => HTMLElement> =
     {
         profile: ProfileTab,
@@ -483,7 +471,6 @@ const DynamicTabsDemo = defineComponent(() =>
     return h('div', { class: 'glass' },
         FeatureTags('Dynamic', 'classList'),
         h('h2', {}, '📑 Dynamic Tabs'),
-
         h('div', { class: 'tabs' },
             ...Object.keys(tabs).map(tab =>
                 h('button', {
@@ -495,10 +482,7 @@ const DynamicTabsDemo = defineComponent(() =>
                 }, tab.charAt(0).toUpperCase() + tab.slice(1))
             )
         ),
-
-        Dynamic({
-            component: () => tabs[activeTab()]
-        })
+        Dynamic({ component: () => tabs[activeTab()] })
     );
 });
 
@@ -511,29 +495,36 @@ const PortalDemo = defineComponent(() =>
     const [isOpen, setIsOpen] = createSignal(false);
 
     onMount(() => console.log('🚪 PortalDemo mounted!'));
-
     onDestroy(() => console.log('🚪 PortalDemo destroyed!'));
 
     return h('div', { class: 'glass' },
         FeatureTags('Portal', 'Show', 'onDestroy'),
         h('h2', {}, '🚪 Portal Modal'),
-        h('p', { style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;' },
-            'The modal renders into document.body via Portal — outside this card\'s DOM tree. Inspect the DOM to verify!'),
-        h('button', { class: 'btn-primary', onClick: () => setIsOpen(true) },
-            () => isOpen() ? 'Modal Open...' : 'Open Modal'),
-
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'The modal renders into document.body via Portal — outside this card\'s DOM tree.'),
+        h('button', {
+            class: 'btn-primary',
+            onClick: () => setIsOpen(true)
+        }, () => isOpen() ? 'Modal Open...' : 'Open Modal'),
         Show(
             { when: isOpen },
             () => Portal({}, () =>
-                h('div', { class: 'modal-overlay', onClick: () => setIsOpen(false) },
-                    h('div', { class: 'modal', onClick: (e: Event) => e.stopPropagation() },
-                        h('h2', {}, '⚛️ Portal Modal'),
-                        h('p', {}, 'This element lives in document.body, not inside the card. It escapes overflow:hidden, z-index issues, and CSS transform contexts.'),
-                        h('div', { class: 'modal-buttons' },
-                            h('button', { class: 'btn-ghost', onClick: () => setIsOpen(false) }, 'Cancel'),
-                            h('button', { class: 'btn-primary', onClick: () => setIsOpen(false) }, 'Got it!')
-                        )
-                    )
+                h('div', {
+                    class: 'modal-overlay',
+                    onClick: () => setIsOpen(false)
+                },
+                h('div', {
+                    class: 'modal',
+                    onClick: (e: Event) => e.stopPropagation()
+                },
+                h('h2', {}, '⚛️ Portal Modal'),
+                h('p', {}, 'This element lives in document.body, not inside the card.'),
+                h('div', { class: 'modal-buttons' },
+                    h('button', { class: 'btn-ghost', onClick: () => setIsOpen(false) }, 'Cancel'),
+                    h('button', { class: 'btn-primary', onClick: () => setIsOpen(false) }, 'Got it!')
+                )
+                )
                 )
             )
         )
@@ -550,7 +541,6 @@ const StyleDemo = defineComponent(() =>
     const [size, setSize] = createSignal(60);
     const [rounded, setRounded] = createSignal(true);
     const [shadow, setShadow] = createSignal(true);
-
     const color = createMemo(() => `hsl(${ hue() }, 70%, 60%)`);
 
     onMount(() => console.log('🎨 StyleDemo mounted!'));
@@ -558,7 +548,6 @@ const StyleDemo = defineComponent(() =>
     return h('div', { class: 'glass' },
         FeatureTags('styleMap', 'classList', 'createMemo'),
         h('h2', {}, '🎨 Style Playground'),
-
         h('div', { style: 'display: flex; align-items: center; gap: 1.5rem; margin: 1rem 0 1.5rem;' },
             h('div', {
                 class: 'color-preview',
@@ -583,50 +572,34 @@ const StyleDemo = defineComponent(() =>
                     () => `${ size() }px · ${ rounded() ? 'Rounded' : 'Square' } · ${ shadow() ? 'Shadow' : 'Flat' }`)
             )
         ),
-
         h('div', { class: 'color-controls' },
             h('label', { class: 'color-label' },
                 h('span', {}, 'Hue'),
                 h('input', {
-                    type: 'range',
-                    min: '0',
-                    max: '360',
+                    type: 'range', min: '0', max: '360',
                     value: () => `${ hue() }`,
                     onInput: (e: Event) => setHue(Number((e.target as HTMLInputElement).value))
                 }),
-                h('span', {
-                    class: 'color-value',
-                    style: styleMap({ color: color })
-                }, () => `${ hue() }°`)
+                h('span', { class: 'color-value', style: styleMap({ color: color }) },
+                    () => `${ hue() }°`)
             ),
             h('label', { class: 'color-label' },
                 h('span', {}, 'Size'),
                 h('input', {
-                    type: 'range',
-                    min: '24',
-                    max: '120',
+                    type: 'range', min: '24', max: '120',
                     value: () => `${ size() }`,
                     onInput: (e: Event) => setSize(Number((e.target as HTMLInputElement).value))
                 }),
                 h('span', { class: 'color-value' }, () => `${ size() }px`)
             )
         ),
-
         h('div', { style: 'display: flex; gap: 8px; margin-top: 1rem;' },
             h('button', {
-                class: classList({
-                    'btn-sm': true,
-                    'btn-primary': rounded,
-                    'btn-ghost': () => !rounded()
-                }),
+                class: classList({ 'btn-sm': true, 'btn-primary': rounded, 'btn-ghost': () => !rounded() }),
                 onClick: () => setRounded(prev => !prev)
             }, () => rounded() ? '● Rounded' : '■ Square'),
             h('button', {
-                class: classList({
-                    'btn-sm': true,
-                    'btn-primary': shadow,
-                    'btn-ghost': () => !shadow()
-                }),
+                class: classList({ 'btn-sm': true, 'btn-primary': shadow, 'btn-ghost': () => !shadow() }),
                 onClick: () => setShadow(prev => !prev)
             }, () => shadow() ? '✦ Shadow' : '○ Flat')
         )
@@ -654,23 +627,14 @@ const TimerDemo = defineComponent(() =>
     onMount(() =>
     {
         console.log('⏱️ Timer mounted!');
-
-        const id = setInterval(() =>
-        {
-            setSeconds(prev => prev + 1);
-        }, 1000);
-
+        const id = setInterval(() => setSeconds(prev => prev + 1), 1000);
         return () =>
         {
-            console.log('⏱️ Timer interval cleared!');
-            clearInterval(id);
+            console.log('⏱️ Timer interval cleared!'); clearInterval(id);
         };
     });
 
-    onDestroy(() =>
-    {
-        console.log('⏱️ Timer destroyed!');
-    });
+    onDestroy(() => console.log('⏱️ Timer destroyed!'));
 
     createEffect(() =>
     {
@@ -691,10 +655,7 @@ const TimerDemo = defineComponent(() =>
                 class: 'btn-primary btn-sm',
                 onClick: () => setLaps(prev => [...prev, { id: lapId++, time: seconds() }])
             }, '🏁 Lap'),
-            h('button', {
-                class: 'btn-ghost btn-sm',
-                onClick: () => setLaps([])
-            }, 'Clear')
+            h('button', { class: 'btn-ghost btn-sm', onClick: () => setLaps([]) }, 'Clear')
         ),
         Show(
             { when: () => laps().length > 0 },
@@ -709,8 +670,7 @@ const TimerDemo = defineComponent(() =>
         ),
         Show(
             { when: () => laps().length === 0 },
-            () => h('p', { class: 'empty-state', style: 'padding: 0.5rem;' },
-                'Hit Lap to record times')
+            () => h('p', { class: 'empty-state', style: 'padding: 0.5rem;' }, 'Hit Lap to record times')
         ),
         h('p', { style: 'color: var(--text-muted); font-size: 0.72rem; text-align: center; margin-top: 12px;' },
             '💡 Toggle hide/show to see lifecycle hooks in console')
@@ -718,8 +678,144 @@ const TimerDemo = defineComponent(() =>
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// DEMO 9: CLASS COMPONENT — Clean field initializers, no setup()
+// ═════════════════════════════════════════════════════════════════════════════
+
+class TemperatureConverter extends QuantumComponent
+{
+    public celsius = this.createSignal(20);
+    public fahrenheit = this.createMemo(() => Math.round((this.celsius() * 9 / 5 + 32) * 10) / 10);
+    public kelvin = this.createMemo(() => Math.round((this.celsius() + 273.15) * 10) / 10);
+    public description = this.createMemo(() =>
+    {
+        const c = this.celsius();
+        if (c <= 0) return '🥶 Freezing';
+        if (c <= 10) return '❄️ Cold';
+        if (c <= 20) return '🌤️ Cool';
+        if (c <= 30) return '☀️ Warm';
+        if (c <= 40) return '🔥 Hot';
+        return '🌋 Extreme';
+    });
+    public history = this.createSignal<number[]>([20]);
+    public historyCount = this.createMemo(() => this.history().length);
+
+    public setTemp(value: number): void
+    {
+        batch(() =>
+        {
+            this.celsius.set(value);
+            this.history.set(prev => [...prev, value]);
+        });
+    }
+
+    public clearHistory(): void
+    {
+        this.history.set([this.celsius()]);
+    }
+
+    public onMount(): void
+    {
+        console.log('🌡️ TemperatureConverter mounted!');
+
+        on([this.celsius], ([temp]) =>
+        {
+            console.log(`🌡️ on() triggered: ${ temp }°C`);
+        }, { defer: true });
+
+        this.createEffect(() =>
+        {
+            const c = this.celsius();
+            const histLen = untrack(() => this.history().length);
+            console.log(`🌡️ ${ c }°C / ${ this.fahrenheit() }°F / ${ this.kelvin() }K — ${ this.description() } (${ histLen } readings)`);
+        });
+    }
+
+    public onDestroy(): void
+    {
+        console.log('🌡️ TemperatureConverter destroyed!');
+    }
+
+    public render(): HTMLElement
+    {
+        return h('div', { class: 'glass' },
+            FeatureTags('QuantumComponent', 'this.createSignal', 'this.createMemo', 'this.createEffect', 'batch', 'untrack', 'on'),
+            h('h2', {}, '🌡️ Class Component'),
+            h('p', { style: 'color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;' },
+                'Built with QuantumComponent — exact same API, no setup(), no boilerplate'),
+
+            h('div', { style: 'text-align: center; margin: 1.25rem 0;' },
+                h('p', {
+                    style: styleMap({
+                        fontSize: '2.2rem',
+                        fontWeight: '700',
+                        fontFamily: '\'JetBrains Mono\', monospace',
+                        color: () =>
+                        {
+                            const c = this.celsius();
+                            if (c <= 0) return 'var(--blue)';
+                            if (c <= 20) return 'var(--teal)';
+                            if (c <= 35) return 'var(--yellow)';
+                            return 'var(--red)';
+                        },
+                        transition: 'color 0.3s'
+                    })
+                }, () => `${ this.celsius() }°C`),
+                h('p', { style: 'font-size: 1.2rem; color: var(--text-secondary); margin-top: 4px;' },
+                    () => this.description())
+            ),
+
+            h('div', { class: 'color-controls' },
+                h('label', { class: 'color-label' },
+                    h('span', {}, 'Temp'),
+                    h('input', {
+                        type: 'range', min: '-40', max: '60',
+                        value: () => `${ this.celsius() }`,
+                        onInput: (e: Event) => this.setTemp(Number((e.target as HTMLInputElement).value))
+                    }),
+                    h('span', { class: 'color-value' }, () => `${ this.celsius() }°`)
+                )
+            ),
+
+            h('div', { class: 'info-bar', style: 'margin-top: 1rem;' },
+                h('span', { class: 'info-chip' }, () => `${ this.fahrenheit() }°F`),
+                h('span', { class: 'info-chip' }, () => `${ this.kelvin() }K`),
+                h('span', { class: 'info-chip' }, () => `${ this.historyCount() } readings`)
+            ),
+
+            h('div', { style: 'display: flex; gap: 6px; justify-content: center; margin-top: 1rem; flex-wrap: wrap;' },
+                ...[
+                    { label: '🥶 −20°', value: -20 },
+                    { label: '❄️ 0°', value: 0 },
+                    { label: '🌤️ 20°', value: 20 },
+                    { label: '☀️ 37°', value: 37 },
+                    { label: '🔥 50°', value: 50 }
+                ].map(preset =>
+                    h('button', {
+                        class: classList({
+                            'btn-sm': true,
+                            'btn-primary': () => this.celsius() === preset.value,
+                            'btn-ghost': () => this.celsius() !== preset.value
+                        }),
+                        onClick: () => this.setTemp(preset.value)
+                    }, preset.label)
+                )
+            ),
+
+            h('div', { style: 'text-align: center; margin-top: 0.75rem;' },
+                h('button', { class: 'btn-ghost btn-sm', onClick: () => this.clearHistory() }, '🗑 Clear History')
+            ),
+
+            h('div', { style: 'margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-glass);' },
+                h('p', { style: 'color: var(--text-muted); font-size: 0.72rem; text-align: center;' },
+                    '💡 Same API: this.createSignal, this.createMemo, this.createEffect — standalone: batch, untrack, on')
+            )
+        );
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // APP ROOT
-// ══════════════════════════════════════════════════��══════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 
 const App = defineComponent(() =>
 {
@@ -730,67 +826,41 @@ const App = defineComponent(() =>
     });
 
     return h('div', {},
-        // Header
         h('div', { class: 'header' },
-            h('h1', {}, 'QuantumJS'),
-            h('p', { class: 'tagline' },
-                'Fine-grained reactivity · No virtual DOM · Direct DOM updates'),
-            h('p', { class: 'hint' },
-                '↕ Toggle sections to see lifecycle hooks · Open console for logs'),
+            h('h1', {}, '⚛️ Quantum'),
+            h('p', { class: 'tagline' }, 'Fine-grained reactivity · No virtual DOM · Direct DOM updates'),
+            h('p', { class: 'hint' }, '↕ Toggle sections to see lifecycle hooks · Open console for logs'),
             h('div', { class: 'header-stats' },
                 h('div', { class: 'header-stat' },
                     h('div', { class: 'header-stat-value' }, '0'),
-                    h('div', { class: 'header-stat-label' }, 'Dependencies')
-                ),
+                    h('div', { class: 'header-stat-label' }, 'Dependencies')),
                 h('div', { class: 'header-stat' },
                     h('div', { class: 'header-stat-value' }, '<4kb'),
-                    h('div', { class: 'header-stat-label' }, 'Bundle Size')
-                ),
+                    h('div', { class: 'header-stat-label' }, 'Bundle Size')),
                 h('div', { class: 'header-stat' },
                     h('div', { class: 'header-stat-value' }, '100+'),
-                    h('div', { class: 'header-stat-label' }, 'Tests')
-                ),
+                    h('div', { class: 'header-stat-label' }, 'Tests')),
                 h('div', { class: 'header-stat' },
                     h('div', { class: 'header-stat-value' }, '∞'),
-                    h('div', { class: 'header-stat-label' }, 'Potential')
-                )
+                    h('div', { class: 'header-stat-label' }, 'Potential'))
             )
         ),
 
-        // Demos
-        Toggleable('⚡ Counter — Signals, Memos, Reactive Styles',
-            () => CounterDemo({ initial: 0 })),
+        Toggleable('⚡ Counter — Signals, Memos, Reactive Styles', () => CounterDemo({ initial: 0 })),
+        Toggleable('🎤 Greeting — Ref, Conditional Rendering', () => GreetingDemo({})),
+        Toggleable('📋 Todo — Keyed Lists, Filters, Batch Updates', () => TodoDemo({})),
+        Toggleable('📡 Status — Switch/Match Multi-Condition', () => StatusDemo({})),
+        Toggleable('📑 Tabs — Dynamic Component Swapping', () => DynamicTabsDemo({})),
+        Toggleable('🚪 Portal — Render Outside DOM Tree', () => PortalDemo({})),
+        Toggleable('🎨 Styles — Reactive Style & Class Binding', () => StyleDemo({})),
+        Toggleable('⏱️ Timer — Lifecycle Hooks, Untrack', () => TimerDemo({})),
+        Toggleable('🌡️ Class Component — QuantumComponent + batch/untrack/on', () => new TemperatureConverter({}).element),
 
-        Toggleable('🎤 Greeting — Ref, Conditional Rendering',
-            () => GreetingDemo({})),
-
-        Toggleable('📋 Todo — Keyed Lists, Filters, Batch Updates',
-            () => TodoDemo({})),
-
-        Toggleable('📡 Status — Switch/Match Multi-Condition',
-            () => StatusDemo({})),
-
-        Toggleable('📑 Tabs — Dynamic Component Swapping',
-            () => DynamicTabsDemo({})),
-
-        Toggleable('🚪 Portal — Render Outside DOM Tree',
-            () => PortalDemo({})),
-
-        Toggleable('🎨 Styles — Reactive Style & Class Binding',
-            () => StyleDemo({})),
-
-        Toggleable('⏱️ Timer — Lifecycle Hooks, Untrack',
-            () => TimerDemo({})),
-
-        // Footer
         h('div', { class: 'footer' },
             h('p', { class: 'footer-brand' }, '⚛️ Built with Quantum Framework'),
-            h('p', { class: 'footer-apis' },
-                'createSignal · createEffect · createMemo · batch · untrack · on'),
-            h('p', { class: 'footer-apis' },
-                'h · render · Show · For · Switch · Match · Portal · Dynamic · createRef'),
-            h('p', { class: 'footer-apis' },
-                'classList · styleMap · defineComponent · onMount · onDestroy')
+            h('p', { class: 'footer-apis' }, 'createSignal · createEffect · createMemo · batch · untrack · on'),
+            h('p', { class: 'footer-apis' }, 'h · render · Show · For · Switch · Match · Portal · Dynamic · createRef'),
+            h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · QuantumComponent · onMount · onDestroy')
         )
     );
 });

@@ -38,18 +38,6 @@ export default defineConfig([
             'linebreak-style': ['error', 'unix'],
             'no-unused-vars': 'off',
 
-            '@typescript-eslint/member-ordering':
-            [
-                'error',
-                {
-                    default:
-                    [
-                        'public-instance-method',
-                        'protected-instance-method',
-                        'private-instance-method'
-                    ]
-                }
-            ],
             '@typescript-eslint/explicit-member-accessibility':
             [
                 'error',

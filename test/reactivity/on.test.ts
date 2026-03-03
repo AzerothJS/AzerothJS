@@ -3,47 +3,63 @@ import { createSignal, on } from '../../src';
 
 describe('on()', () =>
 {
-    it('should run immediately with current values', () =>
+    it('should run immediately by default', () =>
     {
         const [count] = createSignal(5);
-        const results: number[] = [];
+        const results: unknown[] = [];
 
         on([count], ([val]) =>
         {
-            results.push(val as number);
+            results.push(val);
         });
 
         expect(results).toEqual([5]);
     });
 
-    it('should re-run only when specified deps change', () =>
+    it('should skip initial run with defer: true', () =>
+    {
+        const [count, setCount] = createSignal(0);
+        const results: unknown[] = [];
+
+        on([count], ([val]) =>
+        {
+            results.push(val);
+        }, { defer: true });
+
+        expect(results).toEqual([]);
+
+        setCount(1);
+        expect(results).toEqual([1]);
+    });
+
+    it('should only track specified dependencies', () =>
     {
         const [count, setCount] = createSignal(0);
         const [name, setName] = createSignal('Alice');
-        const results: string[] = [];
+        const results: unknown[] = [];
 
-        on([count], ([countVal]) =>
+        on([count], ([val]) =>
         {
-            results.push(`count: ${ countVal }, name: ${ name() }`);
+            // name() is read but NOT tracked
+            name();
+            results.push(val);
         });
 
-        expect(results).toEqual(['count: 0, name: Alice']);
-
         setName('Bob');
-        expect(results).toEqual(['count: 0, name: Alice']);
+        expect(results).toEqual([0]); // Only initial run
 
         setCount(1);
-        expect(results).toEqual(['count: 0, name: Alice', 'count: 1, name: Bob']);
+        expect(results).toEqual([0, 1]); // Re-ran for count
     });
 
     it('should provide previous values', () =>
     {
         const [count, setCount] = createSignal(0);
-        const changes: Array<{ prev: number; curr: number }> = [];
+        const changes: Array<{ prev: unknown; curr: unknown }> = [];
 
         on([count], ([curr], [prev]) =>
         {
-            changes.push({ prev: prev as number, curr: curr as number });
+            changes.push({ prev, curr });
         });
 
         setCount(5);
@@ -56,50 +72,34 @@ describe('on()', () =>
         ]);
     });
 
-    it('should watch multiple dependencies', () =>
+    it('should track multiple dependencies', () =>
     {
         const [a, setA] = createSignal(1);
         const [b, setB] = createSignal(2);
-        const results: number[] = [];
+        const results: unknown[][] = [];
 
         on([a, b], ([aVal, bVal]) =>
         {
-            results.push((aVal as number) + (bVal as number));
+            results.push([aVal, bVal]);
         });
 
-        expect(results).toEqual([3]);
+        expect(results).toEqual([[1, 2]]);
 
         setA(10);
-        expect(results).toEqual([3, 12]);
+        expect(results).toEqual([[1, 2], [10, 2]]);
 
         setB(20);
-        expect(results).toEqual([3, 12, 30]);
+        expect(results).toEqual([[1, 2], [10, 2], [10, 20]]);
     });
 
-    it('should defer initial run when defer: true', () =>
+    it('should dispose when called', () =>
     {
         const [count, setCount] = createSignal(0);
-        const results: number[] = [];
-
-        on([count], ([val]) =>
-        {
-            results.push(val as number);
-        }, { defer: true });
-
-        expect(results).toEqual([]);
-
-        setCount(5);
-        expect(results).toEqual([5]);
-    });
-
-    it('should return a dispose function', () =>
-    {
-        const [count, setCount] = createSignal(0);
-        const results: number[] = [];
+        const results: unknown[] = [];
 
         const dispose = on([count], ([val]) =>
         {
-            results.push(val as number);
+            results.push(val);
         });
 
         setCount(1);
@@ -108,6 +108,7 @@ describe('on()', () =>
         dispose();
 
         setCount(2);
+        setCount(3);
         expect(results).toEqual([0, 1]);
     });
 });
