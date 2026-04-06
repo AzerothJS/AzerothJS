@@ -8,10 +8,10 @@
 //   🔜 SFC:       .quantum files (coming soon)
 //
 // API CONSISTENCY:
-//   Function:  createSignal, createEffect, createMemo, onMount, onDestroy
+//   Function:  createSignal, createEffect, createMemo, onMount, onDestroy, onCleanup
 //   Class:     this.createSignal, this.createEffect, this.createMemo,
 //              onMount(), onDestroy()
-//   Standalone: batch, untrack, on — work everywhere, just import
+//   Standalone: batch, untrack, on, onCleanup, createRoot — work everywhere, just import
 //
 // ============================================================================
 
@@ -23,7 +23,11 @@ export {
     createMemo,
     batch,
     untrack,
-    on
+    on,
+    onCleanup,
+    createRoot,
+    createDeferred,
+    createSelector
 } from './reactivity/index.ts';
 
 export type {
@@ -69,7 +73,7 @@ export type {
     StyleObject
 } from './renderer/index.ts';
 
-// ── Component ��───────────────────────────────────────────────────────────────
+// ── Component ───────────────────────────────────────────────────────────────
 
 export {
     defineComponent,

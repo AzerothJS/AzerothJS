@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Full Feature Demo (9 Demos)
+// QUANTUM FRAMEWORK — Full Feature Demo (13 Demos)
 // ============================================================================
 // Run: npx vite demo
 // ============================================================================
@@ -11,6 +11,10 @@ import {
     batch,
     untrack,
     on,
+    onCleanup,
+    createRoot,
+    createDeferred,
+    createSelector,
     h,
     render,
     Show,
@@ -60,11 +64,11 @@ function Toggleable(label: string, create: () => HTMLElement): HTMLElement
     {
         if (isVisible())
         {
-            mount();
+            untrack(() => mount());
         }
         else
         {
-            unmount();
+            untrack(() => unmount());
         }
     });
 
@@ -814,6 +818,378 @@ class TemperatureConverter extends QuantumComponent
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// DEMO 10: ON CLEANUP — Imperative Cleanup Inside Effects
+// ═════════════════════════════════════════════════════════════════════════════
+
+const CleanupDemo = defineComponent(() =>
+{
+    // Tracks the URL the user types (simulating a WebSocket connection)
+    const [url, setUrl] = createSignal('wss://stream.example.com');
+    // Log of connection events so the user can see open/close lifecycle
+    const [log, setLog] = createSignal<{ id: number; msg: string }[]>([]);
+    let logId = 0;
+
+    function addLog(msg: string): void
+    {
+        setLog(prev => [...prev.slice(-19), { id: logId++, msg }]);
+    }
+
+    // Every time `url` changes the effect re-runs.
+    // onCleanup registers a teardown that fires BEFORE the next run
+    // (or when the effect is disposed), proving automatic resource cleanup.
+    createEffect(() =>
+    {
+        const currentUrl = url();
+        addLog(`🔌 Connected to ${ currentUrl }`);
+
+        // Register cleanup — runs before next execution or on dispose
+        onCleanup(() =>
+        {
+            addLog(`❌ Disconnected from ${ currentUrl }`);
+        });
+    });
+
+    onMount(() => console.log('🧹 CleanupDemo mounted!'));
+
+    return h('div', { class: 'glass' },
+        FeatureTags('onCleanup', 'createEffect', 'createSignal'),
+        h('h2', {}, '🧹 onCleanup'),
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'Change the URL to see the old connection clean up before the new one opens.'),
+        h('div', { style: 'display: flex; gap: 8px; margin-bottom: 1rem;' },
+            h('input', {
+                type: 'text',
+                value: () => url(),
+                style: 'flex: 1;',
+                onInput: (e: Event) => setUrl((e.target as HTMLInputElement).value)
+            }),
+            h('button', {
+                class: 'btn-ghost btn-sm',
+                onClick: () => setUrl(`wss://stream${ Math.floor(Math.random() * 99) }.example.com`)
+            }, '🔀 Random')
+        ),
+        h('div', {
+            class: 'log-box',
+            style: 'font-family: "JetBrains Mono", monospace; font-size: 0.78rem; '
+                + 'background: rgba(0,0,0,0.25); border-radius: 8px; padding: 12px; '
+                + 'min-height: 120px; max-height: 200px; overflow-y: auto;'
+        },
+        For(
+            { each: log, key: (item) => item.id },
+            (entry) => h('div', {
+                style: styleMap({
+                    color: () => entry.msg.startsWith('❌') ? 'var(--red)' : 'var(--green)',
+                    padding: '2px 0'
+                })
+            }, entry.msg)
+        ),
+        Show(
+            { when: () => log().length === 0 },
+            () => h('p', { style: 'color: var(--text-muted);' }, 'Waiting for connection events...')
+        )
+        )
+    );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DEMO 11: CREATE ROOT — Isolated Reactive Ownership
+// ═════════════════════════════════════════════════════════════════════════════
+
+const RootDemo = defineComponent(() =>
+{
+    // Each "scope" gets its own createRoot; dispose kills all its effects.
+    const [scopes, setScopes] = createSignal<{ id: number; name: string; dispose: () => void }[]>([]);
+    const [disposedIds, setDisposedIds] = createSignal<Set<number>>(new Set());
+    const [globalTick, setGlobalTick] = createSignal(0);
+    let nextId = 1;
+
+    // Reactive check — reads disposedIds signal so effects re-run
+    function isAlive(id: number): boolean
+    {
+        return !disposedIds().has(id);
+    }
+
+    function addScope(): void
+    {
+        const id = nextId++;
+        const name = `Scope-${ id }`;
+
+        // createRoot returns a dispose function that tears down all
+        // effects created inside the root — demonstrating ownership.
+        const dispose = createRoot((dispose) =>
+        {
+            // This effect is "owned" by this root
+            createEffect(() =>
+            {
+                const tick = globalTick();
+                console.log(`🌱 [${ name }] tick = ${ tick }`);
+            });
+
+            return dispose;
+        });
+
+        setScopes(prev => [...prev, { id, name, dispose }]);
+    }
+
+    function disposeScope(id: number): void
+    {
+        const scope = scopes().find(s => s.id === id);
+        if (scope && isAlive(id))
+        {
+            scope.dispose();
+            console.log(`💀 [${ scope.name }] disposed — effect stopped`);
+            setDisposedIds(prev => new Set([...prev, id]));
+        }
+    }
+
+    function clearAll(): void
+    {
+        scopes().forEach(s =>
+        {
+            if (isAlive(s.id)) s.dispose();
+        });
+        setScopes([]);
+        setDisposedIds(new Set());
+    }
+
+    onMount(() => console.log('🌱 RootDemo mounted!'));
+
+    return h('div', { class: 'glass' },
+        FeatureTags('createRoot', 'createEffect', 'dispose'),
+        h('h2', {}, '🌱 createRoot'),
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'Create scopes, then dispose them to stop their effects. Check the console.'),
+        h('div', { style: 'display: flex; gap: 8px; margin-bottom: 1rem;' },
+            h('button', { class: 'btn-primary btn-sm', onClick: addScope }, '+ New Scope'),
+            h('button', {
+                class: 'btn-primary btn-sm',
+                onClick: () => setGlobalTick(prev => prev + 1)
+            }, () => `Tick (${ globalTick() })`),
+            Show(
+                { when: () => scopes().length > 0 },
+                () => h('button', { class: 'btn-danger btn-sm', onClick: clearAll }, 'Dispose All')
+            )
+        ),
+        For(
+            { each: scopes, key: (s) => s.id },
+            (scope) => h('div', {
+                style: styleMap({
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    margin: '4px 0',
+                    borderRadius: '8px',
+                    background: 'rgba(255,255,255,0.04)',
+                    opacity: () => isAlive(scope.id) ? '1' : '0.4'
+                })
+            },
+            h('span', {
+                style: styleMap({
+                    fontFamily: '\'JetBrains Mono\', monospace',
+                    fontSize: '0.85rem',
+                    color: () => isAlive(scope.id) ? 'var(--green)' : 'var(--text-muted)'
+                })
+            }, () => `${ scope.name } — ${ isAlive(scope.id) ? '● alive' : '○ disposed' }`),
+            Show(
+                { when: () => isAlive(scope.id) },
+                () => h('button', {
+                    class: 'btn-danger btn-sm',
+                    onClick: () => disposeScope(scope.id)
+                }, 'Dispose')
+            )
+            )
+        ),
+        Show(
+            { when: () => scopes().length === 0 },
+            () => h('p', { class: 'empty-state', style: 'padding: 0.5rem;' }, 'No scopes yet. Create one above.')
+        )
+    );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DEMO 12: CREATE DEFERRED — Debounced Reactive Search
+// ═════════════════════════════════════════════════════════════════════════════
+
+const DeferredDemo = defineComponent(() =>
+{
+    const [query, setQuery] = createSignal('');
+    const [updateCount, setUpdateCount] = createSignal(0);
+
+    // createDeferred waits until the source signal is stable for 300ms
+    // before updating — perfect for search-as-you-type without flooding.
+    const deferredQuery = createDeferred(query, { timeout: 300 });
+
+    // Track how many times the deferred value actually updates
+    createEffect(() =>
+    {
+        deferredQuery();
+        setUpdateCount(prev => prev + 1);
+    });
+
+    // Some dummy items to "search"
+    const items = [
+        'createSignal', 'createEffect', 'createMemo', 'createRoot',
+        'createDeferred', 'createSelector', 'onCleanup', 'onMount',
+        'onDestroy', 'batch', 'untrack', 'on', 'h', 'render',
+        'Show', 'For', 'Switch', 'Match', 'Portal', 'Dynamic'
+    ];
+
+    const results = createMemo(() =>
+    {
+        const q = deferredQuery().trim().toLowerCase();
+        if (q.length === 0) return items;
+        return items.filter(item => item.toLowerCase().includes(q));
+    });
+
+    onMount(() => console.log('⏳ DeferredDemo mounted!'));
+
+    return h('div', { class: 'glass' },
+        FeatureTags('createDeferred', 'createMemo', 'For'),
+        h('h2', {}, '⏳ createDeferred'),
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'Type fast — the results only update after 300ms of inactivity (debounced).'),
+        h('input', {
+            type: 'text',
+            placeholder: 'Search Quantum APIs...',
+            value: () => query(),
+            onInput: (e: Event) => setQuery((e.target as HTMLInputElement).value)
+        }),
+        h('div', { class: 'info-bar', style: 'margin: 12px 0;' },
+            h('span', { class: 'info-chip' }, () => `Raw: "${ query() }"`),
+            h('span', { class: 'info-chip' }, () => `Deferred: "${ deferredQuery() }"`),
+            h('span', { class: 'info-chip' }, () => `Updates: ${ updateCount() }`)
+        ),
+        h('div', { style: 'display: flex; flex-wrap: wrap; gap: 6px;' },
+            For(
+                { each: results, key: (item) => item },
+                (item) => h('span', {
+                    class: 'info-chip',
+                    style: styleMap({
+                        background: () => deferredQuery().length > 0
+                            ? 'rgba(45, 212, 191, 0.15)'
+                            : 'rgba(255,255,255,0.06)',
+                        color: () => deferredQuery().length > 0
+                            ? 'var(--teal)'
+                            : 'var(--text-secondary)'
+                    })
+                }, item)
+            )
+        ),
+        Show(
+            { when: () => results().length === 0 },
+            () => h('p', { class: 'empty-state', style: 'padding: 0.5rem;' },
+                () => `No APIs matching "${ deferredQuery() }"`)
+        )
+    );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DEMO 13: CREATE SELECTOR — Efficient O(1) List Selection
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SelectorDemo = defineComponent(() =>
+{
+    // A list of colors to pick from
+    const colors =
+    [
+        { id: 1, name: 'Ruby', hue: 0 },
+        { id: 2, name: 'Amber', hue: 40 },
+        { id: 3, name: 'Emerald', hue: 145 },
+        { id: 4, name: 'Sapphire', hue: 220 },
+        { id: 5, name: 'Violet', hue: 280 },
+        { id: 6, name: 'Rose', hue: 340 }
+    ];
+
+    const [selectedId, setSelectedId] = createSignal(1);
+
+    // createSelector derives an O(1) lookup: isSelected(id) only re-runs
+    // for the PREVIOUS and NEXT selected id — not the whole list.
+    const isSelected = createSelector(selectedId);
+
+    const selectedColor = createMemo(() => colors.find(c => c.id === selectedId()) ?? colors[0]);
+
+    // Count re-renders to prove O(1) behavior
+    const [renderCount, setRenderCount] = createSignal(0);
+
+    onMount(() => console.log('🎯 SelectorDemo mounted!'));
+
+    return h('div', { class: 'glass' },
+        FeatureTags('createSelector', 'createMemo', 'For', 'O(1) updates'),
+        h('h2', {}, '🎯 createSelector'),
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'Click a color — only the old and new selection re-render (O(1)), not the whole list.'),
+        h('div', {
+            style: 'display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 1rem;'
+        },
+        ...colors.map(color =>
+        {
+            // Each item checks isSelected(id) — thanks to createSelector,
+            // this only fires for the 2 affected items on each change.
+            const el = h('button', {
+                style: styleMap({
+                    padding: '14px 8px',
+                    borderRadius: '10px',
+                    border: () => isSelected(color.id)
+                        ? `2px solid hsl(${ color.hue }, 70%, 60%)`
+                        : '2px solid transparent',
+                    background: () => isSelected(color.id)
+                        ? `hsla(${ color.hue }, 70%, 60%, 0.15)`
+                        : 'rgba(255,255,255,0.04)',
+                    color: () => isSelected(color.id)
+                        ? `hsl(${ color.hue }, 70%, 65%)`
+                        : 'var(--text-secondary)',
+                    fontWeight: () => isSelected(color.id) ? '600' : '400',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                    textAlign: 'center',
+                    fontSize: '0.9rem'
+                }),
+                onClick: () =>
+                {
+                    setSelectedId(color.id);
+                    setRenderCount(prev => prev + 1);
+                }
+            },
+            h('div', {
+                style: 'width: 18px; height: 18px; border-radius: 50%; '
+                        + `background: hsl(${ color.hue }, 70%, 60%); `
+                        + 'margin: 0 auto 6px;'
+            }),
+            color.name
+            );
+
+            return el;
+        })
+        ),
+        h('div', {
+            style: styleMap({
+                textAlign: 'center',
+                padding: '1rem',
+                borderRadius: '10px',
+                background: () => `hsla(${ selectedColor().hue }, 70%, 60%, 0.1)`,
+                border: () => `1px solid hsla(${ selectedColor().hue }, 70%, 60%, 0.25)`
+            })
+        },
+        h('p', {
+            style: styleMap({
+                fontSize: '1.3rem',
+                fontWeight: '600',
+                color: () => `hsl(${ selectedColor().hue }, 70%, 65%)`
+            })
+        }, () => `${ selectedColor().name }`),
+        h('p', {
+            style: 'color: var(--text-muted); font-size: 0.78rem; margin-top: 4px;'
+        }, () => `hsl(${ selectedColor().hue }, 70%, 60%) · ${ renderCount() } selections made`)
+        )
+    );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // APP ROOT
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -827,7 +1203,7 @@ const App = defineComponent(() =>
 
     return h('div', {},
         h('div', { class: 'header' },
-            h('h1', {}, '⚛️ Quantum'),
+            h('h1', {}, 'Quantum'),
             h('p', { class: 'tagline' }, 'Fine-grained reactivity · No virtual DOM · Direct DOM updates'),
             h('p', { class: 'hint' }, '↕ Toggle sections to see lifecycle hooks · Open console for logs'),
             h('div', { class: 'header-stats' },
@@ -838,7 +1214,7 @@ const App = defineComponent(() =>
                     h('div', { class: 'header-stat-value' }, '<4kb'),
                     h('div', { class: 'header-stat-label' }, 'Bundle Size')),
                 h('div', { class: 'header-stat' },
-                    h('div', { class: 'header-stat-value' }, '100+'),
+                    h('div', { class: 'header-stat-value' }, '200+'),
                     h('div', { class: 'header-stat-label' }, 'Tests')),
                 h('div', { class: 'header-stat' },
                     h('div', { class: 'header-stat-value' }, '∞'),
@@ -855,10 +1231,15 @@ const App = defineComponent(() =>
         Toggleable('🎨 Styles — Reactive Style & Class Binding', () => StyleDemo({})),
         Toggleable('⏱️ Timer — Lifecycle Hooks, Untrack', () => TimerDemo({})),
         Toggleable('🌡️ Class Component — QuantumComponent + batch/untrack/on', () => new TemperatureConverter({}).element),
+        Toggleable('🧹 onCleanup — Automatic Resource Teardown', () => CleanupDemo({})),
+        Toggleable('🌱 createRoot — Isolated Ownership Scopes', () => RootDemo({})),
+        Toggleable('⏳ createDeferred — Debounced Reactive Search', () => DeferredDemo({})),
+        Toggleable('🎯 createSelector — O(1) List Selection', () => SelectorDemo({})),
 
         h('div', { class: 'footer' },
             h('p', { class: 'footer-brand' }, '⚛️ Built with Quantum Framework'),
-            h('p', { class: 'footer-apis' }, 'createSignal · createEffect · createMemo · batch · untrack · on'),
+            h('p', { class: 'footer-apis' }, 'createSignal · createEffect · createMemo · batch · untrack · on · onCleanup'),
+            h('p', { class: 'footer-apis' }, 'createRoot · createDeferred · createSelector'),
             h('p', { class: 'footer-apis' }, 'h · render · Show · For · Switch · Match · Portal · Dynamic · createRef'),
             h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · QuantumComponent · onMount · onDestroy')
         )

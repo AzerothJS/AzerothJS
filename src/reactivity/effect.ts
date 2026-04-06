@@ -49,6 +49,19 @@
 import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from './types.ts';
 import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
 import { isBatching, queueEffect } from './batch.ts';
+import { registerDisposer } from './create-root.ts';
+
+/**
+ * The cleanup array for the currently running effect.
+ *
+ * When an effect runs, this is set to that effect's cleanup array.
+ * onCleanup() pushes to this array during effect execution.
+ *
+ * Set to `null` when no effect is running.
+ *
+ * @internal Managed by createEffect, read by onCleanup
+ */
+export let currentCleanups: CleanupFn[] | null = null;
 
 /**
  * Creates a reactive effect that re-runs whenever its
@@ -110,7 +123,16 @@ import { isBatching, queueEffect } from './batch.ts';
  */
 export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 {
-    let cleanup: CleanupFn | void;
+    /**
+     * All cleanup functions for the current run.
+     *
+     * Populated by:
+     *   1. onCleanup() calls during effect execution
+     *   2. The return value of fn() (if it returns a function)
+     *
+     * All are run before re-execution and on dispose.
+     */
+    let cleanups: CleanupFn[] = [];
 
     const subscriber: Subscriber =
     {
@@ -133,12 +155,13 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
             return;
         }
 
-        // Step 1: Run previous cleanup (if any)
-        if (cleanup)
+        // Step 1: Run ALL previous cleanups
+        // (from onCleanup() calls AND returned cleanup)
+        for (const c of cleanups)
         {
-            cleanup();
-            cleanup = undefined;
+            c();
         }
+        cleanups = [];
 
         // Step 2: Unsubscribe from all current dependencies
         // This prevents stale subscriptions when the effect
@@ -150,23 +173,40 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         const previousSubscriber = currentSubscriber;
         setCurrentSubscriber(subscriber);
 
-        // Step 4: Run the effect function
+        // Step 4: Set cleanup collection context
+        // onCleanup() will push to this array during fn()
+        const previousCleanups = currentCleanups;
+        currentCleanups = cleanups;
+
+        // Step 5: Run the effect function
         // During this call, every signal.getter() will:
         //   a. Add this subscriber to its subscribers Set
         //   b. Add a cleanup function to subscriber.dependencies
+        // And every onCleanup() call will push to cleanups
         try
         {
-            cleanup = fn() ?? undefined;
+            const returned = fn() ?? undefined;
+
+            // Return value is also a cleanup — add it to the array
+            if (returned)
+            {
+                cleanups.push(returned);
+            }
         }
         finally
         {
-            // Step 5: Restore the previous subscriber
+            // Step 6: Restore previous contexts
             // (supports nested effects)
+            currentCleanups = previousCleanups;
             setCurrentSubscriber(previousSubscriber);
         }
     }
 
     runEffect();
+
+    // Register with the current root (if any)
+    // so the root can dispose this effect later
+    registerDisposer(dispose);
 
     function dispose(): void
     {
@@ -177,12 +217,12 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 
         subscriber.isDisposed = true;
 
-        // Run final cleanup
-        if (cleanup)
+        // Run ALL cleanups
+        for (const c of cleanups)
         {
-            cleanup();
-            cleanup = undefined;
+            c();
         }
+        cleanups = [];
 
         // Unsubscribe from ALL signals — prevents memory leaks
         cleanupDependencies(subscriber);

@@ -9,6 +9,10 @@
 //   batch()         — Grouped signal updates (single flush)
 //   untrack()       — Read signals without subscribing
 //   on()            — Explicit dependency tracking
+//   onCleanup()     — Imperative cleanup inside effects
+//   createRoot()    — Isolated reactive ownership scope
+//   createDeferred() — Debounced reactive value
+//   createSelector() — Efficient selection tracking for lists
 //
 // NOT EXPORTED (internal):
 //   currentSubscriber   — Used by signal/effect wiring
@@ -24,6 +28,10 @@ export { createMemo } from './memo.ts';
 export { batch } from './batch.ts';
 export { untrack } from './untrack.ts';
 export { on } from './on.ts';
+export { onCleanup } from './on-cleanup.ts';
+export { createRoot } from './create-root.ts';
+export { createDeferred } from './create-deferred.ts';
+export { createSelector } from './create-selector.ts';
 
 export type {
     CleanupFn,
