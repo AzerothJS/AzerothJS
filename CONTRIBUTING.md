@@ -1,6 +1,6 @@
-# Contributing to QuantumJS
+# Contributing to AzerothJS
 
-Thank you for your interest in contributing to QuantumJS! Every contribution matters — whether it's fixing a typo, reporting a bug, or implementing a new feature.
+Thank you for your interest in contributing to AzerothJS! Every contribution matters — whether it's fixing a typo, reporting a bug, or implementing a new feature.
 
 ## Getting Started
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to QuantumJS! Every contribution mat
 ### Setup
 
 ```bash
-git clone https://github.com/IntelligentQuantum-Dev/QuantumJS.git
-cd QuantumJS
+git clone https://github.com/IntelligentQuantum-Dev/AzerothJS.git
+cd AzerothJS
 npm install
 ```
 
@@ -32,11 +32,11 @@ npm install
 src/
 ├── reactivity/     # Signals, effects, memos, batch, untrack, etc.
 ├── renderer/       # h(), render(), Show, For, Switch, Portal, etc.
-├── component/      # defineComponent, QuantumComponent, lifecycle
+├── component/      # defineComponent, AzerothComponent, lifecycle
 ├── core/           # Shared utilities (future)
 ├── router/         # Official router (future)
 ├── store/          # Global store (future)
-├── compiler/       # .quantum compiler (future)
+├── compiler/       # .azeroth compiler (future)
 └── index.ts        # Public API entry point
 
 test/               # Mirrors src/ structure
@@ -160,12 +160,12 @@ Open an issue with:
 
 ## Architecture Overview
 
-QuantumJS uses **fine-grained reactivity** with zero Virtual DOM:
+AzerothJS uses **fine-grained reactivity** with zero Virtual DOM:
 
 1. **Signals** hold reactive state
 2. **Effects** subscribe to signals and re-run on changes
 3. **The renderer** (`h()`) creates real DOM elements and wires up effects for reactive attributes and children
-4. **Components** (`defineComponent` / `QuantumComponent`) provide structure, props, and lifecycle
+4. **Components** (`defineComponent` / `AzerothComponent`) provide structure, props, and lifecycle
 
 There is no diffing, no reconciliation, no virtual nodes. When a signal changes, only the specific DOM nodes that depend on it are updated directly.
 

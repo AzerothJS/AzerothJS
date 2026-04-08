@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Memo (Computed Values)
+// AZEROTHJS — Memo (Computed Values)
 // ============================================================================
 //
 // A memo is a computed value that caches its result and only

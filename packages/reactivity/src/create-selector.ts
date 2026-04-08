@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — createSelector (Efficient Selection Tracking)
+// AZEROTHJS — createSelector (Efficient Selection Tracking)
 // ============================================================================
 //
 // createSelector() creates a reactive selection checker optimized

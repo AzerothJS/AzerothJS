@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Component Type Definitions
+// AZEROTHJS — Component Type Definitions
 // ============================================================================
 //
 // These types define the structure of function components

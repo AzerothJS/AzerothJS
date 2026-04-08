@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, classList } from '@quantum/core';
+import { createSignal, classList } from '@azerothjs/core';
 
 describe('classList()', () =>
 {

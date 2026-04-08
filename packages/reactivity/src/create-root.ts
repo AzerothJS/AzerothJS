@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — createRoot (Reactive Ownership Scope)
+// AZEROTHJS — createRoot (Reactive Ownership Scope)
 // ============================================================================
 //
 // createRoot() creates an isolated reactive scope that owns all

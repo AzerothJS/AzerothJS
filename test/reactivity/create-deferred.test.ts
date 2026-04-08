@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createSignal, createEffect, createDeferred } from '@quantum/core';
+import { createSignal, createEffect, createDeferred } from '@azerothjs/core';
 
 describe('createDeferred', () =>
 {

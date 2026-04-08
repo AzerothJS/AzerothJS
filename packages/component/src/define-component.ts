@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — defineComponent (Function Components)
+// AZEROTHJS — defineComponent (Function Components)
 // ============================================================================
 //
 // defineComponent() creates reusable function components with
@@ -30,7 +30,7 @@
 // ============================================================================
 
 import type { Component, ComponentSetup, LifecycleHook } from './types.ts';
-import { DESTROY_HOOKS } from './quantum-component.ts';
+import { DESTROY_HOOKS } from './azeroth-component.ts';
 
 /**
  * Stack of mount hooks for the currently constructing component.
@@ -58,7 +58,7 @@ let currentDestroyHooks: LifecycleHook[] | null = null;
  *
  * @internal
  */
-const COMPONENT_DESTROY = Symbol('quantum_destroy');
+const COMPONENT_DESTROY = Symbol('azeroth_destroy');
 
 /**
  * Registers a callback to run after the component mounts.
@@ -210,7 +210,7 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
  *
  * Works with BOTH component styles:
  *   - Function components (defineComponent)
- *   - Class components (QuantumComponent)
+ *   - Class components (AzerothComponent)
  *
  * Safe to call on non-component elements (does nothing).
  * Safe to call multiple times (hooks cleared after first run).

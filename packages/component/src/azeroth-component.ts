@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — QuantumComponent (Class-Based Components)
+// AZEROTHJS — AzerothComponent (Class-Based Components)
 // ============================================================================
 //
 // Simple class components. No setup(), no boilerplate.
@@ -22,7 +22,7 @@
 //
 // USAGE:
 //
-//   class Counter extends QuantumComponent<{ initial: number }>
+//   class Counter extends AzerothComponent<{ initial: number }>
 //   {
 //       count = this.createSignal(this.props.initial);
 //       doubled = this.createMemo(() => this.count() * 2);
@@ -51,14 +51,14 @@
 //
 // ============================================================================
 
-import type { Getter, DisposeFn } from '@quantum/reactivity';
-import { createSignal, createEffect, createMemo } from '@quantum/reactivity';
+import type { Getter, DisposeFn } from '@azerothjs/reactivity';
+import { createSignal, createEffect, createMemo } from '@azerothjs/reactivity';
 
 /**
  * Symbol used to store destroy hooks on DOM elements.
  * @internal
  */
-const DESTROY_HOOKS = Symbol('quantum_class_destroy');
+const DESTROY_HOOKS = Symbol('azeroth_class_destroy');
 
 /**
  * A reactive state value for class components.
@@ -86,7 +86,7 @@ export interface ReactiveState<T>
 }
 
 /**
- * Base class for class-based Quantum components.
+ * Base class for class-based AzerothJS components.
  *
  * Just declare fields with this.createSignal/createMemo
  * and implement render(). No setup() needed.
@@ -97,7 +97,7 @@ export interface ReactiveState<T>
  * @typeParam P - Props type. Uses `object` constraint so
  *               interfaces work.
  */
-export abstract class QuantumComponent<P extends object = Record<string, unknown>>
+export abstract class AzerothComponent<P extends object = Record<string, unknown>>
 {
     /**
      * The props passed to this component.

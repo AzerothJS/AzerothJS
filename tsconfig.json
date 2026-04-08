@@ -16,13 +16,13 @@
         "allowImportingTsExtensions": true,
         "noEmit": true,
         "paths": {
-            "@quantum/reactivity": ["./packages/reactivity/src/index.ts"],
-            "@quantum/renderer": ["./packages/renderer/src/index.ts"],
-            "@quantum/component": ["./packages/component/src/index.ts"],
-            "@quantum/core": ["./packages/core/src/index.ts"],
-            "@quantum/router": ["./packages/router/src/index.ts"],
-            "@quantum/store": ["./packages/store/src/index.ts"],
-            "@quantum/compiler": ["./packages/compiler/src/index.ts"]
+            "@azerothjs/reactivity": ["./packages/reactivity/src/index.ts"],
+            "@azerothjs/renderer": ["./packages/renderer/src/index.ts"],
+            "@azerothjs/component": ["./packages/component/src/index.ts"],
+            "@azerothjs/core": ["./packages/core/src/index.ts"],
+            "@azerothjs/router": ["./packages/router/src/index.ts"],
+            "@azerothjs/store": ["./packages/store/src/index.ts"],
+            "@azerothjs/compiler": ["./packages/compiler/src/index.ts"]
         }
     },
     "include": ["packages/*/src/**/*", "test/**/*", "demo/**/*"],

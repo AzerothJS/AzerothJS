@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h, defineComponent, destroyComponent, onMount, onDestroy } from '@quantum/core';
+import { createSignal, h, defineComponent, destroyComponent, onMount, onDestroy } from '@azerothjs/core';
 
 describe('defineComponent()', () =>
 {

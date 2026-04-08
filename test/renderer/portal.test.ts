@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { h, Portal, destroyPortal } from '@quantum/core';
+import { h, Portal, destroyPortal } from '@azerothjs/core';
 
 describe('Portal()', () =>
 {
@@ -20,7 +20,7 @@ describe('Portal()', () =>
         const placeholder = Portal({ target }, () => h('p', {}, 'Hello'));
 
         expect(placeholder.style.display).toBe('none');
-        expect(placeholder.getAttribute('data-quantum-portal')).toBe('');
+        expect(placeholder.getAttribute('data-azeroth-portal')).toBe('');
     });
 
     it('should render into document.body by default', () =>

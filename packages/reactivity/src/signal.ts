@@ -1,9 +1,9 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Signal (Reactive State)
+// AZEROTHJS — Signal (Reactive State)
 // ============================================================================
 //
 // A signal is a reactive value that notifies its subscribers
-// when it changes. It's the atomic unit of state in Quantum.
+// when it changes. It's the atomic unit of state in AzerothJS.
 //
 // MEMORY MANAGEMENT:
 //

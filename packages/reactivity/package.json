@@ -1,7 +1,7 @@
 {
-    "name": "@quantum/reactivity",
+    "name": "@azerothjs/reactivity",
     "version": "0.2.0-alpha.1",
-    "description": "Quantum fine-grained reactivity — signals, effects, memos, batch, untrack",
+    "description": "AzerothJS fine-grained reactivity — signals, effects, memos, batch, untrack",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -21,11 +21,18 @@
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "author": "IntelligentQuantum",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
         "directory": "packages/reactivity"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/reactivity",
+    "bugs": {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }
 }

@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — For (Keyed List Rendering)
+// AZEROTHJS — For (Keyed List Rendering)
 // ============================================================================
 //
 // For efficiently renders a list of items, using a key function
@@ -28,7 +28,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '@quantum/reactivity';
+import { createEffect } from '@azerothjs/reactivity';
 
 /**
  * Props for the For component.

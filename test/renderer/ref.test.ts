@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRef, h } from '@quantum/core';
+import { createRef, h } from '@azerothjs/core';
 
 describe('createRef()', () =>
 {

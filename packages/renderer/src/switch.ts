@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Switch/Match (Multi-Condition Rendering)
+// AZEROTHJS — Switch/Match (Multi-Condition Rendering)
 // ============================================================================
 //
 // Switch renders different content based on which condition matches.
@@ -28,7 +28,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '@quantum/reactivity';
+import { createEffect } from '@azerothjs/reactivity';
 
 /**
  * A single case in a Switch block.

@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Full Feature Demo (13 Demos)
+// AZEROTHJS — Full Feature Demo (13 Demos)
 // ============================================================================
 // Run: npx vite demo
 // ============================================================================
@@ -30,8 +30,8 @@ import {
     destroyComponent,
     onMount,
     onDestroy,
-    QuantumComponent
-} from '@quantum/core';
+    AzerothComponent
+} from '@azerothjs/core';
 
 function FeatureTags(...tags: string[]): HTMLElement
 {
@@ -433,9 +433,9 @@ const DynamicTabsDemo = defineComponent(() =>
     const ProfileTab = (): HTMLElement => h('div', { style: 'padding: 4px 0;' },
         h('h3', {}, '👤 Profile'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;' },
-            'Name: Quantum Developer'),
+            'Name: AzerothJS Developer'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem;' },
-            'Email: dev@quantum.js'),
+            'Email: dev@azeroth.js'),
         h('p', { style: 'color: var(--text-secondary); font-size: 0.88rem;' },
             'Role: Framework Architect')
     );
@@ -685,7 +685,7 @@ const TimerDemo = defineComponent(() =>
 // DEMO 9: CLASS COMPONENT — Clean field initializers, no setup()
 // ═════════════════════════════════════════════════════════════════════════════
 
-class TemperatureConverter extends QuantumComponent
+class TemperatureConverter extends AzerothComponent
 {
     public celsius = this.createSignal(20);
     public fahrenheit = this.createMemo(() => Math.round((this.celsius() * 9 / 5 + 32) * 10) / 10);
@@ -742,10 +742,10 @@ class TemperatureConverter extends QuantumComponent
     public render(): HTMLElement
     {
         return h('div', { class: 'glass' },
-            FeatureTags('QuantumComponent', 'this.createSignal', 'this.createMemo', 'this.createEffect', 'batch', 'untrack', 'on'),
+            FeatureTags('AzerothComponent', 'this.createSignal', 'this.createMemo', 'this.createEffect', 'batch', 'untrack', 'on'),
             h('h2', {}, '🌡️ Class Component'),
             h('p', { style: 'color: var(--text-muted); font-size: 0.82rem; margin-bottom: 1rem;' },
-                'Built with QuantumComponent — exact same API, no setup(), no boilerplate'),
+                'Built with AzerothComponent — exact same API, no setup(), no boilerplate'),
 
             h('div', { style: 'text-align: center; margin: 1.25rem 0;' },
                 h('p', {
@@ -1054,7 +1054,7 @@ const DeferredDemo = defineComponent(() =>
         }, 'Type fast — the results only update after 300ms of inactivity (debounced).'),
         h('input', {
             type: 'text',
-            placeholder: 'Search Quantum APIs...',
+            placeholder: 'Search AzerothJS APIs...',
             value: () => query(),
             onInput: (e: Event) => setQuery((e.target as HTMLInputElement).value)
         }),
@@ -1197,13 +1197,13 @@ const App = defineComponent(() =>
 {
     onMount(() =>
     {
-        console.log('🚀 Quantum App mounted!');
+        console.log('🚀 AzerothJS App mounted!');
         console.log('📋 Open console to see lifecycle logs.');
     });
 
     return h('div', {},
         h('div', { class: 'header' },
-            h('h1', {}, 'Quantum'),
+            h('h1', {}, 'AzerothJS'),
             h('p', { class: 'tagline' }, 'Fine-grained reactivity · No virtual DOM · Direct DOM updates'),
             h('p', { class: 'hint' }, '↕ Toggle sections to see lifecycle hooks · Open console for logs'),
             h('div', { class: 'header-stats' },
@@ -1230,18 +1230,18 @@ const App = defineComponent(() =>
         Toggleable('🚪 Portal — Render Outside DOM Tree', () => PortalDemo({})),
         Toggleable('🎨 Styles — Reactive Style & Class Binding', () => StyleDemo({})),
         Toggleable('⏱️ Timer — Lifecycle Hooks, Untrack', () => TimerDemo({})),
-        Toggleable('🌡️ Class Component — QuantumComponent + batch/untrack/on', () => new TemperatureConverter({}).element),
+        Toggleable('🌡️ Class Component — AzerothComponent + batch/untrack/on', () => new TemperatureConverter({}).element),
         Toggleable('🧹 onCleanup — Automatic Resource Teardown', () => CleanupDemo({})),
         Toggleable('🌱 createRoot — Isolated Ownership Scopes', () => RootDemo({})),
         Toggleable('⏳ createDeferred — Debounced Reactive Search', () => DeferredDemo({})),
         Toggleable('🎯 createSelector — O(1) List Selection', () => SelectorDemo({})),
 
         h('div', { class: 'footer' },
-            h('p', { class: 'footer-brand' }, '⚛️ Built with Quantum Framework'),
+            h('p', { class: 'footer-brand' }, '⚛️ Built with AzerothJS'),
             h('p', { class: 'footer-apis' }, 'createSignal · createEffect · createMemo · batch · untrack · on · onCleanup'),
             h('p', { class: 'footer-apis' }, 'createRoot · createDeferred · createSelector'),
             h('p', { class: 'footer-apis' }, 'h · render · Show · For · Switch · Match · Portal · Dynamic · createRef'),
-            h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · QuantumComponent · onMount · onDestroy')
+            h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · AzerothComponent · onMount · onDestroy')
         )
     );
 });

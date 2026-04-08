@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — createDeferred (Debounced Reactive Value)
+// AZEROTHJS — createDeferred (Debounced Reactive Value)
 // ============================================================================
 //
 // createDeferred() wraps a signal getter and returns a new getter

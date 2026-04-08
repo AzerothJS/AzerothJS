@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Global Store
+// AZEROTHJS — Global Store
 // ============================================================================
 //
 // State management with dual-mode design:

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, createEffect, createMemo, createRoot } from '@quantum/core';
+import { createSignal, createEffect, createMemo, createRoot } from '@azerothjs/core';
 
 describe('createRoot', () =>
 {

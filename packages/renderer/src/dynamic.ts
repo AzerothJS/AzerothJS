@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Dynamic (Swap Components at Runtime)
+// AZEROTHJS — Dynamic (Swap Components at Runtime)
 // ============================================================================
 //
 // Dynamic renders different components based on a reactive signal.
@@ -36,7 +36,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '@quantum/reactivity';
+import { createEffect } from '@azerothjs/reactivity';
 
 /**
  * Props for the Dynamic component.

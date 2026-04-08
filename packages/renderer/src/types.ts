@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Renderer Type Definitions
+// AZEROTHJS — Renderer Type Definitions
 // ============================================================================
 //
 // These types define the inputs for h() — the function that

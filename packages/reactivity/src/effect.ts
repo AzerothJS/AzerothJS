@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Effect (Reactive Side Effects)
+// AZEROTHJS — Effect (Reactive Side Effects)
 // ============================================================================
 //
 // An effect is a function that re-runs whenever the signals

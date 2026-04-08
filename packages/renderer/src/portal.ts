@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Portal (Render Outside Parent)
+// AZEROTHJS — Portal (Render Outside Parent)
 // ============================================================================
 //
 // Portal renders children into a different part of the DOM tree,
@@ -40,7 +40,7 @@
 //
 // ============================================================================
 
-import { destroyComponent } from '@quantum/component';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * Props for the Portal component.
@@ -113,7 +113,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
     // Create an invisible placeholder in the original tree
     const placeholder = document.createElement('span');
     placeholder.style.display = 'none';
-    placeholder.setAttribute('data-quantum-portal', '');
+    placeholder.setAttribute('data-azeroth-portal', '');
 
     // ── Auto-cleanup with MutationObserver ───────────────────
     //
@@ -163,7 +163,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
     }
 
     // Store cleanup function for manual use via destroyPortal()
-    (placeholder as any).__quantum_portal_cleanup = cleanup;
+    (placeholder as any).__azeroth_portal_cleanup = cleanup;
 
     return placeholder;
 }
@@ -185,7 +185,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
  */
 export function destroyPortal(placeholder: HTMLElement): void
 {
-    const cleanup = (placeholder as any).__quantum_portal_cleanup as (() => void) | undefined;
+    const cleanup = (placeholder as any).__azeroth_portal_cleanup as (() => void) | undefined;
 
     if (cleanup)
     {

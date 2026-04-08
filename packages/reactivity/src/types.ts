@@ -1,8 +1,8 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Reactivity Type Definitions
+// AZEROTHJS — Reactivity Type Definitions
 // ============================================================================
 //
-// These types define the foundation of Quantum's reactive system.
+// These types define the foundation of AzerothJS's reactive system.
 //
 // ARCHITECTURE:
 //

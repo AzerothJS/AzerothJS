@@ -1,16 +1,16 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — @quantum/core (Umbrella Package)
+// AZEROTHJS — @azerothjs/core (Umbrella Package)
 // ============================================================================
 //
-// Re-exports everything from @quantum/reactivity, @quantum/renderer,
-// and @quantum/component so users can install a single package:
+// Re-exports everything from @azerothjs/reactivity, @azerothjs/renderer,
+// and @azerothjs/component so users can install a single package:
 //
-//   import { createSignal, h, defineComponent } from '@quantum/core';
+//   import { createSignal, h, defineComponent } from '@azerothjs/core';
 //
 // Or import individual packages for tree-shaking:
 //
-//   import { createSignal } from '@quantum/reactivity';
-//   import { h } from '@quantum/renderer';
+//   import { createSignal } from '@azerothjs/reactivity';
+//   import { h } from '@azerothjs/renderer';
 //
 // ============================================================================
 
@@ -27,7 +27,7 @@ export {
     createRoot,
     createDeferred,
     createSelector
-} from '@quantum/reactivity';
+} from '@azerothjs/reactivity';
 
 export type {
     CleanupFn,
@@ -40,7 +40,7 @@ export type {
     EqualsFn,
     SignalOptions,
     EffectOptions
-} from '@quantum/reactivity';
+} from '@azerothjs/reactivity';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ export {
     createRef,
     classList,
     styleMap
-} from '@quantum/renderer';
+} from '@azerothjs/renderer';
 
 export type {
     Props,
@@ -70,7 +70,7 @@ export type {
     Ref,
     ClassObject,
     StyleObject
-} from '@quantum/renderer';
+} from '@azerothjs/renderer';
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -79,13 +79,13 @@ export {
     destroyComponent,
     onMount,
     onDestroy,
-    QuantumComponent
-} from '@quantum/component';
+    AzerothComponent
+} from '@azerothjs/component';
 
 export type {
     Component,
     ComponentSetup,
     LifecycleHook,
     ReactiveState
-} from '@quantum/component';
+} from '@azerothjs/component';
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — h() Direct DOM Creation
+// AZEROTHJS — h() Direct DOM Creation
 // ============================================================================
 //
 // The h() function creates REAL DOM elements directly.
@@ -11,7 +11,7 @@
 //     Returns virtual node → { type, props, children }
 //     Later, reconciler diffs VNodes and patches the DOM.
 //
-//   Quantum h():
+//   AzerothJS h():
 //     Returns REAL HTMLElement → <div class="box">Hello</div>
 //     Reactive effects are wired up IMMEDIATELY during creation.
 //     When signals change, effects update the DOM node DIRECTLY.
@@ -29,7 +29,7 @@
 // ============================================================================
 
 import type { Props, Child } from './types.ts';
-import { createEffect } from '@quantum/reactivity';
+import { createEffect } from '@azerothjs/reactivity';
 
 /**
  * Set of props that must be set as DOM properties, not attributes.

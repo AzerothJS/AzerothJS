@@ -1,7 +1,7 @@
 {
-    "name": "@quantum/router",
+    "name": "@azerothjs/router",
     "version": "0.2.0-alpha.1",
-    "description": "Quantum router — client and server-side routing (coming soon)",
+    "description": "AzerothJS router — client and server-side routing (coming soon)",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -22,13 +22,20 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@quantum/reactivity": "0.2.0-alpha.1"
+        "@azerothjs/reactivity": "0.2.0-alpha.1"
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "author": "IntelligentQuantum",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
         "directory": "packages/router"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/router",
+    "bugs": {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, Dynamic } from '@quantum/core';
+import { createSignal, h, Dynamic } from '@azerothjs/core';
 
 describe('Dynamic()', () =>
 {

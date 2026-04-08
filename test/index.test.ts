@@ -27,10 +27,10 @@ import {
     destroyComponent,
     onMount,
     onDestroy,
-    QuantumComponent
-} from '@quantum/core';
+    AzerothComponent
+} from '@azerothjs/core';
 
-describe('Quantum Framework — Public API', () =>
+describe('AzerothJS — Public API', () =>
 {
     // ══════════════════════════════════════════════════════════
     // REACTIVITY EXPORTS
@@ -376,11 +376,11 @@ describe('Quantum Framework — Public API', () =>
             expect(el.textContent).toBe('Alice, 30');
         });
 
-        it('should export QuantumComponent', () =>
+        it('should export AzerothComponent', () =>
         {
-            expect(QuantumComponent).toBeDefined();
+            expect(AzerothComponent).toBeDefined();
 
-            class TestClass extends QuantumComponent
+            class TestClass extends AzerothComponent
             {
                 public render(): HTMLElement
                 {
@@ -392,9 +392,9 @@ describe('Quantum Framework — Public API', () =>
             expect(comp.element.textContent).toBe('Class Component');
         });
 
-        it('should support QuantumComponent with createSignal', () =>
+        it('should support AzerothComponent with createSignal', () =>
         {
-            class Counter extends QuantumComponent<{ initial: number }>
+            class Counter extends AzerothComponent<{ initial: number }>
             {
                 public count = this.createSignal(this.props.initial);
 
@@ -413,9 +413,9 @@ describe('Quantum Framework — Public API', () =>
             expect(comp.element.querySelector('.val')!.textContent).toBe('99');
         });
 
-        it('should support QuantumComponent with standalone utilities', () =>
+        it('should support AzerothComponent with standalone utilities', () =>
         {
-            class BatchComp extends QuantumComponent
+            class BatchComp extends AzerothComponent
             {
                 public a = this.createSignal(0);
                 public b = this.createSignal(0);
@@ -518,10 +518,10 @@ describe('Quantum Framework — Public API', () =>
 
         it('should build a full reactive app with class components', () =>
         {
-            class TodoApp extends QuantumComponent
+            class TodoApp extends AzerothComponent
             {
                 public todos = this.createSignal([
-                    { id: 1, text: 'Learn Quantum' },
+                    { id: 1, text: 'Learn AzerothJS' },
                     { id: 2, text: 'Build app' }
                 ]);
                 public count = this.createMemo(() => this.todos().length);
@@ -557,7 +557,7 @@ describe('Quantum Framework — Public API', () =>
 
         it('should mix function and class components', () =>
         {
-            class ClassCounter extends QuantumComponent<{ initial: number }>
+            class ClassCounter extends AzerothComponent<{ initial: number }>
             {
                 public count = this.createSignal(this.props.initial);
 

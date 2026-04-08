@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Show (Conditional Rendering)
+// AZEROTHJS — Show (Conditional Rendering)
 // ============================================================================
 //
 // Show renders its children only when a condition is true.
@@ -36,7 +36,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '@quantum/reactivity';
+import { createEffect } from '@azerothjs/reactivity';
 
 /**
  * Props for the Show component.

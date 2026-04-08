@@ -1,7 +1,7 @@
 {
-    "name": "@quantum/core",
+    "name": "@azerothjs/core",
     "version": "0.2.0-alpha.1",
-    "description": "Quantum core — umbrella package re-exporting all Quantum APIs",
+    "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -22,15 +22,22 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@quantum/reactivity": "0.2.0-alpha.1",
-        "@quantum/renderer": "0.2.0-alpha.1",
-        "@quantum/component": "0.2.0-alpha.1"
+        "@azerothjs/reactivity": "0.2.0-alpha.1",
+        "@azerothjs/renderer": "0.2.0-alpha.1",
+        "@azerothjs/component": "0.2.0-alpha.1"
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "author": "IntelligentQuantum",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
         "directory": "packages/core"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/core",
+    "bugs": {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }
 }

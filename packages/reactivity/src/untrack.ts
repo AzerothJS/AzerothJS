@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Untrack (Read Without Subscribing)
+// AZEROTHJS — Untrack (Read Without Subscribing)
 // ============================================================================
 //
 // untrack() lets you read a signal's value inside an effect

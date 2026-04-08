@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — onCleanup (Imperative Effect Cleanup)
+// AZEROTHJS — onCleanup (Imperative Effect Cleanup)
 // ============================================================================
 //
 // onCleanup() registers a cleanup function inside an effect.

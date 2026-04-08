@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — on() (Explicit Dependency Tracking)
+// AZEROTHJS — on() (Explicit Dependency Tracking)
 // ============================================================================
 //
 // on() creates an effect that explicitly declares which signals

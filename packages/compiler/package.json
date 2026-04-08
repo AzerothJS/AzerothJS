@@ -1,7 +1,7 @@
 {
-    "name": "@quantum/compiler",
+    "name": "@azerothjs/compiler",
     "version": "0.2.0-alpha.1",
-    "description": "Quantum compiler — .quantum SFC compiler (coming soon)",
+    "description": "AzerothJS compiler — .azeroth SFC compiler (coming soon)",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -21,11 +21,18 @@
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
+    "publishConfig": {
+        "access": "public"
+    },
     "author": "IntelligentQuantum",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
         "directory": "packages/compiler"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/compiler",
+    "bugs": {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, untrack } from '@quantum/core';
+import { createSignal, createEffect, untrack } from '@azerothjs/core';
 
 describe('untrack()', () =>
 {

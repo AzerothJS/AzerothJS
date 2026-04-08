@@ -1,11 +1,11 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — render() (Mount Component to DOM)
+// AZEROTHJS — render() (Mount Component to DOM)
 // ============================================================================
 //
 // render() takes a component factory function and a container
 // element, then mounts the component into the container.
 //
-// This is the entry point for every Quantum app:
+// This is the entry point for every AzerothJS app:
 //
 //   render(() => App({}), document.getElementById('app')!);
 //
@@ -15,7 +15,7 @@
  * Mounts a component into a container DOM element.
  *
  * Clears the container and appends the component's element.
- * This is the main entry point for every Quantum app.
+ * This is the main entry point for every AzerothJS app.
  *
  * @param component - A function that returns the root HTMLElement
  * @param container - The DOM element to mount into
@@ -25,7 +25,7 @@
  * const App = defineComponent(() =>
  * {
  *     return h('div', {},
- *       h('h1', {}, 'Hello Quantum!'),
+ *       h('h1', {}, 'Hello AzerothJS!'),
  *     );
  * });
  *

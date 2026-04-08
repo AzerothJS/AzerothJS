@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Batch (Grouped Updates)
+// AZEROTHJS — Batch (Grouped Updates)
 // ============================================================================
 //
 // Batch allows multiple signal updates to be grouped together,

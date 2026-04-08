@@ -1,8 +1,8 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Compiler
+// AZEROTHJS — Compiler
 // ============================================================================
 //
-// Custom .quantum file compiler built from scratch:
+// Custom .azeroth file compiler built from scratch:
 //   - Parser
 //   - Template compiler
 //   - Directives

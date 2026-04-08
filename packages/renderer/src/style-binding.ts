@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Style Binding
+// AZEROTHJS — Style Binding
 // ============================================================================
 //
 // styleMap() converts an object of CSS properties into a reactive

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { QuantumComponent, destroyComponent, h, batch, untrack, on } from '@quantum/core';
+import { AzerothComponent, destroyComponent, h, batch, untrack, on } from '@azerothjs/core';
 
-describe('QuantumComponent', () =>
+describe('AzerothComponent', () =>
 {
     it('should render a basic component', () =>
     {
-        class Hello extends QuantumComponent
+        class Hello extends AzerothComponent
         {
             public render(): HTMLElement
             {
@@ -19,7 +19,7 @@ describe('QuantumComponent', () =>
 
     it('should receive props', () =>
     {
-        class Greeting extends QuantumComponent<{ name: string }>
+        class Greeting extends AzerothComponent<{ name: string }>
         {
             public render(): HTMLElement
             {
@@ -27,13 +27,13 @@ describe('QuantumComponent', () =>
             }
         }
 
-        const comp = new Greeting({ name: 'Quantum' });
-        expect(comp.element.textContent).toBe('Hello, Quantum!');
+        const comp = new Greeting({ name: 'AzerothJS' });
+        expect(comp.element.textContent).toBe('Hello, AzerothJS!');
     });
 
     it('should use props in field initializers', () =>
     {
-        class PropsComp extends QuantumComponent<{ start: number; label: string }>
+        class PropsComp extends AzerothComponent<{ start: number; label: string }>
         {
             public count = this.createSignal(this.props.start);
 
@@ -55,7 +55,7 @@ describe('QuantumComponent', () =>
     {
         const order: string[] = [];
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public render(): HTMLElement
             {
@@ -78,7 +78,7 @@ describe('QuantumComponent', () =>
     {
         const destroyFn = vi.fn();
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public render(): HTMLElement
             {
@@ -103,7 +103,7 @@ describe('QuantumComponent', () =>
     {
         const destroyFn = vi.fn();
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public render(): HTMLElement
             {
@@ -127,7 +127,7 @@ describe('QuantumComponent', () =>
     {
         const order: string[] = [];
 
-        class LifecycleComp extends QuantumComponent<{ label: string }>
+        class LifecycleComp extends AzerothComponent<{ label: string }>
         {
             public count = this.createSignal(0);
 
@@ -160,7 +160,7 @@ describe('QuantumComponent', () =>
     {
         const destroyFn = vi.fn();
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public render(): HTMLElement
             {
@@ -184,7 +184,7 @@ describe('QuantumComponent', () =>
 
     it('should support createSignal — read and set', () =>
     {
-        class Counter extends QuantumComponent<{ initial: number }>
+        class Counter extends AzerothComponent<{ initial: number }>
         {
             public count = this.createSignal(this.props.initial);
 
@@ -205,7 +205,7 @@ describe('QuantumComponent', () =>
 
     it('should support createSignal — updater function', () =>
     {
-        class Counter extends QuantumComponent
+        class Counter extends AzerothComponent
         {
             public count = this.createSignal(0);
 
@@ -229,7 +229,7 @@ describe('QuantumComponent', () =>
 
     it('should support createSignal.value — untracked read', () =>
     {
-        class ValComp extends QuantumComponent
+        class ValComp extends AzerothComponent
         {
             public count = this.createSignal(42);
 
@@ -249,7 +249,7 @@ describe('QuantumComponent', () =>
 
     it('should support multiple state values', () =>
     {
-        class Form extends QuantumComponent
+        class Form extends AzerothComponent
         {
             public name = this.createSignal('Alice');
             public age = this.createSignal(30);
@@ -275,7 +275,7 @@ describe('QuantumComponent', () =>
 
     it('should support event handlers — no this issues', () =>
     {
-        class Clicker extends QuantumComponent
+        class Clicker extends AzerothComponent
         {
             public count = this.createSignal(0);
 
@@ -315,7 +315,7 @@ describe('QuantumComponent', () =>
 
     it('should support createMemo()', () =>
     {
-        class DoubleCounter extends QuantumComponent<{ initial: number }>
+        class DoubleCounter extends AzerothComponent<{ initial: number }>
         {
             public count = this.createSignal(this.props.initial);
             public doubled = this.createMemo(() => this.count() * 2);
@@ -337,7 +337,7 @@ describe('QuantumComponent', () =>
 
     it('should support chained memos', () =>
     {
-        class Chain extends QuantumComponent
+        class Chain extends AzerothComponent
         {
             public count = this.createSignal(2);
             public doubled = this.createMemo(() => this.count() * 2);
@@ -360,7 +360,7 @@ describe('QuantumComponent', () =>
 
     it('should support boolean memos', () =>
     {
-        class BoolComp extends QuantumComponent
+        class BoolComp extends AzerothComponent
         {
             public count = this.createSignal(0);
             public isPositive = this.createMemo(() => this.count() > 0);
@@ -392,7 +392,7 @@ describe('QuantumComponent', () =>
     {
         const effectFn = vi.fn();
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public count = this.createSignal(0);
 
@@ -424,7 +424,7 @@ describe('QuantumComponent', () =>
         const effect1 = vi.fn();
         const effect2 = vi.fn();
 
-        class MultiEffect extends QuantumComponent
+        class MultiEffect extends AzerothComponent
         {
             public a = this.createSignal(0);
             public b = this.createSignal(0);
@@ -467,7 +467,7 @@ describe('QuantumComponent', () =>
 
     it('should work with batch()', () =>
     {
-        class MultiState extends QuantumComponent
+        class MultiState extends AzerothComponent
         {
             public first = this.createSignal('Jane');
             public last = this.createSignal('Smith');
@@ -495,7 +495,7 @@ describe('QuantumComponent', () =>
 
     it('should work with batch() inside class methods', () =>
     {
-        class BatchComp extends QuantumComponent
+        class BatchComp extends AzerothComponent
         {
             public x = this.createSignal(0);
             public y = this.createSignal(0);
@@ -529,7 +529,7 @@ describe('QuantumComponent', () =>
     {
         const effectFn = vi.fn();
 
-        class UntrackComp extends QuantumComponent
+        class UntrackComp extends AzerothComponent
         {
             public tracked = this.createSignal(0);
             public untracked = this.createSignal('hello');
@@ -566,7 +566,7 @@ describe('QuantumComponent', () =>
     {
         const results: unknown[] = [];
 
-        class OnComp extends QuantumComponent
+        class OnComp extends AzerothComponent
         {
             public count = this.createSignal(0);
             public name = this.createSignal('Alice');
@@ -604,7 +604,7 @@ describe('QuantumComponent', () =>
     {
         const changes: Array<{ prev: unknown; curr: unknown }> = [];
 
-        class PrevComp extends QuantumComponent
+        class PrevComp extends AzerothComponent
         {
             public count = this.createSignal(0);
 
@@ -638,7 +638,7 @@ describe('QuantumComponent', () =>
         const effectLog: string[] = [];
         const onLog: number[] = [];
 
-        class CombinedComp extends QuantumComponent
+        class CombinedComp extends AzerothComponent
         {
             public count = this.createSignal(0);
             public label = this.createSignal('item');
@@ -704,7 +704,7 @@ describe('QuantumComponent', () =>
             done: boolean;
         }
 
-        class TodoList extends QuantumComponent
+        class TodoList extends AzerothComponent
         {
             public todos = this.createSignal<TodoItem[]>([]);
             public filter = this.createSignal<'all' | 'done'>('all');
@@ -759,7 +759,7 @@ describe('QuantumComponent', () =>
     {
         let renderCount = 0;
 
-        class TestComp extends QuantumComponent
+        class TestComp extends AzerothComponent
         {
             public render(): HTMLElement
             {

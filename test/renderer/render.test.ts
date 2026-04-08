@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, render } from '@quantum/core';
+import { createSignal, h, render } from '@azerothjs/core';
 
 describe('render()', () =>
 {

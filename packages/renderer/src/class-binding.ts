@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Class Binding
+// AZEROTHJS — Class Binding
 // ============================================================================
 //
 // classList() converts objects and arrays into reactive CSS

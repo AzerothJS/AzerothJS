@@ -1,5 +1,5 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Ref (Direct DOM Access)
+// AZEROTHJS — Ref (Direct DOM Access)
 // ============================================================================
 //
 // A ref provides direct access to a DOM element after it's created.
