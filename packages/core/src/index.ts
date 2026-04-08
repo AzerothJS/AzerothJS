@@ -1,17 +1,16 @@
 // ============================================================================
-// QUANTUM FRAMEWORK — Main Entry Point
+// QUANTUM FRAMEWORK — @quantum/core (Umbrella Package)
 // ============================================================================
 //
-// THREE WAYS TO BUILD COMPONENTS:
-//   ✅ Function:  defineComponent((props) => h(...))
-//   ✅ Class:     class MyComp extends QuantumComponent { render() {...} }
-//   🔜 SFC:       .quantum files (coming soon)
+// Re-exports everything from @quantum/reactivity, @quantum/renderer,
+// and @quantum/component so users can install a single package:
 //
-// API CONSISTENCY:
-//   Function:  createSignal, createEffect, createMemo, onMount, onDestroy, onCleanup
-//   Class:     this.createSignal, this.createEffect, this.createMemo,
-//              onMount(), onDestroy()
-//   Standalone: batch, untrack, on, onCleanup, createRoot — work everywhere, just import
+//   import { createSignal, h, defineComponent } from '@quantum/core';
+//
+// Or import individual packages for tree-shaking:
+//
+//   import { createSignal } from '@quantum/reactivity';
+//   import { h } from '@quantum/renderer';
 //
 // ============================================================================
 
@@ -28,7 +27,7 @@ export {
     createRoot,
     createDeferred,
     createSelector
-} from './reactivity/index.ts';
+} from '@quantum/reactivity';
 
 export type {
     CleanupFn,
@@ -41,7 +40,7 @@ export type {
     EqualsFn,
     SignalOptions,
     EffectOptions
-} from './reactivity/index.ts';
+} from '@quantum/reactivity';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -58,7 +57,7 @@ export {
     createRef,
     classList,
     styleMap
-} from './renderer/index.ts';
+} from '@quantum/renderer';
 
 export type {
     Props,
@@ -71,7 +70,7 @@ export type {
     Ref,
     ClassObject,
     StyleObject
-} from './renderer/index.ts';
+} from '@quantum/renderer';
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -81,11 +80,12 @@ export {
     onMount,
     onDestroy,
     QuantumComponent
-} from './component/index.ts';
+} from '@quantum/component';
 
 export type {
     Component,
     ComponentSetup,
     LifecycleHook,
     ReactiveState
-} from './component/index.ts';
+} from '@quantum/component';
+

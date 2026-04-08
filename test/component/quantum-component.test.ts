@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { QuantumComponent, destroyComponent, h, batch, untrack, on } from '../../src';
+import { QuantumComponent, destroyComponent, h, batch, untrack, on } from '@quantum/core';
 
 describe('QuantumComponent', () =>
 {

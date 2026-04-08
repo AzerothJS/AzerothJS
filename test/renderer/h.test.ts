@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h } from '../../src';
+import { createSignal, h } from '@quantum/core';
 
 describe('h()', () =>
 {

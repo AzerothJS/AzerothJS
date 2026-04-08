@@ -1,14 +1,31 @@
 {
-    "name": "quantumjs",
-    "version": "0.0.1",
-    "description": "The framework that thinks ahead",
+    "name": "quantum-monorepo",
+    "version": "0.2.0-alpha.1",
+    "private": true,
+    "description": "Quantum framework monorepo — fine-grained reactivity, zero Virtual DOM, direct DOM updates",
     "type": "module",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
+    "workspaces": [
+        "packages/*"
+    ],
     "scripts": {
-        "build": "tsc",
+        "build": "npm run build -w @quantum/reactivity && npm run build -w @quantum/component && npm run build -w @quantum/renderer && npm run build -w @quantum/router && npm run build -w @quantum/store && npm run build -w @quantum/compiler && npm run build -w @quantum/core",
         "dev": "tsc --watch",
-        "test": "vitest"
+        "test": "vitest",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "framework",
+        "reactive",
+        "signals",
+        "fine-grained",
+        "no-vdom",
+        "dom",
+        "typescript",
+        "frontend"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git"
     },
     "author": "IntelligentQuantum",
     "license": "MIT",

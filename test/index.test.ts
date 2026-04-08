@@ -28,7 +28,7 @@ import {
     onMount,
     onDestroy,
     QuantumComponent
-} from '../src/index.ts';
+} from '@quantum/core';
 
 describe('Quantum Framework — Public API', () =>
 {

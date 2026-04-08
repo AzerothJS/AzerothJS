@@ -1,0 +1,21 @@
+# Source & dev files
+src/
+test/
+demo/
+
+# Config files
+tsconfig.json
+tsconfig.build.json
+vitest.config.ts
+eslint.config.ts
+.gitignore
+
+# Docs (keep LICENSE and README in files list)
+CONTRIBUTING.md
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

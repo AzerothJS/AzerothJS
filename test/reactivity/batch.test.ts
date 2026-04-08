@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, batch } from '../../src';
+import { createSignal, createEffect, batch } from '@quantum/core';
 
 describe('batch()', () =>
 {

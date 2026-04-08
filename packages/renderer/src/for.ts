@@ -28,7 +28,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '../reactivity/effect.ts';
+import { createEffect } from '@quantum/reactivity';
 
 /**
  * Props for the For component.

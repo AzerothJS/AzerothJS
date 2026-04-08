@@ -29,7 +29,7 @@
 // ============================================================================
 
 import type { Props, Child } from './types.ts';
-import { createEffect } from '../reactivity/effect.ts';
+import { createEffect } from '@quantum/reactivity';
 
 /**
  * Set of props that must be set as DOM properties, not attributes.

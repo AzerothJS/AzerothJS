@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createSignal, createEffect, createDeferred } from '../../src/index.ts';
+import { createSignal, createEffect, createDeferred } from '@quantum/core';
 
 describe('createDeferred', () =>
 {

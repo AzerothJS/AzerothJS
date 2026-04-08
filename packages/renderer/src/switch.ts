@@ -28,7 +28,7 @@
 //
 // ============================================================================
 
-import { createEffect } from '../reactivity/effect.ts';
+import { createEffect } from '@quantum/reactivity';
 
 /**
  * A single case in a Switch block.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, createEffect, createMemo, createRoot } from '../../src/index.ts';
+import { createSignal, createEffect, createMemo, createRoot } from '@quantum/core';
 
 describe('createRoot', () =>
 {

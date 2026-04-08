@@ -40,7 +40,7 @@
 //
 // ============================================================================
 
-import { destroyComponent } from '../component/define-component.ts';
+import { destroyComponent } from '@quantum/component';
 
 /**
  * Props for the Portal component.

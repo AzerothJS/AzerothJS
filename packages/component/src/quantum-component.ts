@@ -51,8 +51,8 @@
 //
 // ============================================================================
 
-import type { Getter, DisposeFn } from '../reactivity/types.ts';
-import { createSignal, createEffect, createMemo } from '../reactivity/index.ts';
+import type { Getter, DisposeFn } from '@quantum/reactivity';
+import { createSignal, createEffect, createMemo } from '@quantum/reactivity';
 
 /**
  * Symbol used to store destroy hooks on DOM elements.

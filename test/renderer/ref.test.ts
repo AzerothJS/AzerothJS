@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRef, h } from '../../src';
+import { createRef, h } from '@quantum/core';
 
 describe('createRef()', () =>
 {

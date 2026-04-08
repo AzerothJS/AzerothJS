@@ -13,8 +13,8 @@ Thank you for your interest in contributing to QuantumJS! Every contribution mat
 ### Setup
 
 ```bash
-git clone https://github.com/IntelligentQuantum/quantum.git
-cd quantum
+git clone https://github.com/IntelligentQuantum-Dev/QuantumJS.git
+cd QuantumJS
 npm install
 ```
 

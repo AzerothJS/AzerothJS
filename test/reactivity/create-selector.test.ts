@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, createSelector } from '../../src/index.ts';
+import { createSignal, createEffect, createSelector } from '@quantum/core';
 
 describe('createSelector', () =>
 {

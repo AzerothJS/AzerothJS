@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, Dynamic } from '../../src';
+import { createSignal, h, Dynamic } from '@quantum/core';
 
 describe('Dynamic()', () =>
 {

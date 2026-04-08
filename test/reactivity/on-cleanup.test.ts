@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, createEffect, onCleanup } from '../../src/index.ts';
+import { createSignal, createEffect, onCleanup } from '@quantum/core';
 
 describe('onCleanup', () =>
 {

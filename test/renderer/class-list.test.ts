@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, classList } from '../../src';
+import { createSignal, classList } from '@quantum/core';
 
 describe('classList()', () =>
 {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h, defineComponent, destroyComponent, onMount, onDestroy } from '../../src';
+import { createSignal, h, defineComponent, destroyComponent, onMount, onDestroy } from '@quantum/core';
 
 describe('defineComponent()', () =>
 {

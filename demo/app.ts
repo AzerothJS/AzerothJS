@@ -31,7 +31,7 @@ import {
     onMount,
     onDestroy,
     QuantumComponent
-} from '../src';
+} from '@quantum/core';
 
 function FeatureTags(...tags: string[]): HTMLElement
 {

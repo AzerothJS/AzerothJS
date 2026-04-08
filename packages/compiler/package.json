@@ -1,0 +1,31 @@
+{
+    "name": "@quantum/compiler",
+    "version": "0.2.0-alpha.1",
+    "description": "Quantum compiler — .quantum SFC compiler (coming soon)",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "sideEffects": false,
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "author": "IntelligentQuantum",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/QuantumJS.git",
+        "directory": "packages/compiler"
+    }
+}
