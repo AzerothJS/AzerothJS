@@ -1,7 +1,7 @@
 {
     "name": "azerothjs-monorepo",
     "version": "0.2.0-alpha.2",
-    "private": true,
+    "private": false,
     "description": "AzerothJS framework monorepo — fine-grained reactivity, zero Virtual DOM, direct DOM updates",
     "type": "module",
     "workspaces": [
