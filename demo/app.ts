@@ -1214,6 +1214,187 @@ const SelectorDemo = defineComponent(() =>
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// DEMO 14: SHOW + SEARCH + PAGINATION — Filter, instant search, paged list
+// ═════════════════════════════════════════════════════════════════════════════
+
+interface PantryItem
+{
+    id: number;
+    name: string;
+    category: 'fruit' | 'vegetable' | 'grain';
+}
+
+const ShowSearchDemo = defineComponent(() =>
+{
+    const items: PantryItem[] =
+    [
+        { id: 1, name: 'Apple', category: 'fruit' },
+        { id: 2, name: 'Apricot', category: 'fruit' },
+        { id: 3, name: 'Avocado', category: 'fruit' },
+        { id: 4, name: 'Banana', category: 'fruit' },
+        { id: 5, name: 'Blackberry', category: 'fruit' },
+        { id: 6, name: 'Blueberry', category: 'fruit' },
+        { id: 7, name: 'Cherry', category: 'fruit' },
+        { id: 8, name: 'Coconut', category: 'fruit' },
+        { id: 9, name: 'Date', category: 'fruit' },
+        { id: 10, name: 'Fig', category: 'fruit' },
+        { id: 11, name: 'Grape', category: 'fruit' },
+        { id: 12, name: 'Lemon', category: 'fruit' },
+        { id: 13, name: 'Mango', category: 'fruit' },
+        { id: 14, name: 'Orange', category: 'fruit' },
+        { id: 15, name: 'Peach', category: 'fruit' },
+        { id: 16, name: 'Asparagus', category: 'vegetable' },
+        { id: 17, name: 'Broccoli', category: 'vegetable' },
+        { id: 18, name: 'Carrot', category: 'vegetable' },
+        { id: 19, name: 'Cucumber', category: 'vegetable' },
+        { id: 20, name: 'Eggplant', category: 'vegetable' },
+        { id: 21, name: 'Kale', category: 'vegetable' },
+        { id: 22, name: 'Lettuce', category: 'vegetable' },
+        { id: 23, name: 'Onion', category: 'vegetable' },
+        { id: 24, name: 'Pepper', category: 'vegetable' },
+        { id: 25, name: 'Potato', category: 'vegetable' },
+        { id: 26, name: 'Spinach', category: 'vegetable' },
+        { id: 27, name: 'Tomato', category: 'vegetable' },
+        { id: 28, name: 'Barley', category: 'grain' },
+        { id: 29, name: 'Buckwheat', category: 'grain' },
+        { id: 30, name: 'Corn', category: 'grain' },
+        { id: 31, name: 'Millet', category: 'grain' },
+        { id: 32, name: 'Oats', category: 'grain' },
+        { id: 33, name: 'Quinoa', category: 'grain' },
+        { id: 34, name: 'Rice', category: 'grain' },
+        { id: 35, name: 'Rye', category: 'grain' },
+        { id: 36, name: 'Wheat', category: 'grain' }
+    ];
+
+    type Category = 'all' | 'fruit' | 'vegetable' | 'grain';
+    const PAGE_SIZE = 5;
+
+    const [isOpen, setIsOpen] = createSignal(true);
+    const [search, setSearch] = createSignal('');
+    const [filter, setFilter] = createSignal<Category>('all');
+    const [page, setPage] = createSignal(0);
+
+    const filtered = createMemo(() =>
+    {
+        const q = search().trim().toLowerCase();
+        const cat = filter();
+        return items.filter(it =>
+            (cat === 'all' || it.category === cat)
+            && (q === '' || it.name.toLowerCase().includes(q))
+        );
+    });
+
+    const pageCount = createMemo(() => Math.max(1, Math.ceil(filtered().length / PAGE_SIZE)));
+
+    const pageItems = createMemo(() =>
+    {
+        const p = page();
+        return filtered().slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
+    });
+
+    // Reset to first page whenever the search or filter changes
+    on([search, filter], () => setPage(0), { defer: true });
+
+    // Clamp current page if the filtered list shrinks below it
+    createEffect(() =>
+    {
+        const max = pageCount() - 1;
+        if (untrack(page) > max) setPage(max);
+    });
+
+    onMount(() => console.log('🔍 ShowSearchDemo mounted!'));
+    onDestroy(() => console.log('🔍 ShowSearchDemo destroyed!'));
+
+    return h('div', { class: 'glass' },
+        FeatureTags('Show', 'For', 'createMemo', 'on', 'pagination'),
+        h('h2', {}, '🔍 Show + Search + Pagination'),
+        h('p', {
+            style: 'color: var(--text-muted); margin-bottom: 1rem; font-size: 0.88rem;'
+        }, 'Toggle the panel — the search input lives inside Show. Updates fire instantly (no debounce).'),
+
+        h('button', {
+            class: 'btn-primary btn-sm',
+            onClick: () => setIsOpen(prev => !prev)
+        }, () => isOpen() ? '▼ Hide Search Panel' : '▶ Show Search Panel'),
+
+        Show(
+            {
+                when: isOpen,
+                fallback: () => h('p', {
+                    class: 'empty-state',
+                    style: 'padding: 1rem; margin-top: 1rem;'
+                }, 'Panel hidden — click above to reveal.')
+            },
+            () => h('div', { style: 'margin-top: 1rem;' },
+                h('input', {
+                    type: 'text',
+                    placeholder: 'Search items (instant, no debounce)...',
+                    value: () => search(),
+                    onInput: (e: Event) => setSearch((e.target as HTMLInputElement).value)
+                }),
+
+                h('div', { class: 'tabs', style: 'margin-top: 12px;' },
+                    ...(['all', 'fruit', 'vegetable', 'grain'] as const).map(cat =>
+                        h('button', {
+                            class: classList({
+                                'tab': true,
+                                'tab-active': () => filter() === cat
+                            }),
+                            onClick: () => setFilter(cat)
+                        }, cat.charAt(0).toUpperCase() + cat.slice(1))
+                    )
+                ),
+
+                h('div', { class: 'info-bar', style: 'margin: 12px 0;' },
+                    h('span', { class: 'info-chip' },
+                        () => `${ filtered().length } match${ filtered().length === 1 ? '' : 'es' }`),
+                    h('span', { class: 'info-chip' },
+                        () => `Page ${ page() + 1 } / ${ pageCount() }`)
+                ),
+
+                For(
+                    { each: pageItems, key: (item) => item.id },
+                    (item) => h('div', {
+                        style: 'display: flex; align-items: center; justify-content: space-between; '
+                            + 'padding: 10px 12px; margin: 4px 0; border-radius: 8px; '
+                            + 'background: rgba(255,255,255,0.04);'
+                    },
+                    h('span', { style: 'font-weight: 500;' }, item.name),
+                    h('span', { class: 'info-chip' }, item.category)
+                    )
+                ),
+
+                Show(
+                    { when: () => filtered().length === 0 },
+                    () => h('p', { class: 'empty-state', style: 'padding: 0.5rem;' },
+                        () => `No items match "${ search() }" in ${ filter() }`)
+                ),
+
+                h('div', {
+                    style: 'display: flex; gap: 10px; justify-content: center; '
+                        + 'align-items: center; margin-top: 1rem;'
+                },
+                h('button', {
+                    class: 'btn-ghost btn-sm',
+                    disabled: () => page() === 0,
+                    onClick: () => setPage(p => Math.max(0, p - 1))
+                }, '← Prev'),
+                h('span', {
+                    style: 'font-family: \'JetBrains Mono\', monospace; '
+                            + 'font-size: 0.85rem; color: var(--text-secondary); min-width: 60px; text-align: center;'
+                }, () => `${ page() + 1 } / ${ pageCount() }`),
+                h('button', {
+                    class: 'btn-ghost btn-sm',
+                    disabled: () => page() >= pageCount() - 1,
+                    onClick: () => setPage(p => Math.min(pageCount() - 1, p + 1))
+                }, 'Next →')
+                )
+            )
+        )
+    );
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // APP ROOT
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1259,6 +1440,7 @@ const App = defineComponent(() =>
         Toggleable('🌱 createRoot — Isolated Ownership Scopes', () => RootDemo({})),
         Toggleable('⏳ createDeferred — Debounced Reactive Search', () => DeferredDemo({})),
         Toggleable('🎯 createSelector — O(1) List Selection', () => SelectorDemo({})),
+        Toggleable('🔍 Show + Search + Pagination — Filter + Instant Search', () => ShowSearchDemo({})),
 
         h('div', { class: 'footer' },
             h('p', { class: 'footer-brand' }, '⚛️ Built with AzerothJS'),
