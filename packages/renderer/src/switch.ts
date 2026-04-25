@@ -28,7 +28,9 @@
 //
 // ============================================================================
 
-import { createEffect } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createEffect, createRoot } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * A single case in a Switch block.
@@ -106,24 +108,49 @@ export function Switch(...cases: MatchCase[]): HTMLElement
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    let branchDispose: DisposeFn | null = null;
+
     createEffect(() =>
     {
-        // Remove children properly (not innerHTML) for Portal support
-        while (container.firstChild)
-        {
-            container.removeChild(container.firstChild);
-        }
+        // Tear down previous branch first — disposes its effects
+        // before we throw away its DOM nodes.
+        teardownBranch();
 
         // Find the FIRST matching case
         for (const matchCase of cases)
         {
             if (matchCase.when())
             {
-                container.appendChild(matchCase.render());
-                return;
+                createRoot((d) =>
+                {
+                    branchDispose = d;
+                    container.appendChild(matchCase.render());
+                });
+                break;
             }
         }
+
+        return teardownBranch;
     });
+
+    function teardownBranch(): void
+    {
+        if (branchDispose)
+        {
+            branchDispose();
+            branchDispose = null;
+        }
+
+        while (container.firstChild)
+        {
+            const node = container.firstChild;
+            container.removeChild(node);
+            if (node instanceof HTMLElement)
+            {
+                destroyComponent(node);
+            }
+        }
+    }
 
     return container as unknown as HTMLElement;
 }

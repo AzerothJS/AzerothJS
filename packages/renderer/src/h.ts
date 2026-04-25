@@ -29,7 +29,9 @@
 // ============================================================================
 
 import type { Props, Child } from './types.ts';
-import { createEffect } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createEffect, createRoot } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * Set of props that must be set as DOM properties, not attributes.
@@ -249,46 +251,30 @@ function appendChild(parent: HTMLElement, child: Child): void
 
         createEffect(() =>
         {
-            const value = child();
+            // Build the new value inside its own root. Any effects
+            // it creates (nested reactive children, h() reactive
+            // attrs) belong to this root and die when we swap.
+            let localDispose!: DisposeFn;
+            let nextNode!: ChildNode;
+            createRoot((d) =>
+            {
+                localDispose = d;
+                nextNode = buildNode((child as () => unknown)());
+            });
 
-            if (value === null || value === undefined || value === false)
-            {
-                const empty = document.createTextNode('');
-                parent.replaceChild(empty, currentNode);
-                currentNode = empty;
-            }
-            else if (value instanceof HTMLElement)
-            {
-                parent.replaceChild(value, currentNode);
-                currentNode = value;
-            }
-            else if (Array.isArray(value))
-            {
-                // Reactive function returned an array
-                const container = document.createElement('span');
-                container.style.display = 'contents';
+            parent.replaceChild(nextNode, currentNode);
+            currentNode = nextNode;
 
-                for (const item of value as Child[])
+            // Returned cleanup runs before the NEXT execution and
+            // on dispose — it owns this run's root and node.
+            return () =>
+            {
+                localDispose();
+                if (nextNode instanceof HTMLElement)
                 {
-                    if (item instanceof HTMLElement)
-                    {
-                        container.appendChild(item);
-                    }
-                    else if (item !== null && item !== undefined && item !== false)
-                    {
-                        container.appendChild(document.createTextNode(String(item)));
-                    }
+                    destroyComponent(nextNode);
                 }
-
-                parent.replaceChild(container, currentNode);
-                currentNode = container;
-            }
-            else
-            {
-                const newText = document.createTextNode(String(value));
-                parent.replaceChild(newText, currentNode);
-                currentNode = newText;
-            }
+            };
         });
 
         return;
@@ -301,4 +287,46 @@ function appendChild(parent: HTMLElement, child: Child): void
     }
 
     parent.appendChild(document.createTextNode(String(child)));
+}
+
+/**
+ * Builds a single ChildNode from a reactive value. Used by the
+ * reactive-child path to materialise the new node inside a
+ * createRoot before swapping it in.
+ *
+ * @internal
+ */
+function buildNode(value: unknown): ChildNode
+{
+    if (value === null || value === undefined || value === false)
+    {
+        return document.createTextNode('');
+    }
+
+    if (value instanceof HTMLElement)
+    {
+        return value;
+    }
+
+    if (Array.isArray(value))
+    {
+        const container = document.createElement('span');
+        container.style.display = 'contents';
+
+        for (const item of value as Child[])
+        {
+            if (item instanceof HTMLElement)
+            {
+                container.appendChild(item);
+            }
+            else if (item !== null && item !== undefined && item !== false)
+            {
+                container.appendChild(document.createTextNode(String(item)));
+            }
+        }
+
+        return container;
+    }
+
+    return document.createTextNode(String(value));
 }

@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/core",
-    "version": "0.2.0-alpha.1",
+    "version": "0.2.0-alpha.2",
     "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,9 +22,9 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.2.0-alpha.1",
-        "@azerothjs/renderer": "0.2.0-alpha.1",
-        "@azerothjs/component": "0.2.0-alpha.1"
+        "@azerothjs/reactivity": "0.2.0-alpha.2",
+        "@azerothjs/renderer": "0.2.0-alpha.2",
+        "@azerothjs/component": "0.2.0-alpha.2"
     },
     "publishConfig": {
         "access": "public"

@@ -36,7 +36,9 @@
 //
 // ============================================================================
 
-import { createEffect } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createEffect, createRoot, untrack } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * Props for the Dynamic component.
@@ -111,25 +113,50 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    let branchDispose: DisposeFn | null = null;
+
+    // Track ONLY the component signal — we don't want a prop signal
+    // change to tear down and rebuild the entire component tree.
+    // Components are expected to subscribe to their own props
+    // internally for fine-grained updates.
     createEffect(() =>
     {
-        // Clear previous component properly
-        while (container.firstChild)
-        {
-            container.removeChild(container.firstChild);
-        }
-
         const Component = dynamicProps.component();
 
-        if (Component)
-        {
-            // Get props (or empty object)
-            const props = dynamicProps.props ? dynamicProps.props() : {};
+        teardownBranch();
 
-            // Render the new component
+        if (!Component) return;
+
+        // Read props without subscribing — initial value only.
+        const props = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
+
+        createRoot((d) =>
+        {
+            branchDispose = d;
             container.appendChild(Component(props));
-        }
+        });
+
+        return teardownBranch;
     });
+
+    function teardownBranch(): void
+    {
+        if (branchDispose)
+        {
+            branchDispose();
+            branchDispose = null;
+        }
+
+        while (container.firstChild)
+        {
+            const node = container.firstChild;
+            container.removeChild(node);
+            if (node instanceof HTMLElement)
+            {
+                destroyComponent(node);
+            }
+        }
+    }
 
     return container as unknown as HTMLElement;
 }

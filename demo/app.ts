@@ -43,11 +43,19 @@ function Toggleable(label: string, create: () => HTMLElement): HTMLElement
     const [isVisible, setIsVisible] = createSignal(true);
     const slot = h('div', {});
     let currentEl: HTMLElement | null = null;
+    let currentDispose: (() => void) | null = null;
 
     function mount(): void
     {
-        currentEl = create();
-        slot.appendChild(currentEl);
+        // Own the mounted subtree in its own root so all of its
+        // reactive effects can be disposed when the section is
+        // hidden (otherwise they'd live for the App's lifetime).
+        createRoot((dispose) =>
+        {
+            currentDispose = dispose;
+            currentEl = create();
+            slot.appendChild(currentEl);
+        });
     }
 
     function unmount(): void
@@ -57,6 +65,11 @@ function Toggleable(label: string, create: () => HTMLElement): HTMLElement
             destroyComponent(currentEl);
             slot.removeChild(currentEl);
             currentEl = null;
+        }
+        if (currentDispose)
+        {
+            currentDispose();
+            currentDispose = null;
         }
     }
 
@@ -954,6 +967,17 @@ const RootDemo = defineComponent(() =>
     }
 
     onMount(() => console.log('🌱 RootDemo mounted!'));
+
+    // Manually-created roots are top-level — they survive even when
+    // this component unmounts. Dispose any leftover scopes here so
+    // hiding the section doesn't leak their effects.
+    onDestroy(() =>
+    {
+        scopes().forEach(s =>
+        {
+            if (isAlive(s.id)) s.dispose();
+        });
+    });
 
     return h('div', { class: 'glass' },
         FeatureTags('createRoot', 'createEffect', 'dispose'),

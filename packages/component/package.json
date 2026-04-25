@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/component",
-    "version": "0.2.0-alpha.1",
+    "version": "0.2.0-alpha.2",
     "description": "AzerothJS component system — defineComponent, AzerothComponent, lifecycle hooks",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,7 +22,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.2.0-alpha.1"
+        "@azerothjs/reactivity": "0.2.0-alpha.2"
     },
     "publishConfig": {
         "access": "public"

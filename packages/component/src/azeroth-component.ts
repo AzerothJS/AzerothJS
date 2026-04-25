@@ -52,7 +52,7 @@
 // ============================================================================
 
 import type { Getter, DisposeFn } from '@azerothjs/reactivity';
-import { createSignal, createEffect, createMemo } from '@azerothjs/reactivity';
+import { createSignal, createEffect } from '@azerothjs/reactivity';
 
 /**
  * Symbol used to store destroy hooks on DOM elements.
@@ -230,10 +230,18 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
 
     /**
      * Creates a memoized value. Same name as createMemo().
+     *
+     * Inlined (rather than calling createMemo()) so we can capture
+     * the underlying effect's dispose and register it with this
+     * component. Without this, destroying the component leaves
+     * the memo's effect subscribed to its source signals forever.
      */
     protected createMemo<T>(fn: () => T): Getter<T>
     {
-        return createMemo(fn);
+        const [getter, setter] = createSignal<T>(undefined as unknown as T);
+        const dispose = createEffect(() => { setter(fn()); });
+        this._disposers.push(dispose);
+        return getter;
     }
 
     /**

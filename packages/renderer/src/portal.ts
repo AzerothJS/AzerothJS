@@ -117,18 +117,25 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
 
     // ── Auto-cleanup with MutationObserver ───────────────────
     //
-    // Watch for the placeholder being removed from the DOM.
-    // When Show() toggles to false, it clears its container
-    // which removes the placeholder. We detect that and clean
-    // up the portaled content automatically.
+    // Watch for the placeholder being detached from the document.
+    // We observe `document` with `subtree: true` from the start so
+    // that:
+    //   1. A synchronous removal (in the same tick as Portal())
+    //      doesn't race the observer setup.
+    //   2. A removal at any ancestor level is caught — not just
+    //      the immediate parent.
     //
     const observer = new MutationObserver((mutations) =>
     {
+        // Cheap check: if the placeholder is still in the document,
+        // there's nothing to do for this batch.
+        if (document.contains(placeholder)) return;
+
         for (const mutation of mutations)
         {
             for (const removed of mutation.removedNodes)
             {
-                if (removed === placeholder || removed.contains(placeholder))
+                if (removed === placeholder || (removed instanceof Node && removed.contains(placeholder)))
                 {
                     cleanup();
                     return;
@@ -137,15 +144,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
         }
     });
 
-    // Start observing — defer until placeholder is in the DOM
-    requestAnimationFrame(() =>
-    {
-        const root = placeholder.parentElement;
-        if (root)
-        {
-            observer.observe(root, { childList: true, subtree: true });
-        }
-    });
+    observer.observe(document, { childList: true, subtree: true });
 
     /**
      * Removes the portaled content from the target and

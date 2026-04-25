@@ -1,0 +1,15 @@
+# Default normalization
+* text=auto eol=lf
+
+# Mark images as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+
+# Avoid Git messing with archives
+*.zip binary
+*.gz  binary
+*.tar binary

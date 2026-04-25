@@ -36,7 +36,9 @@
 //
 // ============================================================================
 
-import { createEffect } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createEffect, createRoot } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * Props for the Show component.
@@ -110,40 +112,51 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    let branchDispose: DisposeFn | null = null;
+
     createEffect(() =>
     {
-        // Remove children properly (not innerHTML) so
-        // MutationObserver can detect removals (Portal support)
-        clearChildren(container);
+        // Tear down the previous branch's effects/components before
+        // swapping. Without this, every toggle leaks every effect
+        // created inside the rendered subtree.
+        teardownBranch();
 
-        if (props.when())
+        const factory = props.when() ? children : props.fallback;
+        if (!factory) return;
+
+        // Own the new branch in its own root so we can dispose it
+        // on the next swap.
+        createRoot((d) =>
         {
-            container.appendChild(children());
-        }
-        else if (props.fallback)
-        {
-            container.appendChild(props.fallback());
-        }
+            branchDispose = d;
+            container.appendChild(factory());
+        });
+
+        return teardownBranch;
     });
+
+    function teardownBranch(): void
+    {
+        if (branchDispose)
+        {
+            branchDispose();
+            branchDispose = null;
+        }
+
+        // Remove children one-by-one so MutationObserver can fire
+        // (needed for Portal auto-cleanup), and run component
+        // destroy hooks on each removed element.
+        while (container.firstChild)
+        {
+            const node = container.firstChild;
+            container.removeChild(node);
+            if (node instanceof HTMLElement)
+            {
+                destroyComponent(node);
+            }
+        }
+    }
 
     return container as unknown as HTMLElement;
 }
 
-/**
- * Removes all child nodes from an element one by one.
- *
- * Used instead of innerHTML = '' because removing nodes
- * individually triggers MutationObserver callbacks, which
- * is necessary for Portal auto-cleanup.
- *
- * @param el - The element to clear
- *
- * @internal
- */
-function clearChildren(el: HTMLElement): void
-{
-    while (el.firstChild)
-    {
-        el.removeChild(el.firstChild);
-    }
-}

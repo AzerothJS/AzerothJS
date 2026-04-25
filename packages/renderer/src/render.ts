@@ -9,13 +9,31 @@
 //
 //   render(() => App({}), document.getElementById('app')!);
 //
+// Calling render() again on the same container disposes the prior
+// tree's reactive scope first, so apps can be remounted without
+// leaking effects.
+//
 // ============================================================================
+
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createRoot } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
+
+/**
+ * Tracks the dispose function for each container's mounted tree.
+ * Lets render() tear down the previous mount on a re-render.
+ *
+ * @internal
+ */
+const containerDisposers = new WeakMap<HTMLElement, DisposeFn>();
 
 /**
  * Mounts a component into a container DOM element.
  *
- * Clears the container and appends the component's element.
- * This is the main entry point for every AzerothJS app.
+ * Clears the container and appends the component's element. The
+ * mount lives in its own root so all effects created during setup
+ * can be disposed if render() is called again on the same
+ * container.
  *
  * @param component - A function that returns the root HTMLElement
  * @param container - The DOM element to mount into
@@ -34,12 +52,31 @@
  */
 export function render(component: () => HTMLElement, container: HTMLElement): void
 {
-    // Clear the container
-    while (container.firstChild)
+    // Tear down the previous mount, if any.
+    const previousDispose = containerDisposers.get(container);
+    if (previousDispose)
     {
-        container.removeChild(container.firstChild);
+        previousDispose();
+        containerDisposers.delete(container);
     }
 
-    // Mount the component
-    container.appendChild(component());
+    // Clear the container, running component destroy hooks on the
+    // way out so on-destroy callbacks fire.
+    while (container.firstChild)
+    {
+        const node = container.firstChild;
+        container.removeChild(node);
+        if (node instanceof HTMLElement)
+        {
+            destroyComponent(node);
+        }
+    }
+
+    // Mount inside a root so the new tree's effects can be disposed
+    // by a future render() call.
+    createRoot((dispose) =>
+    {
+        containerDisposers.set(container, dispose);
+        container.appendChild(component());
+    });
 }

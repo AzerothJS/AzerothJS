@@ -28,7 +28,9 @@
 //
 // ============================================================================
 
-import { createEffect } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createEffect, createRoot } from '@azerothjs/reactivity';
+import { destroyComponent } from '@azerothjs/component';
 
 /**
  * Props for the For component.
@@ -113,57 +115,110 @@ export interface ForProps<T>
  * );
  * ```
  */
+/**
+ * Per-key tracking: the rendered element plus the createRoot
+ * dispose for any reactive primitives the renderItem function
+ * created. Disposing the root tears down those effects when the
+ * key leaves the list — without this, removed items leak forever.
+ *
+ * @internal
+ */
+interface KeyEntry
+{
+    el: HTMLElement;
+    dispose: DisposeFn;
+}
+
 export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) => HTMLElement): HTMLElement
 {
     const container = document.createElement('span');
     container.style.display = 'contents';
 
-    // Map of key → DOM element for tracking existing items
-    let keyToElement = new Map<string | number, HTMLElement>();
+    // Map of key → tracked entry (DOM element + per-item dispose).
+    let keyMap = new Map<string | number, KeyEntry>();
 
     createEffect(() =>
     {
         const items = props.each();
-        const newKeyToElement = new Map<string | number, HTMLElement>();
-        const newElements: HTMLElement[] = [];
+        const newMap = new Map<string | number, KeyEntry>();
+        const newOrder: HTMLElement[] = new Array(items.length);
 
+        // Pass 1: build the new key map. Reuse existing entries
+        // where possible; create new ones (in their own root) for
+        // new keys.
         for (let i = 0; i < items.length; i++)
         {
             const item = items[i];
             const key = props.key(item, i);
-
-            // Check if we already have a DOM element for this key
-            const existing = keyToElement.get(key);
+            const existing = keyMap.get(key);
 
             if (existing)
             {
-                // REUSE existing DOM element
-                newElements.push(existing);
-                newKeyToElement.set(key, existing);
+                newOrder[i] = existing.el;
+                newMap.set(key, existing);
+                keyMap.delete(key);
             }
             else
             {
-                // CREATE new DOM element
-                const el = renderItem(item, i);
-                newElements.push(el);
-                newKeyToElement.set(key, el);
+                let el!: HTMLElement;
+                let dispose!: DisposeFn;
+                createRoot((d) =>
+                {
+                    dispose = d;
+                    el = renderItem(item, i);
+                });
+                newOrder[i] = el;
+                newMap.set(key, { el, dispose });
             }
         }
 
-        // Clear the container properly (not innerHTML)
-        while (container.firstChild)
+        // Pass 2: dispose entries for keys that left the list and
+        // run any component destroy hooks on their elements.
+        for (const entry of keyMap.values())
         {
-            container.removeChild(container.firstChild);
+            entry.dispose();
+            destroyComponent(entry.el);
+            // Element is still in the DOM; pass 3 will remove it.
         }
 
-        // Append in new order
-        for (const el of newElements)
+        // Pass 3: reconcile children to match newOrder using
+        // insertBefore moves. This avoids the full clear+append
+        // cycle (which would destroy focus/scroll/IME state on
+        // surviving elements) and is O(n) in the worst case.
+        for (let i = 0; i < newOrder.length; i++)
         {
-            container.appendChild(el);
+            const want = newOrder[i];
+            const have = container.childNodes[i];
+            if (have !== want)
+            {
+                container.insertBefore(want, have ?? null);
+            }
         }
 
-        // Update the key map for next time
-        keyToElement = newKeyToElement;
+        // Pass 4: remove any trailing nodes (leftover from removed
+        // items that weren't displaced by a move).
+        while (container.childNodes.length > newOrder.length)
+        {
+            container.removeChild(container.lastChild!);
+        }
+
+        keyMap = newMap;
+    });
+
+    // Sentinel effect — never subscribes to any signal, so its
+    // cleanup only fires when the surrounding root is disposed.
+    // Tears down all per-item roots so the For doesn't leak when
+    // the list itself unmounts. (The main effect's cleanup can't
+    // do this — it would also run on every re-execution and wipe
+    // entries we want to preserve.)
+    createEffect(() => () =>
+    {
+        for (const entry of keyMap.values())
+        {
+            entry.dispose();
+            destroyComponent(entry.el);
+        }
+        keyMap.clear();
     });
 
     return container as unknown as HTMLElement;
