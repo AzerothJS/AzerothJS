@@ -53,12 +53,7 @@
 
 import type { Getter, DisposeFn } from '@azerothjs/reactivity';
 import { createSignal, createEffect } from '@azerothjs/reactivity';
-
-/**
- * Symbol used to store destroy hooks on DOM elements.
- * @internal
- */
-const DESTROY_HOOKS = Symbol('azeroth_class_destroy');
+import { getClassDestroyHooks, setClassDestroyHooks } from './destroy-hooks.ts';
 
 /**
  * A reactive state value for class components.
@@ -164,10 +159,13 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
         // Subclass fields are now initialized
         this._element = this.render();
 
-        // Register destroy hook for destroyComponent()
-        const hooks: Array<() => void> = (this._element as any)[DESTROY_HOOKS] || [];
-        hooks.push(() => this.destroy());
-        (this._element as any)[DESTROY_HOOKS] = hooks;
+        // Register destroy hook for destroyComponent(). We append
+        // rather than overwrite so a wrapper component (or anything
+        // else that has already attached class-destroy hooks to this
+        // element) doesn't get clobbered.
+        const hooks = getClassDestroyHooks(this._element) ?? [];
+        hooks.push((): void => this.destroy());
+        setClassDestroyHooks(this._element, hooks);
 
         this.onMount();
     }
@@ -254,5 +252,3 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
         this._disposers.push(dispose);
     }
 }
-
-export { DESTROY_HOOKS };

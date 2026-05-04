@@ -10,6 +10,7 @@
 //   untrack()       — Read signals without subscribing
 //   on()            — Explicit dependency tracking
 //   onCleanup()     — Imperative cleanup inside effects
+//   onRootDispose() — Imperative cleanup tied to a createRoot scope
 //   createRoot()    — Isolated reactive ownership scope
 //   createDeferred() — Debounced reactive value
 //   createSelector() — Efficient selection tracking for lists
@@ -29,6 +30,7 @@ export { batch } from './batch.ts';
 export { untrack } from './untrack.ts';
 export { on } from './on.ts';
 export { onCleanup } from './on-cleanup.ts';
+export { onRootDispose } from './on-root-dispose.ts';
 export { createRoot } from './create-root.ts';
 export { createDeferred } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';

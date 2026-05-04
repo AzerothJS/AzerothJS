@@ -43,6 +43,49 @@
 import { destroyComponent } from '@azerothjs/component';
 
 /**
+ * Storage key for the portal's cleanup function on the placeholder
+ * element. Using a Symbol (instead of a string property name) keeps
+ * user code from accidentally stomping on the cleanup hook and
+ * matches the pattern used elsewhere in AzerothJS for element-
+ * attached state.
+ *
+ * @internal
+ */
+const PORTAL_CLEANUP = Symbol('azeroth_portal_cleanup');
+
+/**
+ * The minimal shape we need to read or write a Symbol-keyed
+ * property on a DOM element.
+ *
+ * @internal
+ */
+type SymbolStore = { [key: symbol]: unknown };
+
+/**
+ * Reads the cleanup function attached to a portal placeholder, or
+ * `undefined` if the element isn't a portal placeholder (or has
+ * already been cleaned up).
+ *
+ * @internal
+ */
+function getPortalCleanup(el: HTMLElement): (() => void) | undefined
+{
+    return (el as unknown as SymbolStore)[PORTAL_CLEANUP] as
+        (() => void) | undefined;
+}
+
+/**
+ * Attaches a cleanup function to a portal placeholder so
+ * `destroyPortal()` (or the MutationObserver) can find it later.
+ *
+ * @internal
+ */
+function setPortalCleanup(el: HTMLElement, cleanup: () => void): void
+{
+    (el as unknown as SymbolStore)[PORTAL_CLEANUP] = cleanup;
+}
+
+/**
  * Props for the Portal component.
  */
 export interface PortalProps
@@ -161,8 +204,9 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
         }
     }
 
-    // Store cleanup function for manual use via destroyPortal()
-    (placeholder as any).__azeroth_portal_cleanup = cleanup;
+    // Store cleanup function for manual use via destroyPortal().
+    // Symbol-keyed so user code can't collide with us.
+    setPortalCleanup(placeholder, cleanup);
 
     return placeholder;
 }
@@ -184,7 +228,7 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
  */
 export function destroyPortal(placeholder: HTMLElement): void
 {
-    const cleanup = (placeholder as any).__azeroth_portal_cleanup as (() => void) | undefined;
+    const cleanup = getPortalCleanup(placeholder);
 
     if (cleanup)
     {

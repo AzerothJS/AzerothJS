@@ -24,6 +24,7 @@ export {
     untrack,
     on,
     onCleanup,
+    onRootDispose,
     createRoot,
     createDeferred,
     createSelector

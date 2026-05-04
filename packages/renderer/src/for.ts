@@ -29,7 +29,7 @@
 // ============================================================================
 
 import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot } from '@azerothjs/reactivity';
+import { createEffect, createRoot, onRootDispose } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
 
 /**
@@ -205,13 +205,12 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
         keyMap = newMap;
     });
 
-    // Sentinel effect — never subscribes to any signal, so its
-    // cleanup only fires when the surrounding root is disposed.
-    // Tears down all per-item roots so the For doesn't leak when
-    // the list itself unmounts. (The main effect's cleanup can't
-    // do this — it would also run on every re-execution and wipe
-    // entries we want to preserve.)
-    createEffect(() => () =>
+    // When the surrounding root unmounts, tear down every per-item
+    // root we accumulated. We can't put this in the main effect's
+    // cleanup — that fires on every re-run and would wipe entries
+    // we still want. onRootDispose fires exactly once, on scope
+    // teardown, which is what we need.
+    onRootDispose(() =>
     {
         for (const entry of keyMap.values())
         {

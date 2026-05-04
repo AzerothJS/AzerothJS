@@ -23,14 +23,20 @@
 // DESTROY INTEGRATION:
 //
 //   destroyComponent() works with BOTH function and class
-//   components. It checks two symbols on the element:
-//     COMPONENT_DESTROY → function component hooks
-//     DESTROY_HOOKS     → class component hooks
+//   components by dispatching through the typed helpers in
+//   destroy-hooks.ts:
+//     getFunctionDestroyHooks() → function component hooks
+//     getClassDestroyHooks()    → class component hooks
 //
 // ============================================================================
 
 import type { Component, ComponentSetup, LifecycleHook } from './types.ts';
-import { DESTROY_HOOKS } from './azeroth-component.ts';
+import {
+    getFunctionDestroyHooks,
+    setFunctionDestroyHooks,
+    getClassDestroyHooks,
+    setClassDestroyHooks
+} from './destroy-hooks.ts';
 
 /**
  * Stack of mount hooks for the currently constructing component.
@@ -51,14 +57,6 @@ let currentMountHooks: LifecycleHook[] | null = null;
  * @internal
  */
 let currentDestroyHooks: LifecycleHook[] | null = null;
-
-/**
- * Symbol to store function component destroy callbacks
- * on the DOM element.
- *
- * @internal
- */
-const COMPONENT_DESTROY = Symbol('azeroth_destroy');
 
 /**
  * Registers a callback to run after the component mounts.
@@ -187,8 +185,10 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
         currentMountHooks = null;
         currentDestroyHooks = null;
 
-        // Store destroy hooks on the element
-        (element as any)[COMPONENT_DESTROY] = destroyHooks;
+        // Store destroy hooks on the element so destroyComponent()
+        // can find them later, regardless of where the element ends
+        // up in the tree.
+        setFunctionDestroyHooks(element, destroyHooks);
 
         // Run mount hooks
         // If a mount hook returns cleanup, add to destroy hooks
@@ -230,25 +230,32 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
  */
 export function destroyComponent(element: HTMLElement): void
 {
-    const fnHooks = (element as any)[COMPONENT_DESTROY] as LifecycleHook[] | undefined;
-    if (fnHooks)
+    // Function-component hooks (registered via onMount/onDestroy).
+    // We drain in-place by reading once and overwriting with [] so a
+    // second destroyComponent() call on the same element is a no-op.
+    const fnHooks = getFunctionDestroyHooks(element);
+    if (fnHooks && fnHooks.length > 0)
     {
+        setFunctionDestroyHooks(element, []);
+
         for (const hook of fnHooks)
         {
             hook();
         }
-
-        (element as any)[COMPONENT_DESTROY] = [];
     }
 
-    const classHooks = (element as any)[DESTROY_HOOKS] as Array<() => void> | undefined;
-    if (classHooks)
+    // Class-component hooks (registered by AzerothComponent._init).
+    // Same drain-then-run pattern so a class component's onDestroy
+    // can safely call destroyComponent() on its own element without
+    // recursing.
+    const classHooks = getClassDestroyHooks(element);
+    if (classHooks && classHooks.length > 0)
     {
+        setClassDestroyHooks(element, []);
+
         for (const hook of classHooks)
         {
             hook();
         }
-
-        (element as any)[DESTROY_HOOKS] = [];
     }
 }

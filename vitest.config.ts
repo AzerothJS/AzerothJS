@@ -18,6 +18,14 @@ export default defineConfig
     },
     test:
     {
-        environment: 'happy-dom'
+        environment: 'happy-dom',
+
+        // happy-dom 20.x is incompatible with vitest 4.x's default
+        // worker-thread pool (the test files crash at the first
+        // `describe()` with "Cannot read properties of undefined
+        // (reading 'config')"). Forks isolate each file in a child
+        // process, which works correctly. Marginally slower than
+        // threads but rock-solid for our suite size.
+        pool: 'forks'
     }
 });
