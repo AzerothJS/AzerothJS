@@ -4,6 +4,15 @@ node_modules/
 # Build output
 dist/
 
+# TypeScript build output should ONLY land in dist/. If a stray
+# tsc invocation ever emits alongside source (it has happened
+# when workspace symlinks were stale), these patterns keep the
+# pollution out of git status until we notice and clean it up.
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+
 # IDE files
 .vscode/
 .idea/

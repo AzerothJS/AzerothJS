@@ -1,5 +1,5 @@
 // ============================================================================
-// AZEROTHJS — Full Feature Demo (13 Demos)
+// AZEROTHJS — Full Feature Demo (15 Demos)
 // ============================================================================
 // Run: npx vite demo
 // ============================================================================
@@ -32,6 +32,7 @@ import {
     onDestroy,
     AzerothComponent
 } from '@azerothjs/core';
+import { RouterDemo } from './router-demo.ts';
 
 function FeatureTags(...tags: string[]): HTMLElement
 {
@@ -1441,13 +1442,15 @@ const App = defineComponent(() =>
         Toggleable('⏳ createDeferred — Debounced Reactive Search', () => DeferredDemo({})),
         Toggleable('🎯 createSelector — O(1) List Selection', () => SelectorDemo({})),
         Toggleable('🔍 Show + Search + Pagination — Filter + Instant Search', () => ShowSearchDemo({})),
+        Toggleable('🧭 Router — Nested Routes, Outlet, Active Links', () => RouterDemo({})),
 
         h('div', { class: 'footer' },
             h('p', { class: 'footer-brand' }, '⚛️ Built with AzerothJS'),
             h('p', { class: 'footer-apis' }, 'createSignal · createEffect · createMemo · batch · untrack · on · onCleanup'),
             h('p', { class: 'footer-apis' }, 'createRoot · createDeferred · createSelector'),
             h('p', { class: 'footer-apis' }, 'h · render · Show · For · Switch · Match · Portal · Dynamic · createRef'),
-            h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · AzerothComponent · onMount · onDestroy')
+            h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · AzerothComponent · onMount · onDestroy'),
+            h('p', { class: 'footer-apis' }, 'createRouter · Link · Routes · Outlet · useRoute · useParams · useNavigate')
         )
     );
 });
