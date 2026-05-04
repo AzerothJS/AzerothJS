@@ -13,6 +13,8 @@
 //   - Route.loader + useLoader — async data with cancellation
 //   - <ErrorBoundary> wrapping the route tree as a safety net
 //   - <Suspense> on the router's loader for "loading…" UI
+//   - createStore — visit tracker that survives navigation and
+//     toggling the entire demo card off and on
 //
 // IMPORTANT: this demo drives the real URL bar. When you click a
 // link below, the address bar genuinely changes — that's the
@@ -30,7 +32,17 @@
 //
 // ============================================================================
 
-import { defineComponent, h, onDestroy, ErrorBoundary, Suspense } from '@azerothjs/core';
+import {
+    defineComponent,
+    h,
+    onDestroy,
+    ErrorBoundary,
+    Suspense,
+    createSignal,
+    createMemo,
+    createEffect,
+    createStore
+} from '@azerothjs/core';
 import {
     createRouter,
     Link,
@@ -138,6 +150,29 @@ function loadUser(id: string, signal: AbortSignal): Promise<DemoUser>
     });
 }
 
+// ── Cross-route store (visit tracker) ───────────────────────
+//
+// Defined at MODULE scope so the lazy-singleton lifetime spans
+// every mount of the demo card — toggling the section off and
+// back on preserves the counts. That's the "global state outlives
+// any single mount" guarantee createStore is built around.
+
+const useDemoSession = createStore(() =>
+{
+    const [visits, setVisits] = createSignal<Record<string, number>>({});
+
+    function recordVisit(id: string): void
+    {
+        setVisits(prev => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+    }
+
+    const totalVisits = createMemo(() =>
+        Object.values(visits()).reduce((a, b) => a + b, 0)
+    );
+
+    return { visits, recordVisit, totalVisits };
+});
+
 export const RouterDemo = defineComponent(() =>
 {
     // Forward declaration — assigned below by createRouter().
@@ -152,7 +187,14 @@ export const RouterDemo = defineComponent(() =>
     // ── Route components ─────────────────────────────────────
 
     const UserList: RouteComponent = () =>
-        h('div', { class: 'router-demo-page' },
+    {
+        // The session store lives at module scope, so this `useStore`
+        // call returns the same instance that was populated by
+        // visits to other routes — this is the "store survives
+        // navigation" demonstration.
+        const session = useDemoSession();
+
+        return h('div', { class: 'router-demo-page' },
             h('h4', {}, 'Pick a user'),
             h('ul', { class: 'router-demo-list' },
                 ...users.map(u =>
@@ -164,9 +206,21 @@ export const RouterDemo = defineComponent(() =>
                             activeClass: 'router-demo-list-link--active',
                             children: u.name
                         }),
-                        h('span', { class: 'router-demo-list-bio' }, u.bio)
+                        h('span', { class: 'router-demo-list-bio' }, u.bio),
+                        // Reactive visit-count badge — updates live
+                        // when other routes call recordVisit.
+                        h('span', { class: 'router-demo-visits' }, () =>
+                        {
+                            const n = session.visits()[u.id] ?? 0;
+                            return n === 0 ? '' : ` · ${ n } visit${ n === 1 ? '' : 's' }`;
+                        })
                     )
                 )
+            ),
+            // Total visits — uses the store's memo, so it only
+            // recomputes when the visits map changes.
+            h('p', { class: 'router-demo-total' }, () =>
+                `Total visits across all users: ${ session.totalVisits() }`
             ),
             h('p', { class: 'router-demo-bio' },
                 Link({
@@ -177,6 +231,7 @@ export const RouterDemo = defineComponent(() =>
                 })
             )
         );
+    };
 
     /**
      * A route that intentionally throws on its first render so we
@@ -276,6 +331,18 @@ export const RouterDemo = defineComponent(() =>
         // `router.loader.loading`, so by the time this component
         // appears in the DOM we know the loader has settled.
         const user = useLoader<DemoUser>(router);
+
+        // Record a visit in the demo session store. The effect
+        // re-runs on every params change, so each navigation
+        // increments the matching user's counter exactly once.
+        // This is the "many routes write, list reads" half of the
+        // store's role.
+        const params = useParams(router);
+        const session = useDemoSession();
+        createEffect(() =>
+        {
+            session.recordVisit(params().id);
+        });
 
         return h('div', {},
             h('p', { class: 'router-demo-bio' }, () =>

@@ -24,7 +24,8 @@
     "dependencies": {
         "@azerothjs/reactivity": "0.2.0-alpha.2",
         "@azerothjs/renderer": "0.2.0-alpha.2",
-        "@azerothjs/component": "0.2.0-alpha.2"
+        "@azerothjs/component": "0.2.0-alpha.2",
+        "@azerothjs/store": "0.2.0-alpha.2"
     },
     "publishConfig": {
         "access": "public"

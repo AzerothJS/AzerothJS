@@ -1092,3 +1092,19 @@ input[type="range"]:focus
     font-style: italic;
     padding: 0.75rem 0;
 }
+
+.router-demo-visits
+{
+    color: rgba(165, 220, 255, 0.65);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.router-demo-total
+{
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 0.85rem;
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}

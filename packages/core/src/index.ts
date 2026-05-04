@@ -96,3 +96,7 @@ export type {
     ReactiveState,
     ErrorBoundaryProps
 } from '@azerothjs/component';
+
+// ── Store ───────────────────────────────────────────────────────────────────
+
+export { createStore } from '@azerothjs/store';
