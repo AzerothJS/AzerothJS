@@ -1085,3 +1085,10 @@ input[type="range"]:focus
     margin: 0 0 0.5rem;
     color: rgba(255, 170, 170, 0.95);
 }
+
+.router-demo-suspense
+{
+    color: rgba(255, 255, 255, 0.55);
+    font-style: italic;
+    padding: 0.75rem 0;
+}

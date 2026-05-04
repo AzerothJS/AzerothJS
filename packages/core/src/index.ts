@@ -58,6 +58,7 @@ export {
     Portal,
     destroyPortal,
     Dynamic,
+    Suspense,
     createRef,
     classList,
     styleMap
@@ -71,6 +72,7 @@ export type {
     MatchCase,
     PortalProps,
     DynamicProps,
+    SuspenseProps,
     Ref,
     ClassObject,
     StyleObject

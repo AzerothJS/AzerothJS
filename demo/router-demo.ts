@@ -12,6 +12,7 @@
 //   - useRoute for the live URL display
 //   - Route.loader + useLoader — async data with cancellation
 //   - <ErrorBoundary> wrapping the route tree as a safety net
+//   - <Suspense> on the router's loader for "loading…" UI
 //
 // IMPORTANT: this demo drives the real URL bar. When you click a
 // link below, the address bar genuinely changes — that's the
@@ -29,7 +30,7 @@
 //
 // ============================================================================
 
-import { defineComponent, h, onDestroy, ErrorBoundary } from '@azerothjs/core';
+import { defineComponent, h, onDestroy, ErrorBoundary, Suspense } from '@azerothjs/core';
 import {
     createRouter,
     Link,
@@ -269,12 +270,16 @@ export const RouterDemo = defineComponent(() =>
         // useLoader returns the matched route's loader resource.
         // We type-cast via the generic argument — the router can't
         // know which leaf's loader is active at compile time.
+        //
+        // The "loading" branch is intentionally absent — Suspense
+        // around the route tree (see below) gates all rendering on
+        // `router.loader.loading`, so by the time this component
+        // appears in the DOM we know the loader has settled.
         const user = useLoader<DemoUser>(router);
 
         return h('div', {},
             h('p', { class: 'router-demo-bio' }, () =>
             {
-                if (user.loading()) return 'Loading user…';
                 const err = user.error();
                 if (err) return `Error: ${ err instanceof Error ? err.message : String(err) }`;
                 const u = user.data();
@@ -394,6 +399,15 @@ export const RouterDemo = defineComponent(() =>
         // single broken route can't take the rest of the demo down
         // with it. Try clicking "Test ErrorBoundary →" inside the
         // user list to see this in action.
+        //
+        // Suspense sits INSIDE the ErrorBoundary and watches the
+        // router's loader resource. Switching users triggers the
+        // 300 ms simulated fetch; while it's pending, Suspense
+        // shows a "Loading…" line in place of the matched route.
+        // When the loader settles (or errors), Suspense flips back
+        // to the route content. This is what makes per-route
+        // components free to assume their loader has resolved by
+        // the time they render.
         ErrorBoundary({
             fallback: (err, reset) =>
                 h('div', { class: 'router-demo-page' },
@@ -406,7 +420,12 @@ export const RouterDemo = defineComponent(() =>
                         'Try again'
                     )
                 ),
-            children: () => Routes({ router, fallback: NotInDemo })
+            children: () => Suspense({
+                fallback: () =>
+                    h('p', { class: 'router-demo-bio router-demo-suspense' }, 'Loading…'),
+                on: [router.loader],
+                children: () => Routes({ router, fallback: NotInDemo })
+            })
         })
     );
 });
