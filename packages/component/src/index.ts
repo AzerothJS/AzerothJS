@@ -8,6 +8,7 @@
 //   onMount()            — Mount lifecycle hook (function components)
 //   onDestroy()          — Destroy lifecycle hook (function components)
 //   destroyComponent()   — Trigger cleanup on any component
+//   ErrorBoundary        — Catch errors in a subtree, render fallback
 //
 // ============================================================================
 
@@ -20,6 +21,9 @@ export {
 
 export { AzerothComponent } from './azeroth-component.ts';
 export type { ReactiveState } from './azeroth-component.ts';
+
+export { ErrorBoundary } from './error-boundary.ts';
+export type { ErrorBoundaryProps } from './error-boundary.ts';
 
 export type {
     Component,

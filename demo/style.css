@@ -1079,3 +1079,9 @@ input[type="range"]:focus
 {
     background: rgba(165, 220, 255, 0.12);
 }
+
+.router-demo-error-title
+{
+    margin: 0 0 0.5rem;
+    color: rgba(255, 170, 170, 0.95);
+}

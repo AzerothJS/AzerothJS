@@ -73,6 +73,21 @@ export interface Subscriber
      * Called during cleanup to prevent memory leaks.
      */
     dependencies: Set<() => void>;
+
+    /**
+     * Error handler captured at subscriber-creation time. When
+     * this subscriber's `execute()` throws, the error is routed
+     * here instead of propagating. `null` when no `catchError`
+     * scope was active at construction time.
+     *
+     * Captured ONCE, at construction — not read again later.
+     * That way an effect created inside a `catchError` scope
+     * keeps routing errors to the same handler even after the
+     * scope has unwound.
+     *
+     * @internal
+     */
+    errorHandler: ((error: unknown) => void) | null;
 }
 
 /**

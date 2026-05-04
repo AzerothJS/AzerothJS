@@ -15,6 +15,7 @@
 //   createDeferred() — Debounced reactive value
 //   createSelector() — Efficient selection tracking for lists
 //   createResource() — Async fetcher → reactive data/loading/error
+//   catchError()    — Route reactive errors to a handler
 //
 // NOT EXPORTED (internal):
 //   currentSubscriber   — Used by signal/effect wiring
@@ -36,6 +37,7 @@ export { createRoot } from './create-root.ts';
 export { createDeferred } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';
 export { createResource } from './create-resource.ts';
+export { catchError } from './catch-error.ts';
 
 export type { Resource } from './create-resource.ts';
 

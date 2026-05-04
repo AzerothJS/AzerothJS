@@ -28,7 +28,8 @@ export {
     createRoot,
     createDeferred,
     createSelector,
-    createResource
+    createResource,
+    catchError
 } from '@azerothjs/reactivity';
 
 export type {
@@ -82,12 +83,14 @@ export {
     destroyComponent,
     onMount,
     onDestroy,
-    AzerothComponent
+    AzerothComponent,
+    ErrorBoundary
 } from '@azerothjs/component';
 
 export type {
     Component,
     ComponentSetup,
     LifecycleHook,
-    ReactiveState
+    ReactiveState,
+    ErrorBoundaryProps
 } from '@azerothjs/component';

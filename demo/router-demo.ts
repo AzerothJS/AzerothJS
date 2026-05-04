@@ -11,6 +11,7 @@
 //   - useNavigate for back/forward navigation
 //   - useRoute for the live URL display
 //   - Route.loader + useLoader — async data with cancellation
+//   - <ErrorBoundary> wrapping the route tree as a safety net
 //
 // IMPORTANT: this demo drives the real URL bar. When you click a
 // link below, the address bar genuinely changes — that's the
@@ -28,7 +29,7 @@
 //
 // ============================================================================
 
-import { defineComponent, h, onDestroy } from '@azerothjs/core';
+import { defineComponent, h, onDestroy, ErrorBoundary } from '@azerothjs/core';
 import {
     createRouter,
     Link,
@@ -165,8 +166,48 @@ export const RouterDemo = defineComponent(() =>
                         h('span', { class: 'router-demo-list-bio' }, u.bio)
                     )
                 )
+            ),
+            h('p', { class: 'router-demo-bio' },
+                Link({
+                    to: '/router-demo/broken',
+                    router,
+                    class: 'router-demo-cta',
+                    children: 'Test ErrorBoundary →'
+                })
             )
         );
+
+    /**
+     * A route that intentionally throws on its first render so we
+     * can demonstrate the wrapping `ErrorBoundary` swapping in a
+     * fallback. The `attempts` counter resets the throw on retry,
+     * so the boundary's `reset()` actually recovers — clicking
+     * "Try again" succeeds the second time around.
+     *
+     * Note: the throw is SYNCHRONOUS during the render. Errors
+     * from `useLoader().error()` are async and observable; the
+     * boundary doesn't catch those — the route's component reads
+     * them directly. See the UserOverview component above for
+     * that style.
+     */
+    let brokenAttempts = 0;
+    const BrokenPage: RouteComponent = () =>
+    {
+        brokenAttempts++;
+        if (brokenAttempts === 1)
+        {
+            throw new Error('Intentional render failure (try again to recover)');
+        }
+        const div = document.createElement('div');
+        div.className = 'router-demo-page';
+        div.innerHTML =
+            '<h4>Recovered ✓</h4>' +
+            '<p class="router-demo-bio">' +
+            'The boundary caught the first throw and rendered its fallback. ' +
+            'Clicking "Try again" reset the boundary, which re-rendered this ' +
+            'route — this time without throwing.</p>';
+        return div;
+    };
 
     const UserLayout: RouteComponent = ({ children }) =>
     {
@@ -300,6 +341,7 @@ export const RouterDemo = defineComponent(() =>
                 children:
                 [
                     { path: '', component: UserList },
+                    { path: 'broken', component: BrokenPage },
                     {
                         path: ':id',
                         component: UserLayout,
@@ -339,7 +381,7 @@ export const RouterDemo = defineComponent(() =>
                 '← Back'
             ),
             h('button',
-                { class: 'btn-secondary', onClick: () => forward() },
+                { class: 'btn-ghost', onClick: () => forward() },
                 'Forward →'
             ),
             h('div', { class: 'router-demo-url' },
@@ -348,6 +390,23 @@ export const RouterDemo = defineComponent(() =>
             )
         ),
 
-        Routes({ router, fallback: NotInDemo })
+        // The whole route tree is wrapped in an ErrorBoundary so a
+        // single broken route can't take the rest of the demo down
+        // with it. Try clicking "Test ErrorBoundary →" inside the
+        // user list to see this in action.
+        ErrorBoundary({
+            fallback: (err, reset) =>
+                h('div', { class: 'router-demo-page' },
+                    h('h4', { class: 'router-demo-error-title' }, 'Something went wrong'),
+                    h('p', { class: 'router-demo-bio' },
+                        err instanceof Error ? err.message : String(err)
+                    ),
+                    h('button',
+                        { class: 'btn-ghost', onClick: reset },
+                        'Try again'
+                    )
+                ),
+            children: () => Routes({ router, fallback: NotInDemo })
+        })
     );
 });

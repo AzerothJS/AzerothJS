@@ -50,6 +50,7 @@ import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from '
 import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
 import { isBatching, queueEffect } from './batch.ts';
 import { registerDisposer } from './create-root.ts';
+import { currentErrorHandler } from './catch-error.ts';
 
 /**
  * The cleanup array for the currently running effect.
@@ -138,7 +139,10 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
     {
         execute: runEffect,
         isDisposed: false,
-        dependencies: new Set()
+        dependencies: new Set(),
+        // Captured ONCE here — see types.ts on `Subscriber.errorHandler`
+        // for why we don't re-read on each run.
+        errorHandler: currentErrorHandler
     };
 
     function runEffect(): void
@@ -182,7 +186,13 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         // During this call, every signal.getter() will:
         //   a. Add this subscriber to its subscribers Set
         //   b. Add a cleanup function to subscriber.dependencies
-        // And every onCleanup() call will push to cleanups
+        // And every onCleanup() call will push to cleanups.
+        //
+        // Errors thrown by fn route through the subscriber's
+        // captured errorHandler (set when this effect was created
+        // inside a `catchError` scope). When no handler is
+        // captured, errors propagate as before — preserving the
+        // pre-catchError contract for every existing call site.
         try
         {
             const returned = fn() ?? undefined;
@@ -191,6 +201,17 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
             if (returned)
             {
                 cleanups.push(returned);
+            }
+        }
+        catch (err)
+        {
+            if (subscriber.errorHandler)
+            {
+                subscriber.errorHandler(err);
+            }
+            else
+            {
+                throw err;
             }
         }
         finally
