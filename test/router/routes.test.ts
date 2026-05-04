@@ -3,7 +3,7 @@ import { createRoot } from '@azerothjs/core';
 import { defineComponent, onDestroy } from '@azerothjs/component';
 import { createRouter } from '../../packages/router/src/router.ts';
 import { Routes } from '../../packages/router/src/routes.ts';
-import type { Route, RouteComponent } from '../../packages/router/src/types.ts';
+import type { RouteComponent } from '../../packages/router/src/types.ts';
 
 // ── Component factories ──────────────────────────────────────
 //
@@ -84,6 +84,8 @@ describe('<Routes>', () =>
 
             const leaf = layout!.querySelector('[data-leaf="user-profile"]');
             expect(leaf).not.toBeNull();
+
+            dispose();
         });
     });
 

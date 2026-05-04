@@ -122,8 +122,10 @@ describe('createBrowserHistory', () =>
         const removeSpy = vi.spyOn(window, 'removeEventListener');
         const history = createBrowserHistory();
 
-        const unsubA = history.subscribe(() => {});
-        const unsubB = history.subscribe(() => {});
+        const unsubA = history.subscribe(() =>
+        {});
+        const unsubB = history.subscribe(() =>
+        {});
 
         // Removing one of two subscribers must NOT detach the
         // native listener — there's still another consumer.

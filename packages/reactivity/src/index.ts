@@ -14,6 +14,7 @@
 //   createRoot()    — Isolated reactive ownership scope
 //   createDeferred() — Debounced reactive value
 //   createSelector() — Efficient selection tracking for lists
+//   createResource() — Async fetcher → reactive data/loading/error
 //
 // NOT EXPORTED (internal):
 //   currentSubscriber   — Used by signal/effect wiring
@@ -34,6 +35,9 @@ export { onRootDispose } from './on-root-dispose.ts';
 export { createRoot } from './create-root.ts';
 export { createDeferred } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';
+export { createResource } from './create-resource.ts';
+
+export type { Resource } from './create-resource.ts';
 
 export type {
     CleanupFn,

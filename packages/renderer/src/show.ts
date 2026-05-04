@@ -159,4 +159,3 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
 
     return container as unknown as HTMLElement;
 }
-

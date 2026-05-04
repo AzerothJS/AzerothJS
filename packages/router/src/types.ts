@@ -171,6 +171,32 @@ export interface Route
 
     /** Free-form metadata — kept verbatim and made available on the match. */
     meta?: Record<string, unknown>;
+
+    /**
+     * Optional async loader. Runs when this route matches; the
+     * result is exposed via `useLoader(router)` inside the route's
+     * component tree. Powered by `createResource` — re-runs when
+     * params change, aborts on navigation away.
+     *
+     * The arg is bundled into an object so future fields
+     * (location, query, parent-loader data) can be added without
+     * a breaking signature change.
+     *
+     * @example
+     * ```ts
+     * {
+     *     path: '/users/:id',
+     *     component: UserPage,
+     *     loader: async ({ params, signal }) =>
+     *     {
+     *         const res = await fetch(`/api/users/${ params.id }`, { signal });
+     *         if (!res.ok) throw new Error(res.statusText);
+     *         return res.json();
+     *     }
+     * }
+     * ```
+     */
+    loader?: (args: { params: Params; signal: AbortSignal }) => Promise<unknown>;
 }
 
 /**

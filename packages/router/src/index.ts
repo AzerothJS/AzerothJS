@@ -28,6 +28,7 @@
 //     useParams(router)     — Slice-memoized params
 //     useQuery(router)      — Slice-memoized query
 //     useNavigate(router)   — Imperative navigation API
+//     useLoader(router)     — Resource holding loader output
 //
 //   Types
 //     Router, RouteLocation, RouteComponent, Route, RouteMatch,
@@ -64,6 +65,7 @@ export {
     useQuery,
     useNavigate
 } from './use-route.ts';
+export { useLoader } from './use-loader.ts';
 
 // ── Types ────────────────────────────────────────────────────
 

@@ -73,7 +73,7 @@ type ClassDestroyHook = () => void;
  *
  * @internal
  */
-type SymbolStore = { [key: symbol]: unknown };
+interface SymbolStore { [key: symbol]: unknown }
 
 /**
  * Reads a Symbol-keyed property from an element, returning

@@ -8,8 +8,7 @@ const repoRoot = path.resolve(here, '..');
 // Vite config for the demo. Mirrors the workspace aliases in
 // vitest.config.ts so the demo imports @azerothjs/* directly from
 // package source — no build step required.
-export default defineConfig
-({
+export default defineConfig({
     resolve:
     {
         alias:

@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
-    globalIgnores(['dist/', 'node_modules/']),
+    globalIgnores(['**/dist/**', '**/node_modules/**']),
     tseslint.configs.recommended,
     {
         files: ['**/*.{js,mjs,cjs,ts,mts,cts}'],
@@ -14,6 +14,12 @@ export default defineConfig([
         rules:
         {
             'no-undef': 'off',
+
+            // TypeScript handles overloaded function signatures
+            // natively; the base ESLint rule flags the overload
+            // forms as redeclarations.
+            'no-redeclare': 'off',
+
             'space-before-blocks': 'error',
             'quotes': ['error', 'single'],
             'key-spacing': 'error',

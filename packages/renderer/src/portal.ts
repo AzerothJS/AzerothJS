@@ -59,7 +59,7 @@ const PORTAL_CLEANUP = Symbol('azeroth_portal_cleanup');
  *
  * @internal
  */
-type SymbolStore = { [key: symbol]: unknown };
+interface SymbolStore { [key: symbol]: unknown }
 
 /**
  * Reads the cleanup function attached to a portal placeholder, or

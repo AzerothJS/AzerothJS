@@ -10,6 +10,7 @@
 //   - useParams composable for slice-memoized params
 //   - useNavigate for back/forward navigation
 //   - useRoute for the live URL display
+//   - Route.loader + useLoader — async data with cancellation
 //
 // IMPORTANT: this demo drives the real URL bar. When you click a
 // link below, the address bar genuinely changes — that's the
@@ -36,6 +37,7 @@ import {
     useParams,
     useNavigate,
     useRoute,
+    useLoader,
     type RouteComponent,
     type Router
 } from '@azerothjs/router';
@@ -103,12 +105,46 @@ function findUser(id: string): DemoUser | undefined
     return users.find(u => u.id === id);
 }
 
+/**
+ * Simulates a network fetch — resolves with the user (or rejects
+ * with a "not found" error) after a 300 ms delay. Honours the
+ * `AbortSignal` so a navigation away cancels the in-flight load.
+ *
+ * Demonstrates the resource's race-condition guard: rapid clicks
+ * between users abort the previous load, and only the latest
+ * resolved data ever paints to the UI.
+ */
+function loadUser(id: string, signal: AbortSignal): Promise<DemoUser>
+{
+    return new Promise<DemoUser>((resolve, reject) =>
+    {
+        const timer = setTimeout(() =>
+        {
+            const u = findUser(id);
+            if (!u) reject(new Error(`No user with id "${ id }"`));
+            else resolve(u);
+        }, 300);
+
+        // If the navigation is superseded mid-flight, the resource
+        // aborts our signal — clean up the pending timer so we
+        // don't sit on it for nothing.
+        signal.addEventListener('abort', () =>
+        {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+        });
+    });
+}
+
 export const RouterDemo = defineComponent(() =>
 {
     // Forward declaration — assigned below by createRouter().
     // Route components close over this variable and read it lazily
     // when they're invoked by `<Routes>` (well after createRouter
-    // has returned).
+    // has returned). prefer-const sees only one assignment site
+    // and suggests const, but we need the binding in scope BEFORE
+    // the assignment so closures can capture it.
+    // eslint-disable-next-line prefer-const
     let router!: Router;
 
     // ── Route components ─────────────────────────────────────
@@ -189,12 +225,19 @@ export const RouterDemo = defineComponent(() =>
 
     const UserOverview: RouteComponent = () =>
     {
-        const params = useParams(router);
+        // useLoader returns the matched route's loader resource.
+        // We type-cast via the generic argument — the router can't
+        // know which leaf's loader is active at compile time.
+        const user = useLoader<DemoUser>(router);
+
         return h('div', {},
             h('p', { class: 'router-demo-bio' }, () =>
             {
-                const u = findUser(params().id);
-                return u ? u.bio : 'No user with this id.';
+                if (user.loading()) return 'Loading user…';
+                const err = user.error();
+                if (err) return `Error: ${ err instanceof Error ? err.message : String(err) }`;
+                const u = user.data();
+                return u ? u.bio : 'No user data.';
             })
         );
     };
@@ -260,6 +303,11 @@ export const RouterDemo = defineComponent(() =>
                     {
                         path: ':id',
                         component: UserLayout,
+                        // The loader runs whenever the matched
+                        // route's params change. Switching users
+                        // triggers a new fetch + aborts the old.
+                        loader: ({ params, signal }) =>
+                            loadUser(params.id, signal),
                         children:
                         [
                             { path: '', component: UserOverview },

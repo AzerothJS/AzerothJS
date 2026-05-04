@@ -58,8 +58,14 @@
 //
 // ============================================================================
 
-import type { Getter } from '@azerothjs/reactivity';
-import { createSignal, createMemo, onRootDispose, untrack } from '@azerothjs/reactivity';
+import type { Getter, Resource } from '@azerothjs/reactivity';
+import {
+    createSignal,
+    createMemo,
+    createResource,
+    onRootDispose,
+    untrack
+} from '@azerothjs/reactivity';
 import type {
     HistoryAdapter,
     NavigateOptions,
@@ -100,6 +106,22 @@ export interface Router
      * (e.g. only the hash) don't invalidate it.
      */
     match: Getter<RouteMatch | null>;
+
+    /**
+     * Resource holding the matched route's loader output.
+     *
+     * The resource's source is the `match` memo. When the match
+     * changes (route or params change), the previous loader's
+     * `AbortSignal` fires and the new route's loader runs. When
+     * no route matches, or the matched route has no loader, the
+     * resource is in the "no key" state — `data()` is undefined
+     * and `loading()` is false.
+     *
+     * Typed as `Resource<unknown>` because the router can't know
+     * which leaf's loader is active at compile time. Use the
+     * `useLoader<T>(router)` composable to apply a per-call cast.
+     */
+    loader: Resource<unknown>;
 
     /**
      * Navigates to `to`, pushing a new history entry.
@@ -386,6 +408,21 @@ export function createRouter(config: RouterConfig): Router
      * URL changes (e.g. only the hash) don't invalidate
      * downstream effects that watch the matched route.
      */
+    /**
+     * Bundles everything the loader fetcher needs: the loader
+     * function, the params it should receive, and a stable
+     * "trigger" handle that lives only as long as the current
+     * match. When the match changes, the source returns a new
+     * trigger object → createResource re-fetches.
+     *
+     * @internal
+     */
+    interface LoaderTrigger
+    {
+        loader: (args: { params: Params; signal: AbortSignal }) => Promise<unknown>;
+        params: Params;
+    }
+
     const match = createMemo<RouteMatch | null>(
         () => state().matched,
         {
@@ -401,6 +438,29 @@ export function createRouter(config: RouterConfig): Router
                 if (a.route !== b.route) return false;
                 return shallowEqualParams(a.params, b.params);
             }
+        }
+    );
+
+    // ── Loader resource ──────────────────────────────────────
+    //
+    // Source returns a `LoaderTrigger` when the matched leaf has
+    // a loader, and `null` otherwise (no match, or matched route
+    // declines to load). createResource handles cancellation +
+    // race-condition guarding so navigation away from a slow
+    // loader doesn't paint stale data.
+
+    const loader = createResource<unknown, LoaderTrigger>(
+        () =>
+        {
+            const m = match();
+            if (m === null) return null;
+            const leaf = m.matched[m.matched.length - 1];
+            if (!leaf.loader) return null;
+            return { loader: leaf.loader, params: m.params };
+        },
+        async (trigger, signal) =>
+        {
+            return trigger.loader({ params: trigger.params, signal });
         }
     );
 
@@ -431,6 +491,7 @@ export function createRouter(config: RouterConfig): Router
     return {
         location,
         match,
+        loader,
         navigate(to, options = {}): void
         {
             // untrack so navigate can be called from inside an

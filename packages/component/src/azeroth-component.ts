@@ -237,7 +237,10 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
     protected createMemo<T>(fn: () => T): Getter<T>
     {
         const [getter, setter] = createSignal<T>(undefined as unknown as T);
-        const dispose = createEffect(() => { setter(fn()); });
+        const dispose = createEffect(() =>
+        {
+            setter(fn());
+        });
         this._disposers.push(dispose);
         return getter;
     }

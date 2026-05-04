@@ -27,7 +27,8 @@ export {
     onRootDispose,
     createRoot,
     createDeferred,
-    createSelector
+    createSelector,
+    createResource
 } from '@azerothjs/reactivity';
 
 export type {
@@ -40,7 +41,8 @@ export type {
     DisposeFn,
     EqualsFn,
     SignalOptions,
-    EffectOptions
+    EffectOptions,
+    Resource
 } from '@azerothjs/reactivity';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
@@ -89,4 +91,3 @@ export type {
     LifecycleHook,
     ReactiveState
 } from '@azerothjs/component';
-
