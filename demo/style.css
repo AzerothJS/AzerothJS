@@ -1187,3 +1187,140 @@ input[type="range"]:focus
     font-size: 0.78rem;
     font-variant-numeric: tabular-nums;
 }
+
+/* ──────────────────────────────────────────────────────────
+   Transition demo
+   ────────────────────────────────────────────────────────── */
+
+.transition-demo-intro
+{
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.transition-demo-row
+{
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    padding: 1rem 0 0.5rem;
+}
+
+.transition-demo-row:first-of-type
+{
+    border-top: none;
+    padding-top: 0.5rem;
+}
+
+.transition-demo-row-header
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+}
+
+.transition-demo-row-label
+{
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.transition-demo-stage
+{
+    /* The stage reserves vertical space and clips slide animations
+       so they don't overflow the demo card. */
+    min-height: 4.5rem;
+    overflow: hidden;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.15);
+    padding: 0.6rem 0.8rem;
+}
+
+.transition-demo-panel
+{
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    background: rgba(165, 220, 255, 0.1);
+    border: 1px solid rgba(165, 220, 255, 0.25);
+    border-radius: 6px;
+}
+
+.transition-demo-panel-name
+{
+    color: rgba(165, 220, 255, 0.95);
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.4rem;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+}
+
+.transition-demo-panel-text
+{
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.85rem;
+}
+
+/* ─── Fade family ─────────────────────────────────────── */
+.demo-fade-enter-from,
+.demo-fade-leave-to
+{
+    opacity: 0;
+}
+
+.demo-fade-enter-active,
+.demo-fade-leave-active
+{
+    transition: opacity 300ms ease;
+}
+
+.demo-fade-enter-to,
+.demo-fade-leave-from
+{
+    opacity: 1;
+}
+
+/* ─── Slide family ────────────────────────────────────── */
+.demo-slide-enter-from,
+.demo-slide-leave-to
+{
+    opacity: 0;
+    transform: translateX(40px);
+}
+
+.demo-slide-enter-active,
+.demo-slide-leave-active
+{
+    transition: opacity 350ms ease, transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.demo-slide-enter-to,
+.demo-slide-leave-from
+{
+    opacity: 1;
+    transform: translateX(0);
+}
+
+/* ─── Pop family ──────────────────────────────────────── */
+.demo-pop-enter-from,
+.demo-pop-leave-to
+{
+    opacity: 0;
+    transform: scale(0.85);
+}
+
+.demo-pop-enter-active,
+.demo-pop-leave-active
+{
+    transition: opacity 250ms ease, transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.demo-pop-enter-to,
+.demo-pop-leave-from
+{
+    opacity: 1;
+    transform: scale(1);
+}

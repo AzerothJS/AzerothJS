@@ -13,6 +13,7 @@
 //   destroyPortal() — Clean up portaled content
 //   Dynamic()       — Swap components at runtime
 //   Suspense()      — Show fallback while resources are loading
+//   Transition()    — Animate enter/leave with CSS class families
 //   createRef()     — Direct DOM element access
 //   classList()     — Reactive CSS class binding
 //   styleMap()      — Reactive inline style binding
@@ -27,6 +28,7 @@ export { Switch, Match } from './switch.ts';
 export { Portal, destroyPortal } from './portal.ts';
 export { Dynamic } from './dynamic.ts';
 export { Suspense } from './suspense.ts';
+export { Transition } from './transition.ts';
 export { createRef } from './ref.ts';
 export { classList } from './class-binding.ts';
 export { styleMap } from './style-binding.ts';
@@ -38,6 +40,7 @@ export type { MatchCase } from './switch.ts';
 export type { PortalProps } from './portal.ts';
 export type { DynamicProps } from './dynamic.ts';
 export type { SuspenseProps } from './suspense.ts';
+export type { TransitionProps } from './transition.ts';
 export type { Ref } from './ref.ts';
 export type { ClassObject } from './class-binding.ts';
 export type { StyleObject } from './style-binding.ts';

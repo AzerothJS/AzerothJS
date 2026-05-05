@@ -59,6 +59,7 @@ export {
     destroyPortal,
     Dynamic,
     Suspense,
+    Transition,
     createRef,
     classList,
     styleMap
@@ -73,6 +74,7 @@ export type {
     PortalProps,
     DynamicProps,
     SuspenseProps,
+    TransitionProps,
     Ref,
     ClassObject,
     StyleObject
