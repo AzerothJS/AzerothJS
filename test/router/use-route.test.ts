@@ -45,10 +45,21 @@ function makeRouterStub(initial: Partial<RouteLocation> = {}): RouterStub
     const backSpy = vi.fn();
     const forwardSpy = vi.fn();
 
+    // Inert loader resource — these tests don't read it, but the
+    // Router type requires the field, so we provide a no-op stub.
+    const stubLoader = {
+        data: () => undefined,
+        loading: () => false,
+        error: () => null,
+        refetch: () =>
+        {}
+    };
+
     const router: Router =
     {
         location,
         match: () => null,
+        loader: stubLoader,
         navigate: navigateSpy,
         replace: replaceSpy,
         back: backSpy,

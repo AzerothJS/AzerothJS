@@ -35,10 +35,21 @@ function makeRouterStub(pathname = '/'): RouterStub
     const navigateSpy = vi.fn();
     const replaceSpy = vi.fn();
 
+    // Inert loader resource — Link doesn't read it, but the Router
+    // type requires the field, so we provide a no-op stub.
+    const stubLoader = {
+        data: () => undefined,
+        loading: () => false,
+        error: () => null,
+        refetch: () =>
+        {}
+    };
+
     const router: Router =
     {
         location,
         match: () => null,
+        loader: stubLoader,
         navigate: navigateSpy,
         replace: replaceSpy,
         back: vi.fn(),

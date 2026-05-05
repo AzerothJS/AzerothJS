@@ -156,7 +156,11 @@ describe('oneOf', () =>
 {
     it('accepts values from the list, rejects others', () =>
     {
-        const v = oneOf(['admin', 'editor', 'viewer'] as const);
+        // Explicit `<string>` widens V so the test can pass an
+        // intentionally-invalid value to assert the rejection
+        // path. Production users typically write
+        // `oneOf(['a','b'] as const)` to get a narrowed type.
+        const v = oneOf<string>(['admin', 'editor', 'viewer']);
         expect(v('admin')).toBeNull();
         expect(v('viewer')).toBeNull();
         expect(v('hacker')).toBe('Must be one of: admin, editor, viewer');
