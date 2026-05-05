@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/store",
-    "version": "0.3.0-alpha.1",
+    "version": "0.3.0-alpha.2",
     "description": "AzerothJS store — minimalist reactive state container with lazy-singleton lifetime",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,7 +22,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.3.0-alpha.1"
+        "@azerothjs/reactivity": "0.3.0-alpha.2"
     },
     "publishConfig": {
         "access": "public"
