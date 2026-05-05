@@ -1,5 +1,5 @@
 // ============================================================================
-// AZEROTHJS — Full Feature Demo (17 Demos)
+// AZEROTHJS — Full Feature Demo (18 Demos)
 // ============================================================================
 // Run: npx vite demo
 // ============================================================================
@@ -35,6 +35,7 @@ import {
 import { RouterDemo } from './router-demo.ts';
 import { FormDemo } from './form-demo.ts';
 import { TransitionDemo } from './transition-demo.ts';
+import { StreamDemo } from './stream-demo.ts';
 
 function FeatureTags(...tags: string[]): HTMLElement
 {
@@ -1447,6 +1448,7 @@ const App = defineComponent(() =>
         Toggleable('🧭 Router — Nested Routes, Outlet, Active Links', () => RouterDemo({})),
         Toggleable('📝 Form — Validation, Submit, Errors', () => FormDemo({})),
         Toggleable('🎬 Transition — Fade, Slide, Pop Animations', () => TransitionDemo({})),
+        Toggleable('🤖 AI Streaming — token-by-token chat', () => StreamDemo({})),
 
         h('div', { class: 'footer' },
             h('p', { class: 'footer-brand' }, '⚛️ Built with AzerothJS'),
@@ -1456,7 +1458,8 @@ const App = defineComponent(() =>
             h('p', { class: 'footer-apis' }, 'classList · styleMap · defineComponent · AzerothComponent · onMount · onDestroy'),
             h('p', { class: 'footer-apis' }, 'createRouter · Link · Routes · Outlet · useRoute · useParams · useNavigate'),
             h('p', { class: 'footer-apis' }, 'createForm · register · handleSubmit · validators · submitting · submitError'),
-            h('p', { class: 'footer-apis' }, 'Transition · enter-from · enter-active · enter-to · leave-from · leave-active · leave-to')
+            h('p', { class: 'footer-apis' }, 'Transition · enter-from · enter-active · enter-to · leave-from · leave-active · leave-to'),
+            h('p', { class: 'footer-apis' }, 'createStream · partial · done · cancel · refetch · parse:sse · parse:ndjson')
         )
     );
 });

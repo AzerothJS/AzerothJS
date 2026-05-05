@@ -15,6 +15,7 @@
 //   createDeferred() — Debounced reactive value
 //   createSelector() — Efficient selection tracking for lists
 //   createResource() — Async fetcher → reactive data/loading/error
+//   createStream()  — Streaming fetcher → reactive partial/done/error
 //   catchError()    — Route reactive errors to a handler
 //
 // NOT EXPORTED (internal):
@@ -37,9 +38,11 @@ export { createRoot } from './create-root.ts';
 export { createDeferred } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';
 export { createResource } from './create-resource.ts';
+export { createStream } from './create-stream.ts';
 export { catchError } from './catch-error.ts';
 
 export type { Resource } from './create-resource.ts';
+export type { Stream, StreamOptions, StreamParseMode } from './create-stream.ts';
 
 export type {
     CleanupFn,

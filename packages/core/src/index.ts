@@ -29,6 +29,7 @@ export {
     createDeferred,
     createSelector,
     createResource,
+    createStream,
     catchError
 } from '@azerothjs/reactivity';
 
@@ -43,7 +44,10 @@ export type {
     EqualsFn,
     SignalOptions,
     EffectOptions,
-    Resource
+    Resource,
+    Stream,
+    StreamOptions,
+    StreamParseMode
 } from '@azerothjs/reactivity';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
