@@ -446,53 +446,65 @@ export const RouterDemo = defineComponent(() =>
         console.log('🚪 RouterDemo unmounted — popstate listener detached.');
     });
 
-    return h('div', { class: 'router-demo' },
-        h('div', { class: 'router-demo-toolbar' },
-            h('button',
-                { class: 'btn-ghost', onClick: () => back() },
-                '← Back'
-            ),
-            h('button',
-                { class: 'btn-ghost', onClick: () => forward() },
-                'Forward →'
-            ),
-            h('div', { class: 'router-demo-url' },
-                'URL: ',
-                h('code', {}, () => location().fullPath || '/')
-            )
+    return h('div', { class: 'glass' },
+        // Feature tag chips — match the visual pattern of every
+        // other demo card. Each tag is one of the public APIs this
+        // demo exercises.
+        h('div', { class: 'feature-tags' },
+            ...['createRouter', 'Link', 'Routes', 'Outlet', 'useParams',
+                'useLoader', 'Suspense', 'ErrorBoundary', 'createStore']
+                .map(tag => h('span', { class: 'feature-tag' }, tag))
         ),
+        h('h2', {}, '🧭 Router — Nested Routes, Outlet, Active Links'),
 
-        // The whole route tree is wrapped in an ErrorBoundary so a
-        // single broken route can't take the rest of the demo down
-        // with it. Try clicking "Test ErrorBoundary →" inside the
-        // user list to see this in action.
-        //
-        // Suspense sits INSIDE the ErrorBoundary and watches the
-        // router's loader resource. Switching users triggers the
-        // 300 ms simulated fetch; while it's pending, Suspense
-        // shows a "Loading…" line in place of the matched route.
-        // When the loader settles (or errors), Suspense flips back
-        // to the route content. This is what makes per-route
-        // components free to assume their loader has resolved by
-        // the time they render.
-        ErrorBoundary({
-            fallback: (err, reset) =>
-                h('div', { class: 'router-demo-page' },
-                    h('h4', { class: 'router-demo-error-title' }, 'Something went wrong'),
-                    h('p', { class: 'router-demo-bio' },
-                        err instanceof Error ? err.message : String(err)
-                    ),
-                    h('button',
-                        { class: 'btn-ghost', onClick: reset },
-                        'Try again'
-                    )
+        h('div', { class: 'router-demo' },
+            h('div', { class: 'router-demo-toolbar' },
+                h('button',
+                    { class: 'btn-ghost', onClick: () => back() },
+                    '← Back'
                 ),
-            children: () => Suspense({
-                fallback: () =>
-                    h('p', { class: 'router-demo-bio router-demo-suspense' }, 'Loading…'),
-                on: [router.loader],
-                children: () => Routes({ router, fallback: NotInDemo })
+                h('button',
+                    { class: 'btn-ghost', onClick: () => forward() },
+                    'Forward →'
+                ),
+                h('div', { class: 'router-demo-url' },
+                    'URL: ',
+                    h('code', {}, () => location().fullPath || '/')
+                )
+            ),
+
+            // The whole route tree is wrapped in an ErrorBoundary so a
+            // single broken route can't take the rest of the demo down
+            // with it. Try clicking "Test ErrorBoundary →" inside the
+            // user list to see this in action.
+            //
+            // Suspense sits INSIDE the ErrorBoundary and watches the
+            // router's loader resource. Switching users triggers the
+            // 300 ms simulated fetch; while it's pending, Suspense
+            // shows a "Loading…" line in place of the matched route.
+            // When the loader settles (or errors), Suspense flips back
+            // to the route content. This is what makes per-route
+            // components free to assume their loader has resolved by
+            // the time they render.
+            ErrorBoundary({
+                fallback: (err, reset) =>
+                    h('div', { class: 'router-demo-page' },
+                        h('h4', { class: 'router-demo-error-title' }, 'Something went wrong'),
+                        h('p', { class: 'router-demo-bio' },
+                            err instanceof Error ? err.message : String(err)
+                        ),
+                        h('button',
+                            { class: 'btn-ghost', onClick: reset },
+                            'Try again'
+                        )
+                    ),
+                children: () => Suspense({
+                    fallback: () =>
+                        h('p', { class: 'router-demo-bio router-demo-suspense' }, 'Loading…'),
+                    on: [router.loader],
+                    children: () => Routes({ router, fallback: NotInDemo })
+                })
             })
-        })
+        ) // ← closes the inner .router-demo div
     );
 });

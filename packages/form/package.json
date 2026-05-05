@@ -1,7 +1,7 @@
 {
-    "name": "@azerothjs/core",
+    "name": "@azerothjs/form",
     "version": "0.2.0-alpha.2",
-    "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
+    "description": "AzerothJS forms — reactive validation, submit lifecycle, and per-field state",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -22,11 +22,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.2.0-alpha.2",
-        "@azerothjs/renderer": "0.2.0-alpha.2",
-        "@azerothjs/component": "0.2.0-alpha.2",
-        "@azerothjs/store": "0.2.0-alpha.2",
-        "@azerothjs/form": "0.2.0-alpha.2"
+        "@azerothjs/reactivity": "0.2.0-alpha.2"
     },
     "publishConfig": {
         "access": "public"
@@ -36,9 +32,9 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
-        "directory": "packages/core"
+        "directory": "packages/form"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/core",
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/form",
     "bugs": {
         "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }

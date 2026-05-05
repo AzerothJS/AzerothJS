@@ -100,3 +100,31 @@ export type {
 // ── Store ───────────────────────────────────────────────────────────────────
 
 export { createStore } from '@azerothjs/store';
+
+// ── Form ────────────────────────────────────────────────────────────────────
+
+export {
+    createForm,
+    required,
+    minLength,
+    maxLength,
+    min,
+    max,
+    pattern,
+    email,
+    url,
+    oneOf,
+    combine,
+    phone,
+    countries,
+    getCountry
+} from '@azerothjs/form';
+
+export type {
+    FormConfig,
+    FormApi,
+    FieldValidator,
+    RegisteredFieldProps,
+    PhoneOptions,
+    CountryInfo
+} from '@azerothjs/form';

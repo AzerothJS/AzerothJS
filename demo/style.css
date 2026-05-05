@@ -1108,3 +1108,82 @@ input[type="range"]:focus
     padding-top: 0.75rem;
     border-top: 1px dashed rgba(255, 255, 255, 0.08);
 }
+
+/* ──────────────────────────────────────────────────────────
+   Form demo
+   ────────────────────────────────────────────────────────── */
+
+.form-demo
+{
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.form-demo-row
+{
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.form-demo-label
+{
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.form-demo-error
+{
+    margin: 0;
+    min-height: 1.1em;       /* reserve space so layout doesn't jump */
+    color: rgba(255, 170, 170, 0.95);
+    font-size: 0.8rem;
+}
+
+.form-demo-actions
+{
+    display: flex;
+    gap: 0.5rem;
+}
+
+.form-demo-status
+{
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    min-height: 1.5rem;
+    font-size: 0.85rem;
+}
+
+.form-demo-status-error
+{
+    color: rgba(255, 170, 170, 0.95);
+}
+
+.form-demo-status-ok
+{
+    color: rgba(180, 240, 200, 0.95);
+}
+
+.form-demo-status-idle
+{
+    color: rgba(255, 255, 255, 0.55);
+    font-style: italic;
+}
+
+.form-demo-select
+{
+    /* Inherits the global input/select base style; just nudges the
+       cursor so it reads as interactive. */
+    cursor: pointer;
+}
+
+.form-demo-hint
+{
+    margin: 0;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}

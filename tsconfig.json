@@ -22,6 +22,7 @@
             "@azerothjs/core": ["./packages/core/src/index.ts"],
             "@azerothjs/router": ["./packages/router/src/index.ts"],
             "@azerothjs/store": ["./packages/store/src/index.ts"],
+            "@azerothjs/form": ["./packages/form/src/index.ts"],
             "@azerothjs/compiler": ["./packages/compiler/src/index.ts"]
         }
     },

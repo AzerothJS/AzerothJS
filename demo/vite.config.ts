@@ -19,6 +19,7 @@ export default defineConfig({
             '@azerothjs/component': path.resolve(repoRoot, 'packages/component/src/index.ts'),
             '@azerothjs/router': path.resolve(repoRoot, 'packages/router/src/index.ts'),
             '@azerothjs/store': path.resolve(repoRoot, 'packages/store/src/index.ts'),
+            '@azerothjs/form': path.resolve(repoRoot, 'packages/form/src/index.ts'),
             '@azerothjs/compiler': path.resolve(repoRoot, 'packages/compiler/src/index.ts')
         }
     },
