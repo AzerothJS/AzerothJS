@@ -2,15 +2,26 @@
 // AZEROTHJS — @azerothjs/core (Umbrella Package)
 // ============================================================================
 //
-// Re-exports everything from @azerothjs/reactivity, @azerothjs/renderer,
-// and @azerothjs/component so users can install a single package:
+// Re-exports everything from the framework's public packages:
+//   @azerothjs/reactivity, @azerothjs/renderer, @azerothjs/component,
+//   @azerothjs/store, @azerothjs/form, @azerothjs/router.
 //
-//   import { createSignal, h, defineComponent } from '@azerothjs/core';
+// Install one package, get the whole framework:
 //
-// Or import individual packages for tree-shaking:
+//   import {
+//       createSignal, h, defineComponent,
+//       createRouter, Link, Routes,
+//       createForm, createStore
+//   } from '@azerothjs/core';
+//
+// Or import individual packages directly — same exports, smaller
+// dependency surface for apps that only use a slice:
 //
 //   import { createSignal } from '@azerothjs/reactivity';
-//   import { h } from '@azerothjs/renderer';
+//   import { createRouter } from '@azerothjs/router';
+//
+// Tree-shaking handles the unused exports either way; the choice
+// is one of explicitness, not bundle size.
 //
 // ============================================================================
 
@@ -134,3 +145,43 @@ export type {
     PhoneOptions,
     CountryInfo
 } from '@azerothjs/form';
+
+// ── Router ──────────────────────────────────────────────────────────────────
+
+export {
+    createRouter,
+    createBrowserHistory,
+    compilePath,
+    parseQuery,
+    stringifyQuery,
+    targetToFullPath,
+    Link,
+    Routes,
+    Outlet,
+    useRoute,
+    useMatch,
+    useParams,
+    useQuery,
+    useNavigate,
+    useLoader
+} from '@azerothjs/router';
+
+export type {
+    Router,
+    Route,
+    RouteLocation,
+    RouteComponent,
+    RouteMatch,
+    Params,
+    Query,
+    NavigateTarget,
+    NavigateOptions,
+    RouterMode,
+    RouterConfig,
+    HistoryAdapter,
+    PathMatcher,
+    LinkProps,
+    RoutesProps,
+    OutletProps,
+    NavigateApi
+} from '@azerothjs/router';

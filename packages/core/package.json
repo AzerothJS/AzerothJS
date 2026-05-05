@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/core",
-    "version": "0.3.0-alpha.2",
+    "version": "0.3.0-alpha.3",
     "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,11 +22,12 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.3.0-alpha.2",
-        "@azerothjs/renderer": "0.3.0-alpha.2",
-        "@azerothjs/component": "0.3.0-alpha.2",
-        "@azerothjs/store": "0.3.0-alpha.2",
-        "@azerothjs/form": "0.3.0-alpha.2"
+        "@azerothjs/reactivity": "0.3.0-alpha.3",
+        "@azerothjs/renderer": "0.3.0-alpha.3",
+        "@azerothjs/component": "0.3.0-alpha.3",
+        "@azerothjs/store": "0.3.0-alpha.3",
+        "@azerothjs/form": "0.3.0-alpha.3",
+        "@azerothjs/router": "0.3.0-alpha.3"
     },
     "publishConfig": {
         "access": "public"
