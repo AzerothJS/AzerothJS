@@ -146,7 +146,10 @@ export function createSelector<T>(
     function notifyKey(key: T): void
     {
         const subs = subscribers.get(key);
-        if (!subs) return;
+        if (!subs)
+        {
+            return;
+        }
 
         for (const sub of Array.from(subs))
         {

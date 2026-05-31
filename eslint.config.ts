@@ -24,6 +24,7 @@ export default defineConfig([
             'quotes': ['error', 'single'],
             'key-spacing': 'error',
             'semi-spacing': 'error',
+            'curly': ['error', 'all'],
             'indent': ['error', 4, { SwitchCase: 1 }],
             'semi': ['error', 'always'],
             'brace-style': ['error', 'allman'],

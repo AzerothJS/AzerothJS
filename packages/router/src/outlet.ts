@@ -83,7 +83,10 @@ export interface OutletProps
  */
 export function Outlet(props: OutletProps): HTMLElement
 {
-    if (props.children) return props.children;
+    if (props.children)
+    {
+        return props.children;
+    }
 
     // No nested level — return an invisible placeholder so the
     // layout's DOM structure stays intact and any sibling layout

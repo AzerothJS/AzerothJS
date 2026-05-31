@@ -31,7 +31,10 @@ function makeDeferred<T>(): {
  */
 async function flush(): Promise<void>
 {
-    for (let i = 0; i < 4; i++) await Promise.resolve();
+    for (let i = 0; i < 4; i++)
+    {
+        await Promise.resolve();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

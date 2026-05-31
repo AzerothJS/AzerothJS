@@ -156,7 +156,10 @@ describe('<ErrorBoundary>', () =>
                 children: () =>
                 {
                     calls++;
-                    if (calls === 1) throw new Error('first');
+                    if (calls === 1)
+                    {
+                        throw new Error('first');
+                    }
                     const div = document.createElement('div');
                     div.setAttribute('data-role', 'child');
                     div.textContent = `attempt ${ calls }`;

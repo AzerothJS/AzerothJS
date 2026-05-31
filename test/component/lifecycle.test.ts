@@ -185,7 +185,10 @@ describe('Lifecycle Hooks', () =>
 
         const Child = defineComponent(() =>
         {
-            onMount(() => { order.push('child:mount'); });
+            onMount(() =>
+            {
+                order.push('child:mount');
+            });
             return h('span', {}, 'child');
         });
 
@@ -196,8 +199,14 @@ describe('Lifecycle Hooks', () =>
             // still register against the parent.
             const child = Child({});
 
-            onMount(() => { order.push('parent:mount'); });
-            onDestroy(() => { order.push('parent:destroy'); });
+            onMount(() =>
+            {
+                order.push('parent:mount');
+            });
+            onDestroy(() =>
+            {
+                order.push('parent:destroy');
+            });
 
             return h('div', {}, child);
         });
@@ -216,13 +225,19 @@ describe('Lifecycle Hooks', () =>
 
         const Child = defineComponent<{ label: string }>((props) =>
         {
-            onDestroy(() => { order.push(`${ props.label }:destroy`); });
+            onDestroy(() =>
+            {
+                order.push(`${ props.label }:destroy`);
+            });
             return h('span', {}, props.label);
         });
 
         const Parent = defineComponent(() =>
         {
-            onDestroy(() => { order.push('parent:destroy'); });
+            onDestroy(() =>
+            {
+                order.push('parent:destroy');
+            });
             return h('div', {},
                 Child({ label: 'a' }),
                 h('section', {}, Child({ label: 'b' })) // nested deeper

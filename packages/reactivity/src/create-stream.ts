@@ -196,7 +196,10 @@ function createSseParser(): ParserStream
         for (;;)
         {
             const eventEnd = buffer.indexOf('\n\n');
-            if (eventEnd === -1) break;
+            if (eventEnd === -1)
+            {
+                break;
+            }
 
             const event = buffer.slice(0, eventEnd);
             buffer = buffer.slice(eventEnd + 2);
@@ -204,10 +207,16 @@ function createSseParser(): ParserStream
             for (const line of event.split('\n'))
             {
                 // Comment line.
-                if (line.startsWith(':')) continue;
+                if (line.startsWith(':'))
+                {
+                    continue;
+                }
                 // We only care about data: lines for the partial
                 // text. event:, id:, retry: ignored in v1.
-                if (!line.startsWith('data:')) continue;
+                if (!line.startsWith('data:'))
+                {
+                    continue;
+                }
 
                 // Per spec, exactly one space after `data:` is
                 // optional and stripped; we use `trimStart` to
@@ -222,7 +231,10 @@ function createSseParser(): ParserStream
 
                 appended += data;
             }
-            if (terminated) break;
+            if (terminated)
+            {
+                break;
+            }
         }
 
         return { append: appended, terminated };
@@ -265,12 +277,18 @@ function createNdjsonParser(): ParserStream
         for (;;)
         {
             const newline = buffer.indexOf('\n');
-            if (newline === -1) break;
+            if (newline === -1)
+            {
+                break;
+            }
 
             const line = buffer.slice(0, newline).trim();
             buffer = buffer.slice(newline + 1);
 
-            if (line === '') continue;
+            if (line === '')
+            {
+                continue;
+            }
             appended += extractFromJsonLine(line);
         }
 
@@ -280,7 +298,10 @@ function createNdjsonParser(): ParserStream
         {
             const tail = buffer.trim();
             buffer = '';
-            if (tail !== '') appended += extractFromJsonLine(tail);
+            if (tail !== '')
+            {
+                appended += extractFromJsonLine(tail);
+            }
         }
 
         return appended;
@@ -320,18 +341,36 @@ function extractFromJsonLine(line: string): string
         return '';
     }
 
-    if (typeof parsed === 'string') return parsed;
-    if (parsed === null || typeof parsed !== 'object') return String(parsed);
+    if (typeof parsed === 'string')
+    {
+        return parsed;
+    }
+    if (parsed === null || typeof parsed !== 'object')
+    {
+        return String(parsed);
+    }
 
     // Walk the most common LLM stream shapes. Stop on first hit.
     const obj = parsed as Record<string, unknown>;
-    if (typeof obj.text === 'string') return obj.text;
-    if (typeof obj.content === 'string') return obj.content;
+    if (typeof obj.text === 'string')
+    {
+        return obj.text;
+    }
+    if (typeof obj.content === 'string')
+    {
+        return obj.content;
+    }
     if (obj.delta && typeof obj.delta === 'object')
     {
         const delta = obj.delta as Record<string, unknown>;
-        if (typeof delta.text === 'string') return delta.text;
-        if (typeof delta.content === 'string') return delta.content;
+        if (typeof delta.text === 'string')
+        {
+            return delta.text;
+        }
+        if (typeof delta.content === 'string')
+        {
+            return delta.content;
+        }
     }
 
     // Unknown shape — stringify so the user can at least see it.
@@ -367,9 +406,18 @@ function makeParser(
     mode: StreamParseMode | ((chunk: string) => string) | undefined
 ): ParserStream
 {
-    if (typeof mode === 'function') return createCustomParser(mode);
-    if (mode === 'sse') return createSseParser();
-    if (mode === 'ndjson') return createNdjsonParser();
+    if (typeof mode === 'function')
+    {
+        return createCustomParser(mode);
+    }
+    if (mode === 'sse')
+    {
+        return createSseParser();
+    }
+    if (mode === 'ndjson')
+    {
+        return createNdjsonParser();
+    }
     return createTextParser();
 }
 
@@ -480,7 +528,10 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
     ): Promise<void>
     {
         const body = response.body;
-        if (!body) return; // empty response — nothing to stream
+        if (!body)
+        {
+            return;
+        } // empty response — nothing to stream
 
         const reader = body.getReader();
         const decoder = new TextDecoder();
@@ -495,7 +546,10 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
                 {
                     // Flush whatever the parser was holding back.
                     const final = parser.finish();
-                    if (final.append) appendPartial(final.append);
+                    if (final.append)
+                    {
+                        appendPartial(final.append);
+                    }
                     return;
                 }
 
@@ -506,13 +560,19 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
                 // either. Returning here (rather than letting a late
                 // chunk through) keeps a fetcher that ignores its
                 // signal from corrupting the fresh stream's output.
-                if (controller.signal.aborted) return;
+                if (controller.signal.aborted)
+                {
+                    return;
+                }
 
                 // `{ stream: true }` is critical — keeps multi-byte
                 // UTF-8 sequences split across reads from breaking.
                 const text = decoder.decode(value, { stream: true });
                 const out = parser.feed(text);
-                if (out.append) appendPartial(out.append);
+                if (out.append)
+                {
+                    appendPartial(out.append);
+                }
                 if (out.terminated)
                 {
                     // SSE `[DONE]` sentinel — close the reader to
@@ -568,7 +628,10 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
             .then(
                 () =>
                 {
-                    if (!controller.signal.aborted) setDone(true);
+                    if (!controller.signal.aborted)
+                    {
+                        setDone(true);
+                    }
                     // If aborted, `done()` was already flipped by
                     // the cancel() path or will be by the next
                     // effect run — don't fight it here.
@@ -607,7 +670,10 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
      */
     function cancelImpl(): void
     {
-        if (done()) return;
+        if (done())
+        {
+            return;
+        }
         // Trigger the effect's onCleanup by re-running it with
         // `pendingCancel = true` so the next iteration sets done
         // without starting a new fetch.

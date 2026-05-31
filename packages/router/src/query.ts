@@ -72,8 +72,14 @@ export function parseQuery(search: string): Query
 {
     // Tolerate either form so callers don't have to remember.
     let raw = search;
-    if (raw.startsWith('?')) raw = raw.slice(1);
-    if (raw.length === 0) return {};
+    if (raw.startsWith('?'))
+    {
+        raw = raw.slice(1);
+    }
+    if (raw.length === 0)
+    {
+        return {};
+    }
 
     const params = new URLSearchParams(raw);
     const result: Query = {};

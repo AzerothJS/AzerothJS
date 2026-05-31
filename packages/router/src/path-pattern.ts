@@ -326,9 +326,18 @@ function splitPath(input: string): string[]
     }
 
     let s = input;
-    if (s.startsWith('/')) s = s.slice(1);
-    if (s.endsWith('/')) s = s.slice(0, -1);
-    if (s.length === 0) return [];
+    if (s.startsWith('/'))
+    {
+        s = s.slice(1);
+    }
+    if (s.endsWith('/'))
+    {
+        s = s.slice(0, -1);
+    }
+    if (s.length === 0)
+    {
+        return [];
+    }
 
     return s.split('/');
 }

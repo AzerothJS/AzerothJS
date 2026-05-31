@@ -124,7 +124,10 @@ describe('h()', () =>
     {
         let captured: HTMLElement | null = null;
 
-        const el = h('div', { ref: (node: HTMLElement) => { captured = node; } });
+        const el = h('div', { ref: (node: HTMLElement) =>
+        {
+            captured = node;
+        } });
 
         expect(captured).toBe(el);
         expect(el.hasAttribute('ref')).toBe(false);

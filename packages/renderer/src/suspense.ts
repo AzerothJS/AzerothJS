@@ -147,7 +147,10 @@ export function Suspense(props: SuspenseProps): HTMLElement
     {
         for (const resource of props.on)
         {
-            if (resource.loading()) return true;
+            if (resource.loading())
+            {
+                return true;
+            }
         }
         return false;
     });

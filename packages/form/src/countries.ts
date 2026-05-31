@@ -339,7 +339,10 @@ export const countries: CountryInfo[] =
  */
 export function getCountry(codeOrCallingCode: string): CountryInfo | undefined
 {
-    if (!codeOrCallingCode) return undefined;
+    if (!codeOrCallingCode)
+    {
+        return undefined;
+    }
 
     // Strip a leading + so callers can pass either '+98' or '98'.
     const cleaned = codeOrCallingCode.replace(/^\+/, '');
@@ -347,7 +350,10 @@ export function getCountry(codeOrCallingCode: string): CountryInfo | undefined
 
     // Try ISO code first — letters, exact match.
     const byIsoCode = countries.find(c => c.code === upper);
-    if (byIsoCode) return byIsoCode;
+    if (byIsoCode)
+    {
+        return byIsoCode;
+    }
 
     // Fall back to calling code — digits, exact match.
     return countries.find(c => c.callingCode === cleaned);

@@ -203,13 +203,25 @@ interface LeafEntry
 function joinPaths(parent: string, child: string): string
 {
     let p = parent;
-    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    if (p.length > 1 && p.endsWith('/'))
+    {
+        p = p.slice(0, -1);
+    }
 
     let c = child;
-    if (c.startsWith('/')) c = c.slice(1);
+    if (c.startsWith('/'))
+    {
+        c = c.slice(1);
+    }
 
-    if (c === '') return p === '' ? '/' : p;
-    if (p === '' || p === '/') return '/' + c;
+    if (c === '')
+    {
+        return p === '' ? '/' : p;
+    }
+    if (p === '' || p === '/')
+    {
+        return '/' + c;
+    }
     return p + '/' + c;
 }
 
@@ -287,7 +299,10 @@ function splitFullPath(fullPath: string): { pathname: string; search: string; ha
  */
 export function targetToFullPath(target: NavigateTarget): string
 {
-    if (typeof target === 'string') return target;
+    if (typeof target === 'string')
+    {
+        return target;
+    }
 
     const search = target.query ? stringifyQuery(target.query) : '';
     const searchPart = search.length > 0 ? '?' + search : '';
@@ -325,11 +340,20 @@ export const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
  */
 function normalizeBase(base: string | undefined): string
 {
-    if (!base || base === '/') return '';
+    if (!base || base === '/')
+    {
+        return '';
+    }
 
     let b = base;
-    if (!b.startsWith('/')) b = '/' + b;
-    if (b.endsWith('/')) b = b.slice(0, -1);
+    if (!b.startsWith('/'))
+    {
+        b = '/' + b;
+    }
+    if (b.endsWith('/'))
+    {
+        b = b.slice(0, -1);
+    }
     return b;
 }
 
@@ -410,9 +434,18 @@ export function createRouter(config: RouterConfig): Router
      */
     function stripBase(rawPathname: string): string | null
     {
-        if (base === '') return rawPathname;
-        if (rawPathname === base) return '/';
-        if (rawPathname.startsWith(base + '/')) return rawPathname.slice(base.length);
+        if (base === '')
+        {
+            return rawPathname;
+        }
+        if (rawPathname === base)
+        {
+            return '/';
+        }
+        if (rawPathname.startsWith(base + '/'))
+        {
+            return rawPathname.slice(base.length);
+        }
         return null;
     }
 
@@ -438,7 +471,10 @@ export function createRouter(config: RouterConfig): Router
         for (const entry of leaves)
         {
             const result = entry.matcher.match(pathname);
-            if (result === null) continue;
+            if (result === null)
+            {
+                continue;
+            }
 
             return {
                 route: entry.matched[entry.matched.length - 1],
@@ -531,9 +567,18 @@ export function createRouter(config: RouterConfig): Router
                 // `equals`. Either side can be `null` ("no route
                 // matched"), so the `== null` branch settles that
                 // before the structural route+params comparison.
-                if (a === b) return true;
-                if (a == null || b == null) return false;
-                if (a.route !== b.route) return false;
+                if (a === b)
+                {
+                    return true;
+                }
+                if (a == null || b == null)
+                {
+                    return false;
+                }
+                if (a.route !== b.route)
+                {
+                    return false;
+                }
                 return shallowEqualParams(a.params, b.params);
             }
         }
@@ -551,9 +596,15 @@ export function createRouter(config: RouterConfig): Router
         () =>
         {
             const m = match();
-            if (m === null) return null;
+            if (m === null)
+            {
+                return null;
+            }
             const leaf = m.matched[m.matched.length - 1];
-            if (!leaf.loader) return null;
+            if (!leaf.loader)
+            {
+                return null;
+            }
             return { loader: leaf.loader, params: m.params };
         },
         async (trigger, signal) =>
@@ -629,11 +680,17 @@ function shallowEqualParams(a: Params, b: Params): boolean
 {
     const keysA = Object.keys(a);
     const keysB = Object.keys(b);
-    if (keysA.length !== keysB.length) return false;
+    if (keysA.length !== keysB.length)
+    {
+        return false;
+    }
 
     for (const k of keysA)
     {
-        if (a[k] !== b[k]) return false;
+        if (a[k] !== b[k])
+        {
+            return false;
+        }
     }
     return true;
 }

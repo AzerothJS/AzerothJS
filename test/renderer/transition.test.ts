@@ -15,7 +15,10 @@ function flushRaf(): void
 {
     const cbs = rafCallbacks;
     rafCallbacks = [];
-    for (const cb of cbs) cb(performance.now());
+    for (const cb of cbs)
+    {
+        cb(performance.now());
+    }
 }
 
 /** Dispatches a synthetic `transitionend` event on `el`. */

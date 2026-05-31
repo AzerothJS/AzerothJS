@@ -59,8 +59,14 @@ import type { FieldValidator } from './create-form.ts';
  */
 function isEmpty(value: unknown): boolean
 {
-    if (value === null || value === undefined) return true;
-    if (typeof value === 'string' && value.trim() === '') return true;
+    if (value === null || value === undefined)
+    {
+        return true;
+    }
+    if (typeof value === 'string' && value.trim() === '')
+    {
+        return true;
+    }
     return false;
 }
 
@@ -106,7 +112,10 @@ export function minLength(n: number, message?: string): FieldValidator<string>
 {
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
         return value.length < n
             ? (message ?? `Must be at least ${ n } character${ n === 1 ? '' : 's' }`)
             : null;
@@ -127,7 +136,10 @@ export function maxLength(n: number, message?: string): FieldValidator<string>
 {
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
         return value.length > n
             ? (message ?? `Must be at most ${ n } character${ n === 1 ? '' : 's' }`)
             : null;
@@ -151,7 +163,10 @@ export function min(n: number, message?: string): FieldValidator<number>
 {
     return (value: number): string | null =>
     {
-        if (value === null || value === undefined) return null;
+        if (value === null || value === undefined)
+        {
+            return null;
+        }
         return value < n ? (message ?? `Must be at least ${ n }`) : null;
     };
 }
@@ -170,7 +185,10 @@ export function max(n: number, message?: string): FieldValidator<number>
 {
     return (value: number): string | null =>
     {
-        if (value === null || value === undefined) return null;
+        if (value === null || value === undefined)
+        {
+            return null;
+        }
         return value > n ? (message ?? `Must be at most ${ n }`) : null;
     };
 }
@@ -191,7 +209,10 @@ export function pattern(regex: RegExp, message?: string): FieldValidator<string>
 {
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
         return regex.test(value) ? null : (message ?? 'Invalid format');
     };
 }
@@ -221,7 +242,10 @@ export function email(message?: string): FieldValidator<string>
 {
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
         return EMAIL_REGEX.test(value) ? null : (message ?? 'Invalid email address');
     };
 }
@@ -242,7 +266,10 @@ export function url(message?: string): FieldValidator<string>
 {
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
         try
         {
             new URL(value);
@@ -272,7 +299,10 @@ export function oneOf<V>(values: readonly V[], message?: string): FieldValidator
     {
         for (const allowed of values)
         {
-            if (Object.is(value, allowed)) return null;
+            if (Object.is(value, allowed))
+            {
+                return null;
+            }
         }
         return message ?? `Must be one of: ${ values.join(', ') }`;
     };
@@ -308,7 +338,10 @@ export function combine<V>(...validators: FieldValidator<V>[]): FieldValidator<V
         for (const validator of validators)
         {
             const error = validator(value);
-            if (error !== null) return error;
+            if (error !== null)
+            {
+                return error;
+            }
         }
         return null;
     };

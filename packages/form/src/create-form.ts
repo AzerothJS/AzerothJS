@@ -289,7 +289,10 @@ export function createForm<T extends Record<string, unknown>>(
         const e = errors();
         for (const name of fieldNames)
         {
-            if (e[name] !== null) return false;
+            if (e[name] !== null)
+            {
+                return false;
+            }
         }
         return true;
     });
@@ -302,7 +305,10 @@ export function createForm<T extends Record<string, unknown>>(
     // we don't subscribe to ourselves.
     function runValidators(snapshot: T): { [K in keyof T]: string | null }
     {
-        if (!config.validate) return makeRecord(fieldNames, null);
+        if (!config.validate)
+        {
+            return makeRecord(fieldNames, null);
+        }
 
         const next = {} as { [K in keyof T]: string | null };
         for (const name of fieldNames)
@@ -322,7 +328,10 @@ export function createForm<T extends Record<string, unknown>>(
             // No validators configured → leave the errors map alone,
             // so an error injected via setError() survives. (The
             // initial map is already all-null.)
-            if (!validate) return;
+            if (!validate)
+            {
+                return;
+            }
 
             // MERGE rather than overwrite: only fields that HAVE a
             // validator are recomputed here. Fields without one keep
@@ -336,7 +345,10 @@ export function createForm<T extends Record<string, unknown>>(
                 for (const name of fieldNames)
                 {
                     const validator = validate[name];
-                    if (validator) next[name] = validator(snapshot[name]);
+                    if (validator)
+                    {
+                        next[name] = validator(snapshot[name]);
+                    }
                 }
                 return next;
             });
@@ -412,10 +424,16 @@ export function createForm<T extends Record<string, unknown>>(
         // cases between effect run and isValid memo recompute.
         for (const name of fieldNames)
         {
-            if (fresh[name] !== null) return;
+            if (fresh[name] !== null)
+            {
+                return;
+            }
         }
 
-        if (!config.onSubmit) return;
+        if (!config.onSubmit)
+        {
+            return;
+        }
 
         setSubmitError(null);
         setSubmitting(true);
@@ -479,6 +497,9 @@ function makeRecord<K extends string | number | symbol, V>(
 ): Record<K, V>
 {
     const out = {} as Record<K, V>;
-    for (const k of keys) out[k] = fill;
+    for (const k of keys)
+    {
+        out[k] = fill;
+    }
     return out;
 }

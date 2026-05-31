@@ -174,3 +174,62 @@ describe('phone() — with countries filter', () =>
         expect(v('+16041234567')).toBeNull();
     });
 });
+
+describe('phone() — national format (optional + and country code)', () =>
+{
+    it('accepts both national and E.164 forms with an explicit defaultCountry', () =>
+    {
+        const v = phone({ defaultCountry: 'IR' });
+
+        // The user's example: these must be treated identically.
+        expect(v('09170459330')).toBeNull();    // national, trunk 0
+        expect(v('+989170459330')).toBeNull();  // E.164
+        expect(v('9170459330')).toBeNull();      // national, no trunk 0
+        expect(v('0917 045 9330')).toBeNull();   // punctuation stripped first
+    });
+
+    it('infers the default country from a single-entry countries list', () =>
+    {
+        const v = phone({ countries: ['IR'] });
+
+        expect(v('09170459330')).toBeNull();
+        expect(v('+989170459330')).toBeNull();
+    });
+
+    it('still applies the country filter after normalizing national input', () =>
+    {
+        const v = phone({ countries: ['IR'], defaultCountry: 'IR' });
+
+        // Normalizes to +98… which matches the IR filter.
+        expect(v('09170459330')).toBeNull();
+        // An explicit non-IR E.164 number is still rejected.
+        expect(v('+14155551234')).toBe('Phone must be from one of: IR');
+    });
+
+    it('does NOT accept national format without a resolvable default', () =>
+    {
+        // No countries, no defaultCountry → strict E.164 only.
+        expect(phone()('09170459330'))
+            .toBe('Phone must be in E.164 format (e.g. +14155551234)');
+
+        // Ambiguous (more than one country, no explicit default) →
+        // national format is not normalized, so it's rejected.
+        const v = phone({ countries: ['IR', 'US'] });
+        expect(v('09170459330'))
+            .toBe('Phone must be in E.164 format (e.g. +14155551234)');
+    });
+
+    it('leaves +-prefixed input untouched even when a default is set', () =>
+    {
+        const v = phone({ defaultCountry: 'IR' });
+        // Already E.164 — must not get a second country code glued on.
+        expect(v('+14155551234')).toBeNull();
+    });
+
+    it('enforces the digit range on the normalized number', () =>
+    {
+        const v = phone({ defaultCountry: 'IR' });
+        // '0123' → '123' → '+98123' → 5 digits, below the floor of 8.
+        expect(v('0123')).toBe('Phone must have 8 to 15 digits');
+    });
+});

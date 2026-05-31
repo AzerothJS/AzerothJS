@@ -49,7 +49,10 @@ function makeControlledResponse(): ControlledResponse
  */
 async function flush(): Promise<void>
 {
-    for (let i = 0; i < 20; i++) await Promise.resolve();
+    for (let i = 0; i < 20; i++)
+    {
+        await Promise.resolve();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

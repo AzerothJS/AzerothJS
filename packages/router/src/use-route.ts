@@ -55,26 +55,44 @@ function shallowEqualRecord(
     b: Record<string, string | string[]>
 ): boolean
 {
-    if (a === b) return true;
-    if (a == null || b == null) return false;
+    if (a === b)
+    {
+        return true;
+    }
+    if (a == null || b == null)
+    {
+        return false;
+    }
 
     const keysA = Object.keys(a);
-    if (keysA.length !== Object.keys(b).length) return false;
+    if (keysA.length !== Object.keys(b).length)
+    {
+        return false;
+    }
 
     for (const k of keysA)
     {
         const va = a[k];
         const vb = b[k];
-        if (va === vb) continue;
+        if (va === vb)
+        {
+            continue;
+        }
 
         // Both arrays — compare element by element. Ordering matters,
         // matching how parseQuery preserves insertion order.
         if (Array.isArray(va) && Array.isArray(vb))
         {
-            if (va.length !== vb.length) return false;
+            if (va.length !== vb.length)
+            {
+                return false;
+            }
             for (let i = 0; i < va.length; i++)
             {
-                if (va[i] !== vb[i]) return false;
+                if (va[i] !== vb[i])
+                {
+                    return false;
+                }
             }
             continue;
         }

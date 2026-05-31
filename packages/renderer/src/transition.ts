@@ -188,7 +188,10 @@ export function Transition(props: TransitionProps): HTMLElement
         to: string;
     } | null
     {
-        if (!props.name) return null;
+        if (!props.name)
+        {
+            return null;
+        }
         return {
             from: `${ props.name }-${ direction }-from`,
             active: `${ props.name }-${ direction }-active`,
@@ -221,7 +224,10 @@ export function Transition(props: TransitionProps): HTMLElement
      */
     function unmountElImmediate(): void
     {
-        if (!currentEl) return;
+        if (!currentEl)
+        {
+            return;
+        }
 
         // Abandon any in-flight enter/leave wait so its timer and
         // transitionend listener don't linger past unmount.
@@ -258,7 +264,10 @@ export function Transition(props: TransitionProps): HTMLElement
 
         function finish(): void
         {
-            if (done) return;
+            if (done)
+            {
+                return;
+            }
             done = true;
             teardown();
             callback();
@@ -269,7 +278,10 @@ export function Transition(props: TransitionProps): HTMLElement
             // Ignore transitionend from descendant elements that
             // bubble up to our target — only count the outer
             // element's own transition completion.
-            if (event.target !== el) return;
+            if (event.target !== el)
+            {
+                return;
+            }
             finish();
         }
 
@@ -280,7 +292,10 @@ export function Transition(props: TransitionProps): HTMLElement
         // wait's listener + timer without running `callback`.
         cancelPendingWait = (): void =>
         {
-            if (done) return;
+            if (done)
+            {
+                return;
+            }
             done = true;
             teardown();
         };
@@ -292,7 +307,10 @@ export function Transition(props: TransitionProps): HTMLElement
      */
     function startEnter(): void
     {
-        if (!currentEl) return;
+        if (!currentEl)
+        {
+            return;
+        }
         const cls = classFamily('enter');
         if (!cls)
         {
@@ -312,14 +330,20 @@ export function Transition(props: TransitionProps): HTMLElement
         requestAnimationFrame(() =>
         {
             // Bail if the state changed while we were waiting.
-            if (phase !== 'entering' || currentEl !== el) return;
+            if (phase !== 'entering' || currentEl !== el)
+            {
+                return;
+            }
 
             el.classList.remove(cls.from);
             el.classList.add(cls.to);
 
             waitForEndOrTimeout(el, () =>
             {
-                if (phase !== 'entering' || currentEl !== el) return;
+                if (phase !== 'entering' || currentEl !== el)
+                {
+                    return;
+                }
                 el.classList.remove(cls.active, cls.to);
                 phase = 'idle';
                 checkPending();
@@ -333,7 +357,10 @@ export function Transition(props: TransitionProps): HTMLElement
      */
     function startLeave(): void
     {
-        if (!currentEl) return;
+        if (!currentEl)
+        {
+            return;
+        }
 
         const cls = classFamily('leave');
         if (!cls)
@@ -353,14 +380,20 @@ export function Transition(props: TransitionProps): HTMLElement
 
         requestAnimationFrame(() =>
         {
-            if (phase !== 'leaving' || currentEl !== el) return;
+            if (phase !== 'leaving' || currentEl !== el)
+            {
+                return;
+            }
 
             el.classList.remove(cls.from);
             el.classList.add(cls.to);
 
             waitForEndOrTimeout(el, () =>
             {
-                if (phase !== 'leaving' || currentEl !== el) return;
+                if (phase !== 'leaving' || currentEl !== el)
+                {
+                    return;
+                }
                 if (container.contains(el))
                 {
                     container.removeChild(el);
@@ -382,7 +415,10 @@ export function Transition(props: TransitionProps): HTMLElement
      */
     function checkPending(): void
     {
-        if (pendingShouldShow === null) return;
+        if (pendingShouldShow === null)
+        {
+            return;
+        }
         const shouldShow = pendingShouldShow;
         pendingShouldShow = null;
 
@@ -411,7 +447,10 @@ export function Transition(props: TransitionProps): HTMLElement
         if (isFirstRun)
         {
             isFirstRun = false;
-            if (shouldShow) mountEl();
+            if (shouldShow)
+            {
+                mountEl();
+            }
             return;
         }
 

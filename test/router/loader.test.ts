@@ -8,7 +8,10 @@ import type { Route, RouteComponent } from '../../packages/router/src/types.ts';
 
 async function flush(): Promise<void>
 {
-    for (let i = 0; i < 4; i++) await Promise.resolve();
+    for (let i = 0; i < 4; i++)
+    {
+        await Promise.resolve();
+    }
 }
 
 // Stub component — these tests assert on the loader resource only,

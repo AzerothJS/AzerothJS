@@ -27,7 +27,10 @@ function makeLayout(name: string): RouteComponent
     {
         const div = document.createElement('div');
         div.setAttribute('data-layout', name);
-        if (children) div.appendChild(children);
+        if (children)
+        {
+            div.appendChild(children);
+        }
         return div;
     };
 }

@@ -196,7 +196,10 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
      */
     public destroy(): void
     {
-        if (this._isDestroyed) return;
+        if (this._isDestroyed)
+        {
+            return;
+        }
         this._isDestroyed = true;
 
         this.onDestroy();

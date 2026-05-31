@@ -241,7 +241,10 @@ export function createResource<T, S>(
                 // The promise might resolve AFTER a newer fetch
                 // aborted us. Drop superseded results so they
                 // don't overwrite fresher state.
-                if (controller.signal.aborted) return;
+                if (controller.signal.aborted)
+                {
+                    return;
+                }
 
                 batch(() =>
                 {
@@ -253,7 +256,10 @@ export function createResource<T, S>(
             },
             (err) =>
             {
-                if (controller.signal.aborted) return;
+                if (controller.signal.aborted)
+                {
+                    return;
+                }
 
                 batch(() =>
                 {

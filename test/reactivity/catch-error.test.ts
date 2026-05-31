@@ -170,7 +170,10 @@ describe('catchError', () =>
                 // handler at construction.
                 createEffect(() =>
                 {
-                    if (tick() > 0) throw new Error('from-outer-effect');
+                    if (tick() > 0)
+                    {
+                        throw new Error('from-outer-effect');
+                    }
                 });
 
                 // This effect is inside the inner scope and
@@ -179,7 +182,10 @@ describe('catchError', () =>
                 {
                     createEffect(() =>
                     {
-                        if (tick() > 0) throw new Error('from-inner-effect');
+                        if (tick() > 0)
+                        {
+                            throw new Error('from-inner-effect');
+                        }
                     });
                 }, innerHandler);
             }, outerHandler);

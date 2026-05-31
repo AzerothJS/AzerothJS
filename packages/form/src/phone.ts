@@ -12,7 +12,10 @@
 //   - Strips human-friendly punctuation: spaces, hyphens, dots,
 //     parentheses. So `+1 (415) 555-1234` and `+14155551234` are
 //     treated identically.
-//   - Requires the leading `+` (strict E.164 format).
+//   - Requires the leading `+` (strict E.164 format) — UNLESS a
+//     `defaultCountry` is set, in which case national-format input
+//     (no `+`, optional leading trunk `0`) is normalized to E.164
+//     first. So `09170459330` validates like `+989170459330`.
 //   - Requires 8 to 15 total digits (E.164 max is 15; 7 + at least
 //     one country-code digit is the realistic minimum).
 //   - With `countries: [...]`, checks that the digits start with
@@ -60,6 +63,27 @@ export interface PhoneOptions
     countries?: string[];
 
     /**
+     * Accept LOCAL/national format too — numbers written without a
+     * leading `+` and country code. ISO 3166-1 alpha-2 code of the
+     * country to assume for such input (e.g., `'IR'`).
+     *
+     * When set, an all-digits input with no `+` is normalized to
+     * E.164 before validation: a single leading national-trunk `0`
+     * is dropped and the country's calling code is prepended. So
+     * with `defaultCountry: 'IR'`:
+     *
+     *   '09170459330'    → '+989170459330'   ✓ (trunk 0 dropped)
+     *   '9170459330'     → '+989170459330'   ✓ (no trunk 0)
+     *   '+989170459330'  → unchanged          ✓ (already E.164)
+     *
+     * If omitted but exactly ONE country is listed in `countries`,
+     * that country is used as the default automatically (it's
+     * unambiguous). Inputs that already start with `+` are never
+     * touched.
+     */
+    defaultCountry?: string;
+
+    /**
      * Override the default error message. The same message is
      * used for every kind of failure (missing `+`, wrong digit
      * count, country mismatch); for granular messages, build
@@ -76,7 +100,10 @@ export interface PhoneOptions
  */
 function isEmpty(value: unknown): boolean
 {
-    if (value === null || value === undefined) return true;
+    if (value === null || value === undefined)
+    {
+        return true;
+    }
     return typeof value === 'string' && value.trim() === '';
 }
 
@@ -110,6 +137,16 @@ function isEmpty(value: unknown): boolean
  *         phone: phone({ countries: ['US', 'CA', 'GB', 'IR'] })
  *     }
  * });
+ *
+ * // Accept national format too (optional + and country code).
+ * // With one country, it doubles as the default — both
+ * // '09170459330' and '+989170459330' pass:
+ * createForm({
+ *     initial: { phone: '' },
+ *     validate: { phone: phone({ countries: ['IR'] }) }
+ * });
+ * // Or set it explicitly while allowing several countries:
+ * phone({ countries: ['IR', 'US'], defaultCountry: 'IR' });
  *
  * // Inputs all parse the same way after stripping punctuation:
  * //   '+1 (415) 555-1234'  ✓
@@ -153,14 +190,40 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
         ))
         : null;
 
+    // Resolve the calling code used to normalize national-format
+    // input (numbers without a leading `+`). Explicit `defaultCountry`
+    // wins; otherwise fall back to the sole `countries` entry when
+    // there's exactly one (unambiguous). `null` → no national support.
+    const defaultCountry =
+        options?.defaultCountry ??
+        (countryFilter && countryFilter.length === 1 ? countryFilter[0] : undefined);
+    const defaultCallingCode = defaultCountry
+        ? getCountry(defaultCountry)?.callingCode ?? null
+        : null;
+
     return (value: string): string | null =>
     {
-        if (isEmpty(value)) return null;
+        if (isEmpty(value))
+        {
+            return null;
+        }
 
         // Step 1: strip human punctuation. Whitespace, hyphens,
         // dots, parentheses, and Unicode soft-hyphens all go.
         // We keep `+` and digits only.
-        const cleaned = value.replace(/[\s\-().­]/g, '');
+        let cleaned = value.replace(/[\s\-().­]/g, '');
+
+        // Step 1b (optional): national-format normalization. If the
+        // input is all digits with no `+` and a default country is
+        // configured, convert it to E.164 — drop a single leading
+        // national-trunk `0`, then prepend `+<callingCode>`. This is
+        // what lets '09170459330' validate the same as
+        // '+989170459330' under `defaultCountry: 'IR'`.
+        if (defaultCallingCode !== null && /^\d+$/.test(cleaned))
+        {
+            const national = cleaned.startsWith('0') ? cleaned.slice(1) : cleaned;
+            cleaned = '+' + defaultCallingCode + national;
+        }
 
         // Step 2: must start with `+` and contain only digits
         // after that. Strict E.164.

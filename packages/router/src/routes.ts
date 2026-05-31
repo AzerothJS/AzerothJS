@@ -125,7 +125,10 @@ export function Routes(props: RoutesProps): HTMLElement
             ? (): HTMLElement => renderChain(matchResult)
             : props.fallback;
 
-        if (!factory) return;
+        if (!factory)
+        {
+            return;
+        }
 
         // Each branch owns its own root so the effect lifetimes
         // for the rendered components are scoped to this match.

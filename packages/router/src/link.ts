@@ -95,14 +95,23 @@ export interface LinkProps
  */
 function targetPathname(target: NavigateTarget): string
 {
-    if (typeof target !== 'string') return target.pathname;
+    if (typeof target !== 'string')
+    {
+        return target.pathname;
+    }
 
     const searchAt = target.indexOf('?');
     const hashAt = target.indexOf('#');
 
     let stop = target.length;
-    if (searchAt >= 0 && searchAt < stop) stop = searchAt;
-    if (hashAt >= 0 && hashAt < stop) stop = hashAt;
+    if (searchAt >= 0 && searchAt < stop)
+    {
+        stop = searchAt;
+    }
+    if (hashAt >= 0 && hashAt < stop)
+    {
+        stop = hashAt;
+    }
 
     return target.slice(0, stop);
 }
@@ -166,23 +175,41 @@ export function Link(props: LinkProps): HTMLElement
      */
     function handleClick(event: MouseEvent): void
     {
-        if (props.onClick) props.onClick(event);
+        if (props.onClick)
+        {
+            props.onClick(event);
+        }
 
         // The user's onClick may have called preventDefault()
         // because they want to suppress navigation entirely.
-        if (event.defaultPrevented) return;
+        if (event.defaultPrevented)
+        {
+            return;
+        }
 
         // Not a primary-button click (middle-click, right-click).
-        if (event.button !== 0) return;
+        if (event.button !== 0)
+        {
+            return;
+        }
 
         // Modifier keys → user wants new tab / new window / save.
-        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+        {
+            return;
+        }
 
         // target="_blank" (or any non-`_self`) → user wants new tab.
-        if (props.target && props.target !== '_self') return;
+        if (props.target && props.target !== '_self')
+        {
+            return;
+        }
 
         // External URL → don't intercept, let the browser go.
-        if (isExternal) return;
+        if (isExternal)
+        {
+            return;
+        }
 
         event.preventDefault();
 
@@ -216,7 +243,10 @@ export function Link(props: LinkProps): HTMLElement
 
                 const isActive = props.router.location().pathname === linkPathname;
 
-                if (!isActive) return String(base);
+                if (!isActive)
+                {
+                    return String(base);
+                }
                 return base.length > 0 ? `${ base } ${ props.activeClass }` : props.activeClass!;
             };
 
@@ -252,8 +282,14 @@ export function Link(props: LinkProps): HTMLElement
         class: classProp
     };
 
-    if (props.target !== undefined) linkAttrs.target = props.target;
-    if (ariaCurrentProp !== undefined) linkAttrs['aria-current'] = ariaCurrentProp;
+    if (props.target !== undefined)
+    {
+        linkAttrs.target = props.target;
+    }
+    if (ariaCurrentProp !== undefined)
+    {
+        linkAttrs['aria-current'] = ariaCurrentProp;
+    }
 
     return h('a', linkAttrs, props.children as Child);
 }

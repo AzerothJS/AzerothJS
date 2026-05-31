@@ -188,7 +188,10 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
     {
         // Cheap check: if the placeholder is still in the document,
         // there's nothing to do for this batch.
-        if (document.contains(placeholder)) return;
+        if (document.contains(placeholder))
+        {
+            return;
+        }
 
         for (const mutation of mutations)
         {
@@ -217,7 +220,10 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
      */
     function cleanup(): void
     {
-        if (cleaned) return;
+        if (cleaned)
+        {
+            return;
+        }
         cleaned = true;
 
         observer.disconnect();

@@ -95,7 +95,10 @@ describe('createBrowserHistory', () =>
         expect(listenerB).toHaveBeenCalledWith('/page-1');
         expect(listenerC).toHaveBeenCalledWith('/page-1');
 
-        for (const unsub of unsubs) unsub();
+        for (const unsub of unsubs)
+        {
+            unsub();
+        }
     });
 
     it('propagates a manual popstate event (back/forward simulation) to subscribers', () =>
