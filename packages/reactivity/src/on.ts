@@ -103,14 +103,22 @@ export function on<T extends readonly Getter<unknown>[]>(
     deps: [...T],
     fn: (
         values: { [K in keyof T]: T[K] extends Getter<infer V> ? V : never },
-        prevValues: { [K in keyof T]: T[K] extends Getter<infer V> ? V : never }
+        prevValues: { [K in keyof T]: T[K] extends Getter<infer V> ? V | undefined : never }
     ) => void,
     options?: { defer?: boolean }
 ): DisposeFn
 {
     type Values = { [K in keyof T]: T[K] extends Getter<infer V> ? V : never };
 
-    let prevValues: Values = deps.map(() => undefined) as unknown as Values;
+    // Previous values are `undefined` on the FIRST callback run
+    // (there is no prior value yet), so they're typed as
+    // `V | undefined` — this forces callers to handle the
+    // first-run case instead of crashing on `prev.something`.
+    // (With `defer: true` the first real callback already has a
+    // genuine previous value, but the type stays conservative.)
+    type PrevValues = { [K in keyof T]: T[K] extends Getter<infer V> ? V | undefined : never };
+
+    let prevValues: PrevValues = deps.map(() => undefined) as unknown as PrevValues;
     let isFirst = true;
 
     return createEffect(() =>

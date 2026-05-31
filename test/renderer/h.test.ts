@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h } from '@azerothjs/core';
+import { createSignal, createRef, h } from '@azerothjs/core';
 
 describe('h()', () =>
 {
@@ -70,6 +70,64 @@ describe('h()', () =>
 
         setCount(5);
         expect(el.textContent).toBe('Count: 5');
+    });
+
+    it('should update reactive text in place, reusing the same node', () =>
+    {
+        const [count, setCount] = createSignal(0);
+
+        const el = h('span', {}, () => `Count: ${ count() }`);
+        const node = el.firstChild;
+        expect(node).not.toBeNull();
+        expect(node?.textContent).toBe('Count: 0');
+
+        setCount(5);
+        // The primitive fast path must mutate the SAME text node,
+        // not build a replacement — no DOM node churn per tick.
+        expect(el.firstChild).toBe(node);
+        expect(node?.textContent).toBe('Count: 5');
+    });
+
+    it('should swap correctly between text and element reactive children', () =>
+    {
+        const [mode, setMode] = createSignal<'text' | 'el'>('text');
+
+        const el = h('div', {}, () =>
+            mode() === 'text' ? 'plain' : h('b', {}, 'bold')
+        );
+
+        expect(el.textContent).toBe('plain');
+        expect(el.querySelector('b')).toBeNull();
+
+        // text → element takes the full rebuild path.
+        setMode('el');
+        expect(el.querySelector('b')?.textContent).toBe('bold');
+
+        // element → text rebuilds again, then resumes in-place.
+        setMode('text');
+        expect(el.textContent).toBe('plain');
+        expect(el.querySelector('b')).toBeNull();
+    });
+
+    it('should assign a ref object to the created element', () =>
+    {
+        const ref = createRef<HTMLInputElement>();
+
+        const el = h('input', { type: 'text', ref });
+
+        expect(ref.current).toBe(el);
+        // `ref` must never leak into the DOM as an attribute.
+        expect(el.hasAttribute('ref')).toBe(false);
+    });
+
+    it('should call a ref callback with the created element', () =>
+    {
+        let captured: HTMLElement | null = null;
+
+        const el = h('div', { ref: (node: HTMLElement) => { captured = node; } });
+
+        expect(captured).toBe(el);
+        expect(el.hasAttribute('ref')).toBe(false);
     });
 
     it('should handle reactive attributes', () =>

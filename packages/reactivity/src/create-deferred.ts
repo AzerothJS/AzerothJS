@@ -134,12 +134,6 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
             return;
         }
 
-        // Clear any pending timeout (debounce reset)
-        if (timerId !== null)
-        {
-            clearTimeout(timerId);
-        }
-
         // Schedule the deferred update
         timerId = setTimeout(() =>
         {
@@ -147,7 +141,15 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
             setDeferred(() => current);
         }, timeout);
 
-        // Clean up timeout if effect re-runs or disposes
+        // The returned cleanup is the SINGLE place a pending timer
+        // is cancelled. It runs in two situations, and both are the
+        // behavior we want:
+        //
+        //   1. Before the effect re-runs (source changed again) —
+        //      this is the debounce RESET: the previous timer is
+        //      cleared right before a fresh one is scheduled above.
+        //   2. When the effect is disposed (root teardown) — stops
+        //      a stale `setDeferred` from firing after unmount.
         return () =>
         {
             if (timerId !== null)

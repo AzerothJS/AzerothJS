@@ -173,17 +173,32 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
         const mountHooks: LifecycleHook[] = [];
         const destroyHooks: LifecycleHook[] = [];
 
-        // Set module-level variables so onMount/onDestroy
-        // know where to push their callbacks
+        // Save the OUTER component's hook context and restore it
+        // afterwards (rather than clearing to null). A component's
+        // setup often creates nested components — each nested factory
+        // swaps the context to ITS arrays. Without save/restore, the
+        // outer setup's onMount/onDestroy calls AFTER a nested
+        // component was created would be lost (the context would
+        // still point at null / the inner arrays). The try/finally
+        // also guarantees restoration if setup throws (so an
+        // ErrorBoundary catching a setup error leaves a clean state).
+        const previousMountHooks = currentMountHooks;
+        const previousDestroyHooks = currentDestroyHooks;
         currentMountHooks = mountHooks;
         currentDestroyHooks = destroyHooks;
 
         // Run setup — creates state, registers hooks, returns element
-        const element = setup(props);
-
-        // Clear hook collection context
-        currentMountHooks = null;
-        currentDestroyHooks = null;
+        let element: HTMLElement;
+        try
+        {
+            element = setup(props);
+        }
+        finally
+        {
+            // Restore the outer context (supports nested components)
+            currentMountHooks = previousMountHooks;
+            currentDestroyHooks = previousDestroyHooks;
+        }
 
         // Store destroy hooks on the element so destroyComponent()
         // can find them later, regardless of where the element ends
@@ -229,6 +244,40 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
  * ```
  */
 export function destroyComponent(element: HTMLElement): void
+{
+    // Run this element's own hooks first, then recurse into its
+    // descendants. Nested components store their hooks on their OWN
+    // elements (deeper in the tree), so a single top-level call
+    // would otherwise miss them — their onDestroy / mount-cleanups
+    // would leak when an ancestor is torn down (Show/For/render all
+    // call destroyComponent on the SUBTREE ROOT, not every element).
+    runOwnDestroyHooks(element);
+
+    // `children` is a live collection, but draining hooks never
+    // removes DOM nodes (callers handle removal separately), so it's
+    // stable to iterate. Drain-in-place keeps the whole walk
+    // idempotent — re-destroying an already-torn-down subtree is a
+    // safe no-op.
+    const children = element.children;
+    for (let i = 0; i < children.length; i++)
+    {
+        const child = children[i];
+        if (child instanceof HTMLElement)
+        {
+            destroyComponent(child);
+        }
+    }
+}
+
+/**
+ * Runs (and drains) the destroy hooks attached directly to one
+ * element — both function-component and class-component hooks.
+ *
+ * @param element - The element whose own hooks should run
+ *
+ * @internal
+ */
+function runOwnDestroyHooks(element: HTMLElement): void
 {
     // Function-component hooks (registered via onMount/onDestroy).
     // We drain in-place by reading once and overwriting with [] so a

@@ -106,4 +106,43 @@ describe('createMemo()', () =>
         setFirst('Jane');
         expect(fullName()).toBe('Jane Doe');
     });
+
+    it('should not invoke a custom equals with the initial placeholder', () =>
+    {
+        const [id, setId] = createSignal(1);
+
+        // A custom equals that dereferences its arguments would
+        // throw if it ever received the initial `undefined`.
+        const user = createMemo(
+            () => ({ id: id(), name: 'A' }),
+            { equals: (a, b) => a.id === b.id }
+        );
+
+        expect(user()).toEqual({ id: 1, name: 'A' });
+
+        // Same id under the custom equals → value is NOT replaced.
+        const before = user();
+        setId(1);
+        expect(user()).toBe(before);
+
+        // Different id → recomputed.
+        setId(2);
+        expect(user()).toEqual({ id: 2, name: 'A' });
+    });
+
+    it('should store a function value verbatim, not invoke it as an updater', () =>
+    {
+        const [enabled, setEnabled] = createSignal(true);
+        const noop = (): string => 'noop';
+        const handler = (): string => 'handler';
+
+        const current = createMemo<() => string>(() => (enabled() ? handler : noop));
+
+        // The memo must return the function itself, untouched.
+        expect(current()).toBe(handler);
+        expect(current()()).toBe('handler');
+
+        setEnabled(false);
+        expect(current()).toBe(noop);
+    });
 });

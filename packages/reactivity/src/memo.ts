@@ -24,7 +24,7 @@
 //
 // ============================================================================
 
-import type { Getter, SignalOptions } from './types.ts';
+import type { Getter, SignalOptions, EqualsFn } from './types.ts';
 import { createSignal } from './signal.ts';
 import { createEffect } from './effect.ts';
 
@@ -82,15 +82,56 @@ import { createEffect } from './effect.ts';
  */
 export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Getter<T>
 {
-    // Create an internal signal to store the computed value
-    // This makes the memo act as a signal that others can subscribe to
-    const [value, setValue] = createSignal<T>(undefined as unknown as T, options);
+    // Equality used to decide whether a recomputation actually
+    // changed the value. We gate updates MANUALLY (below) instead
+    // of letting the backing signal do it, for two reasons:
+    //
+    //   1. The custom `equals` must never see the initial
+    //      placeholder. A memo's FIRST computed value is always
+    //      accepted. If the signal gated instead, it would call
+    //      `equals(undefined, firstValue)` — which crashes for any
+    //      `equals` that dereferences its arguments, e.g.
+    //      `(a, b) => a.id === b.id`.
+    //
+    //   2. We store the value through a function updater (see
+    //      below), so the backing signal can't gate it anyway.
+    const equals: EqualsFn<T> = options?.equals ?? Object.is;
 
-    // Create an effect that recomputes when dependencies change
-    // The effect subscribes to whatever signals compute() reads
+    // Internal signal that consumers subscribe to — this is what
+    // makes the memo act like a signal others can read. It's told
+    // to ALWAYS notify (`equals: () => false`) because this memo
+    // owns the equality decision: by the time we call `setValue`,
+    // we've already confirmed the value changed.
+    const [value, setValue] = createSignal<T>(undefined as unknown as T, { equals: () => false });
+
+    // Tracks whether the first computation has run, so the initial
+    // value can bypass the equality check.
+    let hasValue = false;
+    let current: T;
+
+    // Recompute whenever a dependency changes. Runs synchronously
+    // on creation, so the memo holds its real value before
+    // createMemo returns (unless created inside a batch, where the
+    // first run is deferred to the flush — ordinary effect timing).
     createEffect(() =>
     {
-        setValue(compute());
+        const next = compute();
+
+        // First value is always accepted; afterwards only propagate
+        // when the value actually changed under `equals`.
+        if (hasValue && equals(current, next))
+        {
+            return;
+        }
+
+        current = next;
+        hasValue = true;
+
+        // Store via a function updater so the value is written
+        // verbatim even when T is itself a function. A plain
+        // `setValue(next)` would treat a function `next` as an
+        // updater and invoke it — corrupting function-valued memos.
+        setValue(() => next);
     });
 
     return value;

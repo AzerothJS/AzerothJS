@@ -141,17 +141,16 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
 
     // Pre-compute the allowed calling codes once at validator
     // construction time — looked up via the country dataset and
-    // de-duplicated, since multiple ISO codes share calling codes.
-    // Sorted by length DESC so longer prefixes match before shorter
-    // ones (matters for the `startsWith` check below — if 'IN' (91)
-    // and 'AF' (93) are both listed, we want '91...' to match IN
-    // and not be confused with anything else).
+    // de-duplicated, since multiple ISO codes share one calling code
+    // (US and CA both map to '1'). Order is irrelevant: the check
+    // below is a boolean "does the number start with ANY of these
+    // codes", not a longest-prefix disambiguation.
     const allowedCallingCodes: string[] | null = countryFilter
         ? Array.from(new Set(
             countryFilter
                 .map(code => getCountry(code)?.callingCode)
                 .filter((cc): cc is string => cc !== undefined)
-        )).sort((a, b) => b.length - a.length)
+        ))
         : null;
 
     return (value: string): string | null =>
@@ -180,10 +179,10 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
             return message ?? 'Phone must have 8 to 15 digits';
         }
 
-        // Step 4 (optional): prefix must match one of the allowed
-        // countries' calling codes. The list is sorted longest-
-        // first so we never accidentally let a shorter prefix
-        // match where a longer one would.
+        // Step 4 (optional): the number must start with one of the
+        // allowed countries' calling codes. A coarse "from an allowed
+        // country?" check — it can't disambiguate a code shared by
+        // multiple countries (see the file header).
         if (allowedCallingCodes !== null)
         {
             // Empty list (e.g., user passed only unknown ISO codes)

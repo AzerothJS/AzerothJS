@@ -100,14 +100,29 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
     const getter: Getter<T> = (): T =>
     {
-        // If an effect is currently running, subscribe it
-        if (currentSubscriber !== null && !currentSubscriber.isDisposed)
+        // If an effect is currently running, subscribe it — but
+        // only ONCE per signal, even if the effect reads this
+        // signal many times in a single run (e.g. inside a loop
+        // or referenced repeatedly in a template).
+        //
+        // `subscribers.add` is already idempotent (it's a Set),
+        // but the dependency cleanup below is a brand-new closure
+        // on every call, and closures are never `===`, so the
+        // dependencies Set could never dedupe them. Guarding on
+        // `subscribers.has` keeps `dependencies` free of duplicate
+        // unsubscribe closures on this hot path — identical
+        // behavior, no redundant allocation or cleanup work.
+        if (
+            currentSubscriber !== null &&
+            !currentSubscriber.isDisposed &&
+            !subscribers.has(currentSubscriber)
+        )
         {
-            subscribers.add(currentSubscriber);
+            const sub = currentSubscriber;
+            subscribers.add(sub);
 
             // Register a cleanup function on the subscriber
             // so it can remove itself from this signal later
-            const sub = currentSubscriber;
             sub.dependencies.add(() =>
             {
                 subscribers.delete(sub);

@@ -683,7 +683,7 @@ const TimerDemo = defineComponent(() =>
             () => For(
                 { each: laps, key: (lap) => lap.id },
                 (lap, index) => h('div', { class: 'lap-item' },
-                    h('span', {}, `Lap ${ index + 1 }`),
+                    h('span', {}, () => `Lap ${ index() + 1 }`),
                     h('span', { class: 'lap-time' },
                         `${ Math.floor(lap.time / 60).toString().padStart(2, '0') }:${ (lap.time % 60).toString().padStart(2, '0') }`)
                 )

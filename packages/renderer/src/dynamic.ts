@@ -121,21 +121,27 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
     // internally for fine-grained updates.
     createEffect(() =>
     {
+        // Reading `component()` is what subscribes this effect — so a
+        // component swap re-runs it, but a props change does not.
         const Component = dynamicProps.component();
 
-        teardownBranch();
-
-        if (!Component) return;
-
-        // Read props without subscribing — initial value only.
-        const props = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
-
-        createRoot((d) =>
+        if (Component)
         {
-            branchDispose = d;
-            container.appendChild(Component(props));
-        });
+            // Read props WITHOUT subscribing — initial value only.
+            // Components subscribe to their own props internally for
+            // fine-grained updates, so a prop change must not tear
+            // down and rebuild the whole component tree.
+            const props = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
 
+            createRoot((d) =>
+            {
+                branchDispose = d;
+                container.appendChild(Component(props));
+            });
+        }
+
+        // Single teardown path — runs before every re-render (swap)
+        // and on dispose.
         return teardownBranch;
     });
 

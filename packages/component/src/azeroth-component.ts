@@ -52,7 +52,7 @@
 // ============================================================================
 
 import type { Getter, DisposeFn } from '@azerothjs/reactivity';
-import { createSignal, createEffect } from '@azerothjs/reactivity';
+import { createSignal, createEffect, untrack } from '@azerothjs/reactivity';
 import { getClassDestroyHooks, setClassDestroyHooks } from './destroy-hooks.ts';
 
 /**
@@ -221,7 +221,14 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
 
         state.set = setter;
 
-        Object.defineProperty(state, 'value', { get: () => getter(), enumerable: true });
+        // `.value` is an UNTRACKED peek — reading it never subscribes
+        // the active effect (that's what calling the state directly is
+        // for). Without untrack(), `this.count.value` inside an effect
+        // would silently create a dependency, contradicting the API.
+        Object.defineProperty(state, 'value', {
+            get: () => untrack(() => getter()),
+            enumerable: true
+        });
 
         return state;
     }
@@ -239,7 +246,14 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
         const [getter, setter] = createSignal<T>(undefined as unknown as T);
         const dispose = createEffect(() =>
         {
-            setter(fn());
+            const next = fn();
+            // Store via a function updater so the value is written
+            // verbatim even when T is itself a function. A plain
+            // `setter(next)` would treat a function `next` as an
+            // updater and invoke it — corrupting function-valued
+            // memos (the same bug `createMemo` in @azerothjs/reactivity
+            // guards against).
+            setter(() => next);
         });
         this._disposers.push(dispose);
         return getter;

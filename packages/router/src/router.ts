@@ -152,6 +152,25 @@ export interface Router
 
     /** Steps forward one history entry — same as the browser's Forward button. */
     forward(): void;
+
+    /**
+     * Resolves a `NavigateTarget` to the actual URL string that
+     * belongs in an `<a href>` — i.e. the base-relative path with
+     * the configured `base` prefix applied. External targets
+     * (`https://…`, `mailto:…`) are returned unchanged.
+     *
+     * `<Link>` uses this so its rendered `href` points at the real
+     * (base-prefixed) URL while app code keeps writing base-relative
+     * `to` values.
+     *
+     * @example
+     * ```ts
+     * // With base: '/app'
+     * router.href('/users/42');        // → '/app/users/42'
+     * router.href('https://x.com');    // → 'https://x.com' (unchanged)
+     * ```
+     */
+    href(to: NavigateTarget): string;
 }
 
 /**
@@ -283,6 +302,38 @@ export function targetToFullPath(target: NavigateTarget): string
 }
 
 /**
+ * Matches a string starting with a URL scheme (`https:`, `mailto:`,
+ * `tel:`, …) or a protocol-relative URL (`//host`). Such targets
+ * are external — the base prefix must NOT be applied to them, and
+ * `<Link>` does not intercept their clicks.
+ *
+ * Lives here (rather than in link.ts) so both the router's
+ * base-resolution and the link's click logic share one definition.
+ */
+export const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+
+/**
+ * Normalizes a configured base path into a canonical prefix:
+ *   - `undefined` / `''` / `'/'`  → `''` (no base)
+ *   - `'app'` / `'/app'` / `'/app/'` → `'/app'`
+ *
+ * The result either is empty or starts with `/` and has no trailing
+ * slash, so it can be concatenated directly in front of an absolute
+ * app path.
+ *
+ * @internal
+ */
+function normalizeBase(base: string | undefined): string
+{
+    if (!base || base === '/') return '';
+
+    let b = base;
+    if (!b.startsWith('/')) b = '/' + b;
+    if (b.endsWith('/')) b = b.slice(0, -1);
+    return b;
+}
+
+/**
  * Internal state that the location and match memos derive from.
  *
  * Bundling these into one signal means we match the URL exactly
@@ -343,6 +394,45 @@ export function createRouter(config: RouterConfig): Router
     const leaves = flattenRoutes(config.routes);
     const history: HistoryAdapter = createBrowserHistory();
 
+    // Canonical base prefix (`''` when there's no base). The router
+    // works in BASE-RELATIVE space internally: route patterns,
+    // `location.pathname`, params, and `<Link to>` are all
+    // base-relative. The prefix is added only when writing to
+    // history and stripped only when reading from it.
+    const base = normalizeBase(config.base);
+
+    /**
+     * Strips the base prefix off a raw browser pathname, returning
+     * the base-relative path — or `null` when the pathname is
+     * OUTSIDE the configured base (so nothing should match). The
+     * `base + '/'` boundary check stops `/app` from swallowing
+     * `/application`.
+     */
+    function stripBase(rawPathname: string): string | null
+    {
+        if (base === '') return rawPathname;
+        if (rawPathname === base) return '/';
+        if (rawPathname.startsWith(base + '/')) return rawPathname.slice(base.length);
+        return null;
+    }
+
+    /** Prefixes the base onto a base-relative, absolute app path. */
+    function applyBase(relPath: string): string
+    {
+        return base === '' ? relPath : base + relPath;
+    }
+
+    /**
+     * Resolves a `NavigateTarget` to the final URL string used for
+     * history writes and `<Link>` hrefs: base-prefixed for internal
+     * paths, untouched for external URLs.
+     */
+    function resolve(target: NavigateTarget): string
+    {
+        const full = targetToFullPath(target);
+        return EXTERNAL_URL.test(full) ? full : applyBase(full);
+    }
+
     function matchPathname(pathname: string): RouteMatch | null
     {
         for (const entry of leaves)
@@ -360,15 +450,22 @@ export function createRouter(config: RouterConfig): Router
         return null;
     }
 
-    function buildState(fullPath: string): InternalState
+    function buildState(rawFullPath: string): InternalState
     {
-        const { pathname, search, hash } = splitFullPath(fullPath);
+        const { pathname: rawPathname, search, hash } = splitFullPath(rawFullPath);
+
+        // Match (and expose) in base-relative space. When the URL is
+        // outside the base, `inner` is null → nothing matches, and we
+        // fall back to the raw pathname for the location snapshot.
+        const inner = stripBase(rawPathname);
+        const pathname = inner ?? rawPathname;
+
         return {
-            fullPath,
+            fullPath: pathname + search + hash,
             pathname,
             search,
             hash,
-            matched: matchPathname(pathname)
+            matched: inner === null ? null : matchPathname(inner)
         };
     }
 
@@ -404,11 +501,6 @@ export function createRouter(config: RouterConfig): Router
     });
 
     /**
-     * The matched route, with structural equality so cosmetic
-     * URL changes (e.g. only the hash) don't invalidate
-     * downstream effects that watch the matched route.
-     */
-    /**
      * Bundles everything the loader fetcher needs: the loader
      * function, the params it should receive, and a stable
      * "trigger" handle that lives only as long as the current
@@ -423,16 +515,22 @@ export function createRouter(config: RouterConfig): Router
         params: Params;
     }
 
+    /**
+     * The matched route, with structural equality so cosmetic
+     * URL changes (e.g. only the hash) don't invalidate
+     * downstream effects that watch the matched route.
+     */
     const match = createMemo<RouteMatch | null>(
         () => state().matched,
         {
             equals: (a, b) =>
             {
-                // The memo's underlying signal starts with `undefined`
-                // before the compute fn runs the first time, so
-                // equals will be invoked as `equals(undefined, …)`
-                // on the very first set. Use `==` here to catch both
-                // null and undefined in one branch.
+                // `a` and `b` are the previous and next match values
+                // — never the memo's pre-init placeholder, because a
+                // memo's first computed value always bypasses
+                // `equals`. Either side can be `null` ("no route
+                // matched"), so the `== null` branch settles that
+                // before the structural route+params comparison.
                 if (a === b) return true;
                 if (a == null || b == null) return false;
                 if (a.route !== b.route) return false;
@@ -468,7 +566,9 @@ export function createRouter(config: RouterConfig): Router
 
     function performNavigate(target: NavigateTarget, options: NavigateOptions): void
     {
-        const fullPath = targetToFullPath(target);
+        // resolve() applies the base prefix (internal targets only),
+        // so history always holds the real browser URL.
+        const fullPath = resolve(target);
 
         if (options.replace)
         {
@@ -510,6 +610,10 @@ export function createRouter(config: RouterConfig): Router
         forward(): void
         {
             history.forward();
+        },
+        href(to): string
+        {
+            return resolve(to);
         }
     };
 }

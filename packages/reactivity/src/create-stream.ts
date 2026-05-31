@@ -499,6 +499,15 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
                     return;
                 }
 
+                // A re-run / cancel / source-change may have aborted
+                // us mid-read. Stop WITHOUT appending: a new stream
+                // (if any) now owns `partial`, and `done` is managed
+                // by the driving effect — a stale run must not write
+                // either. Returning here (rather than letting a late
+                // chunk through) keeps a fetcher that ignores its
+                // signal from corrupting the fresh stream's output.
+                if (controller.signal.aborted) return;
+
                 // `{ stream: true }` is critical — keeps multi-byte
                 // UTF-8 sequences split across reads from breaking.
                 const text = decoder.decode(value, { stream: true });
@@ -568,9 +577,15 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
                 {
                     if (controller.signal.aborted)
                     {
-                        // Aborted — preserve partial, mark done,
-                        // don't surface the AbortError.
-                        setDone(true);
+                        // Superseded or cancelled — swallow the
+                        // AbortError and preserve partial. Crucially,
+                        // do NOT touch `done` here: the driving effect
+                        // already set it correctly for whatever caused
+                        // the abort (true for cancel/skip-source, and
+                        // FALSE because a fresh stream started for
+                        // refetch/source-change). Writing `done = true`
+                        // here would clobber that fresh stream — the
+                        // exact race a late-rejecting old fetch causes.
                         return;
                     }
                     batch(() =>

@@ -48,9 +48,12 @@
 import type { FieldValidator } from './create-form.ts';
 
 /**
- * Returns true for the values we treat as "no input": empty
- * string, null, undefined. Empty arrays count for non-string
- * fields (used by `required`).
+ * Returns true for the values we treat as "no input": `null`,
+ * `undefined`, and a string that is empty after trimming.
+ *
+ * Note: empty arrays are NOT handled here — `required()` checks
+ * for them separately before delegating to `isEmpty`, since the
+ * empty-array case only applies to that one validator.
  *
  * @internal
  */

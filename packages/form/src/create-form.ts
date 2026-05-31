@@ -318,7 +318,28 @@ export function createForm<T extends Record<string, unknown>>(
         const snapshot = values();
         untrack(() =>
         {
-            setErrors(runValidators(snapshot));
+            const validate = config.validate;
+            // No validators configured → leave the errors map alone,
+            // so an error injected via setError() survives. (The
+            // initial map is already all-null.)
+            if (!validate) return;
+
+            // MERGE rather than overwrite: only fields that HAVE a
+            // validator are recomputed here. Fields without one keep
+            // their current error untouched — so a server error
+            // injected via setError() (e.g. "username taken") is NOT
+            // wiped when the user edits some OTHER field. Validated
+            // fields still re-validate live on every change.
+            setErrors(prev =>
+            {
+                const next = { ...prev };
+                for (const name of fieldNames)
+                {
+                    const validator = validate[name];
+                    if (validator) next[name] = validator(snapshot[name]);
+                }
+                return next;
+            });
         });
     });
 

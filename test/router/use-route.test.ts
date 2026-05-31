@@ -63,7 +63,8 @@ function makeRouterStub(initial: Partial<RouteLocation> = {}): RouterStub
         navigate: navigateSpy,
         replace: replaceSpy,
         back: backSpy,
-        forward: forwardSpy
+        forward: forwardSpy,
+        href: (to) => (typeof to === 'string' ? to : to.pathname)
     };
 
     return { router, setLocation: setLocationInternal, navigateSpy, replaceSpy, backSpy, forwardSpy };

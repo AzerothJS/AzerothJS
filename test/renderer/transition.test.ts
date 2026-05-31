@@ -239,6 +239,45 @@ describe('<Transition>', () =>
         });
     });
 
+    it('cancels the in-flight wait on root dispose — no stray timer, immediate unmount', () =>
+    {
+        // NB: vi.useFakeTimers() also fakes requestAnimationFrame, so
+        // the custom flushRaf() mock is bypassed here — we drive the
+        // rAF (and the fallback timer) through the fake-timer clock.
+        vi.useFakeTimers();
+
+        const [isOpen, setIsOpen] = createSignal(true);
+
+        createRoot((dispose) =>
+        {
+            const container = Transition({
+                when: isOpen,
+                name: 'fade',
+                duration: 100,
+                children: () =>
+                {
+                    const div = document.createElement('div');
+                    div.setAttribute('data-id', 'child');
+                    return div;
+                }
+            });
+
+            // Start a leave, then fire the rAF so it reaches the
+            // waiting phase — this arms the transitionend fallback
+            // timer.
+            setIsOpen(false);
+            vi.advanceTimersToNextTimer(); // fire the rAF
+            expect(getChild(container)).not.toBeNull();        // mid-leave
+            expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1); // fallback armed
+
+            // Dispose mid-flight: element leaves immediately and the
+            // armed timer is cancelled (not left to fire post-unmount).
+            dispose();
+            expect(getChild(container)).toBeNull();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+    });
+
     it('queues a mid-transition toggle and applies it after the current cycle', () =>
     {
         createRoot((dispose) =>

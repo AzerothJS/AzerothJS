@@ -112,11 +112,10 @@ export function Switch(...cases: MatchCase[]): HTMLElement
 
     createEffect(() =>
     {
-        // Tear down previous branch first — disposes its effects
-        // before we throw away its DOM nodes.
-        teardownBranch();
-
-        // Find the FIRST matching case
+        // Render the FIRST matching case inside its own root. We
+        // stop at the first match, so a lower case's condition is
+        // only tracked — and thus only triggers a re-render — when
+        // no higher case is already winning.
         for (const matchCase of cases)
         {
             if (matchCase.when())
@@ -130,6 +129,9 @@ export function Switch(...cases: MatchCase[]): HTMLElement
             }
         }
 
+        // `teardownBranch` is the SINGLE teardown path: the effect
+        // runs it before every re-render AND on dispose — disposing
+        // the losing branch's effects before its DOM is discarded.
         return teardownBranch;
     });
 

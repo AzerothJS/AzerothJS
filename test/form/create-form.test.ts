@@ -275,6 +275,36 @@ describe('createForm', () =>
         });
     });
 
+    it('preserves a setError() injection on a validator-less field when another field changes', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({
+                initial: { email: '', username: '' },
+                validate: {
+                    // Only email has a client validator; username's
+                    // errors come solely from the server.
+                    email: v => v.includes('@') ? null : 'Invalid email'
+                }
+            });
+
+            // Server rejects the username.
+            form.setError('username', 'Username taken');
+            expect(form.errors().username).toBe('Username taken');
+
+            // Editing an UNRELATED field must not wipe that injected
+            // error — the validation pass only touches validated
+            // fields.
+            form.setValue('email', 'ada@example.com');
+
+            expect(form.errors().username).toBe('Username taken');
+            // …and the validated field still revalidated live.
+            expect(form.errors().email).toBeNull();
+
+            dispose();
+        });
+    });
+
     it('touched()[field] becomes true after register(name).onBlur fires', () =>
     {
         createRoot((dispose) =>

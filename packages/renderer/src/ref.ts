@@ -14,8 +14,11 @@
 //
 // HOW IT WORKS:
 //   1. createRef() returns { current: null }
-//   2. Assign the DOM element after h() creates it
-//   3. After that, ref.current points to the real DOM element
+//   2. Pass it to an element via the `ref` prop: h('input', { ref })
+//   3. h() assigns the element to ref.current as it's created
+//
+//   A `ref` can also be a callback — h('div', { ref: el => ... }) —
+//   when you just want the element without holding a ref object.
 //
 // ============================================================================
 
@@ -42,11 +45,10 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *
  * @example
  * ```ts
- * // Focus an input
+ * // Focus an input — pass the ref via the `ref` prop.
  * const inputRef = createRef<HTMLInputElement>();
  *
- * const input = h('input', { type: 'text' });
- * inputRef.current = input as HTMLInputElement;
+ * h('input', { type: 'text', ref: inputRef });
  *
  * onMount(() =>
  * {
@@ -59,6 +61,8 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  * // Draw on a canvas
  * const canvasRef = createRef<HTMLCanvasElement>();
  *
+ * h('canvas', { width: '400', height: '300', ref: canvasRef });
+ *
  * onMount(() =>
  * {
  *     const ctx = canvasRef.current?.getContext('2d');
@@ -66,11 +70,8 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *     {
  *         ctx.fillStyle = 'red';
  *         ctx.fillRect(0, 0, 100, 100);
- *      }
+ *     }
  * });
- *
- * const canvas = h('canvas', { width: '400', height: '300' });
- * canvasRef.current = canvas as HTMLCanvasElement;
  * ```
  *
  * @example
@@ -78,14 +79,13 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  * // Measure element dimensions
  * const boxRef = createRef();
  *
+ * h('div', { class: 'box', ref: boxRef }, 'Measure me');
+ *
  * onMount(() =>
  * {
  *     const rect = boxRef.current?.getBoundingClientRect();
  *     console.log('Width:', rect?.width, 'Height:', rect?.height);
  * });
- *
- * const box = h('div', { class: 'box' }, 'Measure me');
- * boxRef.current = box;
  * ```
  */
 export function createRef<T extends HTMLElement = HTMLElement>(): Ref<T>

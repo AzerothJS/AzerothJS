@@ -274,3 +274,113 @@ describe('createRouter', () =>
         });
     });
 });
+
+describe('createRouter — base path', () =>
+{
+    it('matches base-relative and exposes a base-relative pathname', () =>
+    {
+        window.history.replaceState({}, '', '/app/users/42');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+            const m = router.match();
+
+            expect(m).not.toBeNull();
+            expect(m!.route.component).toBe(UserProfile);
+            expect(m!.params).toEqual({ id: '42' });
+            // App-facing pathname is base-relative.
+            expect(router.location().pathname).toBe('/users/42');
+
+            dispose();
+        });
+    });
+
+    it('matches the index route at exactly the base path', () =>
+    {
+        window.history.replaceState({}, '', '/app');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+            expect(router.match()!.route.component).toBe(Home);
+            expect(router.location().pathname).toBe('/');
+            dispose();
+        });
+    });
+
+    it('does not match URLs outside the base', () =>
+    {
+        window.history.replaceState({}, '', '/other/users/42');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+            expect(router.match()).toBeNull();
+            dispose();
+        });
+    });
+
+    it('does not let the base swallow a similarly-prefixed path', () =>
+    {
+        // '/application' starts with '/app' textually but is NOT
+        // under the base — the boundary check must reject it.
+        window.history.replaceState({}, '', '/application');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+            expect(router.match()).toBeNull();
+            dispose();
+        });
+    });
+
+    it('prefixes the base when navigating, but keeps location base-relative', () =>
+    {
+        window.history.replaceState({}, '', '/app');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+            router.navigate('/users/42');
+
+            // Real browser URL carries the base…
+            expect(window.location.pathname).toBe('/app/users/42');
+            // …app-facing location does not.
+            expect(router.location().pathname).toBe('/users/42');
+            expect(router.match()!.route.component).toBe(UserProfile);
+
+            dispose();
+        });
+    });
+
+    it('href() applies base to internal targets and leaves external URLs alone', () =>
+    {
+        window.history.replaceState({}, '', '/app');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/app' });
+
+            expect(router.href('/users/42')).toBe('/app/users/42');
+            expect(router.href({ pathname: '/search', query: { q: 'x' } }))
+                .toBe('/app/search?q=x');
+            expect(router.href('https://example.com')).toBe('https://example.com');
+
+            dispose();
+        });
+    });
+
+    it('treats base "/" as no base', () =>
+    {
+        window.history.replaceState({}, '', '/about');
+
+        createRoot((dispose) =>
+        {
+            const router = createRouter({ routes, base: '/' });
+            expect(router.match()!.route.component).toBe(About);
+            expect(router.href('/users/42')).toBe('/users/42');
+            dispose();
+        });
+    });
+});

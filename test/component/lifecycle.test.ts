@@ -179,6 +179,67 @@ describe('Lifecycle Hooks', () =>
         ]);
     });
 
+    it('should register hooks declared AFTER a nested component is created', () =>
+    {
+        const order: string[] = [];
+
+        const Child = defineComponent(() =>
+        {
+            onMount(() => { order.push('child:mount'); });
+            return h('span', {}, 'child');
+        });
+
+        const Parent = defineComponent(() =>
+        {
+            // Create the nested component FIRST — this swaps the
+            // hook-collection context. The outer hooks below must
+            // still register against the parent.
+            const child = Child({});
+
+            onMount(() => { order.push('parent:mount'); });
+            onDestroy(() => { order.push('parent:destroy'); });
+
+            return h('div', {}, child);
+        });
+
+        const el = Parent({});
+
+        expect(order).toContain('parent:mount');
+
+        destroyComponent(el);
+        expect(order).toContain('parent:destroy');
+    });
+
+    it('should run nested components\' destroy hooks when an ancestor is destroyed', () =>
+    {
+        const order: string[] = [];
+
+        const Child = defineComponent<{ label: string }>((props) =>
+        {
+            onDestroy(() => { order.push(`${ props.label }:destroy`); });
+            return h('span', {}, props.label);
+        });
+
+        const Parent = defineComponent(() =>
+        {
+            onDestroy(() => { order.push('parent:destroy'); });
+            return h('div', {},
+                Child({ label: 'a' }),
+                h('section', {}, Child({ label: 'b' })) // nested deeper
+            );
+        });
+
+        const el = Parent({});
+
+        // Destroying only the parent element must cascade to every
+        // nested component, at any depth.
+        destroyComponent(el);
+
+        expect(order).toContain('parent:destroy');
+        expect(order).toContain('a:destroy');
+        expect(order).toContain('b:destroy');
+    });
+
     it('should work with destroyComponent on non-component elements', () =>
     {
         const el = h('div', {}, 'plain element');

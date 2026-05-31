@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AzerothComponent, destroyComponent, h, batch, untrack, on } from '@azerothjs/core';
+import { AzerothComponent, destroyComponent, h, batch, untrack, on, createEffect } from '@azerothjs/core';
 
 describe('AzerothComponent', () =>
 {
@@ -245,6 +245,61 @@ describe('AzerothComponent', () =>
 
         comp.count.set(99);
         expect(comp.count.value).toBe(99);
+    });
+
+    it('should NOT subscribe an effect when reading .value', () =>
+    {
+        class ValComp extends AzerothComponent
+        {
+            public count = this.createSignal(0);
+
+            public render(): HTMLElement
+            {
+                return h('div', {});
+            }
+        }
+
+        const comp = new ValComp({});
+        void comp.element;
+
+        let runs = 0;
+        createEffect(() =>
+        {
+            // Reading `.value` must NOT create a dependency.
+            void comp.count.value;
+            runs++;
+        });
+
+        expect(runs).toBe(1);
+
+        comp.count.set(1);
+        expect(runs).toBe(1); // effect did NOT re-run — `.value` is untracked
+    });
+
+    it('createMemo should store a function value verbatim, not invoke it', () =>
+    {
+        const fnA = (): string => 'A';
+        const fnB = (): string => 'B';
+
+        class C extends AzerothComponent
+        {
+            public flag = this.createSignal(true);
+            public handler = this.createMemo<() => string>(() => (this.flag() ? fnA : fnB));
+
+            public render(): HTMLElement
+            {
+                return h('div', {});
+            }
+        }
+
+        const comp = new C({});
+        void comp.element;
+
+        expect(comp.handler()).toBe(fnA);
+        expect(comp.handler()()).toBe('A');
+
+        comp.flag.set(false);
+        expect(comp.handler()).toBe(fnB);
     });
 
     it('should support multiple state values', () =>

@@ -36,7 +36,7 @@ import { h } from '@azerothjs/renderer';
 import type { Child } from '@azerothjs/renderer';
 import type { NavigateTarget } from './types.ts';
 import type { Router } from './router.ts';
-import { targetToFullPath } from './router.ts';
+import { EXTERNAL_URL } from './router.ts';
 
 /**
  * Props for the `<Link>` component.
@@ -82,15 +82,6 @@ export interface LinkProps
     /** Pass-through for any other anchor attribute the user wants to set. */
     [key: string]: unknown;
 }
-
-/**
- * Matches a string starting with a URL scheme (`https:`, `mailto:`,
- * `tel:`, `javascript:`, …) or a protocol-relative URL (`//host`).
- * These are treated as external and never intercepted.
- *
- * @internal
- */
-const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
 /**
  * Extracts the pathname portion of a `NavigateTarget`.
@@ -158,7 +149,12 @@ export function Link(props: LinkProps): HTMLElement
     // The href is computed once at construction. The link's `to`
     // prop is treated as static — users who need a reactive `to`
     // can wrap the link in a `<Show>` or rebuild it.
-    const href = typeof props.to === 'string' ? props.to : targetToFullPath(props.to);
+    //
+    // router.href() applies the configured base prefix to internal
+    // targets (and leaves external URLs untouched), so the rendered
+    // anchor points at the real URL even when the app is served
+    // under a sub-path.
+    const href = props.router.href(props.to);
     const isExternal = EXTERNAL_URL.test(href);
     const linkPathname = targetPathname(props.to);
 

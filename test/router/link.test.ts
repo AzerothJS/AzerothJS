@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRoot, createSignal } from '@azerothjs/core';
 import { Link } from '../../packages/router/src/link.ts';
 import type { Router } from '../../packages/router/src/router.ts';
+import { targetToFullPath } from '../../packages/router/src/router.ts';
 import type { RouteLocation } from '../../packages/router/src/types.ts';
 
 // ── Router stub ──────────────────────────────────────────────
@@ -53,7 +54,11 @@ function makeRouterStub(pathname = '/'): RouterStub
         navigate: navigateSpy,
         replace: replaceSpy,
         back: vi.fn(),
-        forward: vi.fn()
+        forward: vi.fn(),
+        // No base in this stub, so href is just the canonical
+        // full-path form — exactly what the real resolve() reduces
+        // to when base is empty.
+        href: (to) => targetToFullPath(to)
     };
 
     return { router, setLocation: setLocationInternal, navigateSpy, replaceSpy };

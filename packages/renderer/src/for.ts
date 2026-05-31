@@ -29,7 +29,7 @@
 // ============================================================================
 
 import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot, onRootDispose } from '@azerothjs/reactivity';
+import { createEffect, createRoot, createSignal, onRootDispose } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
 
 /**
@@ -70,7 +70,12 @@ export interface ForProps<T>
  *
  * @param props - ForProps with `each` (items signal) and `key` (identity fn)
  * @param renderItem - Function that creates a DOM element for one item.
- *                     Receives the item and its index.
+ *                     Receives the item and a REACTIVE index getter.
+ *                     Because keyed items are reused across reorders,
+ *                     `index` is a `() => number` accessor (not a plain
+ *                     number) so index-dependent bindings stay correct
+ *                     when items move. Read it inside a reactive child
+ *                     (e.g. `() => index() + 1`) to track changes.
  *
  * @returns An HTMLElement containing the rendered list
  *
@@ -88,7 +93,9 @@ export interface ForProps<T>
  * For(
  *   { each: todos, key: (todo) => todo.id },
  *   (todo, index) => h('div', {},
- *     `${ index + 1 }. ${ todo.text }`
+ *     // `index` is a getter — wrap in a function to stay reactive
+ *     // across reorders.
+ *     () => `${ index() + 1 }. ${ todo.text }`
  *   )
  * );
  * ```
@@ -127,9 +134,20 @@ interface KeyEntry
 {
     el: HTMLElement;
     dispose: DisposeFn;
+
+    /**
+     * Pushes the item's CURRENT position into its reactive index
+     * signal. Called when a reused item shifts to a new index on
+     * reorder, so any `index()`-dependent binding updates without
+     * the element being rebuilt.
+     */
+    setIndex: (index: number) => void;
 }
 
-export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) => HTMLElement): HTMLElement
+export function For<T>(
+    props: ForProps<T>,
+    renderItem: (item: T, index: () => number) => HTMLElement
+): HTMLElement
 {
     const container = document.createElement('span');
     container.style.display = 'contents';
@@ -154,6 +172,12 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
 
             if (existing)
             {
+                // Reused element — but its position may have changed.
+                // Push the new index into its reactive signal so
+                // `index()`-dependent bindings update on reorder
+                // (no-op when the index is unchanged, since the
+                // signal gates on equality).
+                existing.setIndex(i);
                 newOrder[i] = existing.el;
                 newMap.set(key, existing);
                 keyMap.delete(key);
@@ -162,13 +186,20 @@ export function For<T>(props: ForProps<T>, renderItem: (item: T, index: number) 
             {
                 let el!: HTMLElement;
                 let dispose!: DisposeFn;
+
+                // Each item owns a reactive index signal. renderItem
+                // receives the getter, so a binding like
+                // `() => `${ index() + 1 }.`` stays correct across
+                // reorders without rebuilding the element.
+                const [index, setIndex] = createSignal(i);
+
                 createRoot((d) =>
                 {
                     dispose = d;
-                    el = renderItem(item, i);
+                    el = renderItem(item, index);
                 });
                 newOrder[i] = el;
-                newMap.set(key, { el, dispose });
+                newMap.set(key, { el, dispose, setIndex });
             }
         }
 

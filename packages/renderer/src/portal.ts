@@ -40,6 +40,8 @@
 //
 // ============================================================================
 
+import type { DisposeFn } from '@azerothjs/reactivity';
+import { createRoot, onRootDispose } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
 
 /**
@@ -148,7 +150,21 @@ export interface PortalProps
 export function Portal(props: PortalProps, children: () => HTMLElement): HTMLElement
 {
     const target = props.target ?? document.body;
-    const content = children();
+
+    // Build the portaled content inside its OWN root. The content
+    // lives outside the parent tree, so it can't rely on a parent
+    // element being removed to dispose its reactive effects — we
+    // own them here and tear them down in cleanup() instead. Without
+    // this, a manual destroyPortal() (or a portal at the top level
+    // with no surrounding scope) would remove the DOM but leak the
+    // effects, which keep mutating a detached node.
+    let content!: HTMLElement;
+    let contentDispose!: DisposeFn;
+    createRoot((d) =>
+    {
+        contentDispose = d;
+        content = children();
+    });
 
     // Append the content to the target (outside parent tree)
     target.appendChild(content);
@@ -189,13 +205,23 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
 
     observer.observe(document, { childList: true, subtree: true });
 
+    let cleaned = false;
+
     /**
-     * Removes the portaled content from the target and
-     * disconnects the MutationObserver.
+     * Disposes the content's reactive effects, removes it from the
+     * target, and disconnects the MutationObserver.
+     *
+     * Idempotent — it can be reached from three paths (the observer,
+     * `destroyPortal()`, and the surrounding scope's teardown), and
+     * any of them may fire more than once.
      */
     function cleanup(): void
     {
+        if (cleaned) return;
+        cleaned = true;
+
         observer.disconnect();
+        contentDispose();
 
         if (target.contains(content))
         {
@@ -203,6 +229,13 @@ export function Portal(props: PortalProps, children: () => HTMLElement): HTMLEle
             target.removeChild(content);
         }
     }
+
+    // If the SURROUNDING reactive scope tears down (the component or
+    // route that mounted this Portal unmounts), clean up
+    // synchronously — don't wait on the placeholder-removal mutation
+    // being observed. The MutationObserver above stays as the backup
+    // for removals that happen outside a reactive scope's teardown.
+    onRootDispose(cleanup);
 
     // Store cleanup function for manual use via destroyPortal().
     // Symbol-keyed so user code can't collide with us.

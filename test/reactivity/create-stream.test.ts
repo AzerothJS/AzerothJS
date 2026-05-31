@@ -366,6 +366,64 @@ describe('createStream — lifecycle', () =>
             dispose();
         });
     });
+
+    it('keeps done() false when a superseded stream rejects on abort', async () =>
+    {
+        await createRoot(async (dispose) =>
+        {
+            // Simulate a REAL fetch: aborting the signal errors the
+            // response body, so the superseded stream's reader.read()
+            // rejects (the controlled-response helper alone ignores
+            // the signal, which is exactly why this race was invisible
+            // to the other tests).
+            const responses = [makeControlledResponse(), makeControlledResponse()];
+            let callCount = 0;
+
+            const [topic, setTopic] = createSignal('a');
+
+            const stream = createStream({
+                source: () => topic(),
+                fetcher: ({ signal }) =>
+                {
+                    const r = responses[callCount];
+                    callCount++;
+                    signal.addEventListener('abort', () =>
+                    {
+                        r.error(new Error('aborted'));
+                    });
+                    return Promise.resolve(r.response);
+                },
+                parse: 'text'
+            });
+
+            responses[0].push('first');
+            await flush();
+            expect(stream.partial()).toBe('first');
+            expect(stream.done()).toBe(false);
+
+            // Source change: stream #0 is aborted (its reader now
+            // rejects) and stream #1 starts.
+            setTopic('b');
+            await flush();
+
+            // Stream #0's late rejection must NOT flip done() — stream
+            // #1 is actively in flight.
+            expect(stream.done()).toBe(false);
+            expect(stream.partial()).toBe('');
+            expect(stream.error()).toBeNull();
+
+            responses[1].push('second');
+            await flush();
+            expect(stream.partial()).toBe('second');
+            expect(stream.done()).toBe(false);
+
+            responses[1].close();
+            await flush();
+            expect(stream.done()).toBe(true);
+
+            dispose();
+        });
+    });
 });
 
 describe('createStream — custom parser', () =>

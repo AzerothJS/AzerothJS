@@ -42,10 +42,11 @@ import type { Router } from './router.ts';
  * re-fire only when their slice has *actually* changed, not on
  * every location update that happens to leave their slice intact.
  *
- * Tolerates `undefined` on either side because `createMemo`'s
- * underlying signal starts at `undefined` and triggers an initial
- * `equals(undefined, firstValue)` call before the compute fn has
- * ever run.
+ * `createMemo` never invokes `equals` with its initial placeholder
+ * (a memo's first computed value is always accepted), so in
+ * practice both arguments are real record objects. The `a === b`
+ * fast path and the `== null` guard below are kept as cheap
+ * defensive checks regardless.
  *
  * @internal
  */

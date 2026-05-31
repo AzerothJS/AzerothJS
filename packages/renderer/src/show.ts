@@ -116,22 +116,24 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
 
     createEffect(() =>
     {
-        // Tear down the previous branch's effects/components before
-        // swapping. Without this, every toggle leaks every effect
-        // created inside the rendered subtree.
-        teardownBranch();
-
+        // Render the active branch — `children` when `when` is true,
+        // otherwise the optional `fallback` — inside its own root so
+        // the whole subtree (effects + components) disposes as one
+        // unit on the next swap.
         const factory = props.when() ? children : props.fallback;
-        if (!factory) return;
-
-        // Own the new branch in its own root so we can dispose it
-        // on the next swap.
-        createRoot((d) =>
+        if (factory)
         {
-            branchDispose = d;
-            container.appendChild(factory());
-        });
+            createRoot((d) =>
+            {
+                branchDispose = d;
+                container.appendChild(factory());
+            });
+        }
 
+        // `teardownBranch` is the SINGLE teardown path: the effect
+        // runs it before every re-render AND on dispose. Without
+        // this, every toggle would leak the effects created inside
+        // the rendered subtree.
         return teardownBranch;
     });
 

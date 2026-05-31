@@ -170,6 +170,15 @@ export function Transition(props: TransitionProps): HTMLElement
     let pendingShouldShow: boolean | null = null;
 
     /**
+     * Cancels the in-flight `transitionend`/timeout wait, if any —
+     * detaching its listener and clearing its timer WITHOUT running
+     * the completion callback. `null` when no wait is armed. Only
+     * ever one wait is in flight at a time (the phase machine never
+     * overlaps them), so a single slot is enough.
+     */
+    let cancelPendingWait: (() => void) | null = null;
+
+    /**
      * Returns the 3-class family for one direction, or `null`
      * when no `name` was provided.
      */
@@ -213,6 +222,11 @@ export function Transition(props: TransitionProps): HTMLElement
     function unmountElImmediate(): void
     {
         if (!currentEl) return;
+
+        // Abandon any in-flight enter/leave wait so its timer and
+        // transitionend listener don't linger past unmount.
+        cancelPendingWait?.();
+
         const el = currentEl;
         const dispose = currentDispose;
         currentEl = null;
@@ -235,12 +249,18 @@ export function Transition(props: TransitionProps): HTMLElement
         const duration = props.duration ?? FALLBACK_TIMEOUT_MS;
         let done = false;
 
+        function teardown(): void
+        {
+            el.removeEventListener('transitionend', handler);
+            clearTimeout(timer);
+            cancelPendingWait = null;
+        }
+
         function finish(): void
         {
             if (done) return;
             done = true;
-            el.removeEventListener('transitionend', handler);
-            clearTimeout(timer);
+            teardown();
             callback();
         }
 
@@ -255,6 +275,15 @@ export function Transition(props: TransitionProps): HTMLElement
 
         el.addEventListener('transitionend', handler);
         const timer = setTimeout(finish, duration);
+
+        // Allow a forced unmount (root dispose) to detach this
+        // wait's listener + timer without running `callback`.
+        cancelPendingWait = (): void =>
+        {
+            if (done) return;
+            done = true;
+            teardown();
+        };
     }
 
     /**

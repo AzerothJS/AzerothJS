@@ -203,20 +203,31 @@ export function createSelector<T>(
                 subscribers.set(key, subs);
             }
 
-            subs.add(currentSubscriber);
-
-            // Register cleanup so the subscriber can unregister
-            // when it's disposed or re-runs
-            const sub = currentSubscriber;
-            sub.dependencies.add(() =>
+            // Subscribe this effect to the key only ONCE, even if it
+            // calls isSelected(key) several times in a single run.
+            // `subs.add` is idempotent, but the cleanup below is a
+            // fresh closure every call — guarding on `subs.has`
+            // keeps `dependencies` free of duplicates. This matters:
+            // createSelector exists for large lists, so this is the
+            // hottest path in the framework.
+            if (!subs.has(currentSubscriber))
             {
-                subs!.delete(sub);
-                // Clean up empty sets to prevent memory leaks
-                if (subs!.size === 0)
+                const sub = currentSubscriber;
+                const keySubs = subs;
+                keySubs.add(sub);
+
+                // Register cleanup so the subscriber can unregister
+                // when it's disposed or re-runs
+                sub.dependencies.add(() =>
                 {
-                    subscribers.delete(key);
-                }
-            });
+                    keySubs.delete(sub);
+                    // Clean up empty sets to prevent memory leaks
+                    if (keySubs.size === 0)
+                    {
+                        subscribers.delete(key);
+                    }
+                });
+            }
         }
 
         return equals(currentValue, key);
