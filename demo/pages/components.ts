@@ -60,8 +60,10 @@ const RefDemo = defineComponent(() =>
                 }
             } }, 'Clear')
         ),
-        Show({ when: () => name().trim().length > 0 },
-            () => h('p', { class: 'greeting' }, () => `Hello, ${ name().trim() }! 👋`))
+        Show({
+            when: () => name().trim().length > 0,
+            children: () => h('p', { class: 'greeting' }, () => `Hello, ${ name().trim() }! 👋`)
+        })
     );
 });
 

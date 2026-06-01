@@ -1,0 +1,34 @@
+// Scoped styles authored right next to the markup, in a .azeroth
+// file. `css` hashes the rules, scopes the class names, and injects
+// the stylesheet once — no global class collisions.
+
+import { createSignal, css } from '@azerothjs/core';
+
+const styles = css`
+    .card {
+        padding: 22px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #1e1b4b, #0f172a);
+        border: 1px solid rgba(139, 92, 246, 0.45);
+        cursor: pointer;
+        user-select: none;
+        transition: transform 0.15s ease;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .title { font-weight: 700; letter-spacing: -0.01em; }
+    .count { font-family: 'JetBrains Mono', monospace; font-size: 2.4rem; color: #2dd4bf; }
+    .hint { color: #94a3b8; font-size: 0.8rem; margin-top: 6px; }
+`;
+
+export default function StyledCard()
+{
+    const [n, setN] = createSignal(0);
+
+    return (
+        <div class={styles.card} onClick={() => setN(c => c + 1)}>
+            <div class={styles.title}>Scoped styles via css``</div>
+            <div class={styles.count}>{n()}</div>
+            <div class={styles.hint}>Click anywhere — class names are hashed and the stylesheet is injected once.</div>
+        </div>
+    );
+}

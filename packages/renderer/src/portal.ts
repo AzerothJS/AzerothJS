@@ -97,6 +97,13 @@ export interface PortalProps
      * Defaults to document.body if not specified.
      */
     target?: HTMLElement;
+
+    /**
+     * Thunk that builds the content to portal into `target`.
+     * A prop (not positional) so the manual API matches the
+     * compiled `<Portal>…</Portal>` form.
+     */
+    children: () => HTMLElement;
 }
 
 /**
@@ -108,22 +115,21 @@ export interface PortalProps
  * the portaled content is automatically cleaned up via
  * MutationObserver.
  *
- * @param props - PortalProps with optional target element
- * @param children - Function that returns the content to portal
+ * @param props - PortalProps with `children` and optional `target`
  *
  * @returns A hidden placeholder element in the original tree
  *
  * @example
  * ```ts
  * // Render a modal into document.body
- * Portal({}, () =>
+ * Portal({ children: () =>
  *   h('div', { class: 'modal-overlay' },
  *     h('div', { class: 'modal' },
  *       h('h2', {}, 'Are you sure?'),
  *       h('button', { onClick: closeModal }, 'Close')
  *     )
  *   )
- * );
+ * });
  * ```
  *
  * @example
@@ -131,24 +137,14 @@ export interface PortalProps
  * // Render into a specific container
  * const tooltipLayer = document.getElementById('tooltip-layer')!;
  *
- * Portal({ target: tooltipLayer }, () =>
+ * Portal({ target: tooltipLayer, children: () =>
  *   h('div', { class: 'tooltip' }, 'Helpful tip!')
- * );
- * ```
- *
- * @example
- * ```ts
- * // Works with Show — auto-cleanup when condition becomes false
- * Show(
- *   { when: isOpen },
- *   () => Portal({}, () =>
- *     h('div', { class: 'modal' }, 'I auto-clean on close!')
- *   )
- * );
+ * });
  * ```
  */
-export function Portal(props: PortalProps, children: () => HTMLElement): HTMLElement
+export function Portal(props: PortalProps): HTMLElement
 {
+    const children = props.children;
     const target = props.target ?? document.body;
 
     // Build the portaled content inside its OWN root. The content

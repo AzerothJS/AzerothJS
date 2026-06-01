@@ -7,10 +7,10 @@ describe('Show()', () =>
     {
         const [visible] = createSignal(true);
 
-        const el = Show(
-            { when: visible },
-            () => h('p', {}, 'Hello')
-        );
+        const el = Show({
+            when: visible,
+            children: () => h('p', {}, 'Hello')
+        });
 
         expect(el.textContent).toBe('Hello');
     });
@@ -19,10 +19,10 @@ describe('Show()', () =>
     {
         const [visible] = createSignal(false);
 
-        const el = Show(
-            { when: visible },
-            () => h('p', {}, 'Hello')
-        );
+        const el = Show({
+            when: visible,
+            children: () => h('p', {}, 'Hello')
+        });
 
         expect(el.textContent).toBe('');
     });
@@ -33,8 +33,9 @@ describe('Show()', () =>
 
         const el = Show({
             when: visible,
-            fallback: () => h('p', {}, 'Hidden')
-        }, () => h('p', {}, 'Visible'));
+            fallback: () => h('p', {}, 'Hidden'),
+            children: () => h('p', {}, 'Visible')
+        });
 
         expect(el.textContent).toBe('Hidden');
     });
@@ -45,8 +46,9 @@ describe('Show()', () =>
 
         const el = Show({
             when: visible,
-            fallback: () => h('p', {}, 'Hidden')
-        }, () => h('p', {}, 'Visible'));
+            fallback: () => h('p', {}, 'Hidden'),
+            children: () => h('p', {}, 'Visible')
+        });
 
         expect(el.textContent).toBe('Visible');
 
@@ -61,10 +63,10 @@ describe('Show()', () =>
     {
         const [visible] = createSignal(true);
 
-        const el = Show(
-            { when: visible },
-            () => h('p', {}, 'Hello')
-        );
+        const el = Show({
+            when: visible,
+            children: () => h('p', {}, 'Hello')
+        });
 
         expect(el.style.display).toBe('contents');
     });

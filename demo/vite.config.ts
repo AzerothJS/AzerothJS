@@ -1,14 +1,19 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+// Import the plugin from source so the demo always uses the latest
+// compiler (no build step), matching the @azerothjs/* aliases below.
+import { azeroth } from '../packages/compiler/src/index.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 
 // Vite config for the demo. Mirrors the workspace aliases in
 // vitest.config.ts so the demo imports @azerothjs/* directly from
-// package source — no build step required.
+// package source — no build step required. The azeroth() plugin
+// compiles `.azeroth` files (markup → h()) on the fly.
 export default defineConfig({
+    plugins: [azeroth()],
     resolve:
     {
         alias:

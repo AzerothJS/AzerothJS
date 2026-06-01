@@ -7,10 +7,11 @@ describe('For()', () =>
     {
         const [items] = createSignal(['Apple', 'Banana', 'Cherry']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         expect(el.children.length).toBe(3);
         expect(el.children[0].textContent).toBe('Apple');
@@ -22,10 +23,11 @@ describe('For()', () =>
     {
         const [items] = createSignal<string[]>([]);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         expect(el.children.length).toBe(0);
     });
@@ -34,10 +36,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         expect(el.children.length).toBe(2);
 
@@ -50,10 +53,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B', 'C']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         expect(el.children.length).toBe(3);
 
@@ -67,10 +71,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B', 'C']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         const firstChild = el.children[0];
         const thirdChild = el.children[2];
@@ -85,10 +90,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B', 'C']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         const a = el.children[0];
         const b = el.children[1];
@@ -112,10 +118,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal([1, 2, 3, 4]);
 
-        const el = For(
-            { each: items, key: (n) => n },
-            (n) => h('li', {}, String(n))
-        );
+        const el = For({
+            each: items,
+            key: (n) => n,
+            children: (n) => h('li', {}, String(n))
+        });
 
         const original = Array.from(el.children);
 
@@ -135,10 +142,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B', 'C', 'D']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item) => h('p', {}, item)
+        });
 
         const a = el.children[0];
 
@@ -164,10 +172,11 @@ describe('For()', () =>
             { id: 2, text: 'Walk dog' }
         ]);
 
-        const el = For(
-            { each: todos, key: (todo) => todo.id },
-            (todo) => h('div', {}, todo.text)
-        );
+        const el = For({
+            each: todos,
+            key: (todo) => todo.id,
+            children: (todo) => h('div', {}, todo.text)
+        });
 
         expect(el.children.length).toBe(2);
         expect(el.children[0].textContent).toBe('Buy milk');
@@ -181,10 +190,11 @@ describe('For()', () =>
     {
         const [items] = createSignal(['A', 'B', 'C']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item, index) => h('p', {}, () => `${ index() }: ${ item }`)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item, index) => h('p', {}, () => `${ index() }: ${ item }`)
+        });
 
         expect(el.children[0].textContent).toBe('0: A');
         expect(el.children[1].textContent).toBe('1: B');
@@ -195,10 +205,11 @@ describe('For()', () =>
     {
         const [items, setItems] = createSignal(['A', 'B', 'C']);
 
-        const el = For(
-            { each: items, key: (item) => item },
-            (item, index) => h('p', {}, () => `${ index() }: ${ item }`)
-        );
+        const el = For({
+            each: items,
+            key: (item) => item,
+            children: (item, index) => h('p', {}, () => `${ index() }: ${ item }`)
+        });
 
         const a = el.children[0]; // "0: A"
 
@@ -217,10 +228,11 @@ describe('For()', () =>
     {
         const [items] = createSignal(['X', 'Y', 'Z']);
 
-        const el = For(
-            { each: items, key: (_item, i) => i },
-            (item) => h('p', {}, item)
-        );
+        const el = For({
+            each: items,
+            key: (_item, i) => i,
+            children: (item) => h('p', {}, item)
+        });
 
         expect(el.children.length).toBe(3);
         expect(el.children[0].textContent).toBe('X');

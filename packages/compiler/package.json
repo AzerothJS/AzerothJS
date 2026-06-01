@@ -17,6 +17,14 @@
         "dist"
     ],
     "sideEffects": false,
+    "peerDependencies": {
+        "vite": ">=5"
+    },
+    "peerDependenciesMeta": {
+        "vite": {
+            "optional": true
+        }
+    },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"

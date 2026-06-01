@@ -164,10 +164,11 @@ describe('AzerothJS — Public API', () =>
         {
             expect(Show).toBeDefined();
             const [visible, setVisible] = createSignal(true);
-            const el = Show(
-                { when: visible, fallback: () => h('p', {}, 'Hidden') },
-                () => h('p', {}, 'Visible')
-            );
+            const el = Show({
+                when: visible,
+                fallback: () => h('p', {}, 'Hidden'),
+                children: () => h('p', {}, 'Visible')
+            });
 
             expect(el.textContent).toBe('Visible');
             setVisible(false);
@@ -178,10 +179,11 @@ describe('AzerothJS — Public API', () =>
         {
             expect(For).toBeDefined();
             const [items, setItems] = createSignal(['A', 'B', 'C']);
-            const el = For(
-                { each: items, key: (item) => item },
-                (item) => h('span', {}, item)
-            );
+            const el = For({
+                each: items,
+                key: (item) => item,
+                children: (item) => h('span', {}, item)
+            });
 
             expect(el.children.length).toBe(3);
             expect(el.textContent).toBe('ABC');
@@ -197,12 +199,10 @@ describe('AzerothJS — Public API', () =>
             expect(Match).toBeDefined();
 
             const [status, setStatus] = createSignal('loading');
-            const el = Switch(
-                Match({ when: () => status() === 'loading' },
-                    () => h('p', {}, 'Loading...')),
-                Match({ when: () => status() === 'done' },
-                    () => h('p', {}, 'Done!'))
-            );
+            const el = Switch({ children: [
+                Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+                Match({ when: () => status() === 'done', children: () => h('p', {}, 'Done!') })
+            ] });
 
             expect(el.textContent).toBe('Loading...');
             setStatus('done');
@@ -215,7 +215,7 @@ describe('AzerothJS — Public API', () =>
             expect(destroyPortal).toBeDefined();
 
             const target = document.createElement('div');
-            const placeholder = Portal({ target }, () => h('p', {}, 'Portaled'));
+            const placeholder = Portal({ target, children: () => h('p', {}, 'Portaled') });
 
             expect(target.textContent).toBe('Portaled');
             expect(placeholder.style.display).toBe('none');
@@ -493,14 +493,15 @@ describe('AzerothJS — Public API', () =>
                 h('p', {
                     style: styleMap({ color: 'green', fontWeight: 'bold' })
                 }, () => `${ count() } items`),
-                For(
-                    { each: filteredItems, key: (item) => item.id },
-                    (item) => h('div', {}, item.text)
-                ),
-                Show(
-                    { when: () => count() === 0 },
-                    () => h('p', {}, 'No items match your filter')
-                )
+                For({
+                    each: filteredItems,
+                    key: (item) => item.id,
+                    children: (item) => h('div', {}, item.text)
+                }),
+                Show({
+                    when: () => count() === 0,
+                    children: () => h('p', {}, 'No items match your filter')
+                })
                 );
             });
 

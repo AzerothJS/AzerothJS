@@ -32,11 +32,12 @@ export { Transition } from './transition.ts';
 export { createRef } from './ref.ts';
 export { classList } from './class-binding.ts';
 export { styleMap } from './style-binding.ts';
+export { css, collectStyleSheet, resetStyleSheet, type ScopedClasses } from './css.ts';
 
 export type { Props, Child } from './types.ts';
 export type { ShowProps } from './show.ts';
 export type { ForProps } from './for.ts';
-export type { MatchCase } from './switch.ts';
+export type { MatchCase, MatchProps, SwitchProps } from './switch.ts';
 export type { PortalProps } from './portal.ts';
 export type { DynamicProps } from './dynamic.ts';
 export type { SuspenseProps } from './suspense.ts';

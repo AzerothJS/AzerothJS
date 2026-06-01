@@ -7,14 +7,11 @@ describe('Switch() and Match()', () =>
     {
         const [status] = createSignal('loading');
 
-        const el = Switch(
-            Match({ when: () => status() === 'loading' },
-                () => h('p', {}, 'Loading...')),
-            Match({ when: () => status() === 'error' },
-                () => h('p', {}, 'Error!')),
-            Match({ when: () => status() === 'success' },
-                () => h('p', {}, 'Done!'))
-        );
+        const el = Switch({ children: [
+            Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+            Match({ when: () => status() === 'error', children: () => h('p', {}, 'Error!') }),
+            Match({ when: () => status() === 'success', children: () => h('p', {}, 'Done!') })
+        ] });
 
         expect(el.textContent).toBe('Loading...');
     });
@@ -23,28 +20,37 @@ describe('Switch() and Match()', () =>
     {
         const [status] = createSignal('unknown');
 
-        const el = Switch(
-            Match({ when: () => status() === 'loading' },
-                () => h('p', {}, 'Loading...')),
-            Match({ when: () => status() === 'success' },
-                () => h('p', {}, 'Done!'))
-        );
+        const el = Switch({ children: [
+            Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+            Match({ when: () => status() === 'success', children: () => h('p', {}, 'Done!') })
+        ] });
 
         expect(el.textContent).toBe('');
+    });
+
+    it('should render the fallback when no case matches', () =>
+    {
+        const [status] = createSignal('unknown');
+
+        const el = Switch({
+            fallback: () => h('p', {}, 'Fallback'),
+            children: [
+                Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') })
+            ]
+        });
+
+        expect(el.textContent).toBe('Fallback');
     });
 
     it('should swap content when condition changes', () =>
     {
         const [status, setStatus] = createSignal('loading');
 
-        const el = Switch(
-            Match({ when: () => status() === 'loading' },
-                () => h('p', {}, 'Loading...')),
-            Match({ when: () => status() === 'error' },
-                () => h('p', {}, 'Error!')),
-            Match({ when: () => status() === 'success' },
-                () => h('p', {}, 'Done!'))
-        );
+        const el = Switch({ children: [
+            Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+            Match({ when: () => status() === 'error', children: () => h('p', {}, 'Error!') }),
+            Match({ when: () => status() === 'success', children: () => h('p', {}, 'Done!') })
+        ] });
 
         expect(el.textContent).toBe('Loading...');
 
@@ -55,16 +61,14 @@ describe('Switch() and Match()', () =>
         expect(el.textContent).toBe('Done!');
     });
 
-    it('should support a default fallback case', () =>
+    it('should support a default match case', () =>
     {
         const [status, setStatus] = createSignal('unknown');
 
-        const el = Switch(
-            Match({ when: () => status() === 'loading' },
-                () => h('p', {}, 'Loading...')),
-            Match({ when: () => true },
-                () => h('p', {}, 'Default'))
-        );
+        const el = Switch({ children: [
+            Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+            Match({ when: () => true, children: () => h('p', {}, 'Default') })
+        ] });
 
         expect(el.textContent).toBe('Default');
 
@@ -75,14 +79,26 @@ describe('Switch() and Match()', () =>
         expect(el.textContent).toBe('Default');
     });
 
+    it('accepts children as a thunk (the compiled .azeroth form)', () =>
+    {
+        const [status, setStatus] = createSignal('b');
+
+        const el = Switch({ children: () => [
+            Match({ when: () => status() === 'a', children: () => h('p', {}, 'A') }),
+            Match({ when: () => status() === 'b', children: () => h('p', {}, 'B') })
+        ] });
+
+        expect(el.textContent).toBe('B');
+        setStatus('a');
+        expect(el.textContent).toBe('A');
+    });
+
     it('should only render the FIRST matching case', () =>
     {
-        const el = Switch(
-            Match({ when: () => true },
-                () => h('p', {}, 'First')),
-            Match({ when: () => true },
-                () => h('p', {}, 'Second'))
-        );
+        const el = Switch({ children: [
+            Match({ when: () => true, children: () => h('p', {}, 'First') }),
+            Match({ when: () => true, children: () => h('p', {}, 'Second') })
+        ] });
 
         expect(el.textContent).toBe('First');
         expect(el.children.length).toBe(1);

@@ -58,6 +58,14 @@ export interface ShowProps
      * If not provided, nothing is rendered.
      */
     fallback?: () => HTMLElement;
+
+    /**
+     * The content shown when `when` is true. A thunk so it's only
+     * built while visible. Passed as a prop (not a positional
+     * argument) so the manual API matches the compiled `.azeroth`
+     * form: `<Show when={…}>…</Show>`.
+     */
+    children: () => HTMLElement;
 }
 
 /**
@@ -67,8 +75,7 @@ export interface ShowProps
  * fallback (or nothing). Automatically swaps when the
  * condition changes.
  *
- * @param props - ShowProps with `when` condition and optional `fallback`
- * @param children - Function that returns content to show when true
+ * @param props - ShowProps with `when`, `children`, and optional `fallback`
  *
  * @returns An HTMLElement that reactively shows/hides content
  *
@@ -79,35 +86,26 @@ export interface ShowProps
  *
  * Show({
  *   when: isLoggedIn,
- *   fallback: () => h('p', {}, 'Please log in')
- * }, () => h('div', {},
- *   h('p', {}, 'Welcome back!'),
- *   h('button', { onClick: logout }, 'Logout')
- * ));
+ *   fallback: () => h('p', {}, 'Please log in'),
+ *   children: () => h('div', {},
+ *     h('p', {}, 'Welcome back!'),
+ *     h('button', { onClick: logout }, 'Logout')
+ *   )
+ * });
  * ```
  *
  * @example
  * ```ts
  * // Without fallback — hides when false
- * Show({ when: showDetails }, () =>
- *   h('div', { class: 'details' },
+ * Show({
+ *   when: showDetails,
+ *   children: () => h('div', { class: 'details' },
  *     h('p', {}, () => `Email: ${ email() }`)
  *   )
- * );
- * ```
- *
- * @example
- * ```ts
- * // Works with Portal — auto-cleanup when condition becomes false
- * Show(
- *   { when: isOpen },
- *   () => Portal({}, () =>
- *     h('div', { class: 'modal' }, 'I auto-clean on close!')
- *   )
- * );
+ * });
  * ```
  */
-export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
+export function Show(props: ShowProps): HTMLElement
 {
     const container = document.createElement('span');
     container.style.display = 'contents';
@@ -120,7 +118,7 @@ export function Show(props: ShowProps, children: () => HTMLElement): HTMLElement
         // otherwise the optional `fallback` — inside its own root so
         // the whole subtree (effects + components) disposes as one
         // unit on the next swap.
-        const factory = props.when() ? children : props.fallback;
+        const factory = props.when() ? props.children : props.fallback;
         if (factory)
         {
             createRoot((d) =>

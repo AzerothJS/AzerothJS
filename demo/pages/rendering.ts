@@ -93,14 +93,14 @@ const TodoDemo = defineComponent(() =>
                 class: classList(['tab', { 'tab-active': () => filter() === f }]),
                 onClick: () => setFilter(f)
             }, f))),
-        Show(
-            {
-                when: () => visible().length > 0,
-                fallback: () => h('p', { class: 'empty-state' }, 'Nothing here yet.')
-            },
-            () => h('ul', { class: 'todo-list' },
-                For({ each: visible, key: (t) => t.id },
-                    (todo) =>
+        Show({
+            when: () => visible().length > 0,
+            fallback: () => h('p', { class: 'empty-state' }, 'Nothing here yet.'),
+            children: () => h('ul', { class: 'todo-list' },
+                For({
+                    each: visible,
+                    key: (t) => t.id,
+                    children: (todo) =>
                     {
                         const t = todo;
                         return h('li', {
@@ -118,8 +118,9 @@ const TodoDemo = defineComponent(() =>
                             class: 'icon-btn',
                             onClick: () => setTodos(prev => prev.filter(x => x.id !== t.id))
                         }, '✕'));
-                    }))
-        ),
+                    }
+                }))
+        }),
         h('p', { class: 'search-status' }, () => `${ remaining() } remaining`)
     );
 });
@@ -164,11 +165,14 @@ const ReorderDemo = defineComponent(() =>
             h('button', { class: 'btn btn-primary', onClick: shuffle }, 'Shuffle')
         ),
         h('ol', { class: 'rank-list' },
-            For({ each: items, key: (it) => it.id },
-                (item, index) => h('li', { class: 'rank-item' },
+            For({
+                each: items,
+                key: (it) => it.id,
+                children: (item, index) => h('li', { class: 'rank-item' },
                     h('span', { class: 'rank-badge' }, () => `#${ index() + 1 }`),
                     h('span', { class: 'rank-label' }, item.label),
-                    h('span', { class: 'rank-id' }, `id ${ item.id }`))))
+                    h('span', { class: 'rank-id' }, `id ${ item.id }`))
+            }))
     );
 });
 
@@ -193,15 +197,16 @@ const SwitchDemo = defineComponent(() =>
             tags: ['Switch', 'Match']
         },
         h('div', { class: 'status-panel' },
-            Switch(
-                Match({ when: () => status() === 'idle' },
-                    () => h('div', { class: 'status status-idle' }, '⏸️ Idle — press cycle')),
-                Match({ when: () => status() === 'loading' },
-                    () => h('div', { class: 'status status-loading' }, '⏳ Loading…')),
-                Match({ when: () => status() === 'success' },
-                    () => h('div', { class: 'status status-success' }, '✅ Success!')),
-                Match({ when: () => status() === 'error' },
-                    () => h('div', { class: 'status status-error' }, '❌ Something failed')))),
+            Switch({ children: [
+                Match({ when: () => status() === 'idle',
+                    children: () => h('div', { class: 'status status-idle' }, '⏸️ Idle — press cycle') }),
+                Match({ when: () => status() === 'loading',
+                    children: () => h('div', { class: 'status status-loading' }, '⏳ Loading…') }),
+                Match({ when: () => status() === 'success',
+                    children: () => h('div', { class: 'status status-success' }, '✅ Success!') }),
+                Match({ when: () => status() === 'error',
+                    children: () => h('div', { class: 'status status-error' }, '❌ Something failed') })
+            ] })),
         h('button', { class: 'btn btn-primary', onClick: cycle }, () => `Cycle (${ status() })`)
     );
 });
@@ -260,7 +265,7 @@ const PortalDemo = defineComponent(() =>
             onInput: (e: Event) => setHue(Number((e.target as HTMLInputElement).value))
         }),
         h('button', { class: 'btn btn-primary', onClick: () => setOpen(true) }, 'Open modal (portaled)'),
-        Show({ when: open }, () => Portal({}, () =>
+        Show({ when: open, children: () => Portal({ children: () =>
             h('div', { class: 'modal-overlay', onClick: () => setOpen(false) },
                 h('div', {
                     class: 'modal',
@@ -269,7 +274,7 @@ const PortalDemo = defineComponent(() =>
                 },
                 h('h3', {}, 'I live in document.body'),
                 h('p', {}, 'Yet I close when this scope unmounts — Portal auto-cleans.'),
-                h('button', { class: 'btn', onClick: () => setOpen(false) }, 'Close')))))
+                h('button', { class: 'btn', onClick: () => setOpen(false) }, 'Close'))) }) })
     );
 });
 

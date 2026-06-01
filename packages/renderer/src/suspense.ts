@@ -158,11 +158,9 @@ export function Suspense(props: SuspenseProps): HTMLElement
     // Delegate the actual swap to Show — proven, leak-tested,
     // already does per-branch createRoot ownership and
     // destroyComponent on swap.
-    return Show(
-        {
-            when: () => !anyLoading(),
-            fallback: props.fallback
-        },
-        props.children
-    );
+    return Show({
+        when: () => !anyLoading(),
+        fallback: props.fallback,
+        children: props.children
+    });
 }

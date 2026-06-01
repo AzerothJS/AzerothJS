@@ -9,11 +9,11 @@ describe('Effect leak regression', () =>
         const [count, setCount] = createSignal(0);
         const seen: number[] = [];
 
-        const el = Show({ when: show }, () => h('p', {}, () =>
+        const el = Show({ when: show, children: () => h('p', {}, () =>
         {
             seen.push(count());
             return String(count());
-        }));
+        }) });
 
         document.body.appendChild(el);
 
@@ -37,11 +37,11 @@ describe('Effect leak regression', () =>
 
         const dispose = createRoot((d) =>
         {
-            Show({ when: () => true }, () => h('p', {}, () =>
+            Show({ when: () => true, children: () => h('p', {}, () =>
             {
                 seen.push(count());
                 return String(count());
-            }));
+            }) });
             return d;
         });
 
@@ -60,18 +60,18 @@ describe('Effect leak regression', () =>
         const aSeen: number[] = [];
         const bSeen: number[] = [];
 
-        Switch(
-            Match({ when: () => which() === 'a' }, () => h('p', {}, () =>
+        Switch({ children: [
+            Match({ when: () => which() === 'a', children: () => h('p', {}, () =>
             {
                 aSeen.push(count());
                 return String(count());
-            })),
-            Match({ when: () => which() === 'b' }, () => h('p', {}, () =>
+            }) }),
+            Match({ when: () => which() === 'b', children: () => h('p', {}, () =>
             {
                 bSeen.push(count());
                 return String(count());
-            }))
-        );
+            }) })
+        ] });
 
         expect(aSeen).toEqual([0]);
         expect(bSeen).toEqual([]);
@@ -92,14 +92,15 @@ describe('Effect leak regression', () =>
         const [tick, setTick] = createSignal(0);
         const itemRuns = new Map<number, number>();
 
-        For(
-            { each: items, key: (n) => n },
-            (n) => h('span', {}, () =>
+        For({
+            each: items,
+            key: (n) => n,
+            children: (n) => h('span', {}, () =>
             {
                 itemRuns.set(n, (itemRuns.get(n) ?? 0) + 1);
                 return `${ n }:${ tick() }`;
             })
-        );
+        });
 
         expect(itemRuns.get(1)).toBe(1);
         expect(itemRuns.get(2)).toBe(1);

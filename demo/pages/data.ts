@@ -115,11 +115,11 @@ const CartViewer = defineComponent(() =>
         h('h4', {}, () => `Panel B — cart (${ cart.items().length })`),
         Show({
             when: () => cart.items().length > 0,
-            fallback: () => h('p', { class: 'empty-state' }, 'Cart is empty — add from Panel A.')
-        },
-        () => h('ul', { class: 'cart-list' },
-            // Reading the same store getter from a different component.
-            () => cart.items().map(item => h('li', {}, item)))));
+            fallback: () => h('p', { class: 'empty-state' }, 'Cart is empty — add from Panel A.'),
+            children: () => h('ul', { class: 'cart-list' },
+                // Reading the same store getter from a different component.
+                () => cart.items().map(item => h('li', {}, item)))
+        }));
 });
 
 const StoreDemo = defineComponent(() =>
@@ -219,11 +219,13 @@ const StreamDemo = defineComponent(() =>
         h('div', { class: 'chat-bubble' },
             Show({
                 when: () => chat.partial().length > 0,
-                fallback: () => h('span', { class: 'chat-placeholder' }, 'The streamed reply appears here…')
-            },
-            () => h('span', {}, () => chat.partial()))),
-        Show({ when: () => !chat.done() },
-            () => h('button', { class: 'btn btn-ghost', onClick: () => chat.cancel() }, 'Stop'))
+                fallback: () => h('span', { class: 'chat-placeholder' }, 'The streamed reply appears here…'),
+                children: () => h('span', {}, () => chat.partial())
+            })),
+        Show({
+            when: () => !chat.done(),
+            children: () => h('button', { class: 'btn btn-ghost', onClick: () => chat.cancel() }, 'Stop')
+        })
     );
 });
 

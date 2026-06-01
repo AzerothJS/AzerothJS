@@ -77,7 +77,10 @@ export {
     Transition,
     createRef,
     classList,
-    styleMap
+    styleMap,
+    css,
+    collectStyleSheet,
+    resetStyleSheet
 } from '@azerothjs/renderer';
 
 export type {
@@ -86,13 +89,16 @@ export type {
     ShowProps,
     ForProps,
     MatchCase,
+    MatchProps,
+    SwitchProps,
     PortalProps,
     DynamicProps,
     SuspenseProps,
     TransitionProps,
     Ref,
     ClassObject,
-    StyleObject
+    StyleObject,
+    ScopedClasses
 } from '@azerothjs/renderer';
 
 // ── Component ───────────────────────────────────────────────────────────────

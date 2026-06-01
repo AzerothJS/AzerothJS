@@ -7,7 +7,7 @@ describe('Portal()', () =>
     {
         const target = document.createElement('div');
 
-        Portal({ target }, () => h('p', {}, 'Portaled!'));
+        Portal({ target, children: () => h('p', {}, 'Portaled!') });
 
         expect(target.children.length).toBe(1);
         expect(target.children[0].textContent).toBe('Portaled!');
@@ -17,7 +17,7 @@ describe('Portal()', () =>
     {
         const target = document.createElement('div');
 
-        const placeholder = Portal({ target }, () => h('p', {}, 'Hello'));
+        const placeholder = Portal({ target, children: () => h('p', {}, 'Hello') });
 
         expect(placeholder.style.display).toBe('none');
         expect(placeholder.getAttribute('data-azeroth-portal')).toBe('');
@@ -25,7 +25,7 @@ describe('Portal()', () =>
 
     it('should render into document.body by default', () =>
     {
-        const el = Portal({}, () => h('p', { id: 'portal-test' }, 'Body!'));
+        const el = Portal({ children: () => h('p', { id: 'portal-test' }, 'Body!') });
 
         const portaled = document.getElementById('portal-test');
         expect(portaled).not.toBeNull();
@@ -38,7 +38,7 @@ describe('Portal()', () =>
     {
         const target = document.createElement('div');
 
-        const placeholder = Portal({ target }, () => h('p', {}, 'Remove me'));
+        const placeholder = Portal({ target, children: () => h('p', {}, 'Remove me') });
 
         expect(target.children.length).toBe(1);
 
@@ -52,11 +52,11 @@ describe('Portal()', () =>
         const [count, setCount] = createSignal(0);
         const seen: number[] = [];
 
-        const placeholder = Portal({ target }, () => h('p', {}, () =>
+        const placeholder = Portal({ target, children: () => h('p', {}, () =>
         {
             seen.push(count());
             return String(count());
-        }));
+        }) });
 
         expect(seen).toEqual([0]);
 

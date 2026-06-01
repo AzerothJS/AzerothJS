@@ -22,6 +22,7 @@ import { ComponentsPage } from './pages/components.ts';
 import { DataPage } from './pages/data.ts';
 import { FormsPage } from './pages/forms.ts';
 import { RoutingPage, RoutingIndex, UserDetail } from './pages/routing.ts';
+import { CompilerPage } from './pages/compiler.ts';
 
 /** Nav entries the sidebar renders, in order. */
 export const NAV = [
@@ -31,7 +32,8 @@ export const NAV = [
     { path: '/components', label: 'Components', icon: '📦' },
     { path: '/data', label: 'Data', icon: '🔌' },
     { path: '/forms', label: 'Forms', icon: '📝' },
-    { path: '/routing', label: 'Routing', icon: '🧭' }
+    { path: '/routing', label: 'Routing', icon: '🧭' },
+    { path: '/compiler', label: 'Compiler', icon: '🪄' }
 ];
 
 const routes: Route[] = [
@@ -50,7 +52,8 @@ const routes: Route[] = [
             { path: '', component: RoutingIndex },
             { path: 'users/:id', component: UserDetail }
         ]
-    }
+    },
+    { path: '/compiler', component: CompilerPage }
 ];
 
 /** The shared router instance for the whole demo. */

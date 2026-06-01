@@ -53,10 +53,10 @@ function Field(
             placeholder,
             ...form.register(name)
         }),
-        Show(
-            { when: () => form.touched()[name] && form.errors()[name] !== null },
-            () => h('p', { class: 'field-error' }, () => form.errors()[name] ?? '')
-        ));
+        Show({
+            when: () => form.touched()[name] && form.errors()[name] !== null,
+            children: () => h('p', { class: 'field-error' }, () => form.errors()[name] ?? '')
+        }));
 }
 
 const SignupDemo = defineComponent(() =>
@@ -103,10 +103,14 @@ const SignupDemo = defineComponent(() =>
                 type: 'submit',
                 disabled: () => form.submitting()
             }, () => form.submitting() ? 'Submitting…' : 'Create account'),
-            Show({ when: () => form.submitError() !== null },
-                () => h('p', { class: 'field-error' }, () => `Submit failed: ${ String(form.submitError()) }`)),
-            Show({ when: done },
-                () => h('p', { class: 'form-success' }, '✅ Account created!'))
+            Show({
+                when: () => form.submitError() !== null,
+                children: () => h('p', { class: 'field-error' }, () => `Submit failed: ${ String(form.submitError()) }`)
+            }),
+            Show({
+                when: done,
+                children: () => h('p', { class: 'form-success' }, '✅ Account created!')
+            })
         ),
         h('button', {
             class: 'btn btn-ghost',

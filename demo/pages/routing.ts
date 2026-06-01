@@ -29,14 +29,17 @@ export const RoutingIndex: RouteComponent = (): HTMLElement =>
     h('div', { class: 'nested-panel' },
         h('p', { class: 'search-status' }, 'Pick a crew member — the URL and the detail panel update via a nested route:'),
         h('div', { class: 'crew-grid' },
-            For({ each: () => CREW, key: (n) => n },
-                (name, index) => Link({
+            For({
+                each: () => CREW,
+                key: (n) => n,
+                children: (name, index) => Link({
                     to: `/routing/users/${ index() }`,
                     router,
                     class: 'crew-link',
                     activeClass: 'crew-link-active',
                     children: name
-                }))));
+                })
+            })));
 
 /** Nested detail — reads the `:id` param reactively. */
 export const UserDetail: RouteComponent = (): HTMLElement =>

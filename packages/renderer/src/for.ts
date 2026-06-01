@@ -58,6 +58,17 @@ export interface ForProps<T>
      * Keys must be unique within the list.
      */
     key: (item: T, index: number) => string | number;
+
+    /**
+     * Per-item render function. Receives the item and a REACTIVE
+     * index getter (so a row's position updates live on reorder
+     * without rebuilding the element).
+     *
+     * Named `children` and passed as a prop so the manual API
+     * matches the compiled `.azeroth` form:
+     * `<For each={…} key={…}>{(item, i) => …}</For>`.
+     */
+    children: (item: T, index: () => number) => HTMLElement;
 }
 
 /**
@@ -116,10 +127,11 @@ export interface ForProps<T>
  * // Simple string list
  * const [names] = createSignal(['Alice', 'Bob']);
  *
- * For(
- *   { each: names, key: (name) => name },
- *   (name) => h('p', {}, name)
- * );
+ * For({
+ *   each: names,
+ *   key: (name) => name,
+ *   children: (name) => h('p', {}, name)
+ * });
  * ```
  */
 /**
@@ -144,11 +156,10 @@ interface KeyEntry
     setIndex: (index: number) => void;
 }
 
-export function For<T>(
-    props: ForProps<T>,
-    renderItem: (item: T, index: () => number) => HTMLElement
-): HTMLElement
+export function For<T>(props: ForProps<T>): HTMLElement
 {
+    const renderItem = props.children;
+
     const container = document.createElement('span');
     container.style.display = 'contents';
 

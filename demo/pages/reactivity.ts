@@ -77,8 +77,11 @@ const SignalsDemo = defineComponent(() =>
         ),
         h('p', { class: 'effect-log-label' }, 'effect log (latest first):'),
         h('div', { class: 'effect-log' },
-            For({ each: log, key: (entry) => entry.id },
-                (entry) => h('span', { class: 'effect-log-chip' }, String(entry.value))))
+            For({
+                each: log,
+                key: (entry) => entry.id,
+                children: (entry) => h('span', { class: 'effect-log-chip' }, String(entry.value))
+            }))
     );
 });
 
@@ -121,8 +124,11 @@ const DeferredDemo = defineComponent(() =>
                 ? 'typing…'
                 : `${ results().length } match${ results().length === 1 ? '' : 'es' }`),
         h('div', { class: 'chip-grid' },
-            For({ each: results, key: (f) => f },
-                (fruit) => h('span', { class: 'chip' }, fruit)))
+            For({
+                each: results,
+                key: (f) => f,
+                children: (fruit) => h('span', { class: 'chip' }, fruit)
+            }))
     );
 });
 
@@ -151,12 +157,15 @@ const SelectorDemo = defineComponent(() =>
             tags: ['createSelector']
         },
         h('div', { class: 'swatch-grid' },
-            For({ each: () => swatches, key: (s) => s.id },
-                (swatch) => h('button', {
+            For({
+                each: () => swatches,
+                key: (s) => s.id,
+                children: (swatch) => h('button', {
                     class: classList(['swatch', { 'swatch-selected': () => isSelected(swatch.id) }]),
                     style: `--swatch: ${ swatch.hex }`,
                     onClick: () => setSelected(swatch.id)
-                }, swatch.id))),
+                }, swatch.id)
+            })),
         h('p', { class: 'search-status' }, () => `selected: ${ selected() }`)
     );
 });
