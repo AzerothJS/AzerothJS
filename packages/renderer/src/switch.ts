@@ -1,32 +1,29 @@
-// ============================================================================
-// AZEROTHJS — Switch/Match (Multi-Condition Rendering)
-// ============================================================================
+// Switch renders the first matching case from a list of Match cases - a
+// switch/case statement for reactive UI, where only one branch is mounted at
+// a time.
 //
-// Switch renders different content based on which condition matches.
-// Like a switch/case statement but for reactive UI rendering.
+// Why: a chain of if/return inside h() works but gets messy with many
+// conditions and obscures that the branches are mutually exclusive.
 //
-// WITHOUT Switch:
-//   h('div', {}, () => {
-//     const s = status();
-//     if (s === 'loading') return h('p', {}, 'Loading...');
-//     if (s === 'error') return h('p', {}, 'Error!');
-//     if (s === 'success') return h('p', {}, 'Done!');
-//     return h('p', {}, 'Unknown');
-//   })
-//   // Works but messy with many conditions
+// Without Switch: a reactive if/else-if chain inside h().
 //
-// WITH Switch:
-//   Switch(
-//     Match({ when: () => status() === 'loading' },
-//       () => h('p', {}, 'Loading...')),
-//     Match({ when: () => status() === 'error' },
-//       () => h('p', {}, 'Error!')),
-//     Match({ when: () => status() === 'success' },
-//       () => h('p', {}, 'Done!')),
-//   )
-//   // Clean, readable, each case is separate
+//     h('div', {}, () =>
+//     {
+//         if (status() === 'loading') return h('p', {}, 'Loading...');
+//         if (status() === 'error')   return h('p', {}, 'Error!');
+//         return h('p', {}, 'Done!'); // exclusivity is implicit in the order
+//     })
 //
-// ============================================================================
+// With Switch/Match: each case is a separate, declarative unit.
+//
+//     Switch({
+//         fallback: () => h('p', {}, 'Unknown'),
+//         children: [
+//             Match({ when: () => status() === 'loading', children: () => h('p', {}, 'Loading...') }),
+//             Match({ when: () => status() === 'error',   children: () => h('p', {}, 'Error!') }),
+//             Match({ when: () => status() === 'success', children: () => h('p', {}, 'Done!') })
+//         ]
+//     }) // only the first match (or fallback) is mounted; exclusivity is explicit
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
@@ -41,10 +38,10 @@ import { hydrateChild } from './h.ts';
  */
 export interface MatchCase
 {
-    /** Reactive condition — returns true when this case should render */
+    /** Reactive condition - returns true when this case should render. */
     when: () => boolean;
 
-    /** Render function — creates the DOM element for this case */
+    /** Render function - creates the DOM element for this case. */
     render: () => HTMLElement;
 }
 
@@ -53,11 +50,11 @@ export interface MatchCase
  */
 export interface MatchProps
 {
-    /** Reactive condition — true when this case should render. */
+    /** Reactive condition - true when this case should render. */
     when: () => boolean;
 
     /** Thunk that builds this case's content (passed as a prop so
-     *  it matches the compiled `<Match when={…}>…</Match>` form). */
+     *  it matches the compiled `<Match when={...}>...</Match>` form). */
     children: () => HTMLElement;
 }
 
@@ -87,12 +84,9 @@ export function Match(props: MatchProps): MatchCase
 /**
  * Renders the first matching case from a list of Match cases.
  *
- * Reactively watches all conditions. When conditions change,
- * automatically swaps to the correct case. Only ONE case is
- * rendered at a time.
- *
- * If no case matches, the optional `fallback` is rendered (or
- * nothing).
+ * Reactively watches all conditions and swaps to the correct case when they
+ * change. Only one case is rendered at a time. If no case matches, the
+ * optional `fallback` is rendered (or nothing).
  *
  * @param props - `{ children: MatchCase[], fallback? }`
  *
@@ -116,9 +110,9 @@ export interface SwitchProps
 {
     /**
      * The Match cases, in priority order (first match wins). Accepts
-     * an array (manual API) or a thunk returning one/many cases —
+     * an array (manual API) or a thunk returning one/many cases -
      * the latter is what compiled `.azeroth` markup produces from
-     * `<Switch><Match/>…</Switch>`.
+     * `<Switch><Match/>...</Switch>`.
      */
     children: MatchCase[] | (() => MatchCase[] | MatchCase);
 
@@ -135,9 +129,9 @@ export function Switch(props: SwitchProps): HTMLElement
     const raw = typeof props.children === 'function' ? props.children() : props.children;
     const cases: MatchCase[] = Array.isArray(raw) ? raw : [raw];
 
-    // ── Server-side rendering ─────────────────────────────────
+    // Server-side rendering.
     // Emit the first case whose `when` is true (read once), else the
-    // optional fallback — wrapped in a contents anchor for hydration.
+    // optional fallback - wrapped in a contents anchor for hydration.
     if (isStringMode())
     {
         for (const matchCase of cases)
@@ -152,7 +146,7 @@ export function Switch(props: SwitchProps): HTMLElement
         return wrapContents('switch', fallbackInner) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
+    // Hydration.
     // Adopt the wrapper span and its current matching case on the first
     // effect run; subsequent condition changes use the normal DOM swap.
     if (isHydrating())
@@ -190,9 +184,9 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
 
     createEffect(() =>
     {
-        // Find the first matching case — stopping at the first match means a
+        // Find the first matching case - stopping at the first match means a
         // lower case's condition is only tracked (and thus only triggers a
-        // re-render) when no higher case is already winning — else fallback.
+        // re-render) when no higher case is already winning - else fallback.
         let factory: (() => HTMLElement) | null = null;
         for (const matchCase of cases)
         {
@@ -232,7 +226,7 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
         }
 
         // `teardownBranch` is the SINGLE teardown path: the effect
-        // runs it before every re-render AND on dispose — disposing
+        // runs it before every re-render AND on dispose - disposing
         // the losing branch's effects before its DOM is discarded.
         return teardownBranch;
     });

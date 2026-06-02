@@ -1,30 +1,8 @@
-// ============================================================================
-// AZEROTHJS — Reactivity Public API
-// ============================================================================
+// Public API for @azerothjs/reactivity.
 //
-// EXPORTED (public):
-//   createSignal()  — Reactive state (getter/setter pair)
-//   createEffect()  — Reactive side effects (auto re-run)
-//   createMemo()    — Cached computed values
-//   batch()         — Grouped signal updates (single flush)
-//   untrack()       — Read signals without subscribing
-//   on()            — Explicit dependency tracking
-//   onCleanup()     — Imperative cleanup inside effects
-//   onRootDispose() — Imperative cleanup tied to a createRoot scope
-//   createRoot()    — Isolated reactive ownership scope
-//   createDeferred() — Debounced reactive value
-//   createSelector() — Efficient selection tracking for lists
-//   createResource() — Async fetcher → reactive data/loading/error
-//   createStream()  — Streaming fetcher → reactive partial/done/error
-//   catchError()    — Route reactive errors to a handler
-//
-// NOT EXPORTED (internal):
-//   currentSubscriber   — Used by signal/effect wiring
-//   setCurrentSubscriber — Used by effect/untrack
-//   isBatching          — Used by effect
-//   queueEffect         — Used by effect
-//
-// ============================================================================
+// Internal wiring (currentSubscriber, setCurrentSubscriber, isBatching,
+// queueEffect) is intentionally not re-exported here - those are shared
+// between the primitives via direct module imports.
 
 export { createSignal } from './signal.ts';
 export { createEffect } from './effect.ts';

@@ -1,42 +1,26 @@
-// ============================================================================
-// AZEROTHJS — Country Dataset for Phone Validation
-// ============================================================================
+// Country dataset for phone validation: ISO 3166-1 alpha-2 codes paired with
+// their ITU-T E.164 calling codes. Used by phone() to filter accepted numbers,
+// and exported for direct consumption (e.g. to populate a country-select
+// dropdown).
 //
-// Comprehensive list of ISO 3166-1 alpha-2 codes paired with their
-// ITU-T E.164 calling codes. Used by `phone()` to filter accepted
-// numbers, and exported for direct consumption (e.g., to populate
-// a country-select dropdown).
+// Scope: all ~245 inhabited territories with assigned calling codes. Calling
+// codes only - no per-country length, mobile/landline, or area-code metadata.
+// That's what libphonenumber ships ~70 KB to provide; we deliberately don't
+// compete with it.
 //
-// SCOPE:
+// Calling-code collisions: several countries share the NANP code +1 (US,
+// Canada, plus the Caribbean and Pacific NANP territories). +7 is shared by
+// Russia and Kazakhstan. +44 by the UK, Guernsey, Jersey, and the Isle of Man.
+// The phone validator accepts any country whose listed code is the calling-code
+// prefix of the input - it cannot distinguish between collisions without
+// per-country area-code metadata. That trade-off is documented on phone().
 //
-//   - All ~245 inhabited territories with assigned calling codes.
-//   - Calling codes only — NO per-country length, mobile/landline,
-//     or area-code metadata. That's what libphonenumber ships
-//     ~70 KB to provide; we deliberately don't compete with it.
+// Ordering is alphabetical by ISO code, which keeps <select> rendering and
+// snapshot tests deterministic.
 //
-// CALLING-CODE COLLISIONS:
-//
-//   Several countries share the NANP code +1 (US, Canada, plus the
-//   Caribbean and Pacific NANP territories). +7 is shared by Russia
-//   and Kazakhstan. +44 by the UK, Guernsey, Jersey, and the Isle
-//   of Man. The phone validator accepts ANY country whose listed
-//   code is the calling-code prefix of the input — it cannot
-//   distinguish between collisions without per-country area-code
-//   metadata. That trade-off is documented on `phone()`.
-//
-// ORDERING:
-//
-//   Alphabetical by ISO code. Stable ordering helps with
-//   deterministic `<select>` rendering and snapshot testing.
-//
-// TREE-SHAKING:
-//
-//   This file is only pulled into the bundle if either `countries`
-//   or `getCountry` (or `phone()` with a `countries:` filter) is
-//   imported. Apps using just `required()` / `email()` / etc. pay
-//   nothing for it.
-//
-// ============================================================================
+// Tree-shaking: this file is only pulled into the bundle if countries or
+// getCountry (or phone() with a countries: filter) is imported. Apps using just
+// required() / email() / etc. pay nothing for it.
 
 /**
  * One row of the country dataset.
@@ -59,12 +43,17 @@ export interface CountryInfo
 }
 
 /**
- * The full country dataset, alphabetised by ISO code. Stable —
- * adding or removing entries here is a breaking change for any
- * `<select>` that relies on positional indexes, so we order by
- * ISO code (which never changes) rather than by name (which does
- * for a few countries — Czechia, Macedonia, Eswatini all have
- * been renamed).
+ * The full country dataset, alphabetised by ISO code. Adding or removing
+ * entries here is a breaking change for any `<select>` that relies on
+ * positional indexes, so we order by ISO code (which never changes) rather than
+ * by name (which does for a few countries - Czechia, Macedonia, and Eswatini
+ * have all been renamed).
+ *
+ * @example
+ * ```ts
+ * // Populate a country <select> from the dataset.
+ * countries.map(c => h('option', { value: c.code }, `${ c.name } (+${ c.callingCode })`));
+ * ```
  */
 export const countries: CountryInfo[] =
 [
@@ -319,10 +308,10 @@ export const countries: CountryInfo[] =
  * Looks up a country by either its ISO 3166-1 alpha-2 code or
  * its E.164 calling code (with or without a leading `+`).
  *
- * Returns the FIRST match. For calling codes shared by multiple
- * countries (e.g., `1`, `7`, `44`, `590`) the result depends on
- * the dataset's ordering — alphabetical by ISO code. Use
- * `countries.filter(...)` directly when you need every match.
+ * Returns the first match. For calling codes shared by multiple countries (e.g.
+ * `1`, `7`, `44`, `590`) the result depends on the dataset's ordering -
+ * alphabetical by ISO code. Use `countries.filter(...)` directly when you need
+ * every match.
  *
  * @param codeOrCallingCode - 'US', 'us', '+1', '1' all valid
  *
@@ -330,11 +319,11 @@ export const countries: CountryInfo[] =
  *
  * @example
  * ```ts
- * getCountry('US');     // → { code: 'US', name: 'United States', callingCode: '1' }
- * getCountry('us');     // → same — case-insensitive
- * getCountry('+98');    // → { code: 'IR', name: 'Iran',          callingCode: '98' }
- * getCountry('98');     // → same — leading + is optional
- * getCountry('XX');     // → undefined
+ * getCountry('US');     // { code: 'US', name: 'United States', callingCode: '1' }
+ * getCountry('us');     // same - case-insensitive
+ * getCountry('+98');    // { code: 'IR', name: 'Iran', callingCode: '98' }
+ * getCountry('98');     // same - leading + is optional
+ * getCountry('XX');     // undefined
  * ```
  */
 export function getCountry(codeOrCallingCode: string): CountryInfo | undefined
@@ -348,13 +337,13 @@ export function getCountry(codeOrCallingCode: string): CountryInfo | undefined
     const cleaned = codeOrCallingCode.replace(/^\+/, '');
     const upper = cleaned.toUpperCase();
 
-    // Try ISO code first — letters, exact match.
+    // Try ISO code first - letters, exact match.
     const byIsoCode = countries.find(c => c.code === upper);
     if (byIsoCode)
     {
         return byIsoCode;
     }
 
-    // Fall back to calling code — digits, exact match.
+    // Fall back to calling code - digits, exact match.
     return countries.find(c => c.callingCode === cleaned);
 }

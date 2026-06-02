@@ -1,34 +1,18 @@
-// ============================================================================
-// AZEROTHJS — defineComponent (Function Components)
-// ============================================================================
+// defineComponent() creates reusable function components with props and
+// lifecycle hooks.
 //
-// defineComponent() creates reusable function components with
-// props and lifecycle hooks.
+// How it works: defineComponent(setup) returns a factory; calling factory(props)
+// runs setup, which builds and returns an HTMLElement while registering
+// onMount/onDestroy hooks. Mount hooks run immediately after setup; destroy
+// hooks run when destroyComponent(element) is called.
 //
-// HOW IT WORKS:
+// onMount() and onDestroy() collect hooks via module-level variables - the same
+// implicit-context pattern React, Solid, and Vue use internally - so they only
+// work while a setup function is on the stack.
 //
-//   1. defineComponent(setup) returns a factory function
-//   2. Calling factory(props) runs the setup function
-//   3. During setup, onMount/onDestroy hooks are collected
-//   4. Setup returns an HTMLElement
-//   5. Mount hooks run immediately after setup
-//   6. Destroy hooks run when destroyComponent(element) is called
-//
-// HOOK COLLECTION:
-//
-//   onMount() and onDestroy() use module-level variables to
-//   collect hooks. This is the same pattern React, Solid, and
-//   Vue use internally.
-//
-// DESTROY INTEGRATION:
-//
-//   destroyComponent() works with BOTH function and class
-//   components by dispatching through the typed helpers in
-//   destroy-hooks.ts:
-//     getFunctionDestroyHooks() → function component hooks
-//     getClassDestroyHooks()    → class component hooks
-//
-// ============================================================================
+// destroyComponent() handles both function and class components by dispatching
+// through the typed helpers in destroy-hooks.ts (getFunctionDestroyHooks for
+// function components, getClassDestroyHooks for class components).
 
 import type { Component, ComponentSetup, LifecycleHook } from './types.ts';
 import { isStringMode } from '@azerothjs/reactivity';
@@ -40,35 +24,27 @@ import {
 } from './destroy-hooks.ts';
 
 /**
- * Stack of mount hooks for the currently constructing component.
- *
- * Set to an array before setup runs, cleared after.
- * onMount() pushes to this array during setup.
+ * Mount hooks for the component currently being constructed. Pointed at an
+ * array before setup runs and restored afterwards; onMount() pushes here.
  *
  * @internal
  */
 let currentMountHooks: LifecycleHook[] | null = null;
 
 /**
- * Stack of destroy hooks for the currently constructing component.
- *
- * Set to an array before setup runs, cleared after.
- * onDestroy() pushes to this array during setup.
+ * Destroy hooks for the component currently being constructed. Pointed at an
+ * array before setup runs and restored afterwards; onDestroy() pushes here.
  *
  * @internal
  */
 let currentDestroyHooks: LifecycleHook[] | null = null;
 
 /**
- * Registers a callback to run after the component mounts.
+ * Registers a callback to run immediately after the component mounts. Must be
+ * called inside a defineComponent() setup function. A returned cleanup
+ * function is registered as a destroy hook automatically.
  *
- * Must be called inside a defineComponent() setup function.
- * Runs immediately after setup completes.
- *
- * Can return a cleanup function that will be added to the
- * destroy hooks automatically.
- *
- * @param hook - Function to run on mount. Can return cleanup.
+ * @param hook - Function to run on mount; may return a cleanup function
  *
  * @example
  * ```ts
@@ -95,10 +71,9 @@ export function onMount(hook: LifecycleHook): void
 }
 
 /**
- * Registers a callback to run when the component is destroyed.
- *
- * Must be called inside a defineComponent() setup function.
- * Runs when destroyComponent(element) is called.
+ * Registers a callback to run when the component is destroyed (i.e. when
+ * destroyComponent(element) is called). Must be called inside a
+ * defineComponent() setup function.
  *
  * @param hook - Function to run on destroy
  *
@@ -125,6 +100,32 @@ export function onDestroy(hook: LifecycleHook): void
 
 /**
  * Creates a reusable function component with props and lifecycle.
+ *
+ * Without defineComponent: write a bare factory and bolt teardown onto the
+ * element, leaving the caller to invoke it at the right time:
+ *
+ *     function Counter(props)
+ *     {
+ *         const [count, setCount] = createSignal(props.initial);
+ *         const id = setInterval(() => setCount(c => c + 1), 1000);
+ *         const el = h('p', {}, () => `${ count() }`);
+ *         el.cleanup = () => clearInterval(id);  // caller must remember to call it
+ *         return el;
+ *     }
+ *
+ * With defineComponent: onMount/onDestroy register lifecycle, and
+ * destroyComponent() runs every hook for you:
+ *
+ *     const Counter = defineComponent((props) =>
+ *     {
+ *         const [count, setCount] = createSignal(props.initial);
+ *         onMount(() =>
+ *         {
+ *             const id = setInterval(() => setCount(c => c + 1), 1000);
+ *             return () => clearInterval(id);  // auto-run on destroyComponent()
+ *         });
+ *         return h('p', {}, () => `${ count() }`);
+ *     });
  *
  * @typeParam P - The type of props this component accepts
  * @param setup - Setup function that builds the component
@@ -176,7 +177,7 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
 
         // Save the OUTER component's hook context and restore it
         // afterwards (rather than clearing to null). A component's
-        // setup often creates nested components — each nested factory
+        // setup often creates nested components - each nested factory
         // swaps the context to ITS arrays. Without save/restore, the
         // outer setup's onMount/onDestroy calls AFTER a nested
         // component was created would be lost (the context would
@@ -188,7 +189,6 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
         currentMountHooks = mountHooks;
         currentDestroyHooks = destroyHooks;
 
-        // Run setup — creates state, registers hooks, returns element
         let element: HTMLElement;
         try
         {
@@ -203,7 +203,7 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
 
         // Server-side rendering: `element` is a serialized SSRNode, not
         // a live DOM node. Skip destroy-hook storage and DON'T run mount
-        // hooks — onMount side effects (timers, listeners, DOM access)
+        // hooks - onMount side effects (timers, listeners, DOM access)
         // must never fire on the server. Hooks run in 'dom' and
         // 'hydrate' modes, where the element is real.
         if (isStringMode())
@@ -216,8 +216,7 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
         // up in the tree.
         setFunctionDestroyHooks(element, destroyHooks);
 
-        // Run mount hooks
-        // If a mount hook returns cleanup, add to destroy hooks
+        // Run mount hooks; if one returns a cleanup, register it as a destroy hook.
         for (const hook of mountHooks)
         {
             const cleanup = hook();
@@ -232,14 +231,10 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
 }
 
 /**
- * Destroys a component, running all its destroy hooks.
- *
- * Works with BOTH component styles:
- *   - Function components (defineComponent)
- *   - Class components (AzerothComponent)
- *
- * Safe to call on non-component elements (does nothing).
- * Safe to call multiple times (hooks cleared after first run).
+ * Destroys a component, running all its destroy hooks. Works with both
+ * function components (defineComponent) and class components
+ * (AzerothComponent). Safe to call on non-component elements (does nothing)
+ * and idempotent (hooks are cleared after the first run).
  *
  * @param element - The component's root DOM element
  *
@@ -259,7 +254,7 @@ export function destroyComponent(element: HTMLElement): void
     // Run this element's own hooks first, then recurse into its
     // descendants. Nested components store their hooks on their OWN
     // elements (deeper in the tree), so a single top-level call
-    // would otherwise miss them — their onDestroy / mount-cleanups
+    // would otherwise miss them - their onDestroy / mount-cleanups
     // would leak when an ancestor is torn down (Show/For/render all
     // call destroyComponent on the SUBTREE ROOT, not every element).
     runOwnDestroyHooks(element);
@@ -267,7 +262,7 @@ export function destroyComponent(element: HTMLElement): void
     // `children` is a live collection, but draining hooks never
     // removes DOM nodes (callers handle removal separately), so it's
     // stable to iterate. Drain-in-place keeps the whole walk
-    // idempotent — re-destroying an already-torn-down subtree is a
+    // idempotent - re-destroying an already-torn-down subtree is a
     // safe no-op.
     const children = element.children;
     for (let i = 0; i < children.length; i++)
@@ -281,8 +276,8 @@ export function destroyComponent(element: HTMLElement): void
 }
 
 /**
- * Runs (and drains) the destroy hooks attached directly to one
- * element — both function-component and class-component hooks.
+ * Runs and drains the destroy hooks attached directly to one element - both
+ * function-component and class-component hooks.
  *
  * @param element - The element whose own hooks should run
  *

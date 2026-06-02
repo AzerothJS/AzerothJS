@@ -1,50 +1,18 @@
-// ============================================================================
-// AZEROTHJS — Effect (Reactive Side Effects)
-// ============================================================================
+// An effect is a function that re-runs whenever the signals it reads change -
+// the bridge between reactive state and the outside world (DOM updates,
+// logging, network requests).
 //
-// An effect is a function that re-runs whenever the signals
-// it reads change. Effects are the bridge between reactive
-// state and the outside world (DOM updates, console logs,
-// network requests, etc.).
+// Lifecycle: createEffect(fn) runs fn immediately; signal getters called
+// during the run subscribe this effect, each adding an unsubscribe closure to
+// `dependencies`. When a subscribed signal changes the effect re-runs: any
+// cleanups fire, every dependency is unsubscribed, and fn runs again,
+// re-subscribing to whatever it reads this time. dispose() does the same
+// teardown but without re-running.
 //
-// LIFECYCLE OF AN EFFECT:
-//
-//   1. createEffect(fn) is called
-//   2. fn runs immediately
-//   3. During fn, any signal.getter() calls subscribe this effect
-//   4. Each subscription adds a cleanup function to dependencies
-//   5. When a subscribed signal changes → effect re-runs:
-//      a. Previous cleanup function runs (if any)
-//      b. All dependency cleanups run (unsubscribe from signals)
-//      c. dependencies set is cleared
-//      d. fn runs again → re-subscribes to signals it reads
-//   6. When dispose() is called → same cleanup, no re-run
-//
-// WHY RE-SUBSCRIBE EVERY RUN?
-//
-//   Because dependencies can CHANGE between runs:
-//
-//     createEffect(() =>
-//     {
-//         if (showDetails())
-//         {
-//             console.log(details());  // subscribes to details
-//         }
-//         else
-//         {
-//             console.log(summary());  // subscribes to summary
-//         }
-//     });
-//
-//   When showDetails changes:
-//     - Old: subscribed to showDetails + details
-//     - New: subscribed to showDetails + summary
-//     - Must UNSUBSCRIBE from details, SUBSCRIBE to summary
-//
-//   By clearing all dependencies and re-subscribing each run,
-//   we always have the correct subscriptions.
-//
-// ============================================================================
+// We re-subscribe from scratch on every run because dependencies can change
+// between runs. An effect that reads details() in one branch and summary() in
+// another must end up subscribed to exactly the signals it touched this time;
+// clearing and rebuilding the dependency set each run guarantees that.
 
 import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from './types.ts';
 import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
@@ -53,86 +21,67 @@ import { registerDisposer } from './create-root.ts';
 import { currentErrorHandler } from './catch-error.ts';
 
 /**
- * The cleanup array for the currently running effect.
- *
- * When an effect runs, this is set to that effect's cleanup array.
- * onCleanup() pushes to this array during effect execution.
- *
- * Set to `null` when no effect is running.
+ * The cleanup array for the currently running effect, or `null` when no effect
+ * is running. onCleanup() pushes to this during effect execution.
  *
  * @internal Managed by createEffect, read by onCleanup
  */
 export let currentCleanups: CleanupFn[] | null = null;
 
 /**
- * Creates a reactive effect that re-runs whenever its
- * signal dependencies change.
+ * Creates a reactive effect that runs immediately and re-runs whenever any
+ * signal it reads changes. Returns a dispose function that stops the effect
+ * and unsubscribes it from every signal.
  *
- * The effect function runs immediately upon creation, and
- * then re-runs whenever any signal it reads changes.
- *
- * Returns a dispose function that stops the effect and
- * cleans up all subscriptions.
- *
- * @param fn - The effect function. Can optionally return a
- *             cleanup function that runs before re-execution
- *             or on dispose.
+ * @param fn - The effect body. May return a cleanup function that runs before
+ *             each re-run and on dispose.
  * @param _options - Optional configuration (name for debugging)
  *
  * @returns A dispose function that stops and cleans up the effect
  *
+ * Why: reactive work has to subscribe to every signal it reads and unsubscribe
+ * them all on teardown.
+ *
+ * Without createEffect: wire and unwire each source by hand:
+ *
+ *     count.subscribe(update);
+ *     name.subscribe(update);
+ *     // miss one unsubscribe on teardown and the closure leaks forever
+ *
+ * With createEffect: reads subscribe themselves, dispose() unwires them all:
+ *
+ *     const dispose = createEffect(() =>
+ *     {
+ *         render(count(), name());
+ *     });
+ *     dispose(); // unsubscribes from both signals in one call
+ *
  * @example
  * ```ts
- * // Basic effect
  * const [count, setCount] = createSignal(0);
  *
- * const dispose = createEffect(() =>
- * {
- *     console.log('Count:', count());
- * });
- * // Logs: "Count: 0" immediately
+ * const dispose = createEffect(() => console.log('Count:', count()));
+ * // Logs "Count: 0" immediately
  *
- * setCount(5);
- * // Logs: "Count: 5"
- *
+ * setCount(5);   // Logs "Count: 5"
  * dispose();
- * setCount(10);
- * // Nothing logged — effect is disposed
+ * setCount(10);  // Nothing logged - effect is disposed
  * ```
  *
  * @example
  * ```ts
  * // Effect with cleanup
- * const dispose = createEffect(() =>
+ * createEffect(() =>
  * {
  *     const id = setInterval(() => console.log(count()), 1000);
  *     return () => clearInterval(id);
  * });
  * ```
- *
- * @example
- * ```ts
- * // Dynamic dependencies
- * createEffect(() =>
- * {
- *     if (showDetails())
- *     {
- *         console.log(details());  // only subscribes when showing
- *     }
- * });
- * ```
  */
 export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 {
-    /**
-     * All cleanup functions for the current run.
-     *
-     * Populated by:
-     *   1. onCleanup() calls during effect execution
-     *   2. The return value of fn() (if it returns a function)
-     *
-     * All are run before re-execution and on dispose.
-     */
+    // Cleanups for the current run, from onCleanup() calls and from fn()'s
+    // return value. All run before re-execution and on dispose.
     let cleanups: CleanupFn[] = [];
 
     const subscriber: Subscriber =
@@ -140,8 +89,8 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         execute: runEffect,
         isDisposed: false,
         dependencies: new Set(),
-        // Captured ONCE here — see types.ts on `Subscriber.errorHandler`
-        // for why we don't re-read on each run.
+        // Captured once here - see types.ts on `Subscriber.errorHandler` for
+        // why we don't re-read it on each run.
         errorHandler: currentErrorHandler
     };
 
@@ -152,52 +101,41 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
             return;
         }
 
-        // If inside a batch, queue for later
         if (isBatching())
         {
             queueEffect(subscriber);
             return;
         }
 
-        // Step 1: Run ALL previous cleanups
-        // (from onCleanup() calls AND returned cleanup)
         for (const c of cleanups)
         {
             c();
         }
         cleanups = [];
 
-        // Step 2: Unsubscribe from all current dependencies
-        // This prevents stale subscriptions when the effect
-        // reads different signals on different runs
+        // Unsubscribe from every current dependency before re-running, so a
+        // run that reads different signals doesn't keep stale subscriptions.
         cleanupDependencies(subscriber);
 
-        // Step 3: Set this subscriber as current
-        // Save previous for nested effect support
+        // Install this subscriber and cleanup array as the active context,
+        // saving the previous ones so nested effects restore correctly. While
+        // fn runs, signal getters add this subscriber to their subscriber set
+        // (and a matching unsubscribe to subscriber.dependencies), and
+        // onCleanup() pushes onto `cleanups`.
         const previousSubscriber = currentSubscriber;
         setCurrentSubscriber(subscriber);
 
-        // Step 4: Set cleanup collection context
-        // onCleanup() will push to this array during fn()
         const previousCleanups = currentCleanups;
         currentCleanups = cleanups;
 
-        // Step 5: Run the effect function
-        // During this call, every signal.getter() will:
-        //   a. Add this subscriber to its subscribers Set
-        //   b. Add a cleanup function to subscriber.dependencies
-        // And every onCleanup() call will push to cleanups.
-        //
-        // Errors thrown by fn route through the subscriber's
-        // captured errorHandler (set when this effect was created
-        // inside a `catchError` scope). When no handler is
-        // captured, errors propagate as before — preserving the
-        // pre-catchError contract for every existing call site.
+        // Errors route through the handler captured when this effect was
+        // created inside a `catchError` scope. With no captured handler they
+        // propagate, preserving the pre-catchError contract for existing
+        // call sites.
         try
         {
             const returned = fn() ?? undefined;
 
-            // Return value is also a cleanup — add it to the array
             if (returned)
             {
                 cleanups.push(returned);
@@ -216,8 +154,6 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         }
         finally
         {
-            // Step 6: Restore previous contexts
-            // (supports nested effects)
             currentCleanups = previousCleanups;
             setCurrentSubscriber(previousSubscriber);
         }
@@ -225,8 +161,7 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 
     runEffect();
 
-    // Register with the current root (if any)
-    // so the root can dispose this effect later
+    // Register with the current root (if any) so it can dispose this effect.
     registerDisposer(dispose);
 
     function dispose(): void
@@ -238,14 +173,14 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 
         subscriber.isDisposed = true;
 
-        // Run ALL cleanups
         for (const c of cleanups)
         {
             c();
         }
         cleanups = [];
 
-        // Unsubscribe from ALL signals — prevents memory leaks
+        // Unsubscribe from all signals - otherwise a disposed effect lingers
+        // in their subscriber sets and leaks.
         cleanupDependencies(subscriber);
     }
 
@@ -253,12 +188,10 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
 }
 
 /**
- * Removes a subscriber from all signals it's subscribed to
- * and clears the dependencies set.
- *
- * This is the KEY function that prevents memory leaks.
- * Each dependency cleanup function removes the subscriber
- * from one signal's subscriber Set.
+ * Removes a subscriber from every signal it subscribed to and clears its
+ * dependency set. Each dependency closure removes the subscriber from one
+ * signal's subscriber Set; running them all is what keeps disposed and
+ * re-running effects from leaking.
  *
  * @param subscriber - The subscriber to clean up
  *

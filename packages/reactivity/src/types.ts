@@ -1,27 +1,7 @@
-// ============================================================================
-// AZEROTHJS — Reactivity Type Definitions
-// ============================================================================
-//
-// These types define the foundation of AzerothJS's reactive system.
-//
-// ARCHITECTURE:
-//
-//   Signal ──────► Effect
-//   (state)        (side effect)
-//     │               │
-//     │  subscribes   │
-//     ◄───────────────┘
-//     │
-//     │  notifies on change
-//     ├───────────────►  Effect re-runs
-//     ├───────────────►  Effect re-runs
-//     └───────────────►  Effect re-runs
-//
-//   Each signal tracks which effects depend on it.
-//   Each effect tracks which signals it depends on.
-//   This two-way tracking enables proper cleanup.
-//
-// ============================================================================
+// Type definitions for the reactive system. The core relationship is two-way:
+// a signal tracks which effects depend on it, and each effect tracks which
+// signals it depends on. When a signal changes it notifies its effects, which
+// re-run; tracking both directions is what makes precise cleanup possible.
 
 /**
  * A cleanup function returned from an effect.
@@ -34,28 +14,22 @@
  * createEffect(() =>
  * {
  *     const id = setInterval(() => console.log(count()), 1000);
- *     return () => clearInterval(id);  // ← CleanupFn
+ *     return () => clearInterval(id);  // a CleanupFn
  * });
  * ```
  */
 export type CleanupFn = () => void;
 
 /**
- * A subscriber is the internal representation of a reactive
- * consumer (effect, memo, etc.) that gets notified when
- * signals it depends on change.
+ * The internal representation of a reactive consumer (effect, memo) that gets
+ * notified when signals it depends on change.
  *
- * WHY AN INTERFACE AND NOT JUST A FUNCTION?
+ * It's an interface rather than a plain function because we need to carry
+ * lifecycle metadata (isDisposed, dependencies) alongside the callback.
  *
- *   We need metadata (isDisposed, dependencies) to properly
- *   manage the subscriber's lifecycle. A plain function can't
- *   carry this metadata.
- *
- * WHY DEPENDENCIES?
- *
- *   Without dependencies, disposing an effect leaves it in
- *   every signal's subscriber Set → memory leak. With
- *   dependencies, we can remove it from ALL signals in one call.
+ * The `dependencies` set is what makes cleanup cheap: without it, disposing an
+ * effect would leave it in every signal's subscriber Set and leak. With it, we
+ * can remove the subscriber from all its signals in one pass.
  */
 export interface Subscriber
 {
@@ -75,15 +49,14 @@ export interface Subscriber
     dependencies: Set<() => void>;
 
     /**
-     * Error handler captured at subscriber-creation time. When
-     * this subscriber's `execute()` throws, the error is routed
-     * here instead of propagating. `null` when no `catchError`
-     * scope was active at construction time.
+     * Error handler captured at subscriber-creation time. When this
+     * subscriber's `execute()` throws, the error routes here instead of
+     * propagating; `null` when no `catchError` scope was active at
+     * construction.
      *
-     * Captured ONCE, at construction — not read again later.
-     * That way an effect created inside a `catchError` scope
-     * keeps routing errors to the same handler even after the
-     * scope has unwound.
+     * Captured once, at construction, and never re-read - so an effect created
+     * inside a `catchError` scope keeps routing errors to the same handler
+     * even after the scope has unwound.
      *
      * @internal
      */
@@ -91,19 +64,15 @@ export interface Subscriber
 }
 
 /**
- * A getter function that reads and returns the current value
- * of a signal.
- *
- * When called inside an effect or memo, it automatically
- * subscribes that effect — the effect will re-run when
- * the signal's value changes.
+ * Reads and returns the current value of a signal. Called inside an effect or
+ * memo, it subscribes that consumer, which then re-runs when the value changes.
  *
  * @typeParam T - The type of the signal's value
  *
  * @example
  * ```ts
- * const [count, setCount] = createSignal(0);
- * count();  // → 0 (also subscribes any active effect)
+ * const [count] = createSignal(0);
+ * count();  // 0 (also subscribes any active effect)
  * ```
  */
 export type Getter<T> = () => T;

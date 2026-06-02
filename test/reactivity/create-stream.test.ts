@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createSignal, createStream } from '@azerothjs/core';
 
-// ── Helpers ──────────────────────────────────────────────────
+// Helpers
 
 interface ControlledResponse
 {
@@ -10,7 +10,7 @@ interface ControlledResponse
     pushBytes: (bytes: Uint8Array) => void;
     close: () => void;
     error: (err: unknown) => void;
-    /** The AbortSignal that the consumer passed to fetch — set by tests via the fetcher. */
+    /** The AbortSignal that the consumer passed to fetch - set by tests via the fetcher. */
     signal?: AbortSignal;
 }
 
@@ -43,7 +43,7 @@ function makeControlledResponse(): ControlledResponse
 
 /**
  * Drains the microtask queue many times. createStream's pipeline
- * is several `.then` deep (fetcher → consume → reader.read), and
+ * is several `.then` deep (fetcher -> consume -> reader.read), and
  * each chunk needs a fresh round of microtask flushes. 20 drains
  * is plenty of slack for any test in this file.
  */
@@ -55,9 +55,7 @@ async function flush(): Promise<void>
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-
-describe('createStream — text mode', () =>
+describe('createStream - text mode', () =>
 {
     it('accumulates chunks into partial() and flips done() on close', async () =>
     {
@@ -69,7 +67,7 @@ describe('createStream — text mode', () =>
                 parse: 'text'
             });
 
-            // Initial state — fetch in flight.
+            // Initial state - fetch in flight.
             expect(stream.done()).toBe(false);
             expect(stream.partial()).toBe('');
 
@@ -102,12 +100,12 @@ describe('createStream — text mode', () =>
             });
 
             // The character `é` is 0xC3 0xA9 in UTF-8. Splitting
-            // it between two reads must NOT corrupt the output —
+            // it between two reads must NOT corrupt the output -
             // TextDecoder({ stream: true }) holds the partial
             // sequence until the continuation byte arrives.
             ctrl.pushBytes(new Uint8Array([0xC3]));
             await flush();
-            // No complete character yet — partial may be empty
+            // No complete character yet - partial may be empty
             // (decoder buffered the lead byte).
             expect(stream.partial()).toBe('');
 
@@ -124,7 +122,7 @@ describe('createStream — text mode', () =>
     });
 });
 
-describe('createStream — SSE mode', () =>
+describe('createStream - SSE mode', () =>
 {
     it('strips data: prefix and collapses events into partial()', async () =>
     {
@@ -164,7 +162,7 @@ describe('createStream — SSE mode', () =>
 
             ctrl.push('data: first\n\n');
             ctrl.push('data: [DONE]\n\n');
-            // Server keeps the stream open — but we should stop
+            // Server keeps the stream open - but we should stop
             // reading on [DONE].
             await flush();
 
@@ -189,7 +187,7 @@ describe('createStream — SSE mode', () =>
             // SSE event with a comment, blank line, then data.
             ctrl.push(': heartbeat\n');
             ctrl.push('data: a\n\n');
-            ctrl.push('\n\n'); // empty event — no data line
+            ctrl.push('\n\n'); // empty event - no data line
             ctrl.push(': another comment\ndata: b\n\n');
             await flush();
 
@@ -229,7 +227,7 @@ describe('createStream — SSE mode', () =>
     });
 });
 
-describe('createStream — NDJSON mode', () =>
+describe('createStream - NDJSON mode', () =>
 {
     it('parses JSON lines and extracts text/content/delta fields', async () =>
     {
@@ -256,7 +254,7 @@ describe('createStream — NDJSON mode', () =>
             await flush();
             expect(stream.partial()).toBe('hello world!');
 
-            // Malformed line — silently skipped.
+            // Malformed line - silently skipped.
             ctrl.push('not json at all\n');
             await flush();
             expect(stream.partial()).toBe('hello world!');
@@ -270,7 +268,7 @@ describe('createStream — NDJSON mode', () =>
     });
 });
 
-describe('createStream — lifecycle', () =>
+describe('createStream - lifecycle', () =>
 {
     it('cancel() aborts the in-flight stream and preserves partial()', async () =>
     {
@@ -353,7 +351,7 @@ describe('createStream — lifecycle', () =>
             expect(stream.partial()).toBe('weather data');
             expect(signals[0].aborted).toBe(false);
 
-            // Change the source — should cancel the first stream
+            // Change the source - should cancel the first stream
             // and start a fresh one with reset state.
             setTopic('news');
             await flush();
@@ -409,7 +407,7 @@ describe('createStream — lifecycle', () =>
             setTopic('b');
             await flush();
 
-            // Stream #0's late rejection must NOT flip done() — stream
+            // Stream #0's late rejection must NOT flip done() - stream
             // #1 is actively in flight.
             expect(stream.done()).toBe(false);
             expect(stream.partial()).toBe('');
@@ -429,13 +427,13 @@ describe('createStream — lifecycle', () =>
     });
 });
 
-describe('createStream — custom parser', () =>
+describe('createStream - custom parser', () =>
 {
     it('routes raw chunks through a user function', async () =>
     {
         await createRoot(async (dispose) =>
         {
-            // Custom protocol: `EVENT:foo|bar` — we extract the
+            // Custom protocol: `EVENT:foo|bar` - we extract the
             // pipe-separated payload, uppercase it.
             const parser = vi.fn((chunk: string) =>
                 chunk.replace(/^EVENT:/g, '').replace(/\|/g, ' ').toUpperCase()

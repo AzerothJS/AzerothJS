@@ -23,7 +23,7 @@ describe('Dynamic()', () =>
 
         expect(el.textContent).toBe('Home');
 
-        // Must wrap in arrow function — setter treats functions as updaters
+        // Must wrap in arrow function - setter treats functions as updaters
         setView(() => About);
         expect(el.textContent).toBe('About');
     });

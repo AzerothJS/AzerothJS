@@ -87,7 +87,7 @@ describe('catchError', () =>
             // Initial run: count=0, no throw, no handler call.
             expect(handler).not.toHaveBeenCalled();
 
-            // Re-run: count=1, throws — handler captured at
+            // Re-run: count=1, throws - handler captured at
             // CONSTRUCTION fires even though catchError's body
             // already returned.
             setCount(1);
@@ -113,7 +113,7 @@ describe('catchError', () =>
             catchError(() =>
             {
                 // The memo's underlying effect throws on first
-                // recompute — must route through the captured
+                // recompute - must route through the captured
                 // handler.
                 createMemo(() =>
                 {
@@ -208,7 +208,7 @@ describe('catchError', () =>
         createRoot((dispose) =>
         {
             // No catchError on the stack. Throwing inside the
-            // effect must propagate as before — preserves the
+            // effect must propagate as before - preserves the
             // pre-catchError contract for every existing call site.
             expect(() =>
             {

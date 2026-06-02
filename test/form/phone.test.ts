@@ -60,14 +60,14 @@ describe('getCountry', () =>
     {
         // +1 is shared by US, Canada, and many NANP territories.
         // Alphabetical-by-ISO ordering means AG (Antigua) comes
-        // before US — that's the documented "first match" semantic.
+        // before US - that's the documented "first match" semantic.
         const result = getCountry('+1');
         expect(result).not.toBeUndefined();
         expect(result!.callingCode).toBe('1');
     });
 });
 
-describe('phone() — default (no countries filter)', () =>
+describe('phone() - default (no countries filter)', () =>
 {
     it('skips empty values', () =>
     {
@@ -108,9 +108,9 @@ describe('phone() — default (no countries filter)', () =>
     it('enforces the 8-15 digit total range', () =>
     {
         const v = phone();
-        // 7 digits — too short.
+        // 7 digits - too short.
         expect(v('+1234567')).toBe('Phone must have 8 to 15 digits');
-        // 16 digits — too long.
+        // 16 digits - too long.
         expect(v('+1234567890123456')).toBe('Phone must have 8 to 15 digits');
 
         // Boundaries are inclusive: 8 and 15 both pass.
@@ -127,7 +127,7 @@ describe('phone() — default (no countries filter)', () =>
     });
 });
 
-describe('phone() — with countries filter', () =>
+describe('phone() - with countries filter', () =>
 {
     it('accepts numbers whose prefix matches a listed country', () =>
     {
@@ -146,27 +146,27 @@ describe('phone() — with countries filter', () =>
 
     it('treats unknown ISO codes as silently absent', () =>
     {
-        // Only 'XX' is listed (which doesn't exist) → no allowed
-        // codes → reject everything.
+        // Only 'XX' is listed (which doesn't exist) -> no allowed
+        // codes -> reject everything.
         const v = phone({ countries: ['XX'] });
         expect(v('+14155551234')).toBe('No allowed countries');
     });
 
     it('applies the longest-prefix-first match correctly', () =>
     {
-        // 'IN' (91) and 'AF' (93) are both 2-digit codes — neither
+        // 'IN' (91) and 'AF' (93) are both 2-digit codes - neither
         // is a prefix of the other. This test mainly verifies the
         // sort doesn't break correct matches.
         const v = phone({ countries: ['IN', 'AF'] });
         expect(v('+919876543210')).toBeNull();  // IN
         expect(v('+93701234567')).toBeNull();   // AF
-        expect(v('+447911123456')).not.toBeNull(); // GB — rejected
+        expect(v('+447911123456')).not.toBeNull(); // GB - rejected
     });
 
     it('accepts shared-code countries when ANY listed country matches the prefix', () =>
     {
         // +1 covers US, Canada, all NANP territories. Listing just
-        // 'US' accepts any +1 number — that's the documented
+        // 'US' accepts any +1 number - that's the documented
         // calling-code-only matching limitation.
         const v = phone({ countries: ['US'] });
         // This number could be Canadian, but we accept it because
@@ -175,7 +175,7 @@ describe('phone() — with countries filter', () =>
     });
 });
 
-describe('phone() — national format (optional + and country code)', () =>
+describe('phone() - national format (optional + and country code)', () =>
 {
     it('accepts both national and E.164 forms with an explicit defaultCountry', () =>
     {
@@ -200,7 +200,7 @@ describe('phone() — national format (optional + and country code)', () =>
     {
         const v = phone({ countries: ['IR'], defaultCountry: 'IR' });
 
-        // Normalizes to +98… which matches the IR filter.
+        // Normalizes to +98... which matches the IR filter.
         expect(v('09170459330')).toBeNull();
         // An explicit non-IR E.164 number is still rejected.
         expect(v('+14155551234')).toBe('Phone must be from one of: IR');
@@ -208,11 +208,11 @@ describe('phone() — national format (optional + and country code)', () =>
 
     it('does NOT accept national format without a resolvable default', () =>
     {
-        // No countries, no defaultCountry → strict E.164 only.
+        // No countries, no defaultCountry -> strict E.164 only.
         expect(phone()('09170459330'))
             .toBe('Phone must be in E.164 format (e.g. +14155551234)');
 
-        // Ambiguous (more than one country, no explicit default) →
+        // Ambiguous (more than one country, no explicit default) ->
         // national format is not normalized, so it's rejected.
         const v = phone({ countries: ['IR', 'US'] });
         expect(v('09170459330'))
@@ -222,14 +222,14 @@ describe('phone() — national format (optional + and country code)', () =>
     it('leaves +-prefixed input untouched even when a default is set', () =>
     {
         const v = phone({ defaultCountry: 'IR' });
-        // Already E.164 — must not get a second country code glued on.
+        // Already E.164 - must not get a second country code glued on.
         expect(v('+14155551234')).toBeNull();
     });
 
     it('enforces the digit range on the normalized number', () =>
     {
         const v = phone({ defaultCountry: 'IR' });
-        // '0123' → '123' → '+98123' → 5 digits, below the floor of 8.
+        // '0123' -> '123' -> '+98123' -> 5 digits, below the floor of 8.
         expect(v('0123')).toBe('Phone must have 8 to 15 digits');
     });
 });

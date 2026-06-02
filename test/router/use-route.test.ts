@@ -10,10 +10,8 @@ import {
 import type { Router } from '../../packages/router/src/router.ts';
 import type { RouteLocation } from '../../packages/router/src/types.ts';
 
-// ── Router stub ──────────────────────────────────────────────
-//
-// Same shape as the link tests' stub. Real signals so the slice-
-// memoization assertions exercise the actual reactivity path.
+// Router stub. Same shape as the link tests' stub. Real signals so the
+// slice-memoization assertions exercise the actual reactivity path.
 
 interface RouterStub
 {
@@ -45,7 +43,7 @@ function makeRouterStub(initial: Partial<RouteLocation> = {}): RouterStub
     const backSpy = vi.fn();
     const forwardSpy = vi.fn();
 
-    // Inert loader resource — these tests don't read it, but the
+    // Inert loader resource: these tests don't read it, but the
     // Router type requires the field, so we provide a no-op stub.
     const stubLoader = {
         data: () => undefined,
@@ -84,7 +82,7 @@ function loc(overrides: Partial<RouteLocation>): RouteLocation
     };
 }
 
-describe('useRoute / useMatch — passthrough composables', () =>
+describe('useRoute / useMatch - passthrough composables', () =>
 {
     it('useRoute returns the same getter as router.location', () =>
     {
@@ -99,7 +97,7 @@ describe('useRoute / useMatch — passthrough composables', () =>
     });
 });
 
-describe('useParams — slice-memoized', () =>
+describe('useParams - slice-memoized', () =>
 {
     it('reflects the current params', () =>
     {
@@ -134,7 +132,7 @@ describe('useParams — slice-memoized', () =>
             // Initial effect run on creation.
             expect(downstream).toHaveBeenCalledOnce();
 
-            // Hash-only change — params unchanged → no re-fire.
+            // Hash-only change - params unchanged, no re-fire.
             setLocation(loc({
                 pathname: '/users/42',
                 hash: '#bio',
@@ -173,7 +171,7 @@ describe('useParams — slice-memoized', () =>
     });
 });
 
-describe('useQuery — slice-memoized', () =>
+describe('useQuery - slice-memoized', () =>
 {
     it('reflects the current query', () =>
     {
@@ -216,7 +214,7 @@ describe('useQuery — slice-memoized', () =>
 
             expect(downstream).toHaveBeenCalledOnce();
 
-            // Path changes, query stays the same → no re-fire.
+            // Path changes, query stays the same, no re-fire.
             setLocation(loc({
                 pathname: '/different-page',
                 search: '?q=azeroth',
@@ -250,7 +248,7 @@ describe('useQuery — slice-memoized', () =>
 
             expect(downstream).toHaveBeenCalledOnce();
 
-            // Same key but different array contents — must re-fire.
+            // Same key but different array contents - must re-fire.
             setLocation(loc({
                 search: '?tags=a&tags=c',
                 query: { tags: ['a', 'c'] }
@@ -263,7 +261,7 @@ describe('useQuery — slice-memoized', () =>
     });
 });
 
-describe('useNavigate — bundled imperative API', () =>
+describe('useNavigate - bundled imperative API', () =>
 {
     it('returns navigate / replace / back / forward bound to the router', () =>
     {

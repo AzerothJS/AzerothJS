@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createRoot, createResource } from '@azerothjs/core';
 import { Suspense } from '../../packages/renderer/src/suspense.ts';
 
-// ── Helpers ──────────────────────────────────────────────────
+// Helpers
 
 function makeDeferred<T>(): {
     promise: Promise<T>;
@@ -50,8 +50,6 @@ function makeChildren(label: string): () => HTMLElement
     };
 }
 
-// ─────────────────────────────────────────────────────────────
-
 describe('<Suspense>', () =>
 {
     it('renders children when on: is an empty array (degenerate case)', () =>
@@ -64,7 +62,7 @@ describe('<Suspense>', () =>
                 children: makeChildren('hello')
             });
 
-            // No resources to wait on → children shown immediately.
+            // No resources to wait on -> children shown immediately.
             expect(container.querySelector('[data-role="children"]')).not.toBeNull();
             expect(container.querySelector('[data-role="fallback"]')).toBeNull();
             expect(container.textContent).toBe('hello');
@@ -110,14 +108,14 @@ describe('<Suspense>', () =>
                 children: makeChildren('loaded')
             });
 
-            // Loading at construction → fallback.
+            // Loading at construction -> fallback.
             expect(container.querySelector('[data-role="fallback"]')).not.toBeNull();
             expect(container.querySelector('[data-role="children"]')).toBeNull();
 
             deferred.resolve('value');
             await flush();
 
-            // Resource settled → children.
+            // Resource settled -> children.
             expect(container.querySelector('[data-role="children"]')).not.toBeNull();
             expect(container.querySelector('[data-role="fallback"]')).toBeNull();
             expect(container.textContent).toBe('loaded');
@@ -130,7 +128,7 @@ describe('<Suspense>', () =>
     {
         createRoot((dispose) =>
         {
-            // First resource settled, second still pending — Suspense
+            // First resource settled, second still pending - Suspense
             // must show the fallback because ANY is enough.
             const settledDeferred = makeDeferred<string>();
             const pendingDeferred = makeDeferred<string>();
@@ -138,7 +136,7 @@ describe('<Suspense>', () =>
             const pending = createResource(() => pendingDeferred.promise);
 
             settledDeferred.resolve('a');
-            // No flush yet — both still loading at this snapshot.
+            // No flush yet - both still loading at this snapshot.
 
             const container = Suspense({
                 fallback: makeFallback(),
@@ -168,16 +166,16 @@ describe('<Suspense>', () =>
                 children: makeChildren('all-done')
             });
 
-            // Both pending → fallback.
+            // Both pending -> fallback.
             expect(container.querySelector('[data-role="fallback"]')).not.toBeNull();
 
-            // Resolve only A. B still pending → still fallback.
+            // Resolve only A. B still pending -> still fallback.
             dA.resolve('a');
             await flush();
             expect(container.querySelector('[data-role="fallback"]')).not.toBeNull();
             expect(container.querySelector('[data-role="children"]')).toBeNull();
 
-            // Resolve B → all settled → swap.
+            // Resolve B -> all settled -> swap.
             dB.resolve('b');
             await flush();
             expect(container.querySelector('[data-role="children"]')).not.toBeNull();

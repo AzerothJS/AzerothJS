@@ -1,40 +1,31 @@
-// ============================================================================
-// AZEROTHJS — Style Binding
-// ============================================================================
+// styleMap() converts an object of CSS properties into a reactive inline
+// style-string getter, replacing fragile manual concatenation (a missing
+// semicolon silently breaks the whole declaration).
 //
-// styleMap() converts an object of CSS properties into a reactive
-// inline style string getter.
+// Without styleMap: build the style string by hand.
 //
-// WITHOUT styleMap:
-//   h('div', {
 //     style: () =>
-//       `color: ${ textColor() }; font-size: ${ fontSize() }px;`
-//   })
-//   // String concatenation nightmare. Missing semicolons break it.
+//     {
+//         return `color: ${ textColor() } font-size: ${ fontSize() }px`;
+//         // one missing semicolon and the rest of the declaration is dropped
+//     }
 //
-// WITH styleMap:
-//   h('div', {
+// With styleMap: an object where each property is independently reactive.
+//
 //     style: styleMap({
-//       color: textColor,
-//       'font-size': () => `${ fontSize() }px`,
-//       opacity: () => isVisible() ? 1 : 0
-//     })
-//   })
-//   // Clean object syntax. Each property is independently reactive.
+//         color: textColor,
+//         'font-size': () => `${ fontSize() }px`,
+//         opacity: () => isVisible() ? 1 : 0
+//     }) // separators are handled for you, so no property can break another
 //
-// CAMELCASE SUPPORT:
-//   styleMap converts camelCase to kebab-case automatically:
-//     fontSize → font-size
-//     backgroundColor → background-color
-//     borderRadius → border-radius
-//
-// ============================================================================
+// camelCase property names are converted to kebab-case automatically
+// (fontSize -> font-size, backgroundColor -> background-color).
 
 /**
  * A style value. Can be:
- *   - string/number → static value
- *   - () => string/number → reactive value
- *   - null/undefined → property is removed
+ *   - string/number -> static value
+ *   - () => string/number -> reactive value
+ *   - null/undefined -> property is removed
  */
 type StyleValue = string | number | null | undefined | (() => string | number | null | undefined);
 
@@ -65,11 +56,9 @@ export type StyleObject = Record<string, StyleValue>;
  * to h(). The function re-evaluates whenever reactive values
  * change.
  *
- * Automatically converts camelCase property names to
- * kebab-case (fontSize → font-size).
- *
- * Null/undefined values are skipped — the property won't
- * appear in the style string.
+ * Automatically converts camelCase property names to kebab-case
+ * (fontSize -> font-size). Null/undefined values are skipped: the property
+ * won't appear in the style string.
  *
  * @param styles - Object mapping CSS property names to values
  *
@@ -96,7 +85,7 @@ export type StyleObject = Record<string, StyleValue>;
  *
  * @example
  * ```ts
- * // Conditional styles — null removes the property
+ * // Conditional styles: null removes the property
  * h('div', {
  *   style: styleMap({
  *     display: () => isHidden() ? 'none' : null,
@@ -108,7 +97,7 @@ export type StyleObject = Record<string, StyleValue>;
  *
  * @example
  * ```ts
- * // camelCase → kebab-case conversion
+ * // camelCase -> kebab-case conversion
  * h('div', {
  *   style: styleMap({
  *     backgroundColor: theme,
@@ -128,18 +117,15 @@ export function styleMap(styles: StyleObject): () => string
 
         for (const [property, value] of Object.entries(styles))
         {
-            // Resolve the value — might be static or a getter
             const resolved = typeof value === 'function' ? value() : value;
 
-            // Skip null/undefined values
+            // null/undefined means "drop this property".
             if (resolved === null || resolved === undefined)
             {
                 continue;
             }
 
-            // Convert camelCase to kebab-case
-            //   fontSize → font-size
-            //   backgroundColor → background-color
+            // fontSize -> font-size, backgroundColor -> background-color
             const cssProperty = property.replace(
                 /[A-Z]/g,
                 (match) => `-${ match.toLowerCase() }`

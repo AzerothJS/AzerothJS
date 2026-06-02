@@ -1,6 +1,6 @@
 # Contributing to AzerothJS
 
-Thank you for your interest in contributing to AzerothJS! Every contribution matters — whether it's fixing a typo, reporting a bug, or implementing a new feature.
+Thanks for contributing to AzerothJS. Every contribution helps, whether it's fixing a typo, reporting a bug, or implementing a new feature.
 
 ## Getting Started
 
@@ -30,17 +30,17 @@ npm install
 
 ```
 src/
-├── reactivity/     # Signals, effects, memos, batch, untrack, etc.
-├── renderer/       # h(), render(), Show, For, Switch, Portal, etc.
-├── component/      # defineComponent, AzerothComponent, lifecycle
-├── core/           # Shared utilities (future)
-├── router/         # Official router (future)
-├── store/          # Global store (future)
-├── compiler/       # .azeroth compiler (future)
-└── index.ts        # Public API entry point
+  reactivity/     # Signals, effects, memos, batch, untrack, etc.
+  renderer/       # h(), render(), Show, For, Switch, Portal, etc.
+  component/      # defineComponent, AzerothComponent, lifecycle
+  core/           # Shared utilities (future)
+  router/         # Official router (future)
+  store/          # Global store (future)
+  compiler/       # .azeroth compiler (future)
+  index.ts        # Public API entry point
 
-test/               # Mirrors src/ structure
-demo/               # Interactive demo app
+test/             # Mirrors src/ structure
+demo/             # Interactive demo app
 ```
 
 ## Development Guidelines
@@ -61,10 +61,10 @@ npx eslint src/
 
 ### Naming Conventions
 
-- **Functions:** `camelCase` — `createSignal`, `createEffect`
-- **Types/Interfaces:** `PascalCase` — `Subscriber`, `SignalOptions`
-- **Constants:** `UPPER_SNAKE_CASE` — `DOM_PROPERTIES`
-- **Files:** `kebab-case` — `create-root.ts`, `on-cleanup.ts`
+- **Functions:** `camelCase` - `createSignal`, `createEffect`
+- **Types/Interfaces:** `PascalCase` - `Subscriber`, `SignalOptions`
+- **Constants:** `UPPER_SNAKE_CASE` - `DOM_PROPERTIES`
+- **Files:** `kebab-case` - `create-root.ts`, `on-cleanup.ts`
 - **Internal exports:** Prefixed with `@internal` in JSDoc
 
 ### Writing Code
@@ -93,9 +93,9 @@ npx vitest
 **Test file location:** Mirror the source structure under `test/`.
 
 ```
-src/reactivity/signal.ts    →  test/reactivity/signal.test.ts
-src/renderer/show.ts        →  test/renderer/show.test.ts
-src/component/types.ts      →  test/component/types.test.ts
+src/reactivity/signal.ts    ->  test/reactivity/signal.test.ts
+src/renderer/show.ts        ->  test/renderer/show.test.ts
+src/component/types.ts      ->  test/component/types.test.ts
 ```
 
 **Test structure:**
@@ -130,17 +130,17 @@ refactor: simplify batch queue flushing logic
 
 Open an issue with:
 
-1. **Description** — What happened vs what you expected
-2. **Reproduction** — Minimal code that demonstrates the bug
-3. **Environment** — Node version, OS, browser (if applicable)
+1. **Description** - What happened vs what you expected
+2. **Reproduction** - Minimal code that demonstrates the bug
+3. **Environment** - Node version, OS, browser (if applicable)
 
 ## Requesting Features
 
 Open an issue with:
 
-1. **Use case** — What problem does this solve?
-2. **Proposed API** — How should it look?
-3. **Alternatives** — What other approaches did you consider?
+1. **Use case** - What problem does this solve?
+2. **Proposed API** - How should it look?
+3. **Alternatives** - What other approaches did you consider?
 
 ## Pull Requests
 

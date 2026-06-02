@@ -1,36 +1,24 @@
-// ============================================================================
-// AZEROTHJS — Render Mode (Client / Server / Hydration Switch)
-// ============================================================================
+// The framework renders in one of three modes. h() and the control-flow
+// components read the active mode at the top of every call to decide how to
+// materialise their output:
 //
-// The framework renders in one of three modes. The mode is a process-wide
-// signal that h() and the control-flow components read at the top of every
-// call to decide HOW to materialise their output:
+//   'dom'     - the default. Build real DOM via document.createElement and
+//               wire live reactive effects.
+//   'string'  - server-side rendering. Emit an HTML string instead of DOM: no
+//               document, no live effects (reactive getters are read exactly
+//               once). Used by @azerothjs/server's renderToString.
+//   'hydrate' - client-side adoption of server-rendered DOM. Walk the existing
+//               nodes and attach listeners and effects in place rather than
+//               creating new ones.
 //
-//   'dom'      — the default. Build REAL DOM via document.createElement and
-//                wire live reactive effects. This is the original behavior;
-//                nothing about it changes.
+// This lives in @azerothjs/reactivity rather than @azerothjs/renderer because
+// both the renderer (h, Show, For) and the component package (defineComponent,
+// ErrorBoundary) must read the mode, and @azerothjs/component does not depend
+// on the renderer - reactivity is the only package beneath both.
 //
-//   'string'   — server-side rendering. Emit an HTML STRING instead of DOM:
-//                no document, no live effects (reactive getters are read
-//                exactly once). Used by @azerothjs/server's renderToString.
-//
-//   'hydrate'  — client-side adoption of server-rendered DOM. Walk the
-//                existing nodes and attach listeners + effects in place
-//                instead of creating new nodes.
-//
-// WHY THIS LIVES IN @azerothjs/reactivity (not @azerothjs/renderer):
-//
-//   Both the renderer (h, Show, For, …) AND the component package
-//   (defineComponent, AzerothComponent, ErrorBoundary) must read the mode —
-//   the renderer to pick a materialisation strategy, the component package
-//   to skip onMount on the server. @azerothjs/component does NOT depend on
-//   @azerothjs/renderer, so the only package beneath both is reactivity.
-//
-// The mode is a STACK so it nests and resets correctly: runInMode pushes on
+// The mode is a stack so it nests and resets correctly: runInMode pushes on
 // entry and pops in a finally, so a thrown render can never leak a non-'dom'
-// mode into the next call (critical for a long-lived server process).
-//
-// ============================================================================
+// mode into the next call - critical for a long-lived server process.
 
 /**
  * The active rendering strategy. See the file header for the semantics of
@@ -39,9 +27,9 @@
 export type RenderMode = 'dom' | 'string' | 'hydrate';
 
 /**
- * Mode stack. The bottom is always `'dom'` (the default), so reading the
- * top outside any `runInMode` call yields `'dom'` — i.e. the original
- * client behavior.
+ * Mode stack. The bottom is always `'dom'` (the default), so reading the top
+ * outside any `runInMode` call yields `'dom'`, i.e. the original client
+ * behavior.
  *
  * @internal
  */
@@ -51,6 +39,12 @@ const modeStack: RenderMode[] = ['dom'];
  * Returns the currently active render mode (the top of the stack).
  *
  * @returns The active {@link RenderMode}; `'dom'` when no mode is pushed.
+ *
+ * @example
+ * ```ts
+ * getRenderMode(); // 'dom' outside any runInMode
+ * runInMode('string', () => getRenderMode()); // 'string'
+ * ```
  */
 export function getRenderMode(): RenderMode
 {
@@ -64,6 +58,12 @@ export function getRenderMode(): RenderMode
  * component.
  *
  * @returns `true` when the active mode is `'string'`.
+ *
+ * @example
+ * ```ts
+ * isStringMode(); // false in the default 'dom' mode
+ * runInMode('string', () => isStringMode()); // true
+ * ```
  */
 export function isStringMode(): boolean
 {
@@ -74,6 +74,12 @@ export function isStringMode(): boolean
  * Whether the framework is currently hydrating server-rendered DOM.
  *
  * @returns `true` when the active mode is `'hydrate'`.
+ *
+ * @example
+ * ```ts
+ * isHydrating(); // false in the default 'dom' mode
+ * runInMode('hydrate', () => isHydrating()); // true
+ * ```
  */
 export function isHydrating(): boolean
 {
@@ -81,8 +87,8 @@ export function isHydrating(): boolean
 }
 
 /**
- * Runs `fn` with `mode` active, restoring the previous mode afterwards —
- * even if `fn` throws. Modes nest, so this is safe to call re-entrantly.
+ * Runs `fn` with `mode` active, restoring the previous mode afterwards, even
+ * if `fn` throws. Modes nest, so this is safe to call re-entrantly.
  *
  * @typeParam T - The return type of `fn`
  * @param mode - The mode to activate for the duration of `fn`

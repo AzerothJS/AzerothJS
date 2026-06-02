@@ -1,17 +1,10 @@
-// ============================================================================
-// AZEROTHJS — Component Type Definitions
-// ============================================================================
-//
-// These types define the structure of function components
-// created with defineComponent().
-//
-// ============================================================================
+// Types describing function components created with defineComponent().
 
 /**
  * A component factory function.
  *
- * Created by defineComponent(). Call it with props to create
- * a new instance and get back the root HTMLElement.
+ * Created by defineComponent(). Call it with props to create a new instance
+ * and get back the root HTMLElement.
  *
  * @typeParam P - The type of props this component accepts
  *
@@ -30,8 +23,8 @@ export type Component<P extends object = Record<string, unknown>> = (props: P) =
 /**
  * The setup function passed to defineComponent().
  *
- * Receives props, creates reactive state, registers lifecycle
- * hooks, and returns a DOM element.
+ * Receives props, creates reactive state, registers lifecycle hooks, and
+ * returns a DOM element.
  *
  * @typeParam P - The type of props this component accepts
  *
@@ -48,26 +41,19 @@ export type Component<P extends object = Record<string, unknown>> = (props: P) =
 export type ComponentSetup<P extends object = Record<string, unknown>> = (props: P) => HTMLElement;
 
 /**
- * A lifecycle hook function.
- *
- * Can optionally return a cleanup function.
- * For onMount: the cleanup runs on destroy.
- * For onDestroy: no cleanup return is used.
+ * A lifecycle hook function. May optionally return a cleanup function.
+ * For onMount the returned cleanup runs on destroy; onDestroy ignores any
+ * return value.
  *
  * @example
  * ```ts
- * // onMount with cleanup
  * onMount(() =>
  * {
  *     const id = setInterval(() => tick(), 1000);
- *     return () => clearInterval(id);  // cleanup
+ *     return () => clearInterval(id); // runs on destroy
  * });
  *
- * // onDestroy (no cleanup return)
- * onDestroy(() =>
- * {
- *     console.log('Component destroyed');
- * });
+ * onDestroy(() => console.log('Component destroyed'));
  * ```
  */
 export type LifecycleHook = () => void | (() => void);

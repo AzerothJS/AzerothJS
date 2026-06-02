@@ -1,32 +1,24 @@
-// ============================================================================
-// AZEROTHJS — Route Composables
-// ============================================================================
+// Five small primitives that wrap a Router and give the user the slice they
+// actually care about:
 //
-// Five small primitives that wrap a `Router` and give the user
-// the slice they actually care about.
+//   useRoute(router)     ->  the full RouteLocation snapshot
+//   useMatch(router)     ->  the matched route + chain (or null)
+//   useParams(router)    ->  just the path params, slice-memoized
+//   useQuery(router)     ->  just the query, slice-memoized
+//   useNavigate(router)  ->  imperative navigation API as one object
 //
-//   useRoute(router)     →  the full RouteLocation snapshot
-//   useMatch(router)     →  the matched route + chain (or null)
-//   useParams(router)    →  just the path params, slice-memoized
-//   useQuery(router)     →  just the query, slice-memoized
-//   useNavigate(router)  →  imperative navigation API as one object
+// Why these exist when router.location already does it:
 //
-// WHY THESE EXIST WHEN router.location ALREADY DOES IT:
+//   1. Slice memoization. useParams re-fires only when the params actually
+//      change - navigating from /users/42 to /users/42#bio updates the location
+//      signal but leaves params identical, so useParams skips the notification.
+//      Same for useQuery.
 //
-//   1. Slice memoization. `useParams` re-fires only when the
-//      params actually change — navigating from `/users/42` to
-//      `/users/42#bio` updates the location signal but leaves
-//      params identical, so `useParams` skips the notification.
-//      Same for `useQuery`.
-//
-//   2. Future context API. When we add `<RouterProvider>` later,
-//      these composables will resolve the router from context
-//      instead of taking it as an argument. Introducing the
-//      indirection now means user code doesn't change shape on
-//      that day — only the call signature drops the `router`
+//   2. Future context API. When we add <RouterProvider> later, these
+//      composables will resolve the router from context instead of taking it as
+//      an argument. Introducing the indirection now means user code doesn't
+//      change shape on that day - only the call signature drops the router
 //      argument.
-//
-// ============================================================================
 
 import type { Getter } from '@azerothjs/reactivity';
 import { createMemo } from '@azerothjs/reactivity';
@@ -34,19 +26,18 @@ import type { Params, Query, RouteLocation, RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
 
 /**
- * Shallow-equal comparison for `Record<string, string | string[]>`
- * shapes — covers both `Params` (string values only) and `Query`
- * (string or string[] values).
+ * Shallow-equal comparison for `Record<string, string | string[]>` shapes;
+ * covers both `Params` (string values only) and `Query` (string or string[]
+ * values).
  *
- * Used as the `equals` option on the params/query memos so they
- * re-fire only when their slice has *actually* changed, not on
- * every location update that happens to leave their slice intact.
+ * Used as the `equals` option on the params/query memos so they re-fire only
+ * when their slice has actually changed, not on every location update that
+ * happens to leave their slice intact.
  *
- * `createMemo` never invokes `equals` with its initial placeholder
- * (a memo's first computed value is always accepted), so in
- * practice both arguments are real record objects. The `a === b`
- * fast path and the `== null` guard below are kept as cheap
- * defensive checks regardless.
+ * `createMemo` never invokes `equals` with its initial placeholder (a memo's
+ * first computed value is always accepted), so in practice both arguments are
+ * real record objects. The `a === b` fast path and the `== null` guard below
+ * are kept as cheap defensive checks regardless.
  *
  * @internal
  */
@@ -79,8 +70,8 @@ function shallowEqualRecord(
             continue;
         }
 
-        // Both arrays — compare element by element. Ordering matters,
-        // matching how parseQuery preserves insertion order.
+        // Both arrays: compare element by element. Ordering matters, matching
+        // how parseQuery preserves insertion order.
         if (Array.isArray(va) && Array.isArray(vb))
         {
             if (va.length !== vb.length)
@@ -97,7 +88,7 @@ function shallowEqualRecord(
             continue;
         }
 
-        // Mixed shape (one is array, the other isn't) → not equal.
+        // Mixed shape (one is array, the other isn't): not equal.
         return false;
     }
 
@@ -127,12 +118,11 @@ export function useRoute(router: Router): Getter<RouteLocation>
 }
 
 /**
- * Returns a getter for the currently matched route (with full
- * root → leaf chain), or `null` if no route matches.
+ * Returns a getter for the currently matched route (with full root-to-leaf
+ * chain), or `null` if no route matches.
  *
- * Already memoized in the router with structural equality on
- * route + params, so cosmetic location changes (e.g. only the
- * hash) do not invalidate it.
+ * Already memoized in the router with structural equality on route + params, so
+ * cosmetic location changes (e.g. only the hash) do not invalidate it.
  *
  * @example
  * ```ts
@@ -154,9 +144,9 @@ export function useMatch(router: Router): Getter<RouteMatch | null>
 /**
  * Returns a getter for the current path params, slice-memoized.
  *
- * Re-fires only when the params object's keys or values change —
- * navigating to the same route with the same params (e.g. only
- * the hash changed) leaves this getter quiet.
+ * Re-fires only when the params object's keys or values change; navigating to
+ * the same route with the same params (e.g. only the hash changed) leaves this
+ * getter quiet.
  *
  * @example
  * ```ts
@@ -166,7 +156,7 @@ export function useMatch(router: Router): Getter<RouteMatch | null>
  * createEffect(() =>
  * {
  *     fetchUser(params().id);
- *     // …only re-fetches when id actually changes.
+ *     // ...only re-fetches when id actually changes.
  * });
  * ```
  */
@@ -205,11 +195,11 @@ export function useQuery(router: Router): Getter<Query>
 }
 
 /**
- * The shape returned by `useNavigate()` — one object bundling
- * every imperative navigation method.
+ * The shape returned by `useNavigate()`: one object bundling every imperative
+ * navigation method.
  *
- * Methods are taken straight off the router (they don't rely on
- * `this` binding internally), so destructuring is safe:
+ * Methods are taken straight off the router (they don't rely on `this` binding
+ * internally), so destructuring is safe:
  *
  * ```ts
  * const { navigate, replace } = useNavigate(router);

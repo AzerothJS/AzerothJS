@@ -1,14 +1,8 @@
-// ============================================================================
-// AZEROTHJS — renderToDocument
-// ============================================================================
+// Wraps a component's body HTML in a full HTML document and flushes the scoped
+// CSS collected during render into a <style> tag in the <head>.
 //
-// Wraps a component's body HTML in a full HTML document and flushes the
-// scoped CSS collected during render into a <style> tag in the <head>.
-//
-// The body is rendered FIRST so that every `css\`\`` call in the tree has
+// The body is rendered first so that every css`` call in the tree has
 // registered its scope before collectStyleSheet() reads the registry.
-//
-// ============================================================================
 
 import { collectStyleSheet } from '@azerothjs/renderer';
 import { escapeText, escapeAttr } from '@azerothjs/reactivity';
@@ -41,6 +35,20 @@ export interface RenderToDocumentOptions
 /**
  * Renders a component into a complete HTML document string, with scoped CSS
  * flushed into the `<head>`.
+ *
+ * Without renderToDocument: render the body, collect the scoped CSS, then
+ * hand-assemble the doctype/html/head/body shell in the right order:
+ *
+ *     const body = renderToString(() => App({}));
+ *     const css = collectStyleSheet();  // must read AFTER the body renders
+ *     const html = '<!doctype html><html><head><style>' + css
+ *         + '</style></head><body>' + body + '</body></html>';
+ *
+ * With renderToDocument: it renders the body first, flushes css`` scopes into
+ * a <head> <style>, and wraps everything in a full document:
+ *
+ *     const html = renderToDocument(() => App({}), { title: 'My App' });
+ *     // ordering and the <style> flush handled for you
  *
  * @param component - A thunk that builds the root element
  * @param options - Document-level {@link RenderToDocumentOptions}

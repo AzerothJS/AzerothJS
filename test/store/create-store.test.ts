@@ -20,7 +20,7 @@ describe('createStore', () =>
         const factory = vi.fn(() => ({ value: 42 }));
         const useStore = createStore(factory);
 
-        // No call yet — factory must not have run.
+        // No call yet - factory must not have run.
         expect(factory).not.toHaveBeenCalled();
 
         useStore();
@@ -41,12 +41,12 @@ describe('createStore', () =>
         const b = useStore();
         const c = useStore();
 
-        // Reference identity — true cross-component shared state.
+        // Reference identity - true cross-component shared state.
         expect(a).toBe(b);
         expect(b).toBe(c);
     });
 
-    it('exposes reactive signals — external effects re-run on change', () =>
+    it('exposes reactive signals - external effects re-run on change', () =>
     {
         const useCounter = createStore(() =>
         {
@@ -142,8 +142,8 @@ describe('createStore', () =>
     {
         // The factory creates a background effect that mirrors
         // the signal value into a side-channel array. Because the
-        // effect is owned by the store's internal createRoot — not
-        // any consumer's — it must keep running even after every
+        // effect is owned by the store's internal createRoot - not
+        // any consumer's - it must keep running even after every
         // consumer's createRoot has disposed.
         const sideChannel: number[] = [];
 
@@ -183,7 +183,7 @@ describe('createStore', () =>
             disposeB();
         });
 
-        // The store's own background effect should still be live —
+        // The store's own background effect should still be live -
         // mutating now must still record into the side channel.
         tracker.set(1);
         tracker.set(2);

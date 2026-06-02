@@ -1,55 +1,28 @@
-// ============================================================================
-// AZEROTHJS — createResource (Async Reactive Primitive)
-// ============================================================================
+// createResource wraps an async fetcher into reactive signals - `data`,
+// `loading`, `error` - plus an imperative `refetch()`. It is the primitive
+// behind every data-fetching feature in the framework: route loaders, manual
+// resource calls, suspense integration.
 //
-// Wraps an async fetcher into reactive signals: `data`, `loading`,
-// `error`, plus an imperative `refetch()`. The same primitive that
-// drives every "data fetching" feature in the framework — route
-// loaders, manual `useResource` calls, suspense integration.
+// Two calling forms:
+//   1. Standalone fetcher: createResource(async (signal) => ...).
+//   2. With a source signal: createResource(() => postId(), async (id, signal)
+//      => ...). The resource re-runs when the source changes, passing the
+//      source value to the fetcher.
 //
-// TWO CALLING FORMS:
+// Source-falsy short-circuit: if the source returns `false`, `null`, or
+// `undefined`, the fetcher is not invoked and `data` resets to `undefined`.
+// This is the "skip fetching" pattern, e.g. `() => isLoggedIn() && userId`.
+// `0` and `''` are valid keys, not skip values.
 //
-//   1. Standalone fetcher
-//      const user = createResource(async (signal) =>
-//      {
-//          const res = await fetch('/me', { signal });
-//          return res.json();
-//      });
+// Cancellation: each fetch gets its own AbortController. A source change,
+// refetch(), or scope disposal aborts the in-flight controller. The signal
+// threads through to the fetcher so user code can cancel fetch, IndexedDB, or
+// any AbortSignal-aware API.
 //
-//   2. With a source signal — re-runs when the source changes,
-//      and the source value is passed to the fetcher.
-//      const post = createResource(
-//          () => postId(),
-//          async (id, signal) =>
-//          {
-//              const res = await fetch(`/posts/${ id }`, { signal });
-//              return res.json();
-//          }
-//      );
-//
-// SOURCE-FALSY SHORT-CIRCUIT:
-//
-//   If the source returns `false`, `null`, or `undefined`, the
-//   fetcher is NOT invoked. `data` resets to `undefined`. This is
-//   the universal "skip fetching" pattern — `() => isLoggedIn() && userId`.
-//   `0` and `''` are NOT treated as falsy here; they're valid keys.
-//
-// CANCELLATION:
-//
-//   Each fetch gets its own `AbortController`. When the source
-//   changes, `refetch()` is called, or the surrounding scope
-//   disposes, the in-flight controller is aborted. The `signal`
-//   threads to the fetcher so user code can opt into cancelling
-//   `fetch`, IndexedDB, or any AbortSignal-aware async API.
-//
-// RACE-CONDITION GUARD:
-//
-//   When a new fetch supersedes an old one, the old controller is
-//   aborted. If the old promise resolves anyway (network is
-//   already in flight), we drop the result by checking
-//   `signal.aborted` before applying it.
-//
-// ============================================================================
+// Race-condition guard: when a new fetch supersedes an old one, the old
+// controller is aborted. If the old promise resolves anyway (the network
+// request was already in flight), we drop the result by checking
+// `signal.aborted` before applying it.
 
 import type { Getter } from './types.ts';
 import { createSignal } from './signal.ts';
@@ -70,7 +43,7 @@ export interface Resource<T>
      * or fetch errored before producing a value).
      *
      * Reading this inside an effect subscribes the effect to
-     * future changes — same contract as any signal getter.
+     * future changes - same contract as any signal getter.
      */
     data: Getter<T | undefined>;
 
@@ -95,7 +68,7 @@ export interface Resource<T>
      * Re-runs the fetcher with the current source value.
      *
      * If a fetch is in flight, it's aborted first. If the source
-     * is currently falsy, `refetch` is a no-op — there's nothing
+     * is currently falsy, `refetch` is a no-op - there's nothing
      * meaningful to refetch without a key.
      */
     refetch: () => void;
@@ -127,9 +100,27 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  * component or `render()` already provides one) so the in-flight
  * abort and the internal effect can be cleaned up on unmount.
  *
+ * Why: async fetching needs loading/error/data state, a fresh AbortController
+ * per request, and a guard so a slow old response can't overwrite a newer one.
+ *
+ * Without createResource: wire all of that by hand:
+ *
+ *     const [data, setData] = createSignal();
+ *     const [loading, setLoading] = createSignal(false);
+ *     const [error, setError] = createSignal(null);
+ *     const controller = new AbortController();
+ *     // plus a signal.aborted check on resolve, or stale results win
+ *
+ * With createResource: the same machinery is one call:
+ *
+ *     const r = createResource(fetcher);
+ *     r.data();    // resolved value, or undefined
+ *     r.loading(); // true while in flight
+ *     r.refetch(); // aborts any in-flight request, then re-runs
+ *
  * @example
  * ```ts
- * // Standalone — fetch once on construction.
+ * // Standalone - fetch once on construction.
  * const session = createResource(async (signal) =>
  * {
  *     const res = await fetch('/api/session', { signal });
@@ -138,7 +129,7 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  *
  * createEffect(() =>
  * {
- *     if (session.loading()) console.log('loading…');
+ *     if (session.loading()) console.log('loading...');
  *     else if (session.error()) console.error(session.error());
  *     else if (session.data()) console.log('user:', session.data());
  * });
@@ -146,7 +137,7 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  *
  * @example
  * ```ts
- * // With source — re-runs when postId() changes.
+ * // With source - re-runs when postId() changes.
  * const [postId, setPostId] = createSignal<number | null>(null);
  *
  * const post = createResource(
@@ -164,7 +155,7 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  *
  * @example
  * ```ts
- * // Source-falsy short-circuit — fetcher does NOT run while
+ * // Source-falsy short-circuit - fetcher does not run while
  * // userId is null. data() stays undefined.
  * const profile = createResource(
  *     () => userId(),
@@ -201,13 +192,13 @@ export function createResource<T, S>(
 
     // `tick` exists solely so `refetch()` has a signal to bump,
     // forcing the wrapper effect to re-run with the same source
-    // value. Internal — never exposed.
+    // value. Internal - never exposed.
     const [tick, setTick] = createSignal(0);
 
     /**
      * Returns true for the three values that mean "no key, don't
      * fetch": `false`, `null`, `undefined`. `0` and `''` are valid
-     * keys — users can navigate to /post/0 or look up an empty-tag
+     * keys - users can navigate to /post/0 or look up an empty-tag
      * search legitimately.
      */
     function isSkipValue(v: unknown): boolean
@@ -271,7 +262,7 @@ export function createResource<T, S>(
     }
 
     // The reactive heart of the resource. Reads `tick` and `source`
-    // — when either changes, the previous run's `onCleanup` aborts
+    // - when either changes, the previous run's `onCleanup` aborts
     // the in-flight fetch, then this body kicks off the new one.
     createEffect(() =>
     {
@@ -283,9 +274,9 @@ export function createResource<T, S>(
             const v = source();
             if (isSkipValue(v))
             {
-                // No key → no fetch. Reset state to "nothing
-                // loaded". Anything in flight from a previous run
-                // was aborted by the cleanup that fired before us.
+                // No key, no fetch. Reset state to "nothing loaded". Anything
+                // in flight from a previous run was aborted by the cleanup
+                // that fired before us.
                 batch(() =>
                 {
                     setData(() => undefined);

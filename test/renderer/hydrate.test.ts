@@ -1,13 +1,10 @@
-// ============================================================================
-// AZEROTHJS — hydrate() tests
-// ============================================================================
+// hydrate() tests.
 //
-// These mirror a real SSR→CSR handoff: render the component to a string, drop
+// These mirror a real SSR -> CSR handoff: render the component to a string, drop
 // that markup into a container (as the browser would on page load), then
 // hydrate() the SAME component over it and assert the existing nodes are
-// ADOPTED (===), interactivity is wired, and reactive updates hit the adopted
+// adopted (===), interactivity is wired, and reactive updates hit the adopted
 // nodes in place.
-// ============================================================================
 
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal } from '@azerothjs/reactivity';
@@ -23,7 +20,7 @@ function serverInto(component: () => HTMLElement): HTMLElement
     return container;
 }
 
-describe('hydrate — node adoption', () =>
+describe('hydrate - node adoption', () =>
 {
     it('adopts existing elements without recreating them', () =>
     {
@@ -75,14 +72,14 @@ describe('hydrate — node adoption', () =>
         hydrate(Counter, container);
         btn.dispatchEvent(new Event('click'));
 
-        // The SAME text node was patched — not replaced.
+        // The SAME text node was patched - not replaced.
         const after = Array.from(btn.childNodes).find((node) => node.nodeType === 3) as Text;
         expect(after).toBe(textNode);
         expect(textNode.data).toBe('1');
     });
 });
 
-describe('hydrate — components', () =>
+describe('hydrate - components', () =>
 {
     it('runs onMount exactly once', () =>
     {
@@ -101,7 +98,7 @@ describe('hydrate — components', () =>
     });
 });
 
-describe('hydrate — Show', () =>
+describe('hydrate - Show', () =>
 {
     it('adopts the rendered branch, then swaps reactively', () =>
     {
@@ -128,7 +125,7 @@ describe('hydrate — Show', () =>
     });
 });
 
-describe('hydrate — For', () =>
+describe('hydrate - For', () =>
 {
     it('adopts existing rows and preserves their identity across reorder', () =>
     {
@@ -147,13 +144,13 @@ describe('hydrate — For', () =>
         expect(container.querySelector('[data-k="a"]')).toBe(liA); // adopted
 
         setItems(['c', 'a', 'b']);
-        // Same DOM node, just moved — no recreation.
+        // Same DOM node, just moved - no recreation.
         expect(container.querySelector('[data-k="a"]')).toBe(liA);
         expect(Array.from(container.querySelectorAll('li')).map((li) => li.getAttribute('data-k'))).toEqual(['c', 'a', 'b']);
     });
 });
 
-describe('hydrate — mismatch fallback', () =>
+describe('hydrate - mismatch fallback', () =>
 {
     it('falls back to a full client render without throwing', () =>
     {
@@ -172,7 +169,7 @@ describe('hydrate — mismatch fallback', () =>
     });
 });
 
-describe('hydrate — re-render disposes the hydrated tree', () =>
+describe('hydrate - re-render disposes the hydrated tree', () =>
 {
     it('lets a later render() replace a hydrated mount', () =>
     {

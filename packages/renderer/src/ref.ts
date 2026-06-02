@@ -1,26 +1,13 @@
-// ============================================================================
-// AZEROTHJS — Ref (Direct DOM Access)
-// ============================================================================
+// A ref provides direct access to a DOM element after it's created - for the
+// cases where you need the actual node: focusing an input, measuring
+// dimensions, integrating third-party libraries (charts, maps), scrolling, or
+// drawing on a canvas.
 //
-// A ref provides direct access to a DOM element after it's created.
-//
-// WHY?
-//   Sometimes you need the actual DOM element:
-//     - Focus an input programmatically
-//     - Measure element dimensions
-//     - Integrate with third-party libraries (charts, maps)
-//     - Scroll to an element
-//     - Draw on a canvas
-//
-// HOW IT WORKS:
-//   1. createRef() returns { current: null }
-//   2. Pass it to an element via the `ref` prop: h('input', { ref })
-//   3. h() assigns the element to ref.current as it's created
-//
-//   A `ref` can also be a callback — h('div', { ref: el => ... }) —
-//   when you just want the element without holding a ref object.
-//
-// ============================================================================
+// How it works: createRef() returns { current: null }; pass it to an element
+// via the `ref` prop (h('input', { ref })) and h() assigns the element to
+// ref.current as it's created. A `ref` can also be a callback
+// (h('div', { ref: el => ... })) when you just want the element without
+// holding a ref object.
 
 /**
  * A ref object that holds a reference to a DOM element.
@@ -45,7 +32,7 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *
  * @example
  * ```ts
- * // Focus an input — pass the ref via the `ref` prop.
+ * // Focus an input: pass the ref via the `ref` prop.
  * const inputRef = createRef<HTMLInputElement>();
  *
  * h('input', { type: 'text', ref: inputRef });
@@ -58,7 +45,7 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *
  * @example
  * ```ts
- * // Draw on a canvas
+ * // Draw on a canvas once it's mounted.
  * const canvasRef = createRef<HTMLCanvasElement>();
  *
  * h('canvas', { width: '400', height: '300', ref: canvasRef });
@@ -71,20 +58,6 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  *         ctx.fillStyle = 'red';
  *         ctx.fillRect(0, 0, 100, 100);
  *     }
- * });
- * ```
- *
- * @example
- * ```ts
- * // Measure element dimensions
- * const boxRef = createRef();
- *
- * h('div', { class: 'box', ref: boxRef }, 'Measure me');
- *
- * onMount(() =>
- * {
- *     const rect = boxRef.current?.getBoundingClientRect();
- *     console.log('Width:', rect?.width, 'Height:', rect?.height);
  * });
  * ```
  */

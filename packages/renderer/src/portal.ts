@@ -1,44 +1,36 @@
-// ============================================================================
-// AZEROTHJS — Portal (Render Outside Parent)
-// ============================================================================
+// Portal renders children into a different part of the DOM tree, outside the
+// component's parent hierarchy. It returns an invisible placeholder in the
+// original tree and appends the real content to a target (default
+// document.body).
 //
-// Portal renders children into a different part of the DOM tree,
-// outside of the component's parent hierarchy.
+// Why: modals, tooltips, dropdowns, and toasts need to render at the top level
+// of the page to escape problems imposed by ancestors:
+//   - overflow: hidden clipping
+//   - z-index stacking context issues
+//   - a CSS transform on an ancestor breaking position: fixed
 //
-//   Without Portal:
-//     <div class="card" style="overflow: hidden">
-//       <Modal>  ← Gets clipped! Can't escape parent's overflow.
-//     </div>
+// Cleanup: a MutationObserver watches the placeholder. When the placeholder is
+// removed from the DOM (e.g. a surrounding Show toggling to false), the
+// portaled content is removed from the target automatically - no manual
+// cleanup needed. For example, inside Show: opening renders the Portal, which
+// appends the modal to body; closing removes the placeholder, the observer
+// fires, and the modal is removed from body.
 //
-//   With Portal:
-//     <div class="card" style="overflow: hidden">
-//       Portal({ target: document.body }, () => Modal({}))
-//       ← Modal renders in document.body, not inside .card
-//     </div>
+// Without Portal: append to document.body by hand and remember to remove it
+// (and dispose its effects) when the owner unmounts.
 //
-// WHY?
-//   Modals, tooltips, dropdowns, and toasts need to render at the
-//   top level of the page (usually document.body) to avoid:
-//     - overflow: hidden clipping
-//     - z-index stacking context issues
-//     - CSS transform breaking position: fixed
+//     const modal = h('div', { class: 'modal' }, 'Hi');
+//     document.body.appendChild(modal);
+//     onUnmount(() =>
+//     {
+//         modal.remove(); // forget this and the modal leaks past its owner
+//     });
 //
-// CLEANUP:
-//   Portal uses MutationObserver to watch its placeholder element.
-//   When the placeholder is removed from the DOM (e.g., by Show
-//   toggling to false), the portaled content is automatically
-//   removed from the target. No manual cleanup needed.
+// With Portal: returns a placeholder in the local tree.
 //
-//   Show(
-//     { when: isOpen },
-//     () => Portal({}, () => h('div', { class: 'modal' }, '...'))
-//   )
-//
-//   OPEN:   Show renders Portal → Portal appends modal to body ✅
-//   CLOSE:  Show removes placeholder → MutationObserver fires
-//           → Portal removes modal from body ✅
-//
-// ============================================================================
+//     Portal({
+//         children: () => h('div', { class: 'modal' }, 'Hi')
+//     }); // content mounts to the target, auto-cleans when the placeholder goes
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode, serializeChild, wrapContents, hydrationNode } from '@azerothjs/reactivity';
@@ -101,7 +93,7 @@ export interface PortalProps
     /**
      * Thunk that builds the content to portal into `target`.
      * A prop (not positional) so the manual API matches the
-     * compiled `<Portal>…</Portal>` form.
+     * compiled `<Portal>...</Portal>` form.
      */
     children: () => HTMLElement;
 }
@@ -144,7 +136,7 @@ export interface PortalProps
  */
 export function Portal(props: PortalProps): HTMLElement
 {
-    // ── Server-side rendering ─────────────────────────────────
+    // Server-side rendering.
     // There is no document.body to escape into on the server, so emit
     // the content INLINE where the portal is declared. The client
     // relocates it to the real target on hydration.
@@ -153,7 +145,7 @@ export function Portal(props: PortalProps): HTMLElement
         return wrapContents('portal', serializeChild(props.children())) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
+    // Hydration.
     // Portals can't escape their parent on the server, so the content was
     // rendered inline. On the client, discard that inline copy and build the
     // portal fresh (relocating content to its real target). v1 does not adopt
@@ -173,7 +165,7 @@ export function Portal(props: PortalProps): HTMLElement
 
     // Build the portaled content inside its OWN root. The content
     // lives outside the parent tree, so it can't rely on a parent
-    // element being removed to dispose its reactive effects — we
+    // element being removed to dispose its reactive effects - we
     // own them here and tear them down in cleanup() instead. Without
     // this, a manual destroyPortal() (or a portal at the top level
     // with no surrounding scope) would remove the DOM but leak the
@@ -194,14 +186,14 @@ export function Portal(props: PortalProps): HTMLElement
     placeholder.style.display = 'none';
     placeholder.setAttribute('data-azeroth-portal', '');
 
-    // ── Auto-cleanup with MutationObserver ───────────────────
+    // Auto-cleanup with MutationObserver.
     //
     // Watch for the placeholder being detached from the document.
     // We observe `document` with `subtree: true` from the start so
     // that:
     //   1. A synchronous removal (in the same tick as Portal())
     //      doesn't race the observer setup.
-    //   2. A removal at any ancestor level is caught — not just
+    //   2. A removal at any ancestor level is caught - not just
     //      the immediate parent.
     //
     const observer = new MutationObserver((mutations) =>
@@ -234,7 +226,7 @@ export function Portal(props: PortalProps): HTMLElement
      * Disposes the content's reactive effects, removes it from the
      * target, and disconnects the MutationObserver.
      *
-     * Idempotent — it can be reached from three paths (the observer,
+     * Idempotent - it can be reached from three paths (the observer,
      * `destroyPortal()`, and the surrounding scope's teardown), and
      * any of them may fire more than once.
      */
@@ -258,7 +250,7 @@ export function Portal(props: PortalProps): HTMLElement
 
     // If the SURROUNDING reactive scope tears down (the component or
     // route that mounted this Portal unmounts), clean up
-    // synchronously — don't wait on the placeholder-removal mutation
+    // synchronously - don't wait on the placeholder-removal mutation
     // being observed. The MutationObserver above stays as the backup
     // for removals that happen outside a reactive scope's teardown.
     onRootDispose(cleanup);
@@ -273,14 +265,14 @@ export function Portal(props: PortalProps): HTMLElement
 /**
  * Manually removes a Portal's content from its target.
  *
- * Usually not needed — Portal auto-cleans when its placeholder
+ * Usually not needed - Portal auto-cleans when its placeholder
  * is removed from the DOM. But available for edge cases.
  *
  * @param placeholder - The placeholder element returned by Portal()
  *
  * @example
  * ```ts
- * const el = Portal({}, () => h('div', {}, 'Modal'));
+ * const el = Portal({ children: () => h('div', {}, 'Modal') });
  * // Later:
  * destroyPortal(el);  // Removes the modal from document.body
  * ```

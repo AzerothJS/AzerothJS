@@ -1,39 +1,17 @@
-// ============================================================================
-// AZEROTHJS — Forms Public API
-// ============================================================================
+// Public API for the forms package.
 //
-// EXPORTED (public):
-//   createForm()  — Reactive form: values, errors, touched, dirty,
-//                   submitting, submitError, plus DOM-friendly
-//                   register() helpers.
+// createForm(config) builds a reactive form whose state is exposed as standard
+// signal getters. Use form.register(name) to spread props onto an <input>, and
+// form.handleSubmit straight on <form onSubmit>. State is signals and memos
+// underneath - the same composition story as the rest of AzerothJS.
 //
-//   Validator factories — drop-in helpers for the `validate` map:
-//     required, minLength, maxLength, min, max,
-//     pattern, email, url, oneOf, combine, phone
+// Validators compose via combine(required(), email(), ...). Every validator
+// except required silently passes on empty values, so combine produces sensible
+// errors regardless of ordering.
 //
-//   Country dataset — for phone validation and UI dropdowns:
-//     countries, getCountry, CountryInfo
-//
-// HOW IT FITS:
-//
-//   `createForm(config)` builds a reactive form whose state is
-//   exposed as standard signal getters. Use `form.register(name)`
-//   to spread props onto an `<input>`; use `form.handleSubmit`
-//   straight on `<form onSubmit>`. Everything is signals + memos
-//   underneath — same composition story as the rest of AzerothJS.
-//
-//   Validators compose via `combine(required(), email(), ...)`.
-//   Every validator except `required` silently passes on empty
-//   values, so `combine` produces sensible errors regardless of
-//   ordering.
-//
-// NOT IN v1:
-//   - Async validators (compose with createResource for now)
-//   - Checkbox / radio / select register variants (use setValue)
-//   - Field-array helpers (compose manually with For)
-//   - Cross-field validation (use a top-level validateForm later)
-//
-// ============================================================================
+// Not in v1: async validators (compose with createResource for now), checkbox /
+// radio / select register variants (use setValue), field-array helpers (compose
+// manually with For), and cross-field validation (a top-level validateForm).
 
 export { createForm } from './create-form.ts';
 export type {

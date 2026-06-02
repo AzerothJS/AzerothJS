@@ -15,7 +15,7 @@ describe('<Outlet>', () =>
 
         const result = Outlet({ children: child });
 
-        // Reference identity — Outlet is a pure passthrough.
+        // Reference identity: Outlet is a pure passthrough.
         expect(result).toBe(child);
     });
 
@@ -67,7 +67,7 @@ describe('<Outlet>', () =>
             expect(main).not.toBeNull();
 
             // The user leaf must live inside <main>, not adjacent
-            // to it — that's the whole job of <Outlet>.
+            // to it - that's the whole job of <Outlet>.
             const leaf = main!.querySelector('[data-leaf="user"]');
             expect(leaf).not.toBeNull();
             expect(leaf!.textContent).toBe('User profile');

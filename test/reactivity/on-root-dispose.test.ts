@@ -71,7 +71,7 @@ describe('onRootDispose', () =>
                 onRootDispose(innerCb);
 
                 // Disposing the inner root must fire only the inner
-                // callback — the outer one must remain pending.
+                // callback - the outer one must remain pending.
                 disposeInner();
                 expect(innerCb).toHaveBeenCalledOnce();
                 expect(outerCb).not.toHaveBeenCalled();
@@ -111,7 +111,7 @@ describe('onRootDispose', () =>
             //   1. onRootDispose callback fires first
             //   2. effect dispose runs, which fires the effect's
             //      latest onCleanup (registered when count=1 ran)
-            // …each exactly once.
+            // ...each exactly once.
             dispose();
             expect(log).toEqual(['effect-cleanup', 'root-dispose', 'effect-cleanup']);
         });

@@ -1,21 +1,15 @@
-// ============================================================================
-// AZEROTHJS — Hydration Primitives (Descriptor + DOM Cursor)
-// ============================================================================
+// Hydration adopts the existing server-rendered DOM rather than recreating it.
+// The challenge: h() evaluates its children inside-out (the inner h() runs
+// before the outer one), so a child can't claim its server node top-down while
+// it's being built. The fix: in 'hydrate' mode, h() and the control-flow
+// components return a lightweight hydration descriptor instead of building DOM.
+// Once the whole tree of descriptors exists, hydrate() walks it top-down
+// against the server DOM (via a HydrationCursor), claiming each existing node
+// and wiring listeners and effects onto it.
 //
-// AzerothJS hydration adopts the EXISTING server-rendered DOM rather than
-// recreating it. The challenge: h() evaluates its children inside-out (the
-// inner h() runs before the outer one), so a child can't claim its server
-// node "top-down" while it's being built. The fix: in 'hydrate' mode, h()
-// and the control-flow components return a lightweight HYDRATION DESCRIPTOR
-// instead of building DOM. After the whole tree of descriptors is returned,
-// hydrate() walks it TOP-DOWN against the server DOM (via a HydrationCursor),
-// claiming each existing node and wiring listeners/effects onto it.
-//
-// These are the DOM-free primitives shared by the renderer (h + control-flow)
+// These are the DOM-free primitives shared by the renderer (h, control-flow)
 // and the component package (ErrorBoundary). The element-specific adoption
 // logic (applyProps, reactive-hole text patching) lives in the renderer.
-//
-// ============================================================================
 
 /**
  * A hydration descriptor. Returned by h()/control-flow components while the
@@ -36,6 +30,12 @@ export interface HydrationNode
  *
  * @param x - Any value
  * @returns `true` if `x` is a hydration descriptor
+ *
+ * @example
+ * ```ts
+ * isHydrationNode(hydrationNode(() => {})); // true
+ * isHydrationNode('text');                  // false
+ * ```
  */
 export function isHydrationNode(x: unknown): x is HydrationNode
 {
@@ -47,6 +47,16 @@ export function isHydrationNode(x: unknown): x is HydrationNode
  *
  * @param hydrate - The adoption routine
  * @returns A hydration descriptor
+ *
+ * @example
+ * ```ts
+ * const node = hydrationNode((cursor) =>
+ * {
+ *     const el = cursor.takeElement('div'); // claim the server <div>
+ *     el.addEventListener('click', onClick);
+ * });
+ * node.hydrate(new HydrationCursor(container));
+ * ```
  */
 export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): HydrationNode
 {
@@ -57,6 +67,18 @@ export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): Hydra
  * Thrown when the server-rendered DOM doesn't structurally match what the
  * client tree expects (wrong tag, missing node, absent marker). hydrate()
  * catches this and falls back to a full client render so the app always boots.
+ *
+ * @example
+ * ```ts
+ * try
+ * {
+ *     cursor.takeElement('div'); // server had a <span> here
+ * }
+ * catch (err)
+ * {
+ *     if (err instanceof HydrationMismatchError) fullClientRender();
+ * }
+ * ```
  */
 export class HydrationMismatchError extends Error
 {
@@ -74,6 +96,14 @@ export class HydrationMismatchError extends Error
  *
  * @param from - The descriptor that carried the symbols
  * @param to - The adopted real element
+ *
+ * @example
+ * ```ts
+ * const descriptor = {};
+ * (descriptor as Record<symbol, unknown>)[DESTROY] = () => cleanup();
+ * transferCarriedSymbols(descriptor, adoptedEl);
+ * // adoptedEl[DESTROY] is now the cleanup hook
+ * ```
  */
 export function transferCarriedSymbols(from: object, to: object): void
 {
@@ -87,6 +117,14 @@ export function transferCarriedSymbols(from: object, to: object): void
  * A read cursor over a parent node's children, used to adopt server-rendered
  * DOM in source order. Takes a snapshot of `childNodes` at construction so
  * later DOM mutations (a control-flow swap, anchor removal) don't shift it.
+ *
+ * @example
+ * ```ts
+ * // <div id="root"><p>hi</p>text</div>
+ * const cursor = new HydrationCursor(document.getElementById('root')!);
+ * cursor.takeElement('p'); // claims <p>, advances past it
+ * cursor.takeText();       // claims the trailing "text" node
+ * ```
  */
 export class HydrationCursor
 {
@@ -115,6 +153,12 @@ export class HydrationCursor
 
     /**
      * Returns the next unclaimed node without advancing, or `null` at the end.
+     *
+     * @example
+     * ```ts
+     * const next = cursor.peek(); // inspect without claiming
+     * if (next?.nodeType === 8) cursor.takeOpenAnchor();
+     * ```
      */
     public peek(): ChildNode | null
     {
@@ -124,6 +168,11 @@ export class HydrationCursor
     /**
      * Returns the next unclaimed node if it is an element (without advancing),
      * else `null`.
+     *
+     * @example
+     * ```ts
+     * if (cursor.peekElement()) cursor.takeElement(); // only claim if present
+     * ```
      */
     public peekElement(): HTMLElement | null
     {
@@ -137,6 +186,12 @@ export class HydrationCursor
      * @param expectedTag - If given, the element's tag must match (case-insensitive)
      * @returns The claimed element
      * @throws {@link HydrationMismatchError} if the next node isn't the expected element
+     *
+     * @example
+     * ```ts
+     * const button = cursor.takeElement('button'); // claims and returns <button>
+     * button.addEventListener('click', onClick);
+     * ```
      */
     public takeElement(expectedTag?: string): HTMLElement
     {
@@ -163,6 +218,12 @@ export class HydrationCursor
      *
      * @returns The claimed text node
      * @throws {@link HydrationMismatchError} if the next node isn't text
+     *
+     * @example
+     * ```ts
+     * const text = cursor.takeText(); // claims the next text node
+     * text.data; // its current server-rendered string
+     * ```
      */
     public takeText(): Text
     {
@@ -181,6 +242,13 @@ export class HydrationCursor
      * Claims the opening reactive-hole anchor (`<!--[-->`).
      *
      * @throws {@link HydrationMismatchError} if the next node isn't the open anchor
+     *
+     * @example
+     * ```ts
+     * // For <!--[-->42<!--]--> emitted around a reactive hole:
+     * cursor.takeOpenAnchor();              // consume the <!--[--> anchor
+     * const { content } = cursor.takeUntilCloseAnchor(); // the [42] text nodes
+     * ```
      */
     public takeOpenAnchor(): void
     {
@@ -200,6 +268,14 @@ export class HydrationCursor
      *
      * @returns The content nodes between the anchors and the close anchor itself
      * @throws {@link HydrationMismatchError} if no close anchor is found
+     *
+     * @example
+     * ```ts
+     * cursor.takeOpenAnchor();
+     * const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
+     * content;     // the nodes that filled the reactive hole
+     * closeAnchor; // the <!--]--> comment, now consumed
+     * ```
      */
     public takeUntilCloseAnchor(): { content: ChildNode[]; closeAnchor: Comment }
     {

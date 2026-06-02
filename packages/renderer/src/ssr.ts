@@ -1,10 +1,6 @@
-// ============================================================================
-// AZEROTHJS — Element Serialization (SSR)
-// ============================================================================
-//
 // The element-specific half of server-side rendering: turning an h() call
 // into an HTML string. This mirrors, branch for branch, what applyProps /
-// setProperty / appendChild do in h.ts's DOM path — so the markup a server
+// setProperty / appendChild do in h.ts's DOM path - so the markup a server
 // produces is structurally identical to what the browser would build, which
 // is what makes hydration able to adopt it node-for-node.
 //
@@ -12,16 +8,20 @@
 // wrapper) live in @azerothjs/reactivity's ssr.ts; this file owns the bits
 // that are specific to HTML elements (tag names, void elements, the
 // attribute-vs-property rules).
-//
-// ============================================================================
 
 import type { Props, Child } from './types.ts';
 import { untrack, serializeChild, escapeText, escapeAttr, ssr } from '@azerothjs/reactivity';
 import type { SSRNode } from '@azerothjs/reactivity';
 
 /**
- * HTML void elements — they have no children and no closing tag. Rendered
+ * HTML void elements: they have no children and no closing tag. Rendered
  * as `<tag ...>` with no content.
+ *
+ * @example
+ * ```ts
+ * VOID_ELEMENTS.has('br');   // true  -> emitted as '<br>', no </br>
+ * VOID_ELEMENTS.has('div');  // false -> emitted with a closing tag
+ * ```
  *
  * @internal
  */
@@ -73,12 +73,12 @@ function resolveValue(value: unknown): unknown
  * Serializes a props object to an attribute string (each attribute prefixed
  * with a space), mirroring h()'s applyProps / setProperty rules:
  *
- *   - `ref` and `on*` handlers → skipped (no meaning in static HTML)
- *   - `innerHTML` / `textContent` → skipped here (emitted as content)
- *   - reactive values (functions) → resolved once via {@link resolveValue}
- *   - `false` / `null` / `undefined` → attribute omitted
- *   - `true` → boolean attribute (`disabled=""`)
- *   - everything else → `key="<escaped value>"`
+ *   - `ref` and `on*` handlers -> skipped (no meaning in static HTML)
+ *   - `innerHTML` / `textContent` -> skipped here (emitted as content)
+ *   - reactive values (functions) -> resolved once via {@link resolveValue}
+ *   - `false` / `null` / `undefined` -> attribute omitted
+ *   - `true` -> boolean attribute (`disabled=""`)
+ *   - everything else -> `key="<escaped value>"`
  *
  * Note: `value` / `checked` / `selected` / `disabled` are DOM properties on
  * the client, but server-side their correct initial representation IS the
@@ -86,6 +86,14 @@ function resolveValue(value: unknown): unknown
  *
  * @param props - The props passed to h()
  * @returns The serialized attribute string (may be empty)
+ *
+ * @example
+ * ```ts
+ * serializeAttrs({ id: 'box', disabled: true, hidden: false });
+ * // ' id="box" disabled=""'  (false attribute omitted, leading space)
+ *
+ * serializeAttrs({ onClick: handler, ref: r }); // '' (handlers/refs skipped)
+ * ```
  */
 export function serializeAttrs(props: Props): string
 {
@@ -134,6 +142,12 @@ export function serializeAttrs(props: Props): string
  *
  * @param children - The children passed to h()
  * @returns The concatenated, escaped inner HTML
+ *
+ * @example
+ * ```ts
+ * serializeChildren(['Hi ', 'there']);          // 'Hi there'
+ * serializeChildren([serializeElement('b', {}, ['!'])]); // '<b>!</b>'
+ * ```
  */
 export function serializeChildren(children: Child[]): string
 {
@@ -159,6 +173,15 @@ export function serializeChildren(children: Child[]): string
  * @param props - The props/attributes
  * @param children - The child nodes
  * @returns The serialized element as an {@link SSRNode}
+ *
+ * @example
+ * ```ts
+ * serializeElement('div', { class: 'card' }, ['Hi']).html;
+ * // '<div class="card">Hi</div>'
+ *
+ * serializeElement('img', { src: 'a.png' }, []).html;
+ * // '<img src="a.png">'  (void element, no closing tag)
+ * ```
  */
 export function serializeElement(tag: string, props: Props, children: Child[]): SSRNode
 {
@@ -174,7 +197,7 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
 
     if ('innerHTML' in props)
     {
-        // Raw passthrough — same trust model as `el.innerHTML = x`.
+        // Raw passthrough: same trust model as `el.innerHTML = x`.
         inner = String(resolveValue(props.innerHTML) ?? '');
     }
     else if ('textContent' in props)

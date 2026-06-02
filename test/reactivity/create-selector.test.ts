@@ -58,7 +58,7 @@ describe('createSelector', () =>
         expect(item2Runs).toBe(1);
         expect(item3Runs).toBe(1);
 
-        // Change selection from 1 → 2
+        // Change selection from 1 -> 2
         item1Runs = 0;
         item2Runs = 0;
         item3Runs = 0;
@@ -168,7 +168,7 @@ describe('createSelector', () =>
         });
 
         runs = 0;
-        // Select key 99 — no subscribers for it, should not throw
+        // Select key 99 - no subscribers for it, should not throw
         setSelected(99);
         // item1 was deselected, so its effect should re-run
         expect(runs).toBe(1);

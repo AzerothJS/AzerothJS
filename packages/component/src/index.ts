@@ -1,16 +1,10 @@
-// ============================================================================
-// AZEROTHJS — Component Public API
-// ============================================================================
+// Public API for @azerothjs/component.
 //
-// EXPORTED (public):
-//   defineComponent()    — Create function components with lifecycle
-//   AzerothComponent     — Base class for class-based components
-//   onMount()            — Mount lifecycle hook (function components)
-//   onDestroy()          — Destroy lifecycle hook (function components)
-//   destroyComponent()   — Trigger cleanup on any component
-//   ErrorBoundary        — Catch errors in a subtree, render fallback
-//
-// ============================================================================
+//   defineComponent()   - create function components with lifecycle hooks
+//   AzerothComponent    - base class for class-based components
+//   onMount/onDestroy   - lifecycle hooks for function components
+//   destroyComponent()  - trigger cleanup on any component
+//   ErrorBoundary       - catch errors in a subtree, render a fallback
 
 export {
     defineComponent,

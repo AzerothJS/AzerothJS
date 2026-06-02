@@ -1,43 +1,13 @@
-// ============================================================================
-// AZEROTHJS — createDeferred (Debounced Reactive Value)
-// ============================================================================
+// createDeferred() wraps a signal getter and returns a new getter whose value
+// updates are debounced: subscribers only see the new value after a timeout
+// has elapsed since the last change. Use it to keep expensive downstream work
+// (filtering large lists, re-rendering a chart, refetching) from running on
+// every rapid update - e.g. only filter once the user stops typing.
 //
-// createDeferred() wraps a signal getter and returns a new getter
-// whose value updates are delayed (debounced). Subscribers only
-// see the new value after a timeout since the LAST change.
-//
-// WHY?
-//
-//   Some reactive updates are expensive:
-//     - Filtering thousands of items on every keystroke
-//     - Re-rendering a complex chart on every slider move
-//     - Fetching data on every input change
-//
-//   createDeferred lets you debounce these updates automatically:
-//
-//     const [search, setSearch] = createSignal('');
-//     const deferredSearch = createDeferred(search, { timeout: 300 });
-//
-//     // This effect only runs 300ms after the user STOPS typing
-//     createEffect(() =>
-//     {
-//         const results = filterItems(deferredSearch());
-//         renderResults(results);
-//     });
-//
-// HOW IT WORKS:
-//
-//   1. Creates an internal signal to hold the deferred value
-//   2. An effect watches the source getter
-//   3. On change, it starts/resets a setTimeout
-//   4. When the timeout fires (no new changes), it updates
-//      the internal signal
-//   5. Subscribers of the deferred getter then re-run
-//
-//   Source:   "h" → "he" → "hel" → "hell" → "hello"
-//   Deferred: "h" ─────────────────────────→ "hello" (after timeout)
-//
-// ============================================================================
+// It holds the deferred value in an internal signal, watches the source with
+// an effect, and on each source change (re)starts a timer; when the timer
+// fires without further changes it writes the internal signal, re-running its
+// subscribers.
 
 import type { Getter } from './types.ts';
 import { createSignal } from './signal.ts';
@@ -61,14 +31,10 @@ export interface DeferredOptions
 }
 
 /**
- * Creates a deferred (debounced) version of a signal getter.
- *
- * The returned getter's value updates only after `timeout` ms
- * have passed since the last change in the source getter.
- * This prevents expensive downstream computations from running
- * on every rapid update.
- *
- * The initial value is set immediately (no delay on first read).
+ * Creates a deferred (debounced) version of a signal getter. The returned
+ * getter's value updates only after `timeout` ms have passed since the last
+ * source change, keeping expensive downstream work off the rapid-update path.
+ * The initial value is available immediately, with no delay on first read.
  *
  * @typeParam T - The type of the signal's value
  *
@@ -77,9 +43,27 @@ export interface DeferredOptions
  *
  * @returns A getter that returns the debounced value
  *
+ * Why: keeping expensive downstream work off the rapid-update path means
+ * debouncing the source yourself with a timer and a separate held value.
+ *
+ * Without createDeferred: a setTimeout/clearTimeout dance in an effect:
+ *
+ *     const [delayed, setDelayed] = createSignal(search());
+ *     createEffect(() =>
+ *     {
+ *         const v = search();
+ *         const id = setTimeout(() => setDelayed(() => v), 300);
+ *         onCleanup(() => clearTimeout(id)); // forget this and timers pile up
+ *     });
+ *
+ * With createDeferred: one call returns the debounced getter:
+ *
+ *     const deferred = createDeferred(search, { timeout: 300 });
+ *     deferred(); // the value as of 300ms after the last change
+ *
  * @example
  * ```ts
- * // Debounced search — filters only after user stops typing
+ * // Debounced search - filters only after the user stops typing
  * const [search, setSearch] = createSignal('');
  * const deferredSearch = createDeferred(search, { timeout: 300 });
  *
@@ -88,18 +72,6 @@ export interface DeferredOptions
  *     // Only runs 300ms after the last setSearch() call
  *     const results = filterItems(deferredSearch());
  *     renderResults(results);
- * });
- * ```
- *
- * @example
- * ```ts
- * // Debounced slider — avoids re-rendering on every pixel
- * const [value, setValue] = createSignal(50);
- * const smoothValue = createDeferred(value, { timeout: 100 });
- *
- * createEffect(() =>
- * {
- *     renderExpensiveChart(smoothValue());
  * });
  * ```
  *
@@ -114,42 +86,37 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
 {
     const timeout = options?.timeout ?? 150;
 
-    // Internal signal holds the deferred value
-    // Initialized with the current source value (no delay)
-    // untrack prevents the parent effect from subscribing to source
+    // Seed the internal signal with the current source value (no delay).
+    // untrack keeps this read from subscribing any enclosing effect.
     const [deferred, setDeferred] = createSignal<T>(untrack(() => source()));
 
     let timerId: ReturnType<typeof setTimeout> | null = null;
     let isFirst = true;
 
-    // Watch the source — debounce updates to the internal signal
     createEffect(() =>
     {
         const current = source();
 
-        // First run: value already set in createSignal above
+        // First run: the value was already seeded in createSignal above.
         if (isFirst)
         {
             isFirst = false;
             return;
         }
 
-        // Schedule the deferred update
         timerId = setTimeout(() =>
         {
             timerId = null;
             setDeferred(() => current);
         }, timeout);
 
-        // The returned cleanup is the SINGLE place a pending timer
-        // is cancelled. It runs in two situations, and both are the
-        // behavior we want:
-        //
-        //   1. Before the effect re-runs (source changed again) —
-        //      this is the debounce RESET: the previous timer is
-        //      cleared right before a fresh one is scheduled above.
-        //   2. When the effect is disposed (root teardown) — stops
-        //      a stale `setDeferred` from firing after unmount.
+        // The returned cleanup is the single place a pending timer is
+        // cancelled. It runs in two situations, both intended:
+        //   1. Before the effect re-runs (source changed again) - the debounce
+        //      reset, clearing the previous timer right before a fresh one is
+        //      scheduled above.
+        //   2. On dispose (root teardown) - stops a stale setDeferred from
+        //      firing after unmount.
         return () =>
         {
             if (timerId !== null)

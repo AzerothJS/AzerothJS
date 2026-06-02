@@ -8,7 +8,7 @@ function body(src: string): string
     return compile(src).code;
 }
 
-describe('compile() — elements & text', () =>
+describe('compile() - elements & text', () =>
 {
     it('compiles a simple element with text', () =>
     {
@@ -52,7 +52,7 @@ describe('compile() — elements & text', () =>
     });
 });
 
-describe('compile() — attributes & events', () =>
+describe('compile() - attributes & events', () =>
 {
     it('keeps static string attributes as literals', () =>
     {
@@ -88,12 +88,12 @@ describe('compile() — attributes & events', () =>
     });
 });
 
-describe('compile() — JS in markup', () =>
+describe('compile() - JS in markup', () =>
 {
     it('compiles a .map() list with nested markup', () =>
     {
         const out = body('const x = <ul>{items().map(i => <li>{i.name}</li>)}</ul>;');
-        // `i.name` is a bare reference → passed through (static per item);
+        // `i.name` is a bare reference, passed through (static per item);
         // the whole .map() hole is wrapped so the list stays reactive.
         expect(out).toContain('h(\'li\', {  }, i.name)');
         expect(out).toContain('() => (items().map(i => h(\'li\'');
@@ -106,7 +106,7 @@ describe('compile() — JS in markup', () =>
     });
 });
 
-describe('compile() — components', () =>
+describe('compile() - components', () =>
 {
     it('compiles a capitalized tag to a component call', () =>
     {
@@ -128,7 +128,7 @@ describe('compile() — components', () =>
     });
 });
 
-describe('compile() — built-in control flow & auto-import', () =>
+describe('compile() - built-in control flow & auto-import', () =>
 {
     it('auto-imports built-in components used in markup', () =>
     {
@@ -152,7 +152,7 @@ describe('compile() — built-in control flow & auto-import', () =>
         expect(out).toMatch(/^import \{ h \} from/);
     });
 
-    it('Show: when → getter, fallback → thunk, children → thunk', () =>
+    it('Show: when -> getter, fallback -> thunk, children -> thunk', () =>
     {
         const out = body('const x = <Show when={n() > 1} fallback={<i>f</i>}>{<b>y</b>}</Show>;');
         expect(out).toContain('when: () => (n() > 1)');
@@ -160,7 +160,7 @@ describe('compile() — built-in control flow & auto-import', () =>
         expect(out).toContain('children: () =>');
     });
 
-    it('For: each → getter, key → as-is, function child → children fn', () =>
+    it('For: each -> getter, key -> as-is, function child -> children fn', () =>
     {
         const out = body('const x = <For each={items()} key={k}>{(i) => <li>{i}</li>}</For>;');
         expect(out).toContain('each: () => (items())');
@@ -183,7 +183,7 @@ describe('compile() — built-in control flow & auto-import', () =>
     });
 });
 
-describe('findMarkupStart — does not mistake operators for markup', () =>
+describe('findMarkupStart - does not mistake operators for markup', () =>
 {
     it('leaves a less-than comparison untouched', () =>
     {
@@ -207,7 +207,7 @@ describe('findMarkupStart — does not mistake operators for markup', () =>
     });
 });
 
-describe('compile() — source maps', () =>
+describe('compile() - source maps', () =>
 {
     it('encodes VLQ values correctly', () =>
     {
@@ -242,7 +242,7 @@ describe('compile() — source maps', () =>
     });
 });
 
-describe('compile() — example .azeroth files', () =>
+describe('compile() - example .azeroth files', () =>
 {
     for (const name of ['Todo', 'Clock'])
     {
@@ -251,11 +251,11 @@ describe('compile() — example .azeroth files', () =>
             const src = readFileSync(`packages/compiler/examples/${ name }.azeroth`, 'utf8');
             const out = compile(src).code;
 
-            // Produced real h() calls…
+            // Produced real h() calls...
             expect(out).toContain('h(\'');
-            // …and the non-markup script (imports, types) survived.
+            // ...and the non-markup script (imports, types) survived.
             expect(out).toContain('@azerothjs/core');
-            // …and no uncompiled `return ( <` markup remains.
+            // ...and no uncompiled `return ( <` markup remains.
             expect(/return\s*\(\s*</.test(out)).toBe(false);
         });
     }

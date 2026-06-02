@@ -74,7 +74,7 @@ describe('stringifyQuery', () =>
     it('returns empty string for empty input or empty arrays', () =>
     {
         expect(stringifyQuery({})).toBe('');
-        // Empty-array values produce no output — the key is dropped.
+        // Empty-array values produce no output - the key is dropped.
         expect(stringifyQuery({ tags: [] })).toBe('');
     });
 

@@ -1,40 +1,29 @@
-// ============================================================================
-// AZEROTHJS — Show (Conditional Rendering)
-// ============================================================================
+// Show renders its children only when a condition is true, and a fallback
+// (or nothing) when it's false.
 //
-// Show renders its children only when a condition is true.
-// When the condition becomes false, it shows a fallback (or nothing).
+// Why: inline ternaries inside h() work but get unreadable fast, and the
+// inactive branch is still built on every evaluation.
 //
-// WITHOUT Show:
-//   h('div', {},
-//     () => isLoggedIn()
-//       ? h('p', {}, `Welcome, ${user()}!`)
-//       : h('p', {}, 'Please log in'),
-//   )
-//   // Works but ugly and hard to read in complex cases
+// Without Show: an inline reactive ternary inside h().
 //
-// WITH Show:
-//   Show({
-//     when: isLoggedIn,
-//     fallback: () => h('p', {}, 'Please log in'),
-//   }, () => h('p', {}, `Welcome, ${user()}!`))
-//   // Clean, readable, declarative
+//     h('div', {}, () => isLoggedIn()
+//         ? h('p', {}, `Welcome, ${ user() }!`)
+//         : h('p', {}, 'Please log in')) // both branches rebuild on any flip
 //
-// HOW IT WORKS:
-//   1. Creates a container element (display: contents — invisible wrapper)
-//   2. An effect watches the `when` signal
-//   3. When true → renders children into the container
-//   4. When false → renders fallback (or empty) into the container
-//   5. When condition changes → swaps content
+// With Show: a declarative branch with an optional fallback.
 //
-// CLEANUP:
+//     Show({
+//         when: isLoggedIn,
+//         fallback: () => h('p', {}, 'Please log in'),
+//         children: () => h('p', {}, `Welcome, ${ user() }!`)
+//     }) // only the active branch is built, in its own disposable root
 //
-//   When swapping content, Show removes child nodes one by one
-//   (not innerHTML = '') so that MutationObserver and other
-//   watchers can detect removal. This is important for Portal
-//   auto-cleanup.
+// How it works: a contents-wrapper span holds the active branch; an effect
+// watches `when` and swaps children for fallback (or vice versa) when it flips.
 //
-// ============================================================================
+// On swap, children are removed one node at a time rather than via
+// innerHTML = '' so MutationObserver can detect the removal - Portal's
+// auto-cleanup relies on this.
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
@@ -64,7 +53,7 @@ export interface ShowProps
      * The content shown when `when` is true. A thunk so it's only
      * built while visible. Passed as a prop (not a positional
      * argument) so the manual API matches the compiled `.azeroth`
-     * form: `<Show when={…}>…</Show>`.
+     * form: `<Show when={...}>...</Show>`.
      */
     children: () => HTMLElement;
 }
@@ -97,7 +86,7 @@ export interface ShowProps
  *
  * @example
  * ```ts
- * // Without fallback — hides when false
+ * // Without fallback - hides when false
  * Show({
  *   when: showDetails,
  *   children: () => h('div', { class: 'details' },
@@ -108,7 +97,7 @@ export interface ShowProps
  */
 export function Show(props: ShowProps): HTMLElement
 {
-    // ── Server-side rendering ─────────────────────────────────
+    // Server-side rendering.
     // Evaluate `when` ONCE (no live effect), emit the active branch
     // inside a contents-wrapper anchor the client hydrator can adopt.
     if (isStringMode())
@@ -118,7 +107,7 @@ export function Show(props: ShowProps): HTMLElement
         return wrapContents('show', inner) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
+    // Hydration.
     // Adopt the server-rendered wrapper span and its current branch on
     // the first effect run; subsequent toggles use the normal DOM swap.
     if (isHydrating())
@@ -155,8 +144,8 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
 
     createEffect(() =>
     {
-        // Render the active branch — `children` when `when` is true,
-        // otherwise the optional `fallback` — inside its own root so
+        // Render the active branch - `children` when `when` is true,
+        // otherwise the optional `fallback` - inside its own root so
         // the whole subtree (effects + components) disposes as one
         // unit on the next swap.
         const factory = props.when() ? props.children : props.fallback;

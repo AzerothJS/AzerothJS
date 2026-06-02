@@ -194,7 +194,7 @@ describe('Lifecycle Hooks', () =>
 
         const Parent = defineComponent(() =>
         {
-            // Create the nested component FIRST — this swaps the
+            // Create the nested component FIRST - this swaps the
             // hook-collection context. The outer hooks below must
             // still register against the parent.
             const child = Child({});

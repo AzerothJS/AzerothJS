@@ -1,32 +1,29 @@
-// ============================================================================
-// AZEROTHJS — h() Direct DOM Creation
-// ============================================================================
+// h() creates real DOM elements directly: no virtual DOM, no intermediate
+// objects, no diffing. Where React's createElement returns a VNode that a
+// reconciler later diffs and patches, h() returns a live HTMLElement and wires
+// up reactive effects immediately. When signals change, those effects mutate
+// the DOM node in place.
 //
-// The h() function creates REAL DOM elements directly.
-// There is no virtual DOM, no intermediate objects, no diffing.
+// Without h: build and wire each node by hand, repeating the create/effect
+// dance for every element in the tree.
 //
-// COMPARISON WITH OTHER FRAMEWORKS:
+//     const el = document.createElement('span');
+//     createEffect(() =>
+//     {
+//         el.textContent = `Count: ${ count() }`; // wire every node yourself
+//     });
 //
-//   React h() / createElement():
-//     Returns virtual node → { type, props, children }
-//     Later, reconciler diffs VNodes and patches the DOM.
+// With h: declare the tree; a function child becomes a reactive binding.
 //
-//   AzerothJS h():
-//     Returns REAL HTMLElement → <div class="box">Hello</div>
-//     Reactive effects are wired up IMMEDIATELY during creation.
-//     When signals change, effects update the DOM node DIRECTLY.
-//     No diffing. No reconciliation. Just direct DOM mutations.
+//     h('span', {},
+//         () => `Count: ${ count() }` // wires itself up, updates on change
+//     );
 //
-// DOM PROPERTIES vs HTML ATTRIBUTES:
-//
-//   Some props must be set as DOM PROPERTIES (el.value = x)
-//   instead of HTML ATTRIBUTES (el.setAttribute('value', x)).
-//
-//   Why? Attributes set the INITIAL state. Properties control
-//   the LIVE state. For inputs, el.value is the current value,
-//   while getAttribute('value') is the initial value.
-//
-// ============================================================================
+// DOM properties vs HTML attributes: some props must be set as DOM properties
+// (el.value = x) rather than attributes (el.setAttribute('value', x)).
+// Attributes set the initial state; properties control the live state. For an
+// input, el.value is the current value while getAttribute('value') is only the
+// initial value - see DOM_PROPERTIES below.
 
 import type { Props, Child } from './types.ts';
 import type { DisposeFn, HydrationNode, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
@@ -59,78 +56,44 @@ const DOM_PROPERTIES = new Set
 ]);
 
 /**
- * Creates a real DOM element with attributes, event handlers,
- * and children — wiring up reactive signals immediately.
+ * Creates a real DOM element with attributes, event handlers, and children,
+ * wiring up reactive signals immediately.
  *
  * @param tag - The HTML tag name ('div', 'p', 'span', etc.)
  * @param props - Attributes, event handlers, DOM properties
  * @param children - Zero or more children to append
- *
  * @returns A real HTMLElement with all bindings active
  *
  * @example
  * ```ts
- * // Basic element with attributes
- * h('div', { class: 'card', id: 'main' }, 'Hello');
- * ```
- *
- * @example
- * ```ts
- * // Reactive text
  * const [count, setCount] = createSignal(0);
- * h('span', {}, () => `Count: ${ count() }`);
+ * h('div', { class: 'card' },
+ *   h('span', {}, () => `Count: ${ count() }`),
+ *   h('button', { onClick: () => setCount(prev => prev + 1) }, 'Click me')
+ * );
  * ```
  *
  * @example
  * ```ts
- * // Event handlers
- * h('button', {
- *   onClick: () => setCount(prev => prev + 1)
- * }, 'Click me');
- * ```
- *
- * @example
- * ```ts
- * // Reactive attributes
+ * // Reactive attributes re-evaluate when the signals they read change.
  * h('div', {
  *   class: () => isActive() ? 'active' : 'inactive',
  *   disabled: () => isLoading()
  * });
  * ```
- *
- * @example
- * ```ts
- * // Array children
- * const items = ['Apple', 'Banana', 'Cherry'];
- * h('ul', {},
- *   items.map(item => h('li', {}, item))
- * );
- * ```
- *
- * @example
- * ```ts
- * // Nested elements
- * h('div', { class: 'card' },
- *   h('h1', {}, 'Title'),
- *   h('p', {}, 'Description'),
- *   h('button', { onClick: handleClick }, 'Action')
- * );
- * ```
  */
 export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 {
-    // ── Server-side rendering ─────────────────────────────────
-    // In string mode there is no document: emit HTML directly. The
-    // SSRNode is cast to HTMLElement so it flows through composition
-    // (parent h() calls, control-flow children) exactly like a real
+    // Server-side rendering: in string mode there is no document, so emit HTML
+    // directly. The SSRNode is cast to HTMLElement so it flows through
+    // composition (parent h() calls, control-flow children) exactly like a real
     // element would in the DOM path.
     if (isStringMode())
     {
         return serializeElement(tag, props, children) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
-    // Don't build DOM: return a descriptor that, when walked by
+    // Hydration: don't build DOM. Return a descriptor that, when walked by
     // hydrate(), adopts the matching server-rendered element in place.
     if (isHydrating())
     {
@@ -147,13 +110,9 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 }
 
 /**
- * Applies properties, attributes, and event handlers
- * to a DOM element.
- *
- * Handles three categories:
- *   1. Event handlers (onClick, onInput, etc.)
- *   2. Reactive attributes (functions that return values)
- *   3. Static attributes (strings, numbers, booleans)
+ * Applies properties, attributes, and event handlers to a DOM element.
+ * Dispatches each prop to one of: ref, event handler (on*), reactive attribute
+ * (function value), or static attribute.
  *
  * @param el - The real DOM element to apply props to
  * @param props - The props object passed to h()
@@ -164,18 +123,15 @@ function applyProps(el: HTMLElement, props: Props): void
 {
     for (const [key, value] of Object.entries(props))
     {
-        // ── Ref (direct element access) ───────────────────────
-        // `ref` is special: it is NEVER a DOM attribute. It hands
-        // the freshly-created element back to the caller. Must run
-        // before the reactive-function branch below — otherwise a
-        // ref CALLBACK would be mistaken for a reactive attribute.
+        // `ref` is never a DOM attribute: it hands the freshly-created element
+        // back to the caller. Must run before the reactive-function branch
+        // below, or a ref callback would be mistaken for a reactive attribute.
         if (key === 'ref')
         {
             applyRef(el, value);
             continue;
         }
 
-        // ── Event handlers ───────────────────────────────────
         if (key.startsWith('on') && typeof value === 'function')
         {
             const eventName = key.slice(2).toLowerCase();
@@ -183,7 +139,7 @@ function applyProps(el: HTMLElement, props: Props): void
             continue;
         }
 
-        // ── Reactive attributes ───────────────────────────────────
+        // Reactive attribute: re-apply whenever the signals it reads change.
         if (typeof value === 'function')
         {
             createEffect(() =>
@@ -194,20 +150,18 @@ function applyProps(el: HTMLElement, props: Props): void
             continue;
         }
 
-        // ── Static attributes ───────────────────────────────────
         setProperty(el, key, value);
     }
 }
 
 /**
- * Wires up a `ref` prop, handing the created element back to the
- * caller. Supports two forms:
+ * Wires up a `ref` prop, handing the created element back to the caller.
+ * Supports two forms:
  *
- *   - A ref object from `createRef()` → sets its `.current`.
- *   - A callback `(el) => void`        → invoked with the element.
+ *   - A ref object from `createRef()` -> sets its `.current`.
+ *   - A callback `(el) => void` -> invoked with the element.
  *
- * Anything else is ignored — a ref is never rendered as an
- * attribute.
+ * Anything else is ignored; a ref is never rendered as an attribute.
  *
  * @param el - The freshly-created DOM element
  * @param ref - The value passed as the `ref` prop
@@ -229,13 +183,11 @@ function applyRef(el: HTMLElement, ref: unknown): void
 }
 
 /**
- * Sets a single property or attribute on a DOM element.
- *
- * Routes to the correct method based on the property name:
- *   - DOM properties → set directly (el.value = x)
- *   - false/null/undefined → remove attribute
- *   - true → set empty attribute (disabled="")
- *   - everything else → setAttribute(key, String(value))
+ * Sets a single property or attribute on a DOM element, routing by name:
+ *   - DOM properties -> set directly (el.value = x)
+ *   - false/null/undefined -> remove attribute
+ *   - true -> set empty attribute (disabled="")
+ *   - everything else -> setAttribute(key, String(value))
  *
  * @param el - The DOM element
  * @param key - The property/attribute name
@@ -283,14 +235,12 @@ function appendChildren(parent: HTMLElement, children: Child[]): void
 }
 
 /**
- * Appends a single child to a parent DOM element.
- *
- * Handles all child types:
- *   - null/undefined/false → skip (conditional rendering)
- *   - Child[] → flatten and process each item
- *   - HTMLElement → append directly
- *   - string/number → create Text node
- *   - function → reactive child, wrapped in effect
+ * Appends a single child to a parent DOM element, handling all child types:
+ *   - null/undefined/false -> skip (conditional rendering)
+ *   - Child[] -> flatten and process each item
+ *   - HTMLElement -> append directly
+ *   - string/number -> create Text node
+ *   - function -> reactive child, wrapped in effect
  *
  * @param parent - The DOM element to append to
  * @param child - The child to render
@@ -319,12 +269,11 @@ function appendChild(parent: HTMLElement, child: Child): void
 
         createEffect(() =>
         {
-            // Evaluate the child INSIDE a per-run root. This is
-            // critical: building an element here (e.g.
-            // `h('span', {}, () => count())`) creates nested effects,
-            // and they must be owned by THIS root so they die when we
-            // swap. (Evaluating outside the root leaks them — exactly
-            // what the leak-regression suite guards against.)
+            // Evaluate the child inside a per-run root. This is critical:
+            // building an element here (e.g. `h('span', {}, () => count())`)
+            // creates nested effects, and they must be owned by THIS root so
+            // they die when we swap. Evaluating outside the root leaks them -
+            // exactly what the leak-regression suite guards against.
             let localDispose!: DisposeFn;
             const value = createRoot((d) =>
             {
@@ -332,18 +281,16 @@ function appendChild(parent: HTMLElement, child: Child): void
                 return (child as () => unknown)();
             });
 
-            // ── Fast path: primitive → existing text node ─────────
-            // The overwhelmingly common reactive child is a string or
-            // number (`() => `Count: ${ count() }``). Update the live
-            // text node IN PLACE instead of building a replacement and
-            // swapping it in — no DOM node churn per tick, matching
-            // what fine-grained renderers like Solid do. A primitive
-            // owns nothing, so dispose this run's (empty) root now and
-            // register no cleanup.
+            // Fast path: primitive into the existing text node. The common
+            // reactive child is a string or number (`() => `Count: ${ count() }``).
+            // Update the live text node in place rather than building a
+            // replacement and swapping it - no DOM node churn per tick, matching
+            // fine-grained renderers like Solid. A primitive owns nothing, so
+            // dispose this run's (empty) root now and register no cleanup.
             //
-            // Only taken when the current node is ALREADY a text node,
-            // so element↔text transitions still take the full rebuild
-            // path below (which tears down the old subtree).
+            // Only taken when the current node is already a text node, so
+            // element/text transitions still take the full rebuild path below
+            // (which tears down the old subtree).
             if (currentNode.nodeType === 3 /* Node.TEXT_NODE */ && isPrimitiveValue(value))
             {
                 localDispose();
@@ -351,10 +298,10 @@ function appendChild(parent: HTMLElement, child: Child): void
                 return;
             }
 
-            // ── Full path: materialise the value and swap it in ───
-            // The root stays alive — it owns the new subtree's
-            // effects until the next run or dispose, when the returned
-            // cleanup tears it (and the node's components) down.
+            // Full path: materialise the value and swap it in. The root stays
+            // alive - it owns the new subtree's effects until the next run or
+            // dispose, when the returned cleanup tears it (and the node's
+            // components) down.
             const nextNode = buildNode(value);
             parent.replaceChild(nextNode, currentNode);
             currentNode = nextNode;
@@ -382,12 +329,10 @@ function appendChild(parent: HTMLElement, child: Child): void
 }
 
 /**
- * Whether a reactive value can be rendered as plain text in a
- * single text node — strings and numbers, plus the "render
- * nothing" values that become an empty string. Elements and
- * arrays are NOT primitives: they need the full build/swap path.
- *
- * Kept in sync with buildNode's primitive handling.
+ * Whether a reactive value can be rendered as plain text in a single text
+ * node: strings and numbers, plus the "render nothing" values that become an
+ * empty string. Elements and arrays are not primitives; they need the full
+ * build/swap path. Kept in sync with buildNode's primitive handling.
  *
  * @internal
  */
@@ -404,9 +349,8 @@ function isPrimitiveValue(value: unknown): boolean
 
 /**
  * Converts a primitive reactive value to the text it should show.
- * `null` / `undefined` / `false` render as empty (the same
- * "nothing here" convention buildNode uses); strings and numbers
- * stringify.
+ * `null` / `undefined` / `false` render as empty (the same "nothing here"
+ * convention buildNode uses); strings and numbers stringify.
  *
  * @internal
  */
@@ -462,14 +406,12 @@ function buildNode(value: unknown): ChildNode
     return document.createTextNode(String(value));
 }
 
-// ============================================================================
-// HYDRATION — adopt server-rendered DOM instead of creating it
-// ============================================================================
+// Hydration: adopt server-rendered DOM instead of creating it.
 
 /**
  * Builds the hydration descriptor for an element. When walked by hydrate(),
  * it claims the matching server element, attaches its props (event listeners,
- * reactive-attribute effects, refs — via the same {@link applyProps} the DOM
+ * reactive-attribute effects, refs - via the same {@link applyProps} the DOM
  * path uses, which is idempotent against already-rendered attributes),
  * transfers any carried component destroy hooks onto the live element, and
  * recurses into its children.
@@ -484,7 +426,7 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
 
         applyProps(el, props);
 
-        // Component packages store destroy hooks on the value setup() returns —
+        // Component packages store destroy hooks on the value setup() returns -
         // which, in hydrate mode, is THIS descriptor. Move them onto the real
         // element so destroyComponent() finds them after hydration.
         transferCarriedSymbols(node, el);
@@ -503,14 +445,22 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
  * Adopts a single child from `cursor`, mirroring {@link appendChild}'s dispatch
  * but against existing server DOM:
  *
- *   - `null` / `undefined` / `false` → nothing was rendered, skip
- *   - array                          → adopt each item in order
- *   - {@link HydrationNode}          → delegate to its `hydrate`
- *   - function (reactive hole)       → {@link adoptReactiveHole}
- *   - string / number                → consume the existing text node
+ *   - `null` / `undefined` / `false` -> nothing was rendered, skip
+ *   - array -> adopt each item in order
+ *   - {@link HydrationNode} -> delegate to its `hydrate`
+ *   - function (reactive hole) -> {@link adoptReactiveHole}
+ *   - string / number -> consume the existing text node
  *
  * @param child - The child to adopt
  * @param cursor - The cursor over the parent's children
+ *
+ * @example
+ * ```ts
+ * // Adopt the children of a server-rendered element instead of rebuilding.
+ * const cursor = new HydrationCursor(serverEl);
+ * hydrateChild('Hello', cursor);            // consumes the existing text node
+ * hydrateChild(() => count(), cursor);      // attaches the patch effect
+ * ```
  */
 export function hydrateChild(child: Child, cursor: HydrationCursorType): void
 {
@@ -540,14 +490,14 @@ export function hydrateChild(child: Child, cursor: HydrationCursorType): void
         return;
     }
 
-    // Static text — the server already rendered it; just consume the node.
+    // Static text: the server already rendered it; just consume the node.
     cursor.takeText();
 }
 
 /**
  * Adopts a reactive child hole. The server wrapped the hole's output in
- * comment anchors (`<!--[-->…<!--]-->`); this finds them, attaches the SAME
- * patching effect the DOM path uses, and — crucially — does NOT mutate on the
+ * comment anchors (`<!--[-->...<!--]-->`); this finds them, attaches the SAME
+ * patching effect the DOM path uses, and - crucially - does NOT mutate on the
  * first run when the value already matches the server text (no flash, node
  * identity preserved). Subsequent runs behave exactly like the DOM path.
  *
@@ -559,7 +509,7 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
     const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
     const parent = cursor.parent;
 
-    // The hole's live anchor node — the single primitive text node in the
+    // The hole's live anchor node: the single primitive text node in the
     // common case. Extra nodes (an array-valued hole) are removed the first
     // time the value is materialised as a real node.
     let currentNode: ChildNode | null = content.length > 0 ? content[0] : null;
@@ -574,10 +524,10 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
             return child();
         });
 
-        // ── Primitive into the adopted text node ─────────────────
-        // The dominant case: a `() => `Count: ${ n() }`` hole. Keep the
-        // server's text node and only touch `.data` when it actually
-        // differs (so the initial run, where it matches, is a no-op).
+        // Primitive into the adopted text node. The dominant case: a
+        // `() => `Count: ${ n() }`` hole. Keep the server's text node and only
+        // touch `.data` when it actually differs, so the initial run (where it
+        // matches) is a no-op.
         if (currentNode !== null && currentNode.nodeType === 3 && isPrimitiveValue(value))
         {
             const text = primitiveToText(value);
@@ -589,10 +539,10 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
             return;
         }
 
-        // ── Materialise and swap ─────────────────────────────────
-        // Element/array values, an initially-empty hole, or a text↔element
-        // transition. Drop any extra adopted siblings first, then replace
-        // (or insert before the close anchor when the hole was empty).
+        // Materialise and swap: element/array values, an initially-empty hole,
+        // or a text/element transition. Drop any extra adopted siblings first,
+        // then replace (or insert before the close anchor when the hole was
+        // empty).
         for (const extra of extras)
         {
             if (extra.parentNode === parent)

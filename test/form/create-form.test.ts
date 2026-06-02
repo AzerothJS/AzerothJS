@@ -1,9 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createForm } from '@azerothjs/core';
 
-// ── Helpers ──────────────────────────────────────────────────
-
-/** A controlled deferred — lets tests step through async submit timing. */
+/** A controlled deferred - lets tests step through async submit timing. */
 function makeDeferred<T>(): {
     promise: Promise<T>;
     resolve: (value: T) => void;
@@ -37,8 +35,6 @@ function inputEvent(value: string): Event
     Object.defineProperty(event, 'target', { value: input });
     return event;
 }
-
-// ─────────────────────────────────────────────────────────────
 
 describe('createForm', () =>
 {
@@ -98,7 +94,7 @@ describe('createForm', () =>
                 }
             });
 
-            // Initial validation runs synchronously — empty string
+            // Initial validation runs synchronously - empty string
             // doesn't include '@', so error is set immediately.
             expect(form.errors().email).toBe('Invalid email');
             expect(form.isValid()).toBe(false);
@@ -211,7 +207,7 @@ describe('createForm', () =>
                 email: ''
             });
             expect(form.touched()).toEqual({ name: false, email: false });
-            // After reset, errors are blanked unconditionally — the
+            // After reset, errors are blanked unconditionally - the
             // form returns to a "no interaction yet" state. The
             // validator will run again on the next setValue (and
             // it'd flag the empty email then), but until then we
@@ -255,7 +251,7 @@ describe('createForm', () =>
             dispose();
         });
 
-        // Synchronous throw path — separate root so state is fresh.
+        // Synchronous throw path - separate root so state is fresh.
         createRoot((dispose) =>
         {
             const failure = new Error('sync boom');
@@ -296,12 +292,12 @@ describe('createForm', () =>
             expect(form.errors().username).toBe('Username taken');
 
             // Editing an UNRELATED field must not wipe that injected
-            // error — the validation pass only touches validated
+            // error - the validation pass only touches validated
             // fields.
             form.setValue('email', 'ada@example.com');
 
             expect(form.errors().username).toBe('Username taken');
-            // …and the validated field still revalidated live.
+            // ...and the validated field still revalidated live.
             expect(form.errors().email).toBeNull();
 
             dispose();

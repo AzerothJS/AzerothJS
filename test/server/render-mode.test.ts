@@ -1,7 +1,3 @@
-// ============================================================================
-// AZEROTHJS — render-mode switch tests
-// ============================================================================
-
 import { describe, it, expect } from 'vitest';
 import { getRenderMode, isStringMode, isHydrating, runInMode } from '@azerothjs/reactivity';
 import { h } from '@azerothjs/renderer';

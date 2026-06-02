@@ -1,95 +1,61 @@
-// ============================================================================
-// AZEROTHJS — Signal (Reactive State)
-// ============================================================================
+// A signal is a reactive value that notifies subscribing effects when it
+// changes - the atomic unit of state.
 //
-// A signal is a reactive value that notifies its subscribers
-// when it changes. It's the atomic unit of state in AzerothJS.
-//
-// MEMORY MANAGEMENT:
-//
-//   Signals and effects have a TWO-WAY relationship:
-//
-//     Signal ──► knows which effects subscribe to it
-//     Effect ──► knows which signals it depends on
-//
-//   When an effect is disposed:
-//     1. Effect calls all its dependency cleanup functions
-//     2. Each cleanup function removes the effect from that
-//        signal's subscriber Set
-//     3. The effect is fully detached — no references remain
-//     4. Garbage collector can free the memory
-//
-//   This prevents the memory leak where disposed effects stay
-//   in signal subscriber Sets forever.
-//
-// ============================================================================
+// Signals and effects reference each other: a signal holds the set of effects
+// subscribed to it, and each effect holds cleanup closures that remove it from
+// those sets. Disposing an effect runs its cleanups, detaching it from every
+// signal so it can be collected (otherwise disposed effects would linger in
+// subscriber sets forever).
 
 import type { Getter, Setter, Signal, Subscriber, SignalOptions, EqualsFn } from './types.ts';
 
 /**
- * The currently running subscriber (effect/memo).
- *
- * When an effect runs, it sets this variable to itself.
- * When a signal's getter is called, it checks this variable
- * to know "who is reading me?" and subscribes that effect.
- *
- * Set to `null` when no effect is running (e.g., reading a
- * signal in regular code outside an effect).
- *
- * @internal Managed by createEffect, read by createSignal
- */
-export let currentSubscriber: Subscriber | null = null;
-
-/**
- * Sets the current subscriber.
- *
- * Called by createEffect before running the effect function,
- * and cleared after it finishes.
- *
- * @param sub - The subscriber to set, or null to clear
+ * The effect/memo currently running, or null outside any effect. Set by
+ * createEffect before each run; read by a signal getter to know who to
+ * subscribe.
  *
  * @internal
  */
+export let currentSubscriber: Subscriber | null = null;
+
+/** @internal */
 export function setCurrentSubscriber(sub: Subscriber | null): void
 {
     currentSubscriber = sub;
 }
 
 /**
- * Creates a reactive signal — a getter/setter pair that
- * automatically tracks dependencies and notifies subscribers.
+ * Creates a reactive signal: a [getter, setter] pair. The getter subscribes
+ * the running effect (if any); the setter notifies subscribers when the value
+ * changes, compared with `Object.is` or a custom `equals`.
  *
- * The getter returns the current value. When called inside
- * an effect, it subscribes that effect to this signal.
+ * @param initialValue - Starting value
+ * @param options - Optional custom equality (default `Object.is`)
+ * @returns A [getter, setter] tuple
  *
- * The setter updates the value. If the new value is different
- * (checked with Object.is or a custom equals function), all
- * subscribed effects are notified and re-run.
+ * Without createSignal: plain state has no way to notify readers, so you mutate
+ * and then have to remember to refresh everything that depended on it:
  *
- * @typeParam T - The type of the signal's value
+ *     let count = 0;
+ *     count++;
+ *     rerenderEverything(); // easy to forget; any missed reader goes stale
  *
- * @param initialValue - The starting value of the signal
- * @param options - Optional configuration (custom equality)
+ * With createSignal: reads subscribe automatically and the setter notifies them:
  *
- * @returns A tuple [getter, setter] to read and write the value
+ *     const [count, setCount] = createSignal(0);
+ *     setCount((n) => n + 1); // every effect/binding that read count re-runs
  *
  * @example
  * ```ts
- * // Basic usage
  * const [count, setCount] = createSignal(0);
- * count();  // → 0
- * setCount(5);
- * count();  // → 5
- *
- * // Function updater
  * setCount(prev => prev + 1);
- * count();  // → 6
+ * count(); // 1
  *
- * // Custom equality
+ * // Custom equality: only notify when the integer part changes.
  * const [price, setPrice] = createSignal(9.99, {
- *   equals: (a, b) => Math.floor(a) === Math.floor(b)
+ *     equals: (a, b) => Math.floor(a) === Math.floor(b)
  * });
- * setPrice(9.50);  // No notification (same floor)
+ * setPrice(9.50); // no notification
  * ```
  */
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Signal<T>
@@ -100,18 +66,10 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
     const getter: Getter<T> = (): T =>
     {
-        // If an effect is currently running, subscribe it — but
-        // only ONCE per signal, even if the effect reads this
-        // signal many times in a single run (e.g. inside a loop
-        // or referenced repeatedly in a template).
-        //
-        // `subscribers.add` is already idempotent (it's a Set),
-        // but the dependency cleanup below is a brand-new closure
-        // on every call, and closures are never `===`, so the
-        // dependencies Set could never dedupe them. Guarding on
-        // `subscribers.has` keeps `dependencies` free of duplicate
-        // unsubscribe closures on this hot path — identical
-        // behavior, no redundant allocation or cleanup work.
+        // Subscribe the running effect at most once per signal. The Set makes
+        // `add` idempotent, but the cleanup closure below is freshly allocated
+        // each call and never compares equal, so without the `has` guard the
+        // effect's dependency set would fill with duplicate unsubscribers.
         if (
             currentSubscriber !== null &&
             !currentSubscriber.isDisposed &&
@@ -120,9 +78,6 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
         {
             const sub = currentSubscriber;
             subscribers.add(sub);
-
-            // Register a cleanup function on the subscriber
-            // so it can remove itself from this signal later
             sub.dependencies.add(() =>
             {
                 subscribers.delete(sub);
@@ -134,10 +89,8 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
     const setter: Setter<T> = (newValue: T | ((prev: T) => T)): void =>
     {
-        // Resolve the new value (handle function updaters)
         const resolved = typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue;
 
-        // Skip if value hasn't changed
         if (equals(value, resolved))
         {
             return;
@@ -145,9 +98,7 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
         value = resolved;
 
-        // Notify all subscribers
-        // Array.from() snapshots the set — subscribers might
-        // modify the set during notification
+        // Snapshot the set: a subscriber may add or remove subscribers as it runs.
         for (const subscriber of Array.from(subscribers))
         {
             if (!subscriber.isDisposed)
@@ -156,7 +107,6 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
             }
             else
             {
-                // Extra safety: remove disposed subscribers
                 subscribers.delete(subscriber);
             }
         }

@@ -1,27 +1,17 @@
-// ============================================================================
-// AZEROTHJS — Compiler (@azerothjs/compiler)
-// ============================================================================
+// @azerothjs/compiler
 //
-// Compiles `.azeroth` files — JS/TS modules written with AzerothJS
-// markup (a JSX-style syntax) — into plain modules that call the
-// runtime's h() hyperscript with fine-grained reactive bindings.
+// Compiles `.azeroth` files - JS/TS modules written with AzerothJS markup (a
+// JSX-style syntax) - into plain modules that call the runtime's h()
+// hyperscript with fine-grained reactive bindings. For example
+// `<h1>Count: {count()}</h1>` becomes `h('h1', {}, 'Count: ', () => (count()))`.
 //
-//   <h1>Count: {count()}</h1>
-//        ↓
-//   h('h1', {  }, 'Count: ', () => (count()))
-//
-// PIPELINE (build it / read it in this order):
-//   scanner  — finds markup regions inside arbitrary JS (skips
-//              strings/templates/comments/regex; expression-position
-//              detection)
-//   parser   — markup region → AST
-//   codegen  — AST → h()/component-call source (reactive wrapping)
-//   compile  — orchestrates scan → parse → codegen → splice
-//
-// STATUS: Phase 5 — core transform implemented. Scoped CSS, Vite
-// plugin, HMR, and source maps build on top of compile().
-//
-// ============================================================================
+// The pipeline, in the order it runs (and a good order to read it in):
+//   scanner  - finds markup regions inside arbitrary JS, skipping
+//              strings/templates/comments/regex and detecting expression
+//              position
+//   parser   - markup region -> AST
+//   codegen  - AST -> h()/component-call source, with reactive wrapping
+//   compile  - orchestrates scan -> parse -> codegen -> splice
 
 export { compile, type CompileResult } from './compile.ts';
 export { CompileError, parseMarkup } from './parser.ts';

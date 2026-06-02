@@ -120,12 +120,12 @@ describe('createMemo()', () =>
 
         expect(user()).toEqual({ id: 1, name: 'A' });
 
-        // Same id under the custom equals → value is NOT replaced.
+        // Same id under the custom equals: value is NOT replaced.
         const before = user();
         setId(1);
         expect(user()).toBe(before);
 
-        // Different id → recomputed.
+        // Different id: recomputed.
         setId(2);
         expect(user()).toEqual({ id: 2, name: 'A' });
     });

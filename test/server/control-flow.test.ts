@@ -1,7 +1,3 @@
-// ============================================================================
-// AZEROTHJS — SSR control-flow tests
-// ============================================================================
-
 import { describe, it, expect } from 'vitest';
 import { createSignal } from '@azerothjs/reactivity';
 import { h, Show, For, Switch, Match, Portal, Dynamic, Suspense, Transition } from '@azerothjs/renderer';

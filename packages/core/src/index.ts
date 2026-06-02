@@ -1,10 +1,6 @@
-// ============================================================================
-// AZEROTHJS — @azerothjs/core (Umbrella Package)
-// ============================================================================
-//
-// Re-exports everything from the framework's public packages:
-//   @azerothjs/reactivity, @azerothjs/renderer, @azerothjs/component,
-//   @azerothjs/store, @azerothjs/form, @azerothjs/router.
+// @azerothjs/core: umbrella package re-exporting the framework's public
+// packages (@azerothjs/reactivity, @azerothjs/renderer, @azerothjs/component,
+// @azerothjs/store, @azerothjs/form, @azerothjs/router).
 //
 // Install one package, get the whole framework:
 //
@@ -14,18 +10,16 @@
 //       createForm, createStore
 //   } from '@azerothjs/core';
 //
-// Or import individual packages directly — same exports, smaller
-// dependency surface for apps that only use a slice:
+// Or import individual packages directly for the same exports with a smaller
+// dependency surface:
 //
 //   import { createSignal } from '@azerothjs/reactivity';
 //   import { createRouter } from '@azerothjs/router';
 //
-// Tree-shaking handles the unused exports either way; the choice
-// is one of explicitness, not bundle size.
-//
-// ============================================================================
+// Tree-shaking drops unused exports either way, so the choice is one of
+// explicitness, not bundle size.
 
-// ── Reactivity ───────────────────────────────────────────────────────────────
+// Reactivity
 
 export {
     createSignal,
@@ -67,7 +61,7 @@ export type {
     SSRNode
 } from '@azerothjs/reactivity';
 
-// ── Renderer ─────────────────────────────────────────────────────────────────
+// Renderer
 
 export {
     h,
@@ -108,7 +102,7 @@ export type {
     ScopedClasses
 } from '@azerothjs/renderer';
 
-// ── Component ───────────────────────────────────────────────────────────────
+// Component
 
 export {
     defineComponent,
@@ -127,11 +121,11 @@ export type {
     ErrorBoundaryProps
 } from '@azerothjs/component';
 
-// ── Store ───────────────────────────────────────────────────────────────────
+// Store
 
 export { createStore } from '@azerothjs/store';
 
-// ── Form ────────────────────────────────────────────────────────────────────
+// Form
 
 export {
     createForm,
@@ -159,7 +153,7 @@ export type {
     CountryInfo
 } from '@azerothjs/form';
 
-// ── Router ──────────────────────────────────────────────────────────────────
+// Router
 
 export {
     createRouter,
@@ -199,7 +193,7 @@ export type {
     NavigateApi
 } from '@azerothjs/router';
 
-// ── Server (SSR) ──────────────────────────────────────────────────────────────
+// Server (SSR)
 
 export {
     renderToString,

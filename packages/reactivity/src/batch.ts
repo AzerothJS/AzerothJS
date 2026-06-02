@@ -1,51 +1,29 @@
-// ============================================================================
-// AZEROTHJS — Batch (Grouped Updates)
-// ============================================================================
-//
-// Batch allows multiple signal updates to be grouped together,
-// deferring effect execution until all updates are complete.
-//
-// WITHOUT batch:
-//   setFirstName('John');   → effect runs (unnecessary!)
-//   setLastName('Doe');     → effect runs (with correct values)
-//   Result: effect ran TWICE
-//
-// WITH batch:
-//   batch(() =>
-//   {
-//       setFirstName('John'); → queued
-//       setLastName('Doe');   → queued
-//   });                     → effects run ONCE
-//   Result: effect ran ONCE with both values correct
-//
-// ============================================================================
+// batch() groups multiple signal updates, deferring effect execution until
+// all of them are done. Without it, setting two signals an effect depends on
+// runs that effect twice - once with intermediate state. Inside a batch the
+// effect is queued (deduped) and runs once, after the batch, with both values.
 
 import type { Subscriber } from './types.ts';
 
 /**
- * Whether we're currently inside a batch() call.
- * When true, effects are queued instead of running immediately.
+ * Whether we are inside a batch() call. When true, effects are queued instead
+ * of running immediately.
  *
  * @internal
  */
 let batching = false;
 
 /**
- * Queue of effects waiting to run after the batch completes.
- * Uses a Set to automatically deduplicate — if the same effect
- * is triggered multiple times during a batch, it only runs once.
+ * Effects waiting to run after the batch completes. A Set so an effect
+ * triggered several times during a batch still runs once.
  *
  * @internal
  */
 const queue = new Set<Subscriber>();
 
 /**
- * Returns whether we're currently inside a batch.
- *
- * Used by createEffect to decide whether to run immediately
- * or queue for later.
- *
- * @returns true if inside a batch() call
+ * Whether we are currently inside a batch. createEffect uses this to decide
+ * whether to run immediately or queue.
  *
  * @internal
  */
@@ -55,10 +33,7 @@ export function isBatching(): boolean
 }
 
 /**
- * Adds an effect to the batch queue.
- *
- * Called by effect's execute function when isBatching() is true.
- * The effect will run after the batch() call completes.
+ * Queues an effect to run after the current batch completes.
  *
  * @param subscriber - The subscriber to queue
  *
@@ -70,55 +45,46 @@ export function queueEffect(subscriber: Subscriber): void
 }
 
 /**
- * Groups multiple signal updates together, deferring effect
- * execution until all updates are complete.
- *
- * Effects only run once after the batch, even if their
- * dependencies were updated multiple times.
- *
- * Supports nesting — inner batch() calls just run their
- * function, only the outermost batch flushes effects.
+ * Groups multiple signal updates, deferring effect execution until `fn`
+ * returns. Affected effects run once afterwards, even if their dependencies
+ * changed several times. Nests: inner batch() calls just run their function;
+ * only the outermost batch flushes.
  *
  * @param fn - A function containing multiple signal updates
+ *
+ * Why: each setter notifies subscribers immediately, so several updates in a
+ * row run a dependent effect once per update.
+ *
+ * Without batch: two setters fire the effect twice, once mid-update:
+ *
+ *     setFirst('John');
+ *     setLast('Doe'); // effect already ran once on "John Smith"
+ *
+ * With batch: the effect runs once, after both updates land:
+ *
+ *     batch(() =>
+ *     {
+ *         setFirst('John');
+ *         setLast('Doe');
+ *     }); // effect runs a single time, seeing "John Doe"
  *
  * @example
  * ```ts
  * const [first, setFirst] = createSignal('Jane');
  * const [last, setLast] = createSignal('Smith');
- *
- * createEffect(() =>
- * {
- *     console.log(`${ first() } ${ last() }`);
- * });
- * // Logs: "Jane Smith"
+ * createEffect(() => console.log(`${ first() } ${ last() }`));
  *
  * batch(() =>
  * {
  *     setFirst('John');
  *     setLast('Doe');
  * });
- * // Logs: "John Doe" (only ONCE, not twice)
- * ```
- *
- * @example
- * ```ts
- * // Nested batches — only outermost flushes
- * batch(() =>
- * {
- *     setA(1);
- *     batch(() =>
- *     {
- *         setB(2);
- *         setC(3);
- *     });
- *     setD(4);
- * });
- * // All effects run once after the outer batch completes
+ * // Logs "John Doe" once, not twice
  * ```
  */
 export function batch(fn: () => void): void
 {
-    // If already batching (nested), just run the function
+    // Nested call: the outer batch owns the flush, so just run the body.
     if (batching)
     {
         fn();
@@ -135,8 +101,7 @@ export function batch(fn: () => void): void
     {
         batching = false;
 
-        // Flush the queue — run all queued effects
-        // Copy because effects might trigger new signals
+        // Copy before flushing because a queued effect may queue new ones.
         const effects = Array.from(queue);
         queue.clear();
 

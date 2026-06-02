@@ -1,43 +1,71 @@
-// ============================================================================
-// AZEROTHJS COMPILER — Context-Aware Source Scanner
-// ============================================================================
+// Context-aware lexing helpers for finding markup inside arbitrary JS/TS
+// without a full parser. Two jobs:
 //
-// Low-level lexing helpers that let us find AzerothJS markup inside arbitrary
-// JS/TS WITHOUT a full parser. The two jobs:
+//   1. Skip non-code spans correctly - line/block comments, single/double
+//      quoted strings, template literals (with nested `${ ... }`), and regex
+//      literals - so a `<`, `{`, or `}` inside them is never mistaken for
+//      syntax.
 //
-//   1. Skip "non-code" spans correctly — line/block comments,
-//      single/double-quoted strings, template literals (with nested
-//      `${ … }`), and regex literals — so a `<`, `{`, or `}` inside
-//      them is never mistaken for syntax.
+//   2. Decide whether a `<` (or `/`) sits in expression position, which is
+//      what distinguishes markup from a less-than operator (and a regex from
+//      a divide). We track the previous significant token to make that call,
+//      the same trick hand-written JSX transforms use.
 //
-//   2. Decide whether a `<` (or `/`) sits in EXPRESSION POSITION,
-//      which is what distinguishes AzerothJS markup from a less-than operator
-//      (and a regex from a divide). We track the previous significant
-//      token to make that call — the same trick hand-written AzerothJS markup
-//      transforms use.
-//
-// These are pure functions over (src, index) → nextIndex, shared by
-// the parser (which also needs balanced-brace capture for `{…}`
-// holes and `(…)`/`[…]`).
-//
-// ============================================================================
+// These are pure functions over (src, index) -> nextIndex, shared with the
+// parser (which also needs balanced-brace capture for `{...}` holes and
+// `(...)`/`[...]`).
 
+/**
+ * True for a single whitespace character (space, tab, newline, etc.).
+ *
+ * @example
+ * ```ts
+ * isWhitespace(' '); // true
+ * isWhitespace('x'); // false
+ * ```
+ */
 export function isWhitespace(ch: string): boolean
 {
     return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v';
 }
 
+/**
+ * True for a character that can begin an identifier (letter, `_`, or `$`).
+ *
+ * @example
+ * ```ts
+ * isIdentStart('h'); // true
+ * isIdentStart('1'); // false (digits cannot start an identifier)
+ * ```
+ */
 export function isIdentStart(ch: string): boolean
 {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$';
 }
 
+/**
+ * True for a character allowed inside an identifier (an ident-start char or a digit).
+ *
+ * @example
+ * ```ts
+ * isIdentPart('1'); // true (digits are fine after the first char)
+ * isIdentPart('-'); // false
+ * ```
+ */
 export function isIdentPart(ch: string): boolean
 {
     return isIdentStart(ch) || (ch >= '0' && ch <= '9');
 }
 
-/** Skips a `// …` line comment; returns the index of the newline (or EOF). */
+/**
+ * Skips a `//` line comment; returns the index of the newline (or EOF).
+ *
+ * @example
+ * ```ts
+ * const src = 'a // note\nb';
+ * skipLineComment(src, 2); // 9 (the index of the '\n')
+ * ```
+ */
 export function skipLineComment(src: string, i: number): number
 {
     i += 2;
@@ -48,7 +76,15 @@ export function skipLineComment(src: string, i: number): number
     return i;
 }
 
-/** Skips a block comment (slash-star … star-slash); returns the index just after it. */
+/**
+ * Skips a block comment (slash-star to star-slash); returns the index just after it.
+ *
+ * @example
+ * ```ts
+ * const src = '/* hi *' + '/x';
+ * skipBlockComment(src, 0); // points just past the comment, at 'x'
+ * ```
+ */
 export function skipBlockComment(src: string, i: number): number
 {
     i += 2;
@@ -59,7 +95,16 @@ export function skipBlockComment(src: string, i: number): number
     return Math.min(i + 2, src.length);
 }
 
-/** Skips a quoted string (`'` or `"`); `i` points at the opening quote. */
+/**
+ * Skips a quoted string (`'` or `"`); `i` points at the opening quote.
+ * Returns the index just after the closing quote.
+ *
+ * @example
+ * ```ts
+ * const src = 'x = "hi" + y';
+ * skipString(src, 4); // 8 (just past the closing '"')
+ * ```
+ */
 export function skipString(src: string, i: number): number
 {
     const quote = src[i];
@@ -83,8 +128,14 @@ export function skipString(src: string, i: number): number
 
 /**
  * Skips a template literal; `i` points at the opening backtick.
- * Handles `${ … }` substitutions by recursing through `skipBalanced`
+ * Handles `${ ... }` substitutions by recursing through `skipBalanced`
  * (which itself re-enters here for nested templates).
+ *
+ * @example
+ * ```ts
+ * const src = 'tag`a${ b }c` + d';
+ * skipTemplate(src, 3); // 13 (just past the closing backtick)
+ * ```
  */
 export function skipTemplate(src: string, i: number): number
 {
@@ -103,7 +154,7 @@ export function skipTemplate(src: string, i: number): number
         }
         if (ch === '$' && src[i + 1] === '{')
         {
-            // The substitution is balanced like any `{ … }` block.
+            // The substitution is balanced like any `{ ... }` block.
             i = skipBalanced(src, i + 1);
             continue;
         }
@@ -112,7 +163,16 @@ export function skipTemplate(src: string, i: number): number
     return i;
 }
 
-/** Skips a regex literal; `i` points at the leading `/`. */
+/**
+ * Skips a regex literal (including trailing flags); `i` points at the leading `/`.
+ * Returns the index just after the last flag.
+ *
+ * @example
+ * ```ts
+ * const src = 'x = /ab+/gi;';
+ * skipRegex(src, 4); // 11 (just past the 'gi' flags)
+ * ```
+ */
 export function skipRegex(src: string, i: number): number
 {
     i++; // past /
@@ -140,11 +200,11 @@ export function skipRegex(src: string, i: number): number
         }
         else if (ch === '\n')
         {
-            break; // unterminated — bail rather than run away
+            break; // unterminated - bail rather than run away
         }
         i++;
     }
-    // Trailing flags (g, i, m, …).
+    // Trailing flags (g, i, m, ...).
     while (i < src.length && isIdentPart(src[i]))
     {
         i++;
@@ -153,9 +213,15 @@ export function skipRegex(src: string, i: number): number
 }
 
 /**
- * Given `i` at an opening bracket (`(`, `[`, or `{`), returns the
- * index just AFTER the matching close — skipping strings, templates,
- * comments, and nested brackets so braces inside them don't count.
+ * Given `i` at an opening bracket (`(`, `[`, or `{`), returns the index just
+ * after the matching close, skipping strings, templates, comments, and nested
+ * brackets so braces inside them don't count.
+ *
+ * @example
+ * ```ts
+ * const src = '{ a: { b: 1 } } rest';
+ * skipBalanced(src, 0); // 15 (just past the matching outer '}')
+ * ```
  */
 export function skipBalanced(src: string, openIndex: number): number
 {
@@ -207,16 +273,16 @@ export function skipBalanced(src: string, openIndex: number): number
         i++;
     }
 
-    return i; // unbalanced — caller treats as EOF
+    return i; // unbalanced - caller treats as EOF
 }
 
-/** Keywords after which a `<` or `/` begins an expression (AzerothJS markup / regex). */
+/** Keywords after which a `<` or `/` begins an expression (markup / regex). */
 const EXPR_KEYWORDS = new Set([
     'return', 'typeof', 'instanceof', 'in', 'of', 'do', 'else',
     'yield', 'await', 'case', 'delete', 'void', 'new'
 ]);
 
-/** Punctuators after which an expression (hence AzerothJS markup / regex) can start. */
+/** Punctuators after which an expression (hence markup / regex) can start. */
 const EXPR_CHARS = new Set([
     '', '(', '{', '[', ',', ';', ':', '?', '=', '>', '<',
     '&', '|', '!', '~', '+', '-', '*', '/', '%', '^', '\n'
@@ -224,10 +290,9 @@ const EXPR_CHARS = new Set([
 
 /**
  * Whether a `<` / `/` at the current point is in expression position
- * (AzerothJS markup / regex) rather than a binary operator. Based on the previous
- * significant token: an identifier or literal that ENDS an expression
- * means binary; a punctuator/keyword that EXPECTS an operand means
- * expression.
+ * (markup / regex) rather than a binary operator. Based on the previous
+ * significant token: an identifier or literal that ends an expression means
+ * binary; a punctuator/keyword that expects an operand means expression.
  */
 function isExpressionPosition(prevChar: string, prevWord: string): boolean
 {
@@ -239,9 +304,16 @@ function isExpressionPosition(prevChar: string, prevWord: string): boolean
 }
 
 /**
- * Finds the next `<` that begins a AzerothJS markup element/fragment in expression
- * position, scanning from `from` and correctly skipping all non-code
- * spans. Returns its index, or -1 if there is no more AzerothJS markup.
+ * Finds the next `<` that begins a markup element/fragment in expression
+ * position, scanning from `from` and correctly skipping all non-code spans.
+ * Returns its index, or -1 if there is no more markup.
+ *
+ * @example
+ * ```ts
+ * findMarkupStart('return <h1>Hi</h1>;', 0); // 7 (the '<' of <h1>)
+ * findMarkupStart('a < b', 0);               // -1 (a less-than operator, not markup)
+ * findMarkupStart('const s = "<p>";', 0);    // -1 (the '<' is inside a string)
+ * ```
  */
 export function findMarkupStart(src: string, from: number): number
 {

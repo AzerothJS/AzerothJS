@@ -1,24 +1,18 @@
-// ============================================================================
-// AZEROTHJS — Renderer Public API
-// ============================================================================
-//
-// EXPORTED (public):
-//   h()             — Create real DOM elements
-//   render()        — Mount component tree to DOM
-//   Show()          — Conditional rendering
-//   For()           — Keyed list rendering
-//   Switch()        — Multi-condition rendering
-//   Match()         — Single case for Switch
-//   Portal()        — Render outside parent DOM
-//   destroyPortal() — Clean up portaled content
-//   Dynamic()       — Swap components at runtime
-//   Suspense()      — Show fallback while resources are loading
-//   Transition()    — Animate enter/leave with CSS class families
-//   createRef()     — Direct DOM element access
-//   classList()     — Reactive CSS class binding
-//   styleMap()      — Reactive inline style binding
-//
-// ============================================================================
+// Renderer public API:
+//   h()             Create real DOM elements
+//   render()        Mount component tree to DOM
+//   Show()          Conditional rendering
+//   For()           Keyed list rendering
+//   Switch()        Multi-condition rendering
+//   Match()         Single case for Switch
+//   Portal()        Render outside parent DOM
+//   destroyPortal() Clean up portaled content
+//   Dynamic()       Swap components at runtime
+//   Suspense()      Show fallback while resources are loading
+//   Transition()    Animate enter/leave with CSS class families
+//   createRef()     Direct DOM element access
+//   classList()     Reactive CSS class binding
+//   styleMap()      Reactive inline style binding
 
 export { h } from './h.ts';
 export { render } from './render.ts';

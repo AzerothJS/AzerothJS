@@ -1,17 +1,28 @@
-// ============================================================================
-// AZEROTHJS — Scoped CSS (css``)
-// ============================================================================
+// Scoped CSS via a tagged template, with no build step. Author plain CSS with
+// simple `.class` selectors; the helper:
 //
-// A tagged-template that gives component-scoped styles without a
-// build step. Author plain CSS with simple `.class` selectors; the
-// helper:
+// Without css: write global class names and an external stylesheet, so two
+// components that both define `.card` silently fight.
+//
+//     // styles.css (global):
+//     //   .card { padding: 1rem; }
+//     h('div', { class: 'card' }); // any other .card rule leaks in
+//
+// With css: rules are hashed and scoped per component, and identical rules
+// dedupe to one injected stylesheet.
+//
+//     const s = css`
+//         .card { padding: 1rem; }
+//     `;
+//     h('div', { class: s.card }); // class="card_<scope>", can't collide
+//
 //
 //   1. Hashes the CSS text into a short, stable scope suffix.
 //   2. Rewrites every `.name` selector to `.name_<scope>`.
-//   3. Records the rewritten CSS in a registry (every environment),
-//      and in the browser injects it into <head> exactly ONCE
-//      (deduped by scope, so re-rendering never re-injects).
-//   4. Returns a map so `styles.name` → `'name_<scope>'`.
+//   3. Records the rewritten CSS in a registry (in every environment), and in
+//      the browser injects it into <head> exactly once (deduped by scope, so
+//      re-rendering never re-injects).
+//   4. Returns a map so `styles.name` resolves to `'name_<scope>'`.
 //
 //   const styles = css`
 //     .card  { padding: 1rem; background: #111; }
@@ -19,16 +30,14 @@
 //   `;
 //   h('div', { class: styles.card }, h('h1', { class: styles.title }, 'Hi'));
 //
-// Scoping is by content hash: two components with different rules
-// for `.card` get different suffixes (no collisions); two with the
-// SAME rules share one injected stylesheet (dedup). Hashing is
-// deterministic, so it's stable across reloads and SSR-friendly.
+// Scoping is by content hash: two components with different rules for `.card`
+// get different suffixes (no collisions); two with the same rules share one
+// injected stylesheet (dedup). Hashing is deterministic, so it's stable across
+// reloads and SSR-friendly.
 //
-// SSR: on the server there's no <head> to inject into, so every
-// scope's CSS is also recorded in a registry. After rendering, flush
-// it into the document head with collectStyleSheet() — see below.
-//
-// ============================================================================
+// SSR: on the server there's no <head> to inject into, so every scope's CSS is
+// also recorded in the registry. After rendering, flush it into the document
+// head with collectStyleSheet().
 
 /** Scope ids already injected into the document, so we inject once. */
 const injectedScopes = new Set<string>();
@@ -36,8 +45,8 @@ const injectedScopes = new Set<string>();
 /**
  * Every scope's rewritten CSS, recorded in ALL environments (browser
  * and server alike), keyed by scope so it stays deduped. On the server
- * this registry IS the stylesheet — there's no <head> to inject into —
- * so {@link collectStyleSheet} reads it to flush styles into the
+ * this registry IS the stylesheet (there's no <head> to inject into), so
+ * {@link collectStyleSheet} reads it to flush styles into the
  * server-rendered HTML.
  *
  * @internal
@@ -53,8 +62,8 @@ const registeredCss = new Map<string, string>();
 export type ScopedClasses = Record<string, string>;
 
 /**
- * Deterministic djb2 string hash → base36. Stable across runs, so
- * the same CSS always yields the same scope (enables dedup + SSR).
+ * Deterministic djb2 string hash to base36. Stable across runs, so
+ * the same CSS always yields the same scope (enables dedup and SSR).
  *
  * @internal
  */
@@ -70,7 +79,7 @@ function hashCss(input: string): string
 
 /**
  * Rewrites `.name` class selectors to `.name_<scope>`, recording
- * each base name → scoped name in `classMap`.
+ * each base name -> scoped name in `classMap`.
  *
  * @internal
  */
@@ -87,12 +96,12 @@ function scopeSelectors(cssText: string, scope: string, classMap: Record<string,
 
 /**
  * Component-scoped styles. Use as a tagged template (or pass a CSS
- * string). Returns a map of base class name → scoped class name.
+ * string). Returns a map of base class name -> scoped class name.
  *
  * @param strings - Template strings (or a plain CSS string)
  * @param values - Interpolated values (stringified into the CSS)
  *
- * @returns A {@link ScopedClasses} map: `styles.foo` → `'foo_<scope>'`
+ * @returns A {@link ScopedClasses} map: `styles.foo` -> `'foo_<scope>'`
  *
  * @example
  * ```ts
@@ -158,10 +167,17 @@ export function collectStyleSheet(): string
 
 /**
  * Clears the scoped-CSS registry and DOM-injection bookkeeping. The
- * common pattern — `css\`\`` evaluated once at module load — needs no
+ * common pattern - `css\`\`` evaluated once at module load - needs no
  * reset, since the registry is the same for every request. Call this
  * only if your server genuinely re-imports component modules per
  * request, or to isolate tests.
+ *
+ * @example
+ * ```ts
+ * css`.box { color: red; }`;
+ * resetStyleSheet();
+ * collectStyleSheet(); // '' - the registry is empty again
+ * ```
  */
 export function resetStyleSheet(): void
 {

@@ -1,40 +1,33 @@
-// ============================================================================
-// AZEROTHJS — Dynamic (Swap Components at Runtime)
-// ============================================================================
+// Dynamic renders a component chosen by a reactive signal; the component itself
+// can change at runtime.
 //
-// Dynamic renders different components based on a reactive signal.
-// The component itself can change at runtime.
+// Why: an if/return chain over component references inside h() works but is
+// noisy and easy to get wrong.
 //
-// WITHOUT Dynamic:
-//   h('div', {}, () => {
-//     const View = currentView();
-//     if (View === 'home') return Home({});
-//     if (View === 'about') return About({});
-//     return NotFound({});
-//   })
-//   // Manual, messy, doesn't handle component references cleanly
+// Without Dynamic: a reactive child that re-selects and re-invokes the
+// component by hand.
 //
-// WITH Dynamic:
-//   Dynamic({
-//     component: currentView,
-//     props: () => ({ user: currentUser() }),
-//   })
-//   // Clean — just swap the component signal
+//     h('div', {},
+//         () => currentView()({ user: currentUser() })
+//     ); // a prop change rebuilds the whole subtree, losing its state
 //
-// USE CASES:
+// With Dynamic: resolve the current component from a signal and swap it.
+//
+//     Dynamic({
+//         component: currentView,
+//         props: () => ({ user: currentUser() })
+//     }); // props read untracked, so a prop change won't rebuild the subtree
+//
+// Use cases:
 //   - Tab panels (swap between tab content components)
 //   - Role-based rendering (Admin vs User component)
 //   - Plugin systems (load components dynamically)
 //   - Wizard/stepper UIs (step 1, step 2, step 3...)
 //   - Nullable modals (null = hidden, Component = shown)
 //
-// NOTE ON STORING FUNCTIONS IN SIGNALS:
-//   When using setView(NewComponent), you must wrap it:
-//     setView(() => NewComponent)
-//   Because the setter can't distinguish "store this function"
-//   from "use this function to compute next value."
-//
-// ============================================================================
+// Gotcha - storing functions in signals: a setter treats a function argument as
+// an updater that computes the next value. To store a component reference you
+// must wrap it: setView(() => NewComponent).
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
@@ -100,7 +93,7 @@ export interface DynamicProps
  *
  * @example
  * ```ts
- * // Nullable — renders nothing when null
+ * // Nullable - renders nothing when null
  * const [modal, setModal] = createSignal<(() => HTMLElement) | null>(null);
  *
  * Dynamic({ component: modal });
@@ -111,7 +104,7 @@ export interface DynamicProps
  */
 export function Dynamic(dynamicProps: DynamicProps): HTMLElement
 {
-    // ── Server-side rendering ─────────────────────────────────
+    // Server-side rendering.
     // Resolve the component and its props ONCE and emit its output,
     // wrapped in a contents anchor for hydration.
     if (isStringMode())
@@ -126,7 +119,7 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
         return wrapContents('dynamic', serializeChild(Component(resolvedProps))) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
+    // Hydration.
     // Adopt the wrapper span and its current component on the first
     // effect run; a later component swap uses the normal DOM swap.
     if (isHydrating())
@@ -161,19 +154,19 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
 
-    // Track ONLY the component signal — we don't want a prop signal
+    // Track ONLY the component signal - we don't want a prop signal
     // change to tear down and rebuild the entire component tree.
     // Components are expected to subscribe to their own props
     // internally for fine-grained updates.
     createEffect(() =>
     {
-        // Reading `component()` is what subscribes this effect — so a
+        // Reading `component()` is what subscribes this effect - so a
         // component swap re-runs it, but a props change does not.
         const Component = dynamicProps.component();
 
         if (Component)
         {
-            // Read props WITHOUT subscribing — initial value only.
+            // Read props WITHOUT subscribing - initial value only.
             // Components subscribe to their own props internally for
             // fine-grained updates, so a prop change must not tear
             // down and rebuild the whole component tree.
@@ -201,7 +194,7 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
             firstRun = false;
         }
 
-        // Single teardown path — runs before every re-render (swap)
+        // Single teardown path - runs before every re-render (swap)
         // and on dispose.
         return teardownBranch;
     });

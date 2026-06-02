@@ -39,8 +39,8 @@ describe('css()', () =>
         const b = css`.x { color: blue; }`;
         const c = css`.x { color: red; }`;
 
-        expect(a.x).not.toBe(b.x);   // different rules → different scope
-        expect(a.x).toBe(c.x);       // identical rules → shared scope
+        expect(a.x).not.toBe(b.x);   // different rules -> different scope
+        expect(a.x).toBe(c.x);       // identical rules -> shared scope
     });
 
     it('injects each unique scope exactly once', () =>
@@ -70,7 +70,7 @@ describe('css()', () =>
     });
 });
 
-describe('collectStyleSheet() / resetStyleSheet() — SSR collection', () =>
+describe('collectStyleSheet() / resetStyleSheet() - SSR collection', () =>
 {
     beforeEach(() =>
     {

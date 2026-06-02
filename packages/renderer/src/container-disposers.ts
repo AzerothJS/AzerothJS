@@ -1,13 +1,7 @@
-// ============================================================================
-// AZEROTHJS — Container Disposers (shared by render & hydrate)
-// ============================================================================
-//
 // Tracks the dispose function for each container's mounted tree, so a later
 // render()/hydrate() on the same container tears down the previous mount
 // first. Shared between render() and hydrate() (each can dispose the other's
-// mount — e.g. a hydration-mismatch fallback that re-renders).
-//
-// ============================================================================
+// mount - e.g. a hydration-mismatch fallback that re-renders).
 
 import type { DisposeFn } from '@azerothjs/reactivity';
 

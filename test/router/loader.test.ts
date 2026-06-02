@@ -4,8 +4,6 @@ import { createRouter } from '../../packages/router/src/router.ts';
 import { useLoader } from '../../packages/router/src/use-loader.ts';
 import type { Route, RouteComponent } from '../../packages/router/src/types.ts';
 
-// ── Helpers ──────────────────────────────────────────────────
-
 async function flush(): Promise<void>
 {
     for (let i = 0; i < 4; i++)
@@ -14,11 +12,9 @@ async function flush(): Promise<void>
     }
 }
 
-// Stub component — these tests assert on the loader resource only,
+// Stub component: these tests assert on the loader resource only,
 // not on rendered output, so any shape will do.
 const Stub: RouteComponent = () => document.createElement('div');
-
-// ─────────────────────────────────────────────────────────────
 
 describe('Route.loader + useLoader', () =>
 {
@@ -134,13 +130,13 @@ describe('Route.loader + useLoader', () =>
             await flush();
             expect(loader).toHaveBeenCalledTimes(1);
 
-            // Only the hash changes — match memo's structural
+            // Only the hash changes - match memo's structural
             // equality should keep the loader inert.
             router.navigate('/users/1#bio');
             await flush();
             expect(loader).toHaveBeenCalledTimes(1);
 
-            // Search-only change — same deal.
+            // Search-only change - same deal.
             router.navigate('/users/1?tab=posts');
             await flush();
             expect(loader).toHaveBeenCalledTimes(1);
@@ -159,7 +155,7 @@ describe('Route.loader + useLoader', () =>
             const loader = vi.fn(({ signal }: { signal: AbortSignal }) =>
             {
                 signals.push(signal);
-                // Hold open — never resolves naturally.
+                // Hold open - never resolves naturally.
                 return new Promise<string>(() =>
                 {});
             });
@@ -194,7 +190,7 @@ describe('Route.loader + useLoader', () =>
             });
             const resource = useLoader(router);
 
-            // No loader on the matched route → resource is in the
+            // No loader on the matched route -> resource is in the
             // "no key" state synchronously.
             expect(resource.loading()).toBe(false);
             expect(resource.data()).toBeUndefined();
@@ -223,7 +219,7 @@ describe('Route.loader + useLoader', () =>
             });
             const resource = useLoader(router);
 
-            // No match → no fetch.
+            // No match -> no fetch.
             expect(resource.loading()).toBe(false);
             expect(resource.data()).toBeUndefined();
             expect(loader).not.toHaveBeenCalled();
@@ -232,7 +228,7 @@ describe('Route.loader + useLoader', () =>
             expect(loader).not.toHaveBeenCalled();
 
             // And after navigating to a matching URL, the loader
-            // wakes up — confirms the resource isn't permanently
+            // wakes up - confirms the resource isn't permanently
             // disabled by the initial null match.
             router.navigate('/somewhere');
             await flush();

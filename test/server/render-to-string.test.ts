@@ -1,13 +1,9 @@
-// ============================================================================
-// AZEROTHJS — renderToString / renderToStaticMarkup tests
-// ============================================================================
-
 import { describe, it, expect } from 'vitest';
 import { createSignal } from '@azerothjs/reactivity';
 import { h } from '@azerothjs/renderer';
 import { renderToString, renderToStaticMarkup } from '@azerothjs/server';
 
-describe('renderToString — elements', () =>
+describe('renderToString - elements', () =>
 {
     it('serializes a basic element with text', () =>
     {
@@ -42,7 +38,7 @@ describe('renderToString — elements', () =>
     });
 });
 
-describe('renderToString — attributes', () =>
+describe('renderToString - attributes', () =>
 {
     it('escapes attribute values', () =>
     {
@@ -79,7 +75,7 @@ describe('renderToString — attributes', () =>
     });
 });
 
-describe('renderToString — void elements & content properties', () =>
+describe('renderToString - void elements & content properties', () =>
 {
     it('self-closes void elements with no children or closing tag', () =>
     {
@@ -98,7 +94,7 @@ describe('renderToString — void elements & content properties', () =>
     });
 });
 
-describe('renderToString — reactive children & markers', () =>
+describe('renderToString - reactive children & markers', () =>
 {
     it('wraps a reactive child in comment anchors', () =>
     {

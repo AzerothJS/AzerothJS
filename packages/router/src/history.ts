@@ -1,62 +1,36 @@
-// ============================================================================
-// AZEROTHJS — Browser History Adapter
-// ============================================================================
+// Wraps the browser's HTML5 History API behind the HistoryAdapter interface so
+// the router stays oblivious to where URL changes come from. The router never
+// imports window.history directly, which lets tests swap in a memory-only
+// adapter, SSR swap in a request-bound one, and hash mode drop in later.
 //
-// Wraps the browser's HTML5 History API behind the `HistoryAdapter`
-// interface so the router can stay oblivious to the underlying
-// source of URL changes.
+// Fan-out from a single native listener: many subscribers can attach, but we
+// keep them in a private Set and install one popstate listener on the window,
+// never one per subscriber. It's detached when the last subscriber leaves and
+// re-attached if a new one arrives.
 //
-// WHY AN ADAPTER?
+// push/replace do not fire popstate, so we notify manually. The browser fires
+// popstate only for user-driven back/forward (and history.back()/forward());
+// programmatic pushState/replaceState are silent. After every push/replace we
+// invoke our subscribers with the post-mutation URL, otherwise the router would
+// be deaf to its own navigations.
 //
-//   The router never imports `window.history` directly. That gives
-//   us three benefits:
-//     1. Tests can swap in a memory-only adapter
-//     2. SSR can swap in a request-bound adapter
-//     3. Hash mode (or any other strategy) is a future drop-in
-//
-// FAN-OUT WITH A SINGLE NATIVE LISTENER:
-//
-//   Many subscribers can attach to one adapter. We keep them in
-//   a private Set and install ONE `popstate` listener on the
-//   window — never one per subscriber. The native listener is
-//   detached when the last subscriber leaves, then re-attached
-//   if a new subscriber arrives later.
-//
-// PUSH/REPLACE DON'T FIRE popstate — WE NOTIFY MANUALLY:
-//
-//   The browser fires `popstate` only for user-driven back/forward
-//   (and `history.back()` / `forward()` calls). Programmatic
-//   `pushState` and `replaceState` are silent. So after every
-//   push/replace we explicitly invoke our subscribers with the
-//   post-mutation URL — otherwise the router would be deaf to its
-//   own programmatic navigations.
-//
-// CANONICAL URL FORM:
-//
-//   `current()` returns `pathname + search + hash`, with the
-//   leading slash, exactly as the browser sees it. We read this
-//   from `window.location` after every mutation rather than
-//   trusting the input argument — that way relative pushes (e.g.
-//   `'foo/bar'`) come out resolved, not as the raw input.
-//
-// ============================================================================
+// current() returns pathname + search + hash exactly as the browser sees it. We
+// read it from window.location after every mutation rather than trusting the
+// input argument, so relative pushes (e.g. 'foo/bar') come out resolved.
 
 import type { HistoryAdapter } from './types.ts';
 
 /**
- * Builds a `HistoryAdapter` backed by the browser's
- * `window.history` and `popstate` event.
+ * Builds a `HistoryAdapter` backed by the browser's `window.history` and
+ * `popstate` event.
  *
- * Multiple calls return independent adapter instances — they
- * each maintain their own subscriber Set, so attaching/detaching
- * subscribers on one does not affect the other. They DO share
- * the underlying `window.history`, of course; that's the whole
- * point.
+ * Multiple calls return independent adapter instances, each with its own
+ * subscriber Set, so attaching/detaching subscribers on one does not affect the
+ * other. They do share the underlying `window.history`, which is the point.
  *
- * Must be called in a browser-like environment (anything that
- * provides `window.history`, `window.location`, and the
- * `popstate` event). Calling it under Node without a DOM polyfill
- * will fail at the first `current()`/`push()`.
+ * Must be called in a browser-like environment (one that provides
+ * `window.history`, `window.location`, and the `popstate` event). Under Node
+ * without a DOM polyfill it will fail at the first `current()`/`push()`.
  *
  * @returns A `HistoryAdapter` ready for use by `createRouter`
  *
@@ -64,50 +38,36 @@ import type { HistoryAdapter } from './types.ts';
  * ```ts
  * const history = createBrowserHistory();
  *
- * history.current();              // → '/users/42'
+ * history.current();              // -> '/users/42'
  * history.push('/users/43');      // updates URL + notifies
  * history.replace('/login');      // replaces top entry + notifies
  * history.back();                 // goes back; popstate notifies
  *
  * const unsub = history.subscribe(path => console.log(path));
- * // …later
- * unsub();                        // detaches; if last subscriber,
- *                                 // popstate listener removed too
+ * unsub();                        // detaches; removes popstate listener if last
  * ```
  */
 export function createBrowserHistory(): HistoryAdapter
 {
-    /**
-     * The set of currently active subscribers. We snapshot this
-     * to an array before iterating so a listener that subscribes
-     * or unsubscribes during notification doesn't mutate the
-     * collection mid-loop.
-     */
+    // Active subscribers. Snapshotted to an array before iterating so a
+    // listener that subscribes or unsubscribes during notification doesn't
+    // mutate the collection mid-loop.
     const subscribers = new Set<(fullPath: string) => void>();
 
-    /**
-     * Whether our shared `popstate` listener is installed on the
-     * window. Tracked explicitly so we can detach it when the
-     * last subscriber leaves.
-     */
+    // Whether the shared popstate listener is installed. Tracked explicitly so
+    // we can detach it when the last subscriber leaves.
     let popstateAttached = false;
 
-    /**
-     * Reads the current URL straight from `window.location`. The
-     * browser is the source of truth — we never cache.
-     */
+    // The browser is the source of truth; we never cache the URL.
     function readCurrent(): string
     {
         const loc = window.location;
         return loc.pathname + loc.search + loc.hash;
     }
 
-    /**
-     * Iterates a snapshot of subscribers and delivers `fullPath`
-     * to each. Snapshotting matters: a listener might unsubscribe
-     * during its own callback, and we don't want to skip the
-     * next listener as a result.
-     */
+    // Delivers fullPath to a snapshot of subscribers. Snapshotting matters: a
+    // listener might unsubscribe during its own callback, and we don't want to
+    // skip the next listener as a result.
     function notify(fullPath: string): void
     {
         for (const listener of Array.from(subscribers))
@@ -131,8 +91,8 @@ export function createBrowserHistory(): HistoryAdapter
         push(fullPath: string, state?: unknown): void
         {
             window.history.pushState(state, '', fullPath);
-            // pushState is silent — fan out manually so the router
-            // sees its own navigations.
+            // pushState is silent, so fan out manually so the router sees its
+            // own navigations.
             notify(readCurrent());
         },
 
@@ -144,8 +104,8 @@ export function createBrowserHistory(): HistoryAdapter
 
         back(): void
         {
-            // The browser will fire popstate, which invokes our
-            // shared handler. No manual notify here.
+            // The browser fires popstate, which invokes the shared handler. No
+            // manual notify here.
             window.history.back();
         },
 
@@ -158,20 +118,17 @@ export function createBrowserHistory(): HistoryAdapter
         {
             subscribers.add(listener);
 
-            // Lazily install the native popstate listener on the
-            // first subscriber. This avoids polluting the window
-            // with a listener that has nothing to do.
+            // Install the native popstate listener lazily on the first
+            // subscriber, so we don't add a listener that has nothing to do.
             if (!popstateAttached)
             {
                 window.addEventListener('popstate', onPopstate);
                 popstateAttached = true;
             }
 
-            // Return an unsubscribe that:
-            //   1. removes this specific listener
-            //   2. detaches the native popstate when the set
-            //      empties, so a long-lived adapter doesn't hold
-            //      a permanent listener for a no-longer-used router
+            // Unsubscribe removes this listener and detaches the native
+            // popstate when the set empties, so a long-lived adapter doesn't
+            // hold a permanent listener for a no-longer-used router.
             return (): void =>
             {
                 subscribers.delete(listener);

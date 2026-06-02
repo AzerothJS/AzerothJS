@@ -1,67 +1,47 @@
-// ============================================================================
-// AZEROTHJS — onCleanup (Imperative Effect Cleanup)
-// ============================================================================
+// onCleanup() registers a cleanup function inside an effect; it runs before
+// the effect re-runs and when the effect is disposed.
 //
-// onCleanup() registers a cleanup function inside an effect.
-// It runs before the effect re-runs and when the effect is disposed.
-//
-// WHY NOT JUST RETURN A CLEANUP FUNCTION?
-//
-//   Returning a cleanup from an effect works fine for ONE cleanup:
-//
-//     createEffect(() =>
-//     {
-//         const id = setInterval(() => tick(), 1000);
-//         return () => clearInterval(id);  // single cleanup
-//     });
-//
-//   But what if you need MULTIPLE cleanups?
-//
-//     createEffect(() =>
-//     {
-//         const id1 = setInterval(() => tick(), 1000);
-//         const id2 = setTimeout(() => expire(), 5000);
-//         window.addEventListener('resize', onResize);
-//
-//         // Can only return ONE cleanup!
-//         // return () => { clearInterval(id1); clearTimeout(id2); window.removeEventListener(...) };
-//
-//         // With onCleanup — register each independently:
-//         onCleanup(() => clearInterval(id1));
-//         onCleanup(() => clearTimeout(id2));
-//         onCleanup(() => window.removeEventListener('resize', onResize));
-//     });
-//
-//   onCleanup also works in CONDITIONAL blocks:
-//
-//     createEffect(() =>
-//     {
-//         if (isActive())
-//         {
-//             const id = setInterval(() => poll(), 1000);
-//             onCleanup(() => clearInterval(id));  // only if active
-//         }
-//     });
-//
-// ============================================================================
+// Returning a cleanup from the effect handles the single-cleanup case, but an
+// effect can only return one function. onCleanup lets you register any number
+// of independent cleanups, and works inside conditional blocks - a cleanup
+// registered only when a branch is taken fires only for that branch.
 
 import type { CleanupFn } from './types.ts';
 import { currentCleanups } from './effect.ts';
 
 /**
- * Registers a cleanup function inside an effect.
- *
- * The cleanup runs:
- *   - Before the effect re-runs (when dependencies change)
- *   - When the effect is disposed
- *
- * Can be called multiple times inside a single effect to
- * register multiple independent cleanups.
- *
- * Must be called inside a createEffect() callback. Calling
- * it outside an effect does nothing (safe no-op).
+ * Registers a cleanup function inside an effect. It runs before the effect
+ * re-runs (on a dependency change) and when the effect is disposed. Call it
+ * any number of times to register independent cleanups. Calling it outside an
+ * effect is a safe no-op.
  *
  * @param fn - The cleanup function to register
+ *
+ * Why: an effect can return only one cleanup function, which is awkward when a
+ * run sets up several resources or sets one up conditionally.
+ *
+ * Without onCleanup: fold every teardown into a single returned closure:
+ *
+ *     createEffect(() =>
+ *     {
+ *         const id = setInterval(tick, 1000);
+ *         window.addEventListener('resize', onResize);
+ *         return () => // one function must remember to undo both
+ *         {
+ *             clearInterval(id);
+ *             window.removeEventListener('resize', onResize);
+ *         };
+ *     });
+ *
+ * With onCleanup: register each teardown next to its setup:
+ *
+ *     createEffect(() =>
+ *     {
+ *         const id = setInterval(tick, 1000);
+ *         onCleanup(() => clearInterval(id));
+ *         window.addEventListener('resize', onResize);
+ *         onCleanup(() => window.removeEventListener('resize', onResize));
+ *     });
  *
  * @example
  * ```ts
@@ -78,7 +58,7 @@ import { currentCleanups } from './effect.ts';
  *
  * @example
  * ```ts
- * // Conditional cleanup
+ * // Conditional cleanup - registered only when the branch is taken
  * createEffect(() =>
  * {
  *     if (isPolling())
@@ -87,27 +67,6 @@ import { currentCleanups } from './effect.ts';
  *         onCleanup(() => clearInterval(id));
  *     }
  * });
- * ```
- *
- * @example
- * ```ts
- * // Works alongside return cleanup
- * createEffect(() =>
- * {
- *     const id = setInterval(() => tick(), 1000);
- *     onCleanup(() => clearInterval(id));
- *
- *     const ws = new WebSocket(url());
- *     onCleanup(() => ws.close());
- *
- *     return () => console.log('effect re-running');
- * });
- * ```
- *
- * @example
- * ```ts
- * // Safe to call outside effects (no-op)
- * onCleanup(() => console.log('nothing happens'));
  * ```
  */
 export function onCleanup(fn: CleanupFn): void

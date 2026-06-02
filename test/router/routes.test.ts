@@ -5,10 +5,8 @@ import { createRouter } from '../../packages/router/src/router.ts';
 import { Routes } from '../../packages/router/src/routes.ts';
 import type { RouteComponent } from '../../packages/router/src/types.ts';
 
-// ── Component factories ──────────────────────────────────────
-//
-// Layouts wrap their children — leaves return a leaf div. Both
-// expose a `data-*` attribute so DOM assertions can target them.
+// Component factories. Layouts wrap their children; leaves return a leaf div.
+// Both expose a `data-*` attribute so DOM assertions can target them.
 
 function makeLeaf(name: string): RouteComponent
 {
@@ -42,7 +40,7 @@ describe('<Routes>', () =>
         window.history.replaceState({}, '', '/initial');
     });
 
-    // ── Chain wrapping ───────────────────────────────────────
+    // Chain wrapping
 
     it('renders the matched leaf when the chain has length 1', () =>
     {
@@ -129,7 +127,7 @@ describe('<Routes>', () =>
         });
     });
 
-    // ── Reactive swap ────────────────────────────────────────
+    // Reactive swap
 
     it('swaps content when the route changes', () =>
     {
@@ -194,7 +192,7 @@ describe('<Routes>', () =>
         });
     });
 
-    // ── Fallback ─────────────────────────────────────────────
+    // Fallback
 
     it('renders fallback when no route matches', () =>
     {
@@ -241,7 +239,7 @@ describe('<Routes>', () =>
         });
     });
 
-    // ── Slice efficiency ─────────────────────────────────────
+    // Slice efficiency
 
     it('does NOT re-render when only the hash changes', () =>
     {
@@ -265,13 +263,13 @@ describe('<Routes>', () =>
 
             expect(renderCount).toBe(1);
 
-            // Hash-only change — match memo's structural equality
+            // Hash-only change - match memo's structural equality
             // sees the same route + same params and stays quiet.
             router.navigate('/about#bio');
 
             expect(renderCount).toBe(1);
 
-            // Sanity — a real route change DOES re-render.
+            // Sanity - a real route change DOES re-render.
             router.navigate('/about?x=1#bio');
             expect(renderCount).toBe(1); // query change also leaves match alone
 

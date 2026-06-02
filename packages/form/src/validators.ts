@@ -1,59 +1,40 @@
-// ============================================================================
-// AZEROTHJS — Built-in Field Validators
-// ============================================================================
+// Built-in field validators: factories that match the shape createForm's
+// `validate` option expects. Each returns a FieldValidator<V> to drop into the
+// per-field validator map, optionally chained with combine.
 //
-// A small library of validator factories that match the shape
-// expected by `createForm`'s `validate` option. Each factory
-// returns a `FieldValidator<V>` you can drop into the per-field
-// validator map, optionally chained with `combine`.
+// Skip-empty convention: every validator except required silently passes on
+// empty values ('', null, undefined). This makes combine(required(), email())
+// produce the right errors - empty input yields 'Email is required' (from
+// required), 'bad-input' yields 'Invalid email address' (from email). Without
+// the skip, an empty input would yield "Invalid email" before the user typed
+// anything. Matches Zod / Yup / react-hook-form, so it's already familiar.
 //
-//   createForm({
-//       initial: { email: '', name: '', age: 0 },
-//       validate: {
-//           name:  combine(required(), minLength(2)),
-//           email: combine(required(), email()),
-//           age:   combine(required(), min(18, 'Must be 18+'))
-//       }
-//   });
+// Contravariance: required() is typed as FieldValidator<unknown>. TypeScript's
+// contravariance for function parameters makes that assignable to any narrower
+// FieldValidator<V> slot, so combine(required(), email()) infers V = string
+// (what the email field expects) with no casts.
 //
-// SKIP-EMPTY CONVENTION:
-//
-//   Every validator except `required` silently passes on empty
-//   values (`''`, `null`, `undefined`). This makes
-//   `combine(required(), email())` produce the right errors:
-//
-//     - empty input  →  'Email is required'        (from required)
-//     - 'bad-input'  →  'Invalid email address'    (from email)
-//
-//   Without the skip, an empty input would yield "Invalid email"
-//   even before the user typed anything — confusing UX.
-//
-//   Matches Zod / Yup / react-hook-form. Users already know it.
-//
-// CONTRAVARIANCE:
-//
-//   `required()` is typed as `FieldValidator<unknown>`. Thanks to
-//   TypeScript's contravariance for function parameters, that's
-//   assignable to any narrower `FieldValidator<V>` slot — so
-//   `combine(required(), email())` infers `V = string` correctly,
-//   which is what the email field expects. No casts needed.
-//
-// NOT IN v1:
-//   - Async validators — wait for the async-validation contract
-//   - Cross-field validation — wait for `validateForm` top-level
-//   - i18n message bundles — per-call override covers the common case
-//
-// ============================================================================
+// Not in v1: async validators (wait for the async-validation contract),
+// cross-field validation (wait for a top-level validateForm), and i18n message
+// bundles (the per-call message override covers the common case).
 
 import type { FieldValidator } from './create-form.ts';
 
 /**
- * Returns true for the values we treat as "no input": `null`,
- * `undefined`, and a string that is empty after trimming.
+ * Returns true for the values we treat as "no input": `null`, `undefined`, and
+ * a string that is empty after trimming.
  *
- * Note: empty arrays are NOT handled here — `required()` checks
- * for them separately before delegating to `isEmpty`, since the
- * empty-array case only applies to that one validator.
+ * Empty arrays are not handled here - `required()` checks for them separately
+ * before delegating to `isEmpty`, since the empty-array case only applies to
+ * that one validator.
+ *
+ * @example
+ * ```ts
+ * isEmpty('');       // true
+ * isEmpty('   ');    // true (trimmed)
+ * isEmpty(null);     // true
+ * isEmpty('hi');     // false
+ * ```
  *
  * @internal
  */
@@ -73,9 +54,8 @@ function isEmpty(value: unknown): boolean
 /**
  * Validator: the field must have a value.
  *
- * Treats `''` (after trim), `null`, `undefined`, and empty
- * arrays as missing. Use this in front of more specific
- * validators when a field is mandatory.
+ * Treats `''` (after trim), `null`, `undefined`, and empty arrays as missing.
+ * Use this in front of more specific validators when a field is mandatory.
  *
  * @param message - Optional override for the default message.
  *                  Default: `'This field is required'`.
@@ -101,7 +81,7 @@ export function required(message?: string): FieldValidator<unknown>
 /**
  * Validator: string must be at least `n` characters long.
  *
- * Skips empty values — pair with `required()` to enforce both.
+ * Skips empty values - pair with `required()` to enforce both.
  *
  * @example
  * ```ts
@@ -149,10 +129,9 @@ export function maxLength(n: number, message?: string): FieldValidator<string>
 /**
  * Validator: number must be at least `n`.
  *
- * Skips `null`/`undefined`. Note that `0` is NOT skipped — it's a
- * valid numeric value; if you want to require a non-zero number,
- * combine with `required()` (which treats `0` as a valid value)
- * and add an explicit check, or use `min(1)`.
+ * Skips `null`/`undefined`. Note that `0` is not skipped - it's a valid numeric
+ * value; to require a non-zero number, combine with `required()` (which treats
+ * `0` as a valid value) and add an explicit check, or use `min(1)`.
  *
  * @example
  * ```ts
@@ -196,8 +175,8 @@ export function max(n: number, message?: string): FieldValidator<number>
 /**
  * Validator: string must match the supplied regular expression.
  *
- * Skips empty values. The regex is tested with `.test()` — set
- * the `g` flag carefully (it carries `lastIndex` between calls).
+ * Skips empty values. The regex is tested with `.test()` - set the `g` flag
+ * carefully (it carries `lastIndex` between calls).
  *
  * @example
  * ```ts
@@ -218,10 +197,9 @@ export function pattern(regex: RegExp, message?: string): FieldValidator<string>
 }
 
 /**
- * Email regex used by `email()`. Pragmatic — not RFC 5322
- * exhaustive (which is famously near-impossible). Catches the
- * 99 % case: `local@host.tld`, no whitespace, at least one dot
- * after the `@`.
+ * Email regex used by `email()`. Pragmatic, not RFC 5322 exhaustive (which is
+ * famously near-impossible). Catches the common case: `local@host.tld`, no
+ * whitespace, at least one dot after the `@`.
  *
  * @internal
  */
@@ -313,11 +291,10 @@ export function oneOf<V>(values: readonly V[], message?: string): FieldValidator
  * returns the first error encountered, or `null` if every
  * validator passes.
  *
- * Validators may have varying value-type generics — TypeScript
- * narrows the combined type to the strictest one (or, if all
- * are `unknown`, stays at `unknown`). In practice this means
- * `combine(required(), email())` correctly types as
- * `FieldValidator<string>` and slots into a string-typed field.
+ * Validators may have varying value-type generics - TypeScript narrows the
+ * combined type to the strictest one (or, if all are `unknown`, stays at
+ * `unknown`). In practice this means `combine(required(), email())` correctly
+ * types as `FieldValidator<string>` and slots into a string-typed field.
  *
  * @example
  * ```ts

@@ -83,7 +83,7 @@ describe('h()', () =>
 
         setCount(5);
         // The primitive fast path must mutate the SAME text node,
-        // not build a replacement — no DOM node churn per tick.
+        // not build a replacement - no DOM node churn per tick.
         expect(el.firstChild).toBe(node);
         expect(node?.textContent).toBe('Count: 5');
     });
@@ -99,11 +99,11 @@ describe('h()', () =>
         expect(el.textContent).toBe('plain');
         expect(el.querySelector('b')).toBeNull();
 
-        // text → element takes the full rebuild path.
+        // text -> element takes the full rebuild path.
         setMode('el');
         expect(el.querySelector('b')?.textContent).toBe('bold');
 
-        // element → text rebuilds again, then resumes in-place.
+        // element -> text rebuilds again, then resumes in-place.
         setMode('text');
         expect(el.textContent).toBe('plain');
         expect(el.querySelector('b')).toBeNull();

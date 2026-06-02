@@ -1,36 +1,23 @@
-// ============================================================================
-// AZEROTHJS — <Link> Component
-// ============================================================================
+// A SPA link that behaves like a normal <a> for everything the user expects
+// (right-click "Copy link", middle-click "Open in new tab", screen-reader
+// announcement) and intercepts only the clicks where in-app navigation is
+// clearly intended:
 //
-// A polished SPA link: behaves like a normal `<a>` for everything
-// the user expects (right-click → "Copy link", middle-click →
-// "Open in new tab", screen-reader announcement), and intercepts
-// only the cases where intercepting is the obviously right thing
-// to do.
+//   Default click                          ->  router.navigate(to)
+//   Modifier (ctrl / meta / shift / alt)   ->  pass through
+//   Middle-click (event.button !== 0)      ->  pass through
+//   target other than _self                ->  pass through
+//   defaultPrevented from upstream         ->  pass through
+//   external URL (mailto:, https://, ...)  ->  pass through
 //
-// THE WHEN-TO-INTERCEPT TABLE:
+// Handling all of these is what avoids the usual "this router broke ctrl-click"
+// complaints.
 //
-//   Default click                        →  router.navigate(to)
-//   Modifier (ctrl / meta / shift / alt) →  pass through
-//   Middle-click  (event.button !== 0)   →  pass through
-//   target other than `_self`            →  pass through
-//   defaultPrevented from upstream       →  pass through
-//   external URL (mailto:, https://, …)  →  pass through
-//
-// Skipping any of these is what every "ugh, this router broke
-// ctrl-click" complaint is about. We get all of them right.
-//
-// ACCESSIBILITY:
-//
-//   The rendered element is a real `<a href="...">`, not a div
-//   with an onclick. That's what gives us native keyboard focus,
-//   right-click context menu, screen-reader semantics, and the
-//   crawler-friendly destination URL.
-//
-//   When `activeClass` is set, we also toggle `aria-current="page"`
-//   so assistive tech announces the current location correctly.
-//
-// ============================================================================
+// Accessibility: the rendered element is a real <a href="...">, not a div with
+// an onclick, which gives native keyboard focus, the right-click context menu,
+// screen-reader semantics, and a crawler-friendly destination URL. When
+// activeClass is set, aria-current="page" is toggled in lockstep so assistive
+// tech announces the current location correctly.
 
 import { h } from '@azerothjs/renderer';
 import type { Child } from '@azerothjs/renderer';
@@ -41,9 +28,9 @@ import { EXTERNAL_URL } from './router.ts';
 /**
  * Props for the `<Link>` component.
  *
- * Any extra keys are passed through to the underlying `<a>`
- * element — so `id`, `style`, `aria-label`, `data-*`, and any
- * other valid anchor attribute work transparently.
+ * Any extra keys are passed through to the underlying `<a>` element, so `id`,
+ * `style`, `aria-label`, `data-*`, and any other valid anchor attribute work
+ * transparently.
  */
 export interface LinkProps
 {
@@ -63,20 +50,19 @@ export interface LinkProps
     target?: string;
 
     /**
-     * Class to apply when this link's pathname matches the current
-     * router location's pathname exactly. Toggling is reactive.
-     *
-     * When set, `aria-current="page"` is also toggled in lockstep.
+     * Class to apply when this link's pathname matches the current router
+     * location's pathname exactly. Toggling is reactive. When set,
+     * `aria-current="page"` is also toggled in lockstep.
      */
     activeClass?: string;
 
-    /** Optional user click handler — runs BEFORE our interception logic. */
+    /** Optional user click handler. Runs before the interception logic. */
     onClick?: (event: MouseEvent) => void;
 
     /** Class string or reactive class getter passed to the `<a>`. */
     class?: string | (() => string);
 
-    /** Children (text, elements, reactive getters, arrays — anything h() accepts). */
+    /** Children (text, elements, reactive getters, arrays - anything h() accepts). */
     children?: Child;
 
     /** Pass-through for any other anchor attribute the user wants to set. */
@@ -86,10 +72,9 @@ export interface LinkProps
 /**
  * Extracts the pathname portion of a `NavigateTarget`.
  *
- * Used for active-link comparison (`router.location().pathname`
- * vs. the link's pathname). We don't need to compare query or
- * hash for active matching — the URL bar shows them but the
- * "you are here" semantic is path-level.
+ * Used for active-link comparison (`router.location().pathname` vs. the link's
+ * pathname). Query and hash are not compared for active matching: the URL bar
+ * shows them, but the "you are here" semantic is path-level.
  *
  * @internal
  */
@@ -119,13 +104,27 @@ function targetPathname(target: NavigateTarget): string
 /**
  * A SPA-aware anchor element.
  *
- * Renders a real `<a href="...">` so all native browser
- * behaviour (right-click, middle-click, copy, screen-readers)
- * works. Intercepts only the click cases where the user clearly
- * wants in-app navigation.
+ * Renders a real `<a href="...">` so all native browser behaviour (right-click,
+ * middle-click, copy, screen-readers) works, and intercepts only the click
+ * cases where the user clearly wants in-app navigation.
  *
  * Pass `activeClass` to get reactive active-link styling and
  * `aria-current="page"` for accessibility.
+ *
+ * Without Link: a hand-rolled anchor swallows every click, so ctrl-click,
+ * middle-click, and external URLs stop opening the way users expect:
+ *
+ *     h('a', { href: '/users/42', onClick: (e) =>
+ *     {
+ *         e.preventDefault();
+ *         router.navigate('/users/42');
+ *     } }, 'User 42'); // breaks new-tab, copy-link, external hrefs
+ *
+ * With Link: pass the target and router; it renders a real anchor, intercepts
+ * only plain left-clicks, and toggles aria-current when active:
+ *
+ *     Link({ to: '/users/42', router, activeClass: 'is-active', children: 'User 42' });
+ *     // modifier/middle clicks and external URLs pass through untouched
  *
  * @example
  * ```ts
@@ -139,7 +138,7 @@ function targetPathname(target: NavigateTarget): string
  *
  * @example
  * ```ts
- * // Structured target — router will encode and stringify
+ * // Structured target: router will encode and stringify
  * Link({
  *     to: { pathname: '/search', query: { q: 'azeroth js' } },
  *     router,
@@ -149,30 +148,26 @@ function targetPathname(target: NavigateTarget): string
  *
  * @example
  * ```ts
- * // External URL — Link does not intercept; behaves like a plain anchor
+ * // External URL: Link does not intercept; behaves like a plain anchor
  * Link({ to: 'https://example.com', router, children: 'External' });
  * ```
  */
 export function Link(props: LinkProps): HTMLElement
 {
-    // The href is computed once at construction. The link's `to`
-    // prop is treated as static — users who need a reactive `to`
-    // can wrap the link in a `<Show>` or rebuild it.
+    // The href is computed once at construction; the `to` prop is treated as
+    // static. Users who need a reactive `to` can wrap the link in a `<Show>` or
+    // rebuild it.
     //
-    // router.href() applies the configured base prefix to internal
-    // targets (and leaves external URLs untouched), so the rendered
-    // anchor points at the real URL even when the app is served
-    // under a sub-path.
+    // router.href() applies the configured base prefix to internal targets (and
+    // leaves external URLs untouched), so the rendered anchor points at the real
+    // URL even when the app is served under a sub-path.
     const href = props.router.href(props.to);
     const isExternal = EXTERNAL_URL.test(href);
     const linkPathname = targetPathname(props.to);
 
-    /**
-     * Click handler. Runs the user's onClick first (if any), then
-     * applies the bail-out table from the file header. Only when
-     * every condition says "yes, intercept" do we preventDefault
-     * and route through the router.
-     */
+    // Runs the user's onClick first (if any), then applies the bail-out table
+    // from the file header. Only when every condition says intercept do we
+    // preventDefault and route through the router.
     function handleClick(event: MouseEvent): void
     {
         if (props.onClick)
@@ -193,19 +188,19 @@ export function Link(props: LinkProps): HTMLElement
             return;
         }
 
-        // Modifier keys → user wants new tab / new window / save.
+        // Modifier keys: user wants new tab / new window / save.
         if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
         {
             return;
         }
 
-        // target="_blank" (or any non-`_self`) → user wants new tab.
+        // target="_blank" (or any non-_self): user wants a new tab.
         if (props.target && props.target !== '_self')
         {
             return;
         }
 
-        // External URL → don't intercept, let the browser go.
+        // External URL: don't intercept, let the browser go.
         if (isExternal)
         {
             return;
@@ -223,12 +218,10 @@ export function Link(props: LinkProps): HTMLElement
         }
     }
 
-    // ── Active-state bindings (only when activeClass is set) ──
-    //
-    // Both class and aria-current become reactive getters so h()
-    // wires them up as effects. Without activeClass we leave the
-    // user's class as-is (could be a string, a getter, or
-    // undefined — h() handles all three).
+    // Active-state bindings (only when activeClass is set): both class and
+    // aria-current become reactive getters so h() wires them up as effects.
+    // Without activeClass we leave the user's class as-is (string, getter, or
+    // undefined; h() handles all three).
     const userClass = props.class;
 
     const classProp =
@@ -256,10 +249,8 @@ export function Link(props: LinkProps): HTMLElement
             : (): string | null =>
                 props.router.location().pathname === linkPathname ? 'page' : null;
 
-    // ── Pass-through for unknown attrs ───────────────────────
-    //
-    // Pull our own props out so we don't leak them onto the
-    // <a> element. Anything else (id, style, aria-label, data-*)
+    // Pass-through for unknown attrs: pull our own props out so we don't leak
+    // them onto the <a> element. Anything else (id, style, aria-label, data-*)
     // flows through.
     const {
         to: _to,

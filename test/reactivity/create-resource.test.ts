@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createSignal, createResource } from '@azerothjs/core';
 
-// ── Test helpers ─────────────────────────────────────────────
+// Test helpers
 
 /**
- * Build a manually-controlled deferred — a promise plus its
+ * Build a manually-controlled deferred: a promise plus its
  * resolve/reject handles. Lets tests step through fetch timing
  * precisely instead of racing real microtasks.
  */
@@ -37,9 +37,7 @@ async function flush(): Promise<void>
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-
-describe('createResource — standalone form', () =>
+describe('createResource - standalone form', () =>
 {
     it('runs the fetcher once, populates data, flips loading false', async () =>
     {
@@ -88,7 +86,7 @@ describe('createResource — standalone form', () =>
         createRoot((dispose) =>
         {
             const r = createResource(() => makeDeferred<string>().promise);
-            // No await — the very next read should see loading.
+            // No await - the very next read should see loading.
             expect(r.loading()).toBe(true);
             expect(r.data()).toBeUndefined();
 
@@ -97,7 +95,7 @@ describe('createResource — standalone form', () =>
     });
 });
 
-describe('createResource — source form', () =>
+describe('createResource - source form', () =>
 {
     it('re-runs the fetcher when the source signal changes', async () =>
     {
@@ -130,7 +128,7 @@ describe('createResource — source form', () =>
 
             const r = createResource(() => src(), fetcher);
 
-            // null start — no fetch.
+            // null start - no fetch.
             expect(fetcher).not.toHaveBeenCalled();
             expect(r.loading()).toBe(false);
 
@@ -142,13 +140,13 @@ describe('createResource — source form', () =>
             await flush();
             expect(fetcher).not.toHaveBeenCalled();
 
-            // Truthy now — fetch fires.
+            // Truthy now - fetch fires.
             setSrc(7);
             await flush();
             expect(fetcher).toHaveBeenCalledOnce();
             expect(r.data()).toBe('should not appear');
 
-            // Back to falsy — data resets, no new fetch.
+            // Back to falsy - data resets, no new fetch.
             setSrc(null);
             await flush();
             expect(fetcher).toHaveBeenCalledOnce();
@@ -182,7 +180,7 @@ describe('createResource — source form', () =>
     });
 });
 
-describe('createResource — cancellation & race-condition guards', () =>
+describe('createResource - cancellation and race-condition guards', () =>
 {
     it('aborts the previous controller when the source changes', () =>
     {
@@ -249,7 +247,7 @@ describe('createResource — cancellation & race-condition guards', () =>
     {
         await createRoot(async (dispose) =>
         {
-            // Fetcher rejects when its signal aborts — typical of a
+            // Fetcher rejects when its signal aborts - typical of a
             // real `fetch()` cancelled mid-flight.
             const fetcher = vi.fn((_id: number, signal: AbortSignal) =>
                 new Promise<string>((_, reject) =>
@@ -269,7 +267,7 @@ describe('createResource — cancellation & race-condition guards', () =>
             // The abort triggers the inner reject for fetch #1.
             await flush();
 
-            // error() should still be null — the abort error must
+            // error() should still be null - the abort error must
             // be swallowed because the result was superseded.
             expect(r.error()).toBeNull();
 
@@ -278,7 +276,7 @@ describe('createResource — cancellation & race-condition guards', () =>
     });
 });
 
-describe('createResource — refetch & cleanup', () =>
+describe('createResource - refetch and cleanup', () =>
 {
     it('refetch() re-runs the fetcher with the current source value', async () =>
     {

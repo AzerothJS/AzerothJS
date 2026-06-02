@@ -1,15 +1,8 @@
-// ============================================================================
-// AZEROTHJS COMPILER — AzerothJS markup Parser
-// ============================================================================
-//
-// Parses ONE AzerothJS markup region (an element or fragment) starting at a `<`
-// into the AST from types.ts. Expression holes (`{ … }`) and
-// attribute expressions are captured as RAW source — nested AzerothJS markup
-// inside them is handled later by codegen (which recursively
-// compiles the hole text). That keeps the parser focused purely on
-// AzerothJS markup structure.
-//
-// ============================================================================
+// Parses one markup region (an element or fragment) starting at a `<` into the
+// AST from types.ts. Expression holes (`{ ... }`) and attribute expressions
+// are captured as raw source - nested markup inside them is handled later by
+// codegen, which recursively compiles the hole text. That keeps the parser
+// focused purely on markup structure.
 
 import type {
     MarkupElement,
@@ -26,7 +19,21 @@ import {
     skipString
 } from './scanner.ts';
 
-/** Thrown when the AzerothJS markup is malformed. Carries the source offset. */
+/**
+ * Thrown when the markup is malformed. Carries the source offset.
+ *
+ * @example
+ * ```ts
+ * try
+ * {
+ *     parseMarkup('<a></b>', 0); // mismatched closing tag
+ * }
+ * catch (err)
+ * {
+ *     if (err instanceof CompileError) console.log(err.offset); // source index of the error
+ * }
+ * ```
+ */
 export class CompileError extends Error
 {
     constructor(message: string, public readonly offset: number)
@@ -41,7 +48,7 @@ class MarkupParser
     constructor(private readonly src: string, public pos: number)
     {}
 
-    /** Entry point — `pos` must be at the opening `<`. */
+    /** Entry point; `pos` must be at the opening `<`. */
     public parse(): MarkupElement | MarkupFragment
     {
         return this.parseElement();
@@ -72,7 +79,7 @@ class MarkupParser
         this.pos++;
     }
 
-    /** `pos` at `<`. Parses an element or `<>…</>` fragment. */
+    /** `pos` at `<`. Parses an element or `<>...</>` fragment. */
     private parseElement(): MarkupElement | MarkupFragment
     {
         const start = this.pos;
@@ -91,7 +98,7 @@ class MarkupParser
         const attributes = this.parseAttributes();
         this.skipWs();
 
-        // Self-closing: `<tag … />`
+        // Self-closing: `<tag ... />`
         if (this.peek() === '/')
         {
             this.pos++;
@@ -192,7 +199,7 @@ class MarkupParser
 
             if (this.peek() !== '=')
             {
-                // Bare attribute → boolean true.
+                // Bare attribute -> boolean true.
                 attrs.push({
                     kind: 'attribute',
                     name,
@@ -277,7 +284,7 @@ class MarkupParser
 
         while (this.pos < this.src.length)
         {
-            // Closing tag → stop.
+            // Closing tag -> stop.
             if (this.peek() === '<' && this.peek(1) === '/')
             {
                 break;
@@ -313,7 +320,7 @@ class MarkupParser
         return children;
     }
 
-    /** Reads raw text up to the next `<` or `{`, normalised AzerothJS markup-style. */
+    /** Reads raw text up to the next `<` or `{`, normalised JSX-style. */
     private readText(): MarkupText | null
     {
         const start = this.pos;
@@ -331,9 +338,9 @@ class MarkupParser
     }
 
     /**
-     * AzerothJS markup whitespace handling: drop runs that are purely formatting
-     * (whitespace containing a newline) and collapse them to a single
-     * space; preserve meaningful same-line spacing like `Count: `.
+     * JSX-style whitespace handling: collapse runs that are purely formatting
+     * (whitespace containing a newline) to a single space, and preserve
+     * meaningful same-line spacing like `Count: `.
      */
     private static normalizeText(raw: string): string
     {
@@ -344,7 +351,7 @@ class MarkupParser
         return raw.replace(/\s*\n\s*/g, ' ');
     }
 
-    /** True when a `{ … }` hole has no actual expression (only comments/space). */
+    /** True when a `{ ... }` hole has no actual expression (only comments/space). */
     private static isEmptyExpression(code: string): boolean
     {
         const stripped = code
@@ -377,8 +384,16 @@ class MarkupParser
 }
 
 /**
- * Parses the AzerothJS markup element/fragment beginning at `start` (the `<`).
- * Returns the AST node and the offset just after it.
+ * Parses the markup element/fragment beginning at `start` (the `<`). Returns
+ * the AST node and the offset just after it.
+ *
+ * @example
+ * ```ts
+ * const { node, end } = parseMarkup('<h1>Hi</h1>', 0);
+ * node.kind; // 'element'
+ * node.tag;  // 'h1'
+ * end;       // 11 (offset just past '</h1>')
+ * ```
  */
 export function parseMarkup(src: string, start: number): { node: MarkupElement | MarkupFragment; end: number }
 {

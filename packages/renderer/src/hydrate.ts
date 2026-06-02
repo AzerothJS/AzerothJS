@@ -1,8 +1,4 @@
-// ============================================================================
-// AZEROTHJS — hydrate() (Adopt Server-Rendered DOM)
-// ============================================================================
-//
-// hydrate() brings server-rendered markup to life WITHOUT recreating it. It
+// hydrate() brings server-rendered markup to life without recreating it. It
 // runs the component in 'hydrate' mode (so h()/control-flow return adoption
 // descriptors instead of building DOM), then walks the resulting descriptor
 // tree against the existing DOM in `container`, attaching event listeners and
@@ -13,10 +9,21 @@
 //   hydrate(() => App({}), document.getElementById('app')!);
 //
 // If the server and client trees diverge (a structural mismatch), hydration
-// throws internally and falls back to a full client render() — so the app
+// throws internally and falls back to a full client render() - so the app
 // always boots, even when SSR/CSR disagree.
 //
-// ============================================================================
+// Without hydrate: render() into the SSR container.
+//
+//     const container = document.getElementById('app')!;
+//     render(() => App({}), container);
+//     // clears the server markup and rebuilds the tree: a flash, and any
+//     // focus/scroll/input state the user already had is lost
+//
+// With hydrate: adopt the existing markup in place.
+//
+//     const container = document.getElementById('app')!;
+//     hydrate(() => App({}), container);
+//     // keeps the server DOM, only attaching listeners and reactive effects
 
 import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
 import { containerDisposers } from './container-disposers.ts';
@@ -26,7 +33,7 @@ import { render } from './render.ts';
  * Hydrates a server-rendered tree in `container`, adopting its existing DOM.
  *
  * Unlike {@link render}, this does NOT clear the container or append new
- * nodes — it claims the markup already there. A previous mount on the same
+ * nodes - it claims the markup already there. A previous mount on the same
  * container (from render() or hydrate()) is disposed first.
  *
  * @param component - A thunk that builds the root element (same as render's)
@@ -73,14 +80,14 @@ export function hydrate(component: () => HTMLElement, container: HTMLElement): v
             throw error;
         }
 
-        // Structural mismatch — dev-warn and fall back to a clean client
-        // render so the app boots regardless. Dispose the partial hydrate
-        // root first; render() then clears the container and mounts fresh.
-        // Read NODE_ENV off globalThis so this needs no Node type dependency.
+        // Structural mismatch: dev-warn and fall back to a clean client render
+        // so the app boots regardless. Dispose the partial hydrate root first;
+        // render() then clears the container and mounts fresh. Read NODE_ENV
+        // off globalThis so this needs no Node type dependency.
         const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
         if (!proc || proc.env?.NODE_ENV !== 'production')
         {
-            console.warn(`${ error.message } — falling back to full client render.`);
+            console.warn(`${ error.message } - falling back to full client render.`);
         }
 
         const partialDispose = containerDisposers.get(container);

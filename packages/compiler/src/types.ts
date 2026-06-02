@@ -1,18 +1,10 @@
-// ============================================================================
-// AZEROTHJS COMPILER — AzerothJS markup AST Types
-// ============================================================================
+// AST for one markup region. The compiler transforms markup embedded in a
+// JS/TS module into h() calls; these types describe what the parser produces.
+// Everything outside markup is left as opaque source text (the scanner only
+// carves out markup regions), so we never need a full JS grammar.
 //
-// The compiler transforms AzerothJS markup-like markup embedded in a JS/TS
-// module into h() calls. These types describe the small AST the
-// parser produces for ONE AzerothJS markup region. Everything outside AzerothJS markup is
-// left as opaque source text (the scanner only carves out AzerothJS markup
-// regions), so we never need a full JS grammar.
-//
-// Every node carries `start`/`end` byte offsets into the ORIGINAL
-// source, so codegen can emit source maps and error messages can
-// point at the right place.
-//
-// ============================================================================
+// Every node carries start/end byte offsets into the original source, so
+// codegen can emit source maps and errors can point at the right place.
 
 /** Offsets into the original source string. */
 export interface Span
@@ -24,10 +16,10 @@ export interface Span
 }
 
 /**
- * A AzerothJS markup element: `<div class="x">…</div>`, `<Counter n={1} />`, or
- * a component. `isComponent` is true when the tag starts with an
- * uppercase letter or contains a dot (`<Foo.Bar/>`) — those compile
- * to component calls rather than `h('tag', …)`.
+ * A markup element: `<div class="x">...</div>`, `<Counter n={1} />`, or a
+ * component. `isComponent` is true when the tag starts with an uppercase
+ * letter or contains a dot (`<Foo.Bar/>`) - those compile to component calls
+ * rather than `h('tag', ...)`.
  */
 export interface MarkupElement extends Span
 {
@@ -40,7 +32,7 @@ export interface MarkupElement extends Span
     children: MarkupChild[];
 }
 
-/** A `<>…</>` fragment — a children list with no wrapper element. */
+/** A `<>...</>` fragment: a children list with no wrapper element. */
 export interface MarkupFragment extends Span
 {
     kind: 'fragment';
@@ -55,15 +47,14 @@ export interface MarkupText extends Span
 }
 
 /**
- * A `{ … }` expression hole in element-child or attribute position.
- * `code` is the verbatim JS between the braces (which may itself
- * contain nested AzerothJS markup the parser has already expanded — see
- * `MarkupExpression.parts`).
+ * A `{ ... }` expression hole in element-child or attribute position. `code`
+ * is the verbatim JS between the braces; any nested markup inside it is left
+ * untouched here and expanded later by codegen.
  */
 export interface MarkupExpression extends Span
 {
     kind: 'expression';
-    /** Raw JS source inside the braces, with nested AzerothJS markup left in place. */
+    /** Raw JS source inside the braces, with nested markup left in place. */
     code: string;
 }
 
@@ -72,11 +63,11 @@ export type MarkupChild = MarkupElement | MarkupFragment | MarkupText | MarkupEx
 
 /** The value side of an attribute. */
 export type MarkupAttributeValue =
-    /** `name="literal"` — a plain string. */
+    /** `name="literal"`: a plain string. */
     | { kind: 'static'; value: string }
-    /** `name={expr}` — a JS expression. */
+    /** `name={expr}`: a JS expression. */
     | { kind: 'expression'; code: string }
-    /** Bare `name` — a boolean-true attribute. */
+    /** Bare `name`: a boolean-true attribute. */
     | { kind: 'none' };
 
 /**
@@ -95,9 +86,9 @@ export interface MarkupAttribute extends Span
 }
 
 /**
- * A AzerothJS markup region located by the scanner: the root AzerothJS markup node plus the
- * span it occupies in the source (so `compile()` can splice the
- * generated code back in).
+ * A markup region located by the scanner: the root markup node plus the span
+ * it occupies in the source (so `compile()` can splice the generated code
+ * back in).
  */
 export interface MarkupRegion extends Span
 {

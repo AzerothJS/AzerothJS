@@ -1,45 +1,27 @@
-// ============================================================================
-// AZEROTHJS — Path Pattern Matcher
-// ============================================================================
+// Compiles a route pattern (`/users/:id`) into a matcher that accepts URL
+// pathnames and extracts params, plus a builder that substitutes params back to
+// produce a URL.
 //
-// Compiles a route pattern (`/users/:id`) into a matcher that
-// accepts URL pathnames and extracts params, plus a builder that
-// substitutes params back to produce a URL.
-//
-// SUPPORTED SYNTAX:
-//
+// Supported syntax:
 //   Static segments     /users
-//   Param segments      /users/:id          → params.id = '42'
-//   Wildcard segments   /docs/*path         → params.path = 'a/b/c'
+//   Param segments      /users/:id   -> params.id = '42'
+//   Wildcard segments   /docs/*path  -> params.path = 'a/b/c'
 //
-// EXPLICITLY NOT SUPPORTED (v1):
+// Not supported in v1 (each can be added later without breaking the API):
+//   Optional segments    /users/:id?       (adds matcher branching)
+//   Regex constraints    /users/:id(\\d+)  (adds parser complexity)
+//   Multiple wildcards   /a/*x/b/*y         (ambiguous, not useful)
 //
-//   Optional segments    /users/:id?        — adds matcher branching
-//   Regex constraints    /users/:id(\\d+)   — adds parser complexity
-//   Multiple wildcards   /a/*x/b/*y         — ambiguous; not useful
+// This module knows nothing about nested routes. The router flattens its tree
+// into leaf full patterns at creation time and uses this module only on those,
+// which keeps matching purely declarative with no remaining-suffix bookkeeping
+// inside the matcher.
 //
-//   These can be added later without breaking the v1 API.
-//
-// NESTED ROUTE NOTE:
-//
-//   This module knows NOTHING about nested routes. The router
-//   flattens its tree into "leaf full patterns" at creation time
-//   and uses this module only on those leaf patterns. That keeps
-//   matching purely declarative — no special "remaining suffix"
-//   bookkeeping inside the matcher.
-//
-// ENCODING:
-//
-//   match()  — param values are URL-decoded; static segments are
-//              compared after decoding both sides (the user's
-//              pattern is canonical, but URLs in the wild may be
-//              encoded).
-//   build()  — param values are URL-encoded so they can be safely
-//              dropped into a URL. Wildcard values are NOT encoded
-//              (they're already path-shaped — encoding would
-//              double-escape any slashes).
-//
-// ============================================================================
+// Encoding: match() URL-decodes param values and compares static segments after
+// decoding both sides (the user's pattern is canonical, but URLs in the wild
+// may be encoded). build() URL-encodes param values so they can be dropped
+// safely into a URL, but leaves wildcard values unencoded since they're already
+// path-shaped and encoding would double-escape their slashes.
 
 import type { Params } from './types.ts';
 
@@ -56,9 +38,8 @@ type Segment =
 /**
  * The result of `compilePath()`.
  *
- * Re-usable across many `match`/`build` calls. Holds the parsed
- * segment list internally so we don't re-parse the pattern on
- * every match.
+ * Reusable across many `match`/`build` calls. Holds the parsed segment list
+ * internally so we don't re-parse the pattern on every match.
  */
 export interface PathMatcher
 {
@@ -68,24 +49,37 @@ export interface PathMatcher
     /**
      * Tests `pathname` against the compiled pattern.
      *
-     * Returns the extracted params on success, or `null` on
-     * mismatch. Trailing slashes on the path are normalized (so
-     * `/users` and `/users/` match the same pattern).
+     * Returns the extracted params on success, or `null` on mismatch. Trailing
+     * slashes on the path are normalized, so `/users` and `/users/` match the
+     * same pattern.
      *
      * @param pathname - URL pathname (no query, no hash)
+     *
+     * @example
+     * ```ts
+     * const m = compilePath('/users/:id');
+     * m.match('/users/42'); // -> { params: { id: '42' } }
+     * m.match('/posts/42'); // -> null
+     * ```
      */
     match(pathname: string): { params: Params } | null;
 
     /**
-     * Substitutes params back into the pattern to produce a
-     * concrete URL pathname.
+     * Substitutes params back into the pattern to produce a concrete URL
+     * pathname.
      *
-     * Param values are URL-encoded; wildcard values are inserted
-     * verbatim (since they may legitimately contain `/`).
+     * Param values are URL-encoded; wildcard values are inserted verbatim,
+     * since they may legitimately contain `/`. Throws if any param is missing
+     * from `params`.
      *
-     * Throws if any param is missing from `params`.
+     * @param params - Map of param name to value. Extra keys are ignored.
      *
-     * @param params - Map of param name → value. Extra keys are ignored.
+     * @example
+     * ```ts
+     * const m = compilePath('/users/:id');
+     * m.build({ id: '42' });          // -> '/users/42'
+     * m.build({ id: 'a b' });         // -> '/users/a%20b' (encoded)
+     * ```
      */
     build(params: Params): string;
 }
@@ -93,8 +87,8 @@ export interface PathMatcher
 /**
  * Compiles a route pattern into a matcher.
  *
- * The matcher returned is stateless and may be reused across
- * any number of match/build calls.
+ * The matcher returned is stateless and may be reused across any number of
+ * match/build calls.
  *
  * @param pattern - The route pattern, e.g. `/users/:id`
  *
@@ -104,14 +98,9 @@ export interface PathMatcher
  * ```ts
  * const m = compilePath('/users/:id/posts/:slug');
  *
- * m.match('/users/42/posts/hello');
- * // → { params: { id: '42', slug: 'hello' } }
- *
- * m.match('/users/42');
- * // → null
- *
- * m.build({ id: '42', slug: 'hello world' });
- * // → '/users/42/posts/hello%20world'
+ * m.match('/users/42/posts/hello');  // -> { params: { id: '42', slug: 'hello' } }
+ * m.match('/users/42');              // -> null
+ * m.build({ id: '42', slug: 'hello world' }); // -> '/users/42/posts/hello%20world'
  * ```
  *
  * @example
@@ -119,11 +108,8 @@ export interface PathMatcher
  * // Wildcard captures the rest of the path
  * const docs = compilePath('/docs/*path');
  *
- * docs.match('/docs/intro/install');
- * // → { params: { path: 'intro/install' } }
- *
- * docs.build({ path: 'intro/install' });
- * // → '/docs/intro/install'
+ * docs.match('/docs/intro/install');  // -> { params: { path: 'intro/install' } }
+ * docs.build({ path: 'intro/install' }); // -> '/docs/intro/install'
  * ```
  *
  * @example
@@ -131,9 +117,9 @@ export interface PathMatcher
  * // Empty pattern matches only the empty/root path
  * const index = compilePath('');
  *
- * index.match('');     // → { params: {} }
- * index.match('/');    // → { params: {} }
- * index.match('/foo'); // → null
+ * index.match('');     // -> { params: {} }
+ * index.match('/');    // -> { params: {} }
+ * index.match('/foo'); // -> null
  * ```
  */
 export function compilePath(pattern: string): PathMatcher
@@ -156,9 +142,8 @@ export function compilePath(pattern: string): PathMatcher
 /**
  * Splits a pattern string into structured segments.
  *
- * Validates that wildcard segments are last — multiple wildcards
- * or a wildcard followed by other segments is ambiguous and
- * unsupported.
+ * Validates that wildcard segments are last: multiple wildcards, or a wildcard
+ * followed by other segments, is ambiguous and unsupported.
  *
  * @internal
  */
@@ -220,9 +205,9 @@ function matchSegments(segments: Segment[], pathname: string): { params: Params 
 
         if (seg.kind === 'wildcard')
         {
-            // Wildcard consumes the rest of the path verbatim.
-            // Each piece is decoded individually so the joined
-            // result has decoded values but keeps the slashes.
+            // Wildcard consumes the rest of the path verbatim. Each piece is
+            // decoded individually so the joined result has decoded values but
+            // keeps the slashes.
             const rest = pathParts.slice(pi).map(safeDecode).join('/');
             params[seg.name] = rest;
             return { params };
@@ -251,7 +236,7 @@ function matchSegments(segments: Segment[], pathname: string): { params: Params 
         pi++;
     }
 
-    // Ran out of pattern segments — must also be at end of path.
+    // Ran out of pattern segments; must also be at the end of the path.
     if (pi !== pathParts.length)
     {
         return null;
@@ -291,15 +276,15 @@ function buildFromSegments(segments: Segment[], params: Params, pattern: string)
             {
                 throw new Error(`buildPath: missing required wildcard '${ seg.name }' for pattern '${ pattern }'`);
             }
-            // Wildcards are path-shaped already — don't re-encode
-            // the slashes. We trust the caller to URL-encode any
-            // unsafe characters within each segment beforehand.
+            // Wildcards are path-shaped already, so don't re-encode the
+            // slashes. We trust the caller to URL-encode any unsafe characters
+            // within each segment beforehand.
             out.push(value);
         }
     }
 
-    // Re-add the leading slash unless the pattern is genuinely
-    // empty (the index pattern), in which case we return ''.
+    // Re-add the leading slash unless the pattern is genuinely empty (the index
+    // pattern), in which case we return ''.
     if (out.length === 0)
     {
         return '';
@@ -312,9 +297,9 @@ function buildFromSegments(segments: Segment[], params: Params, pattern: string)
  *
  * - leading and trailing `/` are stripped
  * - `''` and `'/'` both produce `[]`
- * - intermediate empty segments (from `//`) are kept as empty
- *   strings so `parsePattern` can flag them — although in
- *   practice no part of the system produces `//`.
+ * - intermediate empty segments (from `//`) are kept as empty strings so
+ *   `parsePattern` can flag them, though in practice no part of the system
+ *   produces `//`.
  *
  * @internal
  */

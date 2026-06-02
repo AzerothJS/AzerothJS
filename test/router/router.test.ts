@@ -3,12 +3,10 @@ import { createRoot } from '@azerothjs/core';
 import { createRouter } from '../../packages/router/src/router.ts';
 import type { Route, RouteComponent } from '../../packages/router/src/types.ts';
 
-// ── Test fixtures ────────────────────────────────────────────
-//
-// Real DOM-returning components aren't needed for these tests —
-// we only check route matching, params, and reactivity. Each
-// "component" here is a stable function reference used for
-// assertions like `expect(match.route.component).toBe(Home)`.
+// Test fixtures. Real DOM-returning components aren't needed here - we only
+// check route matching, params, and reactivity. Each "component" is a stable
+// function reference used for assertions like
+// `expect(match.route.component).toBe(Home)`.
 
 const Home: RouteComponent = () => document.createElement('div');
 const About: RouteComponent = () => document.createElement('div');
@@ -42,7 +40,7 @@ describe('createRouter', () =>
         window.history.replaceState({}, '', '/initial');
     });
 
-    // ── Construction ─────────────────────────────────────────
+    // Construction
 
     it('matches the leaf route at the current URL on construction', () =>
     {
@@ -73,7 +71,7 @@ describe('createRouter', () =>
         });
     });
 
-    // ── Reactive matching ────────────────────────────────────
+    // Reactive matching
 
     it('updates match() after navigate()', () =>
     {
@@ -91,7 +89,7 @@ describe('createRouter', () =>
         });
     });
 
-    it('returns the full root → leaf chain for a nested match', () =>
+    it('returns the full root -> leaf chain for a nested match', () =>
     {
         window.history.replaceState({}, '', '/users/42');
 
@@ -129,7 +127,7 @@ describe('createRouter', () =>
         });
     });
 
-    // ── Navigation ───────────────────────────────────────────
+    // Navigation
 
     it('updates location.fullPath after navigating with a string target', () =>
     {
@@ -163,7 +161,7 @@ describe('createRouter', () =>
             router.navigate({
                 pathname: '/users/42',
                 query: { tab: 'posts', filter: 'recent' },
-                // Caller forgot the leading '#' — router adds it.
+                // Caller forgot the leading '#' - router adds it.
                 hash: 'bio'
             });
 
@@ -215,7 +213,7 @@ describe('createRouter', () =>
         });
     });
 
-    // ── Cleanup ──────────────────────────────────────────────
+    // Cleanup
 
     it('unsubscribes from history when the owning root is disposed', () =>
     {
@@ -231,7 +229,7 @@ describe('createRouter', () =>
         });
 
         // After dispose, the popstate listener should be detached
-        // from the router's adapter — a subsequent URL change
+        // from the router's adapter - a subsequent URL change
         // must NOT update the (now-frozen) location signal.
         window.history.replaceState({}, '', '/about');
         window.dispatchEvent(new PopStateEvent('popstate'));
@@ -275,7 +273,7 @@ describe('createRouter', () =>
     });
 });
 
-describe('createRouter — base path', () =>
+describe('createRouter - base path', () =>
 {
     it('matches base-relative and exposes a base-relative pathname', () =>
     {
@@ -324,7 +322,7 @@ describe('createRouter — base path', () =>
     it('does not let the base swallow a similarly-prefixed path', () =>
     {
         // '/application' starts with '/app' textually but is NOT
-        // under the base — the boundary check must reject it.
+        // under the base - the boundary check must reject it.
         window.history.replaceState({}, '', '/application');
 
         createRoot((dispose) =>
@@ -344,9 +342,9 @@ describe('createRouter — base path', () =>
             const router = createRouter({ routes, base: '/app' });
             router.navigate('/users/42');
 
-            // Real browser URL carries the base…
+            // Real browser URL carries the base...
             expect(window.location.pathname).toBe('/app/users/42');
-            // …app-facing location does not.
+            // ...app-facing location does not.
             expect(router.location().pathname).toBe('/users/42');
             expect(router.match()!.route.component).toBe(UserProfile);
 

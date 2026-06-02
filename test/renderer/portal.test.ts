@@ -62,7 +62,7 @@ describe('Portal()', () =>
 
         destroyPortal(placeholder);
 
-        // Content removed AND its effect torn down — later signal
+        // Content removed AND its effect torn down - later signal
         // changes must not re-run the disposed effect.
         setCount(1);
         setCount(2);

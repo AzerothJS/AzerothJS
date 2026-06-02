@@ -5,12 +5,10 @@ import type { Router } from '../../packages/router/src/router.ts';
 import { targetToFullPath } from '../../packages/router/src/router.ts';
 import type { RouteLocation } from '../../packages/router/src/types.ts';
 
-// ── Router stub ──────────────────────────────────────────────
-//
-// Constructing a full router for every test would couple Link's
-// behaviour to the router's. This stub mirrors only the surface
-// Link reads (`location()`, `navigate()`, `replace()`) and uses
-// real signals so the activeClass tests still exercise reactivity.
+// Router stub. Constructing a full router for every test would couple Link's
+// behaviour to the router's. This mirrors only the surface Link reads
+// (location(), navigate(), replace()) and uses real signals so the activeClass
+// tests still exercise reactivity.
 
 interface RouterStub
 {
@@ -36,7 +34,7 @@ function makeRouterStub(pathname = '/'): RouterStub
     const navigateSpy = vi.fn();
     const replaceSpy = vi.fn();
 
-    // Inert loader resource — Link doesn't read it, but the Router
+    // Inert loader resource: Link doesn't read it, but the Router
     // type requires the field, so we provide a no-op stub.
     const stubLoader = {
         data: () => undefined,
@@ -56,7 +54,7 @@ function makeRouterStub(pathname = '/'): RouterStub
         back: vi.fn(),
         forward: vi.fn(),
         // No base in this stub, so href is just the canonical
-        // full-path form — exactly what the real resolve() reduces
+        // full-path form - exactly what the real resolve() reduces
         // to when base is empty.
         href: (to) => targetToFullPath(to)
     };
@@ -65,7 +63,7 @@ function makeRouterStub(pathname = '/'): RouterStub
 }
 
 /**
- * Builds a left-button MouseEvent that bubbles and is cancelable —
+ * Builds a left-button MouseEvent that bubbles and is cancelable -
  * the shape Link's handler expects to intercept.
  */
 function plainClickEvent(init: Partial<MouseEventInit> = {}): MouseEvent
@@ -93,7 +91,7 @@ describe('Link component', () =>
     // ECONNREFUSED noise without compromising the assertion (our
     // click handler still runs on a detached target).
 
-    // ── Rendering ────────────────────────────────────────────
+    // Rendering
 
     it('renders an anchor with the correct href from a string target', () =>
     {
@@ -126,7 +124,7 @@ describe('Link component', () =>
         });
     });
 
-    // ── Interception (positive case) ─────────────────────────
+    // Interception (positive case)
 
     it('intercepts a plain left-click and calls router.navigate', () =>
     {
@@ -147,7 +145,7 @@ describe('Link component', () =>
         });
     });
 
-    // ── Interception (bail-out cases) ────────────────────────
+    // Interception (bail-out cases)
 
     it('does NOT intercept when a modifier key is held', () =>
     {
@@ -156,7 +154,7 @@ describe('Link component', () =>
             const { router, navigateSpy } = makeRouterStub();
             const link = Link({ to: '/users/42', router });
 
-            // One assertion per modifier — they should ALL pass through.
+            // One assertion per modifier - they should ALL pass through.
             for (const init of [
                 { ctrlKey: true },
                 { metaKey: true },
@@ -209,7 +207,7 @@ describe('Link component', () =>
         });
     });
 
-    it('does NOT intercept external URLs (https://, mailto:, tel:, …)', () =>
+    it('does NOT intercept external URLs (https://, mailto:, tel:, ...)', () =>
     {
         createRoot((dispose) =>
         {
@@ -236,7 +234,7 @@ describe('Link component', () =>
         });
     });
 
-    // ── Replace mode ─────────────────────────────────────────
+    // Replace mode
 
     it('calls router.replace when replace is set', () =>
     {
@@ -256,7 +254,7 @@ describe('Link component', () =>
         });
     });
 
-    // ── activeClass / aria-current ───────────────────────────
+    // activeClass / aria-current
 
     it('applies activeClass when the current pathname matches', () =>
     {

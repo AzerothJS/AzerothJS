@@ -1,17 +1,11 @@
-// ============================================================================
-// AZEROTHJS — @azerothjs/server (Server-Side Rendering)
-// ============================================================================
-//
-// Pure string-emitter SSR for AzerothJS. No DOM shim required: components run
-// in 'string' render mode and emit HTML directly.
+// @azerothjs/server: pure string-emitter SSR. No DOM shim required - components
+// run in 'string' render mode and emit HTML directly.
 //
 //   import { renderToDocument } from '@azerothjs/server';
 //   const html = renderToDocument(() => App({}), { title: 'Home' });
 //
 // The markup produced by renderToString/renderToDocument carries hydration
 // markers so the client can adopt it with hydrate() from @azerothjs/renderer.
-//
-// ============================================================================
 
 export { renderToString, renderToStaticMarkup } from './render-to-string.ts';
 export { renderToDocument } from './render-to-document.ts';

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    // ── Reactivity ──
+    // Reactivity
     createSignal,
     createEffect,
     createMemo,
@@ -8,7 +8,7 @@ import {
     untrack,
     on,
 
-    // ── Renderer ──
+    // Renderer
     h,
     render,
     Show,
@@ -22,7 +22,7 @@ import {
     classList,
     styleMap,
 
-    // ── Component ──
+    // Component
     defineComponent,
     destroyComponent,
     onMount,
@@ -30,12 +30,8 @@ import {
     AzerothComponent
 } from '@azerothjs/core';
 
-describe('AzerothJS — Public API', () =>
+describe('AzerothJS - Public API', () =>
 {
-    // ══════════════════════════════════════════════════════════
-    // REACTIVITY EXPORTS
-    // ══════════════════════════════════════════════════════════
-
     describe('Reactivity', () =>
     {
         it('should export createSignal', () =>
@@ -136,10 +132,6 @@ describe('AzerothJS — Public API', () =>
             dispose();
         });
     });
-
-    // ══════════════════════════════════════════════════════════
-    // RENDERER EXPORTS
-    // ══════════════════════════════════════════════════════════
 
     describe('Renderer', () =>
     {
@@ -294,10 +286,6 @@ describe('AzerothJS — Public API', () =>
         });
     });
 
-    // ══════════════════════════════════════════════════════════
-    // COMPONENT EXPORTS
-    // ══════════════════════════════════════════════════════════
-
     describe('Component', () =>
     {
         it('should export defineComponent', () =>
@@ -441,10 +429,6 @@ describe('AzerothJS — Public API', () =>
             expect(comp.element.querySelector('.sum')!.textContent).toBe('30');
         });
     });
-
-    // ══════════════════════════════════════════════════════════
-    // INTEGRATION
-    // ══════════════════════════════════════════════════════════
 
     describe('Integration', () =>
     {

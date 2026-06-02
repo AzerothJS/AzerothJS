@@ -178,11 +178,9 @@ describe('AzerothComponent', () =>
         expect(destroyFn).toHaveBeenCalledTimes(1);
     });
 
-    // ══════════════════════════════════════════════════════════
     // this.createSignal()
-    // ══════════════════════════════════════════════════════════
 
-    it('should support createSignal — read and set', () =>
+    it('should support createSignal - read and set', () =>
     {
         class Counter extends AzerothComponent<{ initial: number }>
         {
@@ -203,7 +201,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.value')!.textContent).toBe('10');
     });
 
-    it('should support createSignal — updater function', () =>
+    it('should support createSignal - updater function', () =>
     {
         class Counter extends AzerothComponent
         {
@@ -227,7 +225,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.value')!.textContent).toBe('10');
     });
 
-    it('should support createSignal.value — untracked read', () =>
+    it('should support createSignal.value - untracked read', () =>
     {
         class ValComp extends AzerothComponent
         {
@@ -273,7 +271,7 @@ describe('AzerothComponent', () =>
         expect(runs).toBe(1);
 
         comp.count.set(1);
-        expect(runs).toBe(1); // effect did NOT re-run — `.value` is untracked
+        expect(runs).toBe(1); // effect did NOT re-run - `.value` is untracked
     });
 
     it('createMemo should store a function value verbatim, not invoke it', () =>
@@ -328,7 +326,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.summary')!.textContent).toBe('Bob, 25');
     });
 
-    it('should support event handlers — no this issues', () =>
+    it('should support event handlers - no this issues', () =>
     {
         class Clicker extends AzerothComponent
         {
@@ -364,9 +362,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.val')!.textContent).toBe('0');
     });
 
-    // ══════════════════════════════════════════════════════════
     // this.createMemo()
-    // ══════════════════════════════════════════════════════���═══
 
     it('should support createMemo()', () =>
     {
@@ -439,9 +435,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.even')!.textContent).toBe('false');
     });
 
-    // ══════════════════════════════════════════════════════════
     // this.createEffect()
-    // ══════════════════════════════════════════════════════════
 
     it('should support createEffect() and auto-dispose on destroy', () =>
     {
@@ -516,9 +510,7 @@ describe('AzerothComponent', () =>
         expect(effect2).toHaveBeenCalledTimes(2);
     });
 
-    // ══════════════════════════════════════════════════════════
-    // STANDALONE UTILITIES — batch, untrack, on
-    // ══════════════════════════════════════════════════════════
+    // Standalone utilities: batch, untrack, on
 
     it('should work with batch()', () =>
     {
@@ -655,7 +647,7 @@ describe('AzerothComponent', () =>
         expect(results).toEqual([5, 10]);
     });
 
-    it('should work with on() — provides previous values', () =>
+    it('should work with on() - provides previous values', () =>
     {
         const changes: Array<{ prev: unknown; curr: unknown }> = [];
 
@@ -746,9 +738,7 @@ describe('AzerothComponent', () =>
         expect(comp.element.querySelector('.total')!.textContent).toBe('10');
     });
 
-    // ══════════════════════════════════════════════════════════
-    // COMPLEX SCENARIOS
-    // ══════════════════════════════════════════════════════════
+    // Complex scenarios
 
     it('should support a full todo list class component', () =>
     {

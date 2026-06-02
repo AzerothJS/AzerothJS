@@ -108,7 +108,7 @@ describe('For()', () =>
         expect(el.children[1].textContent).toBe('A');
         expect(el.children[2].textContent).toBe('B');
 
-        // The SAME DOM nodes are reused — just moved, not rebuilt.
+        // The SAME DOM nodes are reused - just moved, not rebuilt.
         expect(el.children[0]).toBe(c);
         expect(el.children[1]).toBe(a);
         expect(el.children[2]).toBe(b);

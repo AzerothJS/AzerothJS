@@ -1,32 +1,30 @@
-// ============================================================================
-// AZEROTHJS — For (Keyed List Rendering)
-// ============================================================================
+// For renders a list of items, using a key function to track which items were
+// added, removed, or reordered.
 //
-// For efficiently renders a list of items, using a key function
-// to track which items were added, removed, or reordered.
+// Why: mapping a signal array straight into h() re-creates every element on
+// every change, throwing away DOM (and its focus/scroll/IME state) needlessly.
 //
-// WITHOUT For:
-//   h('ul', {}, () => items().map(item => h('li', {}, item.name)))
-//   // RE-CREATES every <li> on every change! Terrible perf.
+// Without For: map the array inside a reactive child.
 //
-// WITH For:
-//   For(
-//     { each: items, key: (item) => item.id },
-//     (item) => h('li', {}, item.name)
-//   )
-//   // Only creates/removes items that actually changed.
-//   // Existing items are REUSED. Great perf.
+//     h('ul', {},
+//         () => items().map((i) => h('li', {}, i.name))
+//     ); // any change rebuilds every row, losing focus/scroll/IME state
 //
-// HOW KEYED RENDERING WORKS:
+// With For: key each item.
 //
-//   Old list: [A, B, C, D]     (keys: 1, 2, 3, 4)
-//   New list: [A, C, D, E]     (keys: 1, 3, 4, 5)
+//     For(
+//         { each: items, key: (i) => i.id },
+//         (i) => h('li', {}, i.name)
+//     ); // creates/removes only the changed rows, reusing the rest
 //
-//   B (key 2) → REMOVED (DOM element removed)
-//   E (key 5) → CREATED (new DOM element)
-//   A, C, D   → KEPT (same DOM elements, no re-creation!)
+// How keyed rendering works - given a key per item, a list change is a diff:
 //
-// ============================================================================
+//   Old: [A, B, C, D]   (keys 1, 2, 3, 4)
+//   New: [A, C, D, E]   (keys 1, 3, 4, 5)
+//
+//   B (key 2) -> removed (element removed)
+//   E (key 5) -> created (new element)
+//   A, C, D   -> kept    (same elements, no re-creation)
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
@@ -52,9 +50,9 @@ export interface ForProps<T>
      *
      * Receives the item and its index. Keys are used to track
      * identity across updates:
-     *   - Same key = same item (reuse DOM element)
-     *   - New key = new item (create DOM element)
-     *   - Missing key = removed item (remove DOM element)
+     *   - Same key: same item (reuse DOM element)
+     *   - New key: new item (create DOM element)
+     *   - Missing key: removed item (remove DOM element)
      *
      * Keys must be unique within the list.
      */
@@ -67,7 +65,7 @@ export interface ForProps<T>
      *
      * Named `children` and passed as a prop so the manual API
      * matches the compiled `.azeroth` form:
-     * `<For each={…} key={…}>{(item, i) => …}</For>`.
+     * `<For each={...} key={...}>{(item, i) => ...}</For>`.
      */
     children: (item: T, index: () => number) => HTMLElement;
 }
@@ -76,13 +74,13 @@ export interface ForProps<T>
  * Efficiently renders a reactive list of items with keyed tracking.
  *
  * Only creates/removes DOM elements for items that actually changed.
- * Existing items keep their DOM elements — no unnecessary re-creation.
+ * Existing items keep their DOM elements - no unnecessary re-creation.
  *
  * @typeParam T - The type of items in the list
  *
  * @param props - ForProps with `each` (items signal) and `key` (identity fn)
  * @param renderItem - Function that creates a DOM element for one item.
- *                     Receives the item and a REACTIVE index getter.
+ *                     Receives the item and a reactive index getter.
  *                     Because keyed items are reused across reorders,
  *                     `index` is a `() => number` accessor (not a plain
  *                     number) so index-dependent bindings stay correct
@@ -105,7 +103,7 @@ export interface ForProps<T>
  * For(
  *   { each: todos, key: (todo) => todo.id },
  *   (todo, index) => h('div', {},
- *     // `index` is a getter — wrap in a function to stay reactive
+ *     // `index` is a getter - wrap in a function to stay reactive
  *     // across reorders.
  *     () => `${ index() + 1 }. ${ todo.text }`
  *   )
@@ -139,7 +137,7 @@ export interface ForProps<T>
  * Per-key tracking: the rendered element plus the createRoot
  * dispose for any reactive primitives the renderItem function
  * created. Disposing the root tears down those effects when the
- * key leaves the list — without this, removed items leak forever.
+ * key leaves the list - without this, removed items leak forever.
  *
  * @internal
  */
@@ -149,7 +147,7 @@ interface KeyEntry
     dispose: DisposeFn;
 
     /**
-     * Pushes the item's CURRENT position into its reactive index
+     * Pushes the item's current position into its reactive index
      * signal. Called when a reused item shifts to a new index on
      * reorder, so any `index()`-dependent binding updates without
      * the element being rebuilt.
@@ -161,9 +159,9 @@ export function For<T>(props: ForProps<T>): HTMLElement
 {
     const renderItem = props.children;
 
-    // ── Server-side rendering ─────────────────────────────────
+    // Server-side rendering.
     // Map each item ONCE (index is static within a single render). Each row
-    // is a single element, so the client hydrator adopts them in order — no
+    // is a single element, so the client hydrator adopts them in order - no
     // per-row markers needed.
     if (isStringMode())
     {
@@ -179,7 +177,7 @@ export function For<T>(props: ForProps<T>): HTMLElement
         return wrapContents('for', inner) as unknown as HTMLElement;
     }
 
-    // ── Hydration ─────────────────────────────────────────────
+    // Hydration.
     // Adopt the wrapper span and its existing rows on the first effect run;
     // subsequent list changes use the normal keyed reconcile.
     if (isHydrating())
@@ -202,7 +200,7 @@ export function For<T>(props: ForProps<T>): HTMLElement
  * Wires the keyed-list reconcile effect onto `container`. Shared by the DOM
  * path (a fresh span) and hydration (the adopted server span). On a hydrating
  * first run, each row is adopted from the existing server DOM (its key entry
- * populated) and the reconcile passes are skipped — the DOM already matches.
+ * populated) and the reconcile passes are skipped - the DOM already matches.
  *
  * @internal
  */
@@ -210,14 +208,14 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
 {
     let firstRun = hydrateFirstRun;
 
-    // Map of key → tracked entry (DOM element + per-item dispose).
+    // Map of key -> tracked entry (DOM element + per-item dispose).
     let keyMap = new Map<string | number, KeyEntry>();
 
     createEffect(() =>
     {
         const items = props.each();
 
-        // ── Hydration first run: adopt existing rows in order ────
+        // Hydration first run: adopt existing rows in order.
         if (firstRun)
         {
             firstRun = false;
@@ -262,7 +260,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
 
             if (existing)
             {
-                // Reused element — but its position may have changed.
+                // Reused element - but its position may have changed.
                 // Push the new index into its reactive signal so
                 // `index()`-dependent bindings update on reorder
                 // (no-op when the index is unchanged, since the
@@ -328,7 +326,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
 
     // When the surrounding root unmounts, tear down every per-item
     // root we accumulated. We can't put this in the main effect's
-    // cleanup — that fires on every re-run and would wipe entries
+    // cleanup - that fires on every re-run and would wipe entries
     // we still want. onRootDispose fires exactly once, on scope
     // teardown, which is what we need.
     onRootDispose(() =>

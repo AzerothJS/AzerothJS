@@ -1,32 +1,22 @@
-// ============================================================================
-// AZEROTHJS — SSR Primitives (DOM-Free String Building)
-// ============================================================================
-//
-// The DOM-FREE half of server-side rendering. These helpers build HTML
+// The DOM-free half of server-side rendering. These helpers build HTML
 // strings without ever touching `document`, so they run on a bare server.
 // Element-specific serialization (tag names, void elements, attribute rules)
-// lives in @azerothjs/renderer's ssr.ts; the pieces HERE are the ones the
+// lives in @azerothjs/renderer's ssr.ts; the pieces here are the ones the
 // component package also needs (ErrorBoundary serializes its children, and
 // every control-flow component wraps its output in a contents span), which is
-// why they sit in reactivity — the only package beneath both renderer and
+// why they sit in reactivity - the only package beneath both renderer and
 // component.
 //
-// THE SSRNode WRAPPER:
+// The SSRNode wrapper: in string mode, h() returns an SSRNode (cast to
+// HTMLElement) rather than a real element. It carries already-serialized,
+// already-escaped HTML plus a brand, so serializers can tell finished element
+// markup apart from user text that still needs escaping.
 //
-//   In string mode, h() returns an SSRNode (cast to HTMLElement) rather than
-//   a real element. The wrapper carries already-serialized, already-escaped
-//   HTML and a brand so serializers can tell "finished element markup" apart
-//   from "user text that still needs escaping".
-//
-// HYDRATION MARKERS:
-//
-//   When markers are ON (renderToString), reactive holes are wrapped in
-//   paired comment anchors `<!--[-->…<!--]-->` and control-flow wrappers
-//   carry a `data-azeroth-co` attribute, so the client hydrator can locate
-//   the exact nodes a getter owns. When OFF (renderToStaticMarkup), the
-//   output is clean HTML with no framework bookkeeping.
-//
-// ============================================================================
+// Hydration markers: when on (renderToString), reactive holes are wrapped in
+// paired comment anchors `<!--[-->...<!--]-->` and control-flow wrappers carry
+// a `data-azeroth-co` attribute, so the client hydrator can locate the exact
+// nodes a getter owns. When off (renderToStaticMarkup) the output is clean
+// HTML with no framework bookkeeping.
 
 import { untrack } from './untrack.ts';
 
@@ -47,6 +37,12 @@ export interface SSRNode
  *
  * @param x - Any value
  * @returns `true` if `x` is an SSRNode
+ *
+ * @example
+ * ```ts
+ * isSSRNode(ssr('<p>hi</p>')); // true
+ * isSSRNode('hello');          // false (raw text needing escaping)
+ * ```
  */
 export function isSSRNode(x: unknown): x is SSRNode
 {
@@ -58,6 +54,13 @@ export function isSSRNode(x: unknown): x is SSRNode
  *
  * @param html - Finished, escaped HTML markup
  * @returns The branded node
+ *
+ * @example
+ * ```ts
+ * const node = ssr('<p>hi</p>');
+ * node.html;        // '<p>hi</p>'
+ * isSSRNode(node);  // true
+ * ```
  */
 export function ssr(html: string): SSRNode
 {
@@ -100,6 +103,11 @@ export function getSSRMarkers(): boolean
  *
  * @param value - Raw text
  * @returns Escaped text safe to place between tags
+ *
+ * @example
+ * ```ts
+ * escapeText('a < b & c'); // 'a &lt; b &amp; c'
+ * ```
  */
 export function escapeText(value: string): string
 {
@@ -115,6 +123,11 @@ export function escapeText(value: string): string
  *
  * @param value - Raw attribute value
  * @returns Escaped value safe inside `"..."`
+ *
+ * @example
+ * ```ts
+ * escapeAttr('say "hi" & <bye>'); // 'say &quot;hi&quot; &amp; &lt;bye&gt;'
+ * ```
  */
 export function escapeAttr(value: string): string
 {
@@ -127,21 +140,27 @@ export function escapeAttr(value: string): string
 
 /**
  * Serializes a single child value to an HTML string. Mirrors the child
- * handling in h()'s `appendChild` so SSR output structurally matches what
- * the DOM path would build (important for hydration alignment):
+ * handling in h()'s `appendChild` so SSR output structurally matches what the
+ * DOM path would build (important for hydration alignment):
  *
- *   - `null` / `undefined` / `false` → empty string (skipped)
- *   - {@link SSRNode}                → its already-serialized `html`
- *   - array                          → each item serialized and concatenated
- *   - function (reactive hole)       → evaluated ONCE via {@link untrack}
- *                                      (never subscribes / creates an effect),
- *                                      result serialized, wrapped in
- *                                      `<!--[-->…<!--]-->` anchors when markers
- *                                      are on
- *   - everything else                → escaped text
+ *   - `null` / `undefined` / `false`: empty string (skipped)
+ *   - {@link SSRNode}: its already-serialized `html`
+ *   - array: each item serialized and concatenated
+ *   - function (reactive hole): evaluated once via {@link untrack} (never
+ *     subscribes or creates an effect), serialized, and wrapped in
+ *     `<!--[-->...<!--]-->` anchors when markers are on
+ *   - everything else: escaped text
  *
  * @param child - The child value to serialize
  * @returns The child's HTML string
+ *
+ * @example
+ * ```ts
+ * serializeChild('a < b');              // 'a &lt; b' (escaped text)
+ * serializeChild(ssr('<b>x</b>'));      // '<b>x</b>' (already markup)
+ * serializeChild(['a', ssr('<i>b</i>')]); // 'a<i>b</i>' (concatenated)
+ * serializeChild(null);                 // '' (skipped)
+ * ```
  */
 export function serializeChild(child: unknown): string
 {
@@ -184,9 +203,16 @@ export function serializeChild(child: unknown): string
  * `data-azeroth-co` (when markers are on) so the client hydrator can find
  * and adopt the wrapper.
  *
- * @param coType - The control-flow kind ('show', 'for', 'switch', …)
+ * @param coType - The control-flow kind ('show', 'for', 'switch', ...)
  * @param inner - The already-serialized inner HTML
  * @returns The wrapper as an {@link SSRNode}
+ *
+ * @example
+ * ```ts
+ * // With markers off (renderToStaticMarkup):
+ * wrapContents('show', '<p>hi</p>').html;
+ * // '<span style="display:contents"><p>hi</p></span>'
+ * ```
  */
 export function wrapContents(coType: string, inner: string): SSRNode
 {

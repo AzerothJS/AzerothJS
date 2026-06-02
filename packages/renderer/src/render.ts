@@ -1,19 +1,22 @@
-// ============================================================================
-// AZEROTHJS — render() (Mount Component to DOM)
-// ============================================================================
-//
-// render() takes a component factory function and a container
-// element, then mounts the component into the container.
-//
-// This is the entry point for every AzerothJS app:
+// render() mounts a component factory into a container element. It is the
+// entry point for every AzerothJS app:
 //
 //   render(() => App({}), document.getElementById('app')!);
 //
-// Calling render() again on the same container disposes the prior
-// tree's reactive scope first, so apps can be remounted without
-// leaking effects.
+// Calling render() again on the same container disposes the prior tree's
+// reactive scope first, so apps can be remounted without leaking effects.
 //
-// ============================================================================
+// Without render: clear the container and append by hand, and track the
+// mount's reactive scope yourself to dispose it on a remount.
+//
+//     container.innerHTML = '';
+//     container.appendChild(App({}));
+//     // no scope ownership, so the prior mount's effects leak on every remount
+//
+// With render: it owns the root scope and tears down the prior mount.
+//
+//     render(() => App({}), container);
+//     // prior mount is disposed first, so remounting never leaks effects
 
 import { createRoot } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';

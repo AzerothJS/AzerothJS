@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRoot, createSignal } from '@azerothjs/core';
 import { Transition } from '../../packages/renderer/src/transition.ts';
 
-// ── Test helpers ─────────────────────────────────────────────
+// Test helpers
 //
 // `requestAnimationFrame` is async and unpredictable in tests.
 // We replace it with a queue we can flush manually so each test
@@ -32,8 +32,6 @@ function getChild(container: HTMLElement): HTMLElement | null
 {
     return container.firstElementChild as HTMLElement | null;
 }
-
-// ─────────────────────────────────────────────────────────────
 
 describe('<Transition>', () =>
 {
@@ -77,7 +75,7 @@ describe('<Transition>', () =>
             expect(child).not.toBeNull();
             expect(child!.getAttribute('data-id')).toBe('child');
 
-            // First-run mount must NOT apply enter classes —
+            // First-run mount must NOT apply enter classes -
             // we want the page-load to look stable, not flash
             // every animated element on first paint.
             expect(child!.classList.contains('fade-enter-from')).toBe(false);
@@ -87,7 +85,7 @@ describe('<Transition>', () =>
         });
     });
 
-    it('runs the enter cycle when when() toggles false → true', () =>
+    it('runs the enter cycle when when() toggles false -> true', () =>
     {
         createRoot((dispose) =>
         {
@@ -103,7 +101,7 @@ describe('<Transition>', () =>
                 }
             });
 
-            // Starts hidden — no child yet.
+            // Starts hidden - no child yet.
             expect(getChild(container)).toBeNull();
 
             setIsOpen(true);
@@ -153,7 +151,7 @@ describe('<Transition>', () =>
             setIsOpen(false);
 
             // Leave classes applied immediately. Crucially, the
-            // element is STILL in the DOM — that's what gives the
+            // element is STILL in the DOM - that's what gives the
             // browser a chance to animate it.
             expect(child!.classList.contains('fade-leave-from')).toBe(true);
             expect(child!.classList.contains('fade-leave-active')).toBe(true);
@@ -188,7 +186,7 @@ describe('<Transition>', () =>
                 }
             });
 
-            // No name → no animation → behaves like Show.
+            // No name -> no animation -> behaves like Show.
             setIsOpen(true);
             const child = getChild(container);
             expect(child).not.toBeNull();
@@ -196,7 +194,7 @@ describe('<Transition>', () =>
             expect(child!.className).toBe('');
 
             setIsOpen(false);
-            // No leave animation either — element gone immediately.
+            // No leave animation either - element gone immediately.
             expect(getChild(container)).toBeNull();
 
             dispose();
@@ -228,7 +226,7 @@ describe('<Transition>', () =>
             flushRaf();
 
             const child = getChild(container);
-            // Mid-transition — still has active class.
+            // Mid-transition - still has active class.
             expect(child!.classList.contains('fade-enter-active')).toBe(true);
 
             // Advance past the fallback timeout. transitionend
@@ -242,10 +240,10 @@ describe('<Transition>', () =>
         });
     });
 
-    it('cancels the in-flight wait on root dispose — no stray timer, immediate unmount', () =>
+    it('cancels the in-flight wait on root dispose - no stray timer, immediate unmount', () =>
     {
         // NB: vi.useFakeTimers() also fakes requestAnimationFrame, so
-        // the custom flushRaf() mock is bypassed here — we drive the
+        // the custom flushRaf() mock is bypassed here - we drive the
         // rAF (and the fallback timer) through the fake-timer clock.
         vi.useFakeTimers();
 
@@ -266,7 +264,7 @@ describe('<Transition>', () =>
             });
 
             // Start a leave, then fire the rAF so it reaches the
-            // waiting phase — this arms the transitionend fallback
+            // waiting phase - this arms the transitionend fallback
             // timer.
             setIsOpen(false);
             vi.advanceTimersToNextTimer(); // fire the rAF
@@ -304,7 +302,7 @@ describe('<Transition>', () =>
             expect(enteringChild!.classList.contains('fade-enter-active')).toBe(true);
 
             // While the enter animation is in flight, toggle to
-            // hide. The change is queued — no leave classes yet.
+            // hide. The change is queued - no leave classes yet.
             setIsOpen(false);
             expect(enteringChild!.classList.contains('fade-leave-active')).toBe(false);
             expect(getChild(container)).toBe(enteringChild); // still mounted
@@ -314,7 +312,7 @@ describe('<Transition>', () =>
             fireTransitionEnd(enteringChild!);
 
             // Now the queued leave should kick in synchronously
-            // — leave classes applied to the same element.
+            // - leave classes applied to the same element.
             expect(enteringChild!.classList.contains('fade-leave-active')).toBe(true);
             expect(enteringChild!.classList.contains('fade-leave-from')).toBe(true);
             expect(getChild(container)).toBe(enteringChild); // still mounted

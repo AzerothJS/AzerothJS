@@ -1,17 +1,10 @@
-// ============================================================================
-// AZEROTHJS COMPILER — Source Maps (from scratch, no deps)
-// ============================================================================
+// A minimal Source Map v3 generator with no dependencies. We only need
+// line-level mappings, which is what stack traces use: one segment at the
+// start of each generated line, pointing back into the `.azeroth` source.
 //
-// A minimal Source Map v3 generator. We only need LINE-level
-// mappings, which is what stack traces use: one segment at the start
-// of each generated line, pointing back into the `.azeroth` source.
-//
-// It's accurate because the transform leaves non-markup byte-for-
-// byte: a generated line that came from verbatim source maps 1:1;
-// a generated line inside a compiled markup region maps to that
-// region's starting position.
-//
-// ============================================================================
+// This is accurate because the transform leaves non-markup byte-for-byte: a
+// generated line that came from verbatim source maps 1:1; a generated line
+// inside a compiled markup region maps to that region's starting position.
 
 /** A Source Map v3 object (the shape tools and Vite expect). */
 export interface SourceMapV3
@@ -23,7 +16,7 @@ export interface SourceMapV3
     mappings: string;
 }
 
-/** One mapping segment: a generated column → a source position. */
+/** One mapping segment: a generated column to a source position. */
 export interface RawSegment
 {
     genColumn: number;
@@ -33,7 +26,16 @@ export interface RawSegment
 
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/** Encodes a signed integer as a base64 VLQ (the source-map number format). */
+/**
+ * Encodes a signed integer as a base64 VLQ (the source-map number format).
+ *
+ * @example
+ * ```ts
+ * vlqEncode(0);  // 'A'
+ * vlqEncode(1);  // 'C' (1 << 1 = 2 -> base64 'C')
+ * vlqEncode(-1); // 'D' (sign bit set -> 3 -> base64 'D')
+ * ```
+ */
 export function vlqEncode(value: number): string
 {
     // Sign goes in the least-significant bit.
@@ -52,7 +54,14 @@ export function vlqEncode(value: number): string
     return out;
 }
 
-/** Offsets at which each line of `text` begins (index 0 = line 0). */
+/**
+ * Offsets at which each line of `text` begins (index 0 = line 0).
+ *
+ * @example
+ * ```ts
+ * buildLineStarts('ab\ncd\n'); // [0, 3, 6]
+ * ```
+ */
 export function buildLineStarts(text: string): number[]
 {
     const starts = [0];
@@ -66,7 +75,15 @@ export function buildLineStarts(text: string): number[]
     return starts;
 }
 
-/** Converts a byte offset to a 0-based `{ line, column }` location. */
+/**
+ * Converts a byte offset to a 0-based `{ line, column }` location.
+ *
+ * @example
+ * ```ts
+ * const starts = buildLineStarts('ab\ncd\n'); // [0, 3, 6]
+ * locationFor(4, starts); // { line: 1, column: 1 } (the 'd' on line 1)
+ * ```
+ */
 export function locationFor(offset: number, lineStarts: number[]): { line: number; column: number }
 {
     let lo = 0;
@@ -91,6 +108,15 @@ export function locationFor(offset: number, lineStarts: number[]): { line: numbe
  * `genColumn` is relative within a line (reset each line); the
  * source fields are relative across the whole file, per the spec.
  * A single source (index 0) is assumed.
+ *
+ * @example
+ * ```ts
+ * encodeMappings([
+ *     [{ genColumn: 0, sourceLine: 0, sourceColumn: 0 }], // line 0 -> source 0:0
+ *     [{ genColumn: 0, sourceLine: 1, sourceColumn: 0 }]  // line 1 -> source 1:0
+ * ]);
+ * // 'AAAA;AACA' (one ';'-separated segment per generated line)
+ * ```
  */
 export function encodeMappings(lines: RawSegment[][]): string
 {
@@ -106,7 +132,7 @@ export function encodeMappings(lines: RawSegment[][]): string
         {
             let chunk = vlqEncode(seg.genColumn - prevGenColumn);
             prevGenColumn = seg.genColumn;
-            chunk += vlqEncode(0); // sourceIndex delta (always 0 — one source)
+            chunk += vlqEncode(0); // sourceIndex delta (always 0 - one source)
             chunk += vlqEncode(seg.sourceLine - prevSourceLine);
             prevSourceLine = seg.sourceLine;
             chunk += vlqEncode(seg.sourceColumn - prevSourceColumn);

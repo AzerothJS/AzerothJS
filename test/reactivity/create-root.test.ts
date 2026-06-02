@@ -30,7 +30,7 @@ describe('createRoot', () =>
             // Both effects re-ran
             expect(runCount).toBe(2);
 
-            // Dispose the root — both effects are killed
+            // Dispose the root - both effects are killed
             dispose();
         });
 

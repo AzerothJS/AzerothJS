@@ -1,7 +1,3 @@
-// ============================================================================
-// AZEROTHJS — component SSR behavior tests
-// ============================================================================
-
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal } from '@azerothjs/reactivity';
 import { h, render } from '@azerothjs/renderer';
@@ -34,11 +30,11 @@ describe('defineComponent (SSR)', () =>
             return h('div', {}, 'hi');
         });
 
-        // Server render first — must not mount.
+        // Server render first - must not mount.
         renderToString(() => Comp({}));
         expect(mounted).not.toHaveBeenCalled();
 
-        // Now a real client mount — must mount exactly once.
+        // Now a real client mount - must mount exactly once.
         const container = document.createElement('div');
         render(() => Comp({}), container);
         expect(mounted).toHaveBeenCalledTimes(1);

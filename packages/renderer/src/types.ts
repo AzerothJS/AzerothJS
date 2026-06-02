@@ -1,11 +1,4 @@
-// ============================================================================
-// AZEROTHJS — Renderer Type Definitions
-// ============================================================================
-//
-// These types define the inputs for h() — the function that
-// creates real DOM elements.
-//
-// ============================================================================
+// Input types for h(), the function that creates real DOM elements.
 
 /**
  * Props object for h() elements.
@@ -37,11 +30,11 @@ export interface Props
  * A child element for h().
  *
  * Can be:
- *   - string or number → rendered as text node
- *   - HTMLElement → appended directly (from nested h() calls)
- *   - function → reactive child, wrapped in effect
- *   - null/undefined/false → skipped (conditional rendering)
- *   - Child[] → flattened and each item processed
+ *   - string or number -> rendered as text node
+ *   - HTMLElement -> appended directly (from nested h() calls)
+ *   - function -> reactive child, wrapped in effect
+ *   - null/undefined/false -> skipped (conditional rendering)
+ *   - Child[] -> flattened and each item processed
  *
  * @example
  * ```ts

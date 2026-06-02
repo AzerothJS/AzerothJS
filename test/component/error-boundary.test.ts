@@ -2,8 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createSignal, createEffect } from '@azerothjs/core';
 import { ErrorBoundary } from '../../packages/component/src/error-boundary.ts';
 
-// ── Helpers ──────────────────────────────────────────────────
-
 /** Builds a simple paragraph fallback that displays the error. */
 function makeTextFallback(): (err: unknown, reset: () => void) => HTMLElement
 {
@@ -15,8 +13,6 @@ function makeTextFallback(): (err: unknown, reset: () => void) => HTMLElement
         return p;
     };
 }
-
-// ─────────────────────────────────────────────────────────────
 
 describe('<ErrorBoundary>', () =>
 {
@@ -89,7 +85,7 @@ describe('<ErrorBoundary>', () =>
                 }
             });
 
-            // Initial render — the child is shown, no error.
+            // Initial render - the child is shown, no error.
             expect(container.querySelector('[data-role="child"]')).not.toBeNull();
             expect(container.querySelector('[data-role="fallback"]')).toBeNull();
 
@@ -122,7 +118,7 @@ describe('<ErrorBoundary>', () =>
             expect(fallback).toHaveBeenCalledOnce();
             const [receivedError, receivedReset] = fallback.mock.calls[0];
 
-            // First arg: the exact error object — not a copy.
+            // First arg: the exact error object, not a copy.
             expect(receivedError).toBe(failure);
 
             // Second arg: a reset function. We just check the type
@@ -170,7 +166,7 @@ describe('<ErrorBoundary>', () =>
             // After construction: fallback shown.
             expect(container.querySelector('[data-role="fallback"]')).not.toBeNull();
 
-            // Click the reset button — boundary should re-attempt
+            // Click the reset button - boundary should re-attempt
             // children, which now succeeds.
             const button = container.querySelector('[data-role="reset"]') as HTMLButtonElement;
             button.click();
@@ -225,10 +221,9 @@ describe('<ErrorBoundary>', () =>
 
     it('propagates the throw when the fallback itself throws (avoids infinite loops)', () =>
     {
-        // The fallback is intentionally NOT wrapped in catchError —
-        // a broken fallback would otherwise re-trigger the boundary
-        // forever. So when the fallback throws, the throw escapes
-        // the boundary instead.
+        // The fallback is intentionally NOT wrapped in catchError - a
+        // broken fallback would otherwise re-trigger the boundary forever.
+        // So when the fallback throws, the throw escapes the boundary instead.
         expect(() =>
         {
             createRoot((dispose) =>

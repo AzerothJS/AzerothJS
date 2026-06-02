@@ -28,7 +28,7 @@ describe('createDeferred', () =>
 
         setValue('b');
 
-        // Not yet — timeout hasn't fired
+        // Not yet - timeout hasn't fired
         expect(deferred()).toBe('a');
 
         vi.advanceTimersByTime(100);
@@ -43,7 +43,7 @@ describe('createDeferred', () =>
         const [value, setValue] = createSignal(0);
         const deferred = createDeferred(value, { timeout: 300 });
 
-        // Rapid updates — each resets the timer
+        // Rapid updates - each resets the timer
         setValue(1);
         vi.advanceTimersByTime(100);
         setValue(2);
@@ -134,7 +134,7 @@ describe('createDeferred', () =>
 
         expect(log).toEqual([1]);
 
-        // Rapid: 1→2→3→4→5
+        // Rapid: 1->2->3->4->5
         setValue(2);
         setValue(3);
         setValue(4);

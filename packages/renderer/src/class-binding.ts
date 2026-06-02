@@ -1,39 +1,30 @@
-// ============================================================================
-// AZEROTHJS — Class Binding
-// ============================================================================
+// classList() converts objects and arrays into reactive CSS class-string
+// getters, replacing error-prone manual concatenation.
 //
-// classList() converts objects and arrays into reactive CSS
-// class string getters.
+// Without classList: hand-concatenate the class string, juggling spaces and
+// branches.
 //
-// WITHOUT classList:
-//   h('div', {
-//     class: () => {
-//       let c = 'btn';
-//       if (isPrimary()) c += ' btn-primary';
-//       if (isDisabled()) c += ' btn-disabled';
-//       if (isLarge()) c += ' btn-lg';
-//       return c;
+//     class: () =>
+//     {
+//         let c = 'btn';
+//         if (isPrimary()) c += ' btn-primary';
+//         if (isDisabled()) c += ' btn-disabled';
+//         return c; // a forgotten leading space silently merges two classes
 //     }
-//   })
-//   // Ugly string concatenation. Error-prone.
 //
-// WITH classList:
-//   h('div', {
+// With classList: a condition map, where each value is a static boolean or a
+// signal getter.
+//
 //     class: classList({
-//       'btn': true,
-//       'btn-primary': isPrimary,
-//       'btn-disabled': isDisabled,
-//       'btn-lg': isLarge
-//     })
-//   })
-//   // Clean, readable, reactive.
-//
-// ============================================================================
+//         'btn': true,
+//         'btn-primary': isPrimary,
+//         'btn-disabled': isDisabled
+//     }) // spacing is automatic; each class is independently reactive
 
 /**
  * A class binding value. Can be:
- *   - boolean → static include/exclude
- *   - () => boolean → reactive include/exclude
+ *   - boolean -> static include/exclude
+ *   - () => boolean -> reactive include/exclude
  */
 type ClassValue = boolean | (() => boolean);
 
@@ -47,7 +38,7 @@ type ClassValue = boolean | (() => boolean);
  * ```ts
  * {
  *   'btn': true,              // always included
- *   'btn-primary': isPrimary, // reactive — signal getter
+ *   'btn-primary': isPrimary, // reactive: signal getter
  *   'btn-disabled': false     // never included
  * }
  * ```
@@ -88,7 +79,7 @@ export type ClassObject = Record<string, ClassValue>;
  *
  * @example
  * ```ts
- * // Array syntax — mix strings and objects
+ * // Array syntax: mix strings and objects
  * h('div', {
  *   class: classList([
  *     'card',
@@ -130,11 +121,9 @@ export function classList(classes: ClassObject | (string | ClassObject)[]): () =
 }
 
 /**
- * Resolves a ClassObject into an array of active class names.
- *
- * Each entry's condition is evaluated — if it's a function,
- * it's called (reading the signal). If the result is truthy,
- * the class name is added to the result array.
+ * Resolves a ClassObject into an array of active class names. Each entry's
+ * condition is evaluated (calling it if it's a function, which reads the
+ * signal); if truthy, the class name is added to the result array.
  *
  * @param obj - The class object to resolve
  * @param result - The array to push active class names into

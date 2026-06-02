@@ -131,7 +131,7 @@ describe('createBrowserHistory', () =>
         {});
 
         // Removing one of two subscribers must NOT detach the
-        // native listener — there's still another consumer.
+        // native listener - there's still another consumer.
         unsubA();
         expect(removeSpy).not.toHaveBeenCalledWith('popstate', expect.any(Function));
 

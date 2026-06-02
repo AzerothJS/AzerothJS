@@ -1,104 +1,53 @@
-// ============================================================================
-// AZEROTHJS — Untrack (Read Without Subscribing)
-// ============================================================================
+// untrack() reads signals without subscribing the active effect. Reach for it
+// when an effect needs a signal's current value but must not re-run when that
+// value changes. Common cases:
 //
-// untrack() lets you read a signal's value inside an effect
-// WITHOUT subscribing to it. The effect won't re-run when
-// untracked signals change.
+//   - Reading peripheral state for a side effect (logging, analytics) that
+//     should only fire on the "real" dependencies.
+//   - Calling a setter from inside an effect without forming a feedback loop.
 //
-// USE CASES:
-//
-//   1. Read a signal for logging only:
-//      createEffect(() =>
-//      {
-//          console.log('Count changed:', count());
-//          console.log('User:', untrack(() => user()));
-//          // Re-runs when count changes, NOT when user changes
-//      });
-//
-//   2. Prevent unnecessary re-runs:
-//      createEffect(() =>
-//      {
-//          const data = fetchData(query());       // subscribe
-//          const limit = untrack(() => pageSize()); // don't subscribe
-//      });
-//
-//   3. Prevent infinite loops:
-//      createEffect(() =>
-//      {
-//          const val = count();
-//          untrack(() => setOther(val));  // safe, no loop
-//      });
-//
-// ============================================================================
+// It works by clearing the current-subscriber slot for the duration of `fn`,
+// so any signal getters called inside see no subscriber and register no
+// dependency.
 
 import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
 
 /**
- * Executes a function without tracking any signal reads.
+ * Runs `fn` with dependency tracking suspended and returns its result. Signals
+ * read inside `fn` do not subscribe the active effect. The previous subscriber
+ * is restored afterwards, even if `fn` throws.
  *
- * Any signals read inside the function will NOT subscribe
- * the current effect. The effect will NOT re-run when those
- * signals change.
+ * @param fn - Function to run untracked
  *
- * The subscriber context is properly restored after untrack
- * completes, even if the function throws.
+ * Why: every signal read inside an effect subscribes it, but sometimes you want
+ * the current value without re-running when that value later changes.
  *
- * @typeParam T - The return type of the function
+ * Without untrack: reading the value subscribes the effect to it:
  *
- * @param fn - The function to run without tracking
+ *     createEffect(() =>
+ *     {
+ *         save(doc(), user()); // now re-runs whenever user() changes too
+ *     });
  *
- * @returns The return value of the function
+ * With untrack: the wrapped read is observed but not subscribed:
  *
- * @example
- * ```ts
- * const [count, setCount] = createSignal(0);
- * const [name, setName] = createSignal('Alice');
- *
- * createEffect(() =>
- * {
- *     // Tracked — effect re-runs when count changes
- *     console.log('Count:', count());
- *
- *     // Untracked — changing name does NOT re-run this effect
- *     const currentName = untrack(() => name());
- *     console.log('Name:', currentName);
- * });
- *
- * setCount(1);   // Effect re-runs ✅
- * setName('Bob'); // Effect does NOT re-run ✅
- * ```
+ *     createEffect(() =>
+ *     {
+ *         save(doc(), untrack(() => user())); // re-runs only when doc() changes
+ *     });
  *
  * @example
  * ```ts
- * // Nested untrack — all reads are untracked
  * createEffect(() =>
  * {
- *   const result = untrack(() =>
- *   {
- *       return a() + untrack(() => b());
- *   });
- *   // Effect is subscribed to NOTHING — won't re-run
- * });
- * ```
- *
- * @example
- * ```ts
- * // Context restored after untrack
- * createEffect(() =>
- * {
- *     const aVal = a();                     // tracked
- *     const bVal = untrack(() => b());      // NOT tracked
- *     const cVal = c();                     // tracked (restored)
+ *     log(count());                       // tracked: re-runs when count changes
+ *     untrack(() => sendMetric(user()));  // user changes won't re-run this effect
  * });
  * ```
  */
 export function untrack<T>(fn: () => T): T
 {
-    // Save the current subscriber
     const previousSubscriber = currentSubscriber;
-
-    // Clear it — signals read inside fn won't see any subscriber
     setCurrentSubscriber(null);
 
     try
@@ -107,7 +56,6 @@ export function untrack<T>(fn: () => T): T
     }
     finally
     {
-        // Restore the subscriber
         setCurrentSubscriber(previousSubscriber);
     }
 }

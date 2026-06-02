@@ -1,24 +1,12 @@
-// ============================================================================
-// AZEROTHJS — Global Store Public API
-// ============================================================================
+// Public API for the global store package.
 //
-// EXPORTED (public):
-//   createStore() — Lazy-singleton wrapper around a reactive factory
+// createStore(factory) returns a useStore() function. The factory runs on the
+// first call, wrapped in a createRoot so its createEffect/createMemo/
+// onRootDispose calls have somewhere to live; subsequent calls return the same
+// cached instance, giving shared state across components without prop drilling.
 //
-// HOW IT FITS:
-//
-//   `createStore(factory)` returns a `useStore()` function. The
-//   factory runs on the first call, with a `createRoot` wrapper
-//   so its `createEffect` / `createMemo` / `onRootDispose` calls
-//   have somewhere to live. Subsequent calls return the same
-//   cached instance — true cross-component shared state without
-//   prop drilling.
-//
-//   The factory's return shape IS the store's public surface. No
-//   schema, no reducer protocol, no `this` magic. Stores compose
-//   naturally: one store's factory can call other stores'
-//   `useStore()` functions.
-//
-// ============================================================================
+// The factory's return shape is the store's public surface - no schema, no
+// reducer protocol, no this magic. Stores compose: one store's factory can call
+// another store's useStore().
 
 export { createStore } from './create-store.ts';

@@ -1,48 +1,19 @@
-// ============================================================================
-// AZEROTHJS — createForm (Reactive Form State)
-// ============================================================================
+// createForm: reactive form state - per-field signals, sync validation, a
+// submit lifecycle (loading + error), and DOM-friendly registration helpers for
+// <input> elements. Same shape and authoring style as createSignal /
+// createResource: no class hierarchy, no schema layer, no framework-specific JSX.
 //
-// Builds a reactive form: per-field signals, sync validation, a
-// submit lifecycle (loading + error), and DOM-friendly registration
-// helpers for `<input>` elements. Same shape and authoring style
-// as `createSignal` / `createResource` — no class hierarchy, no
-// schema layer, no framework-specific JSX.
+// Validation timing: validators run on every value change and on submit.
+// errors() is always live - callers decide when to display errors by combining
+// with touched() (typical pattern: only show after blur, plus all fields after a
+// submit attempt). Async validators are not supported in v1; compose them
+// externally with createResource. A validateAsync option can be added later
+// without breaking the v1 API.
 //
-// HOW IT FITS:
-//
-//   const form = createForm({
-//       initial:   { name: '', email: '' },
-//       validate:  { email: v => v.includes('@') ? null : 'Invalid' },
-//       onSubmit:  async values => api.save(values)
-//   });
-//
-//   h('form', { onSubmit: form.handleSubmit },
-//       h('input', form.register('email')),
-//       h('p',     {}, () => form.touched().email ? form.errors().email : ''),
-//       h('button', { disabled: () => form.submitting() }, 'Save')
-//   );
-//
-// VALIDATION TIMING:
-//
-//   Validators run on every value change AND on submit. `errors()`
-//   is always live — users decide when to *display* errors by
-//   combining with `touched()` (typical pattern: only show after
-//   blur, plus all fields after a submit attempt).
-//
-//   Async validators are NOT supported in v1. Compose them
-//   externally with `createResource` if needed; we'll add a
-//   `validateAsync` option in a v0.x.x update without breaking
-//   the v1 API.
-//
-// REGISTER FOR TEXT INPUTS:
-//
-//   `form.register('name')` returns a prop bag for `<input>` /
-//   `<textarea>` text-style elements. Checkboxes, radios, selects,
-//   files, and dates need bespoke wiring — call `form.setValue`
-//   from a custom `onChange` handler. We'll ship typed register
-//   variants for those input types in a v0.x.x update.
-//
-// ============================================================================
+// register() targets text inputs: form.register('name') returns a prop bag for
+// <input> / <textarea> text-style elements. Checkboxes, radios, selects, files,
+// and dates need bespoke wiring - call form.setValue from a custom onChange
+// handler. Typed register variants for those input types can come later.
 
 import type { Getter } from '@azerothjs/reactivity';
 import {
@@ -53,8 +24,8 @@ import {
 } from '@azerothjs/reactivity';
 
 /**
- * A sync field validator. Returns the error message for invalid
- * input, or `null` when the value is acceptable.
+ * A sync field validator. Returns the error message for invalid input, or
+ * `null` when the value is acceptable.
  *
  * @typeParam V - The field's value type
  */
@@ -72,16 +43,15 @@ export interface FormConfig<T extends Record<string, unknown>>
     initial: T;
 
     /**
-     * Per-field sync validators. Optional — fields without a
-     * validator are always considered valid. Run on every value
-     * change and on submit.
+     * Per-field sync validators. Optional - fields without a validator are
+     * always considered valid. Run on every value change and on submit.
      */
     validate?: { [K in keyof T]?: FieldValidator<T[K]> };
 
     /**
-     * Called when the form passes validation on submit. May return
-     * a Promise — `submitting()` will be true for its duration,
-     * and any rejection populates `submitError()`.
+     * Called when the form passes validation on submit. May return a Promise -
+     * `submitting()` will be true for its duration, and any rejection populates
+     * `submitError()`.
      */
     onSubmit?: (values: T) => void | Promise<void>;
 }
@@ -95,7 +65,7 @@ export interface RegisteredFieldProps
     /** The field name (HTML form semantics + accessibility). */
     name: string;
 
-    /** Reactive getter for the current value — h() wires it as the input's `value` property. */
+    /** Reactive getter for the current value - h() wires it as the input's `value` property. */
     value: () => unknown;
 
     /** Updates the field signal from the input's current text. */
@@ -115,13 +85,13 @@ export interface FormApi<T extends Record<string, unknown>>
     /** Reactive snapshot of every field's current value. */
     values: Getter<T>;
 
-    /** Reactive map of field name → validation error (or `null`). */
+    /** Reactive map of field name to validation error (or `null`). */
     errors: Getter<{ [K in keyof T]: string | null }>;
 
-    /** Reactive map of field name → whether the user has blurred the field. */
+    /** Reactive map of field name to whether the user has blurred the field. */
     touched: Getter<{ [K in keyof T]: boolean }>;
 
-    /** Reactive map of field name → whether its value differs from `initial`. */
+    /** Reactive map of field name to whether its value differs from `initial`. */
     dirty: Getter<{ [K in keyof T]: boolean }>;
 
     /** True while `onSubmit`'s returned promise is pending. */
@@ -155,20 +125,41 @@ export interface FormApi<T extends Record<string, unknown>>
 }
 
 /**
- * Builds a reactive form whose state — values, errors, touched,
- * dirty, submitting — is observable through standard signal
- * getters. Use `register(name)` for ergonomic input wiring.
+ * Builds a reactive form whose state - values, errors, touched, dirty,
+ * submitting - is observable through standard signal getters. Use
+ * `register(name)` for ergonomic input wiring.
  *
- * Validators are sync only in v1. Composes well with everything
- * else in the framework: errors propagate to `<ErrorBoundary>`,
- * `submitting()` plugs straight into `<Suspense>`, and submitted
- * values can flow into a store or a `createResource` invalidate.
+ * Validators are sync only in v1. Composes well with everything else in the
+ * framework: errors propagate to `<ErrorBoundary>`, `submitting()` plugs
+ * straight into `<Suspense>`, and submitted values can flow into a store or a
+ * `createResource` invalidate.
  *
  * @typeParam T - The form's values shape, inferred from `initial`
  *
  * @param config - The form configuration
  *
  * @returns A {@link FormApi} for reading state and driving submission
+ *
+ * Why: form state is a pile of moving parts - values, errors, touched, dirty,
+ * the submit lifecycle - and wiring each input by hand drifts out of sync fast.
+ *
+ * Without createForm: a signal per field, a separate errors signal, and an effect
+ * to re-run validators, then wire each input and re-validate on submit yourself:
+ *
+ *     const [name, setName] = createSignal('');
+ *     const [errors, setErrors] = createSignal({ name: null });
+ *     createEffect(() => setErrors({ name: name().length < 2 ? 'Too short' : null }));
+ *     h('input', { value: name, onInput: e => setName(e.target.value) });
+ *     // touched/dirty/submitting and the submit handler are still on you
+ *
+ * With createForm: one config gives reactive values/errors/touched/dirty and a
+ * register()/handleSubmit() pair that wires inputs and the submit lifecycle:
+ *
+ *     const form = createForm({
+ *         initial: { name: '' },
+ *         validate: { name: v => v.length < 2 ? 'Too short' : null }
+ *     });
+ *     h('input', form.register('name')); // value, onInput, onBlur all wired
  *
  * @example
  * ```ts
@@ -191,14 +182,14 @@ export interface FormApi<T extends Record<string, unknown>>
  *     h('p', {}, () => form.touched().email ? form.errors().email : ''),
  *     h('button',
  *         { disabled: () => form.submitting() || !form.isValid() },
- *         () => form.submitting() ? 'Saving…' : 'Save'
+ *         () => form.submitting() ? 'Saving...' : 'Save'
  *     )
  * );
  * ```
  *
  * @example
  * ```ts
- * // Server-side error injection — call setError in onSubmit's
+ * // Server-side error injection - call setError in onSubmit's
  * // catch path to surface an error on a specific field.
  * const form = createForm({
  *     initial: { username: '' },
@@ -221,13 +212,10 @@ export function createForm<T extends Record<string, unknown>>(
     const initial = config.initial;
     const fieldNames = Object.keys(initial) as (keyof T)[];
 
-    // ── Per-field signals ────────────────────────────────────
-    //
-    // One signal per field, kept in a map so `register(name)` and
-    // `setValue(name, value)` can look up the right setter
-    // generically. The values getter recomputes its snapshot
-    // object from these signals — that means each individual
-    // setValue notifies exactly one downstream effect (the values
+    // Per-field signals: one signal per field, kept in a map so register(name)
+    // and setValue(name, value) can look up the right setter generically. The
+    // values getter recomputes its snapshot object from these signals, so each
+    // individual setValue notifies exactly one downstream effect (the values
     // memo), not all field readers.
     interface FieldHandle<V>
     {
@@ -244,7 +232,7 @@ export function createForm<T extends Record<string, unknown>>(
         };
     }
 
-    // ── Errors / touched / submit signals ────────────────────
+    // Errors / touched / submit signals.
     const initialErrors = makeRecord<keyof T, string | null>(fieldNames, null);
     const initialTouched = makeRecord<keyof T, boolean>(fieldNames, false);
     const [errors, setErrors] = createSignal(initialErrors);
@@ -252,12 +240,11 @@ export function createForm<T extends Record<string, unknown>>(
     const [submitting, setSubmitting] = createSignal(false);
     const [submitError, setSubmitError] = createSignal<unknown>(null);
 
-    // ── Derived: values, dirty, isValid ──────────────────────
+    // Derived: values, dirty, isValid.
     //
-    // `values` is a memo over every field signal — reading it
-    // subscribes to all fields collectively, which matches users'
-    // expectation of "the form's values" as a single observable
-    // shape.
+    // `values` is a memo over every field signal - reading it subscribes to all
+    // fields collectively, which matches the expectation of "the form's values"
+    // as a single observable shape.
     const values = createMemo<T>(() =>
     {
         const out = {} as T;
@@ -274,11 +261,10 @@ export function createForm<T extends Record<string, unknown>>(
         const out = {} as { [K in keyof T]: boolean };
         for (const name of fieldNames)
         {
-            // Reference comparison — for object/array fields this
-            // means "always dirty after first write" (the user
-            // produced a new reference). Acceptable v1 contract;
-            // real apps using object fields can override via
-            // `setValue` semantics.
+            // Reference comparison - for object/array fields this means
+            // "always dirty after first write" (the caller produced a new
+            // reference). Acceptable v1 contract; apps using object fields can
+            // override via setValue semantics.
             out[name] = v[name] !== initial[name];
         }
         return out;
@@ -297,12 +283,9 @@ export function createForm<T extends Record<string, unknown>>(
         return true;
     });
 
-    // ── Validation effect ────────────────────────────────────
-    //
-    // Re-runs every time any field changes. Reads each field via
-    // the `values` memo (which we've already declared as a
-    // dependency), then writes the new errors map in untrack so
-    // we don't subscribe to ourselves.
+    // Validation effect: re-runs every time any field changes. Reads each field
+    // via the values memo (already a dependency), then writes the new errors map
+    // inside untrack so the effect doesn't subscribe to itself.
     function runValidators(snapshot: T): { [K in keyof T]: string | null }
     {
         if (!config.validate)
@@ -325,20 +308,19 @@ export function createForm<T extends Record<string, unknown>>(
         untrack(() =>
         {
             const validate = config.validate;
-            // No validators configured → leave the errors map alone,
-            // so an error injected via setError() survives. (The
-            // initial map is already all-null.)
+            // No validators configured: leave the errors map alone, so an
+            // error injected via setError() survives. (The initial map is
+            // already all-null.)
             if (!validate)
             {
                 return;
             }
 
-            // MERGE rather than overwrite: only fields that HAVE a
-            // validator are recomputed here. Fields without one keep
-            // their current error untouched — so a server error
-            // injected via setError() (e.g. "username taken") is NOT
-            // wiped when the user edits some OTHER field. Validated
-            // fields still re-validate live on every change.
+            // Merge rather than overwrite: only fields that have a validator are
+            // recomputed here. Fields without one keep their current error
+            // untouched, so a server error injected via setError() (e.g.
+            // "username taken") is not wiped when the user edits some other
+            // field. Validated fields still re-validate live on every change.
             setErrors(prev =>
             {
                 const next = { ...prev };
@@ -355,7 +337,7 @@ export function createForm<T extends Record<string, unknown>>(
         });
     });
 
-    // ── Imperative API ───────────────────────────────────────
+    // Imperative API.
 
     function setValue<K extends keyof T>(name: K, value: T[K]): void
     {
@@ -387,9 +369,9 @@ export function createForm<T extends Record<string, unknown>>(
             value: () => fields[name].value(),
             onInput: (event: Event): void =>
             {
-                // h() doesn't restrict input types; if the user
-                // wired register onto a non-text element the cast
-                // would be wrong. We document register as text-only.
+                // h() doesn't restrict input types; if register is wired onto a
+                // non-text element this cast would be wrong. register is
+                // documented as text-only.
                 const target = event.target as HTMLInputElement;
                 (fields[name].setValue as (next: T[K]) => void)(
                     target.value as unknown as T[K]
@@ -418,10 +400,10 @@ export function createForm<T extends Record<string, unknown>>(
         const fresh = runValidators(snapshot);
         setErrors(fresh);
 
-        // Bail if anything is invalid. We compute validity from
-        // the freshly-computed errors directly rather than
-        // reading isValid() — avoids any reactive timing edge
-        // cases between effect run and isValid memo recompute.
+        // Bail if anything is invalid. Compute validity from the
+        // freshly-computed errors directly rather than reading isValid() - this
+        // avoids reactive timing edge cases between the effect run and the
+        // isValid memo recompute.
         for (const name of fieldNames)
         {
             if (fresh[name] !== null)
@@ -485,9 +467,15 @@ export function createForm<T extends Record<string, unknown>>(
 }
 
 /**
- * Builds a `Record<K, V>` with every key initialised to the same
- * value. Used for the initial errors / touched maps, where
- * "every field starts at null / false" is the right default.
+ * Builds a `Record<K, V>` with every key initialised to the same value. Used
+ * for the initial errors / touched maps, where "every field starts at null /
+ * false" is the right default.
+ *
+ * @example
+ * ```ts
+ * makeRecord(['name', 'email'], null);   // { name: null, email: null }
+ * makeRecord(['name', 'email'], false);  // { name: false, email: false }
+ * ```
  *
  * @internal
  */

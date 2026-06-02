@@ -19,7 +19,7 @@ describe('Effect leak regression', () =>
 
         expect(seen).toEqual([0]);
 
-        // Hide — inner effect should unsubscribe.
+        // Hide - inner effect should unsubscribe.
         setShow(false);
 
         // Mutating count must NOT add to seen anymore.
@@ -79,7 +79,7 @@ describe('Effect leak regression', () =>
         setWhich('b');
         expect(bSeen).toEqual([0]);
 
-        // 'a' branch should be torn down — count change must NOT
+        // 'a' branch should be torn down - count change must NOT
         // add to aSeen anymore.
         setCount(5);
         expect(aSeen).toEqual([0]);
@@ -111,7 +111,7 @@ describe('Effect leak regression', () =>
 
         const beforeTick = itemRuns.get(2);
 
-        // Item 2's effect must be disposed — tick changes shouldn't
+        // Item 2's effect must be disposed - tick changes shouldn't
         // re-run it.
         setTick(1);
         expect(itemRuns.get(2)).toBe(beforeTick);
@@ -168,7 +168,7 @@ describe('Effect leak regression', () =>
 
         expect(seen).toEqual([0]);
 
-        // Remount — old effect must be disposed.
+        // Remount - old effect must be disposed.
         render(() => h('p', {}, 'static'), container);
 
         setCount(1);

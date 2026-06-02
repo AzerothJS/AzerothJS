@@ -1,22 +1,16 @@
-// ============================================================================
-// AZEROTHJS COMPILER — compile()
-// ============================================================================
-//
 // Orchestrates the transform of a `.azeroth` module:
 //
-//   1. Walk the source, skipping non-code, to find each top-level
-//      markup region (scanner.findMarkupStart).
+//   1. Walk the source, skipping non-code, to find each top-level markup
+//      region (scanner.findMarkupStart).
 //   2. Parse the region into a markup AST (parser.parseMarkup).
-//   3. Generate `h()` / component-call code (codegen.generate),
-//      recompiling any nested markup inside `{ … }` holes by calling
-//      back into `transform`.
-//   4. Splice the generated code in place of the region; everything
-//      else (imports, types, functions) is left byte-for-byte.
+//   3. Generate h() / component-call code (codegen.generate), recompiling any
+//      nested markup inside `{ ... }` holes by calling back into the hole
+//      transform.
+//   4. Splice the generated code in place of the region; everything else
+//      (imports, types, functions) is left byte-for-byte.
 //
-// Finally, if markup was emitted and the module doesn't already
-// import `h`, prepend the import.
-//
-// ============================================================================
+// Finally, if markup was emitted and the module doesn't already import `h`,
+// prepend the import.
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './parser.ts';
@@ -33,9 +27,9 @@ import {
 const RUNTIME_MODULE = '@azerothjs/core';
 
 /**
- * Built-in components that markup can use without importing — the
- * compiler injects their import from the runtime. User components
- * are NOT auto-imported (the author imports those explicitly).
+ * Built-in components that markup can use without importing - the compiler
+ * injects their import from the runtime. User components are not
+ * auto-imported (the author imports those explicitly).
  */
 const BUILTIN_COMPONENTS = new Set([
     'Show', 'For', 'Switch', 'Match', 'Portal', 'Dynamic',
@@ -48,8 +42,8 @@ export interface CompileResult
     /** The compiled JS/TS source. */
     code: string;
 
-    /** Source map (original `.azeroth` → compiled), or `null` when
-     *  the file contained no markup (output is identical to input). */
+    /** Source map (original `.azeroth` -> compiled), or `null` when the file
+     *  contained no markup (output is identical to input). */
     map: SourceMapV3 | null;
 }
 
@@ -67,19 +61,41 @@ interface Piece
     verbatim: boolean;
 }
 
-/** True when the module already imports `name` via a named import. */
+/**
+ * True when the module already imports `name` via a named import.
+ *
+ * @example
+ * ```ts
+ * alreadyImports("import { h, For } from 'x';", 'For'); // true
+ * alreadyImports("import { h } from 'x';", 'Show');     // false
+ * ```
+ */
 function alreadyImports(source: string, name: string): boolean
 {
     return new RegExp(`import\\s*\\{[^}]*\\b${ name }\\b[^}]*\\}\\s*from`).test(source);
 }
 
 /**
- * Compiles a `.azeroth` source string: markup → `h()` calls, with
- * the `h` import auto-injected when needed.
+ * Compiles a `.azeroth` source string: markup -> h() calls, with the `h`
+ * import auto-injected when needed.
  *
  * @param source - The `.azeroth` module source
  *
- * @returns `{ code }` — the compiled JS/TS
+ * @returns The compiled JS/TS and its source map
+ *
+ * Without compile: author UI as nested h() calls by hand, wrapping every
+ * dynamic hole in a getter yourself:
+ *
+ *     import { h } from '@azerothjs/core';
+ *     export default () =>
+ *         h('h1', {  }, 'Hello ', () => (name())); // hand-write h() + getters, easy to get wrong
+ *
+ * With compile: write the markup in a `.azeroth` file and compile() emits the
+ * equivalent h() calls (and the `h` import) for you:
+ *
+ *     const { code } = compile('export default () => <h1>Hello {name()}</h1>;');
+ *     // code -> import { h } from '@azerothjs/core'; ... h('h1', {  }, 'Hello ', () => (name()))
+ *     // write JSX-like markup; the getters and the import are generated
  *
  * @example
  * ```ts
@@ -88,7 +104,7 @@ function alreadyImports(source: string, name: string): boolean
  *     return <h1>Hello {name()}</h1>;
  *   }
  * `);
- * // code →
+ * // code becomes:
  * //   import { h } from '@azerothjs/core';
  * //   export default function Hi() {
  * //     return h('h1', {  }, 'Hello ', () => (name()));
@@ -98,7 +114,7 @@ function alreadyImports(source: string, name: string): boolean
 export function compile(source: string, filename = 'module.azeroth'): CompileResult
 {
     // Built-in components referenced anywhere in the file's markup
-    // (including nested inside `{ … }` holes, thanks to the recursion).
+    // (including nested inside `{ ... }` holes, thanks to the recursion).
     const usedBuiltins = new Set<string>();
 
     const collect = (node: Parameters<typeof walkComponentTags>[0]): void =>
@@ -110,10 +126,10 @@ export function compile(source: string, filename = 'module.azeroth'): CompileRes
             }
         });
 
-    // String-based transform for `{ … }` holes (nested markup). Holes
-    // are embedded inside a region's generated string, so they don't
-    // get their own source-map pieces — the whole region maps to its
-    // start, which is plenty for debugging.
+    // String-based transform for `{ ... }` holes (nested markup). Holes are
+    // embedded inside a region's generated string, so they don't get their own
+    // source-map pieces - the whole region maps to its start, which is plenty
+    // for debugging.
     const transformHole: ExpressionCompiler = (input: string): string =>
     {
         let result = '';
@@ -180,7 +196,18 @@ export function compile(source: string, filename = 'module.azeroth'): CompileRes
     return { code, map: buildSourceMap(code, prefix.length, pieces, source, filename) };
 }
 
-/** Finds the piece whose span contains a given OUTPUT (post-`out`) offset. */
+/**
+ * Finds the piece whose span contains a given OUTPUT (post-`out`) offset.
+ *
+ * @example
+ * ```ts
+ * const pieces = [
+ *     { outStart: 0, sourceStart: 0, verbatim: true },
+ *     { outStart: 10, sourceStart: 10, verbatim: false }
+ * ];
+ * findPiece(pieces, 12); // the piece at outStart 10
+ * ```
+ */
 function findPiece(pieces: Piece[], outOffset: number): Piece
 {
     let lo = 0;
@@ -206,6 +233,14 @@ function findPiece(pieces: Piece[], outOffset: number): Piece
  * to the top of the source.
  *
  * @internal
+ *
+ * @example
+ * ```ts
+ * const map = buildSourceMap(code, prefix.length, pieces, source, 'm.azeroth');
+ * map.version;          // 3
+ * map.sources;          // ['m.azeroth']
+ * map.mappings;         // 'AAAA;AACA;...' (one segment per generated line)
+ * ```
  */
 function buildSourceMap(
     code: string,
@@ -223,7 +258,7 @@ function buildSourceMap(
     {
         if (codeOffset < prefixLen)
         {
-            // The injected import line(s) → map to the top of source.
+            // The injected import line(s) map to the top of source.
             lines.push([{ genColumn: 0, sourceLine: 0, sourceColumn: 0 }]);
             continue;
         }

@@ -68,15 +68,15 @@ describe('minLength / maxLength', () =>
     {
         expect(minLength(1)('')).toBeNull();
         // The error message should say "1 character" not "1 characters".
-        // Force a fail by passing a string shorter than 1 — but no
+        // Force a fail by passing a string shorter than 1 - but no
         // string is shorter than empty, and empty is skipped. Use
         // a custom message to confirm the override path bypasses
         // the default formatter regardless.
-        expect(minLength(1, 'too short')(' ')).toBeNull(); // ' ' trims to empty → skipped
+        expect(minLength(1, 'too short')(' ')).toBeNull(); // ' ' trims to empty -> skipped
 
         // Verify pluralisation in the default message string.
         const msg = (minLength(1)('') ?? '') + (minLength(2)('') ?? '');
-        expect(msg).toBe(''); // both skipped — sanity for the line above
+        expect(msg).toBe(''); // both skipped - sanity for the line above
     });
 });
 
@@ -86,7 +86,7 @@ describe('min / max', () =>
     {
         expect(min(1)(null as unknown as number)).toBeNull();
         expect(min(1)(undefined as unknown as number)).toBeNull();
-        // 0 is a real value, not skipped — must fail min(1).
+        // 0 is a real value, not skipped - must fail min(1).
         expect(min(1)(0)).toBe('Must be at least 1');
     });
 
@@ -180,9 +180,9 @@ describe('combine', () =>
     it('returns the FIRST error when multiple validators fail', () =>
     {
         const v = combine(required(), minLength(5));
-        // Empty value — required fires first.
+        // Empty value - required fires first.
         expect(v('')).toBe('This field is required');
-        // Non-empty but too short — minLength fires.
+        // Non-empty but too short - minLength fires.
         expect(v('hi')).toBe('Must be at least 5 characters');
     });
 
@@ -198,9 +198,9 @@ describe('combine', () =>
         expect(v('a@b.co')).toBeNull();
     });
 
-    it('preserves validator order — earlier validators win on conflict', () =>
+    it('preserves validator order - earlier validators win on conflict', () =>
     {
-        // Two validators that both fail — the first wins.
+        // Two validators that both fail - the first wins.
         const v = combine(
             (val: string) => val === '' ? null : 'first error',
             (val: string) => val === '' ? null : 'second error'

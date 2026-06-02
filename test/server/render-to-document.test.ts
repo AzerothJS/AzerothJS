@@ -1,7 +1,3 @@
-// ============================================================================
-// AZEROTHJS — renderToDocument tests
-// ============================================================================
-
 import { describe, it, expect, beforeEach } from 'vitest';
 import { h, css, resetStyleSheet } from '@azerothjs/renderer';
 import { renderToDocument } from '@azerothjs/server';
