@@ -22,6 +22,7 @@
 
 export { h } from './h.ts';
 export { render } from './render.ts';
+export { hydrate } from './hydrate.ts';
 export { Show } from './show.ts';
 export { For } from './for.ts';
 export { Switch, Match } from './switch.ts';

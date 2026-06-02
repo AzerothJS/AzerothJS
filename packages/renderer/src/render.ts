@@ -15,17 +15,9 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
 import { createRoot } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
-
-/**
- * Tracks the dispose function for each container's mounted tree.
- * Lets render() tear down the previous mount on a re-render.
- *
- * @internal
- */
-const containerDisposers = new WeakMap<HTMLElement, DisposeFn>();
+import { containerDisposers } from './container-disposers.ts';
 
 /**
  * Mounts a component into a container DOM element.

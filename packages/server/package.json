@@ -1,7 +1,7 @@
 {
-    "name": "@azerothjs/core",
+    "name": "@azerothjs/server",
     "version": "0.3.0-alpha.3",
-    "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
+    "description": "AzerothJS server-side rendering — renderToString, renderToStaticMarkup, renderToDocument (pure string emitter, hydration-ready)",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -23,12 +23,7 @@
     },
     "dependencies": {
         "@azerothjs/reactivity": "0.3.0-alpha.3",
-        "@azerothjs/renderer": "0.3.0-alpha.3",
-        "@azerothjs/component": "0.3.0-alpha.3",
-        "@azerothjs/server": "0.3.0-alpha.3",
-        "@azerothjs/store": "0.3.0-alpha.3",
-        "@azerothjs/form": "0.3.0-alpha.3",
-        "@azerothjs/router": "0.3.0-alpha.3"
+        "@azerothjs/renderer": "0.3.0-alpha.3"
     },
     "publishConfig": {
         "access": "public"
@@ -38,9 +33,9 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
-        "directory": "packages/core"
+        "directory": "packages/server"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/core",
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/server",
     "bugs": {
         "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }

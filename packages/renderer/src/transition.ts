@@ -66,9 +66,10 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot, onRootDispose } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { hydrateChild } from './h.ts';
 
 /**
  * Props for the `<Transition>` component.
@@ -154,9 +155,45 @@ const FALLBACK_TIMEOUT_MS = 1000;
  */
 export function Transition(props: TransitionProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // Emit the static initial content (no animation classes — there
+    // is no browser to animate against). Matches the instant,
+    // no-enter-animation first mount of the client path.
+    if (isStringMode())
+    {
+        const inner = untrack(() => props.when()) ? serializeChild(props.children()) : '';
+        return wrapContents('transition', inner) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the server wrapper span; the first effect run adopts the
+    // already-rendered child (no enter animation), later toggles animate.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            driveTransition(props, cursor.takeElement('span'), true);
+        }) as unknown as HTMLElement;
+    }
+
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    driveTransition(props, container, false);
+
+    return container as unknown as HTMLElement;
+}
+
+/**
+ * Drives the transition state machine on `container`. Shared by the DOM path
+ * (a fresh span) and hydration (the adopted server span). When
+ * `hydrateFirstRun` is true, the initial visible element is adopted from the
+ * existing server DOM instead of built and appended.
+ *
+ * @internal
+ */
+function driveTransition(props: TransitionProps, container: HTMLElement, hydrateFirstRun: boolean): void
+{
     let currentEl: HTMLElement | null = null;
     let currentDispose: DisposeFn | null = null;
     let phase: Phase = 'idle';
@@ -212,6 +249,27 @@ export function Transition(props: TransitionProps): HTMLElement
             dispose = d;
             el = props.children();
             container.appendChild(el);
+        });
+        currentEl = el;
+        currentDispose = dispose;
+        return el;
+    }
+
+    /**
+     * Hydration counterpart to {@link mountEl}: adopts the already-present
+     * server child instead of building a new one, inside its own root.
+     */
+    function adoptEl(): HTMLElement
+    {
+        let el!: HTMLElement;
+        let dispose!: DisposeFn;
+        createRoot((d) =>
+        {
+            dispose = d;
+            const cursor = new HydrationCursor(container);
+            const adopted = cursor.peekElement();
+            hydrateChild(props.children(), cursor);
+            el = adopted as HTMLElement;
         });
         currentEl = el;
         currentDispose = dispose;
@@ -449,7 +507,14 @@ export function Transition(props: TransitionProps): HTMLElement
             isFirstRun = false;
             if (shouldShow)
             {
-                mountEl();
+                if (hydrateFirstRun)
+                {
+                    adoptEl();
+                }
+                else
+                {
+                    mountEl();
+                }
             }
             return;
         }
@@ -482,6 +547,4 @@ export function Transition(props: TransitionProps): HTMLElement
     {
         unmountElImmediate();
     });
-
-    return container as unknown as HTMLElement;
 }

@@ -52,7 +52,7 @@
 // ============================================================================
 
 import type { Getter, DisposeFn } from '@azerothjs/reactivity';
-import { createSignal, createEffect, untrack } from '@azerothjs/reactivity';
+import { createSignal, createEffect, untrack, isStringMode } from '@azerothjs/reactivity';
 import { getClassDestroyHooks, setClassDestroyHooks } from './destroy-hooks.ts';
 
 /**
@@ -158,6 +158,14 @@ export abstract class AzerothComponent<P extends object = Record<string, unknown
 
         // Subclass fields are now initialized
         this._element = this.render();
+
+        // Server-side rendering: `_element` is a serialized SSRNode.
+        // Skip destroy-hook storage and onMount — server-side mounts
+        // must not run side effects.
+        if (isStringMode())
+        {
+            return;
+        }
 
         // Register destroy hook for destroyComponent(). We append
         // rather than overwrite so a wrapper component (or anything

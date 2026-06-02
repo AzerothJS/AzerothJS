@@ -36,9 +36,10 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { hydrateChild } from './h.ts';
 
 /**
  * Props for the Show component.
@@ -107,10 +108,50 @@ export interface ShowProps
  */
 export function Show(props: ShowProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // Evaluate `when` ONCE (no live effect), emit the active branch
+    // inside a contents-wrapper anchor the client hydrator can adopt.
+    if (isStringMode())
+    {
+        const factory = untrack(() => props.when()) ? props.children : props.fallback;
+        const inner = factory ? serializeChild(factory()) : '';
+        return wrapContents('show', inner) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the server-rendered wrapper span and its current branch on
+    // the first effect run; subsequent toggles use the normal DOM swap.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            driveShow(props, cursor.takeElement('span'), true);
+        }) as unknown as HTMLElement;
+    }
+
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    driveShow(props, container, false);
+
+    return container as unknown as HTMLElement;
+}
+
+/**
+ * Wires the reactive branch effect onto `container`. Shared by the DOM path
+ * (a freshly created span) and the hydration path (the adopted server span).
+ *
+ * @param props - The Show props
+ * @param container - The contents wrapper to render branches into
+ * @param hydrateFirstRun - When true, the FIRST effect run adopts the span's
+ *                          existing server children instead of appending new ones
+ *
+ * @internal
+ */
+function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: boolean): void
+{
     let branchDispose: DisposeFn | null = null;
+    let firstRun = hydrateFirstRun;
 
     createEffect(() =>
     {
@@ -119,6 +160,23 @@ export function Show(props: ShowProps): HTMLElement
         // the whole subtree (effects + components) disposes as one
         // unit on the next swap.
         const factory = props.when() ? props.children : props.fallback;
+
+        if (firstRun)
+        {
+            // Hydration first run: adopt the existing server children
+            // rather than building and appending new ones.
+            firstRun = false;
+            if (factory)
+            {
+                createRoot((d) =>
+                {
+                    branchDispose = d;
+                    hydrateChild(factory(), new HydrationCursor(container));
+                });
+            }
+            return teardownBranch;
+        }
+
         if (factory)
         {
             createRoot((d) =>
@@ -156,6 +214,4 @@ export function Show(props: ShowProps): HTMLElement
             }
         }
     }
-
-    return container as unknown as HTMLElement;
 }

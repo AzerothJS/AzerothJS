@@ -19,6 +19,7 @@
             "@azerothjs/reactivity": ["./packages/reactivity/src/index.ts"],
             "@azerothjs/renderer": ["./packages/renderer/src/index.ts"],
             "@azerothjs/component": ["./packages/component/src/index.ts"],
+            "@azerothjs/server": ["./packages/server/src/index.ts"],
             "@azerothjs/core": ["./packages/core/src/index.ts"],
             "@azerothjs/router": ["./packages/router/src/index.ts"],
             "@azerothjs/store": ["./packages/store/src/index.ts"],

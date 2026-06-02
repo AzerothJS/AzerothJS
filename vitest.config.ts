@@ -10,6 +10,7 @@ export default defineConfig({
             '@azerothjs/reactivity': path.resolve(__dirname, 'packages/reactivity/src/index.ts'),
             '@azerothjs/renderer': path.resolve(__dirname, 'packages/renderer/src/index.ts'),
             '@azerothjs/component': path.resolve(__dirname, 'packages/component/src/index.ts'),
+            '@azerothjs/server': path.resolve(__dirname, 'packages/server/src/index.ts'),
             '@azerothjs/router': path.resolve(__dirname, 'packages/router/src/index.ts'),
             '@azerothjs/store': path.resolve(__dirname, 'packages/store/src/index.ts'),
             '@azerothjs/form': path.resolve(__dirname, 'packages/form/src/index.ts'),

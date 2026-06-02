@@ -29,9 +29,19 @@
 // ============================================================================
 
 import type { Props, Child } from './types.ts';
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationNode, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import {
+    createEffect,
+    createRoot,
+    isStringMode,
+    isHydrating,
+    hydrationNode,
+    isHydrationNode,
+    HydrationCursor,
+    transferCarriedSymbols
+} from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { serializeElement } from './ssr.ts';
 
 /**
  * Set of props that must be set as DOM properties, not attributes.
@@ -109,6 +119,24 @@ const DOM_PROPERTIES = new Set
  */
 export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // In string mode there is no document: emit HTML directly. The
+    // SSRNode is cast to HTMLElement so it flows through composition
+    // (parent h() calls, control-flow children) exactly like a real
+    // element would in the DOM path.
+    if (isStringMode())
+    {
+        return serializeElement(tag, props, children) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Don't build DOM: return a descriptor that, when walked by
+    // hydrate(), adopts the matching server-rendered element in place.
+    if (isHydrating())
+    {
+        return createHydrationNode(tag, props, children) as unknown as HTMLElement;
+    }
+
     const el = document.createElement(tag);
 
     applyProps(el, props);
@@ -432,4 +460,172 @@ function buildNode(value: unknown): ChildNode
     }
 
     return document.createTextNode(String(value));
+}
+
+// ============================================================================
+// HYDRATION — adopt server-rendered DOM instead of creating it
+// ============================================================================
+
+/**
+ * Builds the hydration descriptor for an element. When walked by hydrate(),
+ * it claims the matching server element, attaches its props (event listeners,
+ * reactive-attribute effects, refs — via the same {@link applyProps} the DOM
+ * path uses, which is idempotent against already-rendered attributes),
+ * transfers any carried component destroy hooks onto the live element, and
+ * recurses into its children.
+ *
+ * @internal
+ */
+function createHydrationNode(tag: string, props: Props, children: Child[]): HydrationNode
+{
+    const node = hydrationNode((cursor: HydrationCursorType): void =>
+    {
+        const el = cursor.takeElement(tag);
+
+        applyProps(el, props);
+
+        // Component packages store destroy hooks on the value setup() returns —
+        // which, in hydrate mode, is THIS descriptor. Move them onto the real
+        // element so destroyComponent() finds them after hydration.
+        transferCarriedSymbols(node, el);
+
+        const childCursor = new HydrationCursor(el);
+        for (const child of children)
+        {
+            hydrateChild(child, childCursor);
+        }
+    });
+
+    return node;
+}
+
+/**
+ * Adopts a single child from `cursor`, mirroring {@link appendChild}'s dispatch
+ * but against existing server DOM:
+ *
+ *   - `null` / `undefined` / `false` → nothing was rendered, skip
+ *   - array                          → adopt each item in order
+ *   - {@link HydrationNode}          → delegate to its `hydrate`
+ *   - function (reactive hole)       → {@link adoptReactiveHole}
+ *   - string / number                → consume the existing text node
+ *
+ * @param child - The child to adopt
+ * @param cursor - The cursor over the parent's children
+ */
+export function hydrateChild(child: Child, cursor: HydrationCursorType): void
+{
+    if (child === null || child === undefined || child === false)
+    {
+        return;
+    }
+
+    if (Array.isArray(child))
+    {
+        for (const item of child)
+        {
+            hydrateChild(item, cursor);
+        }
+        return;
+    }
+
+    if (isHydrationNode(child))
+    {
+        child.hydrate(cursor);
+        return;
+    }
+
+    if (typeof child === 'function')
+    {
+        adoptReactiveHole(child as () => unknown, cursor);
+        return;
+    }
+
+    // Static text — the server already rendered it; just consume the node.
+    cursor.takeText();
+}
+
+/**
+ * Adopts a reactive child hole. The server wrapped the hole's output in
+ * comment anchors (`<!--[-->…<!--]-->`); this finds them, attaches the SAME
+ * patching effect the DOM path uses, and — crucially — does NOT mutate on the
+ * first run when the value already matches the server text (no flash, node
+ * identity preserved). Subsequent runs behave exactly like the DOM path.
+ *
+ * @internal
+ */
+function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): void
+{
+    cursor.takeOpenAnchor();
+    const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
+    const parent = cursor.parent;
+
+    // The hole's live anchor node — the single primitive text node in the
+    // common case. Extra nodes (an array-valued hole) are removed the first
+    // time the value is materialised as a real node.
+    let currentNode: ChildNode | null = content.length > 0 ? content[0] : null;
+    let extras: ChildNode[] = content.slice(1);
+
+    createEffect(() =>
+    {
+        let localDispose!: DisposeFn;
+        const value = createRoot((d) =>
+        {
+            localDispose = d;
+            return child();
+        });
+
+        // ── Primitive into the adopted text node ─────────────────
+        // The dominant case: a `() => `Count: ${ n() }`` hole. Keep the
+        // server's text node and only touch `.data` when it actually
+        // differs (so the initial run, where it matches, is a no-op).
+        if (currentNode !== null && currentNode.nodeType === 3 && isPrimitiveValue(value))
+        {
+            const text = primitiveToText(value);
+            if ((currentNode as Text).data !== text)
+            {
+                (currentNode as Text).data = text;
+            }
+            localDispose();
+            return;
+        }
+
+        // ── Materialise and swap ─────────────────────────────────
+        // Element/array values, an initially-empty hole, or a text↔element
+        // transition. Drop any extra adopted siblings first, then replace
+        // (or insert before the close anchor when the hole was empty).
+        for (const extra of extras)
+        {
+            if (extra.parentNode === parent)
+            {
+                parent.removeChild(extra);
+            }
+        }
+        extras = [];
+
+        const nextNode = buildNode(value);
+
+        if (currentNode !== null)
+        {
+            parent.replaceChild(nextNode, currentNode);
+            if (currentNode instanceof HTMLElement)
+            {
+                destroyComponent(currentNode);
+            }
+        }
+        else
+        {
+            parent.insertBefore(nextNode, closeAnchor);
+        }
+
+        currentNode = nextNode;
+
+        return () =>
+        {
+            localDispose();
+            if (nextNode instanceof HTMLElement)
+            {
+                destroyComponent(nextNode);
+            }
+        };
+    });
 }

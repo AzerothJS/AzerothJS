@@ -28,9 +28,10 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { hydrateChild } from './h.ts';
 
 /**
  * A single case in a Switch block.
@@ -127,9 +128,6 @@ export interface SwitchProps
 
 export function Switch(props: SwitchProps): HTMLElement
 {
-    const container = document.createElement('span');
-    container.style.display = 'contents';
-
     // Normalize once: a thunk is evaluated to its cases, and a lone
     // case is wrapped into an array. Building Match cases doesn't read
     // signals (only their `when` getters do, inside the effect below),
@@ -137,37 +135,99 @@ export function Switch(props: SwitchProps): HTMLElement
     const raw = typeof props.children === 'function' ? props.children() : props.children;
     const cases: MatchCase[] = Array.isArray(raw) ? raw : [raw];
 
+    // ── Server-side rendering ─────────────────────────────────
+    // Emit the first case whose `when` is true (read once), else the
+    // optional fallback — wrapped in a contents anchor for hydration.
+    if (isStringMode())
+    {
+        for (const matchCase of cases)
+        {
+            if (untrack(() => matchCase.when()))
+            {
+                return wrapContents('switch', serializeChild(matchCase.render())) as unknown as HTMLElement;
+            }
+        }
+
+        const fallbackInner = props.fallback ? serializeChild(props.fallback()) : '';
+        return wrapContents('switch', fallbackInner) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the wrapper span and its current matching case on the first
+    // effect run; subsequent condition changes use the normal DOM swap.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            driveSwitch(props, cases, cursor.takeElement('span'), true);
+        }) as unknown as HTMLElement;
+    }
+
+    const container = document.createElement('span');
+    container.style.display = 'contents';
+
+    driveSwitch(props, cases, container, false);
+
+    return container as unknown as HTMLElement;
+}
+
+/**
+ * Wires the case-selection effect onto `container`. Shared by the DOM path
+ * (a fresh span) and hydration (the adopted server span).
+ *
+ * @param props - The Switch props
+ * @param cases - The normalized list of Match cases
+ * @param container - The contents wrapper
+ * @param hydrateFirstRun - When true, the first run adopts the existing
+ *                          server children instead of building new ones
+ *
+ * @internal
+ */
+function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElement, hydrateFirstRun: boolean): void
+{
     let branchDispose: DisposeFn | null = null;
+    let firstRun = hydrateFirstRun;
 
     createEffect(() =>
     {
-        // Render the FIRST matching case inside its own root. We
-        // stop at the first match, so a lower case's condition is
-        // only tracked — and thus only triggers a re-render — when
-        // no higher case is already winning.
-        let matched = false;
+        // Find the first matching case — stopping at the first match means a
+        // lower case's condition is only tracked (and thus only triggers a
+        // re-render) when no higher case is already winning — else fallback.
+        let factory: (() => HTMLElement) | null = null;
         for (const matchCase of cases)
         {
             if (matchCase.when())
             {
-                matched = true;
-                createRoot((d) =>
-                {
-                    branchDispose = d;
-                    container.appendChild(matchCase.render());
-                });
+                factory = matchCase.render;
                 break;
             }
         }
 
-        // No case matched → render the optional fallback.
-        if (!matched && props.fallback)
+        if (!factory && props.fallback)
         {
-            const fallback = props.fallback;
+            factory = props.fallback;
+        }
+
+        if (firstRun)
+        {
+            firstRun = false;
+            if (factory)
+            {
+                createRoot((d) =>
+                {
+                    branchDispose = d;
+                    hydrateChild(factory(), new HydrationCursor(container));
+                });
+            }
+            return teardownBranch;
+        }
+
+        if (factory)
+        {
             createRoot((d) =>
             {
                 branchDispose = d;
-                container.appendChild(fallback());
+                container.appendChild(factory());
             });
         }
 
@@ -195,6 +255,4 @@ export function Switch(props: SwitchProps): HTMLElement
             }
         }
     }
-
-    return container as unknown as HTMLElement;
 }

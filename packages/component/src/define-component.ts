@@ -31,6 +31,7 @@
 // ============================================================================
 
 import type { Component, ComponentSetup, LifecycleHook } from './types.ts';
+import { isStringMode } from '@azerothjs/reactivity';
 import {
     getFunctionDestroyHooks,
     setFunctionDestroyHooks,
@@ -198,6 +199,16 @@ export function defineComponent<P extends object = Record<string, unknown>>(setu
             // Restore the outer context (supports nested components)
             currentMountHooks = previousMountHooks;
             currentDestroyHooks = previousDestroyHooks;
+        }
+
+        // Server-side rendering: `element` is a serialized SSRNode, not
+        // a live DOM node. Skip destroy-hook storage and DON'T run mount
+        // hooks — onMount side effects (timers, listeners, DOM access)
+        // must never fire on the server. Hooks run in 'dom' and
+        // 'hydrate' modes, where the element is real.
+        if (isStringMode())
+        {
+            return element;
         }
 
         // Store destroy hooks on the element so destroyComponent()

@@ -42,12 +42,18 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import {
     createSignal,
     createEffect,
     createRoot,
-    catchError
+    catchError,
+    isStringMode,
+    isHydrating,
+    runInMode,
+    serializeChild,
+    wrapContents,
+    hydrationNode
 } from '@azerothjs/reactivity';
 import { destroyComponent } from './define-component.ts';
 
@@ -127,6 +133,39 @@ interface ErrorState
  */
 export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // Render children; if they throw synchronously, fall back. A plain
+    // try/catch suffices on the server — there are no later effect runs
+    // to route through catchError, and reset() is a no-op in static HTML.
+    if (isStringMode())
+    {
+        let inner: string;
+        try
+        {
+            inner = serializeChild(props.children());
+        }
+        catch (err)
+        {
+            inner = serializeChild(props.fallback(err, () => undefined));
+        }
+        return wrapContents('errorboundary', inner) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the wrapper span, then rebuild the boundary's subtree fresh in
+    // DOM mode and swap it in. (The error-effect machinery lives outside the
+    // renderer, so v1 recreates the boundary's children rather than adopting
+    // them in place — a localized, one-time rebuild of matching content.)
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            const serverSpan = cursor.takeElement('span');
+            const real = runInMode('dom', () => ErrorBoundary(props));
+            serverSpan.parentNode?.replaceChild(real, serverSpan);
+        }) as unknown as HTMLElement;
+    }
+
     // Invisible container so the boundary doesn't disturb the
     // surrounding layout.
     const container = document.createElement('span');

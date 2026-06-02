@@ -53,7 +53,7 @@
 // ============================================================================
 
 import type { Resource } from '@azerothjs/reactivity';
-import { createMemo } from '@azerothjs/reactivity';
+import { createMemo, isStringMode, serializeChild, wrapContents } from '@azerothjs/reactivity';
 import { Show } from './show.ts';
 
 /**
@@ -139,6 +139,15 @@ export interface SuspenseProps
  */
 export function Suspense(props: SuspenseProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // Resources don't resolve within a synchronous render, so emit the
+    // fallback (async SSR is a later phase). The client resolves the
+    // resources and swaps in `children` after hydration.
+    if (isStringMode())
+    {
+        return wrapContents('suspense', serializeChild(props.fallback())) as unknown as HTMLElement;
+    }
+
     // Memo collapses N loading getters into one boolean. Show
     // re-evaluates `when` on signal change; the memo's structural
     // equality means Show's effect only re-runs when the answer

@@ -28,9 +28,10 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot, createSignal, onRootDispose } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { hydrateChild } from './h.ts';
 
 /**
  * Props for the For component.
@@ -160,8 +161,54 @@ export function For<T>(props: ForProps<T>): HTMLElement
 {
     const renderItem = props.children;
 
+    // ── Server-side rendering ─────────────────────────────────
+    // Map each item ONCE (index is static within a single render). Each row
+    // is a single element, so the client hydrator adopts them in order — no
+    // per-row markers needed.
+    if (isStringMode())
+    {
+        const items = untrack(() => props.each());
+        let inner = '';
+
+        for (let i = 0; i < items.length; i++)
+        {
+            const index = i;
+            inner += serializeChild(renderItem(items[index], () => index));
+        }
+
+        return wrapContents('for', inner) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the wrapper span and its existing rows on the first effect run;
+    // subsequent list changes use the normal keyed reconcile.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            driveFor(props, renderItem, cursor.takeElement('span'), true);
+        }) as unknown as HTMLElement;
+    }
+
     const container = document.createElement('span');
     container.style.display = 'contents';
+
+    driveFor(props, renderItem, container, false);
+
+    return container as unknown as HTMLElement;
+}
+
+/**
+ * Wires the keyed-list reconcile effect onto `container`. Shared by the DOM
+ * path (a fresh span) and hydration (the adopted server span). On a hydrating
+ * first run, each row is adopted from the existing server DOM (its key entry
+ * populated) and the reconcile passes are skipped — the DOM already matches.
+ *
+ * @internal
+ */
+function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], container: HTMLElement, hydrateFirstRun: boolean): void
+{
+    let firstRun = hydrateFirstRun;
 
     // Map of key → tracked entry (DOM element + per-item dispose).
     let keyMap = new Map<string | number, KeyEntry>();
@@ -169,6 +216,38 @@ export function For<T>(props: ForProps<T>): HTMLElement
     createEffect(() =>
     {
         const items = props.each();
+
+        // ── Hydration first run: adopt existing rows in order ────
+        if (firstRun)
+        {
+            firstRun = false;
+            const cursor = new HydrationCursor(container);
+            const adoptedMap = new Map<string | number, KeyEntry>();
+
+            for (let i = 0; i < items.length; i++)
+            {
+                const item = items[i];
+                const key = props.key(item, i);
+                const [index, setIndex] = createSignal(i);
+
+                let el!: HTMLElement;
+                let dispose!: DisposeFn;
+                createRoot((d) =>
+                {
+                    dispose = d;
+                    const rowDescriptor = renderItem(item, index);
+                    // The next element in the span IS this row; capture it
+                    // before the descriptor's hydrate consumes it.
+                    el = cursor.peekElement() as HTMLElement;
+                    hydrateChild(rowDescriptor, cursor);
+                });
+
+                adoptedMap.set(key, { el, dispose, setIndex });
+            }
+
+            keyMap = adoptedMap;
+            return;
+        }
         const newMap = new Map<string | number, KeyEntry>();
         const newOrder: HTMLElement[] = new Array(items.length);
 
@@ -261,6 +340,4 @@ export function For<T>(props: ForProps<T>): HTMLElement
         }
         keyMap.clear();
     });
-
-    return container as unknown as HTMLElement;
 }

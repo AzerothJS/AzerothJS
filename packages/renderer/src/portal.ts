@@ -40,8 +40,8 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createRoot, onRootDispose } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode, serializeChild, wrapContents, hydrationNode } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
 
 /**
@@ -144,6 +144,30 @@ export interface PortalProps
  */
 export function Portal(props: PortalProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // There is no document.body to escape into on the server, so emit
+    // the content INLINE where the portal is declared. The client
+    // relocates it to the real target on hydration.
+    if (isStringMode())
+    {
+        return wrapContents('portal', serializeChild(props.children())) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Portals can't escape their parent on the server, so the content was
+    // rendered inline. On the client, discard that inline copy and build the
+    // portal fresh (relocating content to its real target). v1 does not adopt
+    // portaled content in place.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            const serverSpan = cursor.takeElement('span');
+            const placeholder = runInMode('dom', () => Portal(props));
+            serverSpan.parentNode?.replaceChild(placeholder, serverSpan);
+        }) as unknown as HTMLElement;
+    }
+
     const children = props.children;
     const target = props.target ?? document.body;
 

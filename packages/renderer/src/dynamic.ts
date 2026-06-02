@@ -36,9 +36,10 @@
 //
 // ============================================================================
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot, untrack } from '@azerothjs/reactivity';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
+import { hydrateChild } from './h.ts';
 
 /**
  * Props for the Dynamic component.
@@ -110,10 +111,55 @@ export interface DynamicProps
  */
 export function Dynamic(dynamicProps: DynamicProps): HTMLElement
 {
+    // ── Server-side rendering ─────────────────────────────────
+    // Resolve the component and its props ONCE and emit its output,
+    // wrapped in a contents anchor for hydration.
+    if (isStringMode())
+    {
+        const Component = untrack(() => dynamicProps.component());
+        if (!Component)
+        {
+            return wrapContents('dynamic', '') as unknown as HTMLElement;
+        }
+
+        const resolvedProps = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
+        return wrapContents('dynamic', serializeChild(Component(resolvedProps))) as unknown as HTMLElement;
+    }
+
+    // ── Hydration ─────────────────────────────────────────────
+    // Adopt the wrapper span and its current component on the first
+    // effect run; a later component swap uses the normal DOM swap.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            driveDynamic(dynamicProps, cursor.takeElement('span'), true);
+        }) as unknown as HTMLElement;
+    }
+
     const container = document.createElement('span');
     container.style.display = 'contents';
 
+    driveDynamic(dynamicProps, container, false);
+
+    return container as unknown as HTMLElement;
+}
+
+/**
+ * Wires the component-swap effect onto `container`. Shared by the DOM path
+ * (a fresh span) and hydration (the adopted server span).
+ *
+ * @param dynamicProps - The Dynamic props
+ * @param container - The contents wrapper
+ * @param hydrateFirstRun - When true, the first run adopts the existing
+ *                          server children instead of building new ones
+ *
+ * @internal
+ */
+function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrateFirstRun: boolean): void
+{
     let branchDispose: DisposeFn | null = null;
+    let firstRun = hydrateFirstRun;
 
     // Track ONLY the component signal — we don't want a prop signal
     // change to tear down and rebuild the entire component tree.
@@ -133,11 +179,26 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
             // down and rebuild the whole component tree.
             const props = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
 
+            if (firstRun)
+            {
+                firstRun = false;
+                createRoot((d) =>
+                {
+                    branchDispose = d;
+                    hydrateChild(Component(props), new HydrationCursor(container));
+                });
+                return teardownBranch;
+            }
+
             createRoot((d) =>
             {
                 branchDispose = d;
                 container.appendChild(Component(props));
             });
+        }
+        else
+        {
+            firstRun = false;
         }
 
         // Single teardown path — runs before every re-render (swap)
@@ -163,6 +224,4 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
             }
         }
     }
-
-    return container as unknown as HTMLElement;
 }

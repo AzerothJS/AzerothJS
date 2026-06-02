@@ -8,8 +8,10 @@
         "packages/*"
     ],
     "scripts": {
-        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core",
+        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core",
         "dev": "tsc --watch",
+        "demo": "vite demo",
+        "demo:ssr": "tsx demo/ssr/server.ts",
         "test": "vitest",
         "prepublishOnly": "npm run build"
     },
@@ -36,6 +38,7 @@
         "globals": "^17.4.0",
         "happy-dom": "^20.8.9",
         "jiti": "^2.6.1",
+        "tsx": "^4.20.6",
         "typescript": "^6.0.2",
         "typescript-eslint": "^8.58.0",
         "vitest": "^4.1.2"

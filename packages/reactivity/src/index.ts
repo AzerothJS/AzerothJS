@@ -41,6 +41,30 @@ export { createResource } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
 export { catchError } from './catch-error.ts';
 
+export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
+export type { RenderMode } from './render-mode.ts';
+
+export {
+    isSSRNode,
+    ssr,
+    setSSRMarkers,
+    getSSRMarkers,
+    escapeText,
+    escapeAttr,
+    serializeChild,
+    wrapContents
+} from './ssr.ts';
+export type { SSRNode } from './ssr.ts';
+
+export {
+    isHydrationNode,
+    hydrationNode,
+    transferCarriedSymbols,
+    HydrationCursor,
+    HydrationMismatchError
+} from './hydration.ts';
+export type { HydrationNode } from './hydration.ts';
+
 export type { Resource } from './create-resource.ts';
 export type { Stream, StreamOptions, StreamParseMode } from './create-stream.ts';
 

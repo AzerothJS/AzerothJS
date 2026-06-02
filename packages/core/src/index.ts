@@ -41,7 +41,11 @@ export {
     createSelector,
     createResource,
     createStream,
-    catchError
+    catchError,
+    getRenderMode,
+    isStringMode,
+    isHydrating,
+    runInMode
 } from '@azerothjs/reactivity';
 
 export type {
@@ -58,7 +62,9 @@ export type {
     Resource,
     Stream,
     StreamOptions,
-    StreamParseMode
+    StreamParseMode,
+    RenderMode,
+    SSRNode
 } from '@azerothjs/reactivity';
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
@@ -66,6 +72,7 @@ export type {
 export {
     h,
     render,
+    hydrate,
     Show,
     For,
     Switch,
@@ -191,3 +198,13 @@ export type {
     OutletProps,
     NavigateApi
 } from '@azerothjs/router';
+
+// ── Server (SSR) ──────────────────────────────────────────────────────────────
+
+export {
+    renderToString,
+    renderToStaticMarkup,
+    renderToDocument
+} from '@azerothjs/server';
+
+export type { RenderToDocumentOptions } from '@azerothjs/server';
