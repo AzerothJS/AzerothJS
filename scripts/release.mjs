@@ -1,0 +1,314 @@
+#!/usr/bin/env node
+// Release helper for the AzerothJS monorepo.
+//
+// The whole monorepo is versioned in lockstep: every package and editor
+// integration shares one version, and every inter-package dependency is pinned
+// to that exact version. This script bumps that version everywhere, verifies the
+// build, commits, tags, pushes the tag to GitHub, and publishes the
+// @azerothjs/* packages to npm.
+//
+// Usage:
+//   npm run release -- <version> [options]
+//   node scripts/release.mjs <version> [options]
+//
+// Examples:
+//   npm run release -- 0.4.0-beta.2
+//   npm run release -- 1.0.0
+//   npm run release -- 0.5.0-rc.1 --dry-run
+//   npm run release -- 0.4.0-beta.1 --no-bump        # finish a release already bumped/tagged
+//
+// Options:
+//   --dry-run       Print every step without changing files, committing, or publishing.
+//   --skip-checks   Skip the build / lint / test gate (not recommended).
+//   --no-bump       Don't bump/commit/tag; just push the existing tag and publish.
+//   --no-push       Skip the git push.
+//   --no-publish    Skip the npm publish.
+//   --otp <code>    npm one-time password (2FA), forwarded to every publish.
+//   -y, --yes       Don't pause for the confirmation prompt.
+//
+// The npm dist-tag is derived from the version: a prerelease (1.2.0-beta.3) is
+// published under its prerelease id (`beta`); a stable version under `latest`.
+//
+// Editor integrations (editors/*) get their version bumped for consistency but
+// are not published to npm: the VS Code extension ships through vsce and the
+// JetBrains plugin through Gradle.
+
+import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import readline from 'node:readline';
+import path from 'node:path';
+import process from 'node:process';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Packages published to npm, in dependency order (dependencies first) so a
+// freshly published package can always resolve the ones it depends on.
+const PUBLISH_ORDER =
+[
+    'reactivity',
+    'component',
+    'renderer',
+    'server',
+    'router',
+    'store',
+    'form',
+    'compiler',
+    'core',
+    'language-service',
+    'language-server'
+];
+
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+function fail(message)
+{
+    console.error('release: ' + message);
+    process.exit(1);
+}
+
+function log(message)
+{
+    console.log(message);
+}
+
+/** Reads a command's stdout (used for read-only queries; always runs). */
+function query(command)
+{
+    return execSync(command, { cwd: ROOT, encoding: 'utf8' }).trim();
+}
+
+let dryRun = false;
+
+/** Runs a state-changing command, honouring --dry-run and forwarding stdio. */
+function act(command, extra)
+{
+    log('  $ ' + command);
+    if (dryRun)
+    {
+        return;
+    }
+    execSync(command, { cwd: ROOT, stdio: 'inherit', ...(extra ?? {}) });
+}
+
+/** Every file that carries the shared version (root, packages, editors). */
+function releaseFiles()
+{
+    const files = ['package.json', 'editors/vscode/package.json', 'editors/jetbrains/build.gradle.kts'];
+    for (const entry of readdirSync(path.join(ROOT, 'packages')))
+    {
+        const relative = path.join('packages', entry, 'package.json');
+        if (existsSync(path.join(ROOT, relative)))
+        {
+            files.push(relative);
+        }
+    }
+    return files;
+}
+
+/** The npm dist-tag implied by a version string. */
+function distTag(version)
+{
+    const dash = version.indexOf('-');
+    if (dash === -1)
+    {
+        return 'latest';
+    }
+    const id = version.slice(dash + 1).split('.')[0];
+    return /^[a-z]+$/i.test(id) ? id : 'next';
+}
+
+/**
+ * Replaces the current version string with the next one in every release file.
+ * Inter-package pins equal the package version, so a literal replace updates
+ * both `version` and the pins while leaving the file's formatting untouched.
+ */
+function bumpFiles(current, next)
+{
+    let total = 0;
+    for (const file of releaseFiles())
+    {
+        const full = path.join(ROOT, file);
+        const before = readFileSync(full, 'utf8');
+        const occurrences = before.split(current).length - 1;
+        if (occurrences === 0)
+        {
+            continue;
+        }
+        if (!dryRun)
+        {
+            writeFileSync(full, before.split(current).join(next));
+        }
+        total += occurrences;
+        log(`  ${ file }: ${ occurrences } occurrence(s)`);
+    }
+    if (total === 0)
+    {
+        fail(`current version ${ current } not found in any release file`);
+    }
+}
+
+function confirm(question)
+{
+    if (process.argv.includes('-y') || process.argv.includes('--yes') || dryRun || !process.stdin.isTTY)
+    {
+        return Promise.resolve(true);
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve =>
+    {
+        rl.question(question + ' (y/N) ', answer =>
+        {
+            rl.close();
+            resolve(/^y(es)?$/i.test(answer.trim()));
+        });
+    });
+}
+
+function parseArgs()
+{
+    const argv = process.argv.slice(2);
+    const options = { skipChecks: false, noBump: false, noPush: false, noPublish: false, otp: null, version: null };
+    for (let i = 0; i < argv.length; i++)
+    {
+        const arg = argv[i];
+        if (arg === '--dry-run')
+        {
+            dryRun = true;
+        }
+        else if (arg === '--skip-checks')
+        {
+            options.skipChecks = true;
+        }
+        else if (arg === '--no-bump')
+        {
+            options.noBump = true;
+        }
+        else if (arg === '--no-push')
+        {
+            options.noPush = true;
+        }
+        else if (arg === '--no-publish')
+        {
+            options.noPublish = true;
+        }
+        else if (arg === '-y' || arg === '--yes')
+        {
+            // Handled in confirm(); accepted here so it isn't treated as the version.
+            continue;
+        }
+        else if (arg === '--otp')
+        {
+            options.otp = argv[++i];
+        }
+        else if (arg.startsWith('--otp='))
+        {
+            options.otp = arg.slice('--otp='.length);
+        }
+        else if (arg.startsWith('-'))
+        {
+            fail('unknown option: ' + arg);
+        }
+        else if (options.version === null)
+        {
+            options.version = arg;
+        }
+        else
+        {
+            fail('unexpected argument: ' + arg);
+        }
+    }
+    return options;
+}
+
+const options = parseArgs();
+const next = options.version;
+
+if (!next)
+{
+    fail('a version is required, e.g. `npm run release -- 0.4.0-beta.2`');
+}
+if (!VERSION_PATTERN.test(next))
+{
+    fail(`"${ next }" is not a valid version (expected MAJOR.MINOR.PATCH[-prerelease])`);
+}
+
+const tag = 'v' + next;
+const current = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const tagExists = query('git tag -l ' + tag) === tag;
+
+log(`\nRelease ${ current } -> ${ next }`);
+log(`  git tag:   ${ tag }${ tagExists ? ' (already exists)' : '' }`);
+log(`  npm tag:   ${ distTag(next) }`);
+log(`  bump:      ${ options.noBump ? 'no' : 'yes' }`);
+log(`  push:      ${ options.noPush ? 'no' : 'yes' }`);
+log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' packages' }`);
+if (dryRun)
+{
+    log('  (dry run: nothing will be changed)');
+}
+
+if (!options.noBump)
+{
+    const status = query('git status --porcelain');
+    if (status && !dryRun)
+    {
+        fail('working tree is not clean; commit or stash first');
+    }
+    if (current === next)
+    {
+        fail(`version is already ${ next }; use --no-bump to publish it`);
+    }
+    if (tagExists)
+    {
+        fail(`tag ${ tag } already exists`);
+    }
+}
+
+if (!(await confirm('\nProceed?')))
+{
+    fail('aborted');
+}
+
+if (!options.noBump)
+{
+    log('\nBumping versions');
+    bumpFiles(current, next);
+    log('\nUpdating lockfile');
+    act('npm install --package-lock-only --no-audit --no-fund');
+}
+
+if (!options.skipChecks)
+{
+    log('\nVerifying (build, lint, test)');
+    act('npm run build');
+    act('npm run lint');
+    act('npx vitest run');
+}
+
+if (!options.noBump)
+{
+    log('\nCommitting and tagging');
+    act('git add -A');
+    act(`git commit -m "chore(release): ${ tag }"`);
+    act(`git tag -a ${ tag } -m "${ tag }"`);
+}
+
+if (!options.noPush)
+{
+    log('\nPushing to GitHub');
+    act('git push origin HEAD');
+    act('git push origin ' + tag);
+}
+
+if (!options.noPublish)
+{
+    log('\nPublishing to npm');
+    const otpFlag = options.otp ? ` --otp=${ options.otp }` : '';
+    for (const name of PUBLISH_ORDER)
+    {
+        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ distTag(next) }${ otpFlag }`);
+    }
+}
+
+log(`\nDone: ${ next }`);
