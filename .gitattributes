@@ -13,3 +13,15 @@
 *.zip binary
 *.gz  binary
 *.tar binary
+
+# --- GitHub language detection (Linguist) ---
+
+# .azeroth single-file components are TypeScript modules with JSX-style markup.
+# Highlight and count them as TSX so both the script and the markup render
+# correctly on GitHub (Linguist has no native .azeroth grammar).
+*.azeroth linguist-language=TSX
+
+# Bundled third-party TextMate grammars (vendored from Microsoft) should not
+# count toward the repository's language statistics.
+editors/jetbrains/src/main/resources/textmate/TypeScript.tmLanguage.json linguist-vendored
+editors/jetbrains/src/main/resources/textmate/TypeScriptReact.tmLanguage.json linguist-vendored
