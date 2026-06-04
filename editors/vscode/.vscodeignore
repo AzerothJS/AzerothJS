@@ -1,0 +1,8 @@
+.vscode/**
+src/**
+esbuild.mjs
+package.mjs
+bundle-smoke.mjs
+tsconfig.json
+**/*.map
+.gitignore

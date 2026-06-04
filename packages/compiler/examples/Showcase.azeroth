@@ -1,0 +1,140 @@
+import { createSignal, createMemo, createEffect, onCleanup, AzerothComponent } from '@azerothjs/core';
+
+/** A single todo item. */
+interface Todo
+{
+    id: number;
+    text: string;
+    done: boolean;
+}
+
+/** The filter applied to the visible list. */
+type Filter = 'all' | 'active' | 'done';
+
+/**
+ * One row of the list — a local component, so the editor can resolve `<TodoRow>`
+ * in the markup below (completion, hover, go-to-definition, find-references).
+ */
+function TodoRow(props: { todo: Todo; onToggle: (id: number) => void; onRemove: (id: number) => void })
+{
+    return (
+        <li class={props.todo.done ? 'todo done' : 'todo'}>
+            <label>
+                <input
+                    type="checkbox"
+                    checked={props.todo.done}
+                    onChange={() => props.onToggle(props.todo.id)}
+                />
+                <span class="text">{props.todo.text}</span>
+            </label>
+            <button class="remove" title="Remove" onClick={() => props.onRemove(props.todo.id)}>
+                ✕
+            </button>
+        </li>
+    );
+}
+
+/** The showcase component. */
+export default function Showcase()
+{
+    let nextId = 1;
+    const [todos, setTodos] = createSignal<Todo[]>([]);
+    const [draft, setDraft] = createSignal('');
+    const [filter, setFilter] = createSignal<Filter>('all');
+
+    // Derived reactive values — plain functions that read signals.
+    const remaining = createMemo(() => todos().filter(t => !t.done).length);
+    const visible = createMemo(() =>
+    {
+        const list = todos();
+        if (filter() === 'active') return list.filter(t => !t.done);
+        if (filter() === 'done') return list.filter(t => t.done);
+        return list;
+    });
+
+    createEffect(() =>
+    {
+        document.title = `${ remaining() } left`;
+        onCleanup(() => { document.title = 'AzerothJS'; });
+    });
+
+    function addTodo(): void
+    {
+        const text = draft().trim();
+        if (text === '') return;
+        setTodos(prev => [...prev, { id: nextId++, text, done: false }]);
+        setDraft('');
+    }
+
+    const toggle = (id: number): void =>
+        setTodos(prev => prev.map(t => (t.id === id ? { ...t, done: !t.done } : t)));
+
+    const remove = (id: number): void =>
+        setTodos(prev => prev.filter(t => t.id !== id));
+
+    return (
+        <section class="showcase">
+            <header>
+                <h1>Todos</h1>
+                <span class="count">{remaining()} remaining</span>
+            </header>
+
+            {/* Dynamic attribute + events; `value={draft()}` is a reactive prop. */}
+            <div class="add">
+                <input
+                    type="text"
+                    value={draft()}
+                    placeholder="What needs doing?"
+                    onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); }}
+                />
+                <button onClick={addTodo} disabled={draft().trim() === ''}>Add</button>
+            </div>
+
+            {/* Built-in control flow — auto-imported by the compiler. */}
+            <Show when={todos().length === 0} fallback={<p class="hint">{visible().length} shown</p>}>
+                <p class="empty">Nothing yet — add one above.</p>
+            </Show>
+
+            <nav class="filters">
+                <Switch>
+                    <Match when={filter() === 'all'}><strong>All</strong></Match>
+                    <Match when={filter() === 'active'}><strong>Active</strong></Match>
+                    <Match when={filter() === 'done'}><strong>Done</strong></Match>
+                </Switch>
+                <button onClick={() => setFilter('all')}>All</button>
+                <button onClick={() => setFilter('active')}>Active</button>
+                <button onClick={() => setFilter('done')}>Done</button>
+            </nav>
+
+            {/* Keyed list; the function child receives each item. */}
+            <ul class="list">
+                <For each={visible()} key={(todo) => todo.id}>
+                    {(todo) => <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />}
+                </For>
+            </ul>
+        </section>
+    );
+}
+
+export class Clock extends AzerothComponent
+{
+    private now = this.createSignal(new Date().toLocaleTimeString());
+
+    public override onMount(): void
+    {
+        const id = setInterval(() => this.now.set(new Date().toLocaleTimeString()), 1000);
+        onCleanup(() => clearInterval(id));
+    }
+
+    public override render()
+    {
+        return (
+            <div class="clock">
+                <span class="face">{this.now()}</span>
+                {/* attribute hole → reactive: title: () => `Updated ${this.now()}` */}
+                <small title={`Updated ${this.now()}`}>tick</small>
+            </div>
+        );
+    }
+}

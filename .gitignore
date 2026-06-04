@@ -32,3 +32,14 @@ coverage/
 
 # Logs
 *.log
+.claude
+
+# Gradle / JetBrains plugin build output (editors/jetbrains)
+.gradle/
+build/
+out/
+*.iml
+.intellijPlatform/
+
+# Packaged extension artifacts (also covered by dist/, kept explicit)
+*.vsix

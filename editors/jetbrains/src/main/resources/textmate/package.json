@@ -1,0 +1,44 @@
+{
+    "name": "azeroth-textmate",
+    "version": "0.3.0",
+    "displayName": "AzerothJS",
+    "engines":
+    {
+        "vscode": "*"
+    },
+    "contributes":
+    {
+        "languages":
+        [
+            {
+                "id": "azeroth",
+                "aliases":
+                [
+                    "AzerothJS",
+                    "azeroth"
+                ],
+                "extensions":
+                [
+                    ".azeroth"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars":
+        [
+            {
+                "language": "azeroth",
+                "scopeName": "source.azeroth",
+                "path": "./azeroth.tmLanguage.json"
+            },
+            {
+                "scopeName": "source.tsx",
+                "path": "./TypeScriptReact.tmLanguage.json"
+            },
+            {
+                "scopeName": "source.ts",
+                "path": "./TypeScript.tmLanguage.json"
+            }
+        ]
+    }
+}

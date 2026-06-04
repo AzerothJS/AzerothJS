@@ -14,7 +14,8 @@ export default defineConfig({
             '@azerothjs/router': path.resolve(__dirname, 'packages/router/src/index.ts'),
             '@azerothjs/store': path.resolve(__dirname, 'packages/store/src/index.ts'),
             '@azerothjs/form': path.resolve(__dirname, 'packages/form/src/index.ts'),
-            '@azerothjs/compiler': path.resolve(__dirname, 'packages/compiler/src/index.ts')
+            '@azerothjs/compiler': path.resolve(__dirname, 'packages/compiler/src/index.ts'),
+            '@azerothjs/language-service': path.resolve(__dirname, 'packages/language-service/src/index.ts')
         }
     },
     test:

@@ -6,41 +6,56 @@
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports": {
-        ".": {
+    "exports":
+    {
+        ".":
+        {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
-    "files": [
+    "files":
+    [
         "dist"
     ],
     "sideEffects": false,
-    "peerDependencies": {
+    "peerDependencies":
+    {
         "vite": ">=5"
     },
-    "peerDependenciesMeta": {
-        "vite": {
+    "peerDependenciesMeta":
+    {
+        "vite":
+        {
             "optional": true
         }
     },
-    "scripts": {
+    "scripts":
+    {
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "publishConfig": {
+    "publishConfig":
+    {
         "access": "public"
     },
-    "author": "IntelligentQuantum",
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
     "license": "MIT",
-    "repository": {
+    "repository":
+    {
         "type": "git",
         "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
         "directory": "packages/compiler"
     },
     "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/compiler",
-    "bugs": {
+    "bugs":
+    {
         "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
     }
 }

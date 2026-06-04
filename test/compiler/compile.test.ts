@@ -244,7 +244,7 @@ describe('compile() - source maps', () =>
 
 describe('compile() - example .azeroth files', () =>
 {
-    for (const name of ['Todo', 'Clock'])
+    for (const name of ['Showcase'])
     {
         it(`compiles examples/${ name }.azeroth with no residual markup`, () =>
         {

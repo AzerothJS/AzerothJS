@@ -1,0 +1,61 @@
+{
+    "name": "@azerothjs/language-server",
+    "version": "0.3.0-alpha.3",
+    "description": "AzerothJS language server — a Language Server Protocol front-end for .azeroth files",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "bin":
+    {
+        "azeroth-language-server": "./dist/cli.js"
+    },
+    "exports":
+    {
+        ".":
+        {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        },
+        "./cli": "./dist/cli.js"
+    },
+    "files":
+    [
+        "dist"
+    ],
+    "dependencies":
+    {
+        "@azerothjs/language-service": "0.3.0-alpha.3",
+        "typescript": ">=5",
+        "vscode-languageserver": "^9",
+        "vscode-languageserver-textdocument": "^1"
+    },
+    "scripts":
+    {
+        "build": "tsc -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "publishConfig":
+    {
+        "access": "public"
+    },
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "repository":
+    {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "directory": "packages/language-server"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/language-server",
+    "bugs":
+    {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+    }
+}

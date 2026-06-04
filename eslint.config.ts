@@ -4,7 +4,13 @@ import tseslint from 'typescript-eslint';
 import { defineConfig, globalIgnores } from 'eslint/config';
 
 export default defineConfig([
-    globalIgnores(['**/dist/**', '**/node_modules/**']),
+    globalIgnores([
+        '**/dist/**',
+        '**/node_modules/**',
+        '**/build/**',
+        '**/out/**',
+        '**/.intellijPlatform/**'
+    ]),
     tseslint.configs.recommended,
     {
         files: ['**/*.{js,mjs,cjs,ts,mts,cts}'],
@@ -21,7 +27,7 @@ export default defineConfig([
             'no-redeclare': 'off',
 
             'space-before-blocks': 'error',
-            'quotes': ['error', 'single'],
+            'quotes': ['error', 'single', { avoidEscape: true }],
             'key-spacing': 'error',
             'semi-spacing': 'error',
             'curly': ['error', 'all'],
@@ -68,6 +74,15 @@ export default defineConfig([
                 }
             ],
             '@typescript-eslint/consistent-type-definitions': ['error', 'interface']
+        }
+    },
+    {
+        // Return-type annotations can't be expressed in plain JavaScript, so the
+        // explicit-return-type rule only makes sense for TypeScript sources.
+        files: ['**/*.{js,mjs,cjs}'],
+        rules:
+        {
+            '@typescript-eslint/explicit-function-return-type': 'off'
         }
     }
 ]);

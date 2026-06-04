@@ -1,0 +1,229 @@
+{
+    "name": "azerothjs-vscode",
+    "displayName": "AzerothJS",
+    "description": "Language support for AzerothJS .azeroth files — completion, hover, diagnostics, and more, powered by the compiler.",
+    "version": "0.3.0-alpha.3",
+    "publisher": "azerothjs",
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "engines":
+    {
+        "vscode": "^1.84.0"
+    },
+    "categories":
+    [
+        "Programming Languages"
+    ],
+    "main": "./dist/extension.js",
+    "activationEvents":
+    [
+        "onLanguage:azeroth"
+    ],
+    "contributes":
+    {
+        "languages":
+        [
+            {
+                "id": "azeroth",
+                "aliases":
+                [
+                    "AzerothJS",
+                    "azeroth"
+                ],
+                "extensions":
+                [
+                    ".azeroth"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars":
+        [
+            {
+                "language": "azeroth",
+                "scopeName": "source.azeroth",
+                "path": "./syntaxes/azeroth.tmLanguage.json"
+            }
+        ],
+        "configuration":
+        {
+            "title": "AzerothJS",
+            "properties":
+            {
+                "azeroth.diagnostics.enable":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Report markup parse errors and TypeScript type errors in `.azeroth` files."
+                },
+                "azeroth.format.enable":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable document formatting for .azeroth files (script and expression regions)."
+                },
+                "azeroth.autoClosingTags":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically insert the closing tag when you type the '>' of an opening tag."
+                },
+                "azeroth.suggest.autoImports":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include not-yet-imported symbols in completion and add the import when one is accepted."
+                },
+                "azeroth.suggest.componentSnippets":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Expand built-in components to snippets on completion (e.g. `<For each={…} key={…}>{…}</For>`)."
+                },
+                "azeroth.inlayHints.enabled":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Master switch for inlay hints in .azeroth files."
+                },
+                "azeroth.inlayHints.parameterNames":
+                {
+                    "type": "string",
+                    "enum":
+                    [
+                        "none",
+                        "literals",
+                        "all"
+                    ],
+                    "enumDescriptions":
+                    [
+                        "No parameter-name hints.",
+                        "Only for literal arguments (numbers, strings, …).",
+                        "For all arguments."
+                    ],
+                    "default": "all",
+                    "description": "Show parameter-name hints at call sites."
+                },
+                "azeroth.inlayHints.parameterTypes":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show inferred types for un-annotated function parameters."
+                },
+                "azeroth.inlayHints.variableTypes":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Show inferred types for `const`/`let` declarations."
+                },
+                "azeroth.inlayHints.propertyDeclarationTypes":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show inferred types for class property declarations."
+                },
+                "azeroth.inlayHints.functionLikeReturnTypes":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show inferred return types for functions."
+                },
+                "azeroth.inlayHints.enumMemberValues":
+                {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show computed values for enum members."
+                },
+                "azeroth.trace.server":
+                {
+                    "type": "string",
+                    "enum":
+                    [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Traces the communication between VS Code and the AzerothJS language server."
+                }
+            }
+        },
+        "configurationDefaults":
+        {
+            "emmet.includeLanguages":
+            {
+                "azeroth": "javascriptreact"
+            },
+            "[azeroth]":
+            {
+                "editor.autoClosingBrackets": "always",
+                "editor.autoClosingQuotes": "always",
+                "editor.autoSurround": "languageDefined",
+                "editor.suggestOnTriggerCharacters": true,
+                "editor.quickSuggestions":
+                {
+                    "other": true,
+                    "comments": false,
+                    "strings": true
+                },
+                "editor.linkedEditing": true,
+                "editor.guides.bracketPairs": "active",
+                "editor.guides.bracketPairsHorizontal": true,
+                "editor.formatOnType": false
+            }
+        },
+        "semanticTokenScopes":
+        [
+            {
+                "language": "azeroth",
+                "scopes":
+                {
+                    "component":
+                    [
+                        "support.class.component.azeroth"
+                    ],
+                    "tag":
+                    [
+                        "entity.name.tag.azeroth"
+                    ],
+                    "attribute":
+                    [
+                        "entity.other.attribute-name.azeroth"
+                    ],
+                    "event":
+                    [
+                        "entity.other.attribute-name.event.azeroth"
+                    ]
+                }
+            }
+        ]
+    },
+    "dependencies":
+    {
+        "typescript": ">=5"
+    },
+    "devDependencies":
+    {
+        "@azerothjs/language-server": "0.3.0-alpha.3",
+        "vscode-languageclient": "^9",
+        "@types/vscode": "^1.84.0"
+    },
+    "scripts":
+    {
+        "build": "tsc -p tsconfig.json",
+        "bundle": "node esbuild.mjs",
+        "package": "node package.mjs",
+        "install-extension": "node package.mjs --install"
+    },
+    "repository":
+    {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "directory": "editors/vscode"
+    }
+}

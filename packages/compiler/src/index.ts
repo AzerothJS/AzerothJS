@@ -15,8 +15,19 @@
 
 export { compile, type CompileResult } from './compile.ts';
 export { CompileError, parseMarkup } from './parser.ts';
-export { findMarkupStart } from './scanner.ts';
-export { generate, type ExpressionCompiler } from './codegen.ts';
+export {
+    findMarkupStart,
+    isWhitespace,
+    isIdentStart,
+    isIdentPart,
+    skipBalanced,
+    skipString,
+    skipTemplate,
+    skipLineComment,
+    skipBlockComment,
+    skipRegex
+} from './scanner.ts';
+export { generate, walkComponentTags, type ExpressionCompiler } from './codegen.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
 export {
     vlqEncode,

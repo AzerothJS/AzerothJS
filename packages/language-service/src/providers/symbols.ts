@@ -1,0 +1,133 @@
+// Document symbols (the outline) and workspace symbols (project-wide search).
+// Both come from TypeScript's navigation APIs over the virtual module; spans
+// are mapped back to the original `.azeroth` source, and any symbol whose span
+// lives purely in generated scaffolding is dropped.
+
+import ts from 'typescript';
+import {
+    SymbolKind,
+    type DocumentSymbol,
+    type Position,
+    type SymbolKindValue,
+    type WorkspaceSymbol
+} from '../protocol.ts';
+import { resolveLocation, type RequestContext } from '../request.ts';
+import type { AzerothProject } from '../ts-project.ts';
+
+/** The outline for the document. */
+export function getDocumentSymbols(ctx: RequestContext): DocumentSymbol[]
+{
+    const tree = ctx.project.service.getNavigationTree(ctx.virtualFile);
+    if (!tree?.childItems)
+    {
+        return [];
+    }
+    return tree.childItems
+        .map(item => toDocumentSymbol(ctx, item))
+        .filter((s): s is DocumentSymbol => s !== null);
+}
+
+/** Recursively converts a TS navigation node to a DocumentSymbol. */
+function toDocumentSymbol(ctx: RequestContext, item: ts.NavigationTree): DocumentSymbol | null
+{
+    const span = item.spans[0];
+    if (!span)
+    {
+        return null;
+    }
+    // A declaration that contains markup straddles generated scaffolding, so its
+    // full span isn't one contiguous mapping. Map the two endpoints
+    // independently (both sit in verbatim script) to recover the source range.
+    const start = ctx.virtual.mapping.toOriginal(span.start);
+    const end = ctx.virtual.mapping.toOriginal(span.start + span.length);
+    if (start === null || end === null || end < start)
+    {
+        return null;
+    }
+    const fullRange = ctx.lineIndex.rangeAt(start, end);
+    const selectionRange = nameRange(ctx, item) ?? fullRange;
+    const children = (item.childItems ?? [])
+        .map(child => toDocumentSymbol(ctx, child))
+        .filter((s): s is DocumentSymbol => s !== null);
+
+    return {
+        name: item.text,
+        kind: tsKindToSymbolKind(item.kind),
+        range: fullRange,
+        selectionRange,
+        children: children.length > 0 ? children : undefined
+    };
+}
+
+/** Maps a navigation node's name span (the identifier) to a source range. */
+function nameRange(ctx: RequestContext, item: ts.NavigationTree): { start: Position; end: Position } | null
+{
+    const span = item.nameSpan;
+    if (!span)
+    {
+        return null;
+    }
+    const mapped = ctx.virtual.mapping.toOriginalRange(span.start, span.start + span.length);
+    return mapped === null ? null : ctx.lineIndex.rangeAt(mapped.start, mapped.end);
+}
+
+/** Project-wide symbol search. */
+export function getWorkspaceSymbols(project: AzerothProject, query: string): WorkspaceSymbol[]
+{
+    const items = project.service.getNavigateToItems(query, undefined, undefined, false);
+    const out: WorkspaceSymbol[] = [];
+    for (const item of items)
+    {
+        const location = resolveLocation(project, item.fileName, item.textSpan);
+        if (location === null)
+        {
+            continue;
+        }
+        out.push({
+            name: item.name,
+            kind: tsKindToSymbolKind(item.kind),
+            location,
+            containerName: item.containerName || undefined
+        });
+    }
+    return out;
+}
+
+/** Maps a TS ScriptElementKind to an LSP SymbolKind. */
+function tsKindToSymbolKind(kind: string): SymbolKindValue
+{
+    switch (kind)
+    {
+        case ts.ScriptElementKind.moduleElement:
+            return SymbolKind.Module;
+        case ts.ScriptElementKind.classElement:
+        case ts.ScriptElementKind.localClassElement:
+            return SymbolKind.Class;
+        case ts.ScriptElementKind.interfaceElement:
+            return SymbolKind.Interface;
+        case ts.ScriptElementKind.enumElement:
+            return SymbolKind.Enum;
+        case ts.ScriptElementKind.enumMemberElement:
+            return SymbolKind.EnumMember;
+        case ts.ScriptElementKind.functionElement:
+        case ts.ScriptElementKind.localFunctionElement:
+            return SymbolKind.Function;
+        case ts.ScriptElementKind.memberFunctionElement:
+        case ts.ScriptElementKind.constructorImplementationElement:
+            return SymbolKind.Method;
+        case ts.ScriptElementKind.memberVariableElement:
+        case ts.ScriptElementKind.memberGetAccessorElement:
+        case ts.ScriptElementKind.memberSetAccessorElement:
+            return SymbolKind.Property;
+        case ts.ScriptElementKind.variableElement:
+        case ts.ScriptElementKind.letElement:
+            return SymbolKind.Variable;
+        case ts.ScriptElementKind.constElement:
+            return SymbolKind.Constant;
+        case ts.ScriptElementKind.typeElement:
+        case ts.ScriptElementKind.typeParameterElement:
+            return SymbolKind.TypeParameter;
+        default:
+            return SymbolKind.Variable;
+    }
+}

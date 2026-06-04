@@ -12,21 +12,67 @@
         "declarationMap": true,
         "sourceMap": true,
         "outDir": "./dist",
-        "lib": ["ESNext", "DOM", "DOM.Iterable"],
+        "lib":
+        [
+            "ESNext",
+            "DOM",
+            "DOM.Iterable"
+        ],
         "allowImportingTsExtensions": true,
         "noEmit": true,
-        "paths": {
-            "@azerothjs/reactivity": ["./packages/reactivity/src/index.ts"],
-            "@azerothjs/renderer": ["./packages/renderer/src/index.ts"],
-            "@azerothjs/component": ["./packages/component/src/index.ts"],
-            "@azerothjs/server": ["./packages/server/src/index.ts"],
-            "@azerothjs/core": ["./packages/core/src/index.ts"],
-            "@azerothjs/router": ["./packages/router/src/index.ts"],
-            "@azerothjs/store": ["./packages/store/src/index.ts"],
-            "@azerothjs/form": ["./packages/form/src/index.ts"],
-            "@azerothjs/compiler": ["./packages/compiler/src/index.ts"]
+        "paths":
+        {
+            "@azerothjs/reactivity":
+            [
+                "./packages/reactivity/src/index.ts"
+            ],
+            "@azerothjs/renderer":
+            [
+                "./packages/renderer/src/index.ts"
+            ],
+            "@azerothjs/component":
+            [
+                "./packages/component/src/index.ts"
+            ],
+            "@azerothjs/server":
+            [
+                "./packages/server/src/index.ts"
+            ],
+            "@azerothjs/core":
+            [
+                "./packages/core/src/index.ts"
+            ],
+            "@azerothjs/router":
+            [
+                "./packages/router/src/index.ts"
+            ],
+            "@azerothjs/store":
+            [
+                "./packages/store/src/index.ts"
+            ],
+            "@azerothjs/form":
+            [
+                "./packages/form/src/index.ts"
+            ],
+            "@azerothjs/compiler":
+            [
+                "./packages/compiler/src/index.ts"
+            ],
+            "@azerothjs/language-service":
+            [
+                "./packages/language-service/src/index.ts"
+            ]
         }
     },
-    "include": ["packages/*/src/**/*", "test/**/*", "demo/**/*"],
-    "exclude": ["node_modules", "dist", "packages/*/dist"]
+    "include":
+    [
+        "packages/*/src/**/*",
+        "test/**/*"
+    ],
+    "exclude":
+    [
+        "node_modules",
+        "dist",
+        "packages/*/dist"
+    ]
 }

@@ -4,18 +4,22 @@
     "private": false,
     "description": "AzerothJS framework monorepo — fine-grained reactivity, zero Virtual DOM, direct DOM updates",
     "type": "module",
-    "workspaces": [
-        "packages/*"
+    "workspaces":
+    [
+        "packages/*",
+        "editors/*"
     ],
-    "scripts": {
-        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core",
+    "scripts":
+    {
+        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/language-server",
         "dev": "tsc --watch",
-        "demo": "vite demo",
-        "demo:ssr": "tsx demo/ssr/server.ts",
         "test": "vitest",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
         "prepublishOnly": "npm run build"
     },
-    "keywords": [
+    "keywords":
+    [
         "framework",
         "reactive",
         "signals",
@@ -25,13 +29,20 @@
         "typescript",
         "frontend"
     ],
-    "repository": {
+    "repository":
+    {
         "type": "git",
         "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git"
     },
-    "author": "IntelligentQuantum",
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
     "license": "MIT",
-    "devDependencies": {
+    "devDependencies":
+    {
         "@eslint/js": "^10.0.1",
         "@types/node": "^25.9.1",
         "eslint": "^10.4.1",
