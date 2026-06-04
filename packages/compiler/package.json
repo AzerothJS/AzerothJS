@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/compiler",
-    "version": "0.3.0-alpha.3",
+    "version": "0.4.0-beta.1",
     "description": "AzerothJS compiler — .azeroth SFC compiler (coming soon)",
     "type": "module",
     "main": "./dist/index.js",
