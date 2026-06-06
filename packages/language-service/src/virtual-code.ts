@@ -323,6 +323,13 @@ export function generateVirtualCode(source: string): VirtualCode
             // rename resolve the component symbol through TypeScript.
             const tagStart = node.start + 1;
             builder.copy(tagStart, tagStart + node.tag.length, 'tag');
+            // Always emit the `({ ... })` props object - even when empty - so
+            // attribute completion can query TypeScript inside it for the
+            // component's prop names. The shipped compiler emits a bare `Comp()`
+            // for the attribute-less case (Bug 2); the difference is invisible
+            // here because the generated `{ }` is unmapped scaffolding, so the
+            // "Expected 0 arguments" arity error it could provoke maps back to
+            // nothing and is dropped by the diagnostics provider.
             builder.emit('(');
             emitProps(node.attributes, emitComponentChildren(node.children), false);
             builder.emit(')');

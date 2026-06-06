@@ -186,10 +186,22 @@ export function serializeChild(child: unknown): string
 
     if (typeof child === 'function')
     {
-        // Reactive hole: read the value WITHOUT subscribing (no live effect
-        // on the server), then serialize it. The anchors let the client
-        // hydrator find the exact node span this getter owns.
-        const value = untrack(() => (child as () => unknown)());
+        // Reactive hole: read the value WITHOUT subscribing (no live effect on
+        // the server). Resolve WHILE it is a function so a
+        // getter-returning-a-getter (e.g. a `{ p.title }` hole the compiler
+        // emits as `() => (p.title)`, where p.title is itself `() => string`)
+        // collapses to its concrete value rather than serializing the inner
+        // function's source. Resolving here - rather than recursing through
+        // serializeChild - also keeps a SINGLE pair of `<!--[-->...<!--]-->`
+        // anchors, matching the one span the client hydrator adopts.
+        let value = untrack(() => (child as () => unknown)());
+        let depth = 0;
+        while (typeof value === 'function' && depth < 16)
+        {
+            const getter = value as () => unknown;
+            value = untrack(() => getter());
+            depth++;
+        }
         const inner = serializeChild(value);
         return markersOn ? `<!--[-->${ inner }<!--]-->` : inner;
     }

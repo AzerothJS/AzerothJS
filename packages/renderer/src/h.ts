@@ -144,7 +144,7 @@ function applyProps(el: HTMLElement, props: Props): void
         {
             createEffect(() =>
             {
-                const resolved = (value as () => unknown)();
+                const resolved = resolveReactive(value);
                 setProperty(el, key, resolved);
             });
             continue;
@@ -152,6 +152,36 @@ function applyProps(el: HTMLElement, props: Props): void
 
         setProperty(el, key, value);
     }
+}
+
+/**
+ * Resolves a reactive value to its final, concrete form by calling it while it
+ * is still a function. The common case is a single `() =>` wrapper, but the
+ * compiler wraps every compound/call attribute or child expression that way,
+ * and some of those expressions ALREADY evaluate to a getter:
+ * `classList()` / `styleMap()` return `() => string`, and a hole like
+ * `{ p.title }` (where `p.title` is itself a getter) compiles to `() => (p.title)`.
+ * Calling only once would hand the inner function to setProperty / buildNode,
+ * which stringify it - rendering `() => t("...")` source text into the DOM.
+ * Calling through to a non-function value fixes that.
+ *
+ * Reads happen inside the caller's effect, so every signal touched on the way
+ * down is tracked and the binding stays fine-grained. The bound is a guard
+ * against a pathological getter that returns a function forever; real chains
+ * are one or two deep.
+ *
+ * @internal
+ */
+function resolveReactive(value: unknown): unknown
+{
+    let resolved = value;
+    let depth = 0;
+    while (typeof resolved === 'function' && depth < 16)
+    {
+        resolved = (resolved as () => unknown)();
+        depth++;
+    }
+    return resolved;
 }
 
 /**
@@ -278,7 +308,7 @@ function appendChild(parent: HTMLElement, child: Child): void
             const value = createRoot((d) =>
             {
                 localDispose = d;
-                return (child as () => unknown)();
+                return resolveReactive(child);
             });
 
             // Fast path: primitive into the existing text node. The common
@@ -521,7 +551,7 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
         const value = createRoot((d) =>
         {
             localDispose = d;
-            return child();
+            return resolveReactive(child);
         });
 
         // Primitive into the adopted text node. The dominant case: a

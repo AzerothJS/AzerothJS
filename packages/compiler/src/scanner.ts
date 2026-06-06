@@ -304,6 +304,126 @@ function isExpressionPosition(prevChar: string, prevWord: string): boolean
 }
 
 /**
+ * Given `i` at a `<` that opens a possible type-parameter list, scans to the
+ * index just past the matching `>`, or -1 if it doesn't balance as an
+ * angle-bracket region. Nested generics (`Array<Map<K, V>>`) nest the depth;
+ * an `=>` inside a function-type constraint (`<T extends () => void>`) is
+ * stepped over so its `>` doesn't close the list; and `(...)`/`[...]`/`{...}`
+ * regions (e.g. an object-literal default `<T = { a: 1 }>`) are skipped whole
+ * so their contents never affect the angle depth.
+ *
+ * @internal
+ */
+function scanTypeParams(src: string, openIndex: number): number
+{
+    let depth = 0;
+    let i = openIndex;
+
+    while (i < src.length)
+    {
+        const ch = src[i];
+
+        if (ch === '/' && src[i + 1] === '/')
+        {
+            i = skipLineComment(src, i);
+            continue;
+        }
+        if (ch === '/' && src[i + 1] === '*')
+        {
+            i = skipBlockComment(src, i);
+            continue;
+        }
+        if (ch === '"' || ch === '\'')
+        {
+            i = skipString(src, i);
+            continue;
+        }
+        if (ch === '`')
+        {
+            i = skipTemplate(src, i);
+            continue;
+        }
+        if (ch === '(' || ch === '[' || ch === '{')
+        {
+            i = skipBalanced(src, i);
+            continue;
+        }
+        // An arrow inside a function-type constraint - step over it so the `>`
+        // of `=>` isn't counted as a closing angle bracket.
+        if (ch === '=' && src[i + 1] === '>')
+        {
+            i += 2;
+            continue;
+        }
+        if (ch === '<')
+        {
+            depth++;
+            i++;
+            continue;
+        }
+        if (ch === '>')
+        {
+            depth--;
+            i++;
+            if (depth === 0)
+            {
+                return i;
+            }
+            continue;
+        }
+        i++;
+    }
+
+    return -1;
+}
+
+/**
+ * Decides whether a `<` in expression position opens a generic arrow function's
+ * type-parameter list (`<T>(x) => x`, `<T extends U>(a: T): T => a`) rather than
+ * markup. TSX has the same ambiguity and resolves it the same way: a
+ * type-parameter list is followed by the arrow's parameter parenthesis, and then
+ * either a return-type annotation (`:`) or the arrow itself (`=>`). Markup never
+ * has that shape, so requiring all three keeps real elements (`<div>(x)</div>`)
+ * out.
+ *
+ * Returns the index just past the `<...>` type-parameter list when it is a
+ * generic arrow (so the caller can resume scanning the arrow body, which may
+ * itself contain markup), or -1 otherwise.
+ *
+ * @internal
+ */
+function tryGenericArrow(src: string, i: number): number
+{
+    const afterAngles = scanTypeParams(src, i);
+    if (afterAngles === -1)
+    {
+        return -1;
+    }
+
+    let k = afterAngles;
+    while (k < src.length && isWhitespace(src[k]))
+    {
+        k++;
+    }
+    if (src[k] !== '(')
+    {
+        return -1;
+    }
+
+    let m = skipBalanced(src, k);
+    while (m < src.length && isWhitespace(src[m]))
+    {
+        m++;
+    }
+    if (src[m] === ':' || (src[m] === '=' && src[m + 1] === '>'))
+    {
+        return afterAngles;
+    }
+
+    return -1;
+}
+
+/**
  * Finds the next `<` that begins a markup element/fragment in expression
  * position, scanning from `from` and correctly skipping all non-code spans.
  * Returns its index, or -1 if there is no more markup.
@@ -371,6 +491,23 @@ export function findMarkupStart(src: string, from: number): number
             const next = src[i + 1];
             if (isExpressionPosition(prevChar, prevWord) && (next === '>' || isIdentStart(next)))
             {
+                // A `<Ident...` in expression position is ambiguous: markup, or
+                // a generic arrow's type-parameter list (`<T>(x) => x`). The
+                // `<>` fragment is never a generic arrow, so only probe when a
+                // name follows.
+                if (next !== '>')
+                {
+                    const past = tryGenericArrow(src, i);
+                    if (past !== -1)
+                    {
+                        // Skip only the `<...>` list; the arrow body after it is
+                        // ordinary code that may still contain markup.
+                        prevChar = '>';
+                        prevWord = '';
+                        i = past;
+                        continue;
+                    }
+                }
                 return i;
             }
             prevChar = '<';

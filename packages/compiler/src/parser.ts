@@ -94,6 +94,18 @@ class MarkupParser
             return { kind: 'fragment', children, start, end: this.pos };
         }
 
+        // A `<` that is neither a fragment, a closing tag, nor the start of a
+        // tag name is a literal less-than in markup text - the single most
+        // common authoring mistake. Diagnose it where it sits instead of the
+        // opaque "Expected a tag name".
+        if (this.peek() !== '/' && !isIdentStart(this.peek()))
+        {
+            throw new CompileError(
+                'Unexpected \'<\' in markup; write a literal \'<\' as {\'<\'} or &lt;',
+                start
+            );
+        }
+
         const tag = this.readTagName();
         const attributes = this.parseAttributes();
         this.skipWs();
@@ -329,6 +341,20 @@ class MarkupParser
             this.pos++;
         }
         const raw = this.src.slice(start, this.pos);
+
+        // A `//` at the head of a text child is almost always a misplaced line
+        // comment (JSX/markup has no `//` comments; only `{/* ... */}`). A real
+        // URL never trips this: its scheme (`https:`) precedes the `//`. Point
+        // at the `//` rather than letting it render as literal text.
+        const lead = raw.length - raw.trimStart().length;
+        if (raw.slice(lead).startsWith('//'))
+        {
+            throw new CompileError(
+                'Line comments (//) are not allowed in markup; use {/* ... */} instead',
+                start + lead
+            );
+        }
+
         const value = MarkupParser.normalizeText(raw);
         if (value === '')
         {

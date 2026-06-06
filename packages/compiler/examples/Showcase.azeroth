@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, onCleanup, AzerothComponent } from '@azerothjs/core';
+import { createSignal, createMemo, createEffect, onCleanup, classList, styleMap, AzerothComponent } from '@azerothjs/core';
 
 /** A single todo item. */
 interface Todo
@@ -18,7 +18,12 @@ type Filter = 'all' | 'active' | 'done';
 function TodoRow(props: { todo: Todo; onToggle: (id: number) => void; onRemove: (id: number) => void })
 {
     return (
-        <li class={props.todo.done ? 'todo done' : 'todo'}>
+        // classList(): each class is included by a condition. A getter makes the
+        // class reactive, so `done` toggles on the element without rebuilding it.
+        <li class={classList({
+            'todo': true,
+            'done': () => props.todo.done
+        })}>
             <label>
                 <input
                     type="checkbox"
@@ -34,11 +39,23 @@ function TodoRow(props: { todo: Todo; onToggle: (id: number) => void; onRemove: 
     );
 }
 
-/** The showcase component. */
-export default function Showcase()
+/** Props for the showcase. Both optional, so `<Showcase />` works as-is. */
+interface ShowcaseProps
 {
-    let nextId = 1;
-    const [todos, setTodos] = createSignal<Todo[]>([]);
+    heading?: string;
+    initial?: Todo[];
+}
+
+// Functional components take their props as the first argument. The default
+// `= {}` lets the component be used with no attributes; read each prop where
+// it's needed (`props.heading` below) rather than destructuring up here, so
+// nothing is captured by value.
+/** The showcase component. */
+export default function Showcase(props: ShowcaseProps = {})
+{
+    // Seed `nextId` past any provided ids so new todos never collide.
+    let nextId = (props.initial?.reduce((max, t) => Math.max(max, t.id), 0) ?? 0) + 1;
+    const [todos, setTodos] = createSignal<Todo[]>(props.initial ?? []);
     const [draft, setDraft] = createSignal('');
     const [filter, setFilter] = createSignal<Filter>('all');
 
@@ -75,8 +92,19 @@ export default function Showcase()
     return (
         <section class="showcase">
             <header>
-                <h1>Todos</h1>
-                <span class="count">{remaining()} remaining</span>
+                <h1>{props.heading ?? 'Todos'}</h1>
+                {/* styleMap(): each CSS property is independently reactive. Getters
+                    re-evaluate when the signals they read change; camelCase keys
+                    (fontWeight) are converted to kebab-case (font-weight). */}
+                <span
+                    class="count"
+                    style={styleMap({
+                        color: () => remaining() === 0 ? '#080' : '#c00',
+                        fontWeight: 'bold'
+                    })}
+                >
+                    {remaining()} remaining
+                </span>
             </header>
 
             {/* Dynamic attribute + events; `value={draft()}` is a reactive prop. */}
@@ -117,7 +145,17 @@ export default function Showcase()
     );
 }
 
-export class Clock extends AzerothComponent
+/** Props for the class component below. */
+interface ClockProps
+{
+    label: string;
+}
+
+// Class components declare their props type as the generic parameter and read
+// them through `this.props` (a readonly field, available in field initializers
+// and every method). There is no separate getter/setter: the parent owns the
+// props object, so a child reads `this.props.x` and never assigns to it.
+export class Clock extends AzerothComponent<ClockProps>
 {
     private now = this.createSignal(new Date().toLocaleTimeString());
 
@@ -131,6 +169,7 @@ export class Clock extends AzerothComponent
     {
         return (
             <div class="clock">
+                <span class="label">{this.props.label}</span>
                 <span class="face">{this.now()}</span>
                 {/* attribute hole → reactive: title: () => `Updated ${this.now()}` */}
                 <small title={`Updated ${this.now()}`}>tick</small>

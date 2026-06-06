@@ -307,6 +307,14 @@ export function generate(node: MarkupElement | MarkupFragment, compileExpression
     if (node.isComponent)
     {
         const childrenEntry = generateComponentChildren(node.children, compileExpression);
+        // No attributes and no children -> a zero-argument call. Emitting
+        // `Comp({  })` instead would force every prop-less component to declare
+        // a props parameter (and the language service would flag the call as
+        // "Expected 0 arguments, but got 1").
+        if (node.attributes.length === 0 && childrenEntry === null)
+        {
+            return `${ node.tag }()`;
+        }
         const props = generateProps(node.attributes, compileExpression, childrenEntry ?? undefined);
         return `${ node.tag }(${ props })`;
     }

@@ -6,3 +6,4 @@
 // or an integration test that drives it through an in-memory connection).
 
 export { startServer } from './server.ts';
+export { runTsc, parseArgs, type TscOptions, type TscResult } from './tsc.ts';

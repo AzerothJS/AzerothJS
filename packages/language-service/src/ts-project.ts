@@ -97,11 +97,21 @@ export class AzerothProject
     /** Virtual names of every `.azeroth` file found in the workspace. */
     private readonly discovered: string[];
 
+    /**
+     * The consuming project's own ambient/global declaration files (`.d.ts`
+     * roots from the tsconfig's `include`/`files`). They are kept in the program
+     * so their global augmentations apply inside `.azeroth` - see
+     * {@link resolveProject}.
+     */
+    private readonly ambientFiles: string[];
+
     private projectVersion = 0;
 
     constructor(private readonly currentDirectory: string, configPath?: string)
     {
-        this.options = AzerothProject.resolveOptions(currentDirectory, configPath);
+        const resolved = AzerothProject.resolveProject(currentDirectory, configPath);
+        this.options = resolved.options;
+        this.ambientFiles = resolved.ambientFiles;
         this.intrinsicsFile = `${ currentDirectory.replace(/\\/g, '/').replace(/\/$/, '') }/${ INTRINSICS_BASENAME }`;
         this.discovered = this.discoverWorkspace();
         this.service = ts.createLanguageService(this.createHost(), ts.createDocumentRegistry());
@@ -199,7 +209,10 @@ export class AzerothProject
         // project instance; no alias is needed.
         const host: ts.LanguageServiceHost =
         {
-            getScriptFileNames: () => [this.intrinsicsFile, ...new Set([...this.openPaths().map(toVirtualFile), ...this.discovered])],
+            getScriptFileNames: () => [
+                this.intrinsicsFile,
+                ...new Set([...this.ambientFiles, ...this.openPaths().map(toVirtualFile), ...this.discovered])
+            ],
             getProjectVersion: () => String(this.projectVersion),
 
             getScriptVersion: (fileName) =>
@@ -334,32 +347,56 @@ export class AzerothProject
     }
 
     /**
-     * Discovers the nearest tsconfig and forces the options the virtual modules
-     * need (TS source, bundler resolution), keeping the project's `paths`.
+     * Discovers the nearest tsconfig and resolves both the compiler options the
+     * virtual modules need (TS source, bundler resolution - keeping the
+     * project's `paths`, `baseUrl`, `types`, `lib`) and the project's own
+     * ambient/global declaration files.
+     *
+     * The ambient files matter: a Vite app's `src/vite-env.d.ts` carries
+     * `/// <reference types="vite/client" />`, which augments `ImportMeta` with
+     * `.env` and declares the `*.css` / `?url` asset modules. That `.d.ts` is
+     * not a `.azeroth` file, so without explicitly adding it to the program its
+     * global augmentations would never apply inside `.azeroth` - and
+     * `import.meta.env.X` would wrongly report
+     * "Property 'env' does not exist on type 'ImportMeta'", even though `tsc`
+     * (which loads the same `.d.ts`) is happy.
      */
-    private static resolveOptions(currentDirectory: string, configPath?: string): ts.CompilerOptions
+    private static resolveProject(
+        currentDirectory: string,
+        configPath?: string
+    ): { options: ts.CompilerOptions; ambientFiles: string[] }
     {
         let options: ts.CompilerOptions = {};
+        let ambientFiles: string[] = [];
         const found = configPath ?? ts.findConfigFile(currentDirectory, ts.sys.fileExists, 'tsconfig.json');
         if (found)
         {
             const read = ts.readConfigFile(found, ts.sys.readFile);
             const parsed = ts.parseJsonConfigFileContent(read.config ?? {}, ts.sys, found.replace(/[\\/][^\\/]*$/, ''));
             options = parsed.options;
+            // Keep the project's ambient/global declaration roots so their
+            // augmentations (and ambient module declarations) apply inside
+            // `.azeroth`. Only `.d.ts` files - pulling in every project `.ts`
+            // would bloat the program and isn't needed for global typing.
+            ambientFiles = parsed.fileNames.filter(name => name.endsWith('.d.ts'));
         }
 
         return {
-            ...options,
-            allowJs: true,
-            checkJs: false,
-            noEmit: true,
-            jsx: ts.JsxEmit.Preserve,
-            module: options.module ?? ts.ModuleKind.ESNext,
-            target: options.target ?? ts.ScriptTarget.ESNext,
-            moduleResolution: options.moduleResolution ?? ts.ModuleResolutionKind.Bundler,
-            allowImportingTsExtensions: true,
-            skipLibCheck: true,
-            lib: options.lib ?? ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']
+            options:
+            {
+                ...options,
+                allowJs: true,
+                checkJs: false,
+                noEmit: true,
+                jsx: ts.JsxEmit.Preserve,
+                module: options.module ?? ts.ModuleKind.ESNext,
+                target: options.target ?? ts.ScriptTarget.ESNext,
+                moduleResolution: options.moduleResolution ?? ts.ModuleResolutionKind.Bundler,
+                allowImportingTsExtensions: true,
+                skipLibCheck: true,
+                lib: options.lib ?? ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']
+            },
+            ambientFiles
         };
     }
 }

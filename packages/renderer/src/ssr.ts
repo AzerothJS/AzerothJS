@@ -54,19 +54,29 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set
 const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
 
 /**
- * Resolves a possibly-reactive prop value to a concrete value, reading any
- * getter exactly ONCE without subscribing (no live effect on the server).
+ * Resolves a possibly-reactive prop value to a concrete value, reading getters
+ * without subscribing (no live effect on the server). Resolves WHILE the value
+ * is a function so a getter-returning-a-getter collapses to its concrete value
+ * - the server counterpart of the renderer's resolveReactive(). This is what
+ * makes `class={classList(...)}` / `style={styleMap(...)}` (which the compiler
+ * emits as `() => (classList(...))`) serialize to the resolved string instead
+ * of the inner function's source. The bound guards a pathological self-returning
+ * getter.
  *
  * @internal
  */
 function resolveValue(value: unknown): unknown
 {
-    if (typeof value === 'function')
+    let resolved = value;
+    let depth = 0;
+    while (typeof resolved === 'function' && depth < 16)
     {
-        return untrack(() => (value as () => unknown)());
+        const getter = resolved as () => unknown;
+        resolved = untrack(() => getter());
+        depth++;
     }
 
-    return value;
+    return resolved;
 }
 
 /**

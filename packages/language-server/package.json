@@ -8,7 +8,8 @@
     "types": "./dist/index.d.ts",
     "bin":
     {
-        "azeroth-language-server": "./dist/cli.js"
+        "azeroth-language-server": "./dist/cli.js",
+        "azeroth-tsc": "./dist/tsc-cli.js"
     },
     "exports":
     {
@@ -18,7 +19,8 @@
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         },
-        "./cli": "./dist/cli.js"
+        "./cli": "./dist/cli.js",
+        "./tsc": "./dist/tsc.js"
     },
     "files":
     [

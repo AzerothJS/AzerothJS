@@ -35,7 +35,23 @@ back any other host without this package.
 | --- | --- |
 | `server.ts` | LSP wiring: connection, capabilities, document sync, settings, and one handler per request. |
 | `cli.ts` | Executable entry point (`azeroth-language-server`); starts the server over stdio. |
-| `index.ts` | Library entry point; exports `startServer`. |
+| `tsc.ts` | `runTsc`: the batch type-checker behind the `azeroth-tsc` binary. |
+| `tsc-cli.ts` | Executable entry point (`azeroth-tsc`); runs one check and sets the exit code. |
+| `index.ts` | Library entry point; exports `startServer` and `runTsc`. |
+
+### `azeroth-tsc` (command-line type checking)
+
+`tsc` cannot parse `.azeroth`, so this package ships `azeroth-tsc`, the `vue-tsc`
+equivalent. It reuses the language service to compile each `.azeroth` file to its
+virtual TypeScript module, type-check it against the project's tsconfig, and print
+`tsc`-style diagnostics mapped back to the original `.azeroth` positions, exiting
+non-zero on the first error. It is a `--noEmit` gate (the Vite plugin / compiler
+owns code emit), meant to run in CI and pre-commit beside `tsc`:
+
+```sh
+npx azeroth-tsc            # check every .azeroth file under the cwd
+npx azeroth-tsc -p tsconfig.json
+```
 
 ### Settings
 

@@ -33,6 +33,44 @@ Scoped styles created with `css` are collected during rendering; the CSS flush
 helpers (`collectStyleSheet`, `resetStyleSheet`) are re-exported here so a server
 only needs to import from this package.
 
+## Supported SSR patterns
+
+What renders on the server, and how it behaves:
+
+- **Elements, attributes, text, fragments, nested components** - serialized to
+  HTML structurally identical to what the DOM path would build, so `hydrate()`
+  can adopt it node-for-node.
+- **Reactive props and holes** - a function prop/child is read once (no live
+  effect on the server) and resolved through while it is still a function, so
+  `class={classList(...)}`, `style={styleMap(...)}`, and a `{ p.title }` hole
+  whose value is itself a getter all serialize to their concrete string. With
+  markers on, a reactive hole is wrapped in exactly one `<!--[-->…<!--]-->`
+  anchor pair - the span the client hydrator adopts.
+- **Control flow** - `Show`, `For`, `Switch`, `Match`, and `Dynamic` each have a
+  string-mode path and wrap their output in a `display:contents` span carrying a
+  `data-azeroth-co` marker for hydration.
+- **Suspense** - resources cannot settle during a synchronous render, so the
+  fallback is emitted (wrapped in a hydration marker) and the client swaps in the
+  resolved children after hydration. There is no streaming/async SSR.
+
+### Escaping and XSS
+
+Text content and attribute values are always escaped (`escapeText` /
+`escapeAttr`), including the resolved output of reactive props, `classList`, and
+`styleMap`, and the `renderToDocument` `title`/`lang`. Attacker-controlled signal
+values therefore cannot break out of an attribute or open a tag.
+
+The deliberate escape hatches, with the same trust model as their client
+counterparts, are **not** escaped and must be sanitized by the caller: the
+`innerHTML` prop (like `el.innerHTML = x`) and the raw `head` / `bodyAttrs`
+options of `renderToDocument`.
+
+### Hydration mismatch
+
+If the server and client trees diverge structurally, `hydrate()` throws a
+`HydrationMismatchError`, warns in development, and falls back to a clean client
+render, so the app always boots.
+
 ## Components
 
 | File | Role |
@@ -79,4 +117,6 @@ hydrate(() => App({}), document.getElementById('app')!);
 
 Keep rendering a pure string emission with no DOM dependency, so it stays usable
 in any server runtime. Output that is meant to be hydrated must keep its markers
-consistent with the renderer's hydration cursor. Add tests under `test/server`.
+consistent with the renderer's hydration cursor. Tests live under `test/server`
+(string/document output, control flow, render mode, getter resolution, and the
+XSS escaping suite); add to them when changing serialization.

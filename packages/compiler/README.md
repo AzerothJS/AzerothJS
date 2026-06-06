@@ -94,6 +94,54 @@ export default {
 };
 ```
 
+## Authoring idiom and reactivity rules
+
+A component is a plain function that returns markup; there is no
+`defineComponent` wrapper. Props are the function's first argument, read where
+they are used so they stay reactive:
+
+```
+function Greeting(props: { name: string })
+{
+    return <p>Hello {props.name}</p>;
+}
+```
+
+How the compiler emits each dynamic `{expr}` decides whether it is reactive:
+
+- An event handler (`onClick={…}`), a function literal, a bare reference
+  (`draft`, `props.x`), or an array/object literal is passed through verbatim.
+- Any other expression is wrapped in a getter, `() => (expr)`, so the runtime
+  re-applies it when the signals it reads change. `value={draft()}` becomes
+  `value: () => (draft())`.
+
+`classList()` and `styleMap()` (from `@azerothjs/core`) return a getter, so a
+`class={classList({ active: isActive })}` ends up wrapped as a
+getter-returning-a-getter. The renderer resolves a reactive value by calling
+through while it is still a function, so this works without special-casing in
+the compiler - see `DECISIONS.md` (entry 1) for why the fix lives in the
+renderer rather than here.
+
+An attribute-less, child-less component tag compiles to a zero-argument call,
+`<Comp/>` -> `Comp()`, so a prop-less component never has to declare an unused
+props parameter (`DECISIONS.md`, entry 2).
+
+## Type checking
+
+The compiler only transforms markup; it does not type-check. `tsc` cannot parse
+`.azeroth`, so use `azeroth-tsc` (from `@azerothjs/language-server`) to gate a
+build, the same way `vue-tsc` does for Vue:
+
+```sh
+npx azeroth-tsc            # check every .azeroth file under the cwd
+npx azeroth-tsc -p tsconfig.json
+```
+
+It compiles each file to its virtual TypeScript module, type-checks it against
+the project's tsconfig, and prints `tsc`-style diagnostics mapped back to the
+original `.azeroth` positions, exiting non-zero on the first error. In the
+editor, `@azerothjs/language-service` provides the same analysis live.
+
 ## Examples
 
 `examples/Showcase.azeroth` is a single comprehensive `.azeroth` file (a function

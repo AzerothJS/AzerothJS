@@ -236,11 +236,33 @@ on its results.
 
 ## Configuration
 
-The service reads the nearest `tsconfig.json` for each file (including `paths`)
-and forces only the options the virtual modules require (TypeScript source,
-bundler-style module resolution). Per-feature toggles are passed in by the caller
-through `CompletionOptions` and `InlayHintOptions`; the server maps editor
-settings onto these.
+The service reads the nearest `tsconfig.json` for each file and analyses
+`.azeroth` against it exactly as `tsc` would a `.ts`: `compilerOptions.paths`,
+`baseUrl`, `types`, and `lib` are all honoured (the parsed options are spread
+through), and only the options the virtual modules require (TypeScript source,
+bundler-style module resolution, `noEmit`) are forced.
+
+The project's own ambient/global declaration roots - the `.d.ts` files the
+tsconfig already includes - are loaded into the program too. This is what makes a
+Vite app's `src/vite-env.d.ts` (`/// <reference types="vite/client" />`) apply
+inside `.azeroth`, so `import.meta.env.X`, `*.css`, and `?url` asset imports
+resolve in a `.azeroth` file the same way they do in a `.ts` file. Provide the
+tsconfig explicitly with `new AzerothLanguageService(dir, configPath)` when it is
+not the nearest one.
+
+Per-feature toggles are passed in by the caller through `CompletionOptions` and
+`InlayHintOptions`; the server maps editor settings onto these.
+
+### Command-line type checking (`azeroth-tsc`)
+
+For CI and pre-commit, `@azerothjs/language-server` ships an `azeroth-tsc` binary
+that batch-checks `.azeroth` files through this service and reports `tsc`-style
+diagnostics mapped to original positions, exiting non-zero on error:
+
+```sh
+npx azeroth-tsc            # check every .azeroth file under the cwd
+npx azeroth-tsc -p tsconfig.json
+```
 
 ## Examples
 
