@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/router",
-    "version": "0.4.0-beta.1",
+    "version": "0.4.0-beta.2",
     "description": "AzerothJS router — fine-grained reactive client-side routing with nested layouts",
     "type": "module",
     "main": "./dist/index.js",
@@ -27,9 +27,9 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.4.0-beta.1",
-        "@azerothjs/renderer": "0.4.0-beta.1",
-        "@azerothjs/component": "0.4.0-beta.1"
+        "@azerothjs/reactivity": "0.4.0-beta.2",
+        "@azerothjs/renderer": "0.4.0-beta.2",
+        "@azerothjs/component": "0.4.0-beta.2"
     },
     "publishConfig":
     {
