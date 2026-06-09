@@ -1,0 +1,11 @@
+{
+    "compilerOptions":
+    {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "strict": true,
+        "types": ["vite/client"],
+        "lib": ["ESNext", "DOM", "DOM.Iterable"]
+    }
+}

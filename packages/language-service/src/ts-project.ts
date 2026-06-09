@@ -58,6 +58,18 @@ export function toAzerothPath(virtualFile: string): string
     return virtualFile.slice(0, -3);
 }
 
+/**
+ * Normalizes a path to forward slashes - the separator TypeScript uses
+ * internally and the one `uriToPath` produces. Open-document keys and resolved
+ * module paths must agree on it: on Windows, `ts.sys.resolvePath` returns
+ * backslashes, so a raw compare against a forward-slash open-doc key would miss
+ * and a cross-file `.azeroth` import would wrongly resolve to `any`.
+ */
+function toSlashes(filePath: string): string
+{
+    return filePath.replace(/\\/g, '/');
+}
+
 /** An open document's source and monotonic version. */
 interface OpenDoc
 {
@@ -95,7 +107,25 @@ export class AzerothProject
     private readonly options: ts.CompilerOptions;
 
     /** Virtual names of every `.azeroth` file found in the workspace. */
-    private readonly discovered: string[];
+    private discovered: string[];
+
+    /**
+     * Memoized `getScriptFileNames` result. TS queries the root file list very
+     * frequently; the set only changes when `projectVersion` does (open/close or
+     * a workspace refresh), so we rebuild lazily and cache against that version.
+     */
+    private scriptNamesCache: { version: number; names: string[] } | null = null;
+
+    /**
+     * Per-file disk mtime cache for `getScriptVersion`. Without it every version
+     * query stats the disk; TS asks once per file per program build, so the same
+     * `.azeroth`/real file gets stat-ed repeatedly. The cache is valid for one
+     * `projectVersion` epoch - any edit (which bumps the version) clears it, so a
+     * genuine change is never masked.
+     */
+    private readonly mtimeCache = new Map<string, string>();
+
+    private mtimeCacheVersion = -1;
 
     /**
      * The consuming project's own ambient/global declaration files (`.d.ts`
@@ -146,17 +176,19 @@ export class AzerothProject
     /** Registers/updates an open `.azeroth` document. */
     public openDocument(azerothPath: string, source: string): void
     {
-        const prev = this.open.get(azerothPath);
-        this.open.set(azerothPath, { source, version: (prev?.version ?? 0) + 1 });
-        this.virtualCache.delete(azerothPath);
+        const key = toSlashes(azerothPath);
+        const prev = this.open.get(key);
+        this.open.set(key, { source, version: (prev?.version ?? 0) + 1 });
+        this.virtualCache.delete(key);
         this.projectVersion++;
     }
 
     /** Drops an open document (e.g. the editor closed it). */
     public closeDocument(azerothPath: string): void
     {
-        this.open.delete(azerothPath);
-        this.virtualCache.delete(azerothPath);
+        const key = toSlashes(azerothPath);
+        this.open.delete(key);
+        this.virtualCache.delete(key);
         this.projectVersion++;
     }
 
@@ -164,6 +196,19 @@ export class AzerothProject
     public openPaths(): string[]
     {
         return [...this.open.keys()];
+    }
+
+    /**
+     * Re-scans the workspace for `.azeroth` files and bumps the project version
+     * so the program picks up files created or deleted since startup. The
+     * editor/LSP should call this on a watched-file create/delete; without it a
+     * newly-added component would be invisible to cross-file completion and
+     * go-to-definition until the service restarts.
+     */
+    public refreshWorkspace(): void
+    {
+        this.discovered = this.discoverWorkspace();
+        this.projectVersion++;
     }
 
     /** The current source of a `.azeroth` document (open buffer or disk). */
@@ -179,27 +224,55 @@ export class AzerothProject
      */
     public getVirtual(azerothPath: string): VirtualCode
     {
-        const source = this.readAzeroth(azerothPath) ?? '';
-        const cached = this.virtualCache.get(azerothPath);
+        // Normalize so the cache key matches the forward-slash key openDocument
+        // stores - the read and write sides must agree (see toSlashes).
+        const key = toSlashes(azerothPath);
+        const source = this.readAzeroth(key) ?? '';
+        const cached = this.virtualCache.get(key);
         if (cached && cached.source === source)
         {
             return cached;
         }
         const built = generateVirtualCode(source);
         const entry: CachedVirtual = { ...built, source };
-        this.virtualCache.set(azerothPath, entry);
+        this.virtualCache.set(key, entry);
         return entry;
     }
 
     /** Reads a `.azeroth` source from the open set or disk. */
     private readAzeroth(azerothPath: string): string | undefined
     {
-        const doc = this.open.get(azerothPath);
+        // Look the open buffer up under the same forward-slash key openDocument
+        // writes; a backslash path would otherwise miss it and serve stale disk.
+        const doc = this.open.get(toSlashes(azerothPath));
         if (doc)
         {
             return doc.source;
         }
         return ts.sys.readFile(azerothPath);
+    }
+
+    /**
+     * Disk mtime as a version string, memoized for the current `projectVersion`
+     * epoch so repeated `getScriptVersion` queries don't re-stat the same file.
+     * Cleared on any edit (the version bump), so a real on-disk change is still
+     * seen on the next epoch.
+     */
+    private diskVersion(fileName: string): string
+    {
+        if (this.mtimeCacheVersion !== this.projectVersion)
+        {
+            this.mtimeCache.clear();
+            this.mtimeCacheVersion = this.projectVersion;
+        }
+        const cached = this.mtimeCache.get(fileName);
+        if (cached !== undefined)
+        {
+            return cached;
+        }
+        const version = String(ts.sys.getModifiedTime?.(fileName)?.getTime() ?? 0);
+        this.mtimeCache.set(fileName, version);
+        return version;
     }
 
     /** Builds the language service host backing the virtual project. */
@@ -209,10 +282,19 @@ export class AzerothProject
         // project instance; no alias is needed.
         const host: ts.LanguageServiceHost =
         {
-            getScriptFileNames: () => [
-                this.intrinsicsFile,
-                ...new Set([...this.ambientFiles, ...this.openPaths().map(toVirtualFile), ...this.discovered])
-            ],
+            getScriptFileNames: () =>
+            {
+                if (this.scriptNamesCache?.version === this.projectVersion)
+                {
+                    return this.scriptNamesCache.names;
+                }
+                const names = [
+                    this.intrinsicsFile,
+                    ...new Set([...this.ambientFiles, ...this.openPaths().map(toVirtualFile), ...this.discovered])
+                ];
+                this.scriptNamesCache = { version: this.projectVersion, names };
+                return names;
+            },
             getProjectVersion: () => String(this.projectVersion),
 
             getScriptVersion: (fileName) =>
@@ -224,16 +306,16 @@ export class AzerothProject
 
                 if (isVirtualFile(fileName))
                 {
-                    const azerothPath = toAzerothPath(fileName);
+                    const azerothPath = toSlashes(toAzerothPath(fileName));
                     const doc = this.open.get(azerothPath);
                     if (doc)
                     {
                         return `o${ doc.version }`;
                     }
-                    return `d${ ts.sys.getModifiedTime?.(azerothPath)?.getTime() ?? 0 }`;
+                    return `d${ this.diskVersion(azerothPath) }`;
                 }
 
-                return `${ ts.sys.getModifiedTime?.(fileName)?.getTime() ?? 0 }`;
+                return this.diskVersion(fileName);
             },
 
             getScriptSnapshot: (fileName) =>
@@ -284,7 +366,7 @@ export class AzerothProject
 
         if (isVirtualFile(fileName))
         {
-            const azerothPath = toAzerothPath(fileName);
+            const azerothPath = toSlashes(toAzerothPath(fileName));
             return this.open.has(azerothPath) || ts.sys.fileExists(azerothPath);
         }
 
@@ -327,8 +409,8 @@ export class AzerothProject
             const text = literal.text;
             if (text.endsWith('.azeroth') && (text.startsWith('.') || text.startsWith('/')))
             {
-                const dir = ts.sys.resolvePath(containingFile).replace(/[\\/][^\\/]*$/, '');
-                const candidate = ts.sys.resolvePath(`${ dir }/${ text }`);
+                const dir = toSlashes(ts.sys.resolvePath(containingFile)).replace(/\/[^/]*$/, '');
+                const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }`));
                 if (this.hostFileExists(toVirtualFile(candidate)))
                 {
                     return {
@@ -378,7 +460,28 @@ export class AzerothProject
             // augmentations (and ambient module declarations) apply inside
             // `.azeroth`. Only `.d.ts` files - pulling in every project `.ts`
             // would bloat the program and isn't needed for global typing.
-            ambientFiles = parsed.fileNames.filter(name => name.endsWith('.d.ts'));
+            const roots = parsed.fileNames.filter(name => name.endsWith('.d.ts'));
+
+            // Resolve `compilerOptions.types` the way tsc does (type reference
+            // directives -> typeRoots / node_modules) and include each resolved
+            // `.d.ts`. tsc loads these packages for their globals (e.g.
+            // "vite/client" -> node_modules/vite/client.d.ts, which augments
+            // `ImportMeta.env` and declares `*.png` / `?url`); including them
+            // explicitly makes those augmentations apply inside `.azeroth` even
+            // when the project has NO triple-slash `vite-env.d.ts`. The TS
+            // program already includes `types` automatically, but a language
+            // service host can miss them, so this guarantees parity with tsc.
+            for (const typeName of options.types ?? [])
+            {
+                const resolved = ts.resolveTypeReferenceDirective(typeName, found, options, ts.sys)
+                    .resolvedTypeReferenceDirective;
+                if (resolved?.resolvedFileName)
+                {
+                    roots.push(resolved.resolvedFileName);
+                }
+            }
+
+            ambientFiles = [...new Set(roots)];
         }
 
         return {

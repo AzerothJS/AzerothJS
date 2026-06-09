@@ -1,6 +1,5 @@
 package com.azerothjs
 
-import com.intellij.codeInsight.completion.CompletionParameters
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.extensions.PluginId
@@ -8,7 +7,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
-import com.intellij.platform.lsp.api.customization.LspCompletionSupport
 import kotlin.io.path.exists
 
 /**
@@ -40,24 +38,11 @@ private class AzerothLspServerDescriptor(project: Project) :
      *  `workspace/configuration` channel from the JetBrains client). */
     override fun createInitializationOptions(): Any = AzerothSettings.instance.toInitializationOptions()
 
-    /**
-     * Markup-aware completion prefix. JetBrains' default prefix stops at word
-     * boundaries, so a hyphenated/colon attribute (`aria-label`, `data-`,
-     * `xml:lang`) or a tag fragment would be matched against the wrong prefix
-     * and the server's HTML items dropped. Extend the prefix over `-`, `:`,
-     * `_`, `$` so those items match.
-     */
-    override val lspCompletionSupport: LspCompletionSupport = object : LspCompletionSupport() {
-        override fun getCompletionPrefix(parameters: CompletionParameters, default: String): String {
-            val text = parameters.editor.document.charsSequence
-            var start = parameters.offset
-            while (start > 0) {
-                val c = text[start - 1]
-                if (c.isLetterOrDigit() || c == '-' || c == ':' || c == '_' || c == '$') start-- else break
-            }
-            return text.subSequence(start, parameters.offset).toString()
-        }
-    }
+    // Note: the platform LSP API in this IDE build (242) exposes no completion-
+    // prefix customization hook (LspCompletionSupport has no getCompletionPrefix),
+    // so the server's completion uses the IDE's default prefix. Hyphenated/colon
+    // attributes (aria-label, data-, xml:lang) still complete via the server;
+    // only the client-side prefix matching uses platform defaults.
 
     /**
      * Locates the AzerothJS language server bundled inside this plugin

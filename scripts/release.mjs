@@ -23,11 +23,23 @@
 //   --no-bump       Don't bump/commit/tag; just push the existing tag and publish.
 //   --no-push       Skip the git push.
 //   --no-publish    Skip the npm publish.
+//   --no-promote-latest  Don't move the `latest` dist-tag to a prerelease.
+//   --promote-only  Only move `latest` to an already-published version (no
+//                   bump/push/publish). Fixes a `latest` left on an older beta:
+//                     node scripts/release.mjs 0.4.0-beta.2 --promote-only -y
 //   --otp <code>    npm one-time password (2FA), forwarded to every publish.
 //   -y, --yes       Don't pause for the confirmation prompt.
 //
 // The npm dist-tag is derived from the version: a prerelease (1.2.0-beta.3) is
 // published under its prerelease id (`beta`); a stable version under `latest`.
+//
+// Dist-tag policy: `npm publish --tag beta` leaves `latest` untouched, so a
+// plain `npm i @azerothjs/<pkg>` would install whatever `latest` last pointed at
+// (e.g. a stale earlier beta). Until a stable version ships there is no `latest`
+// line to protect, so after publishing a prerelease this script also moves
+// `latest` to the new version - keeping a fresh `npm i` current. Pass
+// `--no-promote-latest` once a real stable release exists and prereleases should
+// stay off `latest`.
 //
 // Editor integrations (editors/*) get their version bumped for consistency but
 // are not published to npm: the VS Code extension ships through vsce and the
@@ -56,6 +68,7 @@ const PUBLISH_ORDER =
     'compiler',
     'core',
     'language-service',
+    'typescript-plugin',
     'language-server'
 ];
 
@@ -168,7 +181,7 @@ function confirm(question)
 function parseArgs()
 {
     const argv = process.argv.slice(2);
-    const options = { skipChecks: false, noBump: false, noPush: false, noPublish: false, otp: null, version: null };
+    const options = { skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, otp: null, version: null };
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
@@ -191,6 +204,19 @@ function parseArgs()
         else if (arg === '--no-publish')
         {
             options.noPublish = true;
+        }
+        else if (arg === '--no-promote-latest')
+        {
+            options.promoteLatest = false;
+        }
+        else if (arg === '--promote-only')
+        {
+            // Move `latest` to an already-published version; change nothing else.
+            options.noBump = true;
+            options.noPush = true;
+            options.noPublish = true;
+            options.promoteLatest = true;
+            options.promoteOnly = true;
         }
         else if (arg === '-y' || arg === '--yes')
         {
@@ -237,9 +263,17 @@ const tag = 'v' + next;
 const current = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const tagExists = query('git tag -l ' + tag) === tag;
 
+// Promote `latest` only when this run actually publishes a prerelease, or when
+// the operator explicitly asked to move it (`--promote-only`). A bare
+// `--no-publish` must therefore NOT touch the registry, and a normal stable
+// release leaves it to `npm publish` (which sets `latest` itself).
+const willPromoteLatest = options.promoteLatest
+    && (options.promoteOnly || (!options.noPublish && distTag(next) !== 'latest'));
+
 log(`\nRelease ${ current } -> ${ next }`);
 log(`  git tag:   ${ tag }${ tagExists ? ' (already exists)' : '' }`);
 log(`  npm tag:   ${ distTag(next) }`);
+log(`  latest:    ${ willPromoteLatest ? 'promote -> ' + next : (distTag(next) === 'latest' && !options.noPublish ? 'set by publish' : 'left unchanged') }`);
 log(`  bump:      ${ options.noBump ? 'no' : 'yes' }`);
 log(`  push:      ${ options.noPush ? 'no' : 'yes' }`);
 log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' packages' }`);
@@ -305,10 +339,29 @@ if (!options.noPublish)
 {
     log('\nPublishing to npm');
     const otpFlag = options.otp ? ` --otp=${ options.otp }` : '';
+    const tagName = distTag(next);
     for (const name of PUBLISH_ORDER)
     {
-        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ distTag(next) }${ otpFlag }`);
+        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ tagName }${ otpFlag }`);
+    }
+}
+
+// Dist-tag policy: `npm publish --tag beta` does NOT move `latest`, so a plain
+// `npm i @azerothjs/<pkg>` would keep installing whatever `latest` happened to
+// point at - here, an older beta with the pre-fix code. Until a stable
+// (non-prerelease) version ships, `latest` must track the newest release so a
+// fresh consumer gets current code. A stable publish already sets `latest`, so
+// promotion only applies to prereleases. `--promote-only` fixes an
+// already-published version's `latest` without re-publishing.
+if (willPromoteLatest)
+{
+    log(`\nPromoting 'latest' -> ${ next } (newest release; pass --no-promote-latest to skip)`);
+    const otpAdd = options.otp ? ` --otp=${ options.otp }` : '';
+    for (const name of PUBLISH_ORDER)
+    {
+        act(`npm dist-tag add @azerothjs/${ name }@${ next } latest${ otpAdd }`);
     }
 }
 
 log(`\nDone: ${ next }`);
+log('Verify with: ' + PUBLISH_ORDER.map(n => `npm view @azerothjs/${ n } dist-tags`).slice(0, 1).join('') + '  (repeat per package)');

@@ -11,7 +11,7 @@
     ],
     "scripts":
     {
-        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/language-server",
+        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/typescript-plugin && npm run build -w @azerothjs/language-server",
         "dev": "tsc --watch",
         "test": "vitest",
         "lint": "eslint .",

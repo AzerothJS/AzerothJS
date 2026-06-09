@@ -19,6 +19,14 @@
     [
         "Programming Languages"
     ],
+    "keywords":
+    [
+        "azeroth",
+        "azerothjs",
+        "signals",
+        "reactivity",
+        "lsp"
+    ],
     "main": "./dist/extension.js",
     "activationEvents":
     [
@@ -26,6 +34,13 @@
     ],
     "contributes":
     {
+        "commands":
+        [
+            {
+                "command": "azeroth.restartServer",
+                "title": "AzerothJS: Restart Language Server"
+            }
+        ],
         "languages":
         [
             {
@@ -201,10 +216,18 @@
                     ]
                 }
             }
+        ],
+        "typescriptServerPlugins":
+        [
+            {
+                "name": "@azerothjs/typescript-plugin",
+                "enableForWorkspaceTypeScriptVersions": true
+            }
         ]
     },
     "dependencies":
     {
+        "@azerothjs/typescript-plugin": "0.4.0-beta.2",
         "typescript": ">=5"
     },
     "devDependencies":

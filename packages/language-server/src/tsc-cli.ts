@@ -4,7 +4,18 @@
 // pre-commit the same way `tsc --noEmit` does. All behaviour lives in the
 // testable `runTsc`.
 
-import { runTsc, parseArgs } from './tsc.ts';
+import { runTsc, watchTsc, parseArgs } from './tsc.ts';
 
-const { errorCount } = runTsc(parseArgs(process.argv.slice(2)));
-process.exit(errorCount > 0 ? 1 : 0);
+const options = parseArgs(process.argv.slice(2));
+
+if (options.watch)
+{
+    // The fs watcher keeps the event loop alive; the process stays up until the
+    // user interrupts it. Errors are reported each pass but don't exit the loop.
+    watchTsc(options);
+}
+else
+{
+    const { errorCount } = runTsc(options);
+    process.exit(errorCount > 0 ? 1 : 0);
+}

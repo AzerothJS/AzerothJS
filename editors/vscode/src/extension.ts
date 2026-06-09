@@ -51,6 +51,14 @@ export function activate(context: ExtensionContext): void
     client = new LanguageClient('azeroth', 'AzerothJS Language Server', serverOptions, clientOptions);
     client.start();
 
+    // A manual restart for when the server wedges (vscode-languageclient already
+    // auto-restarts on a crash and owns the "AzerothJS Language Server" output
+    // channel for its logs and the `azeroth.trace.server` trace).
+    context.subscriptions.push(vscode.commands.registerCommand('azeroth.restartServer', async () =>
+    {
+        await client?.restart();
+    }));
+
     // JSX-style tag auto-closing: after the user types `>`, ask the server
     // whether it completes an opening tag, and if so insert `</tag>` with the
     // caret left between the pair. (VS Code has no built-in tag close for

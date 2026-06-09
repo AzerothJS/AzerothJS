@@ -11,7 +11,7 @@
 //   node package.mjs --install  -> also installs it into VS Code
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, cpSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, cpSync, writeFileSync, readFileSync, copyFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,7 @@ run(process.execPath, [path.join(here, 'esbuild.mjs')], here);
 
 // 2) Stage a standalone copy outside the workspace.
 const stage = mkdtempSync(path.join(tmpdir(), 'azeroth-vsix-'));
-for (const entry of ['dist', 'syntaxes', 'language-configuration.json', 'README.md'])
+for (const entry of ['dist', 'syntaxes', 'language-configuration.json', 'README.md', 'LICENSE'])
 {
     cpSync(path.join(here, entry), path.join(stage, entry), { recursive: true });
 }
@@ -53,8 +53,25 @@ staged.dependencies = { typescript: pkg.dependencies?.typescript ?? '>=5' };
 writeFileSync(path.join(stage, 'package.json'), JSON.stringify(staged, null, 2));
 writeFileSync(path.join(stage, '.vscodeignore'), 'src/**\n**/*.map\n');
 
-// 4) Install the lone production dep locally (no hoisting), then package.
+// 4) Install the lone production dep locally (no hoisting).
 run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], stage);
+
+// 4b) Stage the TypeScript plugin physically under node_modules so the built-in
+// TS server can resolve the `typescriptServerPlugins` contribution by name. It
+// is bundled (self-contained CJS), so only its package.json + dist are needed.
+// Copy from the built workspace package rather than `npm install` so the vsix is
+// reproducible before the plugin is published.
+const pluginSrc = path.join(here, '..', '..', 'packages', 'typescript-plugin');
+const pluginDist = path.join(pluginSrc, 'dist', 'index.js');
+if (!existsSync(pluginDist))
+{
+    throw new Error(`missing ${ pluginDist } - run "npm run build -w @azerothjs/typescript-plugin" first`);
+}
+const pluginDest = path.join(stage, 'node_modules', '@azerothjs', 'typescript-plugin');
+cpSync(path.join(pluginSrc, 'dist'), path.join(pluginDest, 'dist'), { recursive: true });
+copyFileSync(path.join(pluginSrc, 'package.json'), path.join(pluginDest, 'package.json'));
+
+// 5) Package the .vsix.
 run('npx', ['--yes', '@vscode/vsce@latest', 'package'], stage);
 
 // 5) Copy the .vsix back into dist/.

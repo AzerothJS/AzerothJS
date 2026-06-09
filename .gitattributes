@@ -17,9 +17,12 @@
 # --- GitHub language detection (Linguist) ---
 
 # .azeroth single-file components are TypeScript modules with JSX-style markup.
-# Highlight and count them as TSX so both the script and the markup render
-# correctly on GitHub (Linguist has no native .azeroth grammar).
-*.azeroth linguist-language=TSX
+# Linguist has no native .azeroth grammar, so we render them with the closest
+# one (TSX) for readable highlighting, but mark them undetectable so they do NOT
+# count toward the repo's language statistics - AzerothJS is its own language,
+# not a TSX project. (A native "Azeroth" language requires an upstream
+# github/linguist submission once the framework clears its popularity bar.)
+*.azeroth linguist-language=TSX linguist-detectable=false
 
 # Bundled third-party TextMate grammars (vendored from Microsoft) should not
 # count toward the repository's language statistics.

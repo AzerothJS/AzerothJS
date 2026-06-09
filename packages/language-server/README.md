@@ -51,7 +51,37 @@ owns code emit), meant to run in CI and pre-commit beside `tsc`:
 ```sh
 npx azeroth-tsc            # check every .azeroth file under the cwd
 npx azeroth-tsc -p tsconfig.json
+npx azeroth-tsc --watch    # re-check on every .azeroth change (alias: -w)
 ```
+
+#### Build wiring
+
+`azeroth-tsc` checks `.azeroth`; `tsc` checks the surrounding `.ts`. Run both
+before bundling - the canonical consumer build is:
+
+```jsonc
+// package.json
+{
+    "scripts": {
+        "build": "tsc --noEmit && azeroth-tsc && vite build",
+        "typecheck": "tsc --noEmit && azeroth-tsc",
+        "dev:check": "azeroth-tsc --watch"
+    }
+}
+```
+
+With `@azerothjs/typescript-plugin` in the editor, `.ts` files importing
+`.azeroth` already get real types live; `azeroth-tsc` provides the matching gate
+on the command line and in CI.
+
+#### Follow-up: a single combined checker
+
+Today `tsc` and `azeroth-tsc` are two passes. A single `vue-tsc`-style binary
+that builds one program over `.ts` + `.azeroth` together (so a `.ts` barrel
+importing `.azeroth` is checked in the same run, without the editor plugin) is a
+tracked follow-up; the building block - presenting each `.azeroth` as its virtual
+TypeScript twin - is already shared by the language service and the
+typescript-plugin.
 
 ### Settings
 

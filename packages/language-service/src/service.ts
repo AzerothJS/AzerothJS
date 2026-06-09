@@ -92,6 +92,16 @@ export class AzerothLanguageService
         this.project.closeDocument(uriToPath(uri));
     }
 
+    /**
+     * Re-scans the workspace for `.azeroth` files. Call on a watched-file
+     * create/delete so newly-added components join the program (cross-file
+     * completion, go-to-definition, auto-import) without a restart.
+     */
+    public refreshWorkspace(): void
+    {
+        this.project.refreshWorkspace();
+    }
+
     /** Context-aware completion at a position. */
     public getCompletions(uri: string, position: Position, options?: CompletionOptions): CompletionItem[]
     {

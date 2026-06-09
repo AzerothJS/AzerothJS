@@ -1,6 +1,6 @@
 // Build with JDK 21 (set JAVA_HOME): `gradle buildPlugin`.
-// Builds against the locally-installed CLion (no IDE SDK download). Adjust the
-// `local(...)` path / `sinceBuild` for your IDE.
+// The target IDE is resolved from gradle.properties (platformType /
+// platformVersion) so the build is reproducible on CI and any machine.
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.4.0"
@@ -19,13 +19,39 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        local("C:/Users/IntelligentQuantum/AppData/Local/Programs/WebStorm")
+        // Reproducible by default: download the target IDE pinned in
+        // gradle.properties (platformType / platformVersion), so the build works
+        // on CI and any machine. For fast local iteration against an already
+        // installed IDE, pass `-PlocalIdePath=<path-to-IDE>` (no machine-specific
+        // path is baked into the build).
+        val localIdePath = providers.gradleProperty("localIdePath").orNull
+        if (localIdePath != null) {
+            local(localIdePath)
+        } else {
+            create(
+                providers.gradleProperty("platformType"),
+                providers.gradleProperty("platformVersion")
+            )
+        }
         bundledPlugin("org.jetbrains.plugins.textmate")
     }
 }
 
 kotlin {
     jvmToolchain(21)
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        version = project.version.toString()
+        ideaVersion {
+            // Lower bound from gradle.properties; leave the upper bound open so a
+            // young, LSP-only plugin keeps working in newer IDEs instead of being
+            // pinned to the build it happened to compile against.
+            sinceBuild = providers.gradleProperty("pluginSinceBuild")
+            untilBuild = provider { null }
+        }
+    }
 }
 
 // --- Bundle the AzerothJS language server INTO the plugin so it is fully
@@ -38,6 +64,16 @@ val serverBundle = layout.buildDirectory.dir("azeroth-server")
 val bundleServer by tasks.registering(Copy::class) {
     val serverJs = file("$rootDir/../vscode/dist/server.js")
     val typescript = file("$rootDir/../../node_modules/typescript")
+    // Fail loudly instead of shipping an empty `server/` folder (a plugin that
+    // silently can't start its language server).
+    doFirst {
+        if (!serverJs.exists()) {
+            throw GradleException(
+                "Missing ${serverJs.path}. Run `npm run bundle -w azerothjs-vscode` " +
+                    "first so the language server is bundled before packaging the plugin."
+            )
+        }
+    }
     from(serverJs) { into("server") }
     from(typescript) {
         into("server/node_modules/typescript")
