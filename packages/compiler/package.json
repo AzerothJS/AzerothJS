@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/compiler",
-    "version": "0.4.0-beta.2",
+    "version": "0.4.0-beta.3",
     "description": "AzerothJS compiler — .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
     "type": "module",
     "main": "./dist/index.js",
