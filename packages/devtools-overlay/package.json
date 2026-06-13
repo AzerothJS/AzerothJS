@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/devtools-overlay",
-    "version": "0.4.0-beta.3",
+    "version": "0.5.0-beta.1",
     "description": "AzerothJS dev error overlay — in-page panel for uncaught reactive errors",
     "type": "module",
     "main": "./dist/index.js",
@@ -27,7 +27,7 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.4.0-beta.3"
+        "@azerothjs/reactivity": "0.5.0-beta.1"
     },
     "publishConfig":
     {
