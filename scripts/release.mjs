@@ -56,10 +56,16 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Packages published to npm, in dependency order (dependencies first) so a
 // freshly published package can always resolve the ones it depends on.
+// devtools-overlay sits before compiler because compiler optionally peers on
+// it (the dev-serve error overlay); the dev tooling (devtools, testing,
+// eslint-plugin) goes after its own deps.
 const PUBLISH_ORDER =
 [
     'reactivity',
+    'devtools-overlay',
+    'devtools',
     'component',
+    'testing',
     'renderer',
     'server',
     'router',
@@ -69,7 +75,8 @@ const PUBLISH_ORDER =
     'core',
     'language-service',
     'typescript-plugin',
-    'language-server'
+    'language-server',
+    'eslint-plugin'
 ];
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

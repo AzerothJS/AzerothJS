@@ -87,6 +87,11 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // Dev server only: load the error overlay before the app, so
         // uncaught reactive errors surface in the page instead of dying in
         // the console. Builds are never touched.
+        //
+        // @azerothjs/devtools-overlay is an OPTIONAL peer dependency, so the
+        // injection is a dynamic import with a catch: a project that hasn't
+        // installed it just doesn't get the overlay, instead of a static
+        // import breaking the dev server's module graph.
         transformIndexHtml()
         {
             if (!serving || !overlay)
@@ -96,7 +101,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             return [{
                 tag: 'script',
                 attrs: { type: 'module' },
-                children: "import { installOverlay } from '@azerothjs/devtools-overlay';\ninstallOverlay();",
+                children: "import('@azerothjs/devtools-overlay').then(m => m.installOverlay()).catch(() => {});",
                 injectTo: 'head' as const
             }];
         },
