@@ -3,30 +3,33 @@
 // logging, network requests).
 //
 // Lifecycle: createEffect(fn) runs fn immediately; signal getters called
-// during the run subscribe this effect, each adding an unsubscribe closure to
-// `dependencies`. When a subscribed signal changes the effect re-runs: any
-// cleanups fire, every dependency is unsubscribed, and fn runs again,
-// re-subscribing to whatever it reads this time. dispose() does the same
-// teardown but without re-running.
-//
-// We re-subscribe from scratch on every run because dependencies can change
-// between runs. An effect that reads details() in one branch and summary() in
-// another must end up subscribed to exactly the signals it touched this time;
-// clearing and rebuilding the dependency set each run guarantees that.
+// during the run link this effect to their producer (see graph.ts). When a
+// subscribed signal changes the effect re-runs: any cleanups fire, then fn
+// runs under a fresh tracking cursor. Dependencies are NOT torn down and
+// rebuilt per run - links are kept in read order, a run that reads the same
+// signals costs one compare per read, and only dependencies the run stopped
+// reading are unlinked afterwards. dispose() runs the cleanups and unlinks
+// everything without re-running.
 
 import type { EffectFn, DisposeFn, CleanupFn, Subscriber, EffectOptions } from './types.ts';
-import { currentSubscriber, setCurrentSubscriber } from './signal.ts';
+import {
+    currentSubscriber,
+    setCurrentSubscriber,
+    currentCleanups,
+    setCurrentCleanups,
+    beginTrack,
+    endTrack,
+    unlinkAll,
+    depsChanged
+} from './graph.ts';
 import { isBatching, queueEffect } from './batch.ts';
 import { registerDisposer } from './create-root.ts';
-import { currentErrorHandler } from './catch-error.ts';
+import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
+import { devtoolsHook, nextDevtoolsId } from './devtools-hook.ts';
 
-/**
- * The cleanup array for the currently running effect, or `null` when no effect
- * is running. onCleanup() pushes to this during effect execution.
- *
- * @internal Managed by createEffect, read by onCleanup
- */
-export let currentCleanups: CleanupFn[] | null = null;
+// onCleanup() reads this live binding to find the running effect's cleanup
+// array; the state lives in graph.ts alongside the tracking context.
+export { currentCleanups } from './graph.ts';
 
 /**
  * Creates a reactive effect that runs immediately and re-runs whenever any
@@ -78,20 +81,34 @@ export let currentCleanups: CleanupFn[] | null = null;
  * });
  * ```
  */
-export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
+export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 {
     // Cleanups for the current run, from onCleanup() calls and from fn()'s
     // return value. All run before re-execution and on dispose.
     let cleanups: CleanupFn[] = [];
 
+    // False only for the initial run, which executes unconditionally; later
+    // notifications validate dependency versions first.
+    let hasRun = false;
+
+    let debugId = 0;
+    if (devtoolsHook)
+    {
+        debugId = nextDevtoolsId();
+        devtoolsHook.created({ id: debugId, kind: 'effect', name: options?.name });
+    }
+
     const subscriber: Subscriber =
     {
         execute: runEffect,
         isDisposed: false,
-        dependencies: new Set(),
+        deps: [],
+        cursor: -1,
+        activeRun: 0,
         // Captured once here - see types.ts on `Subscriber.errorHandler` for
         // why we don't re-read it on each run.
-        errorHandler: currentErrorHandler
+        errorHandler: currentErrorHandler,
+        name: options?.name
     };
 
     function runEffect(): void
@@ -107,26 +124,45 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
             return;
         }
 
-        for (const c of cleanups)
+        // Validate before doing any work: settle memo dependencies and
+        // compare versions. A notification that arrived through a memo whose
+        // recompute came out equal (or a batch that coalesced back to the
+        // same values) is skipped here - the body never runs, cleanups never
+        // fire.
+        if (hasRun && !depsChanged(subscriber))
         {
-            c();
+            return;
         }
-        cleanups = [];
 
-        // Unsubscribe from every current dependency before re-running, so a
-        // run that reads different signals doesn't keep stale subscriptions.
-        cleanupDependencies(subscriber);
+        if (debugId !== 0 && devtoolsHook)
+        {
+            devtoolsHook.run(debugId);
+        }
+
+        // Most effects never register a cleanup; don't reallocate the array
+        // on every run for them.
+        if (cleanups.length > 0)
+        {
+            for (const c of cleanups)
+            {
+                c();
+            }
+            cleanups = [];
+        }
 
         // Install this subscriber and cleanup array as the active context,
-        // saving the previous ones so nested effects restore correctly. While
-        // fn runs, signal getters add this subscriber to their subscriber set
-        // (and a matching unsubscribe to subscriber.dependencies), and
-        // onCleanup() pushes onto `cleanups`.
+        // saving the previous ones so nested effects restore correctly.
+        // While fn runs, signal getters link this subscriber to their
+        // producer (allocation-free when the read order is unchanged), and
+        // onCleanup() pushes onto `cleanups`. endTrack prunes only the
+        // dependencies this run stopped reading.
         const previousSubscriber = currentSubscriber;
         setCurrentSubscriber(subscriber);
 
         const previousCleanups = currentCleanups;
-        currentCleanups = cleanups;
+        setCurrentCleanups(cleanups);
+
+        beginTrack(subscriber);
 
         // Errors route through the handler captured when this effect was
         // created inside a `catchError` scope. With no captured handler they
@@ -147,6 +183,12 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
             {
                 subscriber.errorHandler(err);
             }
+            else if (uncaughtErrorHandler)
+            {
+                // Throw-time last resort (the dev overlay); see
+                // catch-error.ts for why this is not captured at creation.
+                uncaughtErrorHandler(err, { source: 'effect', name: subscriber.name });
+            }
             else
             {
                 throw err;
@@ -154,12 +196,27 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         }
         finally
         {
-            currentCleanups = previousCleanups;
+            endTrack(subscriber);
+            setCurrentCleanups(previousCleanups);
             setCurrentSubscriber(previousSubscriber);
+            hasRun = true;
         }
     }
 
-    runEffect();
+    // If the first run throws (and no catchError handler absorbs it), the
+    // caller never receives the disposer and the root never registers it -
+    // but signals read before the throw already hold this subscriber. Tear
+    // it down before rethrowing, or the half-subscribed effect lives (and
+    // throws again inside some setter) forever, with no handle to stop it.
+    try
+    {
+        runEffect();
+    }
+    catch (err)
+    {
+        dispose();
+        throw err;
+    }
 
     // Register with the current root (if any) so it can dispose this effect.
     registerDisposer(dispose);
@@ -179,30 +236,15 @@ export function createEffect(fn: EffectFn, _options?: EffectOptions): DisposeFn
         }
         cleanups = [];
 
-        // Unsubscribe from all signals - otherwise a disposed effect lingers
-        // in their subscriber sets and leaks.
-        cleanupDependencies(subscriber);
+        // Unlink from all producers - otherwise a disposed effect lingers
+        // in their subscriber lists and leaks.
+        unlinkAll(subscriber);
+
+        if (debugId !== 0 && devtoolsHook)
+        {
+            devtoolsHook.disposed(debugId);
+        }
     }
 
     return dispose;
-}
-
-/**
- * Removes a subscriber from every signal it subscribed to and clears its
- * dependency set. Each dependency closure removes the subscriber from one
- * signal's subscriber Set; running them all is what keeps disposed and
- * re-running effects from leaking.
- *
- * @param subscriber - The subscriber to clean up
- *
- * @internal
- */
-function cleanupDependencies(subscriber: Subscriber): void
-{
-    for (const unsubscribe of subscriber.dependencies)
-    {
-        unsubscribe();
-    }
-
-    subscriber.dependencies.clear();
 }

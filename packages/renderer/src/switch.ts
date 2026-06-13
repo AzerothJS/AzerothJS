@@ -207,10 +207,11 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
             firstRun = false;
             if (factory)
             {
+                const build = factory;
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(factory(), new HydrationCursor(container));
+                    hydrateChild(untrack(build), new HydrationCursor(container));
                 });
             }
             return teardownBranch;
@@ -218,10 +219,15 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
 
         if (factory)
         {
+            const build = factory;
             createRoot((d) =>
             {
                 branchDispose = d;
-                container.appendChild(factory());
+                // untrack: only the `when` conditions drive this effect. A
+                // synchronous signal read inside the case's render function
+                // must not subscribe the selection effect - that would
+                // rebuild the branch on every change of that signal.
+                container.appendChild(untrack(build));
             });
         }
 

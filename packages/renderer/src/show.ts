@@ -160,7 +160,7 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(factory(), new HydrationCursor(container));
+                    hydrateChild(untrack(factory), new HydrationCursor(container));
                 });
             }
             return teardownBranch;
@@ -171,7 +171,13 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
             createRoot((d) =>
             {
                 branchDispose = d;
-                container.appendChild(factory());
+                // untrack: only `when` drives this effect. A synchronous
+                // signal read inside the factory must not subscribe the
+                // branch effect, or that signal would tear down and rebuild
+                // the whole branch (losing focus/scroll state) on every
+                // change. Inner reactive children still track normally -
+                // they run under their own effects.
+                container.appendChild(untrack(factory));
             });
         }
 

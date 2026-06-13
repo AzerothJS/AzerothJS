@@ -101,26 +101,47 @@ export default {
 ## Type checking and editors
 
 `tsc` cannot parse `.azeroth`, so the toolchain provides two complementary
-pieces:
+pieces - one for the command line, one for the editor.
 
-- `azeroth-tsc` (from `@azerothjs/language-server`) type-checks `.azeroth` files
-  on the command line, mapping diagnostics back to original positions. Run it in
-  CI alongside `tsc`:
+- `azeroth-tsc` (from `@azerothjs/language-server`) is a combined `.ts` +
+  `.azeroth` checker - the `vue-tsc` equivalent. It builds ONE TypeScript program
+  containing both your real `.ts` files and every `.azeroth` file (compiled to a
+  virtual module), so a `.ts` file importing `'./x.component.azeroth'` resolves
+  the component's real default/named/type exports, `.azeroth` files are checked,
+  and diagnostics map back to original positions. It REPLACES `tsc`:
 
   ```sh
-  npx azeroth-tsc            # check every .azeroth file
+  npx azeroth-tsc            # check the whole project (.ts + .azeroth)
   npx azeroth-tsc --watch    # re-check on change
   ```
 
-  A canonical consumer build is `tsc --noEmit && azeroth-tsc && vite build`.
+  The canonical consumer build is one checker plus the bundler:
 
-- `@azerothjs/typescript-plugin`, registered in `tsconfig.json`, makes the
-  editor's TypeScript server resolve `.azeroth` imports from `.ts` files with
-  their real exported types (no `declare module '*.azeroth'` shim needed):
+  ```jsonc
+  // package.json
+  { "scripts": { "build": "azeroth-tsc && vite build" } }
+  ```
+
+  No `declare module '*.azeroth'` shim and - with Vite installed - no
+  `vite-env.d.ts` or `"types": ["vite/client"]` entry are needed:
+  `import.meta.env`, `*.png`/`?url` asset imports, and cross-file `.azeroth`
+  types all resolve.
+
+- `@azerothjs/typescript-plugin`, registered in `tsconfig.json`, gives the
+  editor's built-in TypeScript server the same `.ts` -> `.azeroth` resolution
+  (so `.ts` barrels type-check live, no shim):
 
   ```json
   { "compilerOptions": { "plugins": [{ "name": "@azerothjs/typescript-plugin" }] } }
   ```
+
+  `.azeroth` files themselves get full intelligence - completion, hover,
+  diagnostics, typed component tags (`<Modal title={...} />` is checked against
+  the component's props), go-to-definition - from the language server.
+
+Component imports use the explicit `.azeroth` extension
+(`import Modal from './modal.component.azeroth'`); an extensionless specifier is
+a normal "cannot find module" error.
 
 The VS Code extension and JetBrains plugin under `editors/` bundle the language
 server and contribute the TypeScript plugin.
@@ -137,8 +158,7 @@ npm run lint         # ESLint
 ```
 
 Tests live under `test/`. The release flow is scripted in `scripts/release.mjs`
-(`npm run release -- <version>`); see `DECISIONS.md` for the non-obvious design
-decisions behind the compiler, language service, and tooling.
+(`npm run release -- <version>`).
 
 ## License
 

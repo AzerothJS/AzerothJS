@@ -130,6 +130,49 @@ describe('createMemo()', () =>
         expect(user()).toEqual({ id: 2, name: 'A' });
     });
 
+    it('does not recompute while nobody reads it', () =>
+    {
+        const computeFn = vi.fn((x: number) => x * 2);
+        const [count, setCount] = createSignal(1);
+        const doubled = createMemo(() => computeFn(count()));
+
+        // Eager first compute at creation.
+        expect(computeFn).toHaveBeenCalledTimes(1);
+
+        // Writes only mark the memo stale - no reader, no recompute.
+        setCount(2);
+        setCount(3);
+        setCount(4);
+        expect(computeFn).toHaveBeenCalledTimes(1);
+
+        // The first read settles it, once, with the CURRENT value.
+        expect(doubled()).toBe(8);
+        expect(computeFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not re-run reader effects when a recompute comes out equal', () =>
+    {
+        const [price, setPrice] = createSignal(9.25);
+        const floored = createMemo(() => Math.floor(price()));
+
+        let runs = 0;
+        createEffect(() =>
+        {
+            floored();
+            runs++;
+        });
+        expect(runs).toBe(1);
+
+        // The signal changed, the memo recomputed, the VALUE did not -
+        // the effect must not run.
+        setPrice(9.75);
+        expect(runs).toBe(1);
+
+        // A real change propagates.
+        setPrice(10.5);
+        expect(runs).toBe(2);
+    });
+
     it('should store a function value verbatim, not invoke it as an updater', () =>
     {
         const [enabled, setEnabled] = createSignal(true);

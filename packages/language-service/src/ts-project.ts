@@ -135,16 +135,44 @@ export class AzerothProject
      */
     private readonly ambientFiles: string[];
 
+    /**
+     * The consuming project's real `.ts` source files (from the tsconfig).
+     * AzerothJS projects are `.ts` + `.azeroth` (the `.azeroth` language replaces
+     * `.tsx`). The editor doesn't root these - they enter the program on demand
+     * via imports - but the combined command-line checker does
+     * ({@link rootProjectFiles}), so a `.ts` file importing a `.azeroth`
+     * component is type-checked in the SAME program as the `.azeroth` files.
+     */
+    private readonly projectFiles: string[];
+
+    /** When true, {@link projectFiles} are program roots (the CLI checker). */
+    private readonly rootProjectFiles: boolean;
+
     private projectVersion = 0;
 
-    constructor(private readonly currentDirectory: string, configPath?: string)
+    constructor(
+        private readonly currentDirectory: string,
+        configPath?: string,
+        options: { rootProjectFiles?: boolean } = {}
+    )
     {
         const resolved = AzerothProject.resolveProject(currentDirectory, configPath);
         this.options = resolved.options;
         this.ambientFiles = resolved.ambientFiles;
+        this.projectFiles = resolved.projectFiles;
+        this.rootProjectFiles = options.rootProjectFiles ?? false;
         this.intrinsicsFile = `${ currentDirectory.replace(/\\/g, '/').replace(/\/$/, '') }/${ INTRINSICS_BASENAME }`;
         this.discovered = this.discoverWorkspace();
         this.service = ts.createLanguageService(this.createHost(), ts.createDocumentRegistry());
+    }
+
+    /**
+     * The consuming project's real `.ts` files (absolute, forward-slash). Used
+     * by the combined checker to iterate diagnostics over the `.ts` side.
+     */
+    public getProjectFiles(): readonly string[]
+    {
+        return this.projectFiles;
     }
 
     /** Path of the injected ambient declarations file. */
@@ -290,7 +318,12 @@ export class AzerothProject
                 }
                 const names = [
                     this.intrinsicsFile,
-                    ...new Set([...this.ambientFiles, ...this.openPaths().map(toVirtualFile), ...this.discovered])
+                    ...new Set([
+                        ...this.ambientFiles,
+                        ...(this.rootProjectFiles ? this.projectFiles : []),
+                        ...this.openPaths().map(toVirtualFile),
+                        ...this.discovered
+                    ])
                 ];
                 this.scriptNamesCache = { version: this.projectVersion, names };
                 return names;
@@ -446,16 +479,21 @@ export class AzerothProject
     private static resolveProject(
         currentDirectory: string,
         configPath?: string
-    ): { options: ts.CompilerOptions; ambientFiles: string[] }
+    ): { options: ts.CompilerOptions; ambientFiles: string[]; projectFiles: string[] }
     {
         let options: ts.CompilerOptions = {};
         let ambientFiles: string[] = [];
+        let projectFiles: string[] = [];
         const found = configPath ?? ts.findConfigFile(currentDirectory, ts.sys.fileExists, 'tsconfig.json');
         if (found)
         {
             const read = ts.readConfigFile(found, ts.sys.readFile);
             const parsed = ts.parseJsonConfigFileContent(read.config ?? {}, ts.sys, found.replace(/[\\/][^\\/]*$/, ''));
             options = parsed.options;
+            // The project's real source files (not `.d.ts`), so the combined
+            // checker can type-check the `.ts` side in the same program as the
+            // `.azeroth` files. AzerothJS projects are `.ts` + `.azeroth`.
+            projectFiles = parsed.fileNames.filter(name => !name.endsWith('.d.ts')).map(toSlashes);
             // Keep the project's ambient/global declaration roots so their
             // augmentations (and ambient module declarations) apply inside
             // `.azeroth`. Only `.d.ts` files - pulling in every project `.ts`
@@ -481,6 +519,21 @@ export class AzerothProject
                 }
             }
 
+            // Zero-config Vite: if `vite/client` resolves (Vite is installed),
+            // include its globals - `interface ImportMeta` (so `import.meta.env`
+            // works) and the asset module declarations (`*.png`, `*.svg`, `?url`,
+            // `?raw`, ...). This lets a consumer delete BOTH `src/vite-env.d.ts`
+            // and the `"types": ["vite/client"]` tsconfig entry and still have
+            // those resolve inside `.azeroth`. Harmless otherwise: resolution
+            // fails when Vite isn't installed (nothing added), and a duplicate
+            // (already pulled in via `types`/a `vite-env.d.ts`) is deduped below.
+            const viteClient = ts.resolveTypeReferenceDirective('vite/client', found, options, ts.sys)
+                .resolvedTypeReferenceDirective?.resolvedFileName;
+            if (viteClient)
+            {
+                roots.push(viteClient);
+            }
+
             ambientFiles = [...new Set(roots)];
         }
 
@@ -499,7 +552,8 @@ export class AzerothProject
                 skipLibCheck: true,
                 lib: options.lib ?? ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']
             },
-            ambientFiles
+            ambientFiles,
+            projectFiles
         };
     }
 }

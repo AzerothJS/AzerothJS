@@ -48,4 +48,41 @@ describe('azeroth() Vite plugin', () =>
         expect(plugin.name).toBe('azerothjs');
         expect(plugin.enforce).toBe('pre');
     });
+
+    it('emits lint warnings through the plugin context with positions', async () =>
+    {
+        const linted = azeroth();
+        const warnings: string[] = [];
+        const ctx = { warn: (msg: string): number => warnings.push(msg) };
+
+        await (linted.transform as unknown as (this: typeof ctx, code: string, id: string) => Promise<unknown>)
+            .call(ctx, 'const x = <button onClick={save()}>go</button>;', 'L.azeroth');
+
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('azeroth/handler-call');
+    });
+
+    it('injects the dev overlay during serve only', () =>
+    {
+        interface Hooks
+        {
+            configResolved: (config: { command: string }) => void;
+            transformIndexHtml: () => { children: string; attrs: { type: string } }[] | undefined;
+        }
+
+        const serve = azeroth() as unknown as Hooks;
+        serve.configResolved({ command: 'serve' });
+        const tags = serve.transformIndexHtml();
+        expect(tags).toHaveLength(1);
+        expect(tags![0].attrs.type).toBe('module');
+        expect(tags![0].children).toContain('installOverlay');
+
+        const build = azeroth() as unknown as Hooks;
+        build.configResolved({ command: 'build' });
+        expect(build.transformIndexHtml()).toBeUndefined();
+
+        const disabled = azeroth({ overlay: false }) as unknown as Hooks;
+        disabled.configResolved({ command: 'serve' });
+        expect(disabled.transformIndexHtml()).toBeUndefined();
+    });
 });

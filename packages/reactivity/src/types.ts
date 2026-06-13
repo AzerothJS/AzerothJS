@@ -21,38 +21,112 @@
 export type CleanupFn = () => void;
 
 /**
+ * A producer node in the reactive graph: anything consumers can subscribe
+ * to (a signal's value, a memo's cached result, a selector key).
+ *
+ * @internal
+ */
+export interface Producer
+{
+    /** Links to every subscribed consumer. A link knows its slot here, so
+     *  removal is one swap - no Set hashing on the hot path. */
+    subs: Link[];
+
+    /** Together with seenRun: which consumer's run last tracked this
+     *  producer, so a repeated read in the same run is two compares. */
+    seenConsumer: Subscriber | null;
+
+    /** The run stamp of that consumer's tracking run. */
+    seenRun: number;
+
+    /**
+     * Bumped every time this producer's VALUE actually changes (a signal
+     * write that passes `equals`, a memo recompute that produces a new
+     * value). Consumers compare it against their links' recorded versions
+     * to decide whether anything they read really changed.
+     */
+    version: number;
+
+    /**
+     * Present on memo producers: settles the memo (recompute if dirty)
+     * before its version is compared. Consumers call it during validation
+     * so a chain of clean memos costs version compares, not recomputes.
+     */
+    pull?: () => void;
+
+    /** Fired when the last subscriber unlinks; createSelector uses it to
+     *  drop empty per-key producers from its map. */
+    onUnsubscribed?: () => void;
+}
+
+/**
+ * One edge of the reactive graph, held by BOTH sides: the consumer keeps
+ * its links in read order, the producer in subscription order (with the
+ * link recording its slot for O(1) removal).
+ *
+ * @internal
+ */
+export interface Link
+{
+    /** The producer this edge subscribes to. */
+    producer: Producer;
+
+    /** The consumer this edge notifies. */
+    consumer: Subscriber;
+
+    /** This link's index in producer.subs. */
+    slot: number;
+
+    /** The producer's version when the consumer last read it. */
+    version: number;
+}
+
+/**
  * The internal representation of a reactive consumer (effect, memo) that gets
- * notified when signals it depends on change.
+ * notified when producers it depends on change.
  *
  * It's an interface rather than a plain function because we need to carry
- * lifecycle metadata (isDisposed, dependencies) alongside the callback.
+ * lifecycle metadata (isDisposed, deps) alongside the callback.
  *
- * The `dependencies` set is what makes cleanup cheap: without it, disposing an
- * effect would leave it in every signal's subscriber Set and leak. With it, we
- * can remove the subscriber from all its signals in one pass.
+ * Dependencies are kept across runs in read order: a run that reads the same
+ * producers in the same order touches no links at all (see graph.ts), and
+ * only links left unread at the end of a run are unlinked. Disposal walks
+ * `deps` to remove the consumer from every producer in one pass.
  */
 export interface Subscriber
 {
-    /** The function to execute when subscribed signals change */
+    /** The function to execute when subscribed producers change */
     execute: () => void;
 
     /** Whether this subscriber has been disposed */
     isDisposed: boolean;
 
+    /** Links to every producer this consumer reads, in read order. */
+    deps: Link[];
+
+    /** Position in `deps` during a tracked run; -1 outside a run. */
+    cursor: number;
+
+    /** Stamp of the current/most recent tracked run (see graph.ts runClock). */
+    activeRun: number;
+
     /**
-     * Set of cleanup callbacks for all signals this subscriber
-     * depends on. Each entry is a function that removes this
-     * subscriber from one signal's subscriber Set.
-     *
-     * Called during cleanup to prevent memory leaks.
+     * Present on memo nodes: invalidation entry point. notify() routes a
+     * producer change here instead of execute(), so memos mark themselves
+     * stale (and propagate the possibility downstream) without recomputing
+     * until something reads them. `maybe` is true when the change arrived
+     * THROUGH another memo - the upstream recompute may yet come out equal,
+     * so the node only goes maybe-dirty and validates on pull.
      */
-    dependencies: Set<() => void>;
+    notifyDirty?: (maybe: boolean) => void;
 
     /**
      * Error handler captured at subscriber-creation time. When this
      * subscriber's `execute()` throws, the error routes here instead of
      * propagating; `null` when no `catchError` scope was active at
-     * construction.
+     * construction. With no captured handler, the throw-time
+     * `uncaughtErrorHandler` (catch-error.ts) is consulted before
+     * propagating.
      *
      * Captured once, at construction, and never re-read - so an effect created
      * inside a `catchError` scope keeps routing errors to the same handler
@@ -61,6 +135,9 @@ export interface Subscriber
      * @internal
      */
     errorHandler: ((error: unknown) => void) | null;
+
+    /** Debug name from `EffectOptions.name`; surfaced by error tooling. */
+    name?: string;
 }
 
 /**
@@ -158,6 +235,9 @@ export interface SignalOptions<T>
 {
     /** Custom equality function. Defaults to Object.is */
     equals?: EqualsFn<T>;
+
+    /** Optional debug name, surfaced by devtools and error tooling. */
+    name?: string;
 }
 
 /**

@@ -178,7 +178,7 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(Component(props), new HydrationCursor(container));
+                    hydrateChild(untrack(() => Component(props)), new HydrationCursor(container));
                 });
                 return teardownBranch;
             }
@@ -186,7 +186,11 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
             createRoot((d) =>
             {
                 branchDispose = d;
-                container.appendChild(Component(props));
+                // untrack: only the `component` signal drives this effect.
+                // A synchronous signal read in the component's setup must
+                // not subscribe it, or that signal would rebuild the whole
+                // component tree on every change.
+                container.appendChild(untrack(() => Component(props)));
             });
         }
         else

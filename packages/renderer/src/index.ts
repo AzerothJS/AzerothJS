@@ -14,9 +14,12 @@
 //   classList()     Reactive CSS class binding
 //   styleMap()      Reactive inline style binding
 
-export { h } from './h.ts';
+export { h, bindHole, bindChild, bindProps } from './h.ts';
+export { tmpl } from './template.ts';
 export { render } from './render.ts';
 export { hydrate } from './hydrate.ts';
+export { hydrateIslands } from './islands.ts';
+export type { IslandRegistry, IslandComponent } from './islands.ts';
 export { Show } from './show.ts';
 export { For } from './for.ts';
 export { Switch, Match } from './switch.ts';

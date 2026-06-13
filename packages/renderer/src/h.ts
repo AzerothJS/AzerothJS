@@ -39,6 +39,7 @@ import {
 } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
 import { serializeElement } from './ssr.ts';
+import { delegateEvent, isDelegatedEvent } from './delegate.ts';
 
 /**
  * Set of props that must be set as DOM properties, not attributes.
@@ -119,10 +120,13 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
  *
  * @internal
  */
-function applyProps(el: HTMLElement, props: Props): void
+function applyProps(el: HTMLElement, props: Props, delegate = false): void
 {
-    for (const [key, value] of Object.entries(props))
+    // for...in over Object.entries: this runs once per element created, and
+    // entries() allocates an array of [key, value] tuples each call.
+    for (const key in props)
     {
+        const value = props[key];
         // `ref` is never a DOM attribute: it hands the freshly-created element
         // back to the caller. Must run before the reactive-function branch
         // below, or a ref callback would be mistaken for a reactive attribute.
@@ -135,7 +139,18 @@ function applyProps(el: HTMLElement, props: Props): void
         if (key.startsWith('on') && typeof value === 'function')
         {
             const eventName = key.slice(2).toLowerCase();
-            el.addEventListener(eventName, value as EventListener);
+            // Template path (bindProps) delegates bubbling events to one
+            // document listener per type; h() keeps per-element listeners
+            // (its long-standing contract covers detached elements and
+            // non-bubbling dispatches).
+            if (delegate && isDelegatedEvent(eventName))
+            {
+                delegateEvent(el, eventName, value as EventListener);
+            }
+            else
+            {
+                el.addEventListener(eventName, value as EventListener);
+            }
             continue;
         }
 
@@ -294,58 +309,7 @@ function appendChild(parent: HTMLElement, child: Child): void
     {
         const textNode = document.createTextNode('');
         parent.appendChild(textNode);
-
-        let currentNode: ChildNode = textNode;
-
-        createEffect(() =>
-        {
-            // Evaluate the child inside a per-run root. This is critical:
-            // building an element here (e.g. `h('span', {}, () => count())`)
-            // creates nested effects, and they must be owned by THIS root so
-            // they die when we swap. Evaluating outside the root leaks them -
-            // exactly what the leak-regression suite guards against.
-            let localDispose!: DisposeFn;
-            const value = createRoot((d) =>
-            {
-                localDispose = d;
-                return resolveReactive(child);
-            });
-
-            // Fast path: primitive into the existing text node. The common
-            // reactive child is a string or number (`() => `Count: ${ count() }``).
-            // Update the live text node in place rather than building a
-            // replacement and swapping it - no DOM node churn per tick, matching
-            // fine-grained renderers like Solid. A primitive owns nothing, so
-            // dispose this run's (empty) root now and register no cleanup.
-            //
-            // Only taken when the current node is already a text node, so
-            // element/text transitions still take the full rebuild path below
-            // (which tears down the old subtree).
-            if (currentNode.nodeType === 3 /* Node.TEXT_NODE */ && isPrimitiveValue(value))
-            {
-                localDispose();
-                (currentNode as Text).data = primitiveToText(value);
-                return;
-            }
-
-            // Full path: materialise the value and swap it in. The root stays
-            // alive - it owns the new subtree's effects until the next run or
-            // dispose, when the returned cleanup tears it (and the node's
-            // components) down.
-            const nextNode = buildNode(value);
-            parent.replaceChild(nextNode, currentNode);
-            currentNode = nextNode;
-
-            return () =>
-            {
-                localDispose();
-                if (nextNode instanceof HTMLElement)
-                {
-                    destroyComponent(nextNode);
-                }
-            };
-        });
-
+        driveReactiveChild(parent, textNode, child as () => unknown);
         return;
     }
 
@@ -356,6 +320,68 @@ function appendChild(parent: HTMLElement, child: Child): void
     }
 
     parent.appendChild(document.createTextNode(String(child)));
+}
+
+/**
+ * Wires the reactive-child effect onto an existing node: evaluates `child`
+ * per run inside a per-run root and patches `initialNode` (or its
+ * replacement) in place. Shared by appendChild's function-child branch and
+ * the template path's bindHole().
+ *
+ * @internal
+ */
+function driveReactiveChild(parent: HTMLElement, initialNode: ChildNode, child: () => unknown): void
+{
+    let currentNode: ChildNode = initialNode;
+
+    createEffect(() =>
+    {
+        // Evaluate the child inside a per-run root. This is critical:
+        // building an element here (e.g. `h('span', {}, () => count())`)
+        // creates nested effects, and they must be owned by THIS root so
+        // they die when we swap. Evaluating outside the root leaks them -
+        // exactly what the leak-regression suite guards against.
+        let localDispose!: DisposeFn;
+        const value = createRoot((d) =>
+        {
+            localDispose = d;
+            return resolveReactive(child);
+        });
+
+        // Fast path: primitive into the existing text node. The common
+        // reactive child is a string or number (`() => `Count: ${ count() }``).
+        // Update the live text node in place rather than building a
+        // replacement and swapping it - no DOM node churn per tick, matching
+        // fine-grained renderers like Solid. A primitive owns nothing, so
+        // dispose this run's (empty) root now and register no cleanup.
+        //
+        // Only taken when the current node is already a text node, so
+        // element/text transitions still take the full rebuild path below
+        // (which tears down the old subtree).
+        if (currentNode.nodeType === 3 /* Node.TEXT_NODE */ && isPrimitiveValue(value))
+        {
+            localDispose();
+            (currentNode as Text).data = primitiveToText(value);
+            return;
+        }
+
+        // Full path: materialise the value and swap it in. The root stays
+        // alive - it owns the new subtree's effects until the next run or
+        // dispose, when the returned cleanup tears it (and the node's
+        // components) down.
+        const nextNode = buildNode(value);
+        parent.replaceChild(nextNode, currentNode);
+        currentNode = nextNode;
+
+        return () =>
+        {
+            localDispose();
+            if (nextNode instanceof HTMLElement)
+            {
+                destroyComponent(nextNode);
+            }
+        };
+    });
 }
 
 /**
@@ -434,6 +460,66 @@ function buildNode(value: unknown): ChildNode
     }
 
     return document.createTextNode(String(value));
+}
+
+// Template-clone bindings. The compiler's `dom` target hoists a region's
+// static structure into a tmpl() and emits these two calls for the dynamic
+// parts of each clone - the same machinery h() wires per element, applied
+// to existing nodes.
+
+/**
+ * Applies props (events, reactive attributes, refs, DOM properties) to an
+ * existing element - the template path's equivalent of the prop wiring h()
+ * does at creation. Compiled `dom`-target code calls this on cloned nodes.
+ *
+ * Bubbling events are DELEGATED to one document-level listener per type
+ * (see delegate.ts): handlers fire only for events that actually bubble to
+ * the document, so the element must be connected - the normal state for
+ * compiled application markup.
+ *
+ * @param el - The element inside a template clone
+ * @param props - The dynamic props the compiler collected for it
+ */
+export function bindProps(el: HTMLElement, props: Props): void
+{
+    applyProps(el, props, true);
+}
+
+/**
+ * Appends an expression hole into an element with no other children - the
+ * marker-free fast path the compiler emits when a hole is its parent's sole
+ * child (`<span>{x()}</span>`). Same dispatch as h()'s child handling.
+ *
+ * @param el - The hole's parent element inside a template clone
+ * @param child - The hole's compiled value
+ */
+export function bindChild(el: HTMLElement, child: Child): void
+{
+    appendChild(el, child);
+}
+
+/**
+ * Materialises an expression hole at a template marker node. A function
+ * child becomes the standard reactive child binding (only that node updates
+ * on change); any other value is placed once. The marker (a `<!--$-->`
+ * comment in the template HTML) is replaced by the live node.
+ *
+ * @param marker - The placeholder node inside a template clone
+ * @param child - The hole's compiled value
+ */
+export function bindHole(marker: ChildNode, child: Child): void
+{
+    const parent = marker.parentNode as HTMLElement;
+
+    if (typeof child === 'function')
+    {
+        const textNode = document.createTextNode('');
+        parent.replaceChild(textNode, marker);
+        driveReactiveChild(parent, textNode, child as () => unknown);
+        return;
+    }
+
+    parent.replaceChild(buildNode(child), marker);
 }
 
 // Hydration: adopt server-rendered DOM instead of creating it.

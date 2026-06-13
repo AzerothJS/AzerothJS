@@ -6,11 +6,13 @@
 // work. The `@azerothjs/language-server` adapter is a thin translation layer on
 // top of this.
 
+import ts from 'typescript';
 import {
     AzerothProject,
     toVirtualFile
 } from './ts-project.ts';
 import { uriToPath } from './uri.ts';
+import { DiagnosticSeverity } from './protocol.ts';
 import { LineIndex } from './text.ts';
 import type { RequestContext } from './request.ts';
 import type {
@@ -69,9 +71,59 @@ export class AzerothLanguageService
 {
     private readonly project: AzerothProject;
 
-    constructor(workspaceDirectory: string, configPath?: string)
+    constructor(
+        workspaceDirectory: string,
+        configPath?: string,
+        options: { rootProjectFiles?: boolean } = {}
+    )
     {
-        this.project = new AzerothProject(workspaceDirectory, configPath);
+        this.project = new AzerothProject(workspaceDirectory, configPath, options);
+    }
+
+    /**
+     * The consuming project's real `.ts` files (from its tsconfig). Used by the
+     * combined checker to iterate the `.ts` side; only populated meaningfully
+     * when the service was constructed with `{ rootProjectFiles: true }`.
+     */
+    public getProjectTsFiles(): readonly string[]
+    {
+        return this.project.getProjectFiles();
+    }
+
+    /**
+     * Diagnostics for a real `.ts` file in the program (no offset
+     * mapping - positions are the file's own). Lets the combined checker report
+     * `.ts` errors - including those at the `.ts` -> `.azeroth` import boundary -
+     * from the same program that checks the `.azeroth` files.
+     */
+    public getTsDiagnostics(filePath: string): Diagnostic[]
+    {
+        const service = this.project.service;
+        const raw = [
+            ...service.getSyntacticDiagnostics(filePath),
+            ...service.getSemanticDiagnostics(filePath)
+        ];
+
+        const out: Diagnostic[] = [];
+        for (const diag of raw)
+        {
+            if (diag.start === undefined || diag.length === undefined || !diag.file)
+            {
+                continue;
+            }
+            const start = diag.file.getLineAndCharacterOfPosition(diag.start);
+            const end = diag.file.getLineAndCharacterOfPosition(diag.start + diag.length);
+            out.push({
+                range: { start, end },
+                severity: diag.category === ts.DiagnosticCategory.Error
+                    ? DiagnosticSeverity.Error
+                    : DiagnosticSeverity.Warning,
+                message: ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
+                code: diag.code,
+                source: 'azeroth-ts'
+            });
+        }
+        return out;
     }
 
     /** Registers or replaces a document's content. */

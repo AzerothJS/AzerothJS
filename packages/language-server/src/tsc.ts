@@ -1,12 +1,15 @@
-// azeroth-tsc: a batch type-checker for `.azeroth` files, the vue-tsc
-// equivalent for this framework. `tsc` itself cannot parse `.azeroth` markup,
-// so this driver reuses the language service (which compiles each file to a
-// virtual TypeScript module and maps diagnostics back to original positions)
-// and prints them in the familiar `tsc` format. It is meant to run in CI and
-// pre-commit, alongside `tsc` for the surrounding `.ts`.
-//
-// Scope: this reports type errors in `.azeroth` files. It does not emit `.js`
-// (the Vite plugin / compiler does that) - like `tsc --noEmit`, it is a gate.
+// azeroth-tsc: a combined `.ts` + `.azeroth` type-checker, the vue-tsc
+// equivalent for this framework. `tsc` itself cannot parse `.azeroth` markup, so
+// this driver builds ONE TypeScript program containing both the project's real
+// `.ts` files AND every `.azeroth` file (compiled to a virtual TS module by the
+// language service). Because both live in the same program:
+//   - a `.ts` file importing `'./x.component.azeroth'` resolves the component's
+//     REAL default/named/type exports (no `declare module '*.azeroth'` shim);
+//   - `.azeroth` <-> `.azeroth` and `.azeroth` <-> `.ts` imports resolve both ways;
+//   - `.azeroth` internals are still checked.
+// Diagnostics map back to original `.ts`/`.azeroth` positions and print in the
+// familiar `tsc` format. It does not emit `.js` (the Vite plugin / compiler does
+// that) - like `tsc --noEmit`, it is a gate that REPLACES `tsc && azeroth-tsc`.
 
 import path from 'node:path';
 import { watch as fsWatch, type FSWatcher } from 'node:fs';
@@ -42,7 +45,7 @@ export interface TscWatcher
 /** Outcome of a check run. */
 export interface TscResult
 {
-    /** Number of `.azeroth` files checked. */
+    /** Number of files checked (`.azeroth` + `.ts`). */
     fileCount: number;
 
     /** Number of error-severity diagnostics found. */
@@ -95,7 +98,10 @@ export function runTsc(options: TscOptions = {}): TscResult
         process.stdout.write(text);
     });
 
-    const service = new AzerothLanguageService(cwd, options.project);
+    // rootProjectFiles: pull the project's real `.ts` files into the same
+    // program as the `.azeroth` virtual modules, so the `.ts` side is checked and
+    // the `.ts` -> `.azeroth` import boundary resolves real types.
+    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true });
     return checkPass(service, cwd, write, new Set());
 }
 
@@ -131,6 +137,7 @@ function checkPass(
     const seen = new Set<string>();
     let errorCount = 0;
 
+    // 1) The `.azeroth` files: diagnostics map back to original markup positions.
     for (const file of files)
     {
         const source = ts.sys.readFile(file);
@@ -155,6 +162,24 @@ function checkPass(
         }
     }
 
+    // 2) The project's real `.ts` files (from tsconfig), checked in the
+    // same program - this is what lets a `.ts` barrel importing a `.azeroth`
+    // component type-check against real types, so the consumer can delete its
+    // `declare module '*.azeroth'` shim.
+    const tsFiles = service.getProjectTsFiles();
+    for (const file of tsFiles)
+    {
+        for (const diag of service.getTsDiagnostics(file))
+        {
+            const isError = diag.severity === DiagnosticSeverity.Error;
+            if (isError)
+            {
+                errorCount++;
+            }
+            write(formatDiagnostic(cwd, file, diag, isError) + '\n');
+        }
+    }
+
     // Drop documents whose files vanished since the previous pass.
     for (const uri of open)
     {
@@ -169,16 +194,17 @@ function checkPass(
         open.add(uri);
     }
 
+    const total = files.length + tsFiles.length;
     if (errorCount === 0)
     {
-        write(`Checked ${ files.length } .azeroth file(s); no type errors.\n`);
+        write(`Checked ${ total } file(s) (${ files.length } .azeroth, ${ tsFiles.length } .ts); no type errors.\n`);
     }
     else
     {
-        write(`\nFound ${ errorCount } error(s) in ${ files.length } .azeroth file(s).\n`);
+        write(`\nFound ${ errorCount } error(s) across ${ total } file(s) (${ files.length } .azeroth, ${ tsFiles.length } .ts).\n`);
     }
 
-    return { fileCount: files.length, errorCount };
+    return { fileCount: total, errorCount };
 }
 
 /**
@@ -208,14 +234,21 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
     // `.azeroth` files are parsed once and reused across passes via the document
     // registry, instead of building a fresh program on every change. `open`
     // tracks the open document set so deleted files are closed between passes.
-    const service = new AzerothLanguageService(cwd, options.project);
+    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true });
     const open = new Set<string>();
 
     const recheck = (): TscResult =>
     {
-        write('\n[azeroth-tsc] checking .azeroth files...\n');
+        write('\n[azeroth-tsc] checking...\n');
         try
         {
+            // Re-scan + bump the project version so on-disk edits to BOTH
+            // `.ts` and `.azeroth` files are re-read this pass (the first pass
+            // skips it - the constructor just discovered).
+            if (open.size > 0)
+            {
+                service.refreshWorkspace();
+            }
             return checkPass(service, cwd, write, open);
         }
         catch (error)
@@ -236,8 +269,10 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
     {
         watcher = fsWatch(cwd, { recursive: true }, (_event, fileName) =>
         {
-            // Recursive watch reports every file; only react to `.azeroth`.
-            if (fileName && !String(fileName).endsWith('.azeroth'))
+            // Recursive watch reports every file; only react to source the
+            // combined checker covers. AzerothJS projects are `.ts` + `.azeroth`
+            // (the `.azeroth` language replaces `.tsx`), so those two extensions.
+            if (fileName && !/\.(?:azeroth|ts)$/.test(String(fileName)))
             {
                 return;
             }

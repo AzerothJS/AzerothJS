@@ -24,7 +24,7 @@ import {
     attributeDocumentation
 } from '../language-data.ts';
 import { htmlCompletions, eventDocumentation } from './html-service.ts';
-import { cssCompletions } from './css-service.ts';
+import { cssCompletions, cssTemplateCompletions, inCssTemplate } from './css-service.ts';
 import { toGenerated, type RequestContext } from '../request.ts';
 
 /** Payload attached to TS-sourced items so `resolveCompletion` can fill detail. */
@@ -86,11 +86,22 @@ export function getCompletions(ctx: RequestContext, offset: number, options: Com
         case 'script':
         case 'text':
         {
+            // A css`` template is an opaque string to TypeScript; the CSS
+            // engine owns everything inside it.
+            if (inCssTemplate(ctx.source, offset))
+            {
+                return cssTemplateCompletions(ctx.source, offset);
+            }
+
             const items = tsCompletions(ctx, offset, options);
             // After a `<`, markup can begin even in plain expression position.
             if (ctx.source[offset - 1] === '<')
             {
                 items.push(...tagCompletions(ctx, offset, options));
+            }
+            if (context.kind === 'script' && options.componentSnippets !== false)
+            {
+                items.push(...scaffoldSnippets());
             }
             return items;
         }
@@ -153,6 +164,42 @@ function tagCompletions(ctx: RequestContext, offset: number, options: Completion
     }
 
     return items;
+}
+
+/**
+ * File-level scaffolding snippets offered in plain script position: a whole
+ * component and the signal declaration shape. Prefixed labels keep them out
+ * of the way until the user types toward them.
+ */
+function scaffoldSnippets(): CompletionItem[]
+{
+    return [
+        {
+            label: 'azeroth-component',
+            kind: CompletionItemKind.Snippet,
+            detail: 'component scaffold',
+            documentation: 'A default-exported function component with a props type.',
+            insertText: [
+                'export default function ${1:Name}(props: { ${2} })',
+                '{',
+                '    return (',
+                '        ${0:<div></div>}',
+                '    );',
+                '}'
+            ].join('\n'),
+            insertTextFormat: 2,
+            sortText: '8_azeroth-component'
+        },
+        {
+            label: 'azeroth-signal',
+            kind: CompletionItemKind.Snippet,
+            detail: 'createSignal declaration',
+            documentation: 'The [getter, setter] signal declaration shape.',
+            insertText: 'const [${1:value}, set${2:Value}] = createSignal(${3:0});',
+            insertTextFormat: 2,
+            sortText: '8_azeroth-signal'
+        }
+    ];
 }
 
 /** Snippet bodies for the control-flow built-ins (the `<` is already typed). */

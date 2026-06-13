@@ -1,0 +1,12 @@
+export interface ModalProps
+{
+    title: string;
+    open: () => boolean;
+}
+
+export const MODAL_KIND = 'dialog';
+
+export default function Modal(props: ModalProps)
+{
+    return <div class="modal" data-kind={MODAL_KIND}>{props.title}</div>;
+}

@@ -80,6 +80,98 @@ function setPortalCleanup(el: HTMLElement, cleanup: () => void): void
 }
 
 /**
+ * One shared MutationObserver for ALL portals. A per-portal observer on
+ * `document` with `subtree: true` made every DOM mutation anywhere on the
+ * page fan out to N callbacks, and a placeholder that never reached the
+ * document kept its observer connected forever. One observer plus a registry
+ * keeps the cost flat in the number of portals and disconnects itself when
+ * the last portal cleans up.
+ *
+ * @internal
+ */
+const portalRegistry = new Map<HTMLElement, () => void>();
+
+/** @internal */
+let sharedObserver: MutationObserver | null = null;
+
+/**
+ * Registers a placeholder for removal watching, lazily connecting the shared
+ * observer on first use.
+ *
+ * @internal
+ */
+function watchPlaceholder(placeholder: HTMLElement, cleanup: () => void): void
+{
+    portalRegistry.set(placeholder, cleanup);
+
+    if (sharedObserver === null)
+    {
+        sharedObserver = new MutationObserver(onPortalMutations);
+        sharedObserver.observe(document, { childList: true, subtree: true });
+    }
+}
+
+/**
+ * Unregisters a placeholder, disconnecting the shared observer when no
+ * portals remain.
+ *
+ * @internal
+ */
+function unwatchPlaceholder(placeholder: HTMLElement): void
+{
+    portalRegistry.delete(placeholder);
+
+    if (portalRegistry.size === 0 && sharedObserver !== null)
+    {
+        sharedObserver.disconnect();
+        sharedObserver = null;
+    }
+}
+
+/** @internal */
+function onPortalMutations(mutations: MutationRecord[]): void
+{
+    // Snapshot: a cleanup may unregister entries (and other portals) as it
+    // runs user teardown.
+    for (const [placeholder, cleanup] of Array.from(portalRegistry))
+    {
+        // Cheap check first: still in the document means nothing to do.
+        if (document.contains(placeholder))
+        {
+            continue;
+        }
+
+        if (mutationsRemovedNode(mutations, placeholder))
+        {
+            cleanup();
+        }
+    }
+}
+
+/**
+ * Whether this mutation batch actually removed `placeholder` (directly or via
+ * an ancestor). Required so a placeholder that merely hasn't been inserted
+ * yet is not cleaned up prematurely.
+ *
+ * @internal
+ */
+function mutationsRemovedNode(mutations: MutationRecord[], placeholder: HTMLElement): boolean
+{
+    for (const mutation of mutations)
+    {
+        for (const removed of mutation.removedNodes)
+        {
+            if (removed === placeholder || (removed instanceof Node && removed.contains(placeholder)))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
  * Props for the Portal component.
  */
 export interface PortalProps
@@ -186,45 +278,11 @@ export function Portal(props: PortalProps): HTMLElement
     placeholder.style.display = 'none';
     placeholder.setAttribute('data-azeroth-portal', '');
 
-    // Auto-cleanup with MutationObserver.
-    //
-    // Watch for the placeholder being detached from the document.
-    // We observe `document` with `subtree: true` from the start so
-    // that:
-    //   1. A synchronous removal (in the same tick as Portal())
-    //      doesn't race the observer setup.
-    //   2. A removal at any ancestor level is caught - not just
-    //      the immediate parent.
-    //
-    const observer = new MutationObserver((mutations) =>
-    {
-        // Cheap check: if the placeholder is still in the document,
-        // there's nothing to do for this batch.
-        if (document.contains(placeholder))
-        {
-            return;
-        }
-
-        for (const mutation of mutations)
-        {
-            for (const removed of mutation.removedNodes)
-            {
-                if (removed === placeholder || (removed instanceof Node && removed.contains(placeholder)))
-                {
-                    cleanup();
-                    return;
-                }
-            }
-        }
-    });
-
-    observer.observe(document, { childList: true, subtree: true });
-
     let cleaned = false;
 
     /**
      * Disposes the content's reactive effects, removes it from the
-     * target, and disconnects the MutationObserver.
+     * target, and unregisters from the shared observer.
      *
      * Idempotent - it can be reached from three paths (the observer,
      * `destroyPortal()`, and the surrounding scope's teardown), and
@@ -238,7 +296,7 @@ export function Portal(props: PortalProps): HTMLElement
         }
         cleaned = true;
 
-        observer.disconnect();
+        unwatchPlaceholder(placeholder);
         contentDispose();
 
         if (target.contains(content))
@@ -248,11 +306,16 @@ export function Portal(props: PortalProps): HTMLElement
         }
     }
 
+    // Watch for the placeholder being detached from the document, at any
+    // ancestor level. Registered before the placeholder is returned so a
+    // synchronous removal in the same tick doesn't race the setup.
+    watchPlaceholder(placeholder, cleanup);
+
     // If the SURROUNDING reactive scope tears down (the component or
     // route that mounted this Portal unmounts), clean up
     // synchronously - don't wait on the placeholder-removal mutation
-    // being observed. The MutationObserver above stays as the backup
-    // for removals that happen outside a reactive scope's teardown.
+    // being observed. The shared observer stays as the backup for
+    // removals that happen outside a reactive scope's teardown.
     onRootDispose(cleanup);
 
     // Store cleanup function for manual use via destroyPortal().

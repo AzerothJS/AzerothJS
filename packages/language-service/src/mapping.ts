@@ -124,6 +124,30 @@ export class CodeMapping
     }
 
     /**
+     * The original offset of the nearest mapped segment at or before
+     * `generatedOffset`. Anchors a diagnostic that lands purely in generated
+     * scaffolding (no exact original origin) to the closest real code - e.g. a
+     * component-call argument error on the generated `({ ... })` is anchored to
+     * the copied component tag that precedes it. Returns `null` if nothing
+     * precedes the offset.
+     */
+    public nearestSourceBefore(generatedOffset: number): number | null
+    {
+        // byGenerated is sorted ascending by generatedStart; take the last
+        // segment that starts at or before the offset.
+        let best: { sourceStart: number; generatedStart: number } | null = null;
+        for (const seg of this.byGenerated)
+        {
+            if (seg.generatedStart > generatedOffset)
+            {
+                break;
+            }
+            best = seg;
+        }
+        return best === null ? null : best.sourceStart;
+    }
+
+    /**
      * Binary-searches `segments` (sorted by `start`) for the one whose
      * `[start, end]` span contains `offset`, preferring a span that strictly
      * contains it over one it only touches at the end.

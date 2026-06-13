@@ -15,7 +15,7 @@ import type { Hover } from '../protocol.ts';
 import { classifyPosition, enclosingElement } from '../markup-model.ts';
 import { BUILTIN_COMPONENT_MAP, attributeDocumentation } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
-import { cssHover } from './css-service.ts';
+import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
 import { spanToRange, toGenerated, type RequestContext } from '../request.ts';
 
 /** Hover content for the caret at `offset`, or null. */
@@ -29,6 +29,12 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
         case 'expression':
         case 'script':
         case 'text':
+            // Inside a css`` template the content is an opaque string to
+            // TypeScript; the CSS engine has the docs.
+            if (inCssTemplate(ctx.source, offset))
+            {
+                return cssTemplateHover(ctx.source, offset, ctx.lineIndex);
+            }
             return tsHover(ctx, offset);
 
         case 'tagName':

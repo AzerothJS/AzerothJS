@@ -52,6 +52,63 @@ export function setCurrentErrorHandler(
     currentErrorHandler = handler;
 }
 
+/** Where an uncaught reactive error escaped from. */
+export interface UncaughtErrorContext
+{
+    /** The kind of node whose run threw. */
+    source: 'effect' | 'memo';
+
+    /** The effect's debug name (`createEffect(fn, { name })`), if any. */
+    name?: string;
+}
+
+/**
+ * The LAST-RESORT handler for reactive errors, consulted at THROW TIME -
+ * unlike catchError handlers, which are captured when the effect is
+ * created. That difference is deliberate: dev tooling (the error overlay)
+ * installs itself once at startup and must catch errors from effects
+ * created before and after it. `null` means uncaught errors propagate, the
+ * historical behavior.
+ *
+ * @internal Read by effect/memo catch blocks
+ */
+export let uncaughtErrorHandler: ((error: unknown, context: UncaughtErrorContext) => void) | null = null;
+
+/**
+ * Registers a last-resort handler for reactive errors no `catchError` scope
+ * claimed. An effect or memo whose run throws routes here instead of
+ * propagating into whichever signal write happened to trigger it. Returns
+ * an unregister function that restores the previous handler.
+ *
+ * Built for dev tooling (`@azerothjs/devtools-overlay` uses it); apps
+ * normally want scoped `catchError` / `<ErrorBoundary>` instead - a scoped
+ * handler always wins over this one.
+ *
+ * @param handler - Receives the error and where it escaped from
+ * @returns Unregister function (restores the previously registered handler)
+ *
+ * @example
+ * ```ts
+ * const uninstall = onUncaughtError((error, context) =>
+ * {
+ *     console.error(`uncaught in ${ context.source } ${ context.name ?? '' }`, error);
+ * });
+ * // later:
+ * uninstall();
+ * ```
+ */
+export function onUncaughtError(
+    handler: (error: unknown, context: UncaughtErrorContext) => void
+): () => void
+{
+    const previous = uncaughtErrorHandler;
+    uncaughtErrorHandler = handler;
+    return (): void =>
+    {
+        uncaughtErrorHandler = previous;
+    };
+}
+
 /**
  * Runs `fn` with `handler` installed as the active error
  * handler for the duration of the call. Errors thrown

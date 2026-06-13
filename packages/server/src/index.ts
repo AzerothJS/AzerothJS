@@ -10,6 +10,7 @@
 export { renderToString, renderToStaticMarkup } from './render-to-string.ts';
 export { renderToDocument } from './render-to-document.ts';
 export type { RenderToDocumentOptions } from './render-to-document.ts';
+export { island } from './island.ts';
 
 // Re-export the CSS flush helpers (defined in the renderer) for convenience,
 // so a server only needs to import from @azerothjs/server.

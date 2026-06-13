@@ -190,7 +190,24 @@ export function generateVirtualCode(source: string): VirtualCode
         }
 
         const name = attr.name as string;
-        builder.emit(`${ objectKey(name) }: `);
+        const key = objectKey(name);
+        if (key === name)
+        {
+            // Copy the attribute name (mapped) rather than emitting it as
+            // scaffolding, so a prop-level diagnostic - e.g. an unknown prop on a
+            // typed component tag (`<Modal bogus={1}/>` -> excess property on
+            // `Modal({ bogus: ... })`) - maps back to the original attribute
+            // instead of landing in unmapped scaffolding and being dropped.
+            builder.copy(attr.start, attr.start + name.length, 'attribute');
+            builder.emit(': ');
+        }
+        else
+        {
+            // Hyphenated/colon names (host attrs like `data-x`) can't be a bare
+            // key; emit a quoted key. These are host-only, where the permissive
+            // h() props type does no excess-property checking anyway.
+            builder.emit(`${ key }: `);
+        }
 
         if (attr.value.kind === 'none')
         {

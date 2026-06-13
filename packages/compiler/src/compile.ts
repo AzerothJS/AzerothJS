@@ -14,7 +14,7 @@
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './parser.ts';
-import { generate, walkComponentTags, type ExpressionCompiler } from './codegen.ts';
+import { generate, generateDomRegion, quoteString, walkComponentTags, type ExpressionCompiler } from './codegen.ts';
 import {
     buildLineStarts,
     locationFor,
@@ -35,6 +35,25 @@ const BUILTIN_COMPONENTS = new Set([
     'Show', 'For', 'Switch', 'Match', 'Portal', 'Dynamic',
     'Suspense', 'ErrorBoundary', 'Transition', 'Outlet'
 ]);
+
+/** Options for compile(). */
+export interface CompileOptions
+{
+    /**
+     * Output shape for markup regions.
+     *
+     * - `'universal'` (default): h() calls - works in DOM, SSR string mode,
+     *   and hydration. What the language tooling models.
+     * - `'dom'`: template cloning - host-element regions are hoisted as one
+     *   HTML template and instantiated with cloneNode, with only the
+     *   dynamic parts bound per instance. Each region also carries the
+     *   universal h() branch behind a render-mode guard, so SSR and
+     *   hydrate() work from the same artifact; the cost is the duplicated
+     *   region code. Regions containing components/fragments fall back to
+     *   h() alone.
+     */
+    target?: 'universal' | 'dom';
+}
 
 /** Result of compiling a `.azeroth` source string. */
 export interface CompileResult
@@ -111,11 +130,34 @@ function alreadyImports(source: string, name: string): boolean
  * //   }
  * ```
  */
-export function compile(source: string, filename = 'module.azeroth'): CompileResult
+export function compile(source: string, filename = 'module.azeroth', options: CompileOptions = {}): CompileResult
 {
+    const target = options.target ?? 'universal';
+
     // Built-in components referenced anywhere in the file's markup
     // (including nested inside `{ ... }` holes, thanks to the recursion).
     const usedBuiltins = new Set<string>();
+
+    // Hoisted template HTML (dom target), interned so identical static
+    // regions share one template const.
+    const templates = new Map<string, string>();
+    let usedH = false;
+    let usedBindHole = false;
+    let usedBindChild = false;
+    let usedBindProps = false;
+    let usedModeGuard = false;
+
+    const allocateTemplate = (html: string): string =>
+    {
+        const existing = templates.get(html);
+        if (existing !== undefined)
+        {
+            return existing;
+        }
+        const name = `_tmpl$${ templates.size + 1 }`;
+        templates.set(html, name);
+        return name;
+    };
 
     const collect = (node: Parameters<typeof walkComponentTags>[0]): void =>
         walkComponentTags(node, (tag) =>
@@ -146,6 +188,7 @@ export function compile(source: string, filename = 'module.azeroth'): CompileRes
             const { node, end } = parseMarkup(input, start);
             collect(node);
             result += generate(node, transformHole);
+            usedH = true;
             j = end;
         }
         return result;
@@ -175,7 +218,32 @@ export function compile(source: string, filename = 'module.azeroth'): CompileRes
         }
         const { node, end } = parseMarkup(source, start);
         collect(node);
-        push(generate(node, transformHole), start, false);
+
+        // dom target: template-clone emission where the region allows it;
+        // anything with components/fragments falls back to h().
+        let emitted: string | null = null;
+        if (target === 'dom')
+        {
+            const region = generateDomRegion(node, transformHole, allocateTemplate);
+            if (region !== null)
+            {
+                emitted = region.code;
+                usedBindHole = usedBindHole || region.usesBindHole;
+                usedBindChild = usedBindChild || region.usesBindChild;
+                usedBindProps = usedBindProps || region.usesBindProps;
+                // The region carries a universal h() branch behind the
+                // render-mode guard, so both sets of names are live.
+                usedModeGuard = true;
+                usedH = true;
+            }
+        }
+        if (emitted === null)
+        {
+            emitted = generate(node, transformHole);
+            usedH = true;
+        }
+
+        push(emitted, start, false);
         i = end;
     }
 
@@ -185,12 +253,44 @@ export function compile(source: string, filename = 'module.azeroth'): CompileRes
         return { code: out, map: null };
     }
 
-    // Auto-inject `h` plus any built-in components the markup used,
-    // skipping names the source already imports.
-    const names = ['h', ...usedBuiltins].filter(name => !alreadyImports(source, name));
-    const prefix = names.length > 0
+    // Auto-inject the runtime names the emission used plus any built-in
+    // components, skipping names the source already imports. The universal
+    // target keeps its historical "always import h" behavior; the dom
+    // target imports only what it emitted.
+    const runtimeNames: string[] = [];
+    if (target === 'universal' || usedH)
+    {
+        runtimeNames.push('h');
+    }
+    if (templates.size > 0)
+    {
+        runtimeNames.push('tmpl');
+    }
+    if (usedBindHole)
+    {
+        runtimeNames.push('bindHole');
+    }
+    if (usedBindChild)
+    {
+        runtimeNames.push('bindChild');
+    }
+    if (usedBindProps)
+    {
+        runtimeNames.push('bindProps');
+    }
+    if (usedModeGuard)
+    {
+        runtimeNames.push('isStringMode', 'isHydrating');
+    }
+    const names = [...runtimeNames, ...usedBuiltins].filter(name => !alreadyImports(source, name));
+
+    const importLine = names.length > 0
         ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n`
         : '';
+    const hoisted = templates.size > 0
+        ? [...templates].map(([html, name]) => `const ${ name } = tmpl(${ quoteString(html) });`).join('\n') + '\n'
+        : '';
+    const prefix = importLine + hoisted;
     const code = prefix + out;
 
     return { code, map: buildSourceMap(code, prefix.length, pieces, source, filename) };

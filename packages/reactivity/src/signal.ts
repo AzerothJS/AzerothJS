@@ -1,27 +1,46 @@
 // A signal is a reactive value that notifies subscribing effects when it
 // changes - the atomic unit of state.
 //
-// Signals and effects reference each other: a signal holds the set of effects
-// subscribed to it, and each effect holds cleanup closures that remove it from
-// those sets. Disposing an effect runs its cleanups, detaching it from every
-// signal so it can be collected (otherwise disposed effects would linger in
-// subscriber sets forever).
+// Signals and effects reference each other through the link records in
+// graph.ts: a signal's producer holds a link per subscribed consumer, and
+// each consumer holds the same links in read order. Disposing an effect
+// walks its links, detaching it from every signal so it can be collected
+// (otherwise disposed effects would linger in subscriber lists forever).
 
-import type { Getter, Setter, Signal, Subscriber, SignalOptions, EqualsFn } from './types.ts';
+import type { Getter, Setter, Signal, SignalOptions, EqualsFn } from './types.ts';
+import { createProducer, track, notify } from './graph.ts';
+import { devtoolsHook, nextDevtoolsId } from './devtools-hook.ts';
+
+// Re-exported from graph.ts so existing importers (untrack, effect,
+// create-selector) keep their import path; the state itself lives with the
+// rest of the link machinery.
+export { currentSubscriber, setCurrentSubscriber } from './graph.ts';
 
 /**
- * The effect/memo currently running, or null outside any effect. Set by
- * createEffect before each run; read by a signal getter to know who to
- * subscribe.
+ * Key under which a getter exposes its live subscriber count. Symbol-keyed so
+ * it never collides with user properties and stays invisible to enumeration.
  *
  * @internal
  */
-export let currentSubscriber: Subscriber | null = null;
+const SUBSCRIBER_COUNT = Symbol('azeroth_subscriber_count');
 
-/** @internal */
-export function setCurrentSubscriber(sub: Subscriber | null): void
+/**
+ * The live subscriber-list size of a signal getter. Exists so leak tests can
+ * assert that mount/unmount cycles return a signal to its baseline subscriber
+ * count. Returns -1 for a function that is not a signal getter.
+ *
+ * @internal
+ */
+export function subscriberCount(getter: Getter<unknown>): number
 {
-    currentSubscriber = sub;
+    const probe = (getter as unknown as Record<symbol, unknown>)[SUBSCRIBER_COUNT];
+    return typeof probe === 'function' ? (probe as () => number)() : -1;
+}
+
+/** Attaches the subscriber-count probe to a getter. @internal */
+export function attachSubscriberProbe(getter: Getter<unknown>, count: () => number): void
+{
+    (getter as unknown as Record<symbol, unknown>)[SUBSCRIBER_COUNT] = count;
 }
 
 /**
@@ -61,31 +80,25 @@ export function setCurrentSubscriber(sub: Subscriber | null): void
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Signal<T>
 {
     let value: T = initialValue;
-    const subscribers = new Set<Subscriber>();
+    const producer = createProducer();
     const equals: EqualsFn<T> = options?.equals ?? Object.is;
+
+    // 0 = no devtools at creation; the write-path check below is then a
+    // constant-false number compare.
+    let debugId = 0;
+    if (devtoolsHook)
+    {
+        debugId = nextDevtoolsId();
+        devtoolsHook.created({ id: debugId, kind: 'signal', name: options?.name });
+    }
 
     const getter: Getter<T> = (): T =>
     {
-        // Subscribe the running effect at most once per signal. The Set makes
-        // `add` idempotent, but the cleanup closure below is freshly allocated
-        // each call and never compares equal, so without the `has` guard the
-        // effect's dependency set would fill with duplicate unsubscribers.
-        if (
-            currentSubscriber !== null &&
-            !currentSubscriber.isDisposed &&
-            !subscribers.has(currentSubscriber)
-        )
-        {
-            const sub = currentSubscriber;
-            subscribers.add(sub);
-            sub.dependencies.add(() =>
-            {
-                subscribers.delete(sub);
-            });
-        }
-
+        track(producer);
         return value;
     };
+
+    attachSubscriberProbe(getter, (): number => producer.subs.length);
 
     const setter: Setter<T> = (newValue: T | ((prev: T) => T)): void =>
     {
@@ -97,18 +110,14 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
         }
 
         value = resolved;
-
-        // Snapshot the set: a subscriber may add or remove subscribers as it runs.
-        for (const subscriber of Array.from(subscribers))
+        producer.version++;
+        if (debugId !== 0 && devtoolsHook)
         {
-            if (!subscriber.isDisposed)
-            {
-                subscriber.execute();
-            }
-            else
-            {
-                subscribers.delete(subscriber);
-            }
+            devtoolsHook.write(debugId);
+        }
+        if (producer.subs.length !== 0)
+        {
+            notify(producer);
         }
     };
 

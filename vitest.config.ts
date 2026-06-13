@@ -13,6 +13,10 @@ export default defineConfig({
             '@azerothjs/server': path.resolve(__dirname, 'packages/server/src/index.ts'),
             '@azerothjs/router': path.resolve(__dirname, 'packages/router/src/index.ts'),
             '@azerothjs/store': path.resolve(__dirname, 'packages/store/src/index.ts'),
+            '@azerothjs/testing': path.resolve(__dirname, 'packages/testing/src/index.ts'),
+            '@azerothjs/devtools-overlay': path.resolve(__dirname, 'packages/devtools-overlay/src/index.ts'),
+            '@azerothjs/devtools': path.resolve(__dirname, 'packages/devtools/src/index.ts'),
+            '@azerothjs/eslint-plugin': path.resolve(__dirname, 'packages/eslint-plugin/src/index.ts'),
             '@azerothjs/form': path.resolve(__dirname, 'packages/form/src/index.ts'),
             '@azerothjs/compiler': path.resolve(__dirname, 'packages/compiler/src/index.ts'),
             '@azerothjs/language-service': path.resolve(__dirname, 'packages/language-service/src/index.ts')

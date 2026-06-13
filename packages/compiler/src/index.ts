@@ -13,7 +13,8 @@
 //   codegen  - AST -> h()/component-call source, with reactive wrapping
 //   compile  - orchestrates scan -> parse -> codegen -> splice
 
-export { compile, type CompileResult } from './compile.ts';
+export { compile, type CompileResult, type CompileOptions } from './compile.ts';
+export { lintMarkup, lintSource, type LintWarning } from './lint.ts';
 export { CompileError, parseMarkup } from './parser.ts';
 export {
     findMarkupStart,
@@ -27,7 +28,7 @@ export {
     skipBlockComment,
     skipRegex
 } from './scanner.ts';
-export { generate, walkComponentTags, type ExpressionCompiler } from './codegen.ts';
+export { generate, generateDomRegion, walkComponentTags, type ExpressionCompiler, type DomRegion } from './codegen.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
 export {
     vlqEncode,

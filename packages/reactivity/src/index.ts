@@ -4,7 +4,7 @@
 // queueEffect) is intentionally not re-exported here - those are shared
 // between the primitives via direct module imports.
 
-export { createSignal } from './signal.ts';
+export { createSignal, subscriberCount } from './signal.ts';
 export { createEffect } from './effect.ts';
 export { createMemo } from './memo.ts';
 export { batch } from './batch.ts';
@@ -17,7 +17,10 @@ export { createDeferred } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';
 export { createResource } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
-export { catchError } from './catch-error.ts';
+export { catchError, onUncaughtError } from './catch-error.ts';
+export type { UncaughtErrorContext } from './catch-error.ts';
+export { setDevtoolsHook } from './devtools-hook.ts';
+export type { DevtoolsHook, DevtoolsNode } from './devtools-hook.ts';
 
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
 export type { RenderMode } from './render-mode.ts';

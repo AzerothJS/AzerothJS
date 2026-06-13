@@ -1,0 +1,54 @@
+{
+    "name": "@azerothjs/devtools",
+    "version": "0.4.0-beta.3",
+    "description": "AzerothJS devtools — in-page panel for live signals, effects, and re-run activity",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports":
+    {
+        ".":
+        {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files":
+    [
+        "dist"
+    ],
+    "sideEffects": false,
+    "scripts":
+    {
+        "build": "tsc -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "dependencies":
+    {
+        "@azerothjs/reactivity": "0.4.0-beta.3"
+    },
+    "publishConfig":
+    {
+        "access": "public"
+    },
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "repository":
+    {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "directory": "packages/devtools"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/devtools",
+    "bugs":
+    {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+    }
+}

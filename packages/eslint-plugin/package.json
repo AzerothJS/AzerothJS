@@ -1,0 +1,54 @@
+{
+    "name": "@azerothjs/eslint-plugin",
+    "version": "0.4.0-beta.3",
+    "description": "AzerothJS ESLint rules — reactivity foot-guns in plain .ts files",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports":
+    {
+        ".":
+        {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files":
+    [
+        "dist"
+    ],
+    "sideEffects": false,
+    "scripts":
+    {
+        "build": "tsc -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "peerDependencies":
+    {
+        "eslint": ">=9"
+    },
+    "publishConfig":
+    {
+        "access": "public"
+    },
+    "author":
+    {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "repository":
+    {
+        "type": "git",
+        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "directory": "packages/eslint-plugin"
+    },
+    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/eslint-plugin",
+    "bugs":
+    {
+        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+    }
+}

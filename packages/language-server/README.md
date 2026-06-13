@@ -39,49 +39,50 @@ back any other host without this package.
 | `tsc-cli.ts` | Executable entry point (`azeroth-tsc`); runs one check and sets the exit code. |
 | `index.ts` | Library entry point; exports `startServer` and `runTsc`. |
 
-### `azeroth-tsc` (command-line type checking)
+### `azeroth-tsc` (combined command-line type checking)
 
 `tsc` cannot parse `.azeroth`, so this package ships `azeroth-tsc`, the `vue-tsc`
-equivalent. It reuses the language service to compile each `.azeroth` file to its
-virtual TypeScript module, type-check it against the project's tsconfig, and print
-`tsc`-style diagnostics mapped back to the original `.azeroth` positions, exiting
-non-zero on the first error. It is a `--noEmit` gate (the Vite plugin / compiler
-owns code emit), meant to run in CI and pre-commit beside `tsc`:
+equivalent. It builds ONE TypeScript program containing BOTH the project's real
+`.ts` files AND every `.azeroth` file (compiled to its virtual TypeScript module
+by the language service). Because both live in the same program:
+
+- a `.ts` file importing `'./x.component.azeroth'` resolves the component's REAL
+  default, named, and type exports - no `declare module '*.azeroth'` shim;
+- `.azeroth` <-> `.azeroth` and `.azeroth` <-> `.ts` imports resolve both ways;
+- `.azeroth` internals (including typed component tags) are checked;
+- diagnostics map back to original `.ts`/`.azeroth` positions.
+
+It is a `--noEmit` gate (the Vite plugin / compiler owns code emit) that
+REPLACES `tsc`:
 
 ```sh
-npx azeroth-tsc            # check every .azeroth file under the cwd
+npx azeroth-tsc            # check the whole project (.ts + .azeroth)
 npx azeroth-tsc -p tsconfig.json
-npx azeroth-tsc --watch    # re-check on every .azeroth change (alias: -w)
+npx azeroth-tsc --watch    # re-check on change (alias: -w)
 ```
 
 #### Build wiring
 
-`azeroth-tsc` checks `.azeroth`; `tsc` checks the surrounding `.ts`. Run both
-before bundling - the canonical consumer build is:
+One checker covers the whole project, so the canonical consumer build is just
+the checker plus the bundler:
 
 ```jsonc
 // package.json
 {
     "scripts": {
-        "build": "tsc --noEmit && azeroth-tsc && vite build",
-        "typecheck": "tsc --noEmit && azeroth-tsc",
+        "build": "azeroth-tsc && vite build",
+        "typecheck": "azeroth-tsc",
         "dev:check": "azeroth-tsc --watch"
     }
 }
 ```
 
-With `@azerothjs/typescript-plugin` in the editor, `.ts` files importing
-`.azeroth` already get real types live; `azeroth-tsc` provides the matching gate
-on the command line and in CI.
-
-#### Follow-up: a single combined checker
-
-Today `tsc` and `azeroth-tsc` are two passes. A single `vue-tsc`-style binary
-that builds one program over `.ts` + `.azeroth` together (so a `.ts` barrel
-importing `.azeroth` is checked in the same run, without the editor plugin) is a
-tracked follow-up; the building block - presenting each `.azeroth` as its virtual
-TypeScript twin - is already shared by the language service and the
-typescript-plugin.
+With Vite installed, the consumer needs no `declare module '*.azeroth'` shim and
+no `vite-env.d.ts` / `"types": ["vite/client"]` entry: `import.meta.env`,
+`*.png` / `?url` asset imports, and cross-file `.azeroth` types all resolve.
+`@azerothjs/typescript-plugin` gives the editor's TypeScript server the same
+`.ts` -> `.azeroth` resolution live; `azeroth-tsc` is the matching CI/pre-commit
+gate.
 
 ### Settings
 

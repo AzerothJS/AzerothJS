@@ -148,7 +148,7 @@ function isEventName(name: string): boolean
  * quoteString('a\'b'); // "'a\\'b'" (the inner quote is escaped)
  * ```
  */
-function quoteString(value: string): string
+export function quoteString(value: string): string
 {
     return `'${ value.replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/\n/g, '\\n') }'`;
 }
@@ -324,6 +324,279 @@ export function generate(node: MarkupElement | MarkupFragment, compileExpression
     const children = node.children.map(c => generateChild(c, compileExpression));
     const args = [`'${ node.tag }'`, props, ...children];
     return `h(${ args.join(', ') })`;
+}
+
+// Template-cloning emission (the `dom` compile target).
+//
+// For a region whose entire subtree is host elements (no components, no
+// fragments), the static structure is emitted ONCE as an HTML string and
+// instantiated per use with cloneNode - the per-element createElement +
+// applyProps work h() does becomes a single native clone. Dynamic parts
+// (expression holes, event handlers, reactive/spread/DOM-property
+// attributes) are bound into the clone by walking firstChild/nextSibling
+// paths computed here at compile time. Holes leave a `<!--$-->` comment in
+// the template (comments never merge with neighboring text the way a text
+// placeholder would); bindHole() swaps the marker for the live node.
+//
+// Each region is emitted as BOTH forms behind a render-mode guard:
+//
+//     isStringMode() || isHydrating() ? h(...) : (clone + bind)
+//
+// SSR and hydration ride the universal h() machinery - the server output
+// and adoption walk stay byte-identical to the default target - while
+// every fresh client creation (post-hydration rows, branch swaps, CSR)
+// takes the clone path. The walk paths computed below never run against
+// server DOM, whose hole anchors would shift them. Costs one mode check
+// per instantiation and the duplicated region code in the bundle.
+//
+// Regions that contain components or fragments fall back to the universal
+// h() emission alone - composition crosses function boundaries the
+// template can't see across.
+
+/**
+ * Static attributes h() sets as DOM PROPERTIES, not attributes. In a
+ * template they must go through bindProps to keep h()'s semantics (an
+ * attribute only sets the initial state; the property is the live state).
+ *
+ * @internal
+ */
+const DOM_PROPERTY_ATTRS = new Set(['value', 'checked', 'selected', 'innerHTML', 'textContent']);
+
+/** Elements with no end tag (and no children). @internal */
+const VOID_ELEMENTS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr'
+]);
+
+/** Escapes text-node content for embedding in the template HTML. @internal */
+function escapeTemplateText(text: string): string
+{
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Escapes an attribute value for embedding in the template HTML. @internal */
+function escapeTemplateAttr(value: string): string
+{
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+/** What a dom-target region emission used, so compile() imports only that. */
+export interface DomRegion
+{
+    /** The expression replacing the markup region. */
+    code: string;
+
+    /** True when the emission calls bindHole(). */
+    usesBindHole: boolean;
+
+    /** True when the emission calls bindChild(). */
+    usesBindChild: boolean;
+
+    /** True when the emission calls bindProps(). */
+    usesBindProps: boolean;
+}
+
+/**
+ * True when every element in the subtree is a host element - the shape the
+ * template path can serialize. Components and fragments bail to h().
+ *
+ * @internal
+ */
+function isHostOnly(el: MarkupElement): boolean
+{
+    if (el.isComponent)
+    {
+        return false;
+    }
+    if (VOID_ELEMENTS.has(el.tag) && el.children.length > 0)
+    {
+        return false;
+    }
+    for (const child of el.children)
+    {
+        if (child.kind === 'fragment')
+        {
+            return false;
+        }
+        if (child.kind === 'element' && !isHostOnly(child))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Emits a markup region as a cloned template plus dynamic bindings, or
+ * returns null when the region isn't template-eligible (the caller falls
+ * back to the h() emission).
+ *
+ * @param node - The region's root AST node
+ * @param compileExpression - Recompiles nested-markup-bearing JS
+ * @param allocateTemplate - Interns an HTML string, returning the hoisted
+ *                           template const's name (deduplicated per module)
+ *
+ * @example
+ * ```ts
+ * // <li class="row">{name()}</li> becomes (hoisted)
+ * //   const _tmpl$1 = tmpl('<li class="row"><!--$--></li>');
+ * // and (in place)
+ * //   (() => { const _r = _tmpl$1(); const _e$1 = _r.firstChild;
+ * //            bindHole(_e$1, () => (name())); return _r; })()
+ * ```
+ */
+export function generateDomRegion(
+    node: MarkupElement | MarkupFragment,
+    compileExpression: ExpressionCompiler,
+    allocateTemplate: (html: string) => string
+): DomRegion | null
+{
+    if (node.kind !== 'element' || !isHostOnly(node))
+    {
+        return null;
+    }
+
+    interface Op
+    {
+        path: number[];
+        kind: 'hole' | 'child' | 'props';
+        code: string;
+    }
+    const ops: Op[] = [];
+
+    function buildElement(el: MarkupElement, path: number[]): string
+    {
+        let html = `<${ el.tag }`;
+
+        const dynamicEntries: string[] = [];
+        for (const attr of el.attributes)
+        {
+            if (attr.spread || attr.value.kind === 'expression' || DOM_PROPERTY_ATTRS.has(attr.name ?? ''))
+            {
+                dynamicEntries.push(generateAttribute(attr, compileExpression));
+                continue;
+            }
+            html += attr.value.kind === 'none'
+                ? ` ${ attr.name }`
+                : ` ${ attr.name }="${ escapeTemplateAttr(attr.value.value) }"`;
+        }
+        html += '>';
+
+        if (dynamicEntries.length > 0)
+        {
+            ops.push({ path, kind: 'props', code: `{ ${ dynamicEntries.join(', ') } }` });
+        }
+
+        if (VOID_ELEMENTS.has(el.tag))
+        {
+            return html;
+        }
+
+        // Sole-child hole (`<span>{x()}</span>`): no marker - the binding
+        // appends straight into the empty parent. Saves a cloned comment
+        // node and a replaceChild per instance; with one-binding leaf
+        // elements (the dominant row shape) that is most of the work.
+        if (el.children.length === 1 && el.children[0].kind === 'expression')
+        {
+            ops.push({
+                path,
+                kind: 'child',
+                code: wrapDynamic(compileExpression(el.children[0].code), false)
+            });
+            return `${ html }</${ el.tag }>`;
+        }
+
+        let index = 0;
+        for (const child of el.children)
+        {
+            if (child.kind === 'text')
+            {
+                html += escapeTemplateText(child.value);
+            }
+            else if (child.kind === 'expression')
+            {
+                html += '<!--$-->';
+                ops.push({
+                    path: [...path, index],
+                    kind: 'hole',
+                    code: wrapDynamic(compileExpression(child.code), false)
+                });
+            }
+            else
+            {
+                html += buildElement(child as MarkupElement, [...path, index]);
+            }
+            index++;
+        }
+
+        return `${ html }</${ el.tag }>`;
+    }
+
+    const html = buildElement(node, []);
+    const templateName = allocateTemplate(html);
+
+    // The universal form for SSR/hydration - same output the default
+    // target produces, selected by the runtime mode guard.
+    const universal = generate(node, compileExpression);
+
+    if (ops.length === 0)
+    {
+        return {
+            code: `(isStringMode() || isHydrating() ? ${ universal } : ${ templateName }())`,
+            usesBindHole: false,
+            usesBindChild: false,
+            usesBindProps: false
+        };
+    }
+
+    // Walk variables: one const per distinct node a binding targets, shared
+    // ancestor prefixes cached so each path segment is computed once.
+    const decls: string[] = [];
+    const varByPath = new Map<string, string>([['', '_r']]);
+    let varId = 0;
+
+    function varFor(path: number[]): string
+    {
+        const key = path.join('.');
+        const existing = varByPath.get(key);
+        if (existing !== undefined)
+        {
+            return existing;
+        }
+        const parent = varFor(path.slice(0, -1));
+        const name = `_e$${ ++varId }`;
+        decls.push(`const ${ name } = ${ parent }.firstChild${ '.nextSibling'.repeat(path[path.length - 1]) };`);
+        varByPath.set(key, name);
+        return name;
+    }
+
+    let usesBindHole = false;
+    let usesBindChild = false;
+    let usesBindProps = false;
+    const stmts = ops.map((op) =>
+    {
+        const target = varFor(op.path);
+        if (op.kind === 'hole')
+        {
+            usesBindHole = true;
+            return `bindHole(${ target }, ${ op.code });`;
+        }
+        if (op.kind === 'child')
+        {
+            usesBindChild = true;
+            return `bindChild(${ target }, ${ op.code });`;
+        }
+        usesBindProps = true;
+        return `bindProps(${ target }, ${ op.code });`;
+    });
+
+    const body = [`const _r = ${ templateName }();`, ...decls, ...stmts, 'return _r;'].join(' ');
+    return {
+        code: `(isStringMode() || isHydrating() ? ${ universal } : (() => { ${ body } })())`,
+        usesBindHole,
+        usesBindChild,
+        usesBindProps
+    };
 }
 
 /**

@@ -7,13 +7,14 @@
 // compare against its own id; changing the selection then re-runs all N item
 // effects. createSelector turns that O(n) change into O(1).
 //
-// It keeps a Map of key -> Set<Subscriber>. Calling isSelected(key) inside an
-// effect registers that effect under that specific key (not the source
+// It keeps a Map of key -> producer node. Calling isSelected(key) inside an
+// effect links that effect to that specific key's producer (not the source
 // signal). When the source changes, only the subscribers under the old key
-// and the new key are notified; every other key is left untouched.
+// and the new key are notified; every other key is left untouched. A key's
+// producer removes itself from the map when its last subscriber unlinks.
 
-import type { Getter, Subscriber } from './types.ts';
-import { currentSubscriber } from './signal.ts';
+import type { Getter, Producer } from './types.ts';
+import { currentSubscriber, createProducer, track, notify } from './graph.ts';
 import { createEffect } from './effect.ts';
 import { untrack } from './untrack.ts';
 
@@ -82,8 +83,8 @@ export function createSelector<T>(
     equals: (a: T, b: T) => boolean = Object.is
 ): (key: T) => boolean
 {
-    // key -> the effects that called isSelected(key).
-    const subscribers = new Map<T, Set<Subscriber>>();
+    // key -> a producer holding the effects that called isSelected(key).
+    const keyProducers = new Map<T, Producer>();
 
     // The current selected value, updated by the internal effect below.
     let currentValue: T = untrack(() => source());
@@ -91,22 +92,14 @@ export function createSelector<T>(
     // Re-runs every effect registered under one key.
     function notifyKey(key: T): void
     {
-        const subs = subscribers.get(key);
-        if (!subs)
+        const producer = keyProducers.get(key);
+        if (producer)
         {
-            return;
-        }
-
-        for (const sub of Array.from(subs))
-        {
-            if (!sub.isDisposed)
-            {
-                sub.execute();
-            }
-            else
-            {
-                subs.delete(sub);
-            }
+            // The key's selection state flipped - that IS the value change.
+            // Effects validate dependency versions before re-running, so the
+            // version must advance or they would skip the notification.
+            producer.version++;
+            notify(producer);
         }
     }
 
@@ -135,34 +128,19 @@ export function createSelector<T>(
     {
         if (currentSubscriber !== null && !currentSubscriber.isDisposed)
         {
-            let subs = subscribers.get(key);
-            if (!subs)
+            let producer = keyProducers.get(key);
+            if (!producer)
             {
-                subs = new Set();
-                subscribers.set(key, subs);
-            }
-
-            // Subscribe to the key at most once even if isSelected(key) is
-            // called several times in one run. `subs.add` is idempotent, but
-            // the cleanup below is a fresh closure each call, so the `has`
-            // guard is what keeps `dependencies` free of duplicates. This is
-            // the hottest path - createSelector exists for large lists.
-            if (!subs.has(currentSubscriber))
-            {
-                const sub = currentSubscriber;
-                const keySubs = subs;
-                keySubs.add(sub);
-
-                sub.dependencies.add(() =>
+                producer = createProducer();
+                // Drop empty key producers so the Map doesn't grow unbounded.
+                producer.onUnsubscribed = (): void =>
                 {
-                    keySubs.delete(sub);
-                    // Drop empty key sets so the Map doesn't grow unbounded.
-                    if (keySubs.size === 0)
-                    {
-                        subscribers.delete(key);
-                    }
-                });
+                    keyProducers.delete(key);
+                };
+                keyProducers.set(key, producer);
             }
+
+            track(producer);
         }
 
         return equals(currentValue, key);
