@@ -9,13 +9,17 @@ describe('Effect leak regression', () =>
         const [count, setCount] = createSignal(0);
         const seen: number[] = [];
 
-        const el = Show({ when: show, children: () => h('p', {}, () =>
+        // <Show> returns a DocumentFragment; mounting it moves its content into
+        // a real parent (the markers' live parent), which is where teardown
+        // disposes the branch.
+        const container = document.createElement('div');
+        container.appendChild(Show({ when: show, children: () => h('p', {}, () =>
         {
             seen.push(count());
             return String(count());
-        }) });
+        }) }));
 
-        document.body.appendChild(el);
+        document.body.appendChild(container);
 
         expect(seen).toEqual([0]);
 
@@ -27,7 +31,7 @@ describe('Effect leak regression', () =>
         setCount(2);
         expect(seen).toEqual([0]);
 
-        document.body.removeChild(el);
+        document.body.removeChild(container);
     });
 
     it('Show: disposes inner effects when parent root disposes', () =>

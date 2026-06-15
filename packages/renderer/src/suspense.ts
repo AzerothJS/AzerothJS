@@ -42,7 +42,7 @@
 // Suspense's fallback, and the two don't fight.
 
 import type { Resource } from '@azerothjs/reactivity';
-import { createMemo, isStringMode, serializeChild, wrapContents } from '@azerothjs/reactivity';
+import { createMemo, isStringMode, serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity';
 import { Show } from './show.ts';
 
 /**
@@ -134,7 +134,7 @@ export function Suspense(props: SuspenseProps): HTMLElement
     // resources and swaps in `children` after hydration.
     if (isStringMode())
     {
-        return wrapContents('suspense', serializeChild(props.fallback())) as unknown as HTMLElement;
+        return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as HTMLElement;
     }
 
     // Memo collapses N loading getters into one boolean. Show

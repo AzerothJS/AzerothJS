@@ -145,10 +145,19 @@ export class HydrationCursor
      */
     private index: number = 0;
 
-    constructor(parent: Node)
+    /**
+     * @param parent - The node whose children are being adopted (used for live
+     *                 DOM ops during hydration, e.g. patching a reactive hole).
+     * @param nodes - An explicit node list to walk instead of `parent`'s live
+     *                children. Used to hydrate a control-flow component's
+     *                content - the slice between its comment markers - whose
+     *                nodes are siblings of the markers in `parent`, not a
+     *                separate child list.
+     */
+    constructor(parent: Node, nodes?: ChildNode[])
     {
         this.parent = parent;
-        this.nodes = Array.from(parent.childNodes);
+        this.nodes = nodes ?? Array.from(parent.childNodes);
     }
 
     /**
@@ -296,6 +305,80 @@ export class HydrationCursor
         }
 
         throw new HydrationMismatchError('unterminated reactive-hole anchor');
+    }
+
+    /**
+     * Claims a control-flow OPEN anchor (`<!--azc:type-->`), returning it as
+     * the live start marker the component reuses for later swaps.
+     *
+     * @returns The open-anchor comment node
+     * @throws {@link HydrationMismatchError} if the next node isn't a control-flow open anchor
+     *
+     * @example
+     * ```ts
+     * // For <!--azc:show--><p>hi</p><!--/azc--> emitted by wrapContentsAnchored:
+     * const start = cursor.takeCoOpen();              // the <!--azc:show--> marker
+     * const { content, end } = cursor.takeCoBalanced(); // [<p>hi</p>], the <!--/azc--> marker
+     * ```
+     */
+    public takeCoOpen(): Comment
+    {
+        const node = this.nodes[this.index];
+
+        if (!node || node.nodeType !== 8 || !(node as Comment).data.startsWith('azc:'))
+        {
+            throw new HydrationMismatchError(`expected control-flow open anchor, found ${ describe(node) }`);
+        }
+
+        this.index++;
+        return node as Comment;
+    }
+
+    /**
+     * Claims everything up to (but NOT including) the BALANCED control-flow
+     * close anchor (`<!--/azc-->`), then consumes that close anchor. Balanced
+     * means nested control-flow ranges inside the content are skipped over: each
+     * `<!--azc:*-->` seen raises the depth and each `<!--/azc-->` lowers it, so
+     * the close returned is the one that matches the open already claimed by
+     * {@link takeCoOpen} - never an inner range's close. Reactive-hole anchors
+     * (`[` / `]`) use a different sigil and are treated as ordinary content.
+     *
+     * @returns The content nodes between the markers and the close marker itself
+     * @throws {@link HydrationMismatchError} if no matching close anchor is found
+     */
+    public takeCoBalanced(): { content: ChildNode[]; end: Comment }
+    {
+        const content: ChildNode[] = [];
+        let depth = 0;
+
+        while (this.index < this.nodes.length)
+        {
+            const node = this.nodes[this.index];
+
+            if (node.nodeType === 8)
+            {
+                const data = (node as Comment).data;
+
+                if (data.startsWith('azc:'))
+                {
+                    depth++;
+                }
+                else if (data === '/azc')
+                {
+                    if (depth === 0)
+                    {
+                        this.index++;
+                        return { content, end: node as Comment };
+                    }
+                    depth--;
+                }
+            }
+
+            content.push(node);
+            this.index++;
+        }
+
+        throw new HydrationMismatchError('unterminated control-flow anchor');
     }
 }
 

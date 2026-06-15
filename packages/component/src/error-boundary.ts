@@ -33,10 +33,10 @@ import {
     isHydrating,
     runInMode,
     serializeChild,
-    wrapContents,
+    wrapContentsAnchored,
     hydrationNode
 } from '@azerothjs/reactivity';
-import { destroyComponent } from './define-component.ts';
+import { createCoMarkers, appendToCo, clearCo } from './co-range.ts';
 
 /**
  * Props for the `<ErrorBoundary>` component.
@@ -147,28 +147,36 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
         {
             inner = serializeChild(props.fallback(err, () => undefined));
         }
-        return wrapContents('errorboundary', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('errorboundary', inner) as unknown as HTMLElement;
     }
 
-    // Hydration: adopt the wrapper span, then rebuild the boundary's subtree
-    // fresh in DOM mode and swap it in. The error-effect machinery lives
-    // outside the renderer, so v1 recreates the boundary's children rather
-    // than adopting them in place - a localized, one-time rebuild of matching
-    // content.
+    // Hydration: adopt the comment markers and rebuild the boundary's subtree
+    // fresh in DOM mode, splicing it in where the server content was. The
+    // error-effect machinery lives outside the renderer, so v1 recreates the
+    // boundary's children rather than adopting them in place - a localized,
+    // one-time rebuild of matching content.
     if (isHydrating())
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            const serverSpan = cursor.takeElement('span');
+            const start = cursor.takeCoOpen();
+            const { content, end } = cursor.takeCoBalanced();
+            const parent = cursor.parent;
+
             const real = runInMode('dom', () => ErrorBoundary(props));
-            serverSpan.parentNode?.replaceChild(real, serverSpan);
+            parent.insertBefore(real, start);
+            for (const node of content)
+            {
+                parent.removeChild(node);
+            }
+            parent.removeChild(start);
+            parent.removeChild(end);
         }) as unknown as HTMLElement;
     }
 
-    // Invisible container so the boundary doesn't disturb the
-    // surrounding layout.
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // No wrapper element: comment markers bracket the active branch so the
+    // boundary works inside <table>/<select>/<ul>. See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('errorboundary');
 
     const [error, setError] = createSignal<ErrorState | null>(null);
 
@@ -203,7 +211,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
                 catchError(
                     () =>
                     {
-                        container.appendChild(props.children());
+                        appendToCo(target, props.children());
                     },
                     (err) =>
                     {
@@ -228,7 +236,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
             createRoot((dispose) =>
             {
                 branchDispose = dispose;
-                container.appendChild(props.fallback(captured.value, reset));
+                appendToCo(target, props.fallback(captured.value, reset));
             });
         }
 
@@ -243,19 +251,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
             branchDispose = null;
         }
 
-        // Remove children one by one so MutationObserver-based
-        // primitives (Portal) can detect their removal, and run
-        // destroy hooks on each element on the way out.
-        while (container.firstChild)
-        {
-            const node = container.firstChild;
-            container.removeChild(node);
-            if (node instanceof HTMLElement)
-            {
-                destroyComponent(node);
-            }
-        }
+        // Remove the branch's nodes one by one (so Portal's MutationObserver
+        // can detect their removal) and run destroy hooks on each. clearCo
+        // never touches the markers themselves.
+        clearCo(target);
     }
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }

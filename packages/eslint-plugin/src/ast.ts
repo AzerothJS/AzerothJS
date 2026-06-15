@@ -28,24 +28,28 @@ export interface CallNode extends AstNode
     arguments: AstNode[];
 }
 
-/** True when `node` is an Identifier with the given name. */
-export function isIdentifier(node: AstNode | undefined, name?: string): node is IdentifierNode
+/**
+ * True when `node` is an Identifier with the given name. Accepts `null` because
+ * ESTree uses `null` (not `undefined`) for absent optional slots - e.g. an
+ * ArrayPattern hole or a `for (const x of …)` declarator's `init`.
+ */
+export function isIdentifier(node: AstNode | null | undefined, name?: string): node is IdentifierNode
 {
-    return node !== undefined && node.type === 'Identifier'
+    return node !== undefined && node !== null && node.type === 'Identifier'
         && (name === undefined || (node as IdentifierNode).name === name);
 }
 
 /** True when `node` is a call of the named identifier: `name(...)`. */
-export function isCallTo(node: AstNode | undefined, name: string): node is CallNode
+export function isCallTo(node: AstNode | null | undefined, name: string): node is CallNode
 {
-    return node !== undefined && node.type === 'CallExpression'
+    return node !== undefined && node !== null && node.type === 'CallExpression'
         && isIdentifier((node as CallNode).callee, name);
 }
 
 /** A function expression of any flavor. */
-export function isFunctionNode(node: AstNode | undefined): boolean
+export function isFunctionNode(node: AstNode | null | undefined): boolean
 {
-    return node !== undefined && (
+    return node !== undefined && node !== null && (
         node.type === 'ArrowFunctionExpression' ||
         node.type === 'FunctionExpression' ||
         node.type === 'FunctionDeclaration'
@@ -63,7 +67,7 @@ export function findAncestor(
 ): AstNode | null
 {
     let current = node.parent;
-    while (current !== undefined && current !== boundary)
+    while (current !== undefined && current !== null && current !== boundary)
     {
         if (predicate(current))
         {

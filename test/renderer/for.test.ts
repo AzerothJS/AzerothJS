@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createSignal, h, For } from '@azerothjs/core';
+import { createSignal, h, For, render } from '@azerothjs/core';
 
 describe('For()', () =>
 {
@@ -236,5 +236,146 @@ describe('For()', () =>
 
         expect(el.children.length).toBe(3);
         expect(el.children[0].textContent).toBe('X');
+    });
+});
+
+// Rows must be DIRECT children of their parent - no wrapper element - so <For>
+// works inside <table>/<tbody>, <select>, and <ul>, and so `parent > tr`
+// selectors (used by e.g. js-framework-benchmark) match. These mount through
+// render() into a real container, which is where the marker-based range path
+// (rather than the unmounted-fragment path the unit tests above exercise)
+// takes effect.
+describe('For() mounted in a parent with strict child types', () =>
+{
+    interface Row { id: number; label: string }
+
+    const makeRows = (n: number): Row[] =>
+        Array.from({ length: n }, (_, i) => ({ id: i + 1, label: `row ${ i + 1 }` }));
+
+    it('renders <tr> rows as direct children of <tbody>, with no wrapper element', () =>
+    {
+        const [rows] = createSignal(makeRows(3));
+        const container = document.createElement('div');
+
+        render(() => h('table', {},
+            h('tbody', { id: 'tbody' },
+                For({
+                    each: rows,
+                    key: (r) => r.id,
+                    children: (r) => h('tr', {}, h('td', {}, r.label))
+                })
+            )
+        ), container);
+
+        const tbody = container.querySelector('#tbody')!;
+
+        // No <span> (or any non-<tr>) wedged between <tbody> and its rows.
+        expect(tbody.querySelector('span')).toBeNull();
+        expect(Array.from(tbody.children).every((c) => c.tagName === 'TR')).toBe(true);
+
+        // The selector the benchmark driver uses to find rows now matches.
+        expect(container.querySelectorAll('tbody > tr').length).toBe(3);
+        expect(Array.from(container.querySelectorAll('tbody > tr')).map((tr) => tr.textContent))
+            .toEqual(['row 1', 'row 2', 'row 3']);
+    });
+
+    it('adds, removes, and clears rows in place inside <tbody>', () =>
+    {
+        const [rows, setRows] = createSignal(makeRows(3));
+        const container = document.createElement('div');
+
+        render(() => h('table', {},
+            h('tbody', { id: 'tbody' },
+                For({
+                    each: rows,
+                    key: (r) => r.id,
+                    children: (r) => h('tr', {}, h('td', {}, r.label))
+                })
+            )
+        ), container);
+
+        const rowsOf = (): string[] =>
+            Array.from(container.querySelectorAll('tbody > tr')).map((tr) => tr.textContent ?? '');
+
+        // Append.
+        setRows([...rows(), { id: 4, label: 'row 4' }]);
+        expect(rowsOf()).toEqual(['row 1', 'row 2', 'row 3', 'row 4']);
+
+        // Remove the middle row.
+        setRows(rows().filter((r) => r.id !== 2));
+        expect(rowsOf()).toEqual(['row 1', 'row 3', 'row 4']);
+
+        // Clear, then refill - the markers must survive an empty range.
+        setRows([]);
+        expect(rowsOf()).toEqual([]);
+        expect(container.querySelector('#tbody')!.querySelector('span')).toBeNull();
+
+        setRows(makeRows(2));
+        expect(rowsOf()).toEqual(['row 1', 'row 2']);
+    });
+
+    it('reorders/swaps rows inside <tbody> reusing the same <tr> elements', () =>
+    {
+        const [rows, setRows] = createSignal(makeRows(4));
+        const container = document.createElement('div');
+
+        render(() => h('table', {},
+            h('tbody', { id: 'tbody' },
+                For({
+                    each: rows,
+                    key: (r) => r.id,
+                    children: (r) => h('tr', {}, h('td', {}, r.label))
+                })
+            )
+        ), container);
+
+        const trList = (): Element[] => Array.from(container.querySelectorAll('tbody > tr'));
+        const before = trList();
+
+        // Swap first and last (the benchmark's "swap rows" operation).
+        const next = [...rows()];
+        [next[0], next[3]] = [next[3], next[0]];
+        setRows(next);
+
+        const after = trList();
+        expect(after.map((tr) => tr.textContent)).toEqual(['row 4', 'row 2', 'row 3', 'row 1']);
+
+        // Same DOM nodes, moved not rebuilt.
+        expect(after[0]).toBe(before[3]);
+        expect(after[3]).toBe(before[0]);
+        expect(after[1]).toBe(before[1]);
+    });
+
+    it('keeps sibling rows outside the <For> range intact', () =>
+    {
+        const [rows, setRows] = createSignal(makeRows(2));
+        const container = document.createElement('div');
+
+        // A static header row before the <For> and a static footer row after:
+        // the reconcile must never reach past its markers and disturb them.
+        render(() => h('table', {},
+            h('tbody', { id: 'tbody' },
+                h('tr', { id: 'header' }, h('td', {}, 'header')),
+                For({
+                    each: rows,
+                    key: (r) => r.id,
+                    children: (r) => h('tr', {}, h('td', {}, r.label))
+                }),
+                h('tr', { id: 'footer' }, h('td', {}, 'footer'))
+            )
+        ), container);
+
+        const labels = (): string[] =>
+            Array.from(container.querySelectorAll('tbody > tr')).map((tr) => tr.textContent ?? '');
+
+        expect(labels()).toEqual(['header', 'row 1', 'row 2', 'footer']);
+
+        setRows(makeRows(3));
+        expect(labels()).toEqual(['header', 'row 1', 'row 2', 'row 3', 'footer']);
+
+        setRows([]);
+        expect(labels()).toEqual(['header', 'footer']);
+        expect(container.querySelector('#header')).not.toBeNull();
+        expect(container.querySelector('#footer')).not.toBeNull();
     });
 });

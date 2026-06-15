@@ -26,8 +26,8 @@
 // auto-cleanup relies on this.
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from './h.ts';
 
 /**
@@ -104,7 +104,7 @@ export function Show(props: ShowProps): HTMLElement
     {
         const factory = untrack(() => props.when()) ? props.children : props.fallback;
         const inner = factory ? serializeChild(factory()) : '';
-        return wrapContents('show', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('show', inner) as unknown as HTMLElement;
     }
 
     // Hydration.
@@ -114,30 +114,33 @@ export function Show(props: ShowProps): HTMLElement
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            driveShow(props, cursor.takeElement('span'), true);
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveShow(props, target, true, contentCursor);
         }) as unknown as HTMLElement;
     }
 
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // Fresh client render: NO wrapper element. Comment markers bracket the
+    // active branch so it is a DIRECT child of the real parent, letting <Show>
+    // be used inside <table>/<select>/<ul>. See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('show');
 
-    driveShow(props, container, false);
+    driveShow(props, target, false);
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }
 
 /**
- * Wires the reactive branch effect onto `container`. Shared by the DOM path
- * (a freshly created span) and the hydration path (the adopted server span).
+ * Wires the reactive branch effect onto `target`. Shared by the DOM path
+ * (a marker range) and the hydration path (the adopted server span).
  *
  * @param props - The Show props
- * @param container - The contents wrapper to render branches into
+ * @param target - Where to render branches: a marker range or the server span
  * @param hydrateFirstRun - When true, the FIRST effect run adopts the span's
  *                          existing server children instead of appending new ones
  *
  * @internal
  */
-function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: boolean): void
+function driveShow(props: ShowProps, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
@@ -160,7 +163,7 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(untrack(factory), new HydrationCursor(container));
+                    hydrateChild(untrack(factory), hydrationCursor as HydrationCursorType);
                 });
             }
             return teardownBranch;
@@ -177,7 +180,7 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
                 // the whole branch (losing focus/scroll state) on every
                 // change. Inner reactive children still track normally -
                 // they run under their own effects.
-                container.appendChild(untrack(factory));
+                appendToCo(target, untrack(factory));
             });
         }
 
@@ -196,17 +199,9 @@ function driveShow(props: ShowProps, container: HTMLElement, hydrateFirstRun: bo
             branchDispose = null;
         }
 
-        // Remove children one-by-one so MutationObserver can fire
-        // (needed for Portal auto-cleanup), and run component
-        // destroy hooks on each removed element.
-        while (container.firstChild)
-        {
-            const node = container.firstChild;
-            container.removeChild(node);
-            if (node instanceof HTMLElement)
-            {
-                destroyComponent(node);
-            }
-        }
+        // Remove the branch's nodes one-by-one (so a MutationObserver can fire,
+        // which Portal auto-cleanup relies on) and run component destroy hooks
+        // on each. clearCo never touches the markers themselves.
+        clearCo(target);
     }
 }

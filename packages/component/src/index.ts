@@ -19,6 +19,18 @@ export type { ReactiveState } from './azeroth-component.ts';
 export { ErrorBoundary } from './error-boundary.ts';
 export type { ErrorBoundaryProps } from './error-boundary.ts';
 
+// Shared control-flow placement helpers (comment-marker ranges). Consumed by
+// the renderer's control-flow components; kept here because they need
+// destroyComponent and renderer depends on component, not the reverse.
+export {
+    coMarkerTarget,
+    adoptCoRange,
+    createCoMarkers,
+    appendToCo,
+    clearCo
+} from './co-range.ts';
+export type { CoTarget } from './co-range.ts';
+
 export type {
     Component,
     ComponentSetup,

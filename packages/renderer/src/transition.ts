@@ -69,8 +69,8 @@
 // (default 1000) so the state machine can never wedge.
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { destroyComponent, type CoTarget, createCoMarkers, appendToCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from './h.ts';
 
 /**
@@ -164,26 +164,28 @@ export function Transition(props: TransitionProps): HTMLElement
     if (isStringMode())
     {
         const inner = untrack(() => props.when()) ? serializeChild(props.children()) : '';
-        return wrapContents('transition', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('transition', inner) as unknown as HTMLElement;
     }
 
     // Hydration.
-    // Adopt the server wrapper span; the first effect run adopts the
+    // Adopt the server comment markers; the first effect run adopts the
     // already-rendered child (no enter animation), later toggles animate.
     if (isHydrating())
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            driveTransition(props, cursor.takeElement('span'), true);
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveTransition(props, target, true, contentCursor);
         }) as unknown as HTMLElement;
     }
 
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // No wrapper element: comment markers bracket the (single) animated child so
+    // <Transition> works inside <table>/<select>/<ul>. See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('transition');
 
-    driveTransition(props, container, false);
+    driveTransition(props, target, false);
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }
 
 /**
@@ -194,7 +196,7 @@ export function Transition(props: TransitionProps): HTMLElement
  *
  * @internal
  */
-function driveTransition(props: TransitionProps, container: HTMLElement, hydrateFirstRun: boolean): void
+function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let currentEl: HTMLElement | null = null;
     let currentDispose: DisposeFn | null = null;
@@ -250,7 +252,7 @@ function driveTransition(props: TransitionProps, container: HTMLElement, hydrate
         {
             dispose = d;
             el = props.children();
-            container.appendChild(el);
+            appendToCo(target, el);
         });
         currentEl = el;
         currentDispose = dispose;
@@ -268,7 +270,7 @@ function driveTransition(props: TransitionProps, container: HTMLElement, hydrate
         createRoot((d) =>
         {
             dispose = d;
-            const cursor = new HydrationCursor(container);
+            const cursor = hydrationCursor as HydrationCursorType;
             const adopted = cursor.peekElement();
             hydrateChild(props.children(), cursor);
             el = adopted as HTMLElement;
@@ -297,10 +299,9 @@ function driveTransition(props: TransitionProps, container: HTMLElement, hydrate
         const dispose = currentDispose;
         currentEl = null;
         currentDispose = null;
-        if (container.contains(el))
-        {
-            container.removeChild(el);
-        }
+        // el is the single child between the markers; remove it from whatever
+        // parent the markers currently live in.
+        el.parentNode?.removeChild(el);
         dispose?.();
         destroyComponent(el);
     }
@@ -454,10 +455,7 @@ function driveTransition(props: TransitionProps, container: HTMLElement, hydrate
                 {
                     return;
                 }
-                if (container.contains(el))
-                {
-                    container.removeChild(el);
-                }
+                el.parentNode?.removeChild(el);
                 dispose?.();
                 destroyComponent(el);
                 currentEl = null;

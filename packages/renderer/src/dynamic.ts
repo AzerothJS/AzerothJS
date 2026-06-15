@@ -30,8 +30,8 @@
 // must wrap it: setView(() => NewComponent).
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from './h.ts';
 
 /**
@@ -112,11 +112,11 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
         const Component = untrack(() => dynamicProps.component());
         if (!Component)
         {
-            return wrapContents('dynamic', '') as unknown as HTMLElement;
+            return wrapContentsAnchored('dynamic', '') as unknown as HTMLElement;
         }
 
         const resolvedProps = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
-        return wrapContents('dynamic', serializeChild(Component(resolvedProps))) as unknown as HTMLElement;
+        return wrapContentsAnchored('dynamic', serializeChild(Component(resolvedProps))) as unknown as HTMLElement;
     }
 
     // Hydration.
@@ -126,30 +126,33 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            driveDynamic(dynamicProps, cursor.takeElement('span'), true);
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveDynamic(dynamicProps, target, true, contentCursor);
         }) as unknown as HTMLElement;
     }
 
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // Fresh client render: NO wrapper element. Comment markers bracket the
+    // active component so it is a DIRECT child of the real parent, letting
+    // <Dynamic> be used inside <table>/<select>/<ul>. See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('dynamic');
 
-    driveDynamic(dynamicProps, container, false);
+    driveDynamic(dynamicProps, target, false);
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }
 
 /**
- * Wires the component-swap effect onto `container`. Shared by the DOM path
- * (a fresh span) and hydration (the adopted server span).
+ * Wires the component-swap effect onto `target`. Shared by the DOM path
+ * (a marker range) and hydration (the adopted server span).
  *
  * @param dynamicProps - The Dynamic props
- * @param container - The contents wrapper
+ * @param target - Where to render the component: a marker range or server span
  * @param hydrateFirstRun - When true, the first run adopts the existing
  *                          server children instead of building new ones
  *
  * @internal
  */
-function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrateFirstRun: boolean): void
+function driveDynamic(dynamicProps: DynamicProps, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
@@ -178,7 +181,7 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(untrack(() => Component(props)), new HydrationCursor(container));
+                    hydrateChild(untrack(() => Component(props)), hydrationCursor as HydrationCursorType);
                 });
                 return teardownBranch;
             }
@@ -190,7 +193,7 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
                 // A synchronous signal read in the component's setup must
                 // not subscribe it, or that signal would rebuild the whole
                 // component tree on every change.
-                container.appendChild(untrack(() => Component(props)));
+                appendToCo(target, untrack(() => Component(props)));
             });
         }
         else
@@ -211,14 +214,6 @@ function driveDynamic(dynamicProps: DynamicProps, container: HTMLElement, hydrat
             branchDispose = null;
         }
 
-        while (container.firstChild)
-        {
-            const node = container.firstChild;
-            container.removeChild(node);
-            if (node instanceof HTMLElement)
-            {
-                destroyComponent(node);
-            }
-        }
+        clearCo(target);
     }
 }

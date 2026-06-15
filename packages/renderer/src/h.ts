@@ -319,6 +319,17 @@ function appendChild(parent: HTMLElement, child: Child): void
         return;
     }
 
+    // A DocumentFragment is how <For> mounts its rows with no wrapper element:
+    // appending it moves the fragment's children (markers + rows) directly into
+    // `parent`, so the rows become `parent`'s own children. <For> reaches here
+    // via its `as unknown as HTMLElement` return, so `child` isn't statically
+    // typed as a fragment - check at runtime.
+    if ((child as unknown) instanceof DocumentFragment)
+    {
+        parent.appendChild(child as unknown as DocumentFragment);
+        return;
+    }
+
     parent.appendChild(document.createTextNode(String(child)));
 }
 
@@ -437,6 +448,19 @@ function buildNode(value: unknown): ChildNode
     if (value instanceof HTMLElement)
     {
         return value;
+    }
+
+    // A reactive child that returns a <For> (e.g. `() => For({...})`) yields a
+    // DocumentFragment. The reactive-child path swaps a SINGLE node in place,
+    // which a multi-node range can't satisfy, so wrap the fragment's nodes in a
+    // contents span here. (Used <For> directly as an element child needs no
+    // wrapper - see appendChild's DocumentFragment branch.)
+    if (value instanceof DocumentFragment)
+    {
+        const container = document.createElement('span');
+        container.style.display = 'contents';
+        container.appendChild(value);
+        return container;
     }
 
     if (Array.isArray(value))

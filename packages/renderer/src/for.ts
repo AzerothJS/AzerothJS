@@ -27,8 +27,8 @@
 //   A, C, D   -> kept    (same elements, no re-creation)
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { destroyComponent, type CoTarget, createCoMarkers, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from './h.ts';
 
 /**
@@ -195,9 +195,9 @@ export function For<T>(props: ForProps<T>): HTMLElement
     const renderItem = props.children;
 
     // Server-side rendering.
-    // Map each item ONCE (index is static within a single render). Each row
-    // is a single element, so the client hydrator adopts them in order - no
-    // per-row markers needed.
+    // Map each item ONCE (index is static within a single render), then bracket
+    // the rows with comment anchors so they are direct children of the real
+    // parent on hydration too (no wrapper element - works inside <tbody> etc.).
     if (isStringMode())
     {
         const items = untrack(() => props.each());
@@ -209,37 +209,44 @@ export function For<T>(props: ForProps<T>): HTMLElement
             inner += serializeChild(renderItem(items[index], () => index));
         }
 
-        return wrapContents('for', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('for', inner) as unknown as HTMLElement;
     }
 
     // Hydration.
-    // Adopt the wrapper span and its existing rows on the first effect run;
-    // subsequent list changes use the normal keyed reconcile.
+    // Adopt the server's comment markers (reused as the live start/end anchors)
+    // and the rows between them, then reconcile within that marker range.
     if (isHydrating())
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            driveFor(props, renderItem, cursor.takeElement('span'), true);
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveFor(props, renderItem, target, true, contentCursor);
         }) as unknown as HTMLElement;
     }
 
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // Fresh client render: NO wrapper element. Two comment markers bracket the
+    // rows so each row is a DIRECT child of the real parent - which lets <For>
+    // be used inside <table>/<tbody>, <select>, and <ul>, where an intervening
+    // <span> would break layout and `parent > tr` selectors. The reconcile
+    // derives its parent live from the end marker's parent, so it works both
+    // before this fragment is mounted (parent is the fragment) and after
+    // (parent is the real container). See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('for');
 
-    driveFor(props, renderItem, container, false);
+    driveFor(props, renderItem, target, false);
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }
 
 /**
- * Wires the keyed-list reconcile effect onto `container`. Shared by the DOM
- * path (a fresh span) and hydration (the adopted server span). On a hydrating
+ * Wires the keyed-list reconcile effect onto `target`. Shared by the DOM path
+ * (a marker range) and hydration (the adopted server span). On a hydrating
  * first run, each row is adopted from the existing server DOM (its key entry
  * populated) and the reconcile passes are skipped - the DOM already matches.
  *
  * @internal
  */
-function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], container: HTMLElement, hydrateFirstRun: boolean): void
+function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let firstRun = hydrateFirstRun;
 
@@ -273,7 +280,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
         if (firstRun)
         {
             firstRun = false;
-            const cursor = new HydrationCursor(container);
+            const cursor = hydrationCursor as HydrationCursorType;
             const adoptedMap = new Map<string | number, KeyEntry>();
 
             for (let i = 0; i < items.length; i++)
@@ -386,7 +393,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
         // its right neighbor. A swap of two distant rows is 2 DOM moves,
         // not O(n) - and nothing here indexes the live childNodes NodeList,
         // which is O(n) per access in some DOM implementations.
-        reconcileChildren(container, newOrder);
+        reconcileChildren(target, newOrder);
 
         keyMap = newMap;
     }
@@ -415,52 +422,69 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], co
 }
 
 /**
- * Makes `container`'s children equal `newOrder` with the minimum number of
- * insertBefore moves. Departed nodes are removed first; of the survivors,
+ * Makes the rows in `target`'s range equal `newOrder` with the minimum number
+ * of insertBefore moves. Departed nodes are removed first; of the survivors,
  * those on the longest increasing subsequence of old positions keep their
  * relative order and never move, and every other node (moved or new) is
- * inserted before its already-placed right neighbor in one right-to-left
- * walk.
+ * inserted before its already-placed right neighbor in one right-to-left walk.
  *
- * The current children are snapshotted once via firstChild/nextSibling - no
- * live-NodeList indexing, which costs O(n) per access in some DOM
- * implementations and made a 2-row swap O(n^2).
+ * The range is `(target.start, target.end)` exclusive: the rows sit between two
+ * comment markers in an arbitrary parent, so the walk is bounded by `end` and
+ * never escapes into following siblings. The parent is read live
+ * (`target.parent()`) because the parent changes when the returned fragment is
+ * mounted.
+ *
+ * The current rows are snapshotted once via nextSibling - no live-NodeList
+ * indexing, which costs O(n) per access in some DOM implementations and made a
+ * 2-row swap O(n^2).
  *
  * @internal
  */
-function reconcileChildren(container: HTMLElement, newOrder: HTMLElement[]): void
+function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
 {
-    // Emptied list: drop everything from the back. Back-first removal is
-    // O(1) per node in array-backed DOM implementations; front-first would
-    // shift the whole child array every time.
+    const parent = target.parent();
+    const { start, end } = target;
+
+    // First row in the range: the node just after the start marker, or the end
+    // marker itself when the range is empty.
+    const first: ChildNode | null = start.nextSibling;
+
+    // Emptied list: drop every row in the range from the back. Back-first
+    // removal is O(1) per node in array-backed DOM implementations; front-first
+    // would shift the whole child array every time.
     if (newOrder.length === 0)
     {
-        while (container.lastChild !== null)
+        let node: ChildNode | null = end.previousSibling;
+        while (node !== null && node !== start)
         {
-            container.removeChild(container.lastChild);
+            const prev: ChildNode | null = node.previousSibling;
+            parent.removeChild(node);
+            node = prev;
         }
         return;
     }
 
-    // First render into an empty container: nothing to diff, just append.
-    // Skips the membership Set and the survivor/position arrays entirely on
-    // the create path.
-    if (container.firstChild === null)
+    // First render into an empty range: nothing to diff, just insert in order
+    // before the end anchor. Skips the membership Set and the survivor/position
+    // arrays entirely.
+    if (first === end)
     {
         for (const el of newOrder)
         {
-            container.appendChild(el);
+            parent.insertBefore(el, end);
         }
         return;
     }
 
     const wanted = new Set<HTMLElement>(newOrder);
 
-    // Snapshot survivors in DOM order and remove departed nodes. After this
-    // loop the container holds exactly the surviving elements.
+    // Snapshot survivors in DOM order and remove departed nodes. The walk is
+    // bounded by the end anchor so it never escapes the range into following
+    // siblings (critical on the marker path, where the parent holds more than
+    // just these rows). After this loop the range holds exactly the survivors.
     const survivors: HTMLElement[] = [];
-    let node: ChildNode | null = container.firstChild;
-    while (node !== null)
+    let node: ChildNode | null = first;
+    while (node !== null && node !== end)
     {
         const next: ChildNode | null = node.nextSibling;
         if (wanted.has(node as HTMLElement))
@@ -469,7 +493,7 @@ function reconcileChildren(container: HTMLElement, newOrder: HTMLElement[]): voi
         }
         else
         {
-            container.removeChild(node);
+            parent.removeChild(node);
         }
         node = next;
     }
@@ -477,41 +501,41 @@ function reconcileChildren(container: HTMLElement, newOrder: HTMLElement[]): voi
     // Trim the common prefix and suffix. The dominant real updates (append,
     // prepend, a localized splice) collapse to a tiny middle window, and the
     // LIS below then only pays for that window.
-    let start = 0;
-    while (start < survivors.length && start < newOrder.length && survivors[start] === newOrder[start])
+    let startIdx = 0;
+    while (startIdx < survivors.length && startIdx < newOrder.length && survivors[startIdx] === newOrder[startIdx])
     {
-        start++;
+        startIdx++;
     }
 
     let oldEnd = survivors.length;
     let newEnd = newOrder.length;
-    while (oldEnd > start && newEnd > start && survivors[oldEnd - 1] === newOrder[newEnd - 1])
+    while (oldEnd > startIdx && newEnd > startIdx && survivors[oldEnd - 1] === newOrder[newEnd - 1])
     {
         oldEnd--;
         newEnd--;
     }
 
-    if (start === newEnd)
+    if (startIdx === newEnd)
     {
         // Survivors are a subset of newOrder, so an empty new window forces
         // an empty old window: nothing to do.
         return;
     }
 
-    // Everything in the window goes before the first node of the common
-    // suffix (or at the end).
-    const windowAnchor: ChildNode | null = newEnd < newOrder.length ? newOrder[newEnd] : null;
+    // Everything in the window goes before the first node of the common suffix,
+    // or before the end anchor when the window runs to the end.
+    const windowAnchor: ChildNode | null = newEnd < newOrder.length ? newOrder[newEnd] : end;
 
     // Pure insertion (append/prepend/splice-in): no old nodes in the window,
     // so place the new ones left to right. Plain per-node insertion - a
     // DocumentFragment measured SLOWER here (moving N nodes out of a
     // fragment costs O(n^2) in array-backed DOM implementations), and with
     // a detached or anchor-terminated insert there is no reflow to batch.
-    if (start === oldEnd)
+    if (startIdx === oldEnd)
     {
-        for (let i = start; i < newEnd; i++)
+        for (let i = startIdx; i < newEnd; i++)
         {
-            container.insertBefore(newOrder[i], windowAnchor);
+            parent.insertBefore(newOrder[i], windowAnchor);
         }
         return;
     }
@@ -519,16 +543,16 @@ function reconcileChildren(container: HTMLElement, newOrder: HTMLElement[]): voi
     // General window: positions[i] = where the window's i-th new node sits
     // among the old window nodes, -1 for freshly created nodes.
     const oldPosition = new Map<HTMLElement, number>();
-    for (let i = start; i < oldEnd; i++)
+    for (let i = startIdx; i < oldEnd; i++)
     {
         oldPosition.set(survivors[i], i);
     }
 
-    const windowLength = newEnd - start;
+    const windowLength = newEnd - startIdx;
     const positions = new Array<number>(windowLength);
     for (let i = 0; i < windowLength; i++)
     {
-        const pos = oldPosition.get(newOrder[start + i]);
+        const pos = oldPosition.get(newOrder[startIdx + i]);
         positions[i] = pos === undefined ? -1 : pos;
     }
 
@@ -541,14 +565,14 @@ function reconcileChildren(container: HTMLElement, newOrder: HTMLElement[]): voi
     let stableIdx = stable.length - 1;
     for (let i = windowLength - 1; i >= 0; i--)
     {
-        const el = newOrder[start + i];
+        const el = newOrder[startIdx + i];
         if (stableIdx >= 0 && stable[stableIdx] === i)
         {
             stableIdx--;
         }
         else
         {
-            container.insertBefore(el, anchor);
+            parent.insertBefore(el, anchor);
         }
         anchor = el;
     }

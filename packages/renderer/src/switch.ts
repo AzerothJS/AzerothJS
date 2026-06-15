@@ -26,8 +26,8 @@
 //     }) // only the first match (or fallback) is mounted; exclusivity is explicit
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContents, hydrationNode, HydrationCursor } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from './h.ts';
 
 /**
@@ -138,12 +138,12 @@ export function Switch(props: SwitchProps): HTMLElement
         {
             if (untrack(() => matchCase.when()))
             {
-                return wrapContents('switch', serializeChild(matchCase.render())) as unknown as HTMLElement;
+                return wrapContentsAnchored('switch', serializeChild(matchCase.render())) as unknown as HTMLElement;
             }
         }
 
         const fallbackInner = props.fallback ? serializeChild(props.fallback()) : '';
-        return wrapContents('switch', fallbackInner) as unknown as HTMLElement;
+        return wrapContentsAnchored('switch', fallbackInner) as unknown as HTMLElement;
     }
 
     // Hydration.
@@ -153,31 +153,34 @@ export function Switch(props: SwitchProps): HTMLElement
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
-            driveSwitch(props, cases, cursor.takeElement('span'), true);
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveSwitch(props, cases, target, true, contentCursor);
         }) as unknown as HTMLElement;
     }
 
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // Fresh client render: NO wrapper element. Comment markers bracket the
+    // matching case so it is a DIRECT child of the real parent, letting
+    // <Switch> be used inside <table>/<select>/<ul>. See ./co-range.ts.
+    const { fragment, target } = createCoMarkers('switch');
 
-    driveSwitch(props, cases, container, false);
+    driveSwitch(props, cases, target, false);
 
-    return container as unknown as HTMLElement;
+    return fragment as unknown as HTMLElement;
 }
 
 /**
- * Wires the case-selection effect onto `container`. Shared by the DOM path
- * (a fresh span) and hydration (the adopted server span).
+ * Wires the case-selection effect onto `target`. Shared by the DOM path
+ * (a marker range) and hydration (the adopted server span).
  *
  * @param props - The Switch props
  * @param cases - The normalized list of Match cases
- * @param container - The contents wrapper
+ * @param target - Where to render the case: a marker range or the server span
  * @param hydrateFirstRun - When true, the first run adopts the existing
  *                          server children instead of building new ones
  *
  * @internal
  */
-function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElement, hydrateFirstRun: boolean): void
+function driveSwitch(props: SwitchProps, cases: MatchCase[], target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
@@ -211,7 +214,7 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
                 createRoot((d) =>
                 {
                     branchDispose = d;
-                    hydrateChild(untrack(build), new HydrationCursor(container));
+                    hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
                 });
             }
             return teardownBranch;
@@ -227,7 +230,7 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
                 // synchronous signal read inside the case's render function
                 // must not subscribe the selection effect - that would
                 // rebuild the branch on every change of that signal.
-                container.appendChild(untrack(build));
+                appendToCo(target, untrack(build));
             });
         }
 
@@ -245,14 +248,6 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], container: HTMLElem
             branchDispose = null;
         }
 
-        while (container.firstChild)
-        {
-            const node = container.firstChild;
-            container.removeChild(node);
-            if (node instanceof HTMLElement)
-            {
-                destroyComponent(node);
-            }
-        }
+        clearCo(target);
     }
 }

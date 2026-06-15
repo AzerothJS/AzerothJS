@@ -33,7 +33,7 @@ export {
     escapeText,
     escapeAttr,
     serializeChild,
-    wrapContents
+    wrapContentsAnchored
 } from './ssr.ts';
 export type { SSRNode } from './ssr.ts';
 

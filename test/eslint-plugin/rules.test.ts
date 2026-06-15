@@ -35,7 +35,15 @@ describe('azeroth/no-self-write-in-effect', () =>
 
                 // Same pattern outside any effect.
                 `const [n, setN] = createSignal(0);
-                 function bump() { setN(n() + 1); }`
+                 function bump() { setN(n() + 1); }`,
+
+                // Declarators with a null `init` must not crash signal
+                // collection: for-of/for-in bindings and bare `let` all have
+                // `init === null` in ESTree (regression - these threw at
+                // isCallTo(null) because the guard only checked `undefined`).
+                'for (const x of [1, 2]) { void x; }',
+                'for (const k in { a: 1 }) { void k; }',
+                'let pending;'
             ],
             invalid:
             [

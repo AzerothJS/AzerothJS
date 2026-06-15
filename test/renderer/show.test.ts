@@ -59,15 +59,22 @@ describe('Show()', () =>
         expect(el.textContent).toBe('Visible');
     });
 
-    it('should use display: contents on container', () =>
+    it('renders content with NO wrapper element (so it works in strict parents)', () =>
     {
         const [visible] = createSignal(true);
 
-        const el = Show({
+        // Mounting the returned fragment moves its content (between comment
+        // markers) directly into the container - no <span> wrapper, so <Show>
+        // is safe inside <table>/<select>/<ul>.
+        const container = document.createElement('div');
+        container.appendChild(Show({
             when: visible,
             children: () => h('p', {}, 'Hello')
-        });
+        }));
 
-        expect(el.style.display).toBe('contents');
+        expect(container.querySelector('span')).toBeNull();
+        expect(container.children.length).toBe(1);
+        expect(container.children[0].tagName).toBe('P');
+        expect(container.textContent).toBe('Hello');
     });
 });

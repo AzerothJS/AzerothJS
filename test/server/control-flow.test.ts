@@ -4,12 +4,40 @@ import { h, Show, For, Switch, Match, Portal, Dynamic, Suspense, Transition } fr
 import { ErrorBoundary } from '@azerothjs/component';
 import { renderToString, renderToStaticMarkup } from '@azerothjs/server';
 
+describe('control-flow SSR uses comment markers, never a wrapper element', () =>
+{
+    // No control-flow component may emit a `display:contents` span: that wrapper
+    // is illegal inside <table>/<select>/<ul> (the parser hoists it out). Every
+    // one must serialize as comment-anchored content instead.
+    it('no component emits a <span> wrapper', () =>
+    {
+        const View = (): HTMLElement => h('i', {}, 'x');
+        const samples = [
+            renderToString(() => Show({ when: () => true, children: () => h('i', {}, 'x') })),
+            renderToString(() => For({ each: () => [1], key: (n) => n, children: () => h('i', {}, 'x') })),
+            renderToString(() => Switch({ children: [Match({ when: () => true, children: () => h('i', {}, 'x') })] })),
+            renderToString(() => Dynamic({ component: () => View })),
+            renderToString(() => Suspense({ fallback: () => h('i', {}, 'x'), on: [], children: () => h('i', {}, 'y') })),
+            renderToString(() => Transition({ when: () => true, name: 'fade', children: () => h('i', {}, 'x') })),
+            renderToString(() => Portal({ children: () => h('i', {}, 'x') })),
+            renderToString(() => ErrorBoundary({ fallback: () => h('i', {}, 'e'), children: () => h('i', {}, 'x') }))
+        ];
+
+        for (const html of samples)
+        {
+            expect(html).not.toContain('<span');
+            expect(html).not.toContain('display:contents');
+            expect(html).toContain('<!--azc:');
+        }
+    });
+});
+
 describe('Show (SSR)', () =>
 {
     it('renders children when the condition is true, tagged for hydration', () =>
     {
         const html = renderToString(() => Show({ when: () => true, children: () => h('p', {}, 'yes') }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="show"><p>yes</p></span>');
+        expect(html).toBe('<!--azc:show--><p>yes</p><!--/azc-->');
     });
 
     it('renders the fallback when false', () =>
@@ -19,13 +47,13 @@ describe('Show (SSR)', () =>
             fallback: () => h('p', {}, 'no'),
             children: () => h('p', {}, 'yes')
         }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="show"><p>no</p></span>');
+        expect(html).toBe('<!--azc:show--><p>no</p><!--/azc-->');
     });
 
-    it('renders nothing inside the wrapper when false with no fallback', () =>
+    it('renders nothing between the markers when false with no fallback', () =>
     {
         const html = renderToString(() => Show({ when: () => false, children: () => h('p', {}, 'yes') }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="show"></span>');
+        expect(html).toBe('<!--azc:show--><!--/azc-->');
     });
 });
 
@@ -35,7 +63,7 @@ describe('For (SSR)', () =>
     {
         const [items] = createSignal(['a', 'b']);
         const html = renderToString(() => For({ each: items, key: (x) => x, children: (x) => h('li', {}, x) }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="for"><li>a</li><li>b</li></span>');
+        expect(html).toBe('<!--azc:for--><li>a</li><li>b</li><!--/azc-->');
     });
 
     it('exposes a static index getter', () =>
@@ -46,7 +74,7 @@ describe('For (SSR)', () =>
             key: (_, i) => i,
             children: (item, index) => h('li', {}, () => `${ index() }:${ item }`)
         }));
-        expect(html).toBe('<span style="display:contents"><li>0:a</li><li>1:b</li></span>');
+        expect(html).toBe('<li>0:a</li><li>1:b</li>');
     });
 });
 
@@ -62,12 +90,12 @@ describe('Switch (SSR)', () =>
 
     it('renders the first matching case', () =>
     {
-        expect(build('done')).toBe('<span style="display:contents" data-azeroth-co="switch"><p>done</p></span>');
+        expect(build('done')).toBe('<!--azc:switch--><p>done</p><!--/azc-->');
     });
 
     it('renders the fallback when nothing matches', () =>
     {
-        expect(build('other')).toBe('<span style="display:contents" data-azeroth-co="switch"><p>idle</p></span>');
+        expect(build('other')).toBe('<!--azc:switch--><p>idle</p><!--/azc-->');
     });
 });
 
@@ -77,13 +105,13 @@ describe('Dynamic (SSR)', () =>
     {
         const View = (): HTMLElement => h('section', {}, 'view');
         const html = renderToString(() => Dynamic({ component: () => View }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="dynamic"><section>view</section></span>');
+        expect(html).toBe('<!--azc:dynamic--><section>view</section><!--/azc-->');
     });
 
-    it('renders an empty wrapper for a null component', () =>
+    it('renders empty markers for a null component', () =>
     {
         const html = renderToString(() => Dynamic({ component: () => null }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="dynamic"></span>');
+        expect(html).toBe('<!--azc:dynamic--><!--/azc-->');
     });
 });
 
@@ -96,7 +124,7 @@ describe('Suspense (SSR)', () =>
             on: [],
             children: () => h('p', {}, 'content')
         }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="suspense"><p>loading</p></span>');
+        expect(html).toBe('<!--azc:suspense--><p>loading</p><!--/azc-->');
     });
 });
 
@@ -109,7 +137,7 @@ describe('Transition (SSR)', () =>
             name: 'fade',
             children: () => h('div', { class: 'modal' }, 'Hi')
         }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="transition"><div class="modal">Hi</div></span>');
+        expect(html).toBe('<!--azc:transition--><div class="modal">Hi</div><!--/azc-->');
         expect(html).not.toContain('fade-enter');
     });
 });
@@ -119,7 +147,7 @@ describe('Portal (SSR)', () =>
     it('renders content inline without touching document.body', () =>
     {
         const html = renderToString(() => Portal({ children: () => h('div', { class: 'modal' }, 'M') }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="portal"><div class="modal">M</div></span>');
+        expect(html).toBe('<!--azc:portal--><div class="modal">M</div><!--/azc-->');
     });
 });
 
@@ -131,7 +159,7 @@ describe('ErrorBoundary (SSR)', () =>
             fallback: () => h('p', {}, 'err'),
             children: () => h('p', {}, 'ok')
         }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="errorboundary"><p>ok</p></span>');
+        expect(html).toBe('<!--azc:errorboundary--><p>ok</p><!--/azc-->');
     });
 
     it('renders the fallback when children throw', () =>
@@ -143,6 +171,6 @@ describe('ErrorBoundary (SSR)', () =>
                 throw new Error('boom');
             }
         }));
-        expect(html).toBe('<span style="display:contents" data-azeroth-co="errorboundary"><p>caught: Error: boom</p></span>');
+        expect(html).toBe('<!--azc:errorboundary--><p>caught: Error: boom</p><!--/azc-->');
     });
 });

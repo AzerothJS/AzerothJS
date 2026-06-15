@@ -210,24 +210,40 @@ export function serializeChild(child: unknown): string
 }
 
 /**
- * Wraps a control-flow component's inner HTML in the invisible
- * `display:contents` span the DOM path also uses, tagging it with
- * `data-azeroth-co` (when markers are on) so the client hydrator can find
- * and adopt the wrapper.
+ * Wraps a control-flow component's inner HTML in comment-node markers (rather
+ * than a wrapper element). Comments are valid in EVERY context - including
+ * inside `<table>`/`<tbody>`, `<select>`, and
+ * `<ul>`, where the HTML parser would hoist a stray `<span>` out of the table -
+ * so this is what control-flow components that must work in those contexts
+ * emit. The markers double as the live start/end anchors the client adopts and
+ * reuses for later swaps (see ./co-range.ts and the hydration cursor).
+ *
+ * Markers off (renderToStaticMarkup): no wrapper at all, just `inner` - there
+ * is no client to hydrate, so no anchors are needed.
+ *
+ * Markers on (renderToString): `<!--azc:coType-->inner<!--/azc-->`. The open
+ * anchor carries the kind for debugging; the close is a bare `/azc`. Both use a
+ * distinct sigil from reactive-hole anchors (`[` / `]`) so the two never
+ * collide, and the hydrator matches them by BALANCED depth so nested
+ * control-flow adopts correctly.
  *
  * @param coType - The control-flow kind ('show', 'for', 'switch', ...)
  * @param inner - The already-serialized inner HTML
- * @returns The wrapper as an {@link SSRNode}
+ * @returns The anchored content as an {@link SSRNode}
  *
  * @example
  * ```ts
- * // With markers off (renderToStaticMarkup):
- * wrapContents('show', '<p>hi</p>').html;
- * // '<span style="display:contents"><p>hi</p></span>'
+ * // With markers on (renderToString):
+ * wrapContentsAnchored('for', '<li>a</li>').html;
+ * // '<!--azc:for--><li>a</li><!--/azc-->'
  * ```
  */
-export function wrapContents(coType: string, inner: string): SSRNode
+export function wrapContentsAnchored(coType: string, inner: string): SSRNode
 {
-    const marker = markersOn ? ` data-azeroth-co="${ escapeAttr(coType) }"` : '';
-    return ssr(`<span style="display:contents"${ marker }>${ inner }</span>`);
+    if (!markersOn)
+    {
+        return ssr(inner);
+    }
+
+    return ssr(`<!--azc:${ coType }-->${ inner }<!--/azc-->`);
 }

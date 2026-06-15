@@ -150,6 +150,63 @@ describe('hydrate - For', () =>
     });
 });
 
+// The whole point of the comment-marker change: control flow now SSRs and
+// hydrates as DIRECT children of strict parents like <tbody>, where the old
+// <span> wrapper was illegal (the HTML parser would hoist it out of the table).
+describe('hydrate - control flow inside <tbody>', () =>
+{
+    it('SSRs <For> rows into <tbody> with no wrapper element, then adopts them', () =>
+    {
+        const [rows, setRows] = createSignal([{ id: 1 }, { id: 2 }, { id: 3 }]);
+        const App = (): HTMLElement => h('table', {}, h('tbody', { id: 'tb' }, For({
+            each: rows,
+            key: (r) => r.id,
+            children: (r) => h('tr', { 'data-id': String(r.id) }, h('td', {}, String(r.id)))
+        })));
+
+        const container = serverInto(App);
+
+        // Server markup put the rows directly in <tbody> (no <span>), so the
+        // benchmark-style selector matches even before hydration.
+        expect(container.querySelector('#tb')!.querySelector('span')).toBeNull();
+        expect(container.querySelectorAll('tbody > tr')).toHaveLength(3);
+        const row2 = container.querySelector('[data-id="2"]');
+
+        hydrate(App, container);
+        expect(container.querySelector('[data-id="2"]')).toBe(row2); // adopted, not rebuilt
+
+        // Reactivity works on the adopted rows.
+        setRows([{ id: 1 }, { id: 3 }]);
+        expect(Array.from(container.querySelectorAll('tbody > tr')).map((tr) => tr.getAttribute('data-id')))
+            .toEqual(['1', '3']);
+        expect(container.querySelector('#tb')!.querySelector('span')).toBeNull();
+    });
+
+    it('round-trips nested control flow (Show > For) via balanced anchors', () =>
+    {
+        const [on] = createSignal(true);
+        const [rows] = createSignal([{ id: 1 }, { id: 2 }]);
+        const App = (): HTMLElement => h('table', {}, h('tbody', { id: 'tb' }, Show({
+            when: on,
+            children: () => For({
+                each: rows,
+                key: (r) => r.id,
+                children: (r) => h('tr', { 'data-id': String(r.id) }, h('td', {}, String(r.id)))
+            })
+        }) as unknown as HTMLElement));
+
+        const container = serverInto(App);
+        expect(container.querySelectorAll('tbody > tr')).toHaveLength(2);
+        const row1 = container.querySelector('[data-id="1"]');
+
+        // Balanced anchors: Show's close marker is matched past For's markers.
+        hydrate(App, container);
+        expect(container.querySelector('[data-id="1"]')).toBe(row1);
+        expect(container.querySelectorAll('tbody > tr')).toHaveLength(2);
+        expect(container.querySelector('#tb')!.querySelector('span')).toBeNull();
+    });
+});
+
 describe('hydrate - mismatch fallback', () =>
 {
     it('falls back to a full client render without throwing', () =>
