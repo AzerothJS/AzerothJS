@@ -1,7 +1,0 @@
-<idea-plugin>
-    <!-- Loaded only when the TextMate Bundles plugin is present. Registers the
-         bundled grammar so .azeroth gets full TSX-style highlighting. -->
-    <extensions defaultExtensionNs="com.intellij">
-        <textmate.bundleProvider implementation="com.azerothjs.AzerothTextMateBundleProvider"/>
-    </extensions>
-</idea-plugin>

@@ -25,6 +25,10 @@
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
+    "dependencies":
+    {
+        "@azerothjs/compiler": "0.6.0-beta.1"
+    },
     "peerDependencies":
     {
         "eslint": ">=9"

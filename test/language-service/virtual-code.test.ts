@@ -13,11 +13,17 @@ import { compile } from '@azerothjs/compiler';
 
 describe('generateVirtualCode - matches the compiler and maps precisely', () =>
 {
-    it('compiles markup to h() calls and injects the h import', () =>
+    it('compiles markup to h() calls and declares the h binding', () =>
     {
         const { code } = generateVirtualCode('const x = <h1>Count: {count()}</h1>;');
-        expect(code).toMatch(/^import \{ h \} from '@azerothjs\/core';/);
         expect(code).toContain("h('h1', {  }, 'Count: ', () => (count()))");
+        // h is provided as an ambient declaration APPENDED after the user code,
+        // not a real import - so TypeScript's auto-import has no same-module
+        // merge target in generated code (see finalize()), and a new import
+        // lands in the user's own section at the top. The user code is therefore
+        // still first, byte-for-byte.
+        expect(code).toMatch(/^const x = h\('h1'/);
+        expect(code).toContain("declare const h: typeof import('@azerothjs/core').h;");
     });
 
     // Regression: the type-check (virtual) output and the runtime (compiler)

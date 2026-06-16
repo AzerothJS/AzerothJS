@@ -5,19 +5,38 @@
     <description><![CDATA[
         Language support for AzerothJS <code>.azeroth</code> files.
         <ul>
-            <li>Full TSX-style syntax highlighting (HTML/JSX/TS), via JetBrains' TextMate engine.</li>
+            <li>Native <code>.azeroth</code> language: syntax highlighting and correct bracket
+                matching (a real lexer, so braces inside strings, comments, and template
+                interpolations never throw off the pairing).</li>
             <li>Compiler-aware intelligence — completion, hover, diagnostics, navigation, rename,
-                signature help, formatting — from the AzerothJS language server.</li>
+                signature help, formatting, and semantic highlighting — from the AzerothJS
+                language server.</li>
         </ul>
         Requires a paid JetBrains IDE (LSP API) and Node.js on PATH.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>
-    <!-- Full TSX highlighting when the bundled TextMate Bundles plugin is present. -->
-    <depends optional="true" config-file="azeroth-textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- Native .azeroth language: lexer-driven highlighting + brace matching. -->
+        <fileType
+            name="AzerothJS"
+            implementationClass="com.azerothjs.lang.AzerothFileType"
+            fieldName="INSTANCE"
+            language="AzerothJS"
+            extensions="azeroth"/>
+        <lang.parserDefinition
+            language="AzerothJS"
+            implementationClass="com.azerothjs.lang.AzerothParserDefinition"/>
+        <lang.syntaxHighlighterFactory
+            language="AzerothJS"
+            implementationClass="com.azerothjs.lang.AzerothSyntaxHighlighterFactory"/>
+        <lang.braceMatcher
+            language="AzerothJS"
+            implementationClass="com.azerothjs.lang.AzerothBraceMatcher"/>
+
+        <!-- Compiler-aware intelligence over LSP. -->
         <platform.lsp.serverSupportProvider
             implementation="com.azerothjs.AzerothLspServerSupportProvider"/>
         <typedHandler implementation="com.azerothjs.AzerothTypedHandler"/>

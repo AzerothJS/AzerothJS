@@ -422,9 +422,22 @@ function buildVirtualCode(source: string): VirtualCode
 }
 
 /**
- * Prepends the same runtime import the compiler injects (only when markup was
- * emitted) and shifts every mapping segment past it. With no markup the source
- * is reproduced 1:1, so the language service sees a plain TS module.
+ * Makes the generated h()/component calls type-check by declaring the runtime
+ * bindings (h plus any built-in components the markup used). These are APPENDED
+ * after the user code as ambient `declare const`s, for two reasons:
+ *
+ *   - Ambient declarations, not a real `import ... from '@azerothjs/core'`, so
+ *     TypeScript's auto-import has no same-module merge target in generated
+ *     code. A real injected import would capture an auto-import of e.g.
+ *     `createSignal` (same module), and the merge edit - landing in unmapped
+ *     scaffolding - would be silently dropped, so no import got inserted.
+ *   - Appended (not prepended), so the TOP of the virtual module - where
+ *     TypeScript inserts a brand-new import - is the user's own mapped import
+ *     section, and no mapping segment needs shifting. Ambient consts are
+ *     module-scoped regardless of position, so the calls above still see them.
+ *
+ * With no markup the source is reproduced 1:1, so the language service sees a
+ * plain TS module.
  */
 function finalize(builder: Builder, source: string, usedBuiltins: Set<string>): VirtualCode
 {
@@ -436,18 +449,11 @@ function finalize(builder: Builder, source: string, usedBuiltins: Set<string>): 
     }
 
     const names = ['h', ...usedBuiltins].filter(name => !alreadyImports(source, name));
-    const prefix = names.length > 0
-        ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n`
-        : '';
+    const suffix = names.map(name => `\ndeclare const ${ name }: typeof import('${ RUNTIME_MODULE }').${ name };`).join('');
 
-    const shift = prefix.length;
-    const segments = builder.segments.map(segment => ({
-        ...segment,
-        generatedStart: segment.generatedStart + shift,
-        generatedEnd: segment.generatedEnd + shift
-    }));
-
-    return { code: prefix + builder.out, mapping: new CodeMapping(segments) };
+    // User offsets are unchanged (the bindings come after all user code), so the
+    // segments map 1:1 with no shift.
+    return { code: builder.out + suffix + '\n', mapping: new CodeMapping(builder.segments) };
 }
 
 /** True when the module already imports `name` via a named import. */

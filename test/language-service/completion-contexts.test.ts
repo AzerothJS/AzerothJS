@@ -351,3 +351,36 @@ describe('mapping round-trips at completion-critical offsets', () =>
         expect(mapping.toOriginal(cardGenerated!)).toBeLessThanOrEqual(cardOffset);
     });
 });
+
+describe('auto-import resolves through markup', () =>
+{
+    // Regression: when a `.azeroth` file uses markup, the virtual module needs
+    // the runtime `h` binding. It used to be injected as a real
+    // `import { h } from '@azerothjs/core'`, which became TypeScript's
+    // same-module merge target for auto-imports - so accepting an auto-import of
+    // e.g. `createSignal` merged into that GENERATED line, the edit mapped to
+    // unmapped scaffolding, and nothing was inserted. The binding is now an
+    // ambient declaration, so the import lands in the user's own section.
+    it('merges a script symbol into the user import even with markup present', () =>
+    {
+        const src = [
+            "import { onMount } from '@azerothjs/core';",
+            'export default function P()',
+            '{',
+            '    const x = createSig;',
+            '    onMount(() => {});',
+            '    return <div>{x}</div>;',
+            '}'
+        ].join('\n');
+        const uri = open('auto-import-markup.azeroth', src);
+
+        const item = ls.getCompletions(uri, at(src, 'createSig;', 'createSig'.length))
+            .find(i => i.label === 'createSignal' && (i.data as { source?: string } | undefined)?.source);
+        expect(item, 'createSignal should be offered as an auto-import').toBeTruthy();
+
+        const resolved = ls.resolveCompletion(uri, item!);
+        const edits = resolved.additionalTextEdits ?? [];
+        expect(edits.length, 'accepting the auto-import must produce an import edit').toBeGreaterThan(0);
+        expect(edits.some(edit => edit.newText.includes('createSignal'))).toBe(true);
+    });
+});
