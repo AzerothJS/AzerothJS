@@ -5,5 +5,6 @@
 // re-exports it so the server can also be embedded (e.g. in a web worker host
 // or an integration test that drives it through an in-memory connection).
 
-export { startServer } from './server.ts';
+export { startServer, parseSettings, type AzerothSettings, type FeatureToggles } from './server.ts';
 export { runTsc, watchTsc, parseArgs, type TscOptions, type TscResult, type TscWatcher } from './tsc.ts';
+export { runDocgen, type DocgenOptions, type DocgenResult } from './docgen-cli.ts';

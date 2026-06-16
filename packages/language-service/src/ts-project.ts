@@ -28,7 +28,7 @@ const INTRINSICS_BASENAME = '__azeroth-intrinsics.d.ts';
  * Ambient types injected into every project. `AzerothHandler<'onClick'>` maps a
  * camelCase event prop to the right DOM event (via lib.dom's
  * GlobalEventHandlersEventMap), so the virtual code can contextually type host
- * event handlers - `<button onClick={(e) => …}>` infers `e: MouseEvent` - without
+ * event handlers - `<button onClick={(e) => ...}>` infers `e: MouseEvent` - without
  * imposing strict attribute checking that the permissive `h()` runtime doesn't.
  */
 const INTRINSICS_CONTENT = `

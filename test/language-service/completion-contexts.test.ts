@@ -5,13 +5,17 @@
 // snippets. Plus a focused mapping round-trip suite, since every TS-backed
 // answer depends on the offset mapping being exact.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
     AzerothLanguageService,
     LineIndex,
+    CompletionItemKind,
     generateVirtualCode,
     pathToUri,
-    type Position
+    registerCompletionSource,
+    clearCompletionSources,
+    type Position,
+    type CompletionSource
 } from '@azerothjs/language-service';
 import path from 'node:path';
 
@@ -83,6 +87,57 @@ describe('completion by caret context', () =>
         expect(body).toBeTruthy();
         expect(title!.insertText).toBe('title={$0}');
         expect(title!.insertTextFormat).toBe(2);
+    });
+
+    it('carries commit characters on typed props, and preselects an exact-prefix match', () =>
+    {
+        // `=`/space accept the highlighted prop and continue the edit; with `ti`
+        // typed only `title` matches, so it is the clear winner to pre-select.
+        const src = [
+            'function Card(props: { title: string; body: string })',
+            '{',
+            '    return <div>{props.title}</div>;',
+            '}',
+            'const x = <Card ti />;'
+        ].join('\n');
+        const uri = open('PropCommit.azeroth', src);
+
+        const items = ls.getCompletions(uri, at(src, '<Card ti', '<Card ti'.length));
+        const title = items.find(i => i.label === 'title');
+
+        expect(title).toBeTruthy();
+        expect(title!.commitCharacters).toContain('=');
+        expect(title!.commitCharacters).toContain(' ');
+        expect(title!.preselect).toBe(true);
+        // `body` does not match the `ti` prefix, so it stays unselected.
+        expect(items.find(i => i.label === 'body')!.preselect).toBeUndefined();
+    });
+
+    it('offers a getter-backed prop, not just plain field props', () =>
+    {
+        // An interface getter compiles to a get-accessor member, so the prop
+        // filter must accept accessor kinds alongside plain fields. The leading
+        // `id` attribute forces the props-object completion path (not the
+        // empty-call signature path) where that filter runs.
+        const src = [
+            'interface CardProps',
+            '{',
+            '    readonly id: string;',
+            '    get label(): string;',
+            '}',
+            'function Card(props: CardProps)',
+            '{',
+            '    return <div>{props.label}</div>;',
+            '}',
+            'const x = <Card id="a" />;'
+        ].join('\n');
+        const uri = open('AccessorProps.azeroth', src);
+
+        const items = ls.getCompletions(uri, at(src, 'id="a" ', 'id="a" '.length));
+        const label = items.find(i => i.label === 'label');
+
+        expect(label).toBeTruthy();
+        expect(label!.insertText).toBe('label={$0}');
     });
 
     it('offers in-scope signals inside an expression hole', () =>
@@ -175,6 +230,80 @@ describe('completion by caret context', () =>
         // Built-ins expand to their control-flow shape, not just the name.
         expect(show!.insertText).toContain('when={');
         expect(forItem!.insertText).toContain('each={');
+    });
+});
+
+describe('external completion sources', () =>
+{
+    // The registry is a process-wide global; clear it after each case so a
+    // registered source never leaks into the other completion tests.
+    afterEach(() =>
+    {
+        clearCompletionSources();
+    });
+
+    it('appends items from a registered source, context-aware', () =>
+    {
+        const src = 'const x = <input />;';
+        const uri = open('AiSource.azeroth', src);
+
+        let seenKind = '';
+        const source: CompletionSource =
+        {
+            provide(args)
+            {
+                seenKind = args.context.kind;
+                return [{ label: 'ai-suggestion', kind: CompletionItemKind.Text }];
+            }
+        };
+        registerCompletionSource(source);
+
+        const items = ls.getCompletions(uri, at(src, '<input />', '<input '.length));
+        const sentinel = items.find(i => i.label === 'ai-suggestion');
+
+        expect(sentinel).toBeTruthy();
+        // The classified context is passed through to the source.
+        expect(seenKind).toBe('attributeName');
+        // Native items still come along.
+        expect(items.some(i => i.label === 'placeholder')).toBe(true);
+    });
+
+    it('a throwing source never breaks native completion', () =>
+    {
+        const src = 'const x = <input />;';
+        const uri = open('AiThrows.azeroth', src);
+
+        registerCompletionSource({
+            provide()
+            {
+                throw new Error('backend offline');
+            }
+        });
+
+        const labels = ls.getCompletions(uri, at(src, '<input />', '<input '.length)).map(i => i.label);
+
+        expect(labels).toContain('placeholder');
+        expect(labels).toContain('type');
+    });
+
+    it('unregister and clear remove a source', () =>
+    {
+        const src = 'const x = <input />;';
+        const uri = open('AiUnregister.azeroth', src);
+
+        const source: CompletionSource = { provide: () => [{ label: 'ai-suggestion', kind: CompletionItemKind.Text }] };
+        const unregister = registerCompletionSource(source);
+
+        const at1 = at(src, '<input />', '<input '.length);
+        expect(ls.getCompletions(uri, at1).some(i => i.label === 'ai-suggestion')).toBe(true);
+
+        unregister();
+        expect(ls.getCompletions(uri, at1).some(i => i.label === 'ai-suggestion')).toBe(false);
+
+        // clearCompletionSources also drops everything.
+        registerCompletionSource(source);
+        clearCompletionSources();
+        expect(ls.getCompletions(uri, at1).some(i => i.label === 'ai-suggestion')).toBe(false);
     });
 });
 

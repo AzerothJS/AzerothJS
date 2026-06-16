@@ -30,87 +30,97 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
 [
     {
         name: 'Show',
-        detail: '<Show when={…} fallback={…}>…</Show>',
+        detail: '<Show when={...} fallback={...}>...</Show>',
         doc: 'Conditionally renders its children when `when` is truthy, otherwise the optional `fallback`. Swaps automatically when the reactive condition changes.',
         props: [
-            { name: 'when', doc: 'Reactive condition. Children show while truthy.', required: true },
-            { name: 'fallback', doc: 'Rendered when `when` is false. Optional.', required: false }
+            { name: 'when', doc: 'Reactive condition (`() => boolean`). Children show while truthy.', required: true },
+            { name: 'fallback', doc: 'Rendered when `when` is false: `() => element`. Optional.', required: false },
+            { name: 'children', doc: 'Content shown while `when` is truthy: `() => element`.', required: true }
         ]
     },
     {
         name: 'For',
-        detail: '<For each={…} key={…}>{(item, i) => …}</For>',
+        detail: '<For each={...} key={...}>{(item, i) => ...}</For>',
         doc: 'Keyed list rendering. Re-uses DOM elements across updates by `key`, so only changed rows touch the DOM. The child is a render function `(item, index) => element`.',
         props: [
-            { name: 'each', doc: 'Reactive getter returning the array of items.', required: true },
-            { name: 'key', doc: 'Returns a stable unique key per item: `(item, index) => string | number`.', required: true }
+            { name: 'each', doc: 'Reactive getter returning the array of items: `() => T[]`.', required: true },
+            { name: 'key', doc: 'Returns a stable unique key per item: `(item, index) => string | number`.', required: true },
+            { name: 'children', doc: 'Per-item render function: `(item, index: () => number) => element`.', required: true }
         ]
     },
     {
         name: 'Switch',
-        detail: '<Switch fallback={…}><Match/>…</Switch>',
+        detail: '<Switch fallback={...}><Match/>...</Switch>',
         doc: 'Renders the first `<Match>` whose `when` is truthy (priority order). Optional `fallback` when none match.',
         props: [
-            { name: 'fallback', doc: 'Rendered when no `<Match>` matches. Optional.', required: false }
+            { name: 'children', doc: 'The `<Match>` cases, in priority order (first match wins).', required: true },
+            { name: 'fallback', doc: 'Rendered when no `<Match>` matches: `() => element`. Optional.', required: false }
         ]
     },
     {
         name: 'Match',
-        detail: '<Match when={…}>…</Match>',
+        detail: '<Match when={...}>...</Match>',
         doc: 'A single case inside `<Switch>`. Rendered when its `when` condition is the first truthy one.',
         props: [
-            { name: 'when', doc: 'Reactive condition for this case.', required: true }
+            { name: 'when', doc: 'Reactive condition for this case: `() => boolean`.', required: true },
+            { name: 'children', doc: 'Content rendered when this case wins: `() => element`.', required: true }
         ]
     },
     {
         name: 'Portal',
-        detail: '<Portal target={…}>…</Portal>',
+        detail: '<Portal target={...}>...</Portal>',
         doc: 'Renders its children into a different DOM node (defaults to `document.body`). Useful for modals, tooltips, and overlays.',
         props: [
-            { name: 'target', doc: 'Destination element. Defaults to `document.body`.', required: false }
+            { name: 'target', doc: 'Destination element. Defaults to `document.body`. Optional.', required: false },
+            { name: 'children', doc: 'Content portaled into `target`: `() => element`.', required: true }
         ]
     },
     {
         name: 'Dynamic',
-        detail: '<Dynamic component={…} props={…} />',
+        detail: '<Dynamic component={...} props={...} />',
         doc: 'Renders a component chosen at runtime. When the `component` getter changes, the old one is removed and the new one mounted.',
         props: [
-            { name: 'component', doc: 'Reactive getter returning the component to render (or null).', required: true },
-            { name: 'props', doc: 'Optional reactive getter returning props for the component.', required: false }
+            { name: 'component', doc: 'Reactive getter returning the component to render, or `null`.', required: true },
+            { name: 'props', doc: 'Reactive getter returning props for the component. Optional.', required: false }
         ]
     },
     {
         name: 'Suspense',
-        detail: '<Suspense on={[…]} fallback={…}>…</Suspense>',
+        detail: '<Suspense on={[...]} fallback={...}>...</Suspense>',
         doc: 'Shows `fallback` while any watched resource is loading, then reveals children once all have settled.',
         props: [
+            { name: 'fallback', doc: 'Rendered while any watched resource is loading: `() => element`.', required: true },
             { name: 'on', doc: 'Array of resources to watch (captured once, not reactive to array mutation).', required: true },
-            { name: 'fallback', doc: 'Rendered while any watched resource is loading.', required: true }
+            { name: 'children', doc: 'Subtree revealed once all watched resources settle: `() => element`.', required: true }
         ]
     },
     {
         name: 'Transition',
-        detail: '<Transition when={…} name="…">…</Transition>',
+        detail: '<Transition when={...} name="...">...</Transition>',
         doc: 'Animated show/hide. With a `name`, auto-generates the 6-class enter/leave family; without one, falls back to an instant swap.',
         props: [
-            { name: 'when', doc: 'Reactive boolean: true to show, false to hide.', required: true },
-            { name: 'name', doc: 'Class-name prefix for the enter/leave transition classes.', required: false },
-            { name: 'duration', doc: 'Fallback transition timeout in ms. Default 1000.', required: false }
+            { name: 'when', doc: 'Reactive boolean (`() => boolean`): true to show, false to hide.', required: true },
+            { name: 'children', doc: 'Element built when entering: `() => element`.', required: true },
+            { name: 'name', doc: 'Class-name prefix for the enter/leave transition classes. Optional.', required: false },
+            { name: 'duration', doc: 'Fallback transition timeout in ms. Default 1000. Optional.', required: false }
         ]
     },
     {
         name: 'ErrorBoundary',
-        detail: '<ErrorBoundary fallback={(err, reset) => …}>…</ErrorBoundary>',
+        detail: '<ErrorBoundary fallback={(err, reset) => ...}>...</ErrorBoundary>',
         doc: 'Catches errors thrown while rendering its subtree and shows `fallback(error, reset)` instead. Call `reset` to retry.',
         props: [
-            { name: 'fallback', doc: 'Renders the error UI: `(error, reset) => element`.', required: true }
+            { name: 'fallback', doc: 'Renders the error UI: `(error, reset) => element`. Call `reset` to retry.', required: true },
+            { name: 'children', doc: 'Protected subtree, re-evaluated on each reset: `() => element`.', required: true }
         ]
     },
     {
         name: 'Outlet',
         detail: '<Outlet />',
         doc: 'Renders nested-route content inside a layout component. Provided automatically by `<Routes>`.',
-        props: []
+        props: [
+            { name: 'children', doc: 'Nested-route content, forwarded from the layout. Optional.', required: false }
+        ]
     }
 ];
 
@@ -145,7 +155,7 @@ export const DOM_EVENTS: string[] =
 /**
  * Concise documentation for common element attributes that the standard HTML
  * dataset ships *without* a description (form/input attributes especially), so
- * `type`, `placeholder`, `value`, … aren't left blank on hover/completion.
+ * `type`, `placeholder`, `value`, ... aren't left blank on hover/completion.
  * Global attributes (`class`, `id`, `title`, `style`, `aria-*`) and many tag
  * attributes already carry MDN docs straight from the HTML engine; this only
  * fills the gaps.
@@ -153,23 +163,23 @@ export const DOM_EVENTS: string[] =
 export const ATTRIBUTE_DOCS: Record<string, string> =
 {
     type: 'The kind of control to render (e.g. `text`, `checkbox`, `email`, `number`, `password`).',
-    value: 'The control’s current value. In AzerothJS, bind it reactively: `value={signal()}`.',
+    value: 'The control\'s current value. In AzerothJS, bind it reactively: `value={signal()}`.',
     placeholder: 'Hint text shown while the field is empty.',
     checked: 'Whether a checkbox/radio is selected. Bind reactively: `checked={done()}`.',
     disabled: 'When present, the control is non-interactive.',
-    readonly: 'When present, the value can’t be edited (but is still submitted).',
+    readonly: 'When present, the value can\'t be edited (but is still submitted).',
     required: 'Marks the field as required for form submission.',
     name: 'The control name, submitted with the form data.',
     min: 'Minimum allowed value (numeric/date inputs).',
     max: 'Maximum allowed value (numeric/date inputs).',
     step: 'Granularity of allowed values (numeric/date inputs).',
     pattern: 'A regular expression the value must match.',
-    autocomplete: 'Hint for the browser’s autofill behaviour.',
+    autocomplete: 'Hint for the browser\'s autofill behaviour.',
     selected: 'Marks an `<option>` as initially selected.',
     multiple: 'Allows selecting or entering multiple values.',
     rows: 'Visible number of text rows in a `<textarea>`.',
     cols: 'Visible width, in characters, of a `<textarea>`.',
-    src: 'The URL of the resource (image, script, media, …).',
+    src: 'The URL of the resource (image, script, media, ...).',
     alt: 'Alternative text describing an image.',
     for: 'Associates a `<label>` with a control by its `id`.',
     action: 'The URL that processes the form submission.',

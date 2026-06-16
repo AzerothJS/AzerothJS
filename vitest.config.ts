@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+import os from 'os';
 
 export default defineConfig({
     resolve:
@@ -32,6 +33,22 @@ export default defineConfig({
         // (reading 'config')"). Forks isolate each file in a child
         // process, which works correctly. Marginally slower than
         // threads but rock-solid for our suite size.
-        pool: 'forks'
+        pool: 'forks',
+
+        // Many files spin a REAL TypeScript program; unbounded fork
+        // fan-out lets peak memory/CPU starve a worker and produce
+        // transient file-level failures that pass in isolation. Cap
+        // forks (still parallel) so contention can't flake the suite.
+        poolOptions:
+        {
+            forks:
+            {
+                maxForks: Math.min(4, Math.max(2, Math.floor(os.cpus().length / 2)))
+            }
+        },
+
+        // The slow-but-correct TS-program tests can exceed the 5s
+        // default under load; give them headroom without masking hangs.
+        testTimeout: 15000
     }
 });

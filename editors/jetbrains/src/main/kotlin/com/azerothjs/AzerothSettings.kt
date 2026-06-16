@@ -21,6 +21,29 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
         var componentSnippets: Boolean = true
         var inlayHints: Boolean = true
         var parameterNameHints: Boolean = true
+
+        var completion: Boolean = true
+        var hover: Boolean = true
+        var definition: Boolean = true
+        var typeDefinition: Boolean = true
+        var references: Boolean = true
+        var documentHighlight: Boolean = true
+        var rename: Boolean = true
+        var documentSymbol: Boolean = true
+        var workspaceSymbol: Boolean = true
+        var signatureHelp: Boolean = true
+        var semanticTokens: Boolean = true
+        var codeActions: Boolean = true
+        var folding: Boolean = true
+        var selectionRange: Boolean = true
+        var onTypeFormatting: Boolean = true
+        var linkedEditing: Boolean = true
+
+        var parameterTypeHints: Boolean = true
+        var variableTypeHints: Boolean = true
+        var propertyDeclarationTypeHints: Boolean = true
+        var functionLikeReturnTypeHints: Boolean = true
+        var enumMemberValueHints: Boolean = true
     }
 
     private var state = State()
@@ -42,9 +65,32 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
             "autoImports" to state.autoImports,
             "componentSnippets" to state.componentSnippets,
         ),
+        // Each feature is a sibling `azeroth.<feature>` key shaped { enable: bool };
+        // parseSettings reads them via featureOn(<feature>), not a nested map.
+        "completion" to mapOf("enable" to state.completion),
+        "hover" to mapOf("enable" to state.hover),
+        "definition" to mapOf("enable" to state.definition),
+        "typeDefinition" to mapOf("enable" to state.typeDefinition),
+        "references" to mapOf("enable" to state.references),
+        "documentHighlight" to mapOf("enable" to state.documentHighlight),
+        "rename" to mapOf("enable" to state.rename),
+        "documentSymbol" to mapOf("enable" to state.documentSymbol),
+        "workspaceSymbol" to mapOf("enable" to state.workspaceSymbol),
+        "signatureHelp" to mapOf("enable" to state.signatureHelp),
+        "semanticTokens" to mapOf("enable" to state.semanticTokens),
+        "codeActions" to mapOf("enable" to state.codeActions),
+        "folding" to mapOf("enable" to state.folding),
+        "selectionRange" to mapOf("enable" to state.selectionRange),
+        "onTypeFormatting" to mapOf("enable" to state.onTypeFormatting),
+        "linkedEditing" to mapOf("enable" to state.linkedEditing),
         "inlayHints" to mapOf(
             "enabled" to state.inlayHints,
             "parameterNames" to if (state.parameterNameHints) "all" else "none",
+            "parameterTypes" to state.parameterTypeHints,
+            "variableTypes" to state.variableTypeHints,
+            "propertyDeclarationTypes" to state.propertyDeclarationTypeHints,
+            "functionLikeReturnTypes" to state.functionLikeReturnTypeHints,
+            "enumMemberValues" to state.enumMemberValueHints,
         ),
     )
 

@@ -16,6 +16,7 @@ import {
     isIdentifier
 } from '../ast.ts';
 
+/** One createEffect callback's reads and pending writes, pushed while its body is walked and resolved on exit. */
 interface EffectFrame
 {
     /** The effect's callback function node. */

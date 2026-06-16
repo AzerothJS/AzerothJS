@@ -11,9 +11,9 @@
 
 import ts from 'typescript';
 import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart } from '@azerothjs/compiler';
-import type { Hover } from '../protocol.ts';
+import type { Hover, Range } from '../protocol.ts';
 import { classifyPosition, enclosingElement } from '../markup-model.ts';
-import { BUILTIN_COMPONENT_MAP, attributeDocumentation } from '../language-data.ts';
+import { BUILTIN_COMPONENT_MAP, attributeDocumentation, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
 import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
 import { spanToRange, toGenerated, type RequestContext } from '../request.ts';
@@ -43,9 +43,15 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
             const builtin = BUILTIN_COMPONENT_MAP.get(name);
             if (builtin)
             {
-                return { contents: `**<${ builtin.name }>** — built-in component\n\n${ builtin.detail }\n\n${ builtin.doc }` };
+                return builtinHover(ctx, offset, builtin);
             }
-            return isComponentName(name) ? tsHover(ctx, offset) : htmlHover(ctx.source, position);
+            if (isComponentName(name))
+            {
+                // A user component: render its JSDoc + props table from the real
+                // TS types, falling back to plain quick-info when unresolvable.
+                return userComponentHover(ctx, offset, name) ?? tsHover(ctx, offset);
+            }
+            return htmlHover(ctx.source, position);
         }
 
         case 'attributeName':
@@ -63,7 +69,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
                 }
                 const prop = BUILTIN_COMPONENT_MAP.get(context.tag)?.props.find(candidate => candidate.name === attribute);
                 return prop
-                    ? { contents: `**${ prop.name }** — \`<${ context.tag }>\` prop${ prop.required ? ' (required)' : '' }\n\n${ prop.doc }` }
+                    ? { contents: `**${ prop.name }** - \`<${ context.tag }>\` prop${ prop.required ? ' (required)' : '' }\n\n${ prop.doc }` }
                     : null;
             }
 
@@ -72,7 +78,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
             if (/^on[A-Z]/.test(attribute))
             {
                 const doc = eventDocumentation(attribute);
-                return { contents: `**${ attribute }** — DOM event handler${ doc ? `\n\n${ doc }` : '' }` };
+                return { contents: `**${ attribute }** - DOM event handler${ doc ? `\n\n${ doc }` : '' }` };
             }
             // The HTML engine first; fall back to our docs for the common
             // element attributes the standard dataset leaves undocumented.
@@ -82,7 +88,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
                 return html;
             }
             const fallback = attributeDocumentation(attribute);
-            return fallback ? { contents: `**${ attribute }** — attribute\n\n${ fallback }` } : null;
+            return fallback ? { contents: `**${ attribute }** - attribute\n\n${ fallback }` } : null;
         }
 
         case 'attributeValue':
@@ -97,8 +103,143 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
 }
 
 /**
+ * Rich hover for a built-in component tag, assembled from its language-data
+ * entry: a bold signature line, the doc paragraph, and a fenced `azeroth` usage
+ * example (the entry's `detail` already carries the canonical call shape). The
+ * range is mapped to the tag name so the editor highlights just the `<Show`.
+ */
+function builtinHover(ctx: RequestContext, offset: number, builtin: BuiltinComponent): Hover
+{
+    const contents = [
+        `**<${ builtin.name }>** - built-in component`,
+        `\`${ builtin.detail }\``,
+        builtin.doc,
+        '```azeroth\n' + builtin.detail + '\n```'
+    ].join('\n\n');
+    return { contents, range: tagNameRange(ctx, offset) };
+}
+
+/**
+ * Rich hover for a user component tag, assembled from its REAL TypeScript types:
+ * a bold `**<Name>**` line, the component's own JSDoc, and a Props table (name /
+ * type / optional) read off the first call-signature parameter - the same way
+ * docgen renders its reference. Null when the component or its type can't be
+ * resolved, so the caller can fall back to plain quick-info. The range is mapped
+ * to the tag name so the editor highlights just the `<Card`.
+ */
+function userComponentHover(ctx: RequestContext, offset: number, name: string): Hover | null
+{
+    const element = enclosingElement(ctx.source, offset);
+    if (!element || !element.isComponent)
+    {
+        return null;
+    }
+    const generatedTag = ctx.virtual.mapping.toGenerated(element.start + 1);
+    if (generatedTag === null)
+    {
+        return null;
+    }
+
+    const program = ctx.project.service.getProgram();
+    const sourceFile = program?.getSourceFile(ctx.virtualFile);
+    if (!program || !sourceFile)
+    {
+        return null;
+    }
+    const checker = program.getTypeChecker();
+    const token = tokenAt(sourceFile, generatedTag);
+    if (!token)
+    {
+        return null;
+    }
+
+    const type = checker.getTypeAtLocation(token);
+    const signature = type.getCallSignatures()[0];
+    if (!signature)
+    {
+        return null;
+    }
+
+    const contents = [`**<${ name }>** - component`];
+    const symbol = checker.getSymbolAtLocation(token);
+    const doc = symbol ? ts.displayPartsToString(symbol.getDocumentationComment(checker)) : '';
+    if (doc)
+    {
+        contents.push(doc);
+    }
+    contents.push(propsTable(checker, signature, token));
+
+    return { contents: contents.join('\n\n'), range: tagNameRange(ctx, offset) };
+}
+
+/**
+ * Markdown Props table for a component's call signature: one row per apparent
+ * property of its first parameter (the props object), each with the checker's
+ * `typeToString` and an optional marker. The `children` prop is dropped (it's
+ * supplied by nesting, not as an attribute). Returns 'No props.' when the
+ * component takes none.
+ */
+function propsTable(checker: ts.TypeChecker, signature: ts.Signature, location: ts.Node): string
+{
+    const parameter = signature.getParameters()[0];
+    const propsType = parameter ? checker.getTypeOfSymbolAtLocation(parameter, location) : null;
+    const members = propsType
+        ? checker.getApparentType(propsType).getProperties().filter(member => member.getName() !== 'children')
+        : [];
+    if (members.length === 0)
+    {
+        return 'No props.';
+    }
+
+    const rows = ['| Prop | Type | Optional |', '| --- | --- | --- |'];
+    for (const member of members)
+    {
+        const memberType = checker.getTypeOfSymbolAtLocation(member, location);
+        const optional = (member.getFlags() & ts.SymbolFlags.Optional) !== 0;
+        rows.push(`| ${ member.getName() } | \`${ cell(checker.typeToString(memberType)) }\` | ${ optional ? 'Yes' : 'No' } |`);
+    }
+    return rows.join('\n');
+}
+
+/** The TS node whose span contains `pos` (deepest), for a checker query. */
+function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undefined
+{
+    const find = (node: ts.Node): ts.Node | undefined =>
+    {
+        if (pos < node.getStart(sourceFile) || pos >= node.getEnd())
+        {
+            return undefined;
+        }
+        return ts.forEachChild(node, find) ?? node;
+    };
+    return find(sourceFile);
+}
+
+/** Escapes a value for a one-line markdown table cell. */
+function cell(value: string): string
+{
+    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+}
+
+/** Source range of the tag name under the caret (the `Show` in `<Show ...>`). */
+function tagNameRange(ctx: RequestContext, offset: number): Range | undefined
+{
+    let start = offset;
+    while (start > 0 && /[A-Za-z0-9_$.-]/.test(ctx.source[start - 1]) && ctx.source[start - 1] !== '<')
+    {
+        start--;
+    }
+    let end = offset;
+    while (end < ctx.source.length && /[A-Za-z0-9_$.-]/.test(ctx.source[end]))
+    {
+        end++;
+    }
+    return ctx.lineIndex.rangeAt(start, end);
+}
+
+/**
  * Hover for a component prop, read from the component's props type (the same
- * generated `Tag({ … })` object literal completion uses). Null when the type
+ * generated `Tag({ ... })` object literal completion uses). Null when the type
  * can't be resolved.
  */
 function typedPropHover(ctx: RequestContext, offset: number, prop: string): Hover | null

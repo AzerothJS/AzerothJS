@@ -22,6 +22,37 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
         group("Inlay hints") {
             row { checkBox("Enable inlay hints").bindSelected(s::inlayHints) }
             row { checkBox("Parameter-name hints").bindSelected(s::parameterNameHints) }
+            row { checkBox("Parameter-type hints").bindSelected(s::parameterTypeHints) }
+            row { checkBox("Variable-type hints").bindSelected(s::variableTypeHints) }
+            row { checkBox("Property-declaration-type hints").bindSelected(s::propertyDeclarationTypeHints) }
+            row { checkBox("Function return-type hints").bindSelected(s::functionLikeReturnTypeHints) }
+            row { checkBox("Enum-member-value hints").bindSelected(s::enumMemberValueHints) }
+        }
+        group("Intelligence") {
+            row { checkBox("Completion").bindSelected(s::completion) }
+            row { checkBox("Hover").bindSelected(s::hover) }
+            row { checkBox("Signature help").bindSelected(s::signatureHelp) }
+            row { checkBox("Code actions").bindSelected(s::codeActions) }
+            row { checkBox("Semantic tokens").bindSelected(s::semanticTokens) }
+        }
+        group("Navigation") {
+            row { checkBox("Go to definition").bindSelected(s::definition) }
+            row { checkBox("Go to type definition").bindSelected(s::typeDefinition) }
+            row { checkBox("Find references").bindSelected(s::references) }
+            row { checkBox("Document highlight").bindSelected(s::documentHighlight) }
+        }
+        group("Editing") {
+            row { checkBox("Folding ranges").bindSelected(s::folding) }
+            row { checkBox("Selection ranges").bindSelected(s::selectionRange) }
+            row { checkBox("On-type formatting").bindSelected(s::onTypeFormatting) }
+            row { checkBox("Linked editing").bindSelected(s::linkedEditing) }
+        }
+        group("Refactoring") {
+            row { checkBox("Rename").bindSelected(s::rename) }
+        }
+        group("Symbols") {
+            row { checkBox("Document symbols").bindSelected(s::documentSymbol) }
+            row { checkBox("Workspace symbols").bindSelected(s::workspaceSymbol) }
         }
         group("Diagnostics & formatting") {
             row { checkBox("Report diagnostics").bindSelected(s::diagnostics) }

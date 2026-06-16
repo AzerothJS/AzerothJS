@@ -38,7 +38,7 @@ export { currentCleanups } from './graph.ts';
  *
  * @param fn - The effect body. May return a cleanup function that runs before
  *             each re-run and on dispose.
- * @param _options - Optional configuration (name for debugging)
+ * @param options - Optional configuration (name for debugging)
  *
  * @returns A dispose function that stops and cleans up the effect
  *

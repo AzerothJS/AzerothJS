@@ -1,14 +1,17 @@
-// CSS intelligence for inline `style="…"` values, via `vscode-css-languageservice`
+// CSS intelligence for inline `style="..."` values, via `vscode-css-languageservice`
 // (the engine behind VS Code's CSS support). An inline style is a declaration
-// list, not a full stylesheet, so we wrap it in a synthetic rule `*{ … }` and
+// list, not a full stylesheet, so we wrap it in a synthetic rule `*{ ... }` and
 // shift positions by the 2-character prefix - the same trick VS Code uses for
-// embedded styles. Only static `style="…"` values reach here; `style={…}` is a
+// embedded styles. Only static `style="..."` values reach here; `style={...}` is a
 // JavaScript expression handled by the TypeScript bridge.
 
-import { getCSSLanguageService, type LanguageService, type CompletionItem as CssCompletionItem } from 'vscode-css-languageservice';
+import { getCSSLanguageService, type LanguageService, type CompletionItem as CssCompletionItem, type Color as CssColor, type Range as CssRange } from 'vscode-css-languageservice';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
     CompletionItemKind,
+    type Color,
+    type ColorInformation,
+    type ColorPresentation,
     type CompletionItem,
     type Hover,
     type Range
@@ -70,7 +73,7 @@ function mapCssItems(items: CssCompletionItem[]): CompletionItem[]
     }));
 }
 
-/** CSS property/value completion inside an inline `style="…"`. */
+/** CSS property/value completion inside an inline `style="..."`. */
 export function cssCompletions(source: string, offset: number): CompletionItem[]
 {
     const wrapped = wrap(source, offset);
@@ -84,7 +87,7 @@ export function cssCompletions(source: string, offset: number): CompletionItem[]
 }
 
 // css`` tagged templates. Their content is a real stylesheet (selectors and
-// all), not a declaration list, so unlike style="…" it parses without the
+// all), not a declaration list, so unlike style="..." it parses without the
 // synthetic-rule wrap. The TypeScript bridge sees the template as an opaque
 // string, so this is the only source of intelligence inside it.
 
@@ -181,7 +184,7 @@ export function cssTemplateHover(source: string, offset: number, lineIndex: Line
     return { contents, range };
 }
 
-/** CSS hover (property/value docs) inside an inline `style="…"`. */
+/** CSS hover (property/value docs) inside an inline `style="..."`. */
 export function cssHover(source: string, offset: number, lineIndex: LineIndex): Hover | null
 {
     const wrapped = wrap(source, offset);
@@ -211,3 +214,118 @@ export function cssHover(source: string, offset: number, lineIndex: LineIndex): 
     }
     return { contents, range };
 }
+
+// Document colors: render a swatch next to every CSS color literal so the
+// editor can show (and pick from) it. Both a style="..." value and a css``
+// template are handled by the same engine; they differ only in framing - a
+// style value is a declaration list wrapped in a synthetic `*{ ... }` rule (so
+// css-doc offsets carry the 2-char prefix), a template is already a stylesheet.
+
+/** A style/css region: its content and where that content begins in the source. */
+interface CssRegion
+{
+    /** The CSS text fed to the language service. */
+    content: string;
+    /** Original-source offset of the content's first character. */
+    contentStart: number;
+    /** The synthetic prefix prepended to make `content` parse (`''` for templates). */
+    prefix: string;
+}
+
+/** css-doc offset back to original source, undoing the synthetic prefix shift. */
+function toSourceOffset(region: CssRegion, doc: TextDocument, position: { line: number; character: number }): number
+{
+    return doc.offsetAt(position) - region.prefix.length + region.contentStart;
+}
+
+/** Maps a css-doc range to an original-source range within `region`. */
+function regionRange(region: CssRegion, doc: TextDocument, range: CssRange, lineIndex: LineIndex): Range
+{
+    return lineIndex.rangeAt(
+        toSourceOffset(region, doc, range.start),
+        toSourceOffset(region, doc, range.end)
+    );
+}
+
+/** css-language-service Color -> our protocol Color (identical shape, re-typed). */
+function mapColor(color: CssColor): Color
+{
+    return { red: color.red, green: color.green, blue: color.blue, alpha: color.alpha };
+}
+
+/**
+ * Color swatches across the given style/css regions. Runs findDocumentColors
+ * over each region's wrapped document and maps every color's range back to the
+ * original source. Never throws; a region that fails to parse contributes none.
+ */
+export function cssColors(_source: string, regions: CssRegion[], lineIndex: LineIndex): ColorInformation[]
+{
+    const out: ColorInformation[] = [];
+    for (const region of regions)
+    {
+        const doc = TextDocument.create('inline://color.css', 'css', 0, `${ region.prefix }${ region.content }${ region.prefix ? '}' : '' }`);
+        const stylesheet = css().parseStylesheet(doc);
+        for (const info of css().findDocumentColors(doc, stylesheet))
+        {
+            out.push({ range: regionRange(region, doc, info.range, lineIndex), color: mapColor(info.color) });
+        }
+    }
+    return out;
+}
+
+/**
+ * The presentation choices (e.g. `#ff0000`, `rgb(255, 0, 0)`, `hsl(...)`) for a
+ * picked `color` at `range`. Delegates to getColorPresentations over a throwaway
+ * document whose text is just the color literal, since the presentations are the
+ * spellings of the color itself and don't depend on the surrounding stylesheet.
+ */
+export function cssColorPresentations(color: Color, range: Range): ColorPresentation[]
+{
+    const doc = TextDocument.create('inline://present.css', 'css', 0, '*{color:}');
+    const stylesheet = css().parseStylesheet(doc);
+    const at: CssRange = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+    return css().getColorPresentations(doc, stylesheet, color, at).map(presentation => ({
+        label: presentation.label,
+        textEdit: presentation.textEdit
+            ? { range, newText: presentation.textEdit.newText }
+            : undefined
+    }));
+}
+
+/** Builds a declaration-list region from a static `style="..."` value's span. */
+export function styleRegion(source: string, valueStart: number, valueEnd: number): CssRegion
+{
+    return { content: source.slice(valueStart, valueEnd), contentStart: valueStart, prefix: WRAP_PREFIX };
+}
+
+/** Builds a stylesheet region from a css`` template's content span. */
+export function templateRegion(source: string, contentStart: number, contentEnd: number): CssRegion
+{
+    return { content: source.slice(contentStart, contentEnd), contentStart, prefix: '' };
+}
+
+/** The content spans of every css`` template in the source (start/end offsets). */
+export function cssTemplateSpans(source: string): { start: number; end: number }[]
+{
+    const open = /\bcss\s*`/g;
+    const spans: { start: number; end: number }[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = open.exec(source)) !== null)
+    {
+        const start = match.index + match[0].length;
+        let i = start;
+        while (i < source.length && source[i] !== '`')
+        {
+            if (source[i] === '\\')
+            {
+                i++;
+            }
+            i++;
+        }
+        spans.push({ start, end: i });
+        open.lastIndex = i + 1;
+    }
+    return spans;
+}
+
+export type { CssRegion };

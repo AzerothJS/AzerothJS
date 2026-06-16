@@ -16,9 +16,10 @@ import { parseMarkup, CompileError, lintMarkup } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
     type Diagnostic,
+    type DiagnosticRelatedInformation,
     type DiagnosticSeverityValue
 } from '../protocol.ts';
-import { type RequestContext } from '../request.ts';
+import { resolveLocation, type RequestContext } from '../request.ts';
 
 /** All diagnostics for the document. */
 export function getDiagnostics(ctx: RequestContext): Diagnostic[]
@@ -113,24 +114,62 @@ function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
                 const anchor = ctx.virtual.mapping.nearestSourceBefore(diag.start);
                 if (anchor !== null)
                 {
-                    out.push({
+                    out.push(withRelated(ctx, diag, {
                         range: ctx.lineIndex.rangeAt(anchor, Math.min(anchor + 1, ctx.source.length)),
                         severity: categoryToSeverity(diag.category),
                         message: ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
                         code: diag.code,
                         source: 'azeroth-ts'
-                    });
+                    }));
                 }
             }
             continue;
         }
-        out.push({
+        out.push(withRelated(ctx, diag, {
             range: ctx.lineIndex.rangeAt(mapped.start, mapped.end),
             severity: categoryToSeverity(diag.category),
             message: ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
             code: diag.code,
             source: 'azeroth-ts'
+        }));
+    }
+    return out;
+}
+
+/**
+ * Attaches `relatedInformation` (TypeScript's "'x' is declared here" / "the
+ * expected type comes from ..." secondary spans) to a mapped diagnostic. Each
+ * related entry can point at another `.azeroth` file or a real `.ts` file, so it
+ * resolves through the same virtual mapping as definitions/references. Entries
+ * that land in generated scaffolding (or have no span) are skipped, and the
+ * field is left off entirely when nothing maps.
+ */
+function withRelated(ctx: RequestContext, diag: ts.Diagnostic, out: Diagnostic): Diagnostic
+{
+    if (diag.relatedInformation === undefined)
+    {
+        return out;
+    }
+    const related: DiagnosticRelatedInformation[] = [];
+    for (const info of diag.relatedInformation)
+    {
+        if (info.file === undefined || info.start === undefined || info.length === undefined)
+        {
+            continue;
+        }
+        const location = resolveLocation(ctx.project, info.file.fileName, { start: info.start, length: info.length });
+        if (location === null)
+        {
+            continue;
+        }
+        related.push({
+            location,
+            message: ts.flattenDiagnosticMessageText(info.messageText, '\n')
         });
+    }
+    if (related.length > 0)
+    {
+        out.relatedInformation = related;
     }
     return out;
 }

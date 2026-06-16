@@ -71,69 +71,6 @@ export interface ForProps<T>
 }
 
 /**
- * Efficiently renders a reactive list of items with keyed tracking.
- *
- * Only creates/removes DOM elements for items that actually changed.
- * Existing items keep their DOM elements - no unnecessary re-creation.
- *
- * @typeParam T - The type of items in the list
- *
- * @param props - ForProps with `each` (items signal) and `key` (identity fn)
- * @param renderItem - Function that creates a DOM element for one item.
- *                     Receives the item and a reactive index getter.
- *                     Because keyed items are reused across reorders,
- *                     `index` is a `() => number` accessor (not a plain
- *                     number) so index-dependent bindings stay correct
- *                     when items move. Read it inside a reactive child
- *                     (e.g. `() => index() + 1`) to track changes.
- *
- * @returns An HTMLElement containing the rendered list
- *
- * @example
- * ```ts
- * // With item property as key
- * interface Todo { id: number; text: string }
- *
- * const [todos, setTodos] = createSignal<Todo[]>
- * ([
- *     { id: 1, text: 'Buy milk' },
- *     { id: 2, text: 'Walk dog' }
- * ]);
- *
- * For(
- *   { each: todos, key: (todo) => todo.id },
- *   (todo, index) => h('div', {},
- *     // `index` is a getter - wrap in a function to stay reactive
- *     // across reorders.
- *     () => `${ index() + 1 }. ${ todo.text }`
- *   )
- * );
- * ```
- *
- * @example
- * ```ts
- * // With index as key
- * const [items] = createSignal(['A', 'B', 'C']);
- *
- * For(
- *   { each: items, key: (_, i) => i },
- *   (item) => h('p', {}, item)
- * );
- * ```
- *
- * @example
- * ```ts
- * // Simple string list
- * const [names] = createSignal(['Alice', 'Bob']);
- *
- * For({
- *   each: names,
- *   key: (name) => name,
- *   children: (name) => h('p', {}, name)
- * });
- * ```
- */
-/**
  * Per-key tracking: the rendered element plus the createRoot
  * dispose for any reactive primitives the renderItem function
  * created. Disposing the root tears down those effects when the
@@ -190,6 +127,19 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
     };
 }
 
+/**
+ * Renders a reactive list keyed by `props.key`, creating or removing only the
+ * rows that actually changed between updates. Surviving rows keep their DOM (and
+ * its focus, scroll, and IME state) instead of being rebuilt. The module comment
+ * above covers the keyed-diff model and the SSR / hydration / client paths.
+ *
+ * @typeParam T - The item type.
+ * @param props - See {@link ForProps}: `each` (the items getter), `key` (per-item
+ *   identity), and `children` (the per-row render function).
+ * @returns A node owning the rows. On the client they sit between two comment
+ *   markers with no wrapper element, so `For` works directly inside `<table>`,
+ *   `<select>`, and `<ul>`.
+ */
 export function For<T>(props: ForProps<T>): HTMLElement
 {
     const renderItem = props.children;

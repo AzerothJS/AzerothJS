@@ -6,23 +6,31 @@
 // types - default, named, and type exports - instead of the `any` a catch-all
 // `declare module '*.azeroth'` shim would provide.
 //
-// How: a `.azeroth` import resolves to a synthetic sibling named
-// `<path>.azeroth.ts`. When TypeScript then loads that synthetic file, the host
-// serves the COMPILED virtual module (markup rewritten to `h()` calls, all
-// surrounding code - including every `export` - copied verbatim) produced by
-// `@azerothjs/language-service`. This is the same virtual-code pipeline the
-// editor's `.azeroth` language server uses, so the two always agree.
+// How: a `.azeroth` import resolves to the REAL `.azeroth` file (with its module
+// extension reported as `.ts`), and the host serves the COMPILED virtual module
+// (markup rewritten to `h()` calls, all surrounding code - including every
+// `export` - copied verbatim, produced by `@azerothjs/language-service`) as that
+// file's snapshot. Resolving to the real on-disk path - rather than a synthetic
+// `<path>.azeroth.ts` twin - is what lets this work inside tsserver's
+// ProjectService: tsserver creates a `ScriptInfo` only for paths it can find on
+// disk, and its document registry asserts that a ScriptInfo exists before it
+// caches a source file (`ProjectService.setDocument` -> `Debug.checkDefined`). A
+// synthetic path has no ScriptInfo, so loading it threw `Debug Failure` and took
+// down the whole program - i.e. every `.ts` file lost IntelliSense. The real
+// path has one, so the program builds. (The raw `ts.LanguageService` API used by
+// `azeroth-tsc` has no ProjectService and tolerated the synthetic twin, which is
+// why the batch checker never hit this.)
 //
 // The decoration wraps each host method and defers to the original for anything
-// that is not a `.azeroth` virtual file, so it composes with whatever host
-// tsserver (or a test) already provides.
+// that is not a `.azeroth` file, so it composes with whatever host tsserver (or
+// a test) already provides.
 
 import type tsModule from 'typescript';
 import path from 'node:path';
-// The `.azeroth` <-> virtual-twin naming (`<name>.azeroth.ts`) and the compiler
-// are reused from the language service - the single source of truth - so the
-// plugin and the editor language server can never disagree on the convention.
-import { generateVirtualCode, isVirtualFile, toVirtualFile, toAzerothPath } from '@azerothjs/language-service';
+// The compiler is reused from the language service - the single source of truth -
+// so the plugin and the editor language server can never disagree on how a
+// `.azeroth` file becomes TypeScript.
+import { generateVirtualCode } from '@azerothjs/language-service';
 
 /** Real `.azeroth` source extension. */
 const AZEROTH_EXT = '.azeroth';
@@ -42,6 +50,12 @@ export interface DecorateOptions
 function isAzerothSpecifier(text: string): boolean
 {
     return text.endsWith(AZEROTH_EXT) && (text.startsWith('.') || text.startsWith('/'));
+}
+
+/** True for a resolved file name that is a real `.azeroth` source file. */
+function isAzerothFile(fileName: string): boolean
+{
+    return fileName.endsWith(AZEROTH_EXT);
 }
 
 /**
@@ -120,12 +134,17 @@ export function decorateLanguageServiceHost(
         return code;
     };
 
+    // A `.azeroth` file IS the resolved module now, so the program reads its
+    // source through these overrides keyed on the real path. We deliberately do
+    // NOT override getScriptVersion: the original (in tsserver, the Project's)
+    // both creates+attaches the ScriptInfo and reports a version that tracks the
+    // file on disk - exactly what the document registry needs.
     const origSnapshot = host.getScriptSnapshot?.bind(host);
     host.getScriptSnapshot = (fileName): tsModule.IScriptSnapshot | undefined =>
     {
-        if (isVirtualFile(fileName))
+        if (isAzerothFile(fileName))
         {
-            const code = virtualCodeFor(toAzerothPath(fileName));
+            const code = virtualCodeFor(fileName);
             return code === undefined ? undefined : ts.ScriptSnapshot.fromString(code);
         }
         return origSnapshot ? origSnapshot(fileName) : undefined;
@@ -134,7 +153,7 @@ export function decorateLanguageServiceHost(
     const origKind = host.getScriptKind?.bind(host);
     host.getScriptKind = (fileName): tsModule.ScriptKind =>
     {
-        if (isVirtualFile(fileName))
+        if (isAzerothFile(fileName))
         {
             return ts.ScriptKind.TS;
         }
@@ -144,34 +163,14 @@ export function decorateLanguageServiceHost(
         return origKind ? origKind(fileName) : scriptKindFromName(ts, fileName);
     };
 
-    const origVersion = host.getScriptVersion.bind(host);
-    host.getScriptVersion = (fileName): string =>
-    {
-        if (isVirtualFile(fileName))
-        {
-            const azerothPath = toAzerothPath(fileName);
-            const mtime = ts.sys.getModifiedTime?.(azerothPath)?.getTime() ?? 0;
-            return `azeroth:${ mtime }`;
-        }
-        return origVersion(fileName);
-    };
-
-    const origExists = host.fileExists?.bind(host);
-    host.fileExists = (fileName): boolean =>
-    {
-        if (isVirtualFile(fileName))
-        {
-            return read(toAzerothPath(fileName)) !== undefined;
-        }
-        return origExists ? origExists(fileName) : ts.sys.fileExists(fileName);
-    };
-
     const origReadFile = host.readFile?.bind(host);
     host.readFile = (fileName, encoding): string | undefined =>
     {
-        if (isVirtualFile(fileName))
+        // Present `.azeroth` as its compiled TypeScript to anything reading
+        // through the host, keeping the snapshot and readFile views consistent.
+        if (isAzerothFile(fileName))
         {
-            return virtualCodeFor(toAzerothPath(fileName));
+            return virtualCodeFor(fileName);
         }
         return origReadFile ? origReadFile(fileName, encoding) : ts.sys.readFile(fileName, encoding);
     };
@@ -193,7 +192,10 @@ export function decorateLanguageServiceHost(
         const asAzeroth = (azerothPath: string) => ({
             resolvedModule:
             {
-                resolvedFileName: toVirtualFile(azerothPath),
+                // The REAL `.azeroth` path, reported with a `.ts` module
+                // extension so TypeScript treats it as a TypeScript module. Its
+                // snapshot (above) is the compiled virtual code.
+                resolvedFileName: azerothPath,
                 extension: ts.Extension.Ts,
                 isExternalLibraryImport: false
             },

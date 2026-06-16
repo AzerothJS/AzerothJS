@@ -79,14 +79,29 @@ export function activate(context: ExtensionContext): void
         {
             return;
         }
-        const position = change.range.start.translate(0, 1);
-        const snippet = await client!.sendRequest<string | null>('azeroth/autoInsert', {
-            textDocument: { uri: event.document.uri.toString() },
-            position: { line: position.line, character: position.character }
-        });
-        if (snippet && editor.selection.active.isEqual(position))
+        // The handler can fire while the server is down or restarting, so bail
+        // rather than assert a live client and risk an unhandled rejection.
+        if (!client)
         {
-            await editor.insertSnippet(new vscode.SnippetString(snippet), position);
+            return;
+        }
+        const position = change.range.start.translate(0, 1);
+        try
+        {
+            const snippet = await client.sendRequest<string | null>('azeroth/autoInsert', {
+                textDocument: { uri: event.document.uri.toString() },
+                position: { line: position.line, character: position.character }
+            });
+            // Re-check after the await: the caret may have moved while the
+            // request was in flight, so an insert here would land stale.
+            if (snippet && editor.selection.active.isEqual(position))
+            {
+                await editor.insertSnippet(new vscode.SnippetString(snippet), position);
+            }
+        }
+        catch (error)
+        {
+            client.outputChannel.appendLine(`azeroth/autoInsert failed: ${error}`);
         }
     }));
 }

@@ -1,5 +1,5 @@
 // Inlay hints - the inline parameter-name and inferred-type annotations TS
-// shows (`createSignal(initialValue: 0)`, `const x: number = …`). A direct
+// shows (`createSignal(initialValue: 0)`, `const x: number = ...`). A direct
 // TypeScript query over the virtual module, with each hint's position mapped
 // back to the original source and filtered to the requested range. Hints that
 // land in generated scaffolding (which has no original position) are dropped.

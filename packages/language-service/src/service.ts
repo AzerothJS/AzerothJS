@@ -16,16 +16,25 @@ import { DiagnosticSeverity } from './protocol.ts';
 import { LineIndex } from './text.ts';
 import type { RequestContext } from './request.ts';
 import type {
+    CallHierarchyIncomingCall,
+    CallHierarchyItem,
+    CallHierarchyOutgoingCall,
     CodeAction,
+    CodeLens,
+    Color,
+    ColorInformation,
+    ColorPresentation,
     CompletionItem,
     Diagnostic,
     DocumentHighlight,
+    DocumentLink,
     DocumentSymbol,
     FoldingRange,
     Hover,
     InlayHint,
     Location,
     Position,
+    PrepareRenameResult,
     Range,
     SelectionRange,
     SemanticTokens,
@@ -39,11 +48,20 @@ import { getHover } from './providers/hover.ts';
 import {
     getDefinition,
     getDocumentHighlights,
+    getPrepareRename,
     getReferences,
     getRenameEdits,
     getTypeDefinition
 } from './providers/navigation.ts';
 import { getDocumentSymbols, getWorkspaceSymbols } from './providers/symbols.ts';
+import { getDocumentLinks } from './providers/document-links.ts';
+import { getColorPresentations, getDocumentColors } from './providers/color.ts';
+import { getCodeLenses, resolveCodeLens } from './providers/code-lens.ts';
+import {
+    incomingCalls,
+    outgoingCalls,
+    prepareCallHierarchy
+} from './providers/call-hierarchy.ts';
 import { getDiagnostics } from './providers/diagnostics.ts';
 import { getSignatureHelp } from './providers/signature.ts';
 import { getSemanticTokens } from './providers/semantic-tokens.ts';
@@ -56,6 +74,8 @@ import {
 } from './providers/structure.ts';
 import { getAutoCloseTag, getLinkedEditingRanges } from './providers/editing.ts';
 import { getInlayHints, type InlayHintOptions } from './providers/inlay-hints.ts';
+import * as perf from './perf.ts';
+import type { Metrics } from './perf.ts';
 
 /**
  * Compiler-aware language intelligence for `.azeroth` files.
@@ -203,11 +223,51 @@ export class AzerothLanguageService
         return ctx ? getDocumentHighlights(ctx, ctx.lineIndex.offsetAt(position)) : [];
     }
 
+    /** Validates a rename target at a position (identifier range + current name), or null when not renameable. */
+    public getPrepareRename(uri: string, position: Position): PrepareRenameResult | null
+    {
+        const ctx = this.context(uri);
+        return ctx ? getPrepareRename(ctx, ctx.lineIndex.offsetAt(position)) : null;
+    }
+
     /** Workspace edit to rename the symbol at a position. */
     public getRenameEdits(uri: string, position: Position, newName: string): WorkspaceEdit | null
     {
         const ctx = this.context(uri);
         return ctx ? getRenameEdits(ctx, ctx.lineIndex.offsetAt(position), newName) : null;
+    }
+
+    /** The call-hierarchy node(s) for the symbol at a position. */
+    public getCallHierarchyPrepare(uri: string, position: Position): CallHierarchyItem[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? prepareCallHierarchy(ctx, ctx.lineIndex.offsetAt(position)) : [];
+    }
+
+    /**
+     * Callers of a prepared call-hierarchy item. The item carries its source URI
+     * and offset in `data` (a follow-up request gets no position), so the query
+     * re-anchors there.
+     */
+    public getIncomingCalls(item: CallHierarchyItem): CallHierarchyIncomingCall[]
+    {
+        if (!item.data)
+        {
+            return [];
+        }
+        const ctx = this.context(item.data.uri);
+        return ctx ? incomingCalls(ctx, item.data.offset) : [];
+    }
+
+    /** Callees of a prepared call-hierarchy item (anchored via `data`, as above). */
+    public getOutgoingCalls(item: CallHierarchyItem): CallHierarchyOutgoingCall[]
+    {
+        if (!item.data)
+        {
+            return [];
+        }
+        const ctx = this.context(item.data.uri);
+        return ctx ? outgoingCalls(ctx, item.data.offset) : [];
     }
 
     /** The document outline. */
@@ -221,6 +281,41 @@ export class AzerothLanguageService
     public getWorkspaceSymbols(query: string): WorkspaceSymbol[]
     {
         return getWorkspaceSymbols(this.project, query);
+    }
+
+    /** Clickable links over the relative import specifiers in the document. */
+    public getDocumentLinks(uri: string): DocumentLink[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? getDocumentLinks(ctx) : [];
+    }
+
+    /** Color swatches over CSS color literals in style attributes and css`` templates. */
+    public getDocumentColors(uri: string): ColorInformation[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? getDocumentColors(ctx) : [];
+    }
+
+    /** The spelling choices for a picked color at a range. */
+    public getColorPresentations(uri: string, color: Color, range: Range): ColorPresentation[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? getColorPresentations(ctx, color, range) : [];
+    }
+
+    /** Unresolved reference lenses over the document's top-level declarations. */
+    public getCodeLenses(uri: string): CodeLens[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? getCodeLenses(ctx) : [];
+    }
+
+    /** Fills a lens's command with its reference count (anchored via `data`). */
+    public resolveCodeLens(uri: string, lens: CodeLens): CodeLens
+    {
+        const ctx = this.context(uri);
+        return ctx ? resolveCodeLens(ctx, lens) : lens;
     }
 
     /** Signature help for the call enclosing a position. */
@@ -309,8 +404,50 @@ export class AzerothLanguageService
         return this.project.getVirtual(uriToPath(uri)).code;
     }
 
+    /**
+     * The underlying TypeScript program over the virtual modules - exposed for
+     * tooling (docgen) that needs to read the real, checked types. Returns
+     * undefined when no program is available yet.
+     */
+    public getProgram(): ts.Program | undefined
+    {
+        return this.project.service.getProgram();
+    }
+
+    /**
+     * Toggles opt-in performance instrumentation. Off by default; while off the
+     * normal path carries zero overhead (no `performance.now()` calls, nothing
+     * recorded). Turn it on to populate `getMetrics`.
+     */
+    public setMetricsEnabled(enabled: boolean): void
+    {
+        perf.setEnabled(enabled);
+    }
+
+    /**
+     * Timings for the most recent request, in milliseconds. Only meaningful when
+     * instrumentation was enabled via `setMetricsEnabled` before the request;
+     * otherwise the values are zero.
+     */
+    public getMetrics(): Metrics
+    {
+        return perf.snapshot();
+    }
+
     /** Builds a RequestContext for a known document, or null if unknown. */
     private context(uri: string): RequestContext | null
+    {
+        if (!perf.isEnabled())
+        {
+            return this.buildContext(uri);
+        }
+        const start = performance.now();
+        const ctx = this.buildContext(uri);
+        perf.record('total', performance.now() - start);
+        return ctx;
+    }
+
+    private buildContext(uri: string): RequestContext | null
     {
         const azerothPath = uriToPath(uri);
         const source = this.project.getSource(azerothPath);

@@ -10,7 +10,7 @@
 //                  precise offset mapping for every user-authored span
 //   ts-project   - run a single ts.LanguageService over those virtual modules
 //                  (the engine for type inference, completion, hover, etc.)
-//   markup-model - classify the caret (tag name / attribute / expression / …)
+//   markup-model - classify the caret (tag name / attribute / expression / ...)
 //                  so the providers know which vocabulary to offer
 //   providers    - one focused module per editor feature
 //   service      - the AzerothLanguageService facade that ties them together
@@ -19,8 +19,19 @@
 // (and is tested) without an editor in the loop.
 
 export { AzerothLanguageService } from './service.ts';
-export type { CompletionOptions } from './providers/completion.ts';
+export {
+    registerCompletionSource,
+    clearCompletionSources,
+    type CompletionOptions,
+    type CompletionSource
+} from './providers/completion.ts';
 export type { InlayHintOptions } from './providers/inlay-hints.ts';
+
+export {
+    generateComponentDocs,
+    type ComponentDoc,
+    type PropDoc
+} from './docgen.ts';
 
 export {
     AzerothProject,
@@ -36,6 +47,12 @@ export {
 } from './virtual-code.ts';
 
 export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
+
+export {
+    setEnabled as setMetricsEnabled,
+    snapshot as getMetrics,
+    type Metrics
+} from './perf.ts';
 
 export {
     classifyPosition,
@@ -57,6 +74,7 @@ export {
     SymbolKind,
     DiagnosticSeverity,
     SEMANTIC_TOKEN_TYPES,
+    SEMANTIC_TOKEN_MODIFIERS,
     type Position,
     type Range,
     type Location,
@@ -66,14 +84,25 @@ export {
     type SignatureInformation,
     type TextEdit,
     type WorkspaceEdit,
+    type PrepareRenameResult,
     type DocumentSymbol,
     type DocumentHighlight,
+    type DocumentLink,
+    type Color,
+    type ColorInformation,
+    type ColorPresentation,
     type WorkspaceSymbol,
+    type CallHierarchyItem,
+    type CallHierarchyIncomingCall,
+    type CallHierarchyOutgoingCall,
     type Diagnostic,
     type FoldingRange,
     type InlayHint,
     type SelectionRange,
     type CodeAction,
+    type Command,
+    type CodeLens,
     type SemanticTokens,
-    type SemanticTokenType
+    type SemanticTokenType,
+    type SemanticTokenModifier
 } from './protocol.ts';

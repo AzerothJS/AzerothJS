@@ -1,31 +1,85 @@
-// Semantic highlighting for the markup layer. The TextMate grammar in the
-// extension colours the bulk of a `.azeroth` file (it embeds the TypeScript
-// grammar); these tokens add the precise, parser-derived distinctions a grammar
-// can't make reliably - chiefly component tags vs. host tags and event vs.
-// plain attributes. Output is LSP's packed delta encoding.
+// Semantic highlighting for a `.azeroth` file. Two sources are merged: the
+// markup layer (component vs. host tags, event vs. plain attributes - the
+// parser-derived distinctions a TextMate grammar can't make reliably), and the
+// TypeScript classifier run over the virtual module, which colours the embedded
+// script and expression regions exactly as a `.ts` file would. Markup tokens
+// win inside markup regions; TS tokens cover the script/hole code. Output is
+// LSP's packed delta encoding.
 
+import ts from 'typescript';
 import { isWhitespace } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import {
     SEMANTIC_TOKEN_TYPES,
+    SEMANTIC_TOKEN_MODIFIERS,
     type SemanticTokens,
-    type SemanticTokenType
+    type SemanticTokenType,
+    type SemanticTokenModifier
 } from '../protocol.ts';
 import { collectMarkupNodes } from '../markup-model.ts';
+import { BUILTIN_COMPONENTS } from '../virtual-code.ts';
 import type { RequestContext } from '../request.ts';
 
 const TYPE_INDEX = new Map<SemanticTokenType, number>(
     SEMANTIC_TOKEN_TYPES.map((type, index) => [type, index])
 );
 
+const MODIFIER_BIT = new Map<SemanticTokenModifier, number>(
+    SEMANTIC_TOKEN_MODIFIERS.map((modifier, index) => [modifier, 1 << index])
+);
+
+// A built-in component (`Show`, `For`, ...) is library-provided, so its tag tokens
+// carry the `defaultLibrary` modifier - the one distinction the markup layer can
+// make. User components and host tags carry no modifiers.
+const DEFAULT_LIBRARY_BIT = MODIFIER_BIT.get('defaultLibrary') ?? 0;
+const BUILTIN_SET = new Set<string>(BUILTIN_COMPONENTS);
+
+// The 2020 classifier (`SemanticClassificationFormat.TwentyTwenty`) packs each
+// span's classification as `((tokenType + 1) << typeOffset) | modifierBitset`,
+// where typeOffset is 8 and the low 8 bits are a TokenModifier bitset. The `+ 1`
+// is part of TS's wire encoding (so a raw 0 means "no token"), so decoding the
+// type index subtracts it back off - see classifier2020's getSemanticTokens.
+const TS_TYPE_OFFSET = 8;
+const TS_MODIFIER_MASK = 255;
+
+// Maps TypeScript's own classifier token-type index to a legend type. This is
+// the v2020 `TokenType` enum order (verified against the installed typescript):
+// 0=class, 1=enum, 2=interface, 3=namespace, 4=typeParameter, 5=type,
+// 6=parameter, 7=variable, 8=enumMember, 9=property, 10=function, 11=member.
+// `member` is the method case in this legend; there is no token type for keyword
+// or comment spans (the grammar colours those), so those classifications drop.
+const TS_TYPE_TO_LEGEND: readonly (SemanticTokenType | null)[] = [
+    'class', 'enum', 'interface', 'namespace', 'typeParameter', 'type',
+    'parameter', 'variable', 'enumMember', 'property', 'function', 'method'
+];
+
+// Maps TypeScript's `TokenModifier` bit index to this legend's modifier mask.
+// The two legends share the same names but NOT the same order, so the remap is
+// by name: TS bits are declaration=0, static=1, async=2, readonly=3,
+// defaultLibrary=4, local=5.
+const TS_MODIFIER_TO_BIT: readonly number[] = [
+    MODIFIER_BIT.get('declaration') ?? 0,
+    MODIFIER_BIT.get('static') ?? 0,
+    MODIFIER_BIT.get('async') ?? 0,
+    MODIFIER_BIT.get('readonly') ?? 0,
+    MODIFIER_BIT.get('defaultLibrary') ?? 0,
+    MODIFIER_BIT.get('local') ?? 0
+];
+
 interface RawToken
 {
     offset: number;
     length: number;
     type: SemanticTokenType;
+    modifiers: number;
 }
 
-/** Packed semantic tokens for the markup in the document. */
+/**
+ * Packed semantic tokens for the document: the markup tokens merged with the
+ * TypeScript classifications of the embedded script/expression regions. Markup
+ * tokens win where they overlap, so the TS pass only colours code outside the
+ * tag/attribute spans the markup layer already owns.
+ */
 export function getSemanticTokens(ctx: RequestContext): SemanticTokens
 {
     const tokens: RawToken[] = [];
@@ -37,8 +91,91 @@ export function getSemanticTokens(ctx: RequestContext): SemanticTokens
         }
     }
 
+    collectScriptTokens(ctx, tokens);
+
     tokens.sort((a, b) => a.offset - b.offset);
     return { data: encode(ctx, tokens) };
+}
+
+/**
+ * Runs the TypeScript classifier over the virtual module and appends a token
+ * for each span that maps cleanly back to source and doesn't fall inside a
+ * markup-owned span (markup wins there). Spans over generated scaffolding don't
+ * map and are dropped; keyword/comment classifications carry no legend type and
+ * are dropped too (the grammar colours them).
+ */
+function collectScriptTokens(ctx: RequestContext, tokens: RawToken[]): void
+{
+    // markup tokens are the only entries so far; their source spans are the
+    // regions the TS pass must yield to.
+    const markupSpans = tokens.map(token => ({ start: token.offset, end: token.offset + token.length }));
+
+    const code = ctx.virtual.code;
+    const classified = ctx.project.service.getEncodedSemanticClassifications(
+        ctx.virtualFile,
+        { start: 0, length: code.length },
+        ts.SemanticClassificationFormat.TwentyTwenty
+    );
+
+    const spans = classified.spans;
+    for (let i = 0; i + 2 < spans.length; i += 3)
+    {
+        const start = spans[i];
+        const length = spans[i + 1];
+        const classification = spans[i + 2];
+
+        const tsType = (classification >> TS_TYPE_OFFSET) - 1;
+        const type = TS_TYPE_TO_LEGEND[tsType];
+        if (type === undefined || type === null)
+        {
+            continue;
+        }
+
+        const mapped = ctx.virtual.mapping.toOriginalRange(start, start + length);
+        if (mapped === null)
+        {
+            continue;
+        }
+
+        if (overlapsMarkup(markupSpans, mapped.start, mapped.end))
+        {
+            continue;
+        }
+
+        tokens.push({
+            offset: mapped.start,
+            length: mapped.end - mapped.start,
+            type,
+            modifiers: remapModifiers(classification & TS_MODIFIER_MASK)
+        });
+    }
+}
+
+/** Translates a TS modifier bitset into this legend's modifier mask. */
+function remapModifiers(bitset: number): number
+{
+    let mask = 0;
+    for (let bit = 0; bit < TS_MODIFIER_TO_BIT.length; bit++)
+    {
+        if (bitset & (1 << bit))
+        {
+            mask |= TS_MODIFIER_TO_BIT[bit];
+        }
+    }
+    return mask;
+}
+
+/** True when `[start, end)` intersects any markup-owned source span. */
+function overlapsMarkup(markupSpans: { start: number; end: number }[], start: number, end: number): boolean
+{
+    for (const span of markupSpans)
+    {
+        if (start < span.end && end > span.start)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /** Emits tokens for a single element's tag name and attributes. */
@@ -47,7 +184,8 @@ function collectElementTokens(source: string, node: MarkupElement, tokens: RawTo
     tokens.push({
         offset: node.start + 1,
         length: node.tag.length,
-        type: node.isComponent ? 'component' : 'tag'
+        type: node.isComponent ? 'component' : 'tag',
+        modifiers: node.isComponent && BUILTIN_SET.has(node.tag) ? DEFAULT_LIBRARY_BIT : 0
     });
 
     for (const attr of node.attributes)
@@ -57,7 +195,7 @@ function collectElementTokens(source: string, node: MarkupElement, tokens: RawTo
             continue;
         }
         const isEvent = attr.name.length > 2 && attr.name.startsWith('on') && attr.name[2] === attr.name[2].toUpperCase();
-        tokens.push({ offset: attr.start, length: attr.name.length, type: isEvent ? 'event' : 'attribute' });
+        tokens.push({ offset: attr.start, length: attr.name.length, type: isEvent ? 'event' : 'attribute', modifiers: 0 });
 
         if (attr.value.kind === 'static')
         {
@@ -71,7 +209,7 @@ function collectElementTokens(source: string, node: MarkupElement, tokens: RawTo
                 }
                 if (source[q] === '"' || source[q] === '\'')
                 {
-                    tokens.push({ offset: q, length: attr.end - q, type: 'string' });
+                    tokens.push({ offset: q, length: attr.end - q, type: 'string', modifiers: 0 });
                 }
             }
         }
@@ -90,7 +228,7 @@ function encode(ctx: RequestContext, tokens: RawToken[]): number[]
         const pos = ctx.lineIndex.positionAt(token.offset);
         const deltaLine = pos.line - prevLine;
         const deltaChar = deltaLine === 0 ? pos.character - prevChar : pos.character;
-        data.push(deltaLine, deltaChar, token.length, TYPE_INDEX.get(token.type) ?? 0, 0);
+        data.push(deltaLine, deltaChar, token.length, TYPE_INDEX.get(token.type) ?? 0, token.modifiers);
         prevLine = pos.line;
         prevChar = pos.character;
     }

@@ -16,7 +16,7 @@ import {
     type CompletionItem,
     type CompletionItemKindValue
 } from '../protocol.ts';
-import { classifyPosition, enclosingElement } from '../markup-model.ts';
+import { classifyPosition, enclosingElement, type PositionContext } from '../markup-model.ts';
 import {
     BUILTIN_COMPONENTS,
     BUILTIN_COMPONENT_MAP,
@@ -26,6 +26,12 @@ import {
 import { htmlCompletions, eventDocumentation } from './html-service.ts';
 import { cssCompletions, cssTemplateCompletions, inCssTemplate } from './css-service.ts';
 import { toGenerated, type RequestContext } from '../request.ts';
+
+// Commit characters that improve the common edit: typing `=` or a space after a
+// prop name accepts the highlighted prop (then continues into `={...}` or the next
+// attribute); a space/`>`/`/` after a tag name accepts the tag and opens the body.
+const PROP_COMMIT_CHARACTERS: readonly string[] = ['=', ' '];
+const TAG_COMMIT_CHARACTERS: readonly string[] = [' ', '>', '/'];
 
 /** Payload attached to TS-sourced items so `resolveCompletion` can fill detail. */
 export interface CompletionData
@@ -42,15 +48,49 @@ export interface CompletionOptions
 {
     /** Suggest not-yet-imported symbols (and add the import on accept). */
     autoImports?: boolean;
-    /** Expand built-in components to snippet bodies (`<For …>{…}</For>`). */
+    /** Expand built-in components to snippet bodies (`<For ...>{...}</For>`). */
     componentSnippets?: boolean;
+}
+
+/**
+ * An external contributor of completion items (an AI backend, a custom snippet
+ * engine, ...). Registered sources run after the native items for the caret's
+ * branch; the classified `context`, full `source`, and `offset` let a source
+ * tailor its suggestions to where the caret is.
+ */
+export interface CompletionSource
+{
+    provide(args: { source: string; offset: number; context: PositionContext }): CompletionItem[];
+}
+
+// Module-level registry. Empty by default, so registering nothing leaves native
+// completion behaviour untouched.
+const completionSources = new Set<CompletionSource>();
+
+/** Registers an external completion source. Returns a fn that unregisters it. */
+export function registerCompletionSource(source: CompletionSource): () => void
+{
+    completionSources.add(source);
+    return () => { completionSources.delete(source); };
+}
+
+/** Drops all registered completion sources (test isolation; explicit teardown). */
+export function clearCompletionSources(): void
+{
+    completionSources.clear();
 }
 
 /** Produces completion items for the caret at `offset`. */
 export function getCompletions(ctx: RequestContext, offset: number, options: CompletionOptions = {}): CompletionItem[]
 {
     const context = classifyPosition(ctx.source, offset);
+    const items = builtinCompletions(ctx, offset, options, context);
+    return withExternalSources(items, ctx.source, offset, context);
+}
 
+/** Native completion items for the caret's branch, before external sources. */
+function builtinCompletions(ctx: RequestContext, offset: number, options: CompletionOptions, context: PositionContext): CompletionItem[]
+{
     const position = ctx.lineIndex.positionAt(offset);
 
     switch (context.kind)
@@ -76,8 +116,8 @@ export function getCompletions(ctx: RequestContext, offset: number, options: Com
             {
                 return [];
             }
-            // `style="…"` is CSS; everything else gets HTML value enums
-            // (`type="text|email|…"`, booleans, …) from the HTML engine.
+            // `style="..."` is CSS; everything else gets HTML value enums
+            // (`type="text|email|..."`, booleans, ...) from the HTML engine.
             return context.attribute === 'style'
                 ? cssCompletions(ctx.source, offset)
                 : htmlCompletions(ctx.source, position);
@@ -108,6 +148,27 @@ export function getCompletions(ctx: RequestContext, offset: number, options: Com
     }
 }
 
+/**
+ * Appends items from every registered external source. Each call is isolated:
+ * a source that throws (or is otherwise misbehaving) must never break native
+ * completion, so its failure is swallowed and the native items still return.
+ */
+function withExternalSources(items: CompletionItem[], source: string, offset: number, context: PositionContext): CompletionItem[]
+{
+    for (const provider of completionSources)
+    {
+        try
+        {
+            items.push(...provider.provide({ source, offset, context }));
+        }
+        catch
+        {
+            // A broken source is ignored, not propagated.
+        }
+    }
+    return items;
+}
+
 /** True for a component tag (PascalCase, dotted, or a known built-in). */
 function isComponentTag(tag: string): boolean
 {
@@ -134,7 +195,8 @@ function tagCompletions(ctx: RequestContext, offset: number, options: Completion
             documentation: component.doc,
             insertText: snippet ?? component.name,
             insertTextFormat: snippet ? 2 : 1,
-            sortText: `0_${ component.name }`
+            sortText: `0_${ component.name }`,
+            commitCharacters: [...TAG_COMMIT_CHARACTERS]
         });
     }
 
@@ -155,14 +217,16 @@ function tagCompletions(ctx: RequestContext, offset: number, options: Completion
                 items.push({
                     label: entry.name,
                     kind: CompletionItemKind.Class,
-                    detail: autoImport ? `component — import from ${ entry.source ?? 'module' }` : 'component',
+                    detail: autoImport ? `component - import from ${ entry.source ?? 'module' }` : 'component',
                     sortText: `${ autoImport ? '2' : '1' }_${ entry.name }`,
+                    commitCharacters: [...TAG_COMMIT_CHARACTERS],
                     data: completionData(ctx, generatedOffset, entry)
                 });
             }
         }
     }
 
+    preselectExactPrefix(items, identifierPrefix(ctx.source, offset));
     return items;
 }
 
@@ -235,18 +299,50 @@ function componentAttributeCompletions(ctx: RequestContext, offset: number, tag:
                 documentation: prop.doc,
                 insertText: `${ prop.name }={$0}`,
                 insertTextFormat: 2 as const,
-                sortText: `0_${ prop.name }`
+                sortText: `0_${ prop.name }`,
+                commitCharacters: [...PROP_COMMIT_CHARACTERS]
             });
         }
     }
 
+    preselectExactPrefix(items, identifierPrefix(ctx.source, offset));
     items.push(...eventCompletions());
     return items;
 }
 
+/** The bare identifier the caret sits at the end of (`tit|` -> `tit`), or `''`. */
+function identifierPrefix(source: string, offset: number): string
+{
+    let start = offset;
+    while (start > 0 && /[A-Za-z0-9_-]/.test(source[start - 1]))
+    {
+        start--;
+    }
+    return source.slice(start, offset);
+}
+
+/**
+ * Marks the one clear winner for pre-selection: when the typed prefix matches a
+ * single item's label exactly (case-insensitively), the editor highlights it so
+ * Enter commits it. Ambiguous prefixes leave the default highlight alone.
+ */
+function preselectExactPrefix(items: CompletionItem[], prefix: string): void
+{
+    if (prefix === '')
+    {
+        return;
+    }
+    const lower = prefix.toLowerCase();
+    const matches = items.filter(item => item.label.toLowerCase().startsWith(lower));
+    if (matches.length === 1)
+    {
+        matches[0].preselect = true;
+    }
+}
+
 /**
  * Props of the component whose opening tag holds the caret, read from its props
- * type. Works by querying TypeScript inside the generated `Tag({ … })` call's
+ * type. Works by querying TypeScript inside the generated `Tag({ ... })` call's
  * object literal, where the expected properties are exactly the props.
  */
 function typedPropCompletions(ctx: RequestContext, offset: number): CompletionItem[]
@@ -263,7 +359,7 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
     }
     // An attribute-less component compiles to a bare `Comp()` (no props object
     // to complete inside), so read the prop names off the component's call
-    // signature instead. With any attribute present the call carries a `({ … })`
+    // signature instead. With any attribute present the call carries a `({ ... })`
     // and we query TypeScript inside it as before (which also yields per-entry
     // documentation on resolve).
     const open = ctx.virtual.code.indexOf('(', generatedTag + element.tag.length);
@@ -278,8 +374,17 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
         return [];
     }
 
+    // Props may be plain fields or getter/setter-backed accessors; accept all
+    // three member kinds so accessor props are not silently dropped.
+    const propKinds: readonly string[] =
+    [
+        ts.ScriptElementKind.memberVariableElement,
+        ts.ScriptElementKind.memberGetAccessorElement,
+        ts.ScriptElementKind.memberSetAccessorElement
+    ];
+
     return rawTsEntries(ctx, brace + 1)
-        .filter(entry => entry.kind === ts.ScriptElementKind.memberVariableElement && entry.name !== 'children')
+        .filter(entry => propKinds.includes(entry.kind) && entry.name !== 'children')
         .map(entry => ({
             label: entry.name,
             kind: CompletionItemKind.Property,
@@ -287,6 +392,7 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
             insertText: `${ entry.name }={$0}`,
             insertTextFormat: 2 as const,
             sortText: `0_${ entry.name }`,
+            commitCharacters: [...PROP_COMMIT_CHARACTERS],
             data: completionData(ctx, brace + 1, entry)
         }));
 }
@@ -338,7 +444,8 @@ function propsFromComponentSignature(ctx: RequestContext, identifierOffset: numb
             detail: 'prop',
             insertText: `${ prop.name }={$0}`,
             insertTextFormat: 2 as const,
-            sortText: `0_${ prop.name }`
+            sortText: `0_${ prop.name }`,
+            commitCharacters: [...PROP_COMMIT_CHARACTERS]
         }));
 }
 

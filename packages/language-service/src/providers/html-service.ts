@@ -1,7 +1,7 @@
 // Thin wrapper over `vscode-html-languageservice` - the same HTML engine VS
 // Code ships - applied to the embedded HTML view of a `.azeroth` file
 // (html-source.ts). It answers host-element completion (tags, attributes, and
-// crucially attribute *values* like `<input type="…">`) and MDN-backed hover.
+// crucially attribute *values* like `<input type="...">`) and MDN-backed hover.
 //
 // Offsets are shared with the original source (the embedded view is space-for-
 // space the same length), so positions and result ranges need no translation.
@@ -35,6 +35,10 @@ const html = (): LanguageService => (service ??= getLanguageService());
 /** Cache the parsed embedded document so completion + hover on the same edit reuse it. */
 let cache: { source: string; doc: TextDocument; parsed: HTMLDocument } | null = null;
 
+/**
+ * The parsed HTML view of `source` that the html-languageservice works against,
+ * served from {@link cache} when the source is unchanged since the last call.
+ */
 function embeddedDocument(source: string): { doc: TextDocument; parsed: HTMLDocument }
 {
     if (cache && cache.source === source)
@@ -88,7 +92,7 @@ function buildEventDocs(): Map<string, string>
             continue;
         }
         const description = markupToString(attr.description);
-        const references = (attr.references ?? []).map(reference => `[${ reference.name }](${ reference.url })`).join(' · ');
+        const references = (attr.references ?? []).map(reference => `[${ reference.name }](${ reference.url })`).join(' | ');
         const markdown = [description, references].filter(Boolean).join('\n\n');
         if (markdown)
         {

@@ -67,7 +67,9 @@ export function getFoldingRanges(ctx: RequestContext): FoldingRange[]
             continue;
         }
         const startLine = ctx.lineIndex.positionAt(mapped.start).line;
-        const endLine = ctx.lineIndex.positionAt(mapped.end).line;
+        // mapped.end is exclusive; step back one offset so a span ending right before a
+        // newline folds to the brace line, not the line after it (guard empty/one-char spans).
+        const endLine = ctx.lineIndex.positionAt(Math.max(mapped.start, mapped.end - 1)).line;
         add(startLine, endLine, span.kind === ts.OutliningSpanKind.Comment ? 'comment' : span.kind === ts.OutliningSpanKind.Imports ? 'imports' : 'region');
     }
 
@@ -76,7 +78,7 @@ export function getFoldingRanges(ctx: RequestContext): FoldingRange[]
 
 /**
  * Code actions for `range`: TypeScript quick fixes for the overlapping
- * diagnostics, plus any applicable refactors (extract function/constant, …)
+ * diagnostics, plus any applicable refactors (extract function/constant, ...)
  * whose edits map cleanly back to the source. Refactors that would touch
  * generated markup scaffolding are skipped, since their edits can't be
  * represented faithfully in the original document.

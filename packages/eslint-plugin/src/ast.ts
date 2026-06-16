@@ -31,7 +31,7 @@ export interface CallNode extends AstNode
 /**
  * True when `node` is an Identifier with the given name. Accepts `null` because
  * ESTree uses `null` (not `undefined`) for absent optional slots - e.g. an
- * ArrayPattern hole or a `for (const x of …)` declarator's `init`.
+ * ArrayPattern hole or a `for (const x of ...)` declarator's `init`.
  */
 export function isIdentifier(node: AstNode | null | undefined, name?: string): node is IdentifierNode
 {

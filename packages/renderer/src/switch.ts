@@ -82,6 +82,23 @@ export function Match(props: MatchProps): MatchCase
 }
 
 /**
+ * Props for the Switch component.
+ */
+export interface SwitchProps
+{
+    /**
+     * The Match cases, in priority order (first match wins). Accepts
+     * an array (manual API) or a thunk returning one/many cases -
+     * the latter is what compiled `.azeroth` markup produces from
+     * `<Switch><Match/>...</Switch>`.
+     */
+    children: MatchCase[] | (() => MatchCase[] | MatchCase);
+
+    /** Optional content when no case matches. */
+    fallback?: () => HTMLElement;
+}
+
+/**
  * Renders the first matching case from a list of Match cases.
  *
  * Reactively watches all conditions and swaps to the correct case when they
@@ -106,20 +123,6 @@ export function Match(props: MatchProps): MatchCase
  * });
  * ```
  */
-export interface SwitchProps
-{
-    /**
-     * The Match cases, in priority order (first match wins). Accepts
-     * an array (manual API) or a thunk returning one/many cases -
-     * the latter is what compiled `.azeroth` markup produces from
-     * `<Switch><Match/>...</Switch>`.
-     */
-    children: MatchCase[] | (() => MatchCase[] | MatchCase);
-
-    /** Optional content when no case matches. */
-    fallback?: () => HTMLElement;
-}
-
 export function Switch(props: SwitchProps): HTMLElement
 {
     // Normalize once: a thunk is evaluated to its cases, and a lone

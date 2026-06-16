@@ -337,6 +337,13 @@ export function collectMarkupNodes(source: string): (MarkupElement | MarkupFragm
     return nodes;
 }
 
+/**
+ * Scans `source` between `lo` and `hi` for markup that begins there, handing
+ * each parsed node to {@link collectNode}. Split out from the public
+ * {@link collectMarkupNodes} so the recursion can re-enter any sub-range - the
+ * inside of an attribute or child expression's braces - and find markup nested
+ * within it. A parse failure ends the scan for this range instead of throwing.
+ */
 function collectInRange(source: string, lo: number, hi: number, out: (MarkupElement | MarkupFragment)[]): void
 {
     let i = lo;
@@ -362,6 +369,11 @@ function collectInRange(source: string, lo: number, hi: number, out: (MarkupElem
     }
 }
 
+/**
+ * Adds `node` to `out`, then descends into the expression slots it owns - an
+ * element's `{ ... }` attribute values and children, a fragment's children - so
+ * markup written inside those expressions is collected as well.
+ */
 function collectNode(source: string, node: MarkupElement | MarkupFragment, out: (MarkupElement | MarkupFragment)[]): void
 {
     out.push(node);

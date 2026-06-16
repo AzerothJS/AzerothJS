@@ -9,7 +9,8 @@
     "bin":
     {
         "azeroth-language-server": "./dist/cli.js",
-        "azeroth-tsc": "./dist/tsc-cli.js"
+        "azeroth-tsc": "./dist/tsc-cli.js",
+        "azeroth-docgen": "./dist/docgen-cli.js"
     },
     "exports":
     {
@@ -20,7 +21,8 @@
             "default": "./dist/index.js"
         },
         "./cli": "./dist/cli.js",
-        "./tsc": "./dist/tsc.js"
+        "./tsc": "./dist/tsc.js",
+        "./docgen": "./dist/docgen-cli.js"
     },
     "files":
     [

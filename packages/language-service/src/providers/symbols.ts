@@ -11,7 +11,7 @@ import {
     type SymbolKindValue,
     type WorkspaceSymbol
 } from '../protocol.ts';
-import { resolveLocation, type RequestContext } from '../request.ts';
+import { isVirtualFile, resolveLocation, toAzerothPath, type RequestContext } from '../request.ts';
 import type { AzerothProject } from '../ts-project.ts';
 
 /** The outline for the document. */
@@ -78,7 +78,12 @@ export function getWorkspaceSymbols(project: AzerothProject, query: string): Wor
     const out: WorkspaceSymbol[] = [];
     for (const item of items)
     {
-        const location = resolveLocation(project, item.fileName, item.textSpan);
+        // A component declaration's span covers its markup body, which straddles
+        // generated scaffolding and so won't map as one contiguous range. The
+        // name identifier is verbatim and always maps, so range on it instead -
+        // otherwise default-exported components never surface in symbol search.
+        const span = nameSpan(project, item) ?? item.textSpan;
+        const location = resolveLocation(project, item.fileName, span);
         if (location === null)
         {
             continue;
@@ -91,6 +96,38 @@ export function getWorkspaceSymbols(project: AzerothProject, query: string): Wor
         });
     }
     return out;
+}
+
+/**
+ * The span of a navigate-to item's name identifier within its declaration.
+ * `NavigateToItem` carries no name span, so the name's first occurrence inside
+ * the declaration text is located (keywords/modifiers precede it and never
+ * contain it). Returns `null` when the declaration text is unavailable.
+ */
+function nameSpan(project: AzerothProject, item: ts.NavigateToItem): ts.TextSpan | null
+{
+    const text = declarationText(project, item.fileName);
+    if (text === null)
+    {
+        return null;
+    }
+    const slice = text.slice(item.textSpan.start, item.textSpan.start + item.textSpan.length);
+    const offset = slice.indexOf(item.name);
+    if (offset < 0)
+    {
+        return null;
+    }
+    return { start: item.textSpan.start + offset, length: item.name.length };
+}
+
+/** The full text a navigate-to item's span indexes into (generated for virtual files). */
+function declarationText(project: AzerothProject, fileName: string): string | null
+{
+    if (isVirtualFile(fileName))
+    {
+        return project.getVirtual(toAzerothPath(fileName)).code;
+    }
+    return ts.sys.readFile(fileName) ?? null;
 }
 
 /** Maps a TS ScriptElementKind to an LSP SymbolKind. */

@@ -6,13 +6,38 @@
 // works exactly as it does in a `.ts` file.
 
 import ts from 'typescript';
-import type { DocumentHighlight, Location, WorkspaceEdit } from '../protocol.ts';
+import type { DocumentHighlight, Location, PrepareRenameResult, WorkspaceEdit } from '../protocol.ts';
 import {
     resolveLocation,
     spanToRange,
     toGenerated,
     type RequestContext
 } from '../request.ts';
+
+/**
+ * Validates the rename target at `offset`, returning the identifier range and
+ * its current name so the editor can pre-fill the rename box, or null when the
+ * position can't be renamed (e.g. whitespace, a keyword, a string literal).
+ */
+export function getPrepareRename(ctx: RequestContext, offset: number): PrepareRenameResult | null
+{
+    const generated = toGenerated(ctx, offset);
+    if (generated === null)
+    {
+        return null;
+    }
+    const info = ctx.project.service.getRenameInfo(ctx.virtualFile, generated, { allowRenameOfImportPath: false });
+    if (!info.canRename)
+    {
+        return null;
+    }
+    const range = spanToRange(ctx, info.triggerSpan);
+    if (range === null)
+    {
+        return null;
+    }
+    return { range, placeholder: info.displayName };
+}
 
 /** Definition location(s) for the symbol at `offset`. */
 export function getDefinition(ctx: RequestContext, offset: number): Location[]

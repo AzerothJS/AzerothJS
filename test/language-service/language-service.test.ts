@@ -5,7 +5,7 @@
 // and context-aware completion.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AzerothLanguageService, LineIndex, pathToUri, type Position } from '@azerothjs/language-service';
+import { AzerothLanguageService, LineIndex, pathToUri, type Position, type TextEdit } from '@azerothjs/language-service';
 import path from 'node:path';
 
 const ROOT = process.cwd();
@@ -14,6 +14,21 @@ const ROOT = process.cwd();
 function at(source: string, needle: string, offsetInNeedle = 0): Position
 {
     return new LineIndex(source).positionAt(source.indexOf(needle) + offsetInNeedle);
+}
+
+/** Applies LSP text edits to a source string (descending order, so offsets hold). */
+function applyEdits(source: string, edits: TextEdit[]): string
+{
+    const idx = new LineIndex(source);
+    const ordered = [...edits].sort((a, b) => idx.offsetAt(b.range.start) - idx.offsetAt(a.range.start));
+    let out = source;
+    for (const edit of ordered)
+    {
+        const start = idx.offsetAt(edit.range.start);
+        const end = idx.offsetAt(edit.range.end);
+        out = out.slice(0, start) + edit.newText + out.slice(end);
+    }
+    return out;
 }
 
 const COUNTER = [
@@ -86,6 +101,21 @@ describe('navigation', () =>
         const defs = ls.getDefinition(uri, pos);
         expect(defs.length).toBeGreaterThan(0);
         expect(defs[0].uri).toBe(uri);
+    });
+
+    it('jumps to the type definition of a symbol', () =>
+    {
+        const u = uri.replace('Counter', 'TypeDef');
+        // `user` is typed by a locally-declared interface, so its type definition
+        // maps back into this same source (uri + the `interface User` range).
+        const src = 'interface User { id: number; }\nconst user: User = { id: 1 };\nconst x = <p>{user.id}</p>;';
+        ls.didOpen(u, src);
+        const defs = ls.getTypeDefinition(u, at(src, '{user.id}', 1));
+        expect(defs.length).toBeGreaterThan(0);
+        expect(defs[0].uri).toBe(u);
+        const idx = new LineIndex(src);
+        const offset = idx.offsetAt(defs[0].range.start);
+        expect(src.slice(offset, offset + 'User'.length)).toBe('User');
     });
 
     it('finds every reference to a signal (declaration + reads)', () =>
@@ -228,6 +258,17 @@ describe('symbols, signature help, semantic tokens, folding', () =>
         const u = uri.replace('Counter', 'Fold');
         ls.didOpen(u, 'const x = <ul>\n  <li>a</li>\n  <li>b</li>\n</ul>;');
         expect(ls.getFoldingRanges(u).length).toBeGreaterThan(0);
+    });
+
+    it('folds a TS span to its closing-brace line, not the trailing newline', () =>
+    {
+        const u = uri.replace('Counter', 'FoldEnd');
+        // Closing brace on line 3, then a trailing newline (line 4). The outlining span's
+        // end offset is exclusive, so the fold must stop on the brace line, never line 4.
+        ls.didOpen(u, 'function f()\n{\n    return 1;\n}\n');
+        const fold = ls.getFoldingRanges(u).find(r => r.kind === 'region');
+        expect(fold).toBeDefined();
+        expect(fold!.endLine).toBe(3);
     });
 });
 
@@ -439,6 +480,21 @@ describe('selection ranges & on-type formatting', () =>
         ls.didOpen(u, src);
         const idx = new LineIndex(src);
         expect(ls.getOnTypeFormattingEdits(u, idx.positionAt(src.length), '}').length).toBeGreaterThan(0);
+    });
+
+    it('formats a whole document, touching only mapped regions', () =>
+    {
+        const u = uri.replace('Counter', 'Format');
+        // Unindented, semicolon-less script wrapped around a markup return; the
+        // formatter should reindent the script and insert semicolons, but the
+        // edits over the markup hole don't map back, leaving its text verbatim.
+        const src = 'function f()\n{\nconst x=1\nconst y=2\nreturn <div>{x}</div>\n}';
+        ls.didOpen(u, src);
+        const formatted = applyEdits(src, ls.getFormattingEdits(u));
+        expect(formatted).toContain('    const x = 1;');
+        expect(formatted).toContain('    const y = 2;');
+        // The markup text itself survives untouched.
+        expect(formatted).toContain('<div>{x}</div>');
     });
 });
 

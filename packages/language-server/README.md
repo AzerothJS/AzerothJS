@@ -13,7 +13,11 @@ repository, among others) launch this server and talk to it over stdio.
 
 ## Architecture
 
-The server holds one `AzerothLanguageService` for the workspace and a
+The server holds one `AzerothLanguageService` **per workspace root** (multi-root
+aware: each document resolves against the service whose root is its longest
+matching prefix — its nearest project — so files in different roots type-check
+against their own `tsconfig`; roots added/removed at runtime are tracked via
+`workspace/didChangeWorkspaceFolders`) and a
 document manager (`vscode-languageserver`'s `TextDocuments`). Text changes are
 mirrored into the service with `didOpen`/`didChange`/`didClose`, and each LSP
 request handler calls the matching service method and returns the result almost

@@ -25,6 +25,7 @@ import type {
     MarkupAttribute
 } from '@azerothjs/compiler';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
+import { isEnabled, record } from './perf.ts';
 
 /** Module the auto-injected runtime imports point at (matches the compiler). */
 const RUNTIME_MODULE = '@azerothjs/core';
@@ -112,6 +113,25 @@ class Builder
  * ```
  */
 export function generateVirtualCode(source: string): VirtualCode
+{
+    // Opt-in timing only; the unguarded path stays free of performance.now().
+    if (!isEnabled())
+    {
+        return buildVirtualCode(source);
+    }
+    const start = performance.now();
+    const result = buildVirtualCode(source);
+    record('virtualCode', performance.now() - start);
+    return result;
+}
+
+/**
+ * The actual compile behind {@link generateVirtualCode}, split out so the public
+ * entry point can wrap it in optional timing without that overhead leaking into
+ * the hot path. Walks the markup, rewrites it into `h()` calls through a
+ * {@link Builder}, and returns the emitted code with its position mapping.
+ */
+function buildVirtualCode(source: string): VirtualCode
 {
     const builder = new Builder(source);
     const usedBuiltins = new Set<string>();
@@ -221,7 +241,7 @@ export function generateVirtualCode(source: string): VirtualCode
         }
 
         const span = attrExprSpan(source, attr);
-        // Host event handlers: contextually type the handler so `(e) => …`
+        // Host event handlers: contextually type the handler so `(e) => ...`
         // infers the right DOM event. Only for inline functions (a reference's
         // type is the author's business and must not be second-guessed).
         if (isHost && isEventName(name) && isFunctionLiteral(source.slice(span.start, span.end).trim()))
