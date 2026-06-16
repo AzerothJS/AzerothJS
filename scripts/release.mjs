@@ -270,6 +270,13 @@ const tag = 'v' + next;
 const current = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const tagExists = query('git tag -l ' + tag) === tag;
 
+// A previous run can bump the version files and then die before committing or
+// tagging (a failed verify, an interrupted push), leaving the files already at
+// `next` with no tag. Detect that and RESUME - commit and tag the existing bump
+// - instead of refusing ("version is already next") or, under `--no-bump`,
+// trying to push a tag that was never created.
+const resuming = !options.noBump && current === next && !tagExists;
+
 // Promote `latest` only when this run actually publishes a prerelease, or when
 // the operator explicitly asked to move it (`--promote-only`). A bare
 // `--no-publish` must therefore NOT touch the registry, and a normal stable
@@ -281,7 +288,7 @@ log(`\nRelease ${ current } -> ${ next }`);
 log(`  git tag:   ${ tag }${ tagExists ? ' (already exists)' : '' }`);
 log(`  npm tag:   ${ distTag(next) }`);
 log(`  latest:    ${ willPromoteLatest ? 'promote -> ' + next : (distTag(next) === 'latest' && !options.noPublish ? 'set by publish' : 'left unchanged') }`);
-log(`  bump:      ${ options.noBump ? 'no' : 'yes' }`);
+log(`  bump:      ${ options.noBump ? 'no' : (resuming ? `resume (files already at ${ next })` : 'yes') }`);
 log(`  push:      ${ options.noPush ? 'no' : 'yes' }`);
 log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' packages' }`);
 if (dryRun)
@@ -291,18 +298,20 @@ if (dryRun)
 
 if (!options.noBump)
 {
-    const status = query('git status --porcelain');
-    if (status && !dryRun)
-    {
-        fail('working tree is not clean; commit or stash first');
-    }
-    if (current === next)
-    {
-        fail(`version is already ${ next }; use --no-bump to publish it`);
-    }
     if (tagExists)
     {
-        fail(`tag ${ tag } already exists`);
+        fail(`tag ${ tag } already exists; use --no-bump to push and publish it`);
+    }
+    // A fresh bump must start from a clean tree so the release commit is just
+    // the bump. A resuming tree is expected to be dirty - that dirt IS the bump
+    // a prior run left behind, which this run is about to commit and tag.
+    if (!resuming)
+    {
+        const status = query('git status --porcelain');
+        if (status && !dryRun)
+        {
+            fail('working tree is not clean; commit or stash first');
+        }
     }
 }
 
@@ -311,12 +320,16 @@ if (!(await confirm('\nProceed?')))
     fail('aborted');
 }
 
-if (!options.noBump)
+if (!options.noBump && !resuming)
 {
     log('\nBumping versions');
     bumpFiles(current, next);
     log('\nUpdating lockfile');
     act('npm install --package-lock-only --no-audit --no-fund');
+}
+else if (resuming)
+{
+    log(`\nVersion files already at ${ next }; resuming - committing and tagging the existing bump`);
 }
 
 if (!options.skipChecks)
