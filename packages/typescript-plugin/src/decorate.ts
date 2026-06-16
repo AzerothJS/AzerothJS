@@ -190,24 +190,43 @@ export function decorateLanguageServiceHost(
             ? origResolve(literals, containingFile, redirectedReference, compilerOptions, containingSourceFile, reusedNames)
             : literals.map((literal) => ts.resolveModuleName(literal.text, containingFile, compilerOptions, host));
 
+        const asAzeroth = (azerothPath: string) => ({
+            resolvedModule:
+            {
+                resolvedFileName: toVirtualFile(azerothPath),
+                extension: ts.Extension.Ts,
+                isExternalLibraryImport: false
+            },
+            failedLookupLocations: []
+        });
+
         return literals.map((literal, index) =>
         {
-            if (isAzerothSpecifier(literal.text))
+            const text = literal.text;
+
+            // Explicit `./x.azeroth`.
+            if (isAzerothSpecifier(text))
             {
-                const azerothPath = resolveSibling(containingFile, literal.text);
+                const azerothPath = resolveSibling(containingFile, text);
                 if (read(azerothPath) !== undefined)
                 {
-                    return {
-                        resolvedModule:
-                        {
-                            resolvedFileName: toVirtualFile(azerothPath),
-                            extension: ts.Extension.Ts,
-                            isExternalLibraryImport: false
-                        },
-                        failedLookupLocations: []
-                    };
+                    return asAzeroth(azerothPath);
                 }
             }
+
+            // Extensionless relative import nothing else resolved (`./x.component`
+            // for `x.component.azeroth`) - try the `.azeroth` sibling. The base
+            // resolver runs first, so a real `.ts`/`.tsx` of the same name wins.
+            const relative = text.startsWith('.') || text.startsWith('/');
+            if (!base[index].resolvedModule && relative && !text.endsWith(AZEROTH_EXT))
+            {
+                const azerothPath = resolveSibling(containingFile, text + AZEROTH_EXT);
+                if (read(azerothPath) !== undefined)
+                {
+                    return asAzeroth(azerothPath);
+                }
+            }
+
             return base[index];
         });
     };

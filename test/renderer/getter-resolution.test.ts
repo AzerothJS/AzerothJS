@@ -62,6 +62,29 @@ describe('reactive prop resolves through nested getters', () =>
         setCls('b');
         expect(el.getAttribute('class')).toBe('b');
     });
+
+    // Regression: a tag with multiple call/expression children
+    // (`<Link>{createIcon()}{t('x')}</Link>`) compiles to
+    // `children: () => [() => createIcon(), () => t('x')]` - a getter that
+    // resolves to an ARRAY of getters. buildNode's array branch must route each
+    // element back through the child pipeline (resolving the inner getters),
+    // not `String(item)` them - which rendered `()=>t("x")` source text into the
+    // DOM (the live navbar's login/register buttons).
+    it('resolves an array of getter children (tag-style multi-child)', () =>
+    {
+        const [label, setLabel] = createSignal('Login');
+
+        const el = h('div', {}, () => [
+            () => h('span', {}, 'icon-'),
+            () => label()
+        ]);
+
+        expect(el.innerHTML).not.toContain('=>');
+        expect(el.textContent).toBe('icon-Login');
+
+        setLabel('Logout');
+        expect(el.textContent).toBe('icon-Logout');
+    });
 });
 
 describe('reactive child resolves through nested getters', () =>

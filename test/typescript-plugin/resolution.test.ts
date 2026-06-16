@@ -90,6 +90,18 @@ describe('@azerothjs/typescript-plugin resolves .azeroth imports with real types
         expect(messages(serviceWith(CLEAN))).toEqual([]);
     });
 
+    it('resolves an EXTENSIONLESS .azeroth import (`./bc.component` -> bc.component.azeroth)', () =>
+    {
+        const src = [
+            "import Breadcrumb, { SEP } from './bc.component';",
+            "import type { BreadcrumbCrumb } from './bc.component';",
+            "const crumb: BreadcrumbCrumb = { label: 'Home', href: '/' };",
+            'const el = Breadcrumb({ crumbs: [crumb] });',
+            'export { Breadcrumb, SEP, el };'
+        ].join('\n');
+        expect(messages(serviceWith(src))).toEqual([]);
+    });
+
     it('resolves the default export to its real function type, not any', () =>
     {
         const service = serviceWith(CLEAN);

@@ -467,19 +467,15 @@ function buildNode(value: unknown): ChildNode
     {
         const container = document.createElement('span');
         container.style.display = 'contents';
-
-        for (const item of value as Child[])
-        {
-            if (item instanceof HTMLElement)
-            {
-                container.appendChild(item);
-            }
-            else if (item !== null && item !== undefined && item !== false)
-            {
-                container.appendChild(document.createTextNode(String(item)));
-            }
-        }
-
+        // Route each item through the full child pipeline, not a flat
+        // instanceof/String check: an array element can itself be a getter
+        // (`[() => icon, () => t('x')]`, exactly what tag-style multi-child
+        // markup compiles to), a nested array, or a non-HTML node. appendChild
+        // resolves getters into reactive bindings and recurses; a bare
+        // `String(item)` here would render a getter as its literal source text.
+        // We are already inside buildNode's caller createRoot, so the reactive
+        // bindings these items create are owned and torn down with this subtree.
+        appendChildren(container, value as Child[]);
         return container;
     }
 

@@ -437,27 +437,49 @@ export class AzerothProject
         options: ts.CompilerOptions
     ): ts.ResolvedModuleWithFailedLookupLocations[]
     {
+        const dir = toSlashes(ts.sys.resolvePath(containingFile)).replace(/\/[^/]*$/, '');
+
+        // A `.azeroth` source resolved to its virtual twin, in TS's result shape.
+        const asAzeroth = (azerothPath: string) => ({
+            resolvedModule:
+            {
+                resolvedFileName: toVirtualFile(azerothPath),
+                extension: ts.Extension.Ts,
+                isExternalLibraryImport: false
+            },
+            failedLookupLocations: []
+        });
+
         return literals.map((literal) =>
         {
             const text = literal.text;
-            if (text.endsWith('.azeroth') && (text.startsWith('.') || text.startsWith('/')))
+            const relative = text.startsWith('.') || text.startsWith('/');
+
+            // Explicit `./x.azeroth`.
+            if (relative && text.endsWith('.azeroth'))
             {
-                const dir = toSlashes(ts.sys.resolvePath(containingFile)).replace(/\/[^/]*$/, '');
                 const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }`));
                 if (this.hostFileExists(toVirtualFile(candidate)))
                 {
-                    return {
-                        resolvedModule:
-                        {
-                            resolvedFileName: toVirtualFile(candidate),
-                            extension: ts.Extension.Ts,
-                            isExternalLibraryImport: false
-                        },
-                        failedLookupLocations: []
-                    };
+                    return asAzeroth(candidate);
                 }
             }
-            return ts.resolveModuleName(text, containingFile, options, ts.sys);
+
+            const base = ts.resolveModuleName(text, containingFile, options, ts.sys);
+
+            // Extensionless relative import nothing else resolved (`./x.component`
+            // for `x.component.azeroth`) - try the `.azeroth` sibling. Standard
+            // resolution runs first, so a real `.ts`/`.tsx` of the same name wins.
+            if (!base.resolvedModule && relative && !text.endsWith('.azeroth'))
+            {
+                const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }.azeroth`));
+                if (this.hostFileExists(toVirtualFile(candidate)))
+                {
+                    return asAzeroth(candidate);
+                }
+            }
+
+            return base;
         });
     }
 

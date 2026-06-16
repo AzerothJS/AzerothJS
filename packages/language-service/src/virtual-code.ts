@@ -340,15 +340,22 @@ export function generateVirtualCode(source: string): VirtualCode
             // rename resolve the component symbol through TypeScript.
             const tagStart = node.start + 1;
             builder.copy(tagStart, tagStart + node.tag.length, 'tag');
-            // Always emit the `({ ... })` props object - even when empty - so
-            // attribute completion can query TypeScript inside it for the
-            // component's prop names. The shipped compiler emits a bare `Comp()`
-            // for the attribute-less case (Bug 2); the difference is invisible
-            // here because the generated `{ }` is unmapped scaffolding, so the
-            // "Expected 0 arguments" arity error it could provoke maps back to
-            // nothing and is dropped by the diagnostics provider.
+            const childrenThunk = emitComponentChildren(node.children);
+            // No attributes and no children -> a zero-argument call, byte-for-byte
+            // what the compiler emits at runtime (`Comp()`). Emitting `Comp({ })`
+            // here instead would let a `<Comp/>` whose component declares a
+            // REQUIRED props parameter type-check clean while crashing at runtime
+            // on `props` being undefined - the type-check must see the same call
+            // the runtime makes so that "Expected 1 arguments, but got 0" surfaces.
+            // (When the tag has any attribute the props object IS emitted, so
+            // attribute completion still queries the component's prop type.)
+            if (node.attributes.length === 0 && childrenThunk === null)
+            {
+                builder.emit('()');
+                return;
+            }
             builder.emit('(');
-            emitProps(node.attributes, emitComponentChildren(node.children), false);
+            emitProps(node.attributes, childrenThunk, false);
             builder.emit(')');
             return;
         }

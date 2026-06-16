@@ -261,6 +261,17 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
     {
         return [];
     }
+    // An attribute-less component compiles to a bare `Comp()` (no props object
+    // to complete inside), so read the prop names off the component's call
+    // signature instead. With any attribute present the call carries a `({ … })`
+    // and we query TypeScript inside it as before (which also yields per-entry
+    // documentation on resolve).
+    const open = ctx.virtual.code.indexOf('(', generatedTag + element.tag.length);
+    const isEmptyCall = open !== -1 && ctx.virtual.code.slice(open + 1).trimStart().startsWith(')');
+    if (isEmptyCall)
+    {
+        return propsFromComponentSignature(ctx, generatedTag);
+    }
     const brace = ctx.virtual.code.indexOf('{', generatedTag + element.tag.length);
     if (brace === -1)
     {
@@ -277,6 +288,57 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
             insertTextFormat: 2 as const,
             sortText: `0_${ entry.name }`,
             data: completionData(ctx, brace + 1, entry)
+        }));
+}
+
+/** The TS node whose span contains `pos` (deepest), for a checker query. */
+function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undefined
+{
+    const find = (node: ts.Node): ts.Node | undefined =>
+    {
+        if (pos < node.getStart(sourceFile) || pos >= node.getEnd())
+        {
+            return undefined;
+        }
+        return ts.forEachChild(node, find) ?? node;
+    };
+    return find(sourceFile);
+}
+
+/**
+ * Prop completions for an attribute-less `<Comp/>`: the generated `Comp()` has
+ * no props object, so derive the names from the component's first call-signature
+ * parameter type (its props) directly off the checker.
+ */
+function propsFromComponentSignature(ctx: RequestContext, identifierOffset: number): CompletionItem[]
+{
+    const program = ctx.project.service.getProgram();
+    const sourceFile = program?.getSourceFile(ctx.virtualFile);
+    if (!program || !sourceFile)
+    {
+        return [];
+    }
+    const checker = program.getTypeChecker();
+    const token = tokenAt(sourceFile, identifierOffset);
+    if (!token)
+    {
+        return [];
+    }
+    const signature = checker.getTypeAtLocation(token).getCallSignatures()[0];
+    const propsParam = signature?.getParameters()[0];
+    if (!propsParam)
+    {
+        return [];
+    }
+    return checker.getTypeOfSymbolAtLocation(propsParam, token).getProperties()
+        .filter(prop => prop.name !== 'children')
+        .map(prop => ({
+            label: prop.name,
+            kind: CompletionItemKind.Property,
+            detail: 'prop',
+            insertText: `${ prop.name }={$0}`,
+            insertTextFormat: 2 as const,
+            sortText: `0_${ prop.name }`
         }));
 }
 

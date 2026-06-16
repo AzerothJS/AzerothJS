@@ -9,6 +9,7 @@ import {
     classifyPosition,
     collectMarkupNodes
 } from '@azerothjs/language-service';
+import { compile } from '@azerothjs/compiler';
 
 describe('generateVirtualCode - matches the compiler and maps precisely', () =>
 {
@@ -17,6 +18,21 @@ describe('generateVirtualCode - matches the compiler and maps precisely', () =>
         const { code } = generateVirtualCode('const x = <h1>Count: {count()}</h1>;');
         expect(code).toMatch(/^import \{ h \} from '@azerothjs\/core';/);
         expect(code).toContain("h('h1', {  }, 'Count: ', () => (count()))");
+    });
+
+    // Regression: the type-check (virtual) output and the runtime (compiler)
+    // output MUST emit the same component call. They once diverged - virtual
+    // emitted `Comp({ })` while the compiler emitted `Comp()` - so a `<Comp/>`
+    // whose component required a props object type-checked clean yet crashed at
+    // runtime on `props` being undefined. An attribute-less tag is a bare call.
+    it('emits a bare zero-arg component call, identical to the compiler', () =>
+    {
+        const src = 'const x = <Spinner/>;';
+        const virtual = generateVirtualCode(src).code;
+        const runtime = compile(src, 'x.azeroth').code;
+        expect(virtual).toContain('Spinner()');
+        expect(virtual).not.toContain('Spinner({');
+        expect(runtime).toContain('Spinner()');
     });
 
     it('leaves a markup-free module byte-for-byte identical (1:1 mapping)', () =>
