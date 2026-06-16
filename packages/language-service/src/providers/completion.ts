@@ -71,7 +71,10 @@ const completionSources = new Set<CompletionSource>();
 export function registerCompletionSource(source: CompletionSource): () => void
 {
     completionSources.add(source);
-    return () => { completionSources.delete(source); };
+    return () =>
+    {
+        completionSources.delete(source);
+    };
 }
 
 /** Drops all registered completion sources (test isolation; explicit teardown). */

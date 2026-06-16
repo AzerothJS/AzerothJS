@@ -23,17 +23,17 @@ function makeComponent(index: number, imports: readonly number[]): string
     lines.push("import { createSignal, createMemo } from '@azerothjs/core';");
     for (const dep of imports)
     {
-        lines.push(`import Comp${dep} from './Comp${dep}.azeroth';`);
+        lines.push(`import Comp${ dep } from './Comp${ dep }.azeroth';`);
     }
     lines.push('');
-    lines.push(`export default function Comp${index}(props: { label: string; seed: number })`);
+    lines.push(`export default function Comp${ index }(props: { label: string; seed: number })`);
     lines.push('{');
-    lines.push(`    const [count, setCount] = createSignal(props.seed);`);
-    lines.push(`    const doubled = createMemo(() => count() * 2);`);
-    lines.push(`    const title = createMemo(() => props.label + ' #' + count());`);
+    lines.push('    const [count, setCount] = createSignal(props.seed);');
+    lines.push('    const doubled = createMemo(() => count() * 2);');
+    lines.push('    const title = createMemo(() => props.label + \' #\' + count());');
     lines.push('');
     lines.push('    return (');
-    lines.push(`        <section class="comp-${index}">`);
+    lines.push(`        <section class="comp-${ index }">`);
     lines.push('            <header>');
     lines.push('                <h3>{title()}</h3>');
     lines.push('                <span>{doubled()}</span>');
@@ -41,7 +41,7 @@ function makeComponent(index: number, imports: readonly number[]): string
     lines.push('            <button onClick={() => setCount(count() + 1)}>inc</button>');
     for (const dep of imports)
     {
-        lines.push(`            <Comp${dep} label={title()} seed={count()} />`);
+        lines.push(`            <Comp${ dep } label={title()} seed={count()} />`);
     }
     lines.push('            <footer>{props.label}</footer>');
     lines.push('        </section>');
@@ -64,7 +64,7 @@ beforeAll(() =>
         // The first file imports several others, exercising cross-file resolution.
         const imports = i === 0 ? [1, 2, 3, 4, 5] : [];
         const src = makeComponent(i, imports);
-        const uri = pathToUri(path.join(ROOT, `Comp${i}.azeroth`));
+        const uri = pathToUri(path.join(ROOT, `Comp${ i }.azeroth`));
         sources[i] = src;
         uris[i] = uri;
         ls.didOpen(uri, src);

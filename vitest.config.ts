@@ -35,17 +35,12 @@ export default defineConfig({
         // threads but rock-solid for our suite size.
         pool: 'forks',
 
-        // Many files spin a REAL TypeScript program; unbounded fork
+        // Many files spin a REAL TypeScript program; unbounded worker
         // fan-out lets peak memory/CPU starve a worker and produce
-        // transient file-level failures that pass in isolation. Cap
-        // forks (still parallel) so contention can't flake the suite.
-        poolOptions:
-        {
-            forks:
-            {
-                maxForks: Math.min(4, Math.max(2, Math.floor(os.cpus().length / 2)))
-            }
-        },
+        // transient file-level failures that pass in isolation. Cap the
+        // workers (still parallel) so contention can't flake the suite.
+        // Vitest 4 moved this off `poolOptions` to a top-level option.
+        maxWorkers: Math.min(4, Math.max(2, Math.floor(os.cpus().length / 2))),
 
         // The slow-but-correct TS-program tests can exceed the 5s
         // default under load; give them headroom without masking hangs.

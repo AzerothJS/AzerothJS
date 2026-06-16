@@ -98,7 +98,8 @@ function makeMockConnection(): { connection: unknown; captured: Captured; getCon
         languages:
         {
             onLinkedEditingRange: capture('onLinkedEditingRange'),
-            inlayHint: { on: capture('inlayHint'), refresh: (): void => {} },
+            inlayHint: { on: capture('inlayHint'), refresh: (): void =>
+            {} },
             semanticTokens: { on: capture('semanticTokens') },
             callHierarchy:
             {
@@ -111,10 +112,14 @@ function makeMockConnection(): { connection: unknown; captured: Captured; getCon
         // lets the test simulate the client opening and editing a document.
         onDidOpenTextDocument: capture('onDidOpenTextDocument'),
         onDidChangeTextDocument: capture('onDidChangeTextDocument'),
-        onDidCloseTextDocument: (): void => {},
-        onWillSaveTextDocument: (): void => {},
-        onWillSaveTextDocumentWaitUntil: (): void => {},
-        onDidSaveTextDocument: (): void => {},
+        onDidCloseTextDocument: (): void =>
+        {},
+        onWillSaveTextDocument: (): void =>
+        {},
+        onWillSaveTextDocumentWaitUntil: (): void =>
+        {},
+        onDidSaveTextDocument: (): void =>
+        {},
         sendDiagnostics: (params: { uri: string; diagnostics: unknown[] }): void =>
         {
             captured.diagnostics.push(params);
@@ -124,10 +129,19 @@ function makeMockConnection(): { connection: unknown; captured: Captured; getCon
             getConfiguration: async (): Promise<Record<string, unknown>> => getConfig.value,
             onDidChangeWorkspaceFolders: capture('onDidChangeWorkspaceFolders')
         },
-        client: { register: async (): Promise<void> => {} },
-        console: { log: (): void => {}, error: (): void => {}, warn: (): void => {}, info: (): void => {} },
-        window: { showErrorMessage: (): void => {}, showWarningMessage: (): void => {}, showInformationMessage: (): void => {} },
-        listen: (): void => {}
+        client: { register: async (): Promise<void> =>
+        {} },
+        console: { log: (): void =>
+        {}, error: (): void =>
+        {}, warn: (): void =>
+        {}, info: (): void =>
+        {} },
+        window: { showErrorMessage: (): void =>
+        {}, showWarningMessage: (): void =>
+        {}, showInformationMessage: (): void =>
+        {} },
+        listen: (): void =>
+        {}
     };
 
     return { connection, captured, getConfig };

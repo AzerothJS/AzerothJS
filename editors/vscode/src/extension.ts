@@ -101,7 +101,7 @@ export function activate(context: ExtensionContext): void
         }
         catch (error)
         {
-            client.outputChannel.appendLine(`azeroth/autoInsert failed: ${error}`);
+            client.outputChannel.appendLine(`azeroth/autoInsert failed: ${ error }`);
         }
     }));
 }

@@ -440,14 +440,13 @@ export class AzerothProject
         const dir = toSlashes(ts.sys.resolvePath(containingFile)).replace(/\/[^/]*$/, '');
 
         // A `.azeroth` source resolved to its virtual twin, in TS's result shape.
-        const asAzeroth = (azerothPath: string) => ({
+        const asAzeroth = (azerothPath: string): ts.ResolvedModuleWithFailedLookupLocations => ({
             resolvedModule:
             {
                 resolvedFileName: toVirtualFile(azerothPath),
                 extension: ts.Extension.Ts,
                 isExternalLibraryImport: false
-            },
-            failedLookupLocations: []
+            }
         });
 
         return literals.map((literal) =>

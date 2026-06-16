@@ -5,9 +5,9 @@
 // required) so an accidental edit that drifts from the source types is caught.
 
 import { describe, it, expect } from 'vitest';
-import { BUILTIN_COMPONENT_MAP, BUILTIN_COMPONENTS } from '../../packages/language-service/src/language-data.ts';
+import { BUILTIN_COMPONENT_MAP, BUILTIN_COMPONENTS, type BuiltinComponent } from '../../packages/language-service/src/language-data.ts';
 
-function propsOf(name: string)
+function propsOf(name: string): BuiltinComponent['props']
 {
     const entry = BUILTIN_COMPONENT_MAP.get(name);
     if (!entry)
@@ -17,7 +17,7 @@ function propsOf(name: string)
     return entry.props;
 }
 
-function prop(component: string, name: string)
+function prop(component: string, name: string): BuiltinComponent['props'][number] | undefined
 {
     return propsOf(component).find(candidate => candidate.name === name);
 }

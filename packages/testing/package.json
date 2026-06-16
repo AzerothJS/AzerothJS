@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/testing",
-    "version": "0.5.0-beta.2",
+    "version": "0.6.0-beta.1",
     "description": "AzerothJS testing utilities — auto-disposing mounts, subscriber leak guards, event helpers",
     "type": "module",
     "main": "./dist/index.js",
@@ -27,8 +27,8 @@
     },
     "dependencies":
     {
-        "@azerothjs/component": "0.5.0-beta.2",
-        "@azerothjs/reactivity": "0.5.0-beta.2"
+        "@azerothjs/component": "0.6.0-beta.1",
+        "@azerothjs/reactivity": "0.6.0-beta.1"
     },
     "publishConfig":
     {

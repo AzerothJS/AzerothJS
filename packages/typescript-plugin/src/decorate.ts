@@ -189,7 +189,7 @@ export function decorateLanguageServiceHost(
             ? origResolve(literals, containingFile, redirectedReference, compilerOptions, containingSourceFile, reusedNames)
             : literals.map((literal) => ts.resolveModuleName(literal.text, containingFile, compilerOptions, host));
 
-        const asAzeroth = (azerothPath: string) => ({
+        const asAzeroth = (azerothPath: string): tsModule.ResolvedModuleWithFailedLookupLocations => ({
             resolvedModule:
             {
                 // The REAL `.azeroth` path, reported with a `.ts` module
@@ -198,8 +198,7 @@ export function decorateLanguageServiceHost(
                 resolvedFileName: azerothPath,
                 extension: ts.Extension.Ts,
                 isExternalLibraryImport: false
-            },
-            failedLookupLocations: []
+            }
         });
 
         return literals.map((literal, index) =>
