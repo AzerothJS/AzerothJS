@@ -1,7 +1,7 @@
 {
     "name": "@azerothjs/devtools",
     "version": "0.6.0-beta.1",
-    "description": "AzerothJS devtools — in-page panel for live signals, effects, and re-run activity",
+    "description": "AzerothJS devtools — tabbed in-page panel (tree, dependency graph, timeline, performance) plus an embeddable agent",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

@@ -21,6 +21,38 @@
 export type CleanupFn = () => void;
 
 /**
+ * Devtools attribution carried on a producer/subscriber, attached only when
+ * a devtools hook is installed at creation. It lives ON the node so the
+ * devtools registry can hold the node by WeakRef alone (no strong ref that
+ * would keep a GC-managed signal alive) while still reaching its id, source
+ * owner, and value accessors. Absent (and zero-cost) in production.
+ *
+ * @internal
+ */
+export interface DevtoolsInfo
+{
+    /** Stable devtools node id (see devtools-hook nextDevtoolsId). */
+    id: number;
+
+    kind: 'signal' | 'effect' | 'memo' | 'root';
+
+    /** Debug name from the create options, if any. */
+    name?: string;
+
+    /** Enclosing createRoot's devtools id at creation, or 0. */
+    owner: number;
+
+    /** Reads the node's current value (signals, memos). */
+    peek?: () => unknown;
+
+    /** Sets the node's value (signals only). */
+    poke?: (value: unknown) => void;
+
+    /** A memo node's own producer (for version + edge-source id). */
+    producer?: Producer;
+}
+
+/**
  * A producer node in the reactive graph: anything consumers can subscribe
  * to (a signal's value, a memo's cached result, a selector key).
  *
@@ -28,6 +60,9 @@ export type CleanupFn = () => void;
  */
 export interface Producer
 {
+    /** Devtools attribution; set only when a hook is installed. @internal */
+    dv?: DevtoolsInfo;
+
     /** Links to every subscribed consumer. A link knows its slot here, so
      *  removal is one swap - no Set hashing on the hot path. */
     subs: Link[];
@@ -138,6 +173,9 @@ export interface Subscriber
 
     /** Debug name from `EffectOptions.name`; surfaced by error tooling. */
     name?: string;
+
+    /** Devtools attribution; set only when a hook is installed. @internal */
+    dv?: DevtoolsInfo;
 }
 
 /**

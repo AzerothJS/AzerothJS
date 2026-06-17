@@ -41,7 +41,7 @@ import {
 import { attachSubscriberProbe } from './signal.ts';
 import { registerDisposer } from './create-root.ts';
 import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
-import { devtoolsHook, nextDevtoolsId } from './devtools-hook.ts';
+import { devtoolsHook, nextDevtoolsId, currentOwnerId, registerDevtoolsNode, unregisterDevtoolsNode } from './devtools-hook.ts';
 
 /** Invalidation states. @internal */
 const CLEAN = 0;
@@ -110,11 +110,6 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
     let cleanups: CleanupFn[] = [];
 
     let debugId = 0;
-    if (devtoolsHook)
-    {
-        debugId = nextDevtoolsId();
-        devtoolsHook.created({ id: debugId, kind: 'memo', name: options?.name });
-    }
 
     const node: Subscriber =
     {
@@ -128,6 +123,27 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         notifyDirty: markStale,
         errorHandler: currentErrorHandler
     };
+
+    // Devtools (off in production): a memo is both a producer (others
+    // subscribe to `producer`) and a consumer (`node` has deps). The id goes
+    // on both - the producer carries it so downstream edges resolve their
+    // source, the node carries the full info (name, owner, peek, and a back-
+    // ref to the producer for its version). The node is registered (weakly).
+    if (devtoolsHook)
+    {
+        debugId = nextDevtoolsId();
+        producer.dv = { id: debugId, kind: 'memo', owner: currentOwnerId };
+        node.dv = {
+            id: debugId,
+            kind: 'memo',
+            name: options?.name,
+            owner: currentOwnerId,
+            peek: (): unknown => value,
+            producer
+        };
+        registerDevtoolsNode(debugId, node);
+        devtoolsHook.created({ id: debugId, kind: 'memo', name: options?.name, owner: currentOwnerId });
+    }
 
     /**
      * A dependency reported a change. `maybe` is true when it arrived via
@@ -289,6 +305,7 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
 
         if (debugId !== 0 && devtoolsHook)
         {
+            unregisterDevtoolsNode(debugId);
             devtoolsHook.disposed(debugId);
         }
     }

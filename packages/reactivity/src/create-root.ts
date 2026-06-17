@@ -16,7 +16,15 @@
 // nest by saving and restoring the active root, so effects created inside an
 // inner root belong to that inner root, not the outer one.
 
-import type { DisposeFn } from './types.ts';
+import type { DisposeFn, DevtoolsInfo } from './types.ts';
+import {
+    devtoolsHook,
+    nextDevtoolsId,
+    currentOwnerId,
+    setCurrentOwnerId,
+    registerDevtoolsNode,
+    unregisterDevtoolsNode
+} from './devtools-hook.ts';
 
 /**
  * The active root's disposer collector, or null when no root is active.
@@ -82,6 +90,23 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     const previousRoot = currentRoot;
     currentRoot = disposers;
 
+    // Devtools (off in production): give the root an id so nodes created
+    // inside it record this as their owner, and surface the root itself so
+    // the ownership tree has branch nodes. The registry holds the disposers
+    // array weakly via its `dv`, so tracking never keeps the root alive.
+    let rootId = 0;
+    let rootDisposed = false;
+    const previousOwner = currentOwnerId;
+    if (devtoolsHook)
+    {
+        rootId = nextDevtoolsId();
+        const dv: DevtoolsInfo = { id: rootId, kind: 'root', owner: currentOwnerId };
+        (disposers as { dv?: DevtoolsInfo }).dv = dv;
+        devtoolsHook.created({ id: rootId, kind: 'root', owner: currentOwnerId });
+        registerDevtoolsNode(rootId, disposers);
+        setCurrentOwnerId(rootId);
+    }
+
     // Dispose in reverse (stack order); clearing the array makes it idempotent.
     function dispose(): void
     {
@@ -90,6 +115,13 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
             disposers[i]();
         }
         disposers.length = 0;
+
+        if (rootId !== 0 && devtoolsHook && !rootDisposed)
+        {
+            rootDisposed = true;
+            unregisterDevtoolsNode(rootId);
+            devtoolsHook.disposed(rootId);
+        }
     }
 
     try
@@ -99,5 +131,9 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     finally
     {
         currentRoot = previousRoot;
+        if (rootId !== 0)
+        {
+            setCurrentOwnerId(previousOwner);
+        }
     }
 }

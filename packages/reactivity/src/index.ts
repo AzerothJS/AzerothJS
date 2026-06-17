@@ -19,8 +19,8 @@ export { createResource } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
 export { catchError, onUncaughtError } from './catch-error.ts';
 export type { UncaughtErrorContext } from './catch-error.ts';
-export { setDevtoolsHook } from './devtools-hook.ts';
-export type { DevtoolsHook, DevtoolsNode } from './devtools-hook.ts';
+export { setDevtoolsHook, snapshotReactiveGraph, peekNode, pokeNode } from './devtools-hook.ts';
+export type { DevtoolsHook, DevtoolsNode, GraphSnapshot, SnapshotNode, SnapshotEdge } from './devtools-hook.ts';
 
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
 export type { RenderMode } from './render-mode.ts';

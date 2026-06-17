@@ -25,7 +25,7 @@ import {
 import { isBatching, queueEffect } from './batch.ts';
 import { registerDisposer } from './create-root.ts';
 import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
-import { devtoolsHook, nextDevtoolsId } from './devtools-hook.ts';
+import { devtoolsHook, nextDevtoolsId, currentOwnerId, registerDevtoolsNode, unregisterDevtoolsNode } from './devtools-hook.ts';
 
 // onCleanup() reads this live binding to find the running effect's cleanup
 // array; the state lives in graph.ts alongside the tracking context.
@@ -92,11 +92,6 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
     let hasRun = false;
 
     let debugId = 0;
-    if (devtoolsHook)
-    {
-        debugId = nextDevtoolsId();
-        devtoolsHook.created({ id: debugId, kind: 'effect', name: options?.name });
-    }
 
     const subscriber: Subscriber =
     {
@@ -110,6 +105,18 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         errorHandler: currentErrorHandler,
         name: options?.name
     };
+
+    // Devtools (off in production): attach attribution to the subscriber and
+    // register it (held weakly) so the snapshot can place this effect in the
+    // ownership tree and walk its dependency edges. Before the first
+    // runEffect() below, so its run-path id check sees the id.
+    if (devtoolsHook)
+    {
+        debugId = nextDevtoolsId();
+        subscriber.dv = { id: debugId, kind: 'effect', name: options?.name, owner: currentOwnerId };
+        registerDevtoolsNode(debugId, subscriber);
+        devtoolsHook.created({ id: debugId, kind: 'effect', name: options?.name, owner: currentOwnerId });
+    }
 
     function runEffect(): void
     {
@@ -242,6 +249,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 
         if (debugId !== 0 && devtoolsHook)
         {
+            unregisterDevtoolsNode(debugId);
             devtoolsHook.disposed(debugId);
         }
     }

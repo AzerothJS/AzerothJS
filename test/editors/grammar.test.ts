@@ -1,9 +1,11 @@
-// The TextMate grammar is shipped by both editors and must stay structurally
-// sound: it reuses VS Code's TypeScript+JSX grammar (source.tsx) for the whole
-// file and adds an AzerothJS layer that marks the built-in control-flow
-// components. These structural snapshots catch accidental breakage (a bad scope
-// name, a dropped include, a missing built-in) without needing a TextMate
-// tokenizer in the test runner.
+// VS Code's TextMate grammar must stay structurally sound: it reuses VS Code's
+// TypeScript+JSX grammar (source.tsx) for the whole file and adds an AzerothJS
+// layer that marks the built-in control-flow components. These structural
+// snapshots catch accidental breakage (a bad scope name, a dropped include, a
+// missing built-in) without needing a TextMate tokenizer in the test runner.
+//
+// The JetBrains plugin uses a NATIVE language implementation (its own lexer,
+// not a shipped TextMate grammar), so there is nothing to cross-check here.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -12,7 +14,6 @@ import path from 'node:path';
 const ROOT = process.cwd();
 
 const VSCODE_GRAMMAR = 'editors/vscode/syntaxes/azeroth.tmLanguage.json';
-const JETBRAINS_GRAMMAR = 'editors/jetbrains/src/main/resources/textmate/azeroth.tmLanguage.json';
 
 const BUILTINS = ['Show', 'For', 'Switch', 'Match', 'Portal', 'Dynamic', 'Suspense', 'ErrorBoundary', 'Transition', 'Outlet'];
 
@@ -43,14 +44,5 @@ describe('azeroth.tmLanguage.json', () =>
         }
         // The match must only fire right after a tag open (`<` or `</`).
         expect(builtins.match).toContain('</?');
-    });
-
-    it('ships the same grammar to the JetBrains plugin', () =>
-    {
-        const a = grammar(VSCODE_GRAMMAR);
-        const b = grammar(JETBRAINS_GRAMMAR);
-        expect(b.scopeName).toBe(a.scopeName);
-        expect((b.repository as Record<string, { match: string }>)['azeroth-builtins'].match)
-            .toBe((a.repository as Record<string, { match: string }>)['azeroth-builtins'].match);
     });
 });

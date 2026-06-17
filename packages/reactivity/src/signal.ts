@@ -9,7 +9,7 @@
 
 import type { Getter, Setter, Signal, SignalOptions, EqualsFn } from './types.ts';
 import { createProducer, track, notify } from './graph.ts';
-import { devtoolsHook, nextDevtoolsId } from './devtools-hook.ts';
+import { devtoolsHook, nextDevtoolsId, currentOwnerId, registerDevtoolsNode } from './devtools-hook.ts';
 
 // Re-exported from graph.ts so existing importers (untrack, effect,
 // create-selector) keep their import path; the state itself lives with the
@@ -86,11 +86,6 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
     // 0 = no devtools at creation; the write-path check below is then a
     // constant-false number compare.
     let debugId = 0;
-    if (devtoolsHook)
-    {
-        debugId = nextDevtoolsId();
-        devtoolsHook.created({ id: debugId, kind: 'signal', name: options?.name });
-    }
 
     const getter: Getter<T> = (): T =>
     {
@@ -120,6 +115,25 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
             notify(producer);
         }
     };
+
+    // Devtools (off in production): attach attribution + value accessors to
+    // the producer so the snapshot can read/edit this signal by id, holding
+    // it only weakly. Done after getter/setter exist so peek/poke can use
+    // them; the setter's write-path id check captures `debugId` lazily.
+    if (devtoolsHook)
+    {
+        debugId = nextDevtoolsId();
+        producer.dv = {
+            id: debugId,
+            kind: 'signal',
+            name: options?.name,
+            owner: currentOwnerId,
+            peek: (): unknown => value,
+            poke: (v: unknown): void => setter(v as T)
+        };
+        registerDevtoolsNode(debugId, producer);
+        devtoolsHook.created({ id: debugId, kind: 'signal', name: options?.name, owner: currentOwnerId });
+    }
 
     return [getter, setter];
 }
