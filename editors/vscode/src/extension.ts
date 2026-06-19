@@ -59,10 +59,10 @@ export function activate(context: ExtensionContext): void
         await client?.restart();
     }));
 
-    // JSX-style tag auto-closing: after the user types `>`, ask the server
-    // whether it completes an opening tag, and if so insert `</tag>` with the
-    // caret left between the pair. (VS Code has no built-in tag close for
-    // custom languages, so we drive it ourselves.)
+    // Tag auto-closing: after the user types `>`, ask the server whether it
+    // completes an opening tag, and if so insert `</tag>` with the caret left
+    // between the pair. (VS Code has no built-in tag close for custom languages,
+    // so we drive it ourselves.)
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(async (event) =>
     {
         if (event.document.languageId !== 'azeroth' || event.contentChanges.length !== 1)

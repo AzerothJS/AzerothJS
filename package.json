@@ -12,6 +12,7 @@
         "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/devtools-overlay && npm run build -w @azerothjs/devtools && npm run build -w @azerothjs/component && npm run build -w @azerothjs/testing && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/typescript-plugin && npm run build -w @azerothjs/language-server && npm run build -w @azerothjs/eslint-plugin",
         "dev": "tsc --watch",
         "test": "vitest",
+        "perf:stress": "npm run build -w @azerothjs/language-service && node --expose-gc scripts/perf-stress.mjs",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "release": "node scripts/release.mjs",
@@ -47,6 +48,8 @@
         "tsx": "^4.20.6",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.60.1",
-        "vitest": "^4.1.8"
+        "vitest": "^4.1.8",
+        "vscode-oniguruma": "^2.0.1",
+        "vscode-textmate": "^9.3.2"
     }
 }

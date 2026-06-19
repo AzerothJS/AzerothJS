@@ -272,7 +272,7 @@ describe('symbols, signature help, semantic tokens, folding', () =>
     });
 });
 
-describe('JSX-style editing behaviours', () =>
+describe('markup editing behaviours', () =>
 {
     it('auto-closes a tag when the opening > is typed', () =>
     {
@@ -314,6 +314,34 @@ describe('JSX-style editing behaviours', () =>
         const ranges = ls.getLinkedEditingRanges(u, at(src, '<section>', 2));
         expect(ranges).not.toBeNull();
         expect(ranges!.length).toBe(2);
+    });
+
+    it('highlights the matching open/close tag when the caret is on a host tag name', () =>
+    {
+        const u = uri.replace('Counter', 'TagHighlight');
+        const src = 'const x = <h1>title</h1>;';
+        ls.didOpen(u, src);
+        // Caret on the opening `h1`.
+        const open = ls.getDocumentHighlights(u, at(src, '<h1>', 2));
+        expect(open.length).toBe(2);
+        // Caret on the closing `h1` finds the same pair.
+        const close = ls.getDocumentHighlights(u, at(src, '</h1>', 3));
+        expect(close.length).toBe(2);
+        // The two highlights are the open and close name occurrences.
+        expect(open.map(h => h.range.start.character).sort((a, b) => a - b))
+            .toEqual([src.indexOf('<h1>') + 1, src.indexOf('</h1>') + 2]);
+    });
+
+    it('highlights a component tag as references (definition + usages), not just its tag pair', () =>
+    {
+        const u = uri.replace('Counter', 'CompHighlight');
+        const src = 'function Widget() { return <p>0</p>; }\nexport default function App() { return <Widget>a</Widget>; }';
+        ls.didOpen(u, src);
+        // Caret on the opening `<Widget` (line 1). It HAS a close tag, but it's a
+        // component (TS symbol), so highlights must be references - including the
+        // `function Widget` declaration on line 0 - not the local open/close pair.
+        const hl = ls.getDocumentHighlights(u, { line: 1, character: src.split('\n')[1].indexOf('<Widget') + 2 });
+        expect(hl.some(h => h.range.start.line === 0)).toBe(true);
     });
 });
 

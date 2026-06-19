@@ -1,8 +1,11 @@
 package com.azerothjs
 
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.bindSelected
+import com.intellij.ui.dsl.builder.bindText
+import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
 
 /**
@@ -15,6 +18,17 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
     private val s = AzerothSettings.instance.data
 
     override fun createPanel(): DialogPanel = panel {
+        group("Language server") {
+            row("Node.js path:") {
+                textFieldWithBrowseButton(
+                    FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor()
+                        .withTitle("Select Node.js Executable"),
+                )
+                    .bindText(s::nodePath)
+                    .columns(40)
+                    .comment("Leave blank to auto-detect from PATH and common version managers (nvm, fnm, volta, Homebrew). Restart the language server after changing.")
+            }
+        }
         group("Suggestions") {
             row { checkBox("Auto-import suggestions").bindSelected(s::autoImports) }
             row { checkBox("Built-in component snippets").bindSelected(s::componentSnippets) }
@@ -34,18 +48,23 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
             row { checkBox("Signature help").bindSelected(s::signatureHelp) }
             row { checkBox("Code actions").bindSelected(s::codeActions) }
             row { checkBox("Semantic tokens").bindSelected(s::semanticTokens) }
+            row { checkBox("Code lens").bindSelected(s::codeLens) }
         }
         group("Navigation") {
             row { checkBox("Go to definition").bindSelected(s::definition) }
             row { checkBox("Go to type definition").bindSelected(s::typeDefinition) }
             row { checkBox("Find references").bindSelected(s::references) }
             row { checkBox("Document highlight").bindSelected(s::documentHighlight) }
+            row { checkBox("Call hierarchy").bindSelected(s::callHierarchy) }
+            row { checkBox("Document links").bindSelected(s::documentLinks) }
         }
         group("Editing") {
             row { checkBox("Folding ranges").bindSelected(s::folding) }
             row { checkBox("Selection ranges").bindSelected(s::selectionRange) }
             row { checkBox("On-type formatting").bindSelected(s::onTypeFormatting) }
             row { checkBox("Linked editing").bindSelected(s::linkedEditing) }
+            row { checkBox("Auto-close tags").bindSelected(s::autoClosingTags) }
+            row { checkBox("Color swatches").bindSelected(s::documentColor) }
         }
         group("Refactoring") {
             row { checkBox("Rename").bindSelected(s::rename) }

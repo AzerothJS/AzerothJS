@@ -3,7 +3,7 @@
 ## Overview
 
 The `.azeroth` single-file-component compiler. A `.azeroth` file is a JavaScript
-or TypeScript module written with AzerothJS markup, a JSX-style syntax. The
+or TypeScript module written with AzerothJS markup. The
 compiler locates the markup regions inside otherwise ordinary code and rewrites
 them into `h()` hyperscript calls with fine-grained reactive bindings, leaving
 the rest of the module byte-for-byte. For example:

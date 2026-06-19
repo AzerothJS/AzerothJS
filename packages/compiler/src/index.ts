@@ -1,8 +1,8 @@
 // @azerothjs/compiler
 //
-// Compiles `.azeroth` files - JS/TS modules written with AzerothJS markup (a
-// JSX-style syntax) - into plain modules that call the runtime's h()
-// hyperscript with fine-grained reactive bindings. For example
+// Compiles `.azeroth` files - JS/TS modules written with AzerothJS markup -
+// into plain modules that call the runtime's h() hyperscript with fine-grained
+// reactive bindings. For example
 // `<h1>Count: {count()}</h1>` becomes `h('h1', {}, 'Count: ', () => (count()))`.
 //
 // The pipeline, in the order it runs (and a good order to read it in):

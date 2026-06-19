@@ -7,7 +7,7 @@
 //
 // tsserver (the engine behind VS Code's built-in TypeScript, and any editor
 // using it) loads this plugin and, through it, resolves `.azeroth` imports from
-// `.ts`/`.tsx` files with their REAL exported types - default, named, and type
+// `.ts` files with their REAL exported types - default, named, and type
 // exports - so a consuming app no longer needs a hand-written
 // `declare module '*.azeroth'` shim.
 //

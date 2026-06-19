@@ -6,10 +6,10 @@ import com.intellij.psi.tree.IElementType
 import javax.swing.Icon
 
 /** The native AzerothJS language. `.azeroth` is a TypeScript module with
- *  JSX-shaped markup; the native lexer/brace-matcher give correct in-editor
- *  bracket matching (JetBrains' generic TextMate matcher mispairs around the
- *  template-literal `${ }` braces), while the LSP server still supplies the
- *  semantic intelligence on top. */
+ *  AzerothJS markup; the native lexer/brace-matcher give correct in-editor
+ *  bracket matching (a generic matcher mispairs around the template-literal
+ *  `${ }` braces), while the LSP server still supplies the semantic
+ *  intelligence on top. */
 object AzerothLanguage : Language("AzerothJS")
 
 object AzerothFileType : LanguageFileType(AzerothLanguage)

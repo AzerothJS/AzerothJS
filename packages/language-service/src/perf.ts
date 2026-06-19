@@ -11,6 +11,13 @@ export interface Metrics
 
     /** Wall-clock time for the whole request entry. */
     totalMs: number;
+
+    /**
+     * The most recent duration recorded under each label, including one per
+     * instrumented provider (`completion`, `hover`, `definition`, ...). Lets a
+     * harness read which feature a regression lives in, not just the total.
+     */
+    requests: Record<string, number>;
 }
 
 let enabled = false;
@@ -34,12 +41,35 @@ export function record(label: string, ms: number): void
     timings[label] = ms;
 }
 
+/**
+ * Times `fn` under `label` when instrumentation is on, and returns its result.
+ * When off this is a straight passthrough - no `performance.now()` call, no
+ * record - so the hot path stays allocation-free.
+ */
+export function measure<T>(label: string, fn: () => T): T
+{
+    if (!enabled)
+    {
+        return fn();
+    }
+    const start = performance.now();
+    try
+    {
+        return fn();
+    }
+    finally
+    {
+        record(label, performance.now() - start);
+    }
+}
+
 /** The most recent timings as a Metrics object. Absent labels read as 0. */
 export function snapshot(): Metrics
 {
     return {
         virtualCodeMs: timings.virtualCode ?? 0,
-        totalMs: timings.total ?? 0
+        totalMs: timings.total ?? 0,
+        requests: { ...timings }
     };
 }
 

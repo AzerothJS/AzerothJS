@@ -4,7 +4,7 @@
 
 A TypeScript language-service plugin that teaches `tsserver` (the engine behind
 VS Code's built-in TypeScript support, and any editor that uses it) to resolve
-`.azeroth` imports from `.ts`/`.tsx` files with their REAL exported types -
+`.azeroth` imports from `.ts` files with their REAL exported types -
 default, named, and type exports. It is the AzerothJS counterpart to
 `@vue/typescript-plugin`.
 

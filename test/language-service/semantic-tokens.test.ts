@@ -151,3 +151,43 @@ describe('semantic-token script classification', () =>
         expect(token!.modifiers).toBe(0);
     });
 });
+
+describe('semantic-token import bindings', () =>
+{
+    // TypeScript's classifier does not tag import binding names, so the provider
+    // adds a `variable` token for each (default, named, namespace, alias). Without
+    // it these names render uncoloured even though the same names colour wherever
+    // they're later used.
+    const VARIABLE = SEMANTIC_TOKEN_TYPES.indexOf('variable');
+
+    function open(source: string): number[]
+    {
+        const uri = pathToUri(path.join(ROOT, 'Imports.azeroth'));
+        ls.didOpen(uri, source);
+        return ls.getSemanticTokens(uri).data;
+    }
+
+    it('tags a default import binding as a variable', () =>
+    {
+        const source = "import ShareModal from './share-modal.component';\nconst el = <ShareModal />;";
+        const token = tokenAt(source, open(source), 'ShareModal');
+        expect(token).toBeDefined();
+        expect(token!.type).toBe(VARIABLE);
+        expect(token!.length).toBe('ShareModal'.length);
+    });
+
+    it('tags named imports and `as` aliases as variables', () =>
+    {
+        const source = "import { createSignal, renderIcon as ri } from '@azerothjs/core';";
+        const data = open(source);
+        expect(tokenAt(source, data, 'createSignal')?.type).toBe(VARIABLE);
+        // The alias `ri` is the binding name; the original `renderIcon` is not.
+        expect(tokenAt(source, data, 'ri')?.type).toBe(VARIABLE);
+    });
+
+    it('tags a namespace import binding as a variable', () =>
+    {
+        const source = "import * as icons from '../lib/icons';";
+        expect(tokenAt(source, open(source), 'icons')?.type).toBe(VARIABLE);
+    });
+});

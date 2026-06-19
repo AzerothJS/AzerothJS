@@ -14,6 +14,7 @@ interface Captured
     onInitialize?: (params: unknown) => unknown;
     onInitialized?: (params: unknown) => unknown;
     onDidChangeConfiguration?: (params: unknown) => unknown;
+    onDidChangeWatchedFiles?: (params: unknown) => unknown;
     onCompletion?: (params: unknown) => unknown;
     onCompletionResolve?: (params: unknown) => unknown;
     onHover?: (params: unknown) => unknown;
@@ -69,6 +70,7 @@ function makeMockConnection(): { connection: unknown; captured: Captured; getCon
         onInitialize: capture('onInitialize'),
         onInitialized: capture('onInitialized'),
         onDidChangeConfiguration: capture('onDidChangeConfiguration'),
+        onDidChangeWatchedFiles: capture('onDidChangeWatchedFiles'),
         onCompletion: capture('onCompletion'),
         onCompletionResolve: capture('onCompletionResolve'),
         onHover: capture('onHover'),

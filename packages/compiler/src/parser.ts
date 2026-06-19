@@ -332,7 +332,7 @@ class MarkupParser
         return children;
     }
 
-    /** Reads raw text up to the next `<` or `{`, normalised JSX-style. */
+    /** Reads raw text up to the next `<` or `{`, normalised the usual way. */
     private readText(): MarkupText | null
     {
         const start = this.pos;
@@ -343,7 +343,7 @@ class MarkupParser
         const raw = this.src.slice(start, this.pos);
 
         // A `//` at the head of a text child is almost always a misplaced line
-        // comment (JSX/markup has no `//` comments; only `{/* ... */}`). A real
+        // comment (markup has no `//` comments; only `{/* ... */}`). A real
         // URL never trips this: its scheme (`https:`) precedes the `//`. Point
         // at the `//` rather than letting it render as literal text.
         const lead = raw.length - raw.trimStart().length;
@@ -364,7 +364,7 @@ class MarkupParser
     }
 
     /**
-     * JSX-style whitespace handling: collapse runs that are purely formatting
+     * Markup whitespace handling: collapse runs that are purely formatting
      * (whitespace containing a newline) to a single space, and preserve
      * meaningful same-line spacing like `Count: `.
      */

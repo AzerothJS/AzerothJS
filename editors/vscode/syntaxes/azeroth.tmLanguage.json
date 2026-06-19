@@ -2,23 +2,270 @@
     "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
     "name": "Azeroth",
     "scopeName": "source.azeroth",
-    "comment": "A .azeroth file is a TypeScript module whose markup is JSX-shaped. Reusing VS Code's bundled TypeScript+JSX grammar (source.tsx) gives accurate base highlighting for the whole file; the language server's semantic tokens then refine component vs. host tags and event attributes on top.",
+    "comment": "Native AzerothJS base grammar: the TypeScript module body plus AzerothJS markup, written from scratch (no borrowed grammar). It is intentionally a coarse base layer - the language server's semantic tokens refine components, host tags, event attributes, and the embedded script on top.",
     "patterns":
     [
-        {
-            "include": "#azeroth-builtins"
-        },
-        {
-            "include": "source.tsx"
-        }
+        { "include": "#comments" },
+        { "include": "#markup" },
+        { "include": "#statements" }
     ],
     "repository":
     {
-        "azeroth-builtins":
+        "statements":
         {
-            "comment": "Mark the framework's auto-imported control-flow components so they read as support types even before semantic tokens arrive.",
-            "match": "(?<=</?)\\s*(Show|For|Switch|Match|Portal|Dynamic|Suspense|ErrorBoundary|Transition|Outlet)\\b",
-            "name": "support.class.component.azeroth"
+            "patterns":
+            [
+                { "include": "#comments" },
+                { "include": "#import-clause" },
+                { "include": "#markup" },
+                { "include": "#strings" },
+                { "include": "#template" },
+                { "include": "#numbers" },
+                { "include": "#keywords" },
+                { "include": "#storage" },
+                { "include": "#types" },
+                { "include": "#constants" },
+                { "include": "#function-call" },
+                { "include": "#operators" },
+                { "include": "#punctuation" }
+            ]
+        },
+
+        "import-clause":
+        {
+            "comment": "Colours the binding names in `import ... from '...'` (default, named, namespace, aliases) as variables - the base grammar otherwise leaves them plain and TypeScript's semantic classifier doesn't tag import declarations. Spans from `import` to `from`/`;` so multi-line imports work.",
+            "begin": "\\b(import)\\b(?=\\s)",
+            "beginCaptures": { "1": { "name": "keyword.control.azeroth" } },
+            "end": "\\b(from)\\b|;",
+            "endCaptures": { "1": { "name": "keyword.control.azeroth" } },
+            "patterns":
+            [
+                { "include": "#comments" },
+                { "include": "#strings" },
+                { "match": "\\b(as|type)\\b", "name": "keyword.control.azeroth" },
+                { "match": "[_$a-zA-Z][\\w$]*", "name": "variable.other.readwrite.azeroth" }
+            ]
+        },
+
+        "comments":
+        {
+            "patterns":
+            [
+                {
+                    "name": "comment.block.documentation.azeroth",
+                    "begin": "/\\*\\*(?!/)",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.block.azeroth",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.line.double-slash.azeroth",
+                    "match": "//.*$"
+                }
+            ]
+        },
+
+        "strings":
+        {
+            "patterns":
+            [
+                {
+                    "name": "string.quoted.double.azeroth",
+                    "begin": "\"",
+                    "end": "\"|(?<!\\\\)$",
+                    "patterns": [ { "name": "constant.character.escape.azeroth", "match": "\\\\." } ]
+                },
+                {
+                    "name": "string.quoted.single.azeroth",
+                    "begin": "'",
+                    "end": "'|(?<!\\\\)$",
+                    "patterns": [ { "name": "constant.character.escape.azeroth", "match": "\\\\." } ]
+                }
+            ]
+        },
+
+        "template":
+        {
+            "name": "string.template.azeroth",
+            "begin": "`",
+            "end": "`",
+            "patterns":
+            [
+                { "name": "constant.character.escape.azeroth", "match": "\\\\." },
+                {
+                    "name": "meta.template.expression.azeroth",
+                    "begin": "\\$\\{",
+                    "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.azeroth" } },
+                    "end": "\\}",
+                    "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.azeroth" } },
+                    "patterns": [ { "include": "#statements" } ]
+                }
+            ]
+        },
+
+        "numbers":
+        {
+            "name": "constant.numeric.azeroth",
+            "match": "\\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(\\d[\\d_]*\\.?[\\d_]*|\\.[\\d_]+)([eE][+-]?\\d+)?)n?\\b"
+        },
+
+        "constants":
+        {
+            "patterns":
+            [
+                { "name": "constant.language.azeroth", "match": "\\b(true|false|null|undefined|NaN|Infinity)\\b" },
+                { "name": "variable.language.azeroth", "match": "\\b(this|super)\\b" }
+            ]
+        },
+
+        "types":
+        {
+            "comment": "TypeScript primitive/built-in type names, so a type annotation like `: string` colours like a type (`void`/`null`/`undefined` are already covered as keyword/constant).",
+            "match": "\\b(string|number|boolean|object|symbol|bigint|any|unknown|never)\\b",
+            "name": "support.type.primitive.azeroth"
+        },
+
+        "keywords":
+        {
+            "patterns":
+            [
+                { "name": "keyword.control.flow.azeroth", "match": "\\b(return|if|else|for|while|do|switch|case|default|break|continue|throw|try|catch|finally|yield|await)\\b" },
+                { "name": "keyword.control.azeroth", "match": "\\b(import|export|from|as|new|delete|void|typeof|instanceof|in|of|keyof|infer|is|satisfies)\\b" }
+            ]
+        },
+
+        "storage":
+        {
+            "patterns":
+            [
+                { "name": "storage.type.azeroth", "match": "\\b(const|let|var|function|class|interface|type|enum|namespace)\\b" },
+                { "name": "storage.modifier.azeroth", "match": "\\b(async|public|private|protected|static|readonly|abstract|declare|extends|implements|get|set|override)\\b" }
+            ]
+        },
+
+        "function-call":
+        {
+            "match": "([_$a-zA-Z][_$\\w]*)\\s*(?=\\()",
+            "captures": { "1": { "name": "entity.name.function.azeroth" } }
+        },
+
+        "operators":
+        {
+            "name": "keyword.operator.azeroth",
+            "match": "=>|\\.\\.\\.|\\?\\?|\\?\\.|[-+*/%<>=!&|^~?:]"
+        },
+
+        "punctuation":
+        {
+            "patterns":
+            [
+                { "name": "punctuation.terminator.azeroth", "match": ";" },
+                { "name": "punctuation.separator.azeroth", "match": "[,.]" },
+                { "name": "meta.brace.azeroth", "match": "[{}()\\[\\]]" }
+            ]
+        },
+
+        "markup":
+        {
+            "patterns":
+            [
+                { "include": "#markup-fragment" },
+                { "include": "#markup-element" }
+            ]
+        },
+
+        "markup-fragment":
+        {
+            "comment": "`<>...</>`: a children list with no tag name.",
+            "begin": "(?<![\\w$)\\]])(<>)",
+            "beginCaptures": { "1": { "name": "punctuation.definition.tag.azeroth" } },
+            "end": "(</>)",
+            "endCaptures": { "1": { "name": "punctuation.definition.tag.azeroth" } },
+            "patterns": [ { "include": "#markup-children" } ]
+        },
+
+        "markup-element":
+        {
+            "comment": "A full element: the opening tag (name + attributes), its children, and the closing tag. Modelled as a begin/end span so children are their OWN scope - element text stays plain rather than being coloured as script. The end matches a self-close `/>` (no children) or a closing `</name>`. The leading negative lookbehind keeps a generic/comparison (`Promise<void>`, `a<b`, `Map<K,V>`) from being misread as a tag - those `<` directly follow an identifier, `)`, or `]`. Built-in control-flow components read as support classes even before semantic tokens arrive; the server refines component vs. host on top.",
+            "begin": "(?<![\\w$)\\]])(?:(<)(Show|For|Switch|Match|Portal|Dynamic|Suspense|ErrorBoundary|Transition|Outlet)\\b|(<)([A-Z][\\w.]*)|(<)([a-z][\\w-]*))",
+            "beginCaptures":
+            {
+                "1": { "name": "punctuation.definition.tag.begin.azeroth" },
+                "2": { "name": "support.class.component.azeroth" },
+                "3": { "name": "punctuation.definition.tag.begin.azeroth" },
+                "4": { "name": "entity.name.tag.component.azeroth" },
+                "5": { "name": "punctuation.definition.tag.begin.azeroth" },
+                "6": { "name": "entity.name.tag.azeroth" }
+            },
+            "end": "(/>)|(</)\\s*([A-Za-z][\\w.-]*)\\s*(>)",
+            "endCaptures":
+            {
+                "1": { "name": "punctuation.definition.tag.end.azeroth" },
+                "2": { "name": "punctuation.definition.tag.begin.azeroth" },
+                "3": { "name": "entity.name.tag.azeroth" },
+                "4": { "name": "punctuation.definition.tag.end.azeroth" }
+            },
+            "patterns":
+            [
+                { "include": "#tag-attributes" },
+                { "include": "#markup-children" }
+            ]
+        },
+
+        "tag-attributes":
+        {
+            "comment": "Inside an opening tag. Names are matched only when followed by `=`, so element text words (which are not) are never mistaken for attributes.",
+            "patterns":
+            [
+                { "include": "#comments" },
+                { "match": "\\b(on[A-Z][\\w]*)(?=\\s*=)", "name": "entity.other.attribute-name.event.azeroth" },
+                { "match": "\\b([_a-zA-Z][\\w-]*)(?=\\s*=)", "name": "entity.other.attribute-name.azeroth" },
+                { "match": "=", "name": "keyword.operator.assignment.azeroth" },
+                { "include": "#strings" },
+                { "include": "#expr-hole" },
+                { "match": ">", "name": "punctuation.definition.tag.end.azeroth" }
+            ]
+        },
+
+        "markup-children":
+        {
+            "comment": "Element body: comments, `{ ... }` expression holes (embedded script), and nested markup. Plain text is left unscoped so a word like `return` in element text is not coloured as a keyword.",
+            "patterns":
+            [
+                { "include": "#comments" },
+                { "include": "#expr-hole" },
+                { "include": "#markup" }
+            ]
+        },
+
+        "expr-hole":
+        {
+            "comment": "A `{ ... }` hole (attribute value or child) holding embedded script. Nested braces are balanced so an object literal inside doesn't end the hole early.",
+            "begin": "\\{",
+            "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.azeroth" } },
+            "end": "\\}",
+            "endCaptures": { "0": { "name": "punctuation.section.embedded.end.azeroth" } },
+            "patterns": [ { "include": "#expr-body" } ]
+        },
+
+        "expr-body":
+        {
+            "patterns":
+            [
+                { "include": "#brace-block" },
+                { "include": "#statements" }
+            ]
+        },
+
+        "brace-block":
+        {
+            "comment": "A balanced `{ ... }` nested inside an expression hole (object literals, blocks).",
+            "begin": "\\{",
+            "end": "\\}",
+            "patterns": [ { "include": "#expr-body" } ]
         }
     }
 }

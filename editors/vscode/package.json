@@ -241,8 +241,23 @@
         },
         "configurationDefaults": {
             "emmet.includeLanguages": {
-                "azeroth": "javascriptreact"
+                "azeroth": "html"
             },
+            "eslint.validate": [
+                "azeroth"
+            ],
+            "tailwindCSS.includeLanguages": {
+                "azeroth": "html"
+            },
+            "tailwindCSS.experimental.classRegex": [
+                [
+                    "classList\\(([^)]*)\\)",
+                    "[\"'`]([^\"'`]*)[\"'`]"
+                ],
+                [
+                    "class\\s*[:=]\\s*[\"'`]([^\"'`]*)[\"'`]"
+                ]
+            ],
             "[azeroth]": {
                 "editor.autoClosingBrackets": "always",
                 "editor.autoClosingQuotes": "always",

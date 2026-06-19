@@ -61,10 +61,10 @@ version across them.
 
 ## A component
 
-A `.azeroth` file is a TypeScript module with JSX-style markup. Components are
+A `.azeroth` file is a TypeScript module with AzerothJS markup. Components are
 plain functions; props are the first argument.
 
-```tsx
+```azeroth
 import { createSignal, classList } from '@azerothjs/core';
 
 export default function Counter(props: { start?: number })

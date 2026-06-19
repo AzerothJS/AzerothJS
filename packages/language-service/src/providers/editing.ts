@@ -1,8 +1,8 @@
 // Markup editing behaviours that make `.azeroth` feel like a first-class
-// JSX-aware language:
+// markup-aware language:
 //
 //   - auto-close tags: typing the `>` of `<div>` returns `</div>` so the editor
-//     can complete the pair (mirroring VS Code's JSX behaviour);
+//     can complete the pair;
 //   - linked editing: renaming an opening tag updates its closing tag live, and
 //     vice-versa.
 //

@@ -114,7 +114,7 @@ function alreadyImports(source: string, name: string): boolean
  *
  *     const { code } = compile('export default () => <h1>Hello {name()}</h1>;');
  *     // code -> import { h } from '@azerothjs/core'; ... h('h1', {  }, 'Hello ', () => (name()))
- *     // write JSX-like markup; the getters and the import are generated
+ *     // write AzerothJS markup; the getters and the import are generated
  *
  * @example
  * ```ts

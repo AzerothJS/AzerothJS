@@ -17,6 +17,8 @@ import {
     TextDocuments,
     TextDocumentSyncKind,
     DidChangeConfigurationNotification,
+    DidChangeWatchedFilesNotification,
+    FileChangeType,
     type Connection,
     type InitializeParams,
     type InitializeResult,
@@ -407,6 +409,21 @@ export function startServer(connection: Connection = createConnection()): void
             void connection.client.register(DidChangeConfigurationNotification.type, undefined);
             void refreshSettings();
         }
+        // Watch stylesheets and components so class-name intelligence and the
+        // cross-file program stay current when files are added or removed.
+        // Edits to existing files are picked up without an event (by mtime).
+        // A client without dynamic watched-file registration rejects this; that's
+        // fine (mtime still refreshes edits), so swallow it rather than leave an
+        // unhandled rejection.
+        connection.client.register(DidChangeWatchedFilesNotification.type, {
+            watchers: [
+                { globPattern: '**/*.{css,scss,less,sass}' },
+                { globPattern: '**/*.azeroth' }
+            ]
+        }).catch(() =>
+        {
+            // Client lacks dynamic registration; mtime still refreshes edits.
+        });
         if (hasWorkspaceFolderCapability)
         {
             connection.workspace.onDidChangeWorkspaceFolders((event) =>
@@ -415,7 +432,16 @@ export function startServer(connection: Connection = createConnection()): void
                 {
                     const root = norm(uriToPath(removed.uri));
                     roots = roots.filter((r) => r !== root);
-                    services.delete(root);
+                    // Evict the root's service AND any sub-package services anchored
+                    // under it: serviceFor keys by the file's nearest tsconfig dir
+                    // (often a child of the root), so deleting only `root` would leak
+                    // those nested TS LanguageServices when the folder is removed. A
+                    // stray later request just re-creates the service lazily.
+                    const stale = [...services.keys()].filter((key) => key === root || key.startsWith(root + '/'));
+                    for (const key of stale)
+                    {
+                        services.delete(key);
+                    }
                 }
                 for (const added of event.added)
                 {
@@ -434,6 +460,63 @@ export function startServer(connection: Connection = createConnection()): void
             refreshDiagnostics(doc.uri);
         }
         void connection.languages.inlayHint.refresh();
+    });
+
+    // A watched stylesheet or component was created/changed/deleted. The work
+    // needed depends on WHICH:
+    //  - A change to the file SET (`.azeroth` created/deleted) needs a full
+    //    workspace rescan so a new component joins (or a deleted one leaves) the
+    //    program.
+    //  - A plain CONTENT change to an existing `.azeroth` only needs the disk
+    //    cache invalidated: a CLOSED file's mtime is memoized per project-version
+    //    epoch, so without a version bump TypeScript serves stale types - but the
+    //    expensive readDirectory rescan isn't needed since the file set is the
+    //    same. (Open buffers sync through the document manager, untouched here.)
+    //  - A stylesheet created/deleted re-discovers the class index; a stylesheet
+    //    content change needs nothing (the index re-reads it by mtime on demand).
+    connection.onDidChangeWatchedFiles((params) =>
+    {
+        let componentSetChanged = false; // an `.azeroth` file created or deleted
+        let componentChanged = false;    // any `.azeroth` event (incl. content edit)
+        let styleSetChanged = false;     // a stylesheet created or deleted
+        for (const change of params.changes)
+        {
+            const setEvent = change.type === FileChangeType.Created || change.type === FileChangeType.Deleted;
+            if (change.uri.endsWith(EXTENSION))
+            {
+                componentChanged = true;
+                if (setEvent)
+                {
+                    componentSetChanged = true;
+                }
+            }
+            else if (setEvent)
+            {
+                styleSetChanged = true;
+            }
+        }
+        for (const svc of services.values())
+        {
+            if (componentSetChanged)
+            {
+                svc.refreshWorkspace(); // rescans the file set; also refreshes styles
+            }
+            else if (componentChanged)
+            {
+                svc.invalidateDiskCache(); // content edit only: re-read, no rescan
+            }
+            if (styleSetChanged && !componentSetChanged)
+            {
+                svc.refreshStyles();
+            }
+        }
+        if (componentChanged)
+        {
+            for (const doc of documents.all())
+            {
+                refreshDiagnostics(doc.uri);
+            }
+        }
     });
 
     // --- Document lifecycle: keep the service's buffer in sync, publish diagnostics. ---

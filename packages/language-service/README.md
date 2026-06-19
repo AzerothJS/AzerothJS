@@ -20,8 +20,8 @@ The package depends only on `typescript` and `@azerothjs/compiler`, so it runs
 
 ## Architecture
 
-A `.azeroth` file is a TypeScript module whose markup regions are written in a
-JSX-style syntax. The AzerothJS compiler has no separate type system, symbol
+A `.azeroth` file is a TypeScript module whose markup regions are written in
+AzerothJS markup syntax. The AzerothJS compiler has no separate type system, symbol
 table, or semantic analyzer: it locates markup regions and rewrites them into
 `h(...)` calls, leaving everything else byte-for-byte. The authoritative
 semantic engine for the language is therefore TypeScript itself.

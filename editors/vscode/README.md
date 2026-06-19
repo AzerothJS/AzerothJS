@@ -3,7 +3,7 @@
 ## Overview
 
 Language support for `.azeroth` files, the AzerothJS single-file component format
-(a TypeScript module with JSX-style markup).
+(a TypeScript module with AzerothJS markup).
 
 The extension is a launcher for the AzerothJS language server
 (`@azerothjs/language-server`), which reuses the framework's own compiler to
@@ -32,16 +32,16 @@ analysis happens in the server.
 VS Code  --LSP/stdio-->  language server  -->  language service (compiler-aware)
    |
    contributes: language registration, language-configuration.json,
-   TextMate grammar (embeds source.tsx), semantic-token legend, settings
+   native source.azeroth TextMate grammar, semantic-token legend, settings
 ```
 
 Three pieces work together:
 
 - Static contributions in `package.json` register the `azeroth` language for
-  `.azeroth`, a TextMate grammar (`syntaxes/azeroth.tmLanguage.json`) that embeds
-  VS Code's bundled TypeScript and JSX grammar (`source.tsx`) so base
-  highlighting is correct across the whole file, the semantic-token legend, and
-  the configuration schema.
+  `.azeroth`, a native `source.azeroth` TextMate grammar
+  (`syntaxes/azeroth.tmLanguage.json`) that provides base highlighting for the
+  whole file (script + AzerothJS markup), the semantic-token legend, and the
+  configuration schema.
 - `language-configuration.json` defines brackets, comments, auto-closing pairs,
   indentation, and on-enter rules.
 - `src/extension.ts` starts the server over stdio with `vscode-languageclient`
@@ -64,7 +64,7 @@ calls on type to obtain a closing tag from the service.
 | --- | --- |
 | `package.json` | Language, grammar, semantic-token legend, settings schema, and defaults. |
 | `language-configuration.json` | Brackets, comments, auto-closing pairs, indentation, on-enter rules. |
-| `syntaxes/azeroth.tmLanguage.json` | TextMate grammar embedding `source.tsx`. |
+| `syntaxes/azeroth.tmLanguage.json` | Native `source.azeroth` TextMate grammar. |
 | `src/extension.ts` | Language client startup and the auto-insert wiring. |
 | `esbuild.mjs` | Bundles the extension and the server into self-contained `dist/*.js`. |
 | `package.mjs` | Builds and optionally installs a self-contained `.vsix`. |
@@ -114,6 +114,24 @@ per-feature toggles such as completion auto-imports, component snippets, and
 inlay hints. TypeScript intelligence uses the nearest `tsconfig.json` in the
 workspace. The extension also contributes Emmet support for the markup and
 bracket-pair colorization defaults.
+
+### Third-party tooling (zero-config)
+
+`contributes.configurationDefaults` wires `.azeroth` into the common companion
+extensions so a project needs **no `.vscode/settings.json`**:
+
+- **ESLint** (`dbaeumer.vscode-eslint`): `eslint.validate` includes `azeroth`, so
+  the editor runs ESLint on `.azeroth` files (the `@azerothjs/eslint-plugin`
+  processor lints the script; markup is masked). It's a *forced* list separate
+  from the probe defaults, so `.js`/`.ts` validation is unaffected.
+- **Tailwind CSS** (`bradlc.vscode-tailwindcss`): `tailwindCSS.includeLanguages`
+  maps `azeroth` to `html` (its own language — not jsx/tsx; `html` is a neutral
+  markup extractor), plus `classRegex` entries so `class="…"`, `class={…}`, and
+  `classList({ '…': … })` all complete.
+
+These are *defaults* — a user setting of the same name overrides them. The
+companion extensions are recommended, not bundled; nothing breaks if they're
+absent.
 
 ## Examples
 

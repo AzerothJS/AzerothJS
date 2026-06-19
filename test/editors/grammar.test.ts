@@ -1,11 +1,12 @@
-// VS Code's TextMate grammar must stay structurally sound: it reuses VS Code's
-// TypeScript+JSX grammar (source.tsx) for the whole file and adds an AzerothJS
-// layer that marks the built-in control-flow components. These structural
-// snapshots catch accidental breakage (a bad scope name, a dropped include, a
-// missing built-in) without needing a TextMate tokenizer in the test runner.
+// VS Code's TextMate grammar must stay structurally sound: it is a native
+// `source.azeroth` grammar (no borrowed grammar) covering the TypeScript module
+// body plus AzerothJS markup, and it marks the built-in control-flow components.
+// These structural snapshots catch accidental breakage (a bad scope name, a lost
+// pattern, a missing built-in) without needing a TextMate tokenizer in the test
+// runner.
 //
-// The JetBrains plugin uses a NATIVE language implementation (its own lexer,
-// not a shipped TextMate grammar), so there is nothing to cross-check here.
+// The JetBrains plugin uses a NATIVE language implementation (its own lexer), so
+// there is nothing to cross-check here.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,25 +25,30 @@ function grammar(rel: string): Record<string, unknown>
 
 describe('azeroth.tmLanguage.json', () =>
 {
-    it('declares the source.azeroth scope and embeds the TypeScript+JSX grammar', () =>
+    it('declares the native source.azeroth scope and does not borrow another grammar', () =>
     {
         const g = grammar(VSCODE_GRAMMAR);
         expect(g.scopeName).toBe('source.azeroth');
         const includes = (g.patterns as Array<{ include?: string }>).map(p => p.include);
-        expect(includes).toContain('source.tsx');
-        expect(includes).toContain('#azeroth-builtins');
+        expect(includes).toContain('#comments');
+        expect(includes).toContain('#markup');
+        expect(includes).toContain('#statements');
+        // It is a standalone grammar: no embedded external scope.
+        const json = JSON.stringify(g);
+        expect(json).not.toContain('source.tsx');
+        expect(json).not.toContain('source.ts');
     });
 
-    it('highlights every built-in control-flow component', () =>
+    it('highlights every built-in control-flow component in the markup grammar', () =>
     {
         const g = grammar(VSCODE_GRAMMAR);
-        const builtins = (g.repository as Record<string, { match: string; name: string }>)['azeroth-builtins'];
-        expect(builtins.name).toContain('support.class.component');
+        const element = (g.repository as Record<string, { begin: string; beginCaptures: Record<string, { name: string }> }>)['markup-element'];
         for (const name of BUILTINS)
         {
-            expect(builtins.match).toContain(name);
+            expect(element.begin).toContain(name);
         }
-        // The match must only fire right after a tag open (`<` or `</`).
-        expect(builtins.match).toContain('</?');
+        // The built-in alternative is scoped as a support class.
+        const scopes = Object.values(element.beginCaptures).map(c => c.name);
+        expect(scopes).toContain('support.class.component.azeroth');
     });
 });

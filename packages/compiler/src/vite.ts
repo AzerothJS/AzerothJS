@@ -79,6 +79,23 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         name: 'azerothjs',
         enforce: 'pre',
 
+        // Register the extension with Vite's resolver so component imports may
+        // omit it (e.g. `import Modal from './modal.component'`). Explicit
+        // `.azeroth` specifiers keep working — this is purely additive. We must
+        // preserve Vite's default list (setting `resolve.extensions` otherwise
+        // replaces it and breaks `.ts`/`.js` resolution) and any user entries.
+        config(config: { resolve?: { extensions?: string[] } })
+        {
+            // Vite's default extension list, minus `.jsx`/`.tsx`: an AzerothJS
+            // project is `.ts` + `.azeroth`, so those are intentionally excluded.
+            const defaults = ['.mjs', '.js', '.mts', '.ts', '.json'];
+            const resolve = (config.resolve ??= {});
+            const current = resolve.extensions ?? defaults;
+            resolve.extensions = current.includes(extension)
+                ? current
+                : [...current, extension];
+        },
+
         configResolved(config: { command: string })
         {
             serving = config.command === 'serve';

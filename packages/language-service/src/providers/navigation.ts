@@ -13,6 +13,8 @@ import {
     toGenerated,
     type RequestContext
 } from '../request.ts';
+import { classDefinition } from './css-classes.ts';
+import { getLinkedEditingRanges } from './editing.ts';
 
 /**
  * Validates the rename target at `offset`, returning the identifier range and
@@ -42,6 +44,13 @@ export function getPrepareRename(ctx: RequestContext, offset: number): PrepareRe
 /** Definition location(s) for the symbol at `offset`. */
 export function getDefinition(ctx: RequestContext, offset: number): Location[]
 {
+    // A class name in markup resolves to its CSS rule(s), not a TS symbol.
+    const classDefs = classDefinition(ctx, offset);
+    if (classDefs.length > 0)
+    {
+        return classDefs;
+    }
+
     const generated = toGenerated(ctx, offset);
     if (generated === null)
     {
@@ -85,9 +94,33 @@ export function getReferences(ctx: RequestContext, offset: number): Location[]
         .filter((loc): loc is Location => loc !== null));
 }
 
+/**
+ * True when the tag pair's name is a HOST element (lowercase, undotted). A
+ * component (PascalCase or dotted, including built-ins like `Show`) is a real TS
+ * symbol and should keep its reference highlighting instead.
+ */
+function isHostTagPair(ctx: RequestContext, tagPair: { start: { line: number; character: number }; end: { line: number; character: number } }[]): boolean
+{
+    const open = tagPair[0];
+    const name = ctx.source.slice(ctx.lineIndex.offsetAt(open.start), ctx.lineIndex.offsetAt(open.end));
+    return /^[a-z]/.test(name) && !name.includes('.');
+}
+
 /** Occurrences of the symbol at `offset` within this document, for highlighting. */
 export function getDocumentHighlights(ctx: RequestContext, offset: number): DocumentHighlight[]
 {
+    // Caret on a HOST tag name -> highlight the matching open/close pair (so
+    // clicking `<h1>` shows its `</h1>`), the way an HTML/markup editor pairs
+    // tags. A host tag name compiles to a string literal, so TypeScript can't
+    // answer it; the markup model can. A COMPONENT tag name is a real TS symbol,
+    // so we leave it to the TypeScript pass below, which highlights every
+    // reference (import + all usages) - more useful than just its own tag pair.
+    const tagPair = getLinkedEditingRanges(ctx, offset);
+    if (tagPair !== null && isHostTagPair(ctx, tagPair))
+    {
+        return tagPair.map(range => ({ range, kind: 1 as const }));
+    }
+
     const generated = toGenerated(ctx, offset);
     if (generated === null)
     {

@@ -1,9 +1,10 @@
 // Document colors: render a swatch next to every CSS color literal in a
-// `.azeroth` file, in the two places CSS appears - a static `style="..."`
-// attribute (a declaration list) and a css`` template (a full stylesheet).
-// Both are handed to vscode-css-languageservice via css-service, which maps the
-// swatch ranges back to the original source. `style={...}` is a JS expression and
-// is left to the TypeScript bridge, never reached here.
+// `.azeroth` file, in the three places CSS appears - a static `style="..."`
+// attribute (a declaration list), a css`` template (a full stylesheet), and the
+// string values of a reactive `styleMap({ color: '#080' })`. All are handed to
+// vscode-css-languageservice via css-service, which maps the swatch ranges back
+// to the original source. A non-string `style={...}`/styleMap value is a JS
+// expression, left to the TypeScript bridge.
 
 import { collectMarkupNodes } from '../markup-model.ts';
 import { type RequestContext } from '../request.ts';
@@ -14,8 +15,10 @@ import {
     cssTemplateSpans,
     styleRegion,
     templateRegion,
+    valueColorRegion,
     type CssRegion
 } from './css-service.ts';
+import { styleMapColorValueSpans } from './style-map.ts';
 
 /**
  * Color swatches for every static `style="..."` value and css`` template in the
@@ -34,6 +37,11 @@ export function getDocumentColors(ctx: RequestContext): ColorInformation[]
         for (const span of cssTemplateSpans(ctx.source))
         {
             regions.push(templateRegion(ctx.source, span.start, span.end));
+        }
+        // String color values inside styleMap({ color: '#080', ... }).
+        for (const span of styleMapColorValueSpans(ctx.source))
+        {
+            regions.push(valueColorRegion(ctx.source, span.start, span.end));
         }
         return cssColors(ctx.source, regions, ctx.lineIndex);
     }

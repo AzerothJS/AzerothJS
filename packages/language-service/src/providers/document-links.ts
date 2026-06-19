@@ -4,8 +4,8 @@
 // (`@azerothjs/core`, `node:path`) have no single on-disk target worth a link,
 // and are left to go-to-definition. Each candidate is resolved the way the
 // project's module resolver resolves a relative import: the path as written,
-// then with `.ts`, `.tsx`, and `.azeroth` appended (the `.azeroth` language
-// replaces `.tsx`). The link's range covers the specifier text BETWEEN the
+// then with `.ts` and `.azeroth` appended (an AzerothJS project is `.ts` +
+// `.azeroth`). The link's range covers the specifier text BETWEEN the
 // quotes; the target is the resolved file's `file://` URI.
 
 import ts from 'typescript';
@@ -14,7 +14,7 @@ import { type RequestContext } from '../request.ts';
 import { pathToUri } from '../uri.ts';
 
 /** Extensions tried (in order) when a relative specifier has none of its own. */
-const PROBE_EXTENSIONS = ['.ts', '.tsx', '.azeroth'];
+const PROBE_EXTENSIONS = ['.ts', '.azeroth'];
 
 /** A relative import/export-from/dynamic-import('...') specifier and its span. */
 interface Specifier
@@ -70,7 +70,7 @@ function isRelative(text: string): boolean
 /**
  * Resolves a relative specifier against `dir` to an existing file, trying the
  * path as written first, then with each probe extension appended - mirroring the
- * project's resolver (`.ts`/`.tsx`/`.azeroth`). Returns null when nothing exists.
+ * project's resolver (`.ts`/`.azeroth`). Returns null when nothing exists.
  */
 function resolve(dir: string, text: string): string | null
 {

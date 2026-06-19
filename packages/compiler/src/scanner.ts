@@ -9,7 +9,7 @@
 //   2. Decide whether a `<` (or `/`) sits in expression position, which is
 //      what distinguishes markup from a less-than operator (and a regex from
 //      a divide). We track the previous significant token to make that call,
-//      the same trick hand-written JSX transforms use.
+//      the same trick hand-written markup transforms use.
 //
 // These are pure functions over (src, index) -> nextIndex, shared with the
 // parser (which also needs balanced-brace capture for `{...}` holes and
@@ -380,8 +380,9 @@ function scanTypeParams(src: string, openIndex: number): number
 /**
  * Decides whether a `<` in expression position opens a generic arrow function's
  * type-parameter list (`<T>(x) => x`, `<T extends U>(a: T): T => a`) rather than
- * markup. TSX has the same ambiguity and resolves it the same way: a
- * type-parameter list is followed by the arrow's parameter parenthesis, and then
+ * markup. Mixing `<...>` markup with TypeScript generics creates this ambiguity;
+ * it is resolved structurally: a type-parameter list is followed by the arrow's
+ * parameter parenthesis, and then
  * either a return-type annotation (`:`) or the arrow itself (`=>`). Markup never
  * has that shape, so requiring all three keeps real elements (`<div>(x)</div>`)
  * out.

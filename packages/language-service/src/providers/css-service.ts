@@ -86,6 +86,37 @@ export function cssCompletions(source: string, offset: number): CompletionItem[]
     return mapCssItems(list.items);
 }
 
+// styleMap({ ... }) support: the object keys are CSS property names (camelCase)
+// and string values are CSS values. These two helpers expose the CSS engine's
+// property/value vocabulary so a dedicated provider can offer it on the object
+// keys and inside value strings. The engine speaks kebab-case CSS; the provider
+// translates to/from the camelCase the object literal uses.
+
+/** All CSS property names (kebab-case) as completion items, with MDN docs. */
+export function cssPropertyCompletions(): CompletionItem[]
+{
+    const doc = TextDocument.create('inline://props.css', 'css', 0, `${ WRAP_PREFIX }}`);
+    const stylesheet = css().parseStylesheet(doc);
+    // The caret sits right after `*{`, where the engine offers property names.
+    const list = css().doComplete(doc, doc.positionAt(WRAP_PREFIX.length), stylesheet);
+    return mapCssItems(list.items).filter(item => item.kind === CompletionItemKind.Property);
+}
+
+/**
+ * CSS value completions for `property` (kebab-case) given the value text typed
+ * so far and the caret's offset within it (e.g. property `font-weight`, value
+ * `bo` -> `bold`). Wraps the declaration in a synthetic rule so the engine sees
+ * a real value position.
+ */
+export function cssValueCompletions(property: string, valueText: string, caretInValue: number): CompletionItem[]
+{
+    const prefix = `${ WRAP_PREFIX }${ property }:`;
+    const doc = TextDocument.create('inline://value.css', 'css', 0, `${ prefix }${ valueText }}`);
+    const stylesheet = css().parseStylesheet(doc);
+    const list = css().doComplete(doc, doc.positionAt(prefix.length + caretInValue), stylesheet);
+    return mapCssItems(list.items);
+}
+
 // css`` tagged templates. Their content is a real stylesheet (selectors and
 // all), not a declaration list, so unlike style="..." it parses without the
 // synthetic-rule wrap. The TypeScript bridge sees the template as an opaque
@@ -296,6 +327,17 @@ export function cssColorPresentations(color: Color, range: Range): ColorPresenta
 export function styleRegion(source: string, valueStart: number, valueEnd: number): CssRegion
 {
     return { content: source.slice(valueStart, valueEnd), contentStart: valueStart, prefix: WRAP_PREFIX };
+}
+
+/**
+ * Builds a color-bearing region from a bare CSS *value* span (e.g. a styleMap
+ * string value `#0080ff`). The value alone isn't a declaration, so it's framed
+ * as `*{color:<value>}`; the longer prefix is accounted for when ranges are
+ * mapped back to the source.
+ */
+export function valueColorRegion(source: string, valueStart: number, valueEnd: number): CssRegion
+{
+    return { content: source.slice(valueStart, valueEnd), contentStart: valueStart, prefix: `${ WRAP_PREFIX }color:` };
 }
 
 /** Builds a stylesheet region from a css`` template's content span. */

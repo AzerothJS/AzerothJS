@@ -15,8 +15,12 @@ import com.intellij.openapi.components.service
 @State(name = "AzerothSettings", storages = [Storage("azeroth.xml")])
 class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
     class State {
+        /** Explicit Node.js path; blank = auto-detect (PATH + common version managers). */
+        var nodePath: String = ""
+
         var diagnostics: Boolean = true
         var format: Boolean = true
+        var autoClosingTags: Boolean = true
         var autoImports: Boolean = true
         var componentSnippets: Boolean = true
         var inlayHints: Boolean = true
@@ -38,6 +42,10 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
         var selectionRange: Boolean = true
         var onTypeFormatting: Boolean = true
         var linkedEditing: Boolean = true
+        var callHierarchy: Boolean = true
+        var codeLens: Boolean = true
+        var documentLinks: Boolean = true
+        var documentColor: Boolean = true
 
         var parameterTypeHints: Boolean = true
         var variableTypeHints: Boolean = true
@@ -61,6 +69,9 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
     fun toInitializationOptions(): Map<String, Any> = mapOf(
         "diagnostics" to mapOf("enable" to state.diagnostics),
         "format" to mapOf("enable" to state.format),
+        // A bare top-level boolean, not an { enable } map (parseSettings reads
+        // `c.autoClosingTags` directly).
+        "autoClosingTags" to state.autoClosingTags,
         "suggest" to mapOf(
             "autoImports" to state.autoImports,
             "componentSnippets" to state.componentSnippets,
@@ -83,6 +94,10 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
         "selectionRange" to mapOf("enable" to state.selectionRange),
         "onTypeFormatting" to mapOf("enable" to state.onTypeFormatting),
         "linkedEditing" to mapOf("enable" to state.linkedEditing),
+        "callHierarchy" to mapOf("enable" to state.callHierarchy),
+        "codeLens" to mapOf("enable" to state.codeLens),
+        "documentLinks" to mapOf("enable" to state.documentLinks),
+        "documentColor" to mapOf("enable" to state.documentColor),
         "inlayHints" to mapOf(
             "enabled" to state.inlayHints,
             "parameterNames" to if (state.parameterNameHints) "all" else "none",

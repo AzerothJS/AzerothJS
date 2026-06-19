@@ -6,14 +6,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
 
 /**
- * JSX-style tag auto-closing for `.azeroth` files: typing the `>` of an opening
- * tag (`<div>`) inserts the matching `</div>` and leaves the caret between them.
+ * Tag auto-closing for `.azeroth` files: typing the `>` of an opening tag
+ * (`<div>`) inserts the matching `</div>` and leaves the caret between them.
  * (VS Code does this via a custom LSP request; JetBrains drives it natively
  * through a typed handler.)
  */
 class AzerothTypedHandler : TypedHandlerDelegate() {
     override fun charTyped(c: Char, project: Project, editor: Editor, file: PsiFile): Result {
-        if (c != '>' || file.virtualFile?.extension != "azeroth") {
+        // Tag auto-close runs natively (not via the LSP server), so it must honour
+        // the `autoClosingTags` setting itself - the server's gate never sees it.
+        if (c != '>' || file.virtualFile?.extension != "azeroth" || !AzerothSettings.instance.data.autoClosingTags) {
             return Result.CONTINUE
         }
         val closing = closingTagFor(editor.document.charsSequence, editor.caretModel.offset)

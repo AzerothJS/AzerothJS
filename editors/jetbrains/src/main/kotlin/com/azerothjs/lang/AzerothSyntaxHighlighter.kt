@@ -14,7 +14,7 @@ import com.intellij.psi.tree.IElementType
  * Base colouring off the lexer tokens (keywords, strings, comments, numbers,
  * brackets, tag delimiters). The LSP server's semantic tokens refine components,
  * host tags, and event attributes on top, so this only needs to be a solid
- * foundation - not a full TypeScript+JSX theme.
+ * foundation - not a full TypeScript theme.
  */
 class AzerothSyntaxHighlighter : SyntaxHighlighterBase()
 {

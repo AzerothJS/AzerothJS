@@ -25,6 +25,8 @@ import {
 } from '../language-data.ts';
 import { htmlCompletions, eventDocumentation } from './html-service.ts';
 import { cssCompletions, cssTemplateCompletions, inCssTemplate } from './css-service.ts';
+import { classCompletions, inClassValue } from './css-classes.ts';
+import { styleMapCompletions } from './style-map.ts';
 import { toGenerated, type RequestContext } from '../request.ts';
 
 // Commit characters that improve the common edit: typing `=` or a space after a
@@ -119,8 +121,13 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
             {
                 return [];
             }
-            // `style="..."` is CSS; everything else gets HTML value enums
+            // `class="..."` completes the project's own CSS classes; `style="..."`
+            // is CSS; everything else gets HTML value enums
             // (`type="text|email|..."`, booleans, ...) from the HTML engine.
+            if (context.attribute === 'class')
+            {
+                return classCompletions(ctx, offset);
+            }
             return context.attribute === 'style'
                 ? cssCompletions(ctx.source, offset)
                 : htmlCompletions(ctx.source, position);
@@ -134,6 +141,19 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
             if (inCssTemplate(ctx.source, offset))
             {
                 return cssTemplateCompletions(ctx.source, offset);
+            }
+            // A class binding's strings (`classList({ '...': })`, `class={'...'}`)
+            // complete project class names rather than TypeScript identifiers.
+            if (inClassValue(ctx.source, offset))
+            {
+                return classCompletions(ctx, offset);
+            }
+            // styleMap({ ... }) keys are CSS properties and string values are CSS
+            // values; offer that vocabulary instead of TypeScript when applicable.
+            const styleMapItems = styleMapCompletions(ctx, offset);
+            if (styleMapItems.length > 0)
+            {
+                return styleMapItems;
             }
 
             const items = tsCompletions(ctx, offset, options);

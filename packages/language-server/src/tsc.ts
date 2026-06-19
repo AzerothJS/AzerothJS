@@ -271,7 +271,7 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
         {
             // Recursive watch reports every file; only react to source the
             // combined checker covers. AzerothJS projects are `.ts` + `.azeroth`
-            // (the `.azeroth` language replaces `.tsx`), so those two extensions.
+            // (markup lives in `.azeroth`), so those two extensions.
             if (fileName && !/\.(?:azeroth|ts)$/.test(String(fileName)))
             {
                 return;

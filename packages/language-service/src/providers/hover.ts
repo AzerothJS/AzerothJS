@@ -16,6 +16,8 @@ import { classifyPosition, enclosingElement } from '../markup-model.ts';
 import { BUILTIN_COMPONENT_MAP, attributeDocumentation, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
 import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
+import { classHover } from './css-classes.ts';
+import { styleMapHover } from './style-map.ts';
 import { spanToRange, toGenerated, type RequestContext } from '../request.ts';
 
 /** Hover content for the caret at `offset`, or null. */
@@ -35,7 +37,9 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
             {
                 return cssTemplateHover(ctx.source, offset, ctx.lineIndex);
             }
-            return tsHover(ctx, offset);
+            // A styleMap property key shows CSS docs; a class name inside a
+            // binding string shows its CSS rule; otherwise the TS type.
+            return styleMapHover(ctx, offset) ?? classHover(ctx, offset) ?? tsHover(ctx, offset);
 
         case 'tagName':
         {
@@ -95,6 +99,10 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
             if (isComponentName(context.tag))
             {
                 return null;
+            }
+            if (context.attribute === 'class')
+            {
+                return classHover(ctx, offset);
             }
             return context.attribute === 'style'
                 ? cssHover(ctx.source, offset, ctx.lineIndex)

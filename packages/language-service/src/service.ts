@@ -165,6 +165,17 @@ export class AzerothLanguageService
     }
 
     /**
+     * Sizes of the internal per-document caches. Intended for leak detection: a
+     * harness that opens, edits, and closes many documents can assert these stay
+     * bounded (they should fall back to the count of still-open documents), not
+     * grow with the number of cycles.
+     */
+    public getCacheStats(): { openDocuments: number; virtualCache: number; mtimeCache: number }
+    {
+        return this.project.cacheStats();
+    }
+
+    /**
      * Re-scans the workspace for `.azeroth` files. Call on a watched-file
      * create/delete so newly-added components join the program (cross-file
      * completion, go-to-definition, auto-import) without a restart.
@@ -174,11 +185,33 @@ export class AzerothLanguageService
         this.project.refreshWorkspace();
     }
 
+    /**
+     * Re-discovers the workspace stylesheets backing class-name intelligence,
+     * without rebuilding the TypeScript program. Call when a `.css`/`.scss`/
+     * `.less`/`.sass` file is created or deleted; edits to existing files are
+     * picked up automatically by mtime.
+     */
+    public refreshStyles(): void
+    {
+        this.project.refreshStyles();
+    }
+
+    /**
+     * Picks up an on-disk content change to an existing `.azeroth`/`.ts` file
+     * without re-scanning the workspace. Call on a watched-file CHANGE (not
+     * create/delete) so a closed file's new content is re-read; see
+     * {@link AzerothProject.invalidateDiskCache}.
+     */
+    public invalidateDiskCache(): void
+    {
+        this.project.invalidateDiskCache();
+    }
+
     /** Context-aware completion at a position. */
     public getCompletions(uri: string, position: Position, options?: CompletionOptions): CompletionItem[]
     {
         const ctx = this.context(uri);
-        return ctx ? getCompletions(ctx, ctx.lineIndex.offsetAt(position), options) : [];
+        return ctx ? perf.measure('completion', () => getCompletions(ctx, ctx.lineIndex.offsetAt(position), options)) : [];
     }
 
     /** Lazily fills in a completion item's documentation/detail. */
@@ -192,14 +225,14 @@ export class AzerothLanguageService
     public getHover(uri: string, position: Position): Hover | null
     {
         const ctx = this.context(uri);
-        return ctx ? getHover(ctx, ctx.lineIndex.offsetAt(position)) : null;
+        return ctx ? perf.measure('hover', () => getHover(ctx, ctx.lineIndex.offsetAt(position))) : null;
     }
 
     /** Definition location(s) for the symbol at a position. */
     public getDefinition(uri: string, position: Position): Location[]
     {
         const ctx = this.context(uri);
-        return ctx ? getDefinition(ctx, ctx.lineIndex.offsetAt(position)) : [];
+        return ctx ? perf.measure('definition', () => getDefinition(ctx, ctx.lineIndex.offsetAt(position))) : [];
     }
 
     /** Type-definition location(s) for the symbol at a position. */
@@ -329,14 +362,14 @@ export class AzerothLanguageService
     public getDiagnostics(uri: string): Diagnostic[]
     {
         const ctx = this.context(uri);
-        return ctx ? getDiagnostics(ctx) : [];
+        return ctx ? perf.measure('diagnostics', () => getDiagnostics(ctx)) : [];
     }
 
     /** Packed semantic tokens for the markup in the document. */
     public getSemanticTokens(uri: string): SemanticTokens
     {
         const ctx = this.context(uri);
-        return ctx ? getSemanticTokens(ctx) : { data: [] };
+        return ctx ? perf.measure('semanticTokens', () => getSemanticTokens(ctx)) : { data: [] };
     }
 
     /** Folding ranges for the document. */
@@ -383,7 +416,7 @@ export class AzerothLanguageService
 
     /**
      * After the caret types `>`, returns a snippet closing the just-opened tag
-     * (e.g. `$0</div>`), or null. Powers JSX-style tag auto-closing.
+     * (e.g. `$0</div>`), or null. Powers tag auto-closing.
      */
     public getAutoCloseTag(uri: string, position: Position): string | null
     {

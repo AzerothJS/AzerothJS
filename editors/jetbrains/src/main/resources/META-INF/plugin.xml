@@ -12,7 +12,9 @@
                 signature help, formatting, and semantic highlighting — from the AzerothJS
                 language server.</li>
         </ul>
-        Requires a paid JetBrains IDE (LSP API) and Node.js on PATH.
+        Requires a paid JetBrains IDE (LSP API) and Node.js. Node is auto-detected
+        from PATH and common version managers (nvm, fnm, volta, Homebrew); set an
+        explicit path in Settings → Languages &amp; Frameworks → AzerothJS if needed.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -35,6 +37,11 @@
         <lang.braceMatcher
             language="AzerothJS"
             implementationClass="com.azerothjs.lang.AzerothBraceMatcher"/>
+        <colorSettingsPage implementation="com.azerothjs.lang.AzerothColorSettingsPage"/>
+        <!-- Caret on a tag name highlights the matching open/close tag (native,
+             since a custom-language file routes highlight-usages through PSI). -->
+        <highlightUsagesHandlerFactory
+            implementation="com.azerothjs.lang.AzerothTagHighlightHandlerFactory"/>
 
         <!-- Compiler-aware intelligence over LSP. -->
         <platform.lsp.serverSupportProvider
@@ -45,5 +52,8 @@
             id="com.azerothjs.settings"
             displayName="AzerothJS"
             instance="com.azerothjs.AzerothConfigurable"/>
+
+        <!-- Surfaces language-server startup problems (e.g. Node not found). -->
+        <notificationGroup id="AzerothJS" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

@@ -18,9 +18,10 @@ editions.
 
 The plugin combines two platform mechanisms with the bundled server:
 
-- The TextMate engine provides TSX-style highlighting (HTML, JSX, TypeScript).
-  The AzerothJS grammar embeds `source.tsx`, and the real TypeScript and
-  TypeScript-React grammars are bundled so highlighting matches a `.tsx` file.
+- A native lexer (`AzerothLexer`) provides base highlighting and correct
+  brace/bracket matching (it handles strings, comments, and template `${ }`
+  interpolations so a brace inside them never mispairs). Semantic tokens from the
+  language server refine components, host tags, and event attributes on top.
 - The platform LSP API (`com.intellij.platform.lsp`, 2023.2 and later) provides
   the compiler-accurate intelligence by talking to the bundled language server.
 - A settings panel sends per-feature toggles to the server as LSP
@@ -28,7 +29,7 @@ The plugin combines two platform mechanisms with the bundled server:
 
 ```
 JetBrains IDE
-  TextMate engine          highlighting (azeroth grammar embeds source.tsx)
+  native lexer             base highlighting + brace matching
   LspServerSupportProvider starts the bundled server, routes LSP requests
   settings panel           toggles sent as initializationOptions
         |
@@ -46,14 +47,14 @@ forwards each request to `@azerothjs/language-service`. So the same analysis
 backs both editors; only the host wiring differs. `AzerothTypedHandler` adds
 type-driven editing behavior (such as triggering completion) on the IDE side.
 
-### Why LSP plus TextMate, and not a native TypeScript parser
+### Why LSP plus a native lexer, and not the IDE's TypeScript engine
 
-`.azeroth` markup is JSX-shaped, so it is tempting to register it as
-TypeScript-JSX and let the IDE's native TypeScript engine analyze it. That engine
-does not know AzerothJS semantics and would report false errors (`Show` is not
-imported, JSX requires React, the `h()` factory, reactive wrapping). The bundled
-server reuses the AzerothJS compiler, so its analysis is correct. TextMate
-supplies the native highlighting without a second, incorrect analyzer. WebStorm's
+It is tempting to register `.azeroth` as a TypeScript variant and let the IDE's
+native TypeScript engine analyze it. That engine does not know AzerothJS
+semantics and would report false errors (`Show` is not imported, markup needs the
+`h()` factory, reactive wrapping). The bundled server reuses the AzerothJS
+compiler, so its analysis is correct. The native lexer supplies base highlighting
+without a second, incorrect analyzer. WebStorm's
 own TypeScript support also runs a Node `tsserver` under the hood, so a bundled
 Node server is a normal arrangement.
 
@@ -108,6 +109,25 @@ Settings are under Settings, Languages and Frameworks, AzerothJS. The toggles ar
 stored by `AzerothSettings` and sent to the server as `initializationOptions`, so
 they map onto the same per-feature options the VS Code extension uses. TypeScript
 intelligence uses the nearest `tsconfig.json` in the project.
+
+### ESLint and Tailwind for `.azeroth`
+
+These are JetBrains' own bundled integrations (the JavaScript/Styles plugins),
+not something this plugin controls, and JetBrains does not read a project's
+`.vscode/settings.json`. Two one-time IDE settings enable them for `.azeroth`:
+
+- **ESLint** — Settings → Languages & Frameworks → JavaScript → Code Quality
+  Tools → ESLint → set *Run for files* to also match `.azeroth`, e.g.
+  `{**/*,*}.{js,ts,vue,html,azeroth}`. ESLint then runs the
+  `@azerothjs/eslint-plugin` processor on the whole component (script and markup).
+- **Tailwind** — Settings → Languages & Frameworks → Style Sheets → Tailwind CSS,
+  add to the config JSON: `"includeLanguages": { "azeroth": "html" }` (its own
+  language — not jsx/tsx) plus the same `experimental.classRegex` the VS Code
+  extension uses for `classList({ … })`.
+
+A plugin can't force a third-party integration's file globs, so these stay
+manual until the editor-agnostic path lands: Tailwind completion served directly
+by `@azerothjs/language-server` over LSP, which would need no per-IDE config.
 
 ## Installation
 

@@ -59,21 +59,15 @@ function isAzerothFile(fileName: string): boolean
 }
 
 /**
- * Infers a script kind from a file name, mirroring TypeScript's own
- * extension-based inference. Used as a fallback when the wrapped host does not
- * implement getScriptKind: returning ScriptKind.Unknown for a real file would
- * make the program drop it, so we must classify it the way TypeScript would.
+ * Infers a script kind from a file name for the file types an AzerothJS project
+ * uses (`.ts`, `.js`/`.mjs`/`.cjs`, `.json`); `.azeroth` files are presented to
+ * TypeScript as `.azeroth.ts` and so classify as `.ts`. Used as a fallback when
+ * the wrapped host does not implement getScriptKind: returning
+ * ScriptKind.Unknown for a real file would make the program drop it, so we must
+ * classify it the way TypeScript would.
  */
 function scriptKindFromName(ts: typeof tsModule, fileName: string): tsModule.ScriptKind
 {
-    if (fileName.endsWith('.tsx'))
-    {
-        return ts.ScriptKind.TSX;
-    }
-    if (fileName.endsWith('.jsx'))
-    {
-        return ts.ScriptKind.JSX;
-    }
     if (fileName.endsWith('.json'))
     {
         return ts.ScriptKind.JSON;
@@ -217,7 +211,7 @@ export function decorateLanguageServiceHost(
 
             // Extensionless relative import nothing else resolved (`./x.component`
             // for `x.component.azeroth`) - try the `.azeroth` sibling. The base
-            // resolver runs first, so a real `.ts`/`.tsx` of the same name wins.
+            // resolver runs first, so a real `.ts` of the same name wins.
             const relative = text.startsWith('.') || text.startsWith('/');
             if (!base[index].resolvedModule && relative && !text.endsWith(AZEROTH_EXT))
             {

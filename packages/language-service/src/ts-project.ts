@@ -17,6 +17,7 @@
 
 import ts from 'typescript';
 import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
+import { StyleIndex } from './style-index.ts';
 
 /** Suffix that marks a synthetic virtual file backing a `.azeroth` module. */
 const VIRTUAL_SUFFIX = '.azeroth.ts';
@@ -137,8 +138,8 @@ export class AzerothProject
 
     /**
      * The consuming project's real `.ts` source files (from the tsconfig).
-     * AzerothJS projects are `.ts` + `.azeroth` (the `.azeroth` language replaces
-     * `.tsx`). The editor doesn't root these - they enter the program on demand
+     * AzerothJS projects are `.ts` + `.azeroth` (markup lives in `.azeroth`, the
+     * framework's own format). The editor doesn't root these - they enter the program on demand
      * via imports - but the combined command-line checker does
      * ({@link rootProjectFiles}), so a `.ts` file importing a `.azeroth`
      * component is type-checked in the SAME program as the `.azeroth` files.
@@ -149,6 +150,9 @@ export class AzerothProject
     private readonly rootProjectFiles: boolean;
 
     private projectVersion = 0;
+
+    /** Workspace CSS class index (for `class="..."` completion/hover/definition), built on first use. */
+    private styleIndex: StyleIndex | null = null;
 
     constructor(
         private readonly currentDirectory: string,
@@ -227,6 +231,21 @@ export class AzerothProject
     }
 
     /**
+     * Sizes of the per-document caches, for leak detection. Every entry here is
+     * keyed by a document/file path, so after a document is closed its entries
+     * must be released - a stress loop of open/close cycles asserts these stay
+     * bounded rather than growing with the number of cycles.
+     */
+    public cacheStats(): { openDocuments: number; virtualCache: number; mtimeCache: number }
+    {
+        return {
+            openDocuments: this.open.size,
+            virtualCache: this.virtualCache.size,
+            mtimeCache: this.mtimeCache.size
+        };
+    }
+
+    /**
      * Re-scans the workspace for `.azeroth` files and bumps the project version
      * so the program picks up files created or deleted since startup. The
      * editor/LSP should call this on a watched-file create/delete; without it a
@@ -236,6 +255,42 @@ export class AzerothProject
     public refreshWorkspace(): void
     {
         this.discovered = this.discoverWorkspace();
+        this.styleIndex?.refresh();
+        this.projectVersion++;
+    }
+
+    /**
+     * The workspace CSS class index, built lazily on first use (so a project
+     * that never writes `class="..."` pays nothing for it) and re-scanned on
+     * {@link refreshWorkspace}. Backs class-name completion, hover, and
+     * go-to-definition in markup.
+     */
+    public getStyleIndex(): StyleIndex
+    {
+        return this.styleIndex ??= new StyleIndex(this.currentDirectory);
+    }
+
+    /**
+     * Re-discovers stylesheet files for the class index without touching the TS
+     * program. Call on a watched stylesheet create/delete; an edit to an existing
+     * file needs no call (the index re-reads it by mtime). No-op until the index
+     * has been built.
+     */
+    public refreshStyles(): void
+    {
+        this.styleIndex?.refresh();
+    }
+
+    /**
+     * Picks up an on-disk CONTENT change to an existing file without re-scanning
+     * the workspace file set. Disk mtimes are memoized per `projectVersion` epoch
+     * (see {@link diskVersion}), so a closed file changed on disk is otherwise
+     * served stale - bumping the version clears that epoch so TypeScript re-stats
+     * and re-reads it. Cheaper than {@link refreshWorkspace} (no `readDirectory`
+     * scan, no style re-discovery), which is only needed when the file SET changes.
+     */
+    public invalidateDiskCache(): void
+    {
         this.projectVersion++;
     }
 
@@ -468,7 +523,7 @@ export class AzerothProject
 
             // Extensionless relative import nothing else resolved (`./x.component`
             // for `x.component.azeroth`) - try the `.azeroth` sibling. Standard
-            // resolution runs first, so a real `.ts`/`.tsx` of the same name wins.
+            // resolution runs first, so a real `.ts` of the same name wins.
             if (!base.resolvedModule && relative && !text.endsWith('.azeroth'))
             {
                 const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }.azeroth`));
@@ -565,7 +620,6 @@ export class AzerothProject
                 allowJs: true,
                 checkJs: false,
                 noEmit: true,
-                jsx: ts.JsxEmit.Preserve,
                 module: options.module ?? ts.ModuleKind.ESNext,
                 target: options.target ?? ts.ScriptTarget.ESNext,
                 moduleResolution: options.moduleResolution ?? ts.ModuleResolutionKind.Bundler,

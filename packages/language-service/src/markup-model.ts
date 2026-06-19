@@ -262,6 +262,10 @@ function localScan(source: string, ltIndex: number, offset: number): PositionCon
         }
         if (ch === '=')
         {
+            // The attribute name is the identifier run just before the `=` (after
+            // any whitespace) - captured so a half-typed `class="…`/`style="…`
+            // still routes to the right value vocabulary before the tag closes.
+            const attribute = attributeNameBefore(source, i);
             i++;
             while (i < offset && isWhitespace(source[i]))
             {
@@ -281,7 +285,7 @@ function localScan(source: string, ltIndex: number, offset: number): PositionCon
                 }
                 if (j >= offset)
                 {
-                    return { kind: 'attributeValue', tag, attribute: '' };
+                    return { kind: 'attributeValue', tag, attribute };
                 }
                 i = j + 1;
                 continue;
@@ -292,6 +296,22 @@ function localScan(source: string, ltIndex: number, offset: number): PositionCon
         i++;
     }
     return { kind: 'attributeName', tag, partial: identifierBefore(source, offset) };
+}
+
+/** The attribute name immediately before `eq` (an `=`), skipping whitespace. */
+function attributeNameBefore(source: string, eq: number): string
+{
+    let end = eq - 1;
+    while (end >= 0 && isWhitespace(source[end]))
+    {
+        end--;
+    }
+    let start = end + 1;
+    while (start > 0 && (isIdentPart(source[start - 1]) || source[start - 1] === '-' || source[start - 1] === ':'))
+    {
+        start--;
+    }
+    return source.slice(start, end + 1);
 }
 
 /** Returns the identifier-ish run ending at `offset` (what the user has typed). */

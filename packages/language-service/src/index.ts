@@ -48,6 +48,8 @@ export {
 
 export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
+export { StyleIndex, type ClassDefinition } from './style-index.ts';
+
 export {
     setEnabled as setMetricsEnabled,
     snapshot as getMetrics,

@@ -1,7 +1,7 @@
 // createForm: reactive form state - per-field signals, sync validation, a
 // submit lifecycle (loading + error), and DOM-friendly registration helpers for
 // <input> elements. Same shape and authoring style as createSignal /
-// createResource: no class hierarchy, no schema layer, no framework-specific JSX.
+// createResource: no class hierarchy, no schema layer, no framework-specific markup.
 //
 // Validation timing: validators run on every value change and on submit.
 // errors() is always live - callers decide when to display errors by combining
