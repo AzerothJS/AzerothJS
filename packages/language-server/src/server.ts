@@ -64,6 +64,7 @@ export interface FeatureToggles
     hover: boolean;
     definition: boolean;
     typeDefinition: boolean;
+    implementation: boolean;
     references: boolean;
     documentHighlight: boolean;
     rename: boolean;
@@ -86,7 +87,7 @@ export interface FeatureToggles
 const ALL_FEATURES_ON: FeatureToggles =
 {
     completion: true, hover: true, definition: true, typeDefinition: true,
-    references: true, documentHighlight: true, rename: true, documentSymbol: true,
+    implementation: true, references: true, documentHighlight: true, rename: true, documentSymbol: true,
     workspaceSymbol: true, signatureHelp: true, semanticTokens: true, codeActions: true,
     folding: true, selectionRange: true, onTypeFormatting: true, linkedEditing: true,
     callHierarchy: true, codeLens: true, documentLinks: true, documentColor: true
@@ -143,6 +144,7 @@ export function parseSettings(cfg: Record<string, unknown> | undefined): Azeroth
             hover: featureOn('hover'),
             definition: featureOn('definition'),
             typeDefinition: featureOn('typeDefinition'),
+            implementation: featureOn('implementation'),
             references: featureOn('references'),
             documentHighlight: featureOn('documentHighlight'),
             rename: featureOn('rename'),
@@ -373,6 +375,7 @@ export function startServer(connection: Connection = createConnection()): void
                 hoverProvider: true,
                 definitionProvider: true,
                 typeDefinitionProvider: true,
+                implementationProvider: true,
                 referencesProvider: true,
                 documentHighlightProvider: true,
                 renameProvider: { prepareProvider: true },
@@ -386,6 +389,7 @@ export function startServer(connection: Connection = createConnection()): void
                     codeActionKinds: ['quickfix', 'refactor']
                 },
                 documentFormattingProvider: true,
+                documentRangeFormattingProvider: true,
                 documentOnTypeFormattingProvider: { firstTriggerCharacter: ';', moreTriggerCharacter: ['}', '\n'] },
                 selectionRangeProvider: true,
                 linkedEditingRangeProvider: true,
@@ -567,6 +571,15 @@ export function startServer(connection: Connection = createConnection()): void
     // completed document; completion and its resolve always pair up per file.
     let lastCompletionUri = '';
 
+    // The service supplies a completion item's `documentation` as a plain string;
+    // render it as markdown so a keyword item's bold heading + fenced `azeroth`
+    // example format in the editor. Plain prose is valid markdown, so items that
+    // were already plain (props, attributes, built-ins) look identical.
+    const markdownDoc = <T extends { documentation?: unknown }>(item: T): T =>
+        typeof item.documentation === 'string'
+            ? { ...item, documentation: { kind: 'markdown', value: item.documentation } } as T
+            : item;
+
     connection.onCompletion((params) =>
     {
         if (!isAzeroth(params.textDocument.uri) || !settings.features.completion)
@@ -574,7 +587,12 @@ export function startServer(connection: Connection = createConnection()): void
             return [];
         }
         lastCompletionUri = params.textDocument.uri;
-        return safe(() => serviceFor(params.textDocument.uri).getCompletions(params.textDocument.uri, params.position, settings.suggest), []);
+        return safe(
+            () => serviceFor(params.textDocument.uri)
+                .getCompletions(params.textDocument.uri, params.position, settings.suggest)
+                .map(markdownDoc),
+            []
+        );
     });
 
     connection.onCompletionResolve((item) =>
@@ -591,7 +609,9 @@ export function startServer(connection: Connection = createConnection()): void
             return {
                 ...item,
                 detail: resolved.detail,
-                documentation: resolved.documentation,
+                documentation: resolved.documentation === undefined
+                    ? undefined
+                    : { kind: 'markdown', value: resolved.documentation },
                 additionalTextEdits: resolved.additionalTextEdits
             };
         }, item);
@@ -623,6 +643,11 @@ export function startServer(connection: Connection = createConnection()): void
     connection.onTypeDefinition((params) =>
         isAzeroth(params.textDocument.uri) && settings.features.typeDefinition
             ? safe(() => serviceFor(params.textDocument.uri).getTypeDefinition(params.textDocument.uri, params.position), [])
+            : []);
+
+    connection.onImplementation((params) =>
+        isAzeroth(params.textDocument.uri) && settings.features.implementation
+            ? safe(() => serviceFor(params.textDocument.uri).getImplementation(params.textDocument.uri, params.position), [])
             : []);
 
     connection.onReferences((params) =>
@@ -687,6 +712,11 @@ export function startServer(connection: Connection = createConnection()): void
     connection.onDocumentFormatting((params) =>
         isAzeroth(params.textDocument.uri) && settings.format.enable
             ? safe(() => serviceFor(params.textDocument.uri).getFormattingEdits(params.textDocument.uri), [])
+            : []);
+
+    connection.onDocumentRangeFormatting((params) =>
+        isAzeroth(params.textDocument.uri) && settings.format.enable
+            ? safe(() => serviceFor(params.textDocument.uri).getRangeFormattingEdits(params.textDocument.uri, params.range), [])
             : []);
 
     connection.languages.inlayHint.on((params) =>

@@ -1,85 +1,39 @@
-// Transition wraps a conditionally-rendered element with CSS-class-driven
-// enter/leave animations. Same swap pattern as Show, but instead of an instant
-// mount/unmount we add transition classes for the browser to animate against,
-// and only remove the element from the DOM after the leave animation finishes.
-//
-// Without Transition: use Show and drive the enter/leave classes and the
-// delayed unmount yourself - the leave animation is the hard part.
-//
-//     el.classList.add('fade-leave-from', 'fade-leave-active');
-//     void el.offsetHeight;                  // force reflow
-//     el.classList.add('fade-leave-to');
-//     el.addEventListener('transitionend', () =>
-//     {
-//         el.remove(); // must defer removal by hand, or the leave never plays
-//     });
-//
-// With Transition: toggle `when` and name the class family.
-//
-//     Transition({
-//         when: isOpen,
-//         name: 'fade',
-//         children: () => h('div', { class: 'modal' }, 'Hi')
-//     }); // sequences enter/leave and defers removal until the leave ends
-//
-// Vue-style 6-class convention: with name: 'fade', these classes are applied
-// during the transition:
-//
-//     `${name}-enter-from`     initial state at enter start
-//     `${name}-enter-active`   present throughout enter
-//     `${name}-enter-to`       final state at enter end
-//     `${name}-leave-from`     initial state at leave start
-//     `${name}-leave-active`   present throughout leave
-//     `${name}-leave-to`       final state at leave end
-//
-//   Pair with CSS like:
-//
-//     .fade-enter-from, .fade-leave-to       { opacity: 0; }
-//     .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
-//     .fade-enter-to, .fade-leave-from       { opacity: 1; }
-//
-// Lifecycle:
-//
-//   Enter (when toggles false -> true):
-//     1. Mount the element, append to container.
-//     2. Add enter-from + enter-active.
-//     3. Force reflow so the browser paints the "from" state.
-//     4. Next animation frame: remove enter-from, add enter-to (the CSS
-//        transition runs).
-//     5. On transitionend (or duration timeout): clear all classes.
-//
-//   Leave (when toggles true -> false):
-//     1. Element is in DOM.
-//     2. Add leave-from + leave-active.
-//     3. Force reflow.
-//     4. Next animation frame: remove leave-from, add leave-to.
-//     5. On transitionend: remove element from DOM, run cleanup.
-//
-// First run has no enter animation, matching Vue's appear: false default - the
-// initial mount is instant so the page doesn't show a wave of fade-ins on load.
-// Animations kick in only when the user actually toggles state.
-//
-// In-flight toggles: v1 queues a single pending change instead of cancelling.
-// If `when` flips during an enter, we let the enter complete and then
-// immediately start the leave. This feels right for most click-twice cases;
-// mid-flight reversal is left for v1.x.
-//
-// Fallback timeout: if the user forgot to define a CSS transition,
-// `transitionend` never fires. We arm a setTimeout for `duration` ms
-// (default 1000) so the state machine can never wedge.
+/**
+ * MODULE: renderer/transition
+ *
+ * <Transition> wraps a conditionally-rendered element with CSS-class-driven enter/leave
+ * animations. Same swap pattern as <Show>, but instead of instant mount/unmount it adds
+ * transition classes for the browser to animate against and removes the element only AFTER the
+ * leave animation finishes - the deferred-removal leave is the part that is hard to do by hand
+ * around Show.
+ *
+ * VUE-STYLE 6-CLASS CONVENTION (with name: 'fade'): `fade-enter-from` / `-enter-active` /
+ * `-enter-to` (enter) and the matching `-leave-*` trio; CSS pairs the from/to states with a
+ * transition on the -active classes.
+ *
+ * LIFECYCLE: enter = mount, add enter-from+active, force reflow, next frame swap to enter-to,
+ * clear classes on transitionend; leave = add leave-from+active, force reflow, next frame swap
+ * to leave-to, remove from DOM on transitionend. The FIRST run mounts INSTANTLY (Vue's
+ * appear:false default) so a page does not fade in a wave on load. A mid-flight toggle queues a
+ * single pending change (v1 does not cancel mid-transition). A transitionend that never fires
+ * (missing CSS transition) is backstopped by a `duration` timeout (default 1000ms) so the state
+ * machine cannot wedge. The phase-machine internals below carry their own comments.
+ */
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
 import { destroyComponent, type CoTarget, createCoMarkers, appendToCo, adoptCoRange } from '@azerothjs/component';
-import { hydrateChild } from './h.ts';
+import { hydrateChild, resolveReactive } from './h.ts';
 
 /**
  * Props for the `<Transition>` component.
  */
 export interface TransitionProps
 {
-    /** Reactive boolean - true to show the element, false to hide. */
-    when: () => boolean;
+    /** Whether to show: a value, or a getter (thunk/signal) for reactivity. The
+     *  compiler emits a getter-object prop; manual callers may pass `() => cond`
+     *  or a signal. `resolveReactive` unwraps it on each read. */
+    when: boolean | (() => boolean);
 
     /** Factory that builds the element when entering. */
     children: () => HTMLElement;
@@ -118,42 +72,63 @@ type Phase = 'idle' | 'entering' | 'leaving';
 const FALLBACK_TIMEOUT_MS = 1000;
 
 /**
- * Renders `children()` only while `when()` returns true, with CSS
- * enter/leave animations driven by the `name` prop.
+ * Transition
  *
- * Skip the `name` prop for an instant swap (the same behaviour as
- * `<Show>` - useful when you want the option of animating without
- * committing to it for every render).
+ * PURPOSE:
+ * Renders children() while `when` is true, animating the element in/out via the CSS class
+ * family derived from `name`, and deferring DOM removal until the leave animation completes.
  *
- * @param props - `{ when, children, name?, duration? }`
+ * WHY IT EXISTS:
+ * The leave animation is the hard part: you must add the leave classes, force a reflow, swap to
+ * the "to" state, and remove the node only on transitionend (with a timeout backstop). Doing
+ * that by hand around <Show> is fiddly and easy to wedge; Transition packages the full
+ * enter/leave state machine.
  *
- * @returns An invisible (`display: contents`) container that owns
- *          the animated child element.
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; an animated control-flow component. Mode-dispatched: client state machine,
+ * static initial content in SSR (no browser to animate against), instant adoption on hydration
+ * (later toggles animate).
  *
+ * INPUT CONTRACT:
+ * - when: boolean or getter (resolveReactive-unwrapped).
+ * - children: thunk building the element to animate.
+ * - name: optional class-family prefix; absent => instant swap (like Show).
+ * - duration: optional transitionend fallback timeout in ms (default 1000).
+ *
+ * OUTPUT CONTRACT:
+ * - Returns an HTMLElement-typed handle (a comment-marker co-range) owning the single animated child.
+ *
+ * WHY THIS DESIGN:
+ * A phase machine (idle/entering/leaving) plus a one-deep pending-toggle queue sequences
+ * enter/leave without overlap; each child mounts in its own createRoot so its effects dispose on
+ * leave; a transitionend listener with a duration timeout guarantees progress even without a
+ * real CSS transition. The first-run instant mount avoids load-time fade waves.
+ *
+ * WHEN TO USE:
+ * For enter/leave animations on a single conditional element (modals, drawers, toasts).
+ *
+ * WHEN NOT TO USE:
+ * For instant show/hide (use {@link Show}). For per-row list animations (v1 animates one child).
+ *
+ * EDGE CASES:
+ * - No `name`: instant swap (Show semantics).
+ * - First mount never animates; rapid toggles coalesce to the latest pending state.
+ * - Missing CSS transition still completes via the duration timeout.
+ *
+ * PERFORMANCE NOTES:
+ * One child at a time; one transitionend listener + timeout per phase; one forced reflow per
+ * enter/leave start (required to commit the from-state before animating).
+ *
+ * DEVELOPER WARNING:
+ * Define the CSS class family (or pass no `name` for instant) - relying on the duration timeout
+ * for every transition makes leaves feel laggy. Mid-flight reversal is queued, not cancelled, in v1.
+ *
+ * @param props - {@link TransitionProps}: `when`, `children`, optional `name`, `duration`.
+ * @returns An HTMLElement-typed handle owning the animated child.
+ * @see {@link Show}
  * @example
- * ```ts
- * const [isOpen, setIsOpen] = createSignal(false);
- *
- * Transition({
- *     when: isOpen,
- *     name: 'fade',
- *     children: () => h('div', { class: 'modal' }, 'Hi!')
- * });
- *
- * // CSS:
- * //   .fade-enter-from, .fade-leave-to    { opacity: 0; }
- * //   .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
- * //   .fade-enter-to, .fade-leave-from    { opacity: 1; }
- * ```
- *
- * @example
- * ```ts
- * // No name prop -> instant swap, identical to <Show>.
- * Transition({
- *     when: isOpen,
- *     children: () => h('p', {}, 'Instantly visible')
- * });
- * ```
+ * Transition({ when: isOpen, name: 'fade', children: () => h('div', { class: 'modal' }, 'Hi') });
+ * // CSS: .fade-enter-from,.fade-leave-to{opacity:0} .fade-enter-active,.fade-leave-active{transition:opacity .3s}
  */
 export function Transition(props: TransitionProps): HTMLElement
 {
@@ -163,7 +138,7 @@ export function Transition(props: TransitionProps): HTMLElement
     // no-enter-animation first mount of the client path.
     if (isStringMode())
     {
-        const inner = untrack(() => props.when()) ? serializeChild(props.children()) : '';
+        const inner = untrack(() => resolveReactive(props.when)) ? serializeChild(props.children()) : '';
         return wrapContentsAnchored('transition', inner) as unknown as HTMLElement;
     }
 
@@ -500,7 +475,7 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     let isFirstRun = true;
     createEffect(() =>
     {
-        const shouldShow = props.when();
+        const shouldShow = resolveReactive(props.when) as boolean;
 
         if (isFirstRun)
         {

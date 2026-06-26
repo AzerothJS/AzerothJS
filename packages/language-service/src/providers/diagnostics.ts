@@ -7,11 +7,13 @@
 //   3. TypeScript's syntactic + semantic diagnostics over the virtual module,
 //      mapped back to original ranges. Diagnostics that land purely in
 //      generated scaffolding are dropped (there is no original code to flag),
-//      so what surfaces are genuine type errors in the user's expressions and
-//      script.
+//      EXCEPT the two the projection deliberately checks there: a non-function
+//      event handler (1360, on the `satisfies` keyword) and a component-tag
+//      props mismatch (on the synthesized call args) - both anchored back to the
+//      markup so the editor flags exactly what the azeroth-tsc gate flags.
 
 import ts from 'typescript';
-import { findMarkupStart } from '@azerothjs/compiler';
+import { findMarkupStart, parseModule } from '@azerothjs/compiler';
 import { parseMarkup, CompileError, lintMarkup } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
@@ -19,6 +21,7 @@ import {
     type DiagnosticRelatedInformation,
     type DiagnosticSeverityValue
 } from '../protocol.ts';
+import { keywordOptions } from '../language-data.ts';
 import { resolveLocation, type RequestContext } from '../request.ts';
 
 /** All diagnostics for the document. */
@@ -32,7 +35,97 @@ export function getDiagnostics(ctx: RequestContext): Diagnostic[]
     {
         return errors;
     }
-    return [...warnings, ...typeScriptDiagnostics(ctx)];
+    return [...warnings, ...withOptionDiagnostics(ctx), ...typeScriptDiagnostics(ctx)];
+}
+
+/**
+ * Flags an unknown key inside a keyword's `with { ... }` options clause - e.g. a typo'd or made-up
+ * option. The allowed set comes from the same KEYWORD_OPTIONS registry that completion and hover
+ * use, so adding an option there clears this error too. Only the KEYS are checked (a made-up option
+ * is a real mistake the projection can't catch, since it drops the options object); value types are
+ * the runtime's concern.
+ */
+function withOptionDiagnostics(ctx: RequestContext): Diagnostic[]
+{
+    let module: ReturnType<typeof parseModule>;
+    try
+    {
+        module = parseModule(ctx.source);
+    }
+    catch
+    {
+        return [];
+    }
+
+    const out: Diagnostic[] = [];
+    for (const item of module.items)
+    {
+        if (item.kind !== 'component')
+        {
+            continue;
+        }
+        for (const bodyItem of item.body)
+        {
+            if (!('optionsStart' in bodyItem) || bodyItem.optionsStart === null || bodyItem.optionsEnd === null)
+            {
+                continue;
+            }
+            const allowed = keywordOptions(bodyItem.kind);
+            if (allowed === undefined)
+            {
+                continue;
+            }
+            const allowedNames = new Set(allowed.map(option => option.name));
+            const allowedList = allowed.map(option => option.name).join(', ');
+            for (const key of optionKeys(ctx.source, bodyItem.optionsStart, bodyItem.optionsEnd))
+            {
+                if (!allowedNames.has(key.name))
+                {
+                    out.push({
+                        range: ctx.lineIndex.rangeAt(key.start, key.end),
+                        severity: DiagnosticSeverity.Error,
+                        message: `Unknown option '${ key.name }' for \`${ bodyItem.kind }\`. Allowed: ${ allowedList }.`,
+                        code: 'azeroth/unknown-option',
+                        source: 'azeroth'
+                    });
+                }
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * The top-level keys of the `{ ... }` options object spanning `[start, end)`, with their source spans.
+ * Parses through TypeScript so nested objects, function values, and strings in the option values are
+ * skipped correctly; positions are rebased from the wrapped `({ ... })` parse back onto the source.
+ */
+function optionKeys(source: string, start: number, end: number): { name: string; start: number; end: number }[]
+{
+    const sourceFile = ts.createSourceFile('__opts.ts', `(${ source.slice(start, end) })`, ts.ScriptTarget.Latest, false);
+    const statement = sourceFile.statements[0];
+    if (statement === undefined || !ts.isExpressionStatement(statement) || !ts.isParenthesizedExpression(statement.expression))
+    {
+        return [];
+    }
+    const object = statement.expression.expression;
+    if (!ts.isObjectLiteralExpression(object))
+    {
+        return [];
+    }
+    const keys: { name: string; start: number; end: number }[] = [];
+    for (const property of object.properties)
+    {
+        const nameNode = property.name;
+        if (nameNode === undefined || !ts.isIdentifier(nameNode))
+        {
+            continue;
+        }
+        // Positions are into the wrapping `(` + slice, so drop the leading `(` and rebase to source.
+        const relative = nameNode.getStart(sourceFile) - 1;
+        keys.push({ name: nameNode.text, start: start + relative, end: start + relative + nameNode.text.length });
+    }
+    return keys;
 }
 
 /**
@@ -98,6 +191,27 @@ function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
     {
         if (diag.start === undefined || diag.length === undefined)
         {
+            continue;
+        }
+        // A handler `satisfies AzerothHandler<...>` failure (TS 1360 - the only `satisfies` the
+        // projection emits) is reported on the generated `satisfies` keyword, which is scaffolding.
+        // Anchor it to the handler value segment and present it as a handler error, so a
+        // non-function `onClick={...}` surfaces in the editor exactly as the azeroth-tsc gate
+        // reports it - otherwise the editor stays silent while CI fails.
+        if (diag.code === 1360)
+        {
+            const handler = ctx.virtual.mapping.segmentAt(diag.start)
+                ?? ctx.virtual.mapping.nearestSegmentBefore(diag.start);
+            if (handler !== null)
+            {
+                out.push(withRelated(ctx, diag, {
+                    range: ctx.lineIndex.rangeAt(handler.sourceStart, handler.sourceEnd),
+                    severity: categoryToSeverity(diag.category),
+                    message: 'Event handler must be a function: ' + ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
+                    code: diag.code,
+                    source: 'azeroth-ts'
+                }));
+            }
             continue;
         }
         const mapped = ctx.virtual.mapping.toOriginalRange(diag.start, diag.start + diag.length);

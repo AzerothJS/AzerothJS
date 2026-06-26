@@ -1,48 +1,78 @@
-// hydrate() brings server-rendered markup to life without recreating it. It
-// runs the component in 'hydrate' mode (so h()/control-flow return adoption
-// descriptors instead of building DOM), then walks the resulting descriptor
-// tree against the existing DOM in `container`, attaching event listeners and
-// reactive effects onto the live nodes.
-//
-//   // server: const html = renderToString(() => App({}));
-//   // client:
-//   hydrate(() => App({}), document.getElementById('app')!);
-//
-// If the server and client trees diverge (a structural mismatch), hydration
-// throws internally and falls back to a full client render() - so the app
-// always boots, even when SSR/CSR disagree.
-//
-// Without hydrate: render() into the SSR container.
-//
-//     const container = document.getElementById('app')!;
-//     render(() => App({}), container);
-//     // clears the server markup and rebuilds the tree: a flash, and any
-//     // focus/scroll/input state the user already had is lost
-//
-// With hydrate: adopt the existing markup in place.
-//
-//     const container = document.getElementById('app')!;
-//     hydrate(() => App({}), container);
-//     // keeps the server DOM, only attaching listeners and reactive effects
+/**
+ * MODULE: renderer/hydrate
+ *
+ * hydrate() brings server-rendered markup to life WITHOUT recreating it. It runs the
+ * component in 'hydrate' mode (so h()/control-flow return adoption descriptors instead of
+ * building DOM), then walks the descriptor tree against the existing DOM in `container`,
+ * attaching event listeners and reactive effects onto the live nodes. If the server and
+ * client trees diverge, it throws internally and falls back to a full client render() - so
+ * the app always boots. render()-ing into an SSR container instead would clear the markup
+ * and rebuild (a flash, and lost focus/scroll/input state).
+ */
 
 import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
 
 /**
- * Hydrates a server-rendered tree in `container`, adopting its existing DOM.
+ * hydrate
  *
- * Unlike {@link render}, this does NOT clear the container or append new
- * nodes - it claims the markup already there. A previous mount on the same
- * container (from render() or hydrate()) is disposed first.
+ * PURPOSE:
+ * Adopts the server-rendered DOM in `container`, wiring listeners and reactive effects onto
+ * the existing nodes instead of clearing and rebuilding them.
  *
- * @param component - A thunk that builds the root element (same as render's)
- * @param container - The DOM element holding the server-rendered markup
+ * WHY IT EXISTS:
+ * SSR ships HTML the user already sees; re-rendering it on the client would flash and
+ * discard DOM state. Hydration must instead claim those nodes top-down and attach behavior -
+ * which the inside-out evaluation of h() cannot do directly, hence the descriptor-tree
+ * approach this function drives.
  *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; the client entry point for server-rendered pages. Runs the tree in
+ * runInMode('hydrate'), so the same component code produces adoption descriptors that walk
+ * the server DOM via a HydrationCursor.
+ *
+ * INPUT CONTRACT:
+ * - component: the same thunk used for {@link render}; in hydrate mode it returns a
+ *   descriptor tree, not real DOM.
+ * - container: the element holding the server-rendered markup.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns void. On success the existing DOM is adopted and live; on a structural mismatch
+ *   it disposes the partial mount and falls back to {@link render} (clean client render).
+ *
+ * WHY THIS DESIGN:
+ * Wrapping the walk in createRoot gives the adopted tree the same disposal scope render()
+ * provides. The mismatch -> full-render fallback guarantees the app boots even when SSR and
+ * CSR disagree; the cursor's assertExhausted catches "server rendered more than expected".
+ *
+ * WHEN TO USE:
+ * On the client, once, to revive a page rendered by renderToString/renderToDocument.
+ *
+ * WHEN NOT TO USE:
+ * For a purely client-rendered app (use {@link render}). Do not call it on a container whose
+ * markup was not produced by this framework's SSR (it will mismatch and fall back).
+ *
+ * EDGE CASES:
+ * - Root component not producing a hydratable node, or any structural mismatch, triggers a
+ *   dev warning and a clean render() fallback.
+ * - A previous mount on the same container (from render or hydrate) is disposed first.
+ *
+ * PERFORMANCE NOTES:
+ * No DOM construction on the happy path - only listener/effect attachment over existing
+ * nodes. The fallback path pays for a full client render only when SSR/CSR diverged.
+ *
+ * DEVELOPER WARNING:
+ * The client tree must match the server output structurally; a mismatch silently degrades to
+ * a full re-render (losing the no-flash benefit). Keep SSR and CSR rendering the same tree
+ * for the same inputs.
+ *
+ * @param component - A thunk that builds the root element (same as render's).
+ * @param container - The element holding the server-rendered markup.
+ * @returns void
+ * @see {@link render}
  * @example
- * ```ts
  * hydrate(() => App({}), document.getElementById('app')!);
- * ```
  */
 export function hydrate(component: () => HTMLElement, container: HTMLElement): void
 {
@@ -69,7 +99,9 @@ export function hydrate(component: () => HTMLElement, container: HTMLElement): v
                     throw new HydrationMismatchError('root component did not produce a hydratable node');
                 }
 
-                root.hydrate(new HydrationCursor(container));
+                const cursor = new HydrationCursor(container);
+                root.hydrate(cursor);
+                cursor.assertExhausted('root container');
             });
         });
     }
@@ -80,10 +112,9 @@ export function hydrate(component: () => HTMLElement, container: HTMLElement): v
             throw error;
         }
 
-        // Structural mismatch: dev-warn and fall back to a clean client render
-        // so the app boots regardless. Dispose the partial hydrate root first;
-        // render() then clears the container and mounts fresh. Read NODE_ENV
-        // off globalThis so this needs no Node type dependency.
+        // Structural mismatch: dev-warn and fall back to a clean client render so the app
+        // boots regardless. Dispose the partial hydrate root first; render() then clears the
+        // container and mounts fresh. Read NODE_ENV off globalThis (no Node type dependency).
         const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
         if (!proc || proc.env?.NODE_ENV !== 'production')
         {

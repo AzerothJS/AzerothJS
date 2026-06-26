@@ -1,2 +1,0 @@
-import Modal from './modal.component.azeroth';
-export const good = <Modal title="hi" open={() => true} />;

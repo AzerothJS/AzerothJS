@@ -1,61 +1,85 @@
-// on() creates an effect that explicitly declares which signals it depends on
-// instead of auto-tracking. A plain createEffect subscribes to everything it
-// reads; on([a, b], ...) subscribes only to a and b, so the callback can read
-// other signals freely without subscribing to them.
-//
-// The callback also receives the previous values alongside the current ones,
-// which is handy for reacting to a specific change rather than just its
-// occurrence.
+/**
+ * MODULE: reactivity/on
+ *
+ * on() builds an effect with an EXPLICIT dependency list instead of automatic
+ * tracking. A plain createEffect subscribes to every source it reads; on([a, b], fn)
+ * subscribes only to a and b, leaving the callback free to read other sources without
+ * subscribing to them. The callback also receives the previous values alongside the
+ * current ones, so it can react to a specific transition rather than mere occurrence.
+ */
 
 import type { Getter, DisposeFn } from './types.ts';
-import { createEffect } from './effect.ts';
+import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
+import { assertFunction, describeArg } from './validate.ts';
 
 /**
- * Creates an effect with explicit dependency tracking. Only the signals in
- * `deps` are watched; all other signal reads inside the callback are
- * untracked. The callback receives the current values and the previous ones.
+ * on
  *
- * @typeParam T - Tuple type of the dependency getters
+ * PURPOSE:
+ * Creates an effect that watches exactly the getters in `deps`. When any of them
+ * changes, `fn` runs with the current values and the previous values; every other
+ * reactive read inside `fn` is untracked.
  *
- * @param deps - The signal getters to watch
- * @param fn - Runs when any dep changes, with current and previous values
- * @param options - Set `defer: true` to skip the initial run
+ * WHY IT EXISTS:
+ * Automatic tracking is the right default, but two needs fall outside it: watching a
+ * precise set of sources while reading others incidentally, and seeing the prior
+ * value of a source (auto-tracking gives neither). on() provides both without the
+ * caller hand-rolling untrack() around every incidental read.
  *
- * @returns A dispose function to stop watching
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, reactivity stage. A thin, explicit-dependency wrapper over createEffect;
+ * not produced by the compiler directly - it is an authoring convenience.
  *
- * Why: a plain effect subscribes to everything it reads and has no handle on
- * the prior value.
+ * INPUT CONTRACT:
+ * - deps: a tuple of getters; only these are subscribed (read each run to track them).
+ * - fn: receives (values, prevValues) as tuples parallel to deps. prevValues entries
+ *   are `V | undefined` because the first run has no prior value.
+ * - options.defer: when true, the initial run only records baseline values and does
+ *   not call fn; fn first runs on the next change.
  *
- * Without on: every read inside the body becomes a dependency:
+ * OUTPUT CONTRACT:
+ * - Returns the underlying effect's dispose function.
  *
- *     createEffect(() =>
- *     {
- *         log(count(), other()); // now re-runs when other() changes too
- *     });
+ * WHY THIS DESIGN:
+ * deps are read at the top of the effect (that read IS the subscription), then fn runs
+ * inside untrack() so its own reads add no further dependencies. Previous values are
+ * carried in a closure and rotated each run; typing them `V | undefined` forces
+ * callers to handle the first-run case rather than crashing on `prev.x`.
  *
- * With on: only the listed deps are watched, and you get the previous value:
+ * WHEN TO USE:
+ * When an effect should fire on a specific set of sources, or needs the prior value of
+ * a source to compute a delta/transition.
  *
- *     on([count], ([cur], [prev]) =>
- *     {
- *         log(cur, prev, other()); // other() read is untracked, no subscribe
- *     });
+ * WHEN NOT TO USE:
+ * When ordinary auto-tracking is sufficient - a plain createEffect is simpler and has
+ * no closure overhead for previous values.
  *
+ * EDGE CASES:
+ * - With `defer: true` the first invocation of fn already has genuine previous values,
+ *   but the type stays `V | undefined` to remain conservative.
+ * - Reading a dep conditionally inside fn does not change what is watched; the watched
+ *   set is fixed by `deps`, which is always read in full at the top.
+ *
+ * PERFORMANCE NOTES:
+ * One array allocation per run for the current values (and the previous-value rotation).
+ * Subscriptions are limited to `deps`, so unrelated source churn never re-runs it.
+ *
+ * DEVELOPER WARNING:
+ * Only `deps` are tracked - if fn relies on a source not listed in deps, it will read a
+ * stale value and never re-run for it. Dispose it like any effect to avoid leaks.
+ *
+ * @typeParam T - Tuple type of the dependency getters.
+ * @param deps - The getters to watch.
+ * @param fn - Runs on any dep change, receiving current and previous value tuples.
+ * @param options - Set `defer: true` to skip the initial run.
+ * @returns A dispose function that stops watching.
+ * @see {@link createEffect}
+ * @see {@link untrack}
  * @example
- * ```ts
  * const [count, setCount] = createSignal(0);
- *
- * on([count], ([current], [prev]) =>
- * {
- *     console.log(`Count: ${ prev } -> ${ current }`);
- * });
- * ```
- *
- * @example
- * ```ts
- * // defer: nothing fires until a dep actually changes
- * on([count], ([val]) => console.log('Changed to:', val), { defer: true });
- * ```
+ * on([count], ([cur], [prev]) => console.log(`${ prev } -> ${ cur }`));
+ * on([count], ([v]) => console.log('changed to', v), { defer: true });
  */
 export function on<T extends readonly Getter<unknown>[]>(
     deps: [...T],
@@ -66,13 +90,19 @@ export function on<T extends readonly Getter<unknown>[]>(
     options?: { defer?: boolean }
 ): DisposeFn
 {
+    if (!Array.isArray(deps))
+    {
+        throw new TypeError(
+            `on() expects an array of dependency getters as its first argument, received ${ describeArg(deps) }. ` +
+            'Wrap a single source too: on([count], ...).'
+        );
+    }
+    assertFunction(fn, 'on', 'Pass the callback as a function: on([dep], (values, prev) => { ... }).');
+
     type Values = { [K in keyof T]: T[K] extends Getter<infer V> ? V : never };
 
-    // Previous values are `undefined` on the first callback run (there is no
-    // prior value yet), so they are typed `V | undefined`, forcing callers to
-    // handle the first-run case instead of crashing on `prev.something`. With
-    // `defer: true` the first real callback already has a genuine previous
-    // value, but the type stays conservative.
+    // Previous values are undefined on the first run (no prior value yet), so they are
+    // typed `V | undefined` to force callers to handle that case.
     type PrevValues = { [K in keyof T]: T[K] extends Getter<infer V> ? V | undefined : never };
 
     let prevValues: PrevValues = deps.map(() => undefined) as unknown as PrevValues;
@@ -93,8 +123,7 @@ export function on<T extends readonly Getter<unknown>[]>(
         const prev = prevValues;
         prevValues = currentValues;
 
-        // Run the callback untracked so its own signal reads don't add
-        // subscriptions beyond the declared deps.
+        // Run the callback untracked so its own reads add no subscriptions beyond deps.
         untrack(() =>
         {
             fn(currentValues, prev);

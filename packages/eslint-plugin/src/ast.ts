@@ -108,7 +108,7 @@ export function collectSignalPair(declarator: AstNode, pairs: SignalPairs): void
     const elements = id.elements as (AstNode | null)[];
     const getter = elements[0];
     const setter = elements[1];
-    if (getter !== null && setter !== null && isIdentifier(getter ?? undefined) && isIdentifier(setter ?? undefined))
+    if (getter !== null && setter !== null && isIdentifier(getter) && isIdentifier(setter))
     {
         pairs.getterOf.set((setter as IdentifierNode).name, (getter as IdentifierNode).name);
         pairs.getters.add((getter as IdentifierNode).name);

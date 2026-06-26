@@ -1,109 +1,118 @@
-// createSelector() creates a reactive selection checker optimized for large
-// lists. When the selection changes, instead of re-running every item's
-// effect, only two are notified: the previously selected item (now
-// deselected) and the newly selected one.
-//
-// The naive approach has each list item subscribe to the selection signal and
-// compare against its own id; changing the selection then re-runs all N item
-// effects. createSelector turns that O(n) change into O(1).
-//
-// It keeps a Map of key -> producer node. Calling isSelected(key) inside an
-// effect links that effect to that specific key's producer (not the source
-// signal). When the source changes, only the subscribers under the old key
-// and the new key are notified; every other key is left untouched. A key's
-// producer removes itself from the map when its last subscriber unlinks.
+/**
+ * MODULE: reactivity/create-selector
+ *
+ * createSelector() is a selection-tracking primitive tuned for large lists. The naive
+ * approach has every row subscribe to a shared "selected key" signal and compare
+ * against its own id, so one selection change re-runs all N row effects. A selector
+ * turns that O(n) into O(1): it keeps a Map of key -> producer, and isSelected(key)
+ * subscribes the calling effect to THAT key's producer (not the source). When the
+ * selection moves, only the old key's and new key's subscribers are notified; every
+ * other key is untouched. A key's producer removes itself from the Map when its last
+ * subscriber unlinks, so the Map cannot grow unbounded.
+ */
 
-import type { Getter, Producer } from './types.ts';
+import type { Getter, Producer, SelectorOptions } from './types.ts';
 import { currentSubscriber, createProducer, track, notify } from './graph.ts';
-import { createEffect } from './effect.ts';
+import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 
 /**
- * Creates a reactive selector for tracking which item in a list is selected.
- * Returns `isSelected(key)`, which reactively checks whether `key` matches the
- * current source value. On a selection change only the effects checking the
- * old and new keys re-run; all others are skipped - an O(1) change versus the
- * O(n) of a naive signal comparison.
+ * createSelector
  *
- * @typeParam T - The type of the selection key (string, number, etc.)
+ * PURPOSE:
+ * Given a source getter of the currently selected key, returns isSelected(key): a
+ * reactive predicate that is true when key is selected and, when read inside an
+ * effect, subscribes that effect only to that key's selection state.
  *
- * @param source - A signal getter returning the currently selected key
- * @param equals - Custom key equality. Defaults to `Object.is`.
+ * WHY IT EXISTS:
+ * Per-row subscription to a shared selection signal makes selection changes O(n) in the
+ * list length - every row re-runs even though only two changed appearance. For long
+ * lists that dominates interaction cost. The selector localizes the dependency to a
+ * per-key producer so a change re-runs exactly the two affected rows.
  *
- * @returns `(key: T) => boolean`, reactively true when `key` is selected
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, reactivity stage; a list-rendering performance primitive. Used by row
+ * effects in large collections (tables, virtualized lists).
  *
- * Why: if every row subscribes to the selection signal, one selection change
- * re-runs all N rows even though only two visibly changed.
+ * INPUT CONTRACT:
+ * - source: getter returning the current selected key.
+ * - equals: key comparator, defaults to Object.is.
  *
- * Without createSelector: each row reads the shared signal directly:
+ * OUTPUT CONTRACT:
+ * - Returns (key) => boolean. Called inside an effect it subscribes that effect to
+ *   `key`'s producer; called outside any effect it just compares (no subscription).
  *
- *     createEffect(() =>
- *     {
- *         el.classList.toggle('selected', selectedId() === id);
- *     }); // changing selectedId() re-runs this for all N rows
+ * WHY THIS DESIGN:
+ * Interposing one producer per observed key (created lazily on first isSelected(key)
+ * inside an effect, dropped when its last subscriber leaves) is what makes the change
+ * notification touch only the old and new keys. The internal effect bumps each
+ * affected producer's version before notify so dependent effects, which validate
+ * versions before re-running, do not skip the change.
  *
- * With createSelector: a row subscribes to its own key, not the source:
+ * WHEN TO USE:
+ * For "is this item the selected/active/hovered one" across many items, where a
+ * selection change should repaint only the two affected items.
  *
- *     const isSelected = createSelector(selectedId);
- *     createEffect(() =>
- *     {
- *         el.classList.toggle('selected', isSelected(id));
- *     }); // a change re-runs only the old and new rows, O(1)
+ * WHEN NOT TO USE:
+ * For a handful of items (a plain signal comparison is simpler and the O(n) cost is
+ * negligible). Not for multi-select sets - this models a single current key.
  *
+ * EDGE CASES:
+ * - isSelected(key) read outside an effect returns the current boolean but creates no
+ *   producer and no subscription.
+ * - A key's producer is removed when its last subscriber unlinks, so re-selecting a key
+ *   later lazily recreates it.
+ *
+ * PERFORMANCE NOTES:
+ * Selection change is O(1) in list size (two producers notified). Memory is one
+ * producer per key currently observed by a live effect, reclaimed on unsubscribe.
+ *
+ * DEVELOPER WARNING:
+ * The boolean is only reactive when isSelected is read INSIDE an effect; reading it in
+ * plain code gives a one-shot value that will not update.
+ *
+ * @typeParam T - The selection key type.
+ * @param source - Getter returning the currently selected key.
+ * @param equals - Key equality; defaults to Object.is.
+ * @returns A reactive predicate (key) => boolean.
+ * @see {@link createSignal}
+ * @see {@link createEffect}
  * @example
- * ```ts
  * const [selectedId, setSelectedId] = createSignal(1);
  * const isSelected = createSelector(selectedId);
- *
- * isSelected(1);  // true
- * isSelected(2);  // false
- *
- * setSelectedId(2);
- * isSelected(1);  // false
- * isSelected(2);  // true
- * ```
+ * createEffect(() => el.classList.toggle('selected', isSelected(id)));
+ * setSelectedId(2); // only the old (1) and new (2) row effects re-run
  *
  * @example
- * ```ts
- * // Only the affected items re-render
- * items.forEach(item =>
- * {
- *     createEffect(() =>
- *     {
- *         el.classList.toggle('selected', isSelected(item.id));
- *     });
- * });
- *
- * setSelected('item-5');
- * // Only item-1 (deselected) and item-5 (selected) effects re-run
- * ```
+ * // Custom equality (same `{ equals }` shape as createSignal / createMemo):
+ * const isSelected = createSelector(selected, { equals: (a, b) => a.id === b.id });
  */
 export function createSelector<T>(
     source: Getter<T>,
-    equals: (a: T, b: T) => boolean = Object.is
+    options: SelectorOptions<T> = {}
 ): (key: T) => boolean
 {
+    const equals = options.equals ?? Object.is;
+
     // key -> a producer holding the effects that called isSelected(key).
     const keyProducers = new Map<T, Producer>();
 
     // The current selected value, updated by the internal effect below.
     let currentValue: T = untrack(() => source());
 
-    // Re-runs every effect registered under one key.
+    // Re-run every effect registered under one key. The selection flip IS the value
+    // change, so the version must advance or version-validating effects would skip it.
     function notifyKey(key: T): void
     {
         const producer = keyProducers.get(key);
         if (producer)
         {
-            // The key's selection state flipped - that IS the value change.
-            // Effects validate dependency versions before re-running, so the
-            // version must advance or they would skip the notification.
             producer.version++;
             notify(producer);
         }
     }
 
-    // Watch the source. On a change, notify only the old and new keys.
+    // Watch the source; on a change, notify only the old and new keys.
     createEffect(() =>
     {
         const newValue = source();
@@ -121,9 +130,8 @@ export function createSelector<T>(
         }
     });
 
-    // The selector. Called inside an effect, it subscribes that effect to this
-    // specific key (not the source signal), so it re-runs only when this key's
-    // selection state flips.
+    // Called inside an effect, subscribe that effect to this key's producer (not the
+    // source), so it re-runs only when this key's selection state flips.
     return function isSelected(key: T): boolean
     {
         if (currentSubscriber !== null && !currentSubscriber.isDisposed)

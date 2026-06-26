@@ -1,22 +1,26 @@
-// Built-in field validators: factories that match the shape createForm's
-// `validate` option expects. Each returns a FieldValidator<V> to drop into the
-// per-field validator map, optionally chained with combine.
-//
-// Skip-empty convention: every validator except required silently passes on
-// empty values ('', null, undefined). This makes combine(required(), email())
-// produce the right errors - empty input yields 'Email is required' (from
-// required), 'bad-input' yields 'Invalid email address' (from email). Without
-// the skip, an empty input would yield "Invalid email" before the user typed
-// anything. Matches Zod / Yup / react-hook-form, so it's already familiar.
-//
-// Contravariance: required() is typed as FieldValidator<unknown>. TypeScript's
-// contravariance for function parameters makes that assignable to any narrower
-// FieldValidator<V> slot, so combine(required(), email()) infers V = string
-// (what the email field expects) with no casts.
-//
-// Not in v1: async validators (wait for the async-validation contract),
-// cross-field validation (wait for a top-level validateForm), and i18n message
-// bundles (the per-call message override covers the common case).
+/**
+ * MODULE: form/validators
+ *
+ * Built-in field validators: factories that match the shape createForm's `validate` option expects.
+ * Each returns a FieldValidator<V> (value -> error message | null) to drop into the per-field
+ * validator map, optionally chained with combine(). Every factory takes an optional `message` to
+ * override its default text - the common i18n need without a message-bundle layer.
+ *
+ * SKIP-EMPTY CONVENTION: every validator EXCEPT required() silently passes on empty values ('', null,
+ * undefined). This makes combine(required(), email()) produce the right errors in order - empty input
+ * yields 'This field is required' (from required), 'bad-input' yields 'Invalid email address' (from
+ * email). Without the skip, an empty input would show "Invalid email" before the user typed anything.
+ * Matches Zod / Yup / react-hook-form, so it's already familiar.
+ *
+ * CONTRAVARIANCE: required() is typed FieldValidator<unknown>. TypeScript's parameter contravariance
+ * makes that assignable to any narrower FieldValidator<V> slot, so combine(required(), email()) infers
+ * V = string (what the email field expects) with no casts. combine() narrows to the strictest member.
+ *
+ * NOT IN V1: async validators (await the async-validation contract), cross-field validation (await a
+ * top-level validateForm), and i18n message bundles (the per-call message override covers the common
+ * case). Each public factory below carries its own concise JSDoc + example; isEmpty/EMAIL_REGEX are
+ * @internal.
+ */
 
 import type { FieldValidator } from './create-form.ts';
 
@@ -38,7 +42,7 @@ import type { FieldValidator } from './create-form.ts';
  *
  * @internal
  */
-function isEmpty(value: unknown): boolean
+export function isEmpty(value: unknown): boolean
 {
     if (value === null || value === undefined)
     {

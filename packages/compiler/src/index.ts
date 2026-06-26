@@ -1,21 +1,27 @@
-// @azerothjs/compiler
-//
-// Compiles `.azeroth` files - JS/TS modules written with AzerothJS markup -
-// into plain modules that call the runtime's h() hyperscript with fine-grained
-// reactive bindings. For example
-// `<h1>Count: {count()}</h1>` becomes `h('h1', {}, 'Count: ', () => (count()))`.
-//
-// The pipeline, in the order it runs (and a good order to read it in):
-//   scanner  - finds markup regions inside arbitrary JS, skipping
-//              strings/templates/comments/regex and detecting expression
-//              position
-//   parser   - markup region -> AST
-//   codegen  - AST -> h()/component-call source, with reactive wrapping
-//   compile  - orchestrates scan -> parse -> codegen -> splice
+/**
+ * MODULE: @azerothjs/compiler - public API
+ *
+ * Compiles `.azeroth` files - JS/TS modules written with `component` syntax and AzerothJS markup -
+ * into plain modules that call the runtime with fine-grained reactive bindings, e.g.
+ * `<h1>Count: {count()}</h1>` becomes a mode-dispatched body (clone in the DOM, serialize for SSR,
+ * adopt on hydrate) over ONE IR.
+ *
+ * The component pipeline, in run order (and a good reading order):
+ *   parser   - `.azeroth` source -> module AST (opaque regions + component declarations)
+ *   analyze  - per component, the reactive sources and each scope's dependency set
+ *   lower    - markup AST + analysis -> the target-independent Render Plan IR
+ *   optimize - IR -> IR passes (constant folding)
+ *   codegen  - IR -> JS via ONE emitter (generateModule), with the R2 reactive rewrite
+ * Most apps never call these directly: the supported entry is the Vite plugin {@link azeroth}, which
+ * runs the whole pipeline plus lint + diagnostics + source-map chaining.
+ *
+ * The scanner/markup-parser/lint utilities are the lower-level markup-region building blocks, exported
+ * for tooling. `.azeroth` is component-only.
+ * Every symbol below is documented at its definition.
+ */
 
-export { compile, type CompileResult, type CompileOptions } from './compile.ts';
 export { lintMarkup, lintSource, type LintWarning } from './lint.ts';
-export { CompileError, parseMarkup } from './parser.ts';
+export { CompileError, parseMarkup } from './markup-parser.ts';
 export {
     findMarkupStart,
     isWhitespace,
@@ -28,8 +34,26 @@ export {
     skipBlockComment,
     skipRegex
 } from './scanner.ts';
-export { generate, generateDomRegion, walkComponentTags, type ExpressionCompiler, type DomRegion } from './codegen.ts';
+export { walkComponentTags } from './markup-util.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
+
+// The component pipeline: the parser/analysis/codegen for `component` syntax.
+export { parseModule } from './parser.ts';
+export type { Module, ModuleItem, OpaqueRegion, ComponentDecl } from './ast.ts';
+// NOTE: this pipeline (and `diagnoseModule`) pulls the TypeScript-backed analysis
+// into this index; the compiler requires `typescript` as a peer dep.
+export { diagnoseModule, diagnoseUnusedImports, type AzerothDiagnostic } from './diagnostics.ts';
+// The TypeScript-program-backed type checker. The Vite plugin runs it as the build-blocking gate by
+// default (a non-function handler or a wrong/missing component prop fails the build); createIncrementalChecker
+// is the incremental form that binds the lib once and is reused across every file in a build.
+export { typeCheckModuleTS, createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
+// Emits a `.d.ts` for an `.azeroth` module so plain TypeScript (`tsc` and editors) can resolve and
+// type-check `.azeroth` imports from `.ts` files.
+export { emitDeclarations } from './declarations.ts';
+// THE single Azeroth -> TypeScript projection. Every tool (type checker, language service, TS plugin,
+// ESLint processor, declaration emitter) lowers `.azeroth` to TypeScript through this one function.
+export { generateVirtualCode, BUILTIN_COMPONENTS, type VirtualCode } from './project.ts';
+export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 export {
     vlqEncode,
     buildLineStarts,
@@ -47,6 +71,5 @@ export type {
     MarkupExpression,
     MarkupChild,
     MarkupAttribute,
-    MarkupAttributeValue,
-    MarkupRegion
+    MarkupAttributeValue
 } from './types.ts';

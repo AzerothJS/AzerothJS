@@ -1,6 +1,7 @@
 {
     "name": "@azerothjs/form",
     "version": "0.6.0-beta.1",
+    "engines": { "node": ">=20" },
     "description": "AzerothJS forms — reactive validation, submit lifecycle, and per-field state",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,6 +23,8 @@
     "sideEffects": false,
     "scripts":
     {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
@@ -43,12 +46,12 @@
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/form"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/form",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/form",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

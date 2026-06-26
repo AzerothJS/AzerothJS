@@ -1,0 +1,57 @@
+name: Release
+
+# Fires when the release script pushes a version tag (e.g. v0.7.0-beta.1). This
+# workflow does NOT publish to npm - that stays in scripts/release.mjs, which
+# handles the lockstep bump, dist-tags, and 2FA locally. Its job is to (1) prove
+# the tagged commit builds and its tests pass on a clean checkout, and (2) create
+# a GitHub Release with auto-generated, categorised notes (see .github/release.yml).
+on:
+    push:
+        tags:
+            - 'v*'
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        name: Verify tag and publish GitHub Release
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+                with:
+                    fetch-depth: 0
+
+            -   uses: actions/setup-node@v4
+                with:
+                    node-version: 20
+                    cache: npm
+
+            -   run: npm ci
+
+            # The tag must build and pass the full gate on a clean machine, not just
+            # on the maintainer's box.
+            -   run: npm run lint
+            -   run: npm run build
+            -   run: npm test
+            -   run: npm run leak
+
+            -   name: Create GitHub Release
+                env:
+                    GH_TOKEN: ${{ github.token }}
+                    TAG: ${{ github.ref_name }}
+                shell: bash
+                run: |
+                    # A tag containing a hyphen is a prerelease (v0.7.0-beta.1); a bare
+                    # version (v1.0.0) is a stable release.
+                    prerelease=""
+                    case "$TAG" in
+                      *-*) prerelease="--prerelease" ;;
+                    esac
+                    # Idempotent: if a release already exists for this tag (e.g. the tag was
+                    # re-pushed), skip rather than fail the run.
+                    if gh release view "$TAG" >/dev/null 2>&1; then
+                      echo "Release $TAG already exists - skipping."
+                    else
+                      gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag $prerelease
+                    fi

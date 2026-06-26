@@ -1,0 +1,42 @@
+name: CodeQL
+
+on:
+    push:
+        branches: [ main ]
+    pull_request:
+        branches: [ main ]
+    schedule:
+        # Weekly, so newly published CodeQL queries catch issues even on weeks with
+        # no commits. Monday 07:00 UTC.
+        -   cron: '0 7 * * 1'
+
+# CodeQL needs to read the code and write its findings to the Security tab.
+permissions:
+    contents: read
+    security-events: write
+
+concurrency:
+    group: codeql-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    analyze:
+        name: Analyze (JavaScript/TypeScript)
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+
+            -   name: Initialize CodeQL
+                uses: github/codeql-action/init@v3
+                with:
+                    languages: javascript-typescript
+                    # security-and-quality adds maintainability/correctness queries on top
+                    # of the default security set - useful for a parser/compiler that runs
+                    # over untrusted source text.
+                    queries: security-and-quality
+
+            -   name: Autobuild
+                uses: github/codeql-action/autobuild@v3
+
+            -   name: Perform CodeQL analysis
+                uses: github/codeql-action/analyze@v3

@@ -84,5 +84,14 @@ export default defineConfig([
         {
             '@typescript-eslint/explicit-function-return-type': 'off'
         }
+    },
+    {
+        // Test files are not consumed as a typed API surface, so explicit return types on their
+        // helper functions add ceremony without value (the assertions check behaviour, not signatures).
+        files: ['**/*.spec.ts', '**/tests/**/*.ts'],
+        rules:
+        {
+            '@typescript-eslint/explicit-function-return-type': 'off'
+        }
     }
 ]);

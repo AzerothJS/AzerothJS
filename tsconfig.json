@@ -57,22 +57,20 @@
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"
-            ],
-            "@azerothjs/language-service":
-            [
-                "./packages/language-service/src/index.ts"
             ]
         }
     },
     "include":
     [
-        "packages/*/src/**/*",
-        "test/**/*"
+        "packages/*/src/**/*"
     ],
     "exclude":
     [
         "node_modules",
         "dist",
-        "packages/*/dist"
+        "packages/*/dist",
+        // CommonJS tsserver plugin (`export = init`), bundled by its own esbuild
+        // step, not tsc - it cannot be type-checked under `module: ESNext`.
+        "packages/typescript-plugin"
     ]
 }

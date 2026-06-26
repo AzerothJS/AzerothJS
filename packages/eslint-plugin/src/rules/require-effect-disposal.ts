@@ -8,7 +8,8 @@
 import type { Rule } from 'eslint';
 import { type AstNode, isCallTo } from '../ast.ts';
 
-export const requireEffectDisposal: Rule.RuleModule = {
+export const requireEffectDisposal: Rule.RuleModule =
+{
     meta:
     {
         type: 'problem',

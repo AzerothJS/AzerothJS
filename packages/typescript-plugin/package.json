@@ -2,6 +2,7 @@
     "name": "@azerothjs/typescript-plugin",
     "version": "0.6.0-beta.1",
     "description": "AzerothJS TypeScript language-service plugin — resolves .azeroth imports with real types in tsserver/editors",
+    "type": "commonjs",
     "main": "./dist/index.js",
     "files":
     [
@@ -40,15 +41,16 @@
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
+    "engines": { "node": ">=18" },
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/typescript-plugin"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/typescript-plugin",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/typescript-plugin",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

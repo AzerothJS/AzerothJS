@@ -11,7 +11,7 @@
 // (`<div clas`); when the region under the caret doesn't parse yet, a resilient
 // local scan still classifies it so completion keeps working as you type.
 
-import { findMarkupStart, skipBalanced, isIdentPart, isWhitespace } from '@azerothjs/compiler';
+import { findMarkupStart, skipBalanced, isIdentPart, isWhitespace, parseModule } from '@azerothjs/compiler';
 import { parseMarkup, CompileError } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment, MarkupChild } from '@azerothjs/compiler';
 
@@ -263,7 +263,7 @@ function localScan(source: string, ltIndex: number, offset: number): PositionCon
         if (ch === '=')
         {
             // The attribute name is the identifier run just before the `=` (after
-            // any whitespace) - captured so a half-typed `class="…`/`style="…`
+            // any whitespace) - captured so a half-typed `class="...`/`style="...`
             // still routes to the right value vocabulary before the tag closes.
             const attribute = attributeNameBefore(source, i);
             i++;
@@ -433,6 +433,55 @@ function collectNode(source: string, node: MarkupElement | MarkupFragment, out: 
  * ```ts
  * enclosingElement('const x = <Counter start={0}/>;', 20)?.tag; // 'Counter'
  * ```
+ */
+/**
+ * When `offset` sits inside a `with { ... }` options clause, returns the authoring keyword that owns
+ * it (`state` | `derived` | `deferred` | `effect` | `watch` | `resource` | `stream` | `selector`); null
+ * otherwise. A provider maps the
+ * returned keyword to its option set. The compiler parser supplies the clause's exact span, so this
+ * is accurate across brace styles and nesting (no hand-rolled brace matching). The parser is total
+ * (it never throws), but a malformed buffer is guarded all the same.
+ */
+export function withClauseKeyword(source: string, offset: number): string | null
+{
+    let module;
+    try
+    {
+        module = parseModule(source);
+    }
+    catch
+    {
+        return null;
+    }
+    for (const item of module.items)
+    {
+        if (item.kind !== 'component')
+        {
+            continue;
+        }
+        for (const bodyItem of item.body)
+        {
+            if ('optionsStart' in bodyItem
+                && bodyItem.optionsStart !== null
+                && bodyItem.optionsEnd !== null
+                && offset > bodyItem.optionsStart
+                && offset < bodyItem.optionsEnd)
+            {
+                return bodyItem.kind;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Finds the innermost markup element whose span contains `offset`, or null when the offset is not
+ * inside any element. Used by the providers that need the element under the cursor (attribute
+ * completion, hover on a tag, and the like).
+ *
+ * @param source - The full `.azeroth` source.
+ * @param offset - A source offset (caret position).
+ * @returns The innermost containing element, or null.
  */
 export function enclosingElement(source: string, offset: number): MarkupElement | null
 {

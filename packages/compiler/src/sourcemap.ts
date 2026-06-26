@@ -1,10 +1,17 @@
-// A minimal Source Map v3 generator with no dependencies. We only need
-// line-level mappings, which is what stack traces use: one segment at the
-// start of each generated line, pointing back into the `.azeroth` source.
-//
-// This is accurate because the transform leaves non-markup byte-for-byte: a
-// generated line that came from verbatim source maps 1:1; a generated line
-// inside a compiled markup region maps to that region's starting position.
+/**
+ * MODULE: compiler/sourcemap - a minimal Source Map v3 generator (zero dependency)
+ *
+ * Only LINE-LEVEL mappings are produced - what stack traces use: one segment at the start of each
+ * generated line, pointing back into the `.azeroth` source. This is accurate because the transform
+ * leaves non-markup byte-for-byte: a generated line that came from verbatim source maps 1:1; a
+ * generated line inside a compiled markup region maps to that region's starting position.
+ *
+ * These are small, pure public utilities (re-exported from the package index); each carries a concise
+ * JSDoc + example rather than a full block.
+ *
+ * @see {@link encodeMappings} - assemble the `mappings` string
+ * @see {@link vlqEncode} - the base64 VLQ number format
+ */
 
 /** A Source Map v3 object (the shape tools and Vite expect). */
 export interface SourceMapV3
@@ -29,6 +36,8 @@ const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 /**
  * Encodes a signed integer as a base64 VLQ (the source-map number format).
  *
+ * @param value - The signed integer to encode.
+ * @returns The base64 VLQ string.
  * @example
  * ```ts
  * vlqEncode(0);  // 'A'
@@ -57,6 +66,8 @@ export function vlqEncode(value: number): string
 /**
  * Offsets at which each line of `text` begins (index 0 = line 0).
  *
+ * @param text - The source text.
+ * @returns The byte offset where each line starts.
  * @example
  * ```ts
  * buildLineStarts('ab\ncd\n'); // [0, 3, 6]
@@ -76,8 +87,11 @@ export function buildLineStarts(text: string): number[]
 }
 
 /**
- * Converts a byte offset to a 0-based `{ line, column }` location.
+ * Converts a byte offset to a 0-based `{ line, column }` location (binary search over `lineStarts`).
  *
+ * @param offset - The byte offset into the source.
+ * @param lineStarts - Line-start offsets from {@link buildLineStarts}.
+ * @returns The 0-based line and column.
  * @example
  * ```ts
  * const starts = buildLineStarts('ab\ncd\n'); // [0, 3, 6]
@@ -109,6 +123,8 @@ export function locationFor(offset: number, lineStarts: number[]): { line: numbe
  * source fields are relative across the whole file, per the spec.
  * A single source (index 0) is assumed.
  *
+ * @param lines - Per-generated-line segment lists.
+ * @returns The encoded `mappings` string (`;`-separated lines, `,`-separated segments).
  * @example
  * ```ts
  * encodeMappings([

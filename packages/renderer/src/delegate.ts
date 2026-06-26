@@ -1,18 +1,18 @@
-// Event delegation for the template path: one document-level listener per
-// event type, with per-element handlers stored on the elements themselves.
-// Compiled `dom`-target rows stop paying an addEventListener per handler per
-// row - the listener exists once and the handler is one property write.
-//
-// Scope: ONLY bindProps (compiled dom-target output) delegates. h() keeps
-// per-element listeners - delegation changes observable behavior for
-// detached elements and non-bubbling dispatches, and h()'s contract
-// predates it. The dom target is opt-in, so it can carry the stricter
-// semantics: a delegated handler fires only for events that actually bubble
-// to the document.
-//
-// The document listeners are never removed: at most one per type for the
-// life of the page, and removal bookkeeping would cost more than the
-// listeners do.
+/**
+ * MODULE: renderer/delegate (internal)
+ *
+ * Event delegation for the template (`dom`-target) path: one document-level listener per event
+ * type, with per-element handlers stored on the elements themselves. Compiled rows stop paying
+ * an addEventListener per handler per row - the listener exists once and registering a handler
+ * is one property write.
+ *
+ * SCOPE: ONLY bindProps (compiled dom-target output) delegates; h() keeps per-element listeners
+ * because delegation changes observable behavior for detached elements and non-bubbling
+ * dispatches, and h()'s contract predates it. The opt-in dom target carries the stricter
+ * semantics: a delegated handler fires only for events that actually bubble to the document.
+ * The document listeners are never removed (at most one per type for the page's life; removal
+ * bookkeeping would cost more than the listeners do).
+ */
 
 /** Per-element delegated handler store, keyed by event type. @internal */
 const HANDLERS = Symbol('azeroth_delegated_handlers');

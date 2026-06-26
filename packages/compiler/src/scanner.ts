@@ -1,19 +1,23 @@
-// Context-aware lexing helpers for finding markup inside arbitrary JS/TS
-// without a full parser. Two jobs:
-//
-//   1. Skip non-code spans correctly - line/block comments, single/double
-//      quoted strings, template literals (with nested `${ ... }`), and regex
-//      literals - so a `<`, `{`, or `}` inside them is never mistaken for
-//      syntax.
-//
-//   2. Decide whether a `<` (or `/`) sits in expression position, which is
-//      what distinguishes markup from a less-than operator (and a regex from
-//      a divide). We track the previous significant token to make that call,
-//      the same trick hand-written markup transforms use.
-//
-// These are pure functions over (src, index) -> nextIndex, shared with the
-// parser (which also needs balanced-brace capture for `{...}` holes and
-// `(...)`/`[...]`).
+/**
+ * MODULE: compiler/scanner - context-aware lexing helpers
+ *
+ * Finds markup inside arbitrary JS/TS WITHOUT a full parser. Two jobs:
+ *   1. Skip non-code spans correctly - line/block comments, single/double quoted strings, template
+ *      literals (with nested `${ ... }`), and regex literals - so a `<`, `{`, or `}` inside them is
+ *      never mistaken for syntax.
+ *   2. Decide whether a `<` (or `/`) sits in EXPRESSION position, which distinguishes markup from a
+ *      less-than operator (and a regex from a divide). The previous significant token is tracked to
+ *      make that call - the same trick hand-written markup transforms use.
+ *
+ * These are pure functions over (src, index) -> nextIndex, shared with the parser (which also needs
+ * balanced-brace capture for `{...}` holes and `(...)`/`[...]`).
+ *
+ * The predicates (isWhitespace/isIdentStart/isIdentPart) and skip helpers (skipString/skipTemplate/
+ * skipRegex/skipLineComment/skipBlockComment/skipBalanced) are a family of small public utilities,
+ * each with a concise example-bearing JSDoc; {@link findMarkupStart} is the substantive entry point.
+ *
+ * @see {@link findMarkupStart}
+ */
 
 /**
  * True for a single whitespace character (space, tab, newline, etc.).
@@ -294,7 +298,7 @@ const EXPR_CHARS = new Set([
  * significant token: an identifier or literal that ends an expression means
  * binary; a punctuator/keyword that expects an operand means expression.
  */
-function isExpressionPosition(prevChar: string, prevWord: string): boolean
+export function isExpressionPosition(prevChar: string, prevWord: string): boolean
 {
     if (prevWord !== '')
     {
@@ -314,7 +318,7 @@ function isExpressionPosition(prevChar: string, prevWord: string): boolean
  *
  * @internal
  */
-function scanTypeParams(src: string, openIndex: number): number
+export function scanTypeParams(src: string, openIndex: number): number
 {
     let depth = 0;
     let i = openIndex;
@@ -425,9 +429,56 @@ function tryGenericArrow(src: string, i: number): number
 }
 
 /**
- * Finds the next `<` that begins a markup element/fragment in expression
- * position, scanning from `from` and correctly skipping all non-code spans.
- * Returns its index, or -1 if there is no more markup.
+ * findMarkupStart
+ *
+ * PURPOSE:
+ * Finds the next `<` that begins a markup element/fragment in EXPRESSION position, scanning from
+ * `from` and correctly skipping all non-code spans. Returns its index, or -1 if there is no more
+ * markup.
+ *
+ * WHY IT EXISTS:
+ * Markup is embedded in arbitrary JS/TS, so the compiler must locate a region's start without a full
+ * JS grammar - and without false-positiving on `a < b`, a `<` inside a string/comment/regex, or a
+ * generic. This is the scanner's entry that all markup-region consumers (codegen, lint, lower) call
+ * to step through a module's regions.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Compiler, scanning stage; the front of the markup pipeline (its result feeds parseMarkup).
+ *
+ * INPUT CONTRACT:
+ * - src: the module source.
+ * - from: the index to start scanning at (callers loop, passing the previous region's end).
+ *
+ * OUTPUT CONTRACT:
+ * - The index of the next markup-opening `<`, or -1 when none remains.
+ *
+ * WHY THIS DESIGN:
+ * It tracks the previous significant character/word so it can decide expression position (markup vs
+ * less-than) the way hand-written transforms do, and it reuses the skip* helpers to jump over strings,
+ * templates, comments, and regex - so syntax inside those is never mistaken for a tag.
+ *
+ * WHEN TO USE:
+ * Iterating the markup regions of a module (`from` = 0, then the prior region's end each time).
+ *
+ * WHEN NOT TO USE:
+ * Parsing the region itself - that's {@link parseMarkup}, which takes this index.
+ *
+ * EDGE CASES:
+ * - `a < b` (operator), a `<` inside a string/comment/regex, and (heuristically) generics return -1
+ *   at that position.
+ * - Returns -1 at end of input.
+ *
+ * PERFORMANCE NOTES:
+ * A single left-to-right scan; skip helpers advance in O(span length).
+ *
+ * DEVELOPER WARNING:
+ * Expression-position detection is HEURISTIC (token-based, not a real parser). It is tuned for the
+ * markup the language accepts; exotic generic/operator combinations could in principle misclassify.
+ *
+ * @param src - The module source.
+ * @param from - The index to start scanning from.
+ * @returns The index of the next markup-opening `<`, or -1.
+ * @see {@link parseMarkup}
  *
  * @example
  * ```ts

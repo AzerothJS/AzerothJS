@@ -1,27 +1,18 @@
-// Compiles a route pattern (`/users/:id`) into a matcher that accepts URL
-// pathnames and extracts params, plus a builder that substitutes params back to
-// produce a URL.
-//
-// Supported syntax:
-//   Static segments     /users
-//   Param segments      /users/:id   -> params.id = '42'
-//   Wildcard segments   /docs/*path  -> params.path = 'a/b/c'
-//
-// Not supported in v1 (each can be added later without breaking the API):
-//   Optional segments    /users/:id?       (adds matcher branching)
-//   Regex constraints    /users/:id(\\d+)  (adds parser complexity)
-//   Multiple wildcards   /a/*x/b/*y         (ambiguous, not useful)
-//
-// This module knows nothing about nested routes. The router flattens its tree
-// into leaf full patterns at creation time and uses this module only on those,
-// which keeps matching purely declarative with no remaining-suffix bookkeeping
-// inside the matcher.
-//
-// Encoding: match() URL-decodes param values and compares static segments after
-// decoding both sides (the user's pattern is canonical, but URLs in the wild
-// may be encoded). build() URL-encodes param values so they can be dropped
-// safely into a URL, but leaves wildcard values unencoded since they're already
-// path-shaped and encoding would double-escape their slashes.
+/**
+ * MODULE: router/path-pattern
+ *
+ * Compiles a route pattern (`/users/:id`) into a matcher that tests URL pathnames and extracts
+ * params, plus a builder that substitutes params back into a URL. Supported: static segments
+ * (/users), params (/users/:id -> params.id = '42'), and a trailing wildcard (/docs/*path ->
+ * params.path = 'a/b/c'). Not in v1 (each addable without breaking the API): optional segments,
+ * regex constraints, multiple wildcards.
+ *
+ * This module knows nothing about nested routes - the router flattens its tree into leaf full
+ * patterns and uses this only on those, keeping matching purely declarative. Encoding: match()
+ * URL-decodes params and compares static segments after decoding both sides; build() URL-encodes
+ * param values but leaves wildcard values unencoded (they are already path-shaped, so encoding
+ * would double-escape their slashes). The segment-parsing internals below carry their own comments.
+ */
 
 import type { Params } from './types.ts';
 
@@ -85,42 +76,57 @@ export interface PathMatcher
 }
 
 /**
- * Compiles a route pattern into a matcher.
+ * compilePath
  *
- * The matcher returned is stateless and may be reused across any number of
- * match/build calls.
+ * PURPOSE:
+ * Compiles a route pattern into a reusable, stateless {@link PathMatcher}: match a pathname to
+ * params, or build a pathname from params.
  *
- * @param pattern - The route pattern, e.g. `/users/:id`
+ * WHY IT EXISTS:
+ * The router must test pathnames, extract params, and reconstruct URLs from a declarative pattern.
+ * Parsing the pattern once into a matcher (rather than re-parsing on every match) keeps routing
+ * cheap, and a regex-free segment walk keeps the matching predictable and easy to reason about.
  *
- * @returns A `PathMatcher` for the given pattern
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, router; createRouter compiles each flattened leaf full-path with this at construction.
  *
+ * INPUT CONTRACT:
+ * - pattern: a route pattern of static, `:param`, and a trailing `*wildcard` segments.
+ *
+ * OUTPUT CONTRACT:
+ * - A PathMatcher with match(pathname) -> { params } | null and build(params) -> pathname. The
+ *   matcher is stateless and reusable across any number of calls.
+ *
+ * WHY THIS DESIGN:
+ * The pattern is parsed once into a segment list; matching is a linear walk (no regex), trailing
+ * slashes are normalized so /users and /users/ match the same pattern, and a wildcard must be the
+ * last segment (validated at compile time) so matching needs no suffix bookkeeping.
+ *
+ * WHEN TO USE:
+ * To match or build a single route pattern (the router does this for every leaf).
+ *
+ * WHEN NOT TO USE:
+ * For nested-route resolution - the router flattens the tree first and only calls this on leaves.
+ *
+ * EDGE CASES:
+ * - The empty pattern matches only '' and '/'.
+ * - Malformed %-escapes decode to the raw value rather than throwing (safeDecode).
+ * - build() throws if a required param/wildcard is missing.
+ *
+ * PERFORMANCE NOTES:
+ * Parse cost is paid once at compile; match and build are O(segments) with no regex.
+ *
+ * DEVELOPER WARNING:
+ * Only a TRAILING wildcard is supported (a wildcard elsewhere throws at compile). build() does NOT
+ * encode wildcard values (they are path-shaped) - encode unsafe characters within them yourself.
+ *
+ * @param pattern - The route pattern, e.g. `/users/:id`.
+ * @returns A reusable {@link PathMatcher}.
  * @example
- * ```ts
  * const m = compilePath('/users/:id/posts/:slug');
- *
- * m.match('/users/42/posts/hello');  // -> { params: { id: '42', slug: 'hello' } }
- * m.match('/users/42');              // -> null
- * m.build({ id: '42', slug: 'hello world' }); // -> '/users/42/posts/hello%20world'
- * ```
- *
- * @example
- * ```ts
- * // Wildcard captures the rest of the path
- * const docs = compilePath('/docs/*path');
- *
- * docs.match('/docs/intro/install');  // -> { params: { path: 'intro/install' } }
- * docs.build({ path: 'intro/install' }); // -> '/docs/intro/install'
- * ```
- *
- * @example
- * ```ts
- * // Empty pattern matches only the empty/root path
- * const index = compilePath('');
- *
- * index.match('');     // -> { params: {} }
- * index.match('/');    // -> { params: {} }
- * index.match('/foo'); // -> null
- * ```
+ * m.match('/users/42/posts/hello');           // { params: { id: '42', slug: 'hello' } }
+ * m.build({ id: '42', slug: 'hello world' }); // '/users/42/posts/hello%20world'
+ * compilePath('/docs/*path').match('/docs/a/b'); // { params: { path: 'a/b' } }
  */
 export function compilePath(pattern: string): PathMatcher
 {
@@ -151,34 +157,42 @@ function parsePattern(pattern: string): Segment[]
 {
     const parts = splitPath(pattern);
     const segments: Segment[] = [];
+    // Track param/wildcard names so a duplicate (`/users/:id/:id`) is a clear compile error rather than
+    // silently collapsing - the second occurrence would overwrite the first at match time (data loss).
+    const names = new Set<string>();
 
     for (let i = 0; i < parts.length; i++)
     {
         const part = parts[i];
 
-        if (part.startsWith(':'))
+        if (part.startsWith(':') || part.startsWith('*'))
         {
+            const isWildcard = part.startsWith('*');
             const name = part.slice(1);
             if (name.length === 0)
             {
-                throw new Error(`Invalid pattern '${ pattern }': param segment ':' has no name`);
+                throw new Error(
+                    `Invalid pattern '${ pattern }': ${ isWildcard ? 'wildcard' : 'param' } segment ` +
+                    `'${ part[0] }' has no name`
+                );
             }
-            segments.push({ kind: 'param', name });
-            continue;
-        }
-
-        if (part.startsWith('*'))
-        {
-            const name = part.slice(1);
-            if (name.length === 0)
+            if (names.has(name))
             {
-                throw new Error(`Invalid pattern '${ pattern }': wildcard segment '*' has no name`);
+                throw new Error(`Invalid pattern '${ pattern }': duplicate parameter name ':${ name }'`);
             }
-            if (i !== parts.length - 1)
+            names.add(name);
+            if (isWildcard)
             {
-                throw new Error(`Invalid pattern '${ pattern }': wildcard segment must be last`);
+                if (i !== parts.length - 1)
+                {
+                    throw new Error(`Invalid pattern '${ pattern }': wildcard segment must be last`);
+                }
+                segments.push({ kind: 'wildcard', name });
             }
-            segments.push({ kind: 'wildcard', name });
+            else
+            {
+                segments.push({ kind: 'param', name });
+            }
             continue;
         }
 

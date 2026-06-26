@@ -1,4 +1,4 @@
-// Documentation extraction (Phase 5 seed). Renders a GitHub-flavoured markdown
+// Documentation extraction. Renders a GitHub-flavoured markdown
 // API reference for the component a `.azeroth` file exports, read from the file's
 // REAL TypeScript types: the same engine hover/symbols query. We resolve the
 // exported component symbol in the file's virtual module, take the first
@@ -262,13 +262,9 @@ function render(doc: ComponentDoc): string
 
     lines.push('', '## Props');
 
-    if (!doc.hasProps)
-    {
-        lines.push('', 'This component takes no props.');
-        return lines.join('\n') + '\n';
-    }
-
-    if (doc.props.length === 0)
+    // Either a component with no declared props, or one whose props type resolved
+    // to no members - both render the same "no props" note.
+    if (!doc.hasProps || doc.props.length === 0)
     {
         lines.push('', 'This component takes no props.');
         return lines.join('\n') + '\n';

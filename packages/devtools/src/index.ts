@@ -421,7 +421,7 @@ export function installDevtools(): () => void
             text.setAttribute('font-family', 'ui-monospace,Consolas,monospace');
             text.setAttribute('fill', center ? '#0a120d' : color);
             const label = labelOf(n);
-            text.textContent = label.length > 13 ? `${ label.slice(0, 12) }…` : label;
+            text.textContent = label.length > 13 ? `${ label.slice(0, 12) }...` : label;
             const tip = document.createElementNS(SVG_NS, 'title');
             tip.textContent = `${ n.kind } ${ label }`;
             g.append(rect, text, tip);
@@ -1262,7 +1262,7 @@ export function installDevtools(): () => void
         summary.setAttribute('style', 'color:#7fd4a8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
 
         const collapse = document.createElement('button');
-        collapse.textContent = '–';
+        collapse.textContent = '-';
         collapse.setAttribute('title', 'Collapse to icon');
         collapse.setAttribute('style', barButtonStyle());
         collapse.addEventListener('pointerdown', (e) => e.stopPropagation());

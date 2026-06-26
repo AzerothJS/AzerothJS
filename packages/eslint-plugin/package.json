@@ -27,7 +27,8 @@
     },
     "dependencies":
     {
-        "@azerothjs/compiler": "0.6.0-beta.1"
+        "@azerothjs/compiler": "0.6.0-beta.1",
+        "@azerothjs/language-service": "0.6.0-beta.1"
     },
     "peerDependencies":
     {
@@ -45,15 +46,16 @@
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
+    "engines": { "node": ">=18" },
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/eslint-plugin"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/eslint-plugin",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/eslint-plugin",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

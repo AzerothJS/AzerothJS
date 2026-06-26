@@ -2,68 +2,264 @@
 
 ## Overview
 
-The `.azeroth` single-file-component compiler. A `.azeroth` file is a JavaScript
-or TypeScript module written with AzerothJS markup. The
-compiler locates the markup regions inside otherwise ordinary code and rewrites
-them into `h()` hyperscript calls with fine-grained reactive bindings, leaving
-the rest of the module byte-for-byte. For example:
+The `.azeroth` single-file-component compiler. A `.azeroth` file is a TypeScript module written with
+`component` blocks and AzerothJS markup. The compiler turns each component into one mode-aware runtime
+artifact and copies everything outside a component (imports, types, helpers) through unchanged.
 
+The supported way to use it is the **Vite plugin** — add `azeroth()` to a Vite config and imports of
+`.azeroth` files just work, with source maps back to the original markup and build-time lint and
+diagnostics.
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import { azeroth } from '@azerothjs/compiler';
+
+export default defineConfig({ plugins: [azeroth()] });
 ```
-<h1>Count: {count()}</h1>
-```
 
-compiles to:
-
-```js
-h('h1', {}, 'Count: ', () => (count()))
-```
-
-It has no runtime dependencies and is used both as a build-time tool (the Vite
-plugin) and as the shared language core that the editor tooling reuses.
+It has no runtime dependencies; `typescript` is a peer dependency (used for parsing component
+expressions) and `vite` is a peer dependency loaded only at transform time.
 
 ## Architecture
 
-The compiler does not have a type system, symbol table, or semantic analyzer. It
-treats a `.azeroth` file as code with embedded markup and only transforms the
-markup, which is why the rest of the module passes through unchanged. The
-pipeline, in the order it runs:
+`.azeroth` is component-only — there is no standalone markup transform. The pipeline, in run order:
 
-1. Scanner: finds markup regions inside arbitrary JavaScript, correctly skipping
-   strings, template literals, comments, and regular expressions, and detecting
-   whether a `<` begins markup or is a comparison or generic.
-2. Parser: turns a markup region into an AST (`parseMarkup`).
-3. Codegen: turns the AST into `h()` and component-call source, adding the
-   reactive wrapping (`() => (...)`) around dynamic expressions.
-4. Compile: orchestrates scan, parse, codegen, and splice back into the module,
-   producing the output plus a source map.
+1. **parser** — splits the source into `component` declarations and pass-through (opaque) regions, and
+   parses each component body into items (`props`/`state`/`derived`/`effect`/markup output). Inner
+   JS/TS is left as source spans.
+2. **analyze** — for each component, finds the reactive sources and the dependency set every
+   expression reads, using the TypeScript parser for scope-correct read collection.
+3. **lower** — turns the markup output plus analysis into a target-independent **Render Plan IR**: a
+   static template skeleton plus a list of surgical bindings.
+4. **optimize** — IR → IR passes (constant folding).
+5. **codegen** — emits one artifact from the IR through a single emitter. Reactive reads become getter
+   calls and writes become setter calls.
 
-The scanner and parser are exported because the editor tooling
-(`@azerothjs/language-service`) reuses them as its single source of truth for
-markup behavior, rather than re-implementing a second parser that could drift.
+There is **one IR and one emitter**. An element-rooted output emits a mode-dispatched body: a hoisted
+`<template>` cloned on the client, the same tree serialized to HTML for SSR, and adopted on hydration.
+Because SSR and hydration share the emitter, their comment markers line up by construction.
 
-## Components
+## Public API
 
-| File | Role |
-| --- | --- |
-| `scanner.ts` | Markup-region detection and the low-level skip helpers. |
-| `parser.ts` | `parseMarkup` and `CompileError`. |
-| `codegen.ts` | `generate`, `walkComponentTags`, the `ExpressionCompiler` hook. |
-| `compile.ts` | `compile`: the end-to-end entry point and `CompileResult`. |
-| `sourcemap.ts` | Source-map construction (VLQ encoding, mappings). |
-| `vite.ts` | `azeroth`: the Vite plugin and its options. |
-| `types.ts` | The markup AST node types and `Span`. |
+The supported entry point is the Vite plugin; the lower-level pieces are exported for tooling.
 
-### Public API
+- `azeroth(options?)` — the Vite plugin (`options.extension` defaults to `'.azeroth'`;
+  `options.typeCheck` toggles build-time type checking, default `true`).
+- `parseModule(source)` — parse a `.azeroth` module into its AST (components + opaque regions).
+- `diagnoseModule(source)` — semantic diagnostics the type system can't see (inert effects, constant
+  deriveds, setup-time event handlers, …).
+- `typeCheckModuleTS(source, options?)` — real TypeScript-backed type checking of handlers and
+  component props (`options.fileName` enables cross-file resolution). Used by the plugin's
+  `typeCheck` option.
+- `lintSource(source)` / `lintMarkup(node)` — markup lint (duplicate attributes, lowercase event
+  names).
+- `parseMarkup(source, start)` / `CompileError` — parse one markup region beginning at a `<`.
+- `findMarkupStart` and the scanner helpers (`skipString`, `skipTemplate`, `skipBalanced`,
+  `skipRegex`, `isIdentStart`, `isIdentPart`, `isWhitespace`, comment skippers) — markup-region
+  scanning over arbitrary JS/TS.
+- `walkComponentTags(node, visit)` — visit the component tags in a markup tree.
+- Source-map helpers (`vlqEncode`, `buildLineStarts`, `locationFor`, `encodeMappings`) and the markup
+  AST types (`Span`, `MarkupElement`, …).
 
-- `compile(source, filename?)` returns the compiled module and its source map.
-- `parseMarkup(source, start)` parses one markup region to an AST node.
-- `generate(node, compileExpression)` emits source for a markup AST node.
-- `walkComponentTags(...)` visits component tags in a region.
-- The scanner helpers (`findMarkupStart`, `skipString`, `skipTemplate`,
-  `skipBalanced`, `skipRegex`, `isIdentStart`, `isIdentPart`, `isWhitespace`,
-  and the comment skippers) are exported for tooling that needs the same
-  scanning behavior.
-- `azeroth(options?)` is the Vite plugin.
+Every exported symbol is documented at its definition.
+
+## Authoring idiom and reactivity
+
+A component is a `component` block. Declare reactive state with `state`, derived values with
+`derived`, and side effects with `effect`, and type props with an ordinary TypeScript parameter on the
+`component` signature. You read and write state as plain variables; the compiler rewrites a read of
+`count` to `count()` and a write `count = x` / `count++` to the signal's setter, so reactivity is
+resolved at compile time with a tiny runtime.
+
+```azeroth
+component Greeting(props: { name: string })
+{
+    <p>Hello {props.name}</p>
+}
+```
+
+The parameter is plain TypeScript, so every natural form works: a named interface
+(`component Greeting(props: GreetingProps)`), a destructured binding with defaults
+(`component Greeting({ name = "world" }: GreetingProps)`), or an inline object type. A destructured
+prop stays reactive - a bare `name` read lowers to `props.name`.
+
+### Reactive keywords: effect, watch, deferred, and the block-wrappers
+
+The reactive vocabulary is deliberately small. Each keyword maps to one runtime primitive; everything
+else (resources, roots, stores, error handling, …) stays an ordinary import + function call.
+
+**`effect { … }`** — runs on mount and re-runs whenever the reactive values it reads change. Purely
+auto-tracked (it discovers its dependencies by running its body). A `with { … }` clause passes options
+(e.g. `name`) to `createEffect`:
+
+```azeroth
+effect { document.title = `${ count } now`; }
+effect with { name: 'sync' } { syncToServer(data); }   // → createEffect(fn, { name: 'sync' })
+```
+
+**`watch (deps) [(values, prev)] [with { … }] { … }`** — an explicit-dependency effect (the `on`
+primitive). It watches *exactly* the listed deps (the body's other reads do not subscribe); the
+optional `(values, prev)` binds the current and previous dependency-value tuples; `with { defer: true }`
+skips the mount run.
+
+```azeroth
+watch (count) { logServer(count); }                     // → on([() => count()], () => { … })
+watch (a, b) (cur, prev) { diff(prev, cur); }            // current + previous value tuples
+watch (count) with { defer: true } { save(count); }      // skip the mount run → on(…, { defer: true })
+```
+
+**`deferred name = expr [with { … }]`** — a read-only reactive value like `derived`, but recomputed at
+idle priority. Compiles to `createDeferred(() => (expr), options?)`; reads are bare like any source.
+
+**Block-wrappers** — `<keyword> { … }` → `<fn>(() => { … })`, with the body reactively rewritten:
+
+| Keyword | Runtime | Use |
+|---|---|---|
+| `batch { … }` | `batch` | coalesce a burst of writes into one effect flush |
+| `untrack { … }` | `untrack` | run without subscribing the active effect |
+| `cleanup { … }` | `onCleanup` | teardown registered inside an effect (runs before re-run/dispose) |
+| `dispose { … }` | `onRootDispose` | teardown for the surrounding scope (runs once on dispose) |
+
+```azeroth
+effect {
+    const id = setInterval(tick, 1000);
+    cleanup { clearInterval(id); }
+}
+batch { firstName = 'Ada'; lastName = 'Lovelace'; }   // → batch(() => { setFirstName(…); setLastName(…); })
+```
+
+All of these work at the component top level **and** in nested scopes (render callbacks, IIFEs, and
+module-level composable functions). For hand-written `.ts`, the same runtime functions are imported and
+called directly — `createEffect`/`on`/`batch`/`untrack`/`onCleanup`/`onRootDispose`/`createDeferred`.
+
+How the compiler emits each dynamic `{expr}` decides whether it is reactive:
+
+- **On a host element**: an event handler (`onClick={…}`), a function literal, a bare reference, or an
+  array/object literal is passed through verbatim; any other expression is wrapped in a getter
+  `() => (expr)` so the runtime re-applies it when the signals it reads change.
+- **On a component tag**: every prop is passed as a getter-object entry
+  (`Child({ get name() { return expr } })`), read uniformly as `props.name`, so one prop contract
+  covers user, library, and built-in components.
+
+For conditional classes and styles the canonical authoring form is the directive: `class:active={isActive}`
+toggles one class, `style:color={tone}` sets one property, and both merge with a static `class="..."` /
+`style="..."` on the same element. Reach for the `classList()` / `styleMap()` helpers (from
+`@azerothjs/core`) only when the whole set is computed from an object; they return a getter the renderer
+resolves by calling through while it is still a function, so `class={classList(obj)}` needs no
+special-casing in the compiler.
+
+Two-way input binding follows the same pattern: `bind:value={state}` (and `bind:checked={state}`) is the
+canonical mirror for a form control or a value-bearing component, desugaring to the value prop plus the
+write-back listener/callback. Keep the explicit `value={state}` + `onInput={...}` form for inputs that
+transform, validate, or otherwise do more than mirror.
+
+A whole form is the `form` keyword (lowers to `createForm`): `form f = { ...initial } with { validate, onSubmit }`.
+A FIELD reads as `f.field` and binds with `bind:value={f.field}` (the read lowers to `f.values().field`, the
+write to `f.setValue('field', v)`); the rest of the form API is explicit - `f.errors()`, `f.touched()`,
+`f.submitting()`, `f.handleSubmit`. This is the idiomatic form style; the `createForm` runtime primitive can
+also be driven by a hand-built field component when an app prefers that abstraction.
+
+A prop-less, child-less component tag compiles to a zero-argument call (`<Comp/>` → `Comp()`), so a
+component without props never declares an unused props parameter.
+
+### Event handlers (`on*` attributes)
+
+An event-handler attribute is a **function position**: its value must be a function — the listener
+invoked when the event fires (`(event) => void`). That is the whole rule; everything else follows
+from it. The value is an ordinary TypeScript expression, so the authoritative check is the **type
+system**: an expression whose type is not a function is ill-typed in handler position.
+
+The three canonical, always-correct forms:
+
+| Form | Example | Why it is a function |
+| --- | --- | --- |
+| Reference | `onClick={save}`, `onClick={props.onClose}` | the name *is* the function |
+| Inline function | `onClick={() => count++}`, `onClick={(e) => save(e)}` | a function literal |
+| Factory call | `onClick={makeHandler(id)}` | a call that *returns* a function |
+
+Independently of types, the compiler **rejects at build time** any handler expression that is
+recognizably a *side effect performed when the component is created*, not a function. Exactly three
+forms are rejected:
+
+1. an **assignment** — `count = 1`, `x += y` (any assignment operator);
+2. an **increment / decrement** — `count++`, `--n`;
+3. a **no-argument call of a plain name or path** — `save()`, `props.onClose()`, `actions.reset()`.
+
+Each runs once at setup and yields a non-function value, so wiring it as a listener never does what
+the author intended. The fix is always to make it a function — `onClick={() => count++}` or
+`onClick={save}`.
+
+**Why `makeHandler(id)` is accepted but `save()` is rejected.** This is not "arguments make a call
+valid." The compiler is a *conservative rejecter*: it flags only what it can prove — without type
+information — is a setup-time mistake, and stays silent on everything else, deferring to the type
+system. `save()`, a plain name called with no arguments, is unmistakably "call `save` now" (the single
+most common handler error), so it is rejected. `makeHandler(id)` matches no such pattern, so the
+compiler does not flag it; whether it truly returns a function is then a type question. Acceptance by
+the compiler means "no provable error here," not "guaranteed correct" — only the type checker
+guarantees that.
+
+**Mental model:** *a handler is a function — pass one.* When in doubt, write `() => …`. Use a factory
+call only when it returns a handler; a *zero-argument* factory (`getHandler()`) is syntactically
+indistinguishable from the `save()` mistake and is therefore rejected — bind it to a name first
+(`const handler = getHandler();` … `onClick={handler}`).
+
+### TypeScript syntax (the TSX rules)
+
+Because `.azeroth` mixes markup with TypeScript, it follows the same disambiguation rules as `.tsx`:
+
+- **No angle-bracket type assertions.** Write `value as Foo`, not `<Foo>value` — a `<Foo>…` is read
+  as a markup element, so a forgotten `</Foo>` is reported as an unclosed tag where it sits rather
+  than silently compiling as a cast.
+- **Generic arrows need a trailing comma.** Write `<T,>(v: T) => v`; the comma tells the parser the
+  `<T,>` is a type-parameter list, not a tag. Type arguments in call position (`foo<Bar>(x)`,
+  `new C<Bar>()`) are unaffected.
+
+Precise boundary (for tooling authors): after stripping wrapping parentheses, a handler is rejected
+iff it is an assignment expression, a prefix/postfix `++`/`--`, or a zero-argument call (including
+`?.()`) whose callee is an identifier or a dotted member path. Every other expression — a reference, a
+function literal, a call with arguments, or a call whose callee is itself a call or an index access —
+is left to the type system.
+
+## Type checking and diagnostics
+
+Three independent layers run during a build, in increasing depth.
+
+**Lint** (`lintSource`) — markup nits that need no type knowledge: duplicate attributes, lowercase
+event names. Reported as warnings.
+
+**Semantic diagnostics** (`diagnoseModule`) — mistakes the parser can see but the type system cannot:
+an `effect` or `derived` with no reactive dependency (warning), a duplicate `props` block or a write
+to a read-only `derived` (error). Error-severity diagnostics fail the build.
+
+**Unused imports** (`diagnoseUnusedImports(source, compiledJs)`) — an `azeroth/unused-import` warning
+for any import never used. Detection is reliable because it walks the COMPILED JS (markup already
+lowered to `h()`/component calls) for value use, then cross-checks the source so a type-only import
+(`import type { T }`, used in a props annotation `component C(props: { x: T })`) is never falsely
+flagged. Runs in the Vite plugin
+(which has the compiled output); warning severity, located at the unused name.
+
+**Type checking** (`typeCheckModuleTS`) — a real TypeScript-backed checker, **on by default**
+(disable with `azeroth({ typeCheck: false })`). It projects each `.azeroth` module to TypeScript, runs
+the real TypeScript `TypeChecker`, and fails the build on a genuine type error, located back in the
+`.azeroth` source:
+
+- a **non-function event handler** — `onClick={count}` where `count` is a number (exactly the
+  type-only mistake the handler rule above defers to the type system);
+- a **wrong-typed component prop** — `<Child count={"x"} />` where `count: number`;
+- a **missing required prop** — `<Child />` when `Child` requires `count`. A component that takes its
+  children as markup (`<Card>…</Card>`) satisfies a required `children` prop automatically;
+- a **misused built-in control-flow component** — the built-ins (`For`, `Show`, `Switch`, …) are
+  checked against their real runtime prop types, so a `<For>` missing its required `key` (a runtime
+  crash) or with a non-iterable `each` is caught.
+
+Component prop checks resolve across files: props on a component **imported from another `.azeroth`
+file** are checked through TypeScript's module resolver (the import may use the explicit `.azeroth`
+extension or omit it). `on*` props on a component are typed by the receiving component, not as DOM
+events. The check is **sound** — it never reports a false error. It is enabled by default; turn it off
+with `typeCheck: false` if you want to skip it. The (immutable) TypeScript lib files are parsed once
+and reused across files, so a typical component checks in single-digit milliseconds; a fully shared
+incremental Program remains a possible future optimization.
 
 ## Building
 
@@ -71,93 +267,11 @@ markup behavior, rather than re-implementing a second parser that could drift.
 npm run build -w @azerothjs/compiler
 ```
 
-Several other packages (the language service and server, and anything importing
-the AST or scanner) depend on the compiler being built first; the repository root
-`npm run build` builds in dependency order.
-
-## Testing
-
-```sh
-npx vitest run test/compiler
-```
-
-## Configuration
-
-The Vite plugin (`azeroth`) compiles `.azeroth` files as part of a Vite build.
-Add it to a project's `vite.config`:
-
-```ts
-import { azeroth } from '@azerothjs/compiler';
-
-export default {
-    plugins: [azeroth()]
-};
-```
-
-## Authoring idiom and reactivity rules
-
-A component is a plain function that returns markup; there is no
-`defineComponent` wrapper. Props are the function's first argument, read where
-they are used so they stay reactive:
-
-```
-function Greeting(props: { name: string })
-{
-    return <p>Hello {props.name}</p>;
-}
-```
-
-How the compiler emits each dynamic `{expr}` decides whether it is reactive:
-
-- An event handler (`onClick={…}`), a function literal, a bare reference
-  (`draft`, `props.x`), or an array/object literal is passed through verbatim.
-- Any other expression is wrapped in a getter, `() => (expr)`, so the runtime
-  re-applies it when the signals it reads change. `value={draft()}` becomes
-  `value: () => (draft())`.
-
-`classList()` and `styleMap()` (from `@azerothjs/core`) return a getter, so a
-`class={classList({ active: isActive })}` ends up wrapped as a
-getter-returning-a-getter. The renderer resolves a reactive value by calling
-through while it is still a function, so this works without special-casing in
-the compiler - see `DECISIONS.md` (entry 1) for why the fix lives in the
-renderer rather than here.
-
-An attribute-less, child-less component tag compiles to a zero-argument call,
-`<Comp/>` -> `Comp()`, so a prop-less component never has to declare an unused
-props parameter (`DECISIONS.md`, entry 2).
-
-## Type checking
-
-The compiler only transforms markup; it does not type-check. `tsc` cannot parse
-`.azeroth`, so use `azeroth-tsc` (from `@azerothjs/language-server`) to gate a
-build, the same way `vue-tsc` does for Vue:
-
-```sh
-npx azeroth-tsc            # check every .azeroth file under the cwd
-npx azeroth-tsc -p tsconfig.json
-```
-
-It compiles each file to its virtual TypeScript module, type-checks it against
-the project's tsconfig, and prints `tsc`-style diagnostics mapped back to the
-original `.azeroth` positions, exiting non-zero on the first error. In the
-editor, `@azerothjs/language-service` provides the same analysis live.
-
-## Examples
-
-`examples/Showcase.azeroth` is a single comprehensive `.azeroth` file (a function
-component and a class component) used to exercise both the compiler and the
-editor tooling. Compile a string directly:
-
-```ts
-import { compile } from '@azerothjs/compiler';
-
-const { code, map } = compile('export default () => <h1>Hi {name()}</h1>;', 'App.azeroth');
-```
+The repository root `npm run build` builds every package in dependency order.
 
 ## Contributing
 
-The scanner is the trickiest part: it must distinguish markup from comparison and
-generic syntax and skip every JavaScript token kind, because a mistake there
-mis-compiles otherwise valid code. Keep its behavior covered by tests under
-`test/compiler`, and remember that the language service depends on the exported
-scanner and parser behaving exactly as the compiler uses them.
+The scanner is the trickiest part: it must distinguish markup from comparison and generic syntax and
+skip every JavaScript token kind, because a mistake there mis-compiles otherwise valid code. The IR is
+the single source of truth — keep optimizations as IR → IR passes and let the one emitter handle all
+render modes, rather than special-casing a target in codegen.

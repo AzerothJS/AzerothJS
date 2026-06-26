@@ -12,17 +12,33 @@
 import ts from 'typescript';
 import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart } from '@azerothjs/compiler';
 import type { Hover, Range } from '../protocol.ts';
-import { classifyPosition, enclosingElement } from '../markup-model.ts';
-import { BUILTIN_COMPONENT_MAP, attributeDocumentation, type BuiltinComponent } from '../language-data.ts';
+import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
+import { BUILTIN_COMPONENT_MAP, attributeDocumentation, keywordDocumentation, keywordOptions, keywordWithExample, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
 import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
 import { classHover } from './css-classes.ts';
 import { styleMapHover } from './style-map.ts';
-import { spanToRange, toGenerated, type RequestContext } from '../request.ts';
+import { spanToRange, toGenerated, tokenAt, type RequestContext } from '../request.ts';
 
 /** Hover content for the caret at `offset`, or null. */
 export function getHover(ctx: RequestContext, offset: number): Hover | null
 {
+    // An AzerothJS authoring keyword (`state`, `effect`, `component`, ...) compiles
+    // away, so TypeScript has no symbol to describe it; serve its docs directly.
+    const keyword = keywordHover(ctx, offset);
+    if (keyword)
+    {
+        return keyword;
+    }
+
+    // An option key inside a `with { ... }` clause (`equals`, `name`, `defer`, ...) -
+    // also compiled away; documented from the same registry completion uses.
+    const option = withOptionHover(ctx, offset);
+    if (option)
+    {
+        return option;
+    }
+
     const context = classifyPosition(ctx.source, offset);
     const position = ctx.lineIndex.positionAt(offset);
 
@@ -209,20 +225,6 @@ function propsTable(checker: ts.TypeChecker, signature: ts.Signature, location: 
     return rows.join('\n');
 }
 
-/** The TS node whose span contains `pos` (deepest), for a checker query. */
-function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undefined
-{
-    const find = (node: ts.Node): ts.Node | undefined =>
-    {
-        if (pos < node.getStart(sourceFile) || pos >= node.getEnd())
-        {
-            return undefined;
-        }
-        return ts.forEachChild(node, find) ?? node;
-    };
-    return find(sourceFile);
-}
-
 /** Escapes a value for a one-line markdown table cell. */
 function cell(value: string): string
 {
@@ -388,6 +390,126 @@ function tsHover(ctx: RequestContext, offset: number): Hover | null
 function isComponentName(name: string): boolean
 {
     return /^[A-Z]/.test(name) || name.includes('.');
+}
+
+/**
+ * Hover for an option key inside a `with { ... }` clause (`equals`, `name`, `defer`, ...), or null. The
+ * owning keyword decides which options exist; both the set and the docs come from the same
+ * language-data registry that completion uses, so adding an option there documents it here too.
+ */
+function withOptionHover(ctx: RequestContext, offset: number): Hover | null
+{
+    const keyword = withClauseKeyword(ctx.source, offset);
+    if (keyword === null)
+    {
+        return null;
+    }
+    const options = keywordOptions(keyword);
+    if (options === undefined)
+    {
+        return null;
+    }
+    let start = offset;
+    while (start > 0 && isIdentPart(ctx.source[start - 1]))
+    {
+        start--;
+    }
+    let end = offset;
+    while (end < ctx.source.length && isIdentPart(ctx.source[end]))
+    {
+        end++;
+    }
+    const option = options.find(candidate => candidate.name === ctx.source.slice(start, end));
+    if (option === undefined)
+    {
+        return null;
+    }
+    return {
+        contents: `**\`${ option.name }\`** - \`${ option.type }\`\n\n${ option.doc }`,
+        range: ctx.lineIndex.rangeAt(start, end)
+    };
+}
+
+/** Keywords whose construct is followed by a declared NAME (`state x`, `component App`). */
+const NAME_KEYWORDS = new Set(['component', 'state', 'derived', 'deferred']);
+
+/**
+ * Hover for an AzerothJS authoring keyword under the caret, or null. The word is
+ * only treated as a keyword when it is USED as one - anchored the same way the
+ * grammar colours it: not a member access (`sub.dispose`), and followed by the
+ * token its construct requires (a name for declarations, `(` for `watch`, `{` for
+ * the reactive blocks). So an ordinary identifier named `state` or an `effect()`
+ * call falls through to TypeScript quick-info instead.
+ */
+function keywordHover(ctx: RequestContext, offset: number): Hover | null
+{
+    let start = offset;
+    while (start > 0 && isIdentPart(ctx.source[start - 1]))
+    {
+        start--;
+    }
+    let end = offset;
+    while (end < ctx.source.length && isIdentPart(ctx.source[end]))
+    {
+        end++;
+    }
+    const doc = keywordDocumentation(ctx.source.slice(start, end));
+    if (doc === undefined)
+    {
+        return null;
+    }
+
+    // Reject a member access: `sub.dispose`, `this.state`.
+    let before = start - 1;
+    while (before >= 0 && isWhitespace(ctx.source[before]))
+    {
+        before--;
+    }
+    if (ctx.source[before] === '.')
+    {
+        return null;
+    }
+
+    // Require the token the construct opens with (so `effect()` / a variable named
+    // `state` doesn't match): a name for declarations, `(` for `watch`, else `{` -
+    // or a `with` options clause, which a block keyword takes before its body brace.
+    let after = end;
+    while (after < ctx.source.length && isWhitespace(ctx.source[after]))
+    {
+        after++;
+    }
+    const word = ctx.source.slice(start, end);
+    const next = ctx.source[after] ?? '';
+    // `effect with { ... } { }`: the keyword is followed by its options clause, not the body brace.
+    const followedByWith = ctx.source.startsWith('with', after) && !isIdentPart(ctx.source[after + 4] ?? '');
+    const opensCorrectly = NAME_KEYWORDS.has(word)
+        ? /[_$A-Za-z]/.test(next)
+        // `effect` opens either form: `effect (deps)` (explicit) or `effect { }` / `effect with { }` (auto).
+        : word === 'effect' ? (next === '(' || next === '{' || followedByWith) : (next === '{' || followedByWith);
+    if (!opensCorrectly)
+    {
+        return null;
+    }
+
+    return { contents: doc + withOptionsSection(word), range: ctx.lineIndex.rangeAt(start, end) };
+}
+
+/**
+ * A markdown section listing the keyword's `with { ... }` options, appended to its hover so a keyword
+ * that supports options advertises them. Read from the same registry completion/option-hover use, so
+ * an added option shows up here too. Returns '' for a keyword that takes no options.
+ */
+function withOptionsSection(keyword: string): string
+{
+    const options = keywordOptions(keyword);
+    if (options === undefined || options.length === 0)
+    {
+        return '';
+    }
+    const rows = options.map(option => `- \`${ option.name }\`: \`${ option.type }\` - ${ option.doc }`);
+    const example = keywordWithExample(keyword);
+    const usage = example === undefined ? '' : `\n\n\`\`\`azeroth\n${ example }\n\`\`\``;
+    return `\n\n**\`with { ... }\` options:**\n\n${ rows.join('\n') }${ usage }`;
 }
 
 /** The full tag name under the caret (the model only knows the typed prefix). */

@@ -1,36 +1,32 @@
-// phone() validator: checks phone numbers in E.164 international format.
-// Pragmatic scope - starts with `+`, total digit count between 8 and 15, and
-// (optionally) the calling-code prefix matches one of a supplied country list.
-//
-// What this does:
-//   - Strips human-friendly punctuation (spaces, hyphens, dots, parentheses),
-//     so `+1 (415) 555-1234` and `+14155551234` are treated identically.
-//   - Requires the leading `+` (strict E.164) unless a `defaultCountry` is set,
-//     in which case national-format input (no `+`, optional leading trunk `0`)
-//     is normalized to E.164 first. So `09170459330` validates like
-//     `+989170459330`.
-//   - Requires 8 to 15 total digits (E.164 caps at 15; 7 + at least one
-//     country-code digit is the realistic minimum).
-//   - With `countries: [...]`, checks that the digits start with one of those
-//     countries' calling codes.
-//
-// What this does not do:
-//   - Per-country length validation (US numbers are exactly 10 digits after +1;
-//     we accept 7-14 digits after +1).
-//   - Mobile vs landline vs special-service distinction.
-//   - Carrier code validation.
-//   - Disambiguation between countries sharing a calling code (e.g. +1 for
-//     US/Canada/NANP territories - we accept any number starting with `1`, not
-//     just genuine US numbers).
-//
-// For any of the above, use libphonenumber-js as a FieldValidator<string> and
-// chain it via combine(). We deliberately don't compete with its 70 KB metadata.
-//
-// Like every other validator, phone() passes silently on empty/null/undefined
-// input. Pair with required() when the field is mandatory.
+/**
+ * MODULE: form/phone
+ *
+ * phone() validator: checks phone numbers in E.164 international format. Pragmatic scope - starts
+ * with `+`, total digit count 8-15, and (optionally) the calling-code prefix matches one of a
+ * supplied country list.
+ *
+ * WHAT IT DOES:
+ *   - Strips human punctuation (spaces, hyphens, dots, parentheses) so `+1 (415) 555-1234` and
+ *     `+14155551234` are treated identically.
+ *   - Requires the leading `+` (strict E.164) UNLESS defaultCountry is set, in which case national
+ *     input (no `+`, optional leading trunk `0`) is normalized to E.164 first - `09170459330`
+ *     validates like `+989170459330`.
+ *   - Requires 8-15 total digits (E.164 caps at 15; 7 subscriber digits + >=1 country-code digit is
+ *     the realistic floor).
+ *   - With countries:[...], checks that the digits start with one of those countries' calling codes.
+ *
+ * WHAT IT DOES NOT DO: per-country length validation, mobile/landline/special-service distinction,
+ * carrier-code validation, or disambiguation between countries sharing a calling code (+1 accepts any
+ * NANP number, not just genuine US). For any of those, chain libphonenumber-js as a
+ * FieldValidator<string> via combine() - we deliberately don't ship its ~70 KB metadata.
+ *
+ * Like every other validator, phone() passes silently on empty/null/undefined; pair with required()
+ * when the field is mandatory.
+ */
 
 import type { FieldValidator } from './create-form.ts';
 import { getCountry } from './countries.ts';
+import { isEmpty } from './validators.ts';
 
 /**
  * Options for the `phone()` validator.
@@ -77,31 +73,53 @@ export interface PhoneOptions
 }
 
 /**
- * Returns true for the values we treat as "no input": empty
- * string after trim, null, undefined.
+ * phone
  *
- * @example
- * ```ts
- * isEmpty('');       // true
- * isEmpty('  ');     // true (trimmed)
- * isEmpty(null);     // true
- * isEmpty('+1');     // false
- * ```
+ * PURPOSE:
+ * Validator factory: returns a FieldValidator<string> that accepts E.164 phone numbers, optionally
+ * restricted to (and normalized for) a list of countries.
  *
- * @internal
- */
-function isEmpty(value: unknown): boolean
-{
-    if (value === null || value === undefined)
-    {
-        return true;
-    }
-    return typeof value === 'string' && value.trim() === '';
-}
-
-/**
- * Validator: phone number must be a valid E.164 international
- * number, optionally restricted to a list of countries.
+ * WHY IT EXISTS:
+ * Forms commonly need phone validation, but bundling full libphonenumber metadata (~70 KB) is overkill
+ * for "looks like a valid international number". phone() covers the common case with zero dependencies,
+ * and composes with libphonenumber-js via combine() when exact rules are required.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, form; a validator factory for createForm's `validate` map, built on the country dataset
+ * (getCountry) to resolve calling codes.
+ *
+ * INPUT CONTRACT:
+ * - options?: { countries?, defaultCountry?, message? } - all optional (see {@link PhoneOptions}).
+ *
+ * OUTPUT CONTRACT:
+ * - A FieldValidator<string>: value -> error message | null. Allowed calling codes and the default
+ *   calling code are precomputed once at construction, not per call.
+ *
+ * WHY THIS DESIGN:
+ * Calling codes are resolved + de-duplicated at construction (US/CA both map to '1'), so each call is
+ * cheap. National-format normalization (drop a leading trunk '0', prepend the calling code) lets users
+ * type local numbers. The country check is a coarse prefix match, NOT longest-prefix disambiguation -
+ * deliberate, to stay dependency-free.
+ *
+ * WHEN TO USE:
+ * Lightweight phone validation in forms, with optional country restriction.
+ *
+ * WHEN NOT TO USE:
+ * Exact per-country length, mobile-vs-landline, or carrier rules - chain libphonenumber-js instead.
+ *
+ * EDGE CASES:
+ * - Skips empty values (pair with required()).
+ * - An empty allowed-codes list (only unknown ISO codes passed) rejects every input.
+ * - Shared calling codes are not disambiguated (+1 accepts any NANP number).
+ * - defaultCountry is auto-inferred when exactly one country is listed.
+ *
+ * PERFORMANCE NOTES:
+ * Country lookups + de-dup run once at construction; per-call work is a couple of regex tests plus a
+ * prefix scan over the (small) allowed-codes array.
+ *
+ * DEVELOPER WARNING:
+ * This is FORMAT/PREFIX validation, not real-number validation - it does not prove a number is
+ * assigned or dialable. Don't rely on it for that.
  *
  * Skips empty values - pair with `required()` to enforce both:
  *
@@ -109,10 +127,10 @@ function isEmpty(value: unknown): boolean
  * validate: { phone: combine(required(), phone({ countries: ['US', 'GB'] })) }
  * ```
  *
- * @param options - Optional `{ countries, message }` configuration
- *
- * @returns A `FieldValidator<string>` ready to slot into a form's
- *          `validate` map
+ * @param options - Optional `{ countries, defaultCountry, message }` configuration
+ * @returns A `FieldValidator<string>` ready to slot into a form's `validate` map
+ * @see {@link PhoneOptions}
+ * @see {@link combine}
  *
  * @example
  * ```ts

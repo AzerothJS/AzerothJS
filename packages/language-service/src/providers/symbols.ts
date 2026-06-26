@@ -71,10 +71,23 @@ function nameRange(ctx: RequestContext, item: ts.NavigationTree): { start: Posit
     return mapped === null ? null : ctx.lineIndex.rangeAt(mapped.start, mapped.end);
 }
 
+/**
+ * The most matches a single workspace-symbol query returns. Matches tsserver's
+ * navigate-to default: the editor refines the list as the user types, so an
+ * unbounded scan only adds latency for results no one reads.
+ */
+const MAX_WORKSPACE_SYMBOLS = 256;
+
 /** Project-wide symbol search. */
 export function getWorkspaceSymbols(project: AzerothProject, query: string): WorkspaceSymbol[]
 {
-    const items = project.service.getNavigateToItems(query, undefined, undefined, false);
+    // excludeDtsFiles = true: a workspace-symbol search navigates to the user's
+    // own declarations, never into `lib.dom.d.ts` or `node_modules` `.d.ts`
+    // files. Scanning those is a large fixed cost (seconds on a real project)
+    // that grows the result set with symbols no one is searching for - so they
+    // are excluded, exactly as TypeScript's own tsserver does. The cap bounds
+    // the work on top of that.
+    const items = project.service.getNavigateToItems(query, MAX_WORKSPACE_SYMBOLS, undefined, true);
     const out: WorkspaceSymbol[] = [];
     for (const item of items)
     {

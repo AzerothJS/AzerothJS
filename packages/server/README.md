@@ -47,8 +47,10 @@ What renders on the server, and how it behaves:
   markers on, a reactive hole is wrapped in exactly one `<!--[-->…<!--]-->`
   anchor pair - the span the client hydrator adopts.
 - **Control flow** - `Show`, `For`, `Switch`, `Match`, and `Dynamic` each have a
-  string-mode path and wrap their output in a `display:contents` span carrying a
-  `data-azeroth-co` marker for hydration.
+  string-mode path and wrap their output in a comment co-range marker
+  (`<!--azc:type-->…<!--/azc-->`) the client hydrator adopts. Comments, not a
+  `display:contents` wrapper, so control-flow output stays valid inside
+  `<table>` / `<select>` / `<ul>`.
 - **Suspense** - resources cannot settle during a synchronous render, so the
   fallback is emitted (wrapped in a hydration marker) and the client swaps in the
   resolved children after hydration. There is no streaming/async SSR.
@@ -77,17 +79,12 @@ render, so the app always boots.
 | --- | --- |
 | `render-to-string.ts` | `renderToString` and `renderToStaticMarkup`. |
 | `render-to-document.ts` | `renderToDocument` and `RenderToDocumentOptions`. |
+| `island.ts` | `island`: mark an interactivity boundary for partial hydration. |
 
 ## Building
 
 ```sh
 npm run build -w @azerothjs/server
-```
-
-## Testing
-
-```sh
-npx vitest run test/server
 ```
 
 ## Examples
@@ -117,6 +114,5 @@ hydrate(() => App({}), document.getElementById('app')!);
 
 Keep rendering a pure string emission with no DOM dependency, so it stays usable
 in any server runtime. Output that is meant to be hydrated must keep its markers
-consistent with the renderer's hydration cursor. Tests live under `test/server`
-(string/document output, control flow, render mode, getter resolution, and the
-XSS escaping suite); add to them when changing serialization.
+consistent with the renderer's hydration cursor, since the client adopts exactly
+what was serialized.

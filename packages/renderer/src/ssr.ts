@@ -1,13 +1,14 @@
-// The element-specific half of server-side rendering: turning an h() call
-// into an HTML string. This mirrors, branch for branch, what applyProps /
-// setProperty / appendChild do in h.ts's DOM path - so the markup a server
-// produces is structurally identical to what the browser would build, which
-// is what makes hydration able to adopt it node-for-node.
-//
-// The generic, DOM-free pieces (escaping, child serialization, the SSRNode
-// wrapper) live in @azerothjs/reactivity's ssr.ts; this file owns the bits
-// that are specific to HTML elements (tag names, void elements, the
-// attribute-vs-property rules).
+/**
+ * MODULE: renderer/ssr (internal)
+ *
+ * The element-specific half of server-side rendering: turning an h() call into an HTML string.
+ * It mirrors, branch for branch, what applyProps/setProperty/appendChild do in h.ts's DOM path,
+ * so the markup the server produces is structurally identical to what the browser would build -
+ * which is what lets hydration adopt it node-for-node. The generic DOM-free pieces (escaping,
+ * child serialization, the SSRNode wrapper) live in @azerothjs/reactivity's ssr; this file owns
+ * the HTML-element specifics (tag names, void elements, attribute-vs-property rules). These
+ * serializers are package-internal (consumed by h.ts in string mode), not public API.
+ */
 
 import type { Props, Child } from './types.ts';
 import { untrack, serializeChild, escapeText, escapeAttr, ssr } from '@azerothjs/reactivity';

@@ -158,6 +158,30 @@ export function getFormattingEdits(ctx: RequestContext): TextEdit[]
     return mapTextChanges(ctx, ctx.project.service.getFormattingEditsForDocument(ctx.virtualFile, FORMAT_OPTIONS));
 }
 
+/**
+ * Format-selection edits for `range`. We can't hand the range straight to
+ * TypeScript's range formatter: an editor typically selects whole lines, whose
+ * leading indentation the projection drops (the script is re-emitted at column
+ * zero), so a selection that starts in that indentation has no generated offset.
+ * Instead we format the whole document - full context, the same proven mapped
+ * path as {@link getFormattingEdits} - and keep only the edits that fall inside
+ * the selection. That is exactly the user's intent for "Format Selection", and
+ * the approach embedded-language tooling uses for the same reason. Edits in the
+ * markup are already excluded (they don't map), so a markup-only selection
+ * yields none.
+ */
+export function getRangeFormattingEdits(ctx: RequestContext, range: Range): TextEdit[]
+{
+    const selStart = ctx.lineIndex.offsetAt(range.start);
+    const selEnd = ctx.lineIndex.offsetAt(range.end);
+    return getFormattingEdits(ctx).filter((edit) =>
+    {
+        const editStart = ctx.lineIndex.offsetAt(edit.range.start);
+        const editEnd = ctx.lineIndex.offsetAt(edit.range.end);
+        return editStart >= selStart && editEnd <= selEnd;
+    });
+}
+
 /** Formatting edits triggered by typing `ch` at a position (e.g. `;`, `}`). */
 export function getOnTypeFormattingEdits(ctx: RequestContext, position: Position, ch: string): TextEdit[]
 {

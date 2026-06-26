@@ -13,7 +13,9 @@
 
 import path from 'node:path';
 import { watch as fsWatch, type FSWatcher } from 'node:fs';
+
 import ts from 'typescript';
+
 import { AzerothLanguageService, pathToUri, DiagnosticSeverity } from '@azerothjs/language-service';
 
 /** Options controlling a single check run. */

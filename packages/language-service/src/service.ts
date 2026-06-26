@@ -48,6 +48,7 @@ import { getHover } from './providers/hover.ts';
 import {
     getDefinition,
     getDocumentHighlights,
+    getImplementation,
     getPrepareRename,
     getReferences,
     getRenameEdits,
@@ -70,6 +71,7 @@ import {
     getFoldingRanges,
     getFormattingEdits,
     getOnTypeFormattingEdits,
+    getRangeFormattingEdits,
     getSelectionRanges
 } from './providers/structure.ts';
 import { getAutoCloseTag, getLinkedEditingRanges } from './providers/editing.ts';
@@ -91,13 +93,35 @@ export class AzerothLanguageService
 {
     private readonly project: AzerothProject;
 
+    /** Workspace root (forward-slash, no trailing slash); the anchor for scratch (untitled) docs. */
+    private readonly scratchRoot: string;
+
     constructor(
         workspaceDirectory: string,
         configPath?: string,
         options: { rootProjectFiles?: boolean } = {}
     )
     {
+        this.scratchRoot = workspaceDirectory.replace(/\\/g, '/').replace(/\/+$/, '');
         this.project = new AzerothProject(workspaceDirectory, configPath, options);
+    }
+
+    /**
+     * The OS path a document URI maps to. A `file://` URI or a bare path is its real path
+     * ({@link uriToPath}); a PATHLESS URI - an untitled / never-saved buffer (`untitled:...`,
+     * `vscode-vfs:...`) the editor attaches before a first save - maps to a deterministic synthetic
+     * `.azeroth` path under the workspace root. That gives an unsaved scratch file a valid virtual module,
+     * so hover / completion / diagnostics work on it instead of throwing "source file not found"; the
+     * content is served from the open-document buffer, never from disk.
+     */
+    private docPath(uri: string): string
+    {
+        if (uri.startsWith('file://') || uri.startsWith('/') || /^[A-Za-z]:[\\/]/.test(uri))
+        {
+            return uriToPath(uri);
+        }
+        const safe = uri.replace(/[^A-Za-z0-9._-]/g, '_');
+        return `${ this.scratchRoot }/__azeroth_scratch__/${ safe }.azeroth`;
     }
 
     /**
@@ -149,19 +173,19 @@ export class AzerothLanguageService
     /** Registers or replaces a document's content. */
     public didOpen(uri: string, source: string): void
     {
-        this.project.openDocument(uriToPath(uri), source);
+        this.project.openDocument(this.docPath(uri), source);
     }
 
     /** Updates a document's content. */
     public didChange(uri: string, source: string): void
     {
-        this.project.openDocument(uriToPath(uri), source);
+        this.project.openDocument(this.docPath(uri), source);
     }
 
     /** Drops a document. */
     public didClose(uri: string): void
     {
-        this.project.closeDocument(uriToPath(uri));
+        this.project.closeDocument(this.docPath(uri));
     }
 
     /**
@@ -247,6 +271,13 @@ export class AzerothLanguageService
     {
         const ctx = this.context(uri);
         return ctx ? getReferences(ctx, ctx.lineIndex.offsetAt(position)) : [];
+    }
+
+    /** Implementation location(s) for the symbol at a position (interface implementors, member overrides). */
+    public getImplementation(uri: string, position: Position): Location[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? perf.measure('implementation', () => getImplementation(ctx, ctx.lineIndex.offsetAt(position))) : [];
     }
 
     /** Occurrences of the symbol at a position, for editor highlighting. */
@@ -393,6 +424,13 @@ export class AzerothLanguageService
         return ctx ? getFormattingEdits(ctx) : [];
     }
 
+    /** Format-selection edits for a range (script/expression regions only). */
+    public getRangeFormattingEdits(uri: string, range: Range): TextEdit[]
+    {
+        const ctx = this.context(uri);
+        return ctx ? getRangeFormattingEdits(ctx, range) : [];
+    }
+
     /** Inline parameter-name / inferred-type hints for a range. */
     public getInlayHints(uri: string, range: Range, options?: InlayHintOptions): InlayHint[]
     {
@@ -482,7 +520,7 @@ export class AzerothLanguageService
 
     private buildContext(uri: string): RequestContext | null
     {
-        const azerothPath = uriToPath(uri);
+        const azerothPath = this.docPath(uri);
         const source = this.project.getSource(azerothPath);
         if (source === undefined)
         {

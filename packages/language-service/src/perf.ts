@@ -72,12 +72,3 @@ export function snapshot(): Metrics
         requests: { ...timings }
     };
 }
-
-/** Clears all accumulated timings. */
-export function reset(): void
-{
-    for (const key of Object.keys(timings))
-    {
-        delete timings[key];
-    }
-}

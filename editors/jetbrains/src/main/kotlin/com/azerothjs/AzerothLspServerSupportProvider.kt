@@ -23,13 +23,16 @@ private const val EXTENSION = "azeroth"
  * actions - all from the same bundled `server.js` VS Code runs, so the two
  * editors stay at feature parity.
  */
-class AzerothLspServerSupportProvider : LspServerSupportProvider {
+class AzerothLspServerSupportProvider : LspServerSupportProvider
+{
     override fun fileOpened(
         project: Project,
         file: VirtualFile,
         serverStarter: LspServerSupportProvider.LspServerStarter,
-    ) {
-        if (file.extension == EXTENSION) {
+    )
+    {
+        if (file.extension == EXTENSION)
+        {
             serverStarter.ensureServerStarted(AzerothLspServerDescriptor(project))
         }
     }
@@ -39,13 +42,12 @@ class AzerothLspServerSupportProvider : LspServerSupportProvider {
  * The project-wide descriptor. Inheriting [ProjectWideLspServerDescriptor] turns
  * on the platform's default feature set (completion, hover, diagnostics,
  * go-to-definition/type-definition, references, rename, semantic tokens, code
- * actions, formatting, folding, …) for any server that advertises them, which
+ * actions, formatting, folding, ...) for any server that advertises them, which
  * ours does - so the descriptor's real responsibilities are: launch Node
  * reliably, forward settings, and answer the server's `workspace/configuration`
  * requests for live config updates.
  */
-private class AzerothLspServerDescriptor(project: Project) :
-    ProjectWideLspServerDescriptor(project, "AzerothJS") {
+private class AzerothLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "AzerothJS") {
 
     override fun isSupportedFile(file: VirtualFile): Boolean = file.extension == EXTENSION
 
@@ -56,7 +58,8 @@ private class AzerothLspServerDescriptor(project: Project) :
      * (component, tag, attribute, event, delimiter) aren't standard LSP types
      * and would otherwise render with no colour.
      */
-    override val lspCustomization: LspCustomization = object : LspCustomization() {
+    override val lspCustomization: LspCustomization = object : LspCustomization()
+    {
         override val semanticTokensCustomizer: LspSemanticTokensCustomizer = AzerothSemanticTokens()
     }
 
@@ -65,17 +68,20 @@ private class AzerothLspServerDescriptor(project: Project) :
      * On failure it notifies the user (with a link to the settings) and throws so
      * the platform records the cause in the LSP console rather than failing mute.
      */
-    override fun createCommandLine(): GeneralCommandLine {
+    override fun createCommandLine(): GeneralCommandLine
+    {
         val server = locateServer()
-        if (server == null) {
+        if (server == null)
+        {
             AzerothNotifier.serverMissing(project, "Reinstall the AzerothJS plugin so its bundled server is present.")
             throw ExecutionException("AzerothJS language server (server.js) not found in the plugin or on PATH.")
         }
 
         val node = NodeLocator.locate(AzerothSettings.instance.data.nodePath)
-        if (node == null) {
+        if (node == null)
+        {
             AzerothNotifier.nodeNotFound(project)
-            throw ExecutionException("Node.js executable not found. Set it in Settings → Languages & Frameworks → AzerothJS.")
+            throw ExecutionException("Node.js executable not found. Set it in Settings > Languages & Frameworks > AzerothJS.")
         }
 
         AzerothNotifier.log.info("Starting AzerothJS language server: $node $server --stdio")
@@ -95,7 +101,8 @@ private class AzerothLspServerDescriptor(project: Project) :
      * `azeroth.*` tree the init options carry. The server reads `azeroth.<x>` from
      * the returned map, so an unsectioned request gets the whole tree.
      */
-    override fun getWorkspaceConfiguration(item: ConfigurationItem): Any? {
+    override fun getWorkspaceConfiguration(item: ConfigurationItem): Any?
+    {
         val options = AzerothSettings.instance.toInitializationOptions()
         val section = item.section?.removePrefix("azeroth.")?.removePrefix("azeroth")?.trim('.')
         return if (section.isNullOrEmpty()) options else options[section] ?: options
@@ -106,10 +113,12 @@ private class AzerothLspServerDescriptor(project: Project) :
      * beside it), falling back to a globally-installed `azeroth-language-server`.
      * Returns null when neither is present.
      */
-    private fun locateServer(): String? {
+    private fun locateServer(): String?
+    {
         val pluginPath = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.pluginPath
         val bundled = pluginPath?.resolve("server")?.resolve("server.js")
-        if (bundled != null && bundled.exists()) {
+        if (bundled != null && bundled.exists())
+        {
             return bundled.toString()
         }
         // PATH fallback: a globally-installed CLI shim.

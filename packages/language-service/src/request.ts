@@ -82,5 +82,19 @@ export function resolveLocation(project: AzerothProject, fileName: string, span:
     return { uri: pathToUri(fileName), range: lineIndex.rangeAt(span.start, span.start + span.length) };
 }
 
+/** The deepest TypeScript node whose span contains `pos`, for a checker query at a generated offset. */
+export function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undefined
+{
+    const find = (node: ts.Node): ts.Node | undefined =>
+    {
+        if (pos < node.getStart(sourceFile) || pos >= node.getEnd())
+        {
+            return undefined;
+        }
+        return ts.forEachChild(node, find) ?? node;
+    };
+    return find(sourceFile);
+}
+
 /** Re-exports so providers import file-name helpers from one place. */
 export { isVirtualFile, toAzerothPath, toVirtualFile };

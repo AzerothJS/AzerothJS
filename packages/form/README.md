@@ -51,12 +51,6 @@ calls the configured `onSubmit`. The form's shape is defined by the keys of
 npm run build -w @azerothjs/form
 ```
 
-## Testing
-
-```sh
-npx vitest run test/form
-```
-
 ## Examples
 
 ```ts
@@ -91,4 +85,4 @@ The first version does not include async validators (compose with
 ## Contributing
 
 Keep validators pure functions that pass on empty input (except `required`), so
-they compose predictably under `combine`. Add tests under `test/form`.
+they compose predictably under `combine`.

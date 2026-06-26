@@ -1,50 +1,80 @@
-// The framework renders in one of three modes. h() and the control-flow
-// components read the active mode at the top of every call to decide how to
-// materialise their output:
-//
-//   'dom'     - the default. Build real DOM via document.createElement and
-//               wire live reactive effects.
-//   'string'  - server-side rendering. Emit an HTML string instead of DOM: no
-//               document, no live effects (reactive getters are read exactly
-//               once). Used by @azerothjs/server's renderToString.
-//   'hydrate' - client-side adoption of server-rendered DOM. Walk the existing
-//               nodes and attach listeners and effects in place rather than
-//               creating new ones.
-//
-// This lives in @azerothjs/reactivity rather than @azerothjs/renderer because
-// both the renderer (h, Show, For) and the component package (defineComponent,
-// ErrorBoundary) must read the mode, and @azerothjs/component does not depend
-// on the renderer - reactivity is the only package beneath both.
-//
-// The mode is a stack so it nests and resets correctly: runInMode pushes on
-// entry and pops in a finally, so a thrown render can never leak a non-'dom'
-// mode into the next call - critical for a long-lived server process.
+/**
+ * MODULE: reactivity/render-mode
+ *
+ * The framework renders in one of three modes. h() and every control-flow component
+ * read the active mode at the top of each call to decide how to materialise output:
+ *
+ *   'dom'     - default. Build real DOM (document.createElement) and wire live effects.
+ *   'string'  - SSR. Emit an HTML string: no document, no live effects (reactive
+ *               getters are read exactly once). Used by @azerothjs/server.
+ *   'hydrate' - client adoption of server HTML. Walk existing nodes and attach
+ *               listeners/effects in place instead of creating new ones.
+ *
+ * WHY IT LIVES IN @azerothjs/reactivity:
+ * Both the renderer (h, Show, For) and @azerothjs/component (ErrorBoundary) must read
+ * the mode, and component does not depend on the renderer - reactivity is the only
+ * package beneath both, so the mode flag lives here.
+ *
+ * The mode is a STACK so it nests and resets correctly: runInMode pushes on entry and
+ * pops in a finally, so a thrown render can never leak a non-'dom' mode into the next
+ * call - essential for a long-lived server process serving many requests.
+ */
 
 /**
- * The active rendering strategy. See the file header for the semantics of
- * each mode.
+ * The active rendering strategy. See the module header for each mode's semantics.
  */
 export type RenderMode = 'dom' | 'string' | 'hydrate';
 
-/**
- * Mode stack. The bottom is always `'dom'` (the default), so reading the top
- * outside any `runInMode` call yields `'dom'`, i.e. the original client
- * behavior.
- *
- * @internal
- */
+/** Mode stack; the bottom is always 'dom', so reading the top outside runInMode is 'dom'. @internal */
 const modeStack: RenderMode[] = ['dom'];
 
 /**
- * Returns the currently active render mode (the top of the stack).
+ * getRenderMode
  *
- * @returns The active {@link RenderMode}; `'dom'` when no mode is pushed.
+ * PURPOSE:
+ * Returns the currently active render mode (top of the mode stack).
  *
+ * WHY IT EXISTS:
+ * One read point for the mode lets every mode-aware primitive (h, control-flow,
+ * ErrorBoundary) branch on a single source of truth instead of each tracking its own.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, render dispatch. Read at the top of h() and control-flow components to pick
+ * DOM construction vs string serialization vs hydration adoption.
+ *
+ * INPUT CONTRACT:
+ * - None.
+ *
+ * OUTPUT CONTRACT:
+ * - The active {@link RenderMode}; 'dom' when no mode is pushed.
+ *
+ * WHY THIS DESIGN:
+ * A stack (rather than a single mutable flag) is what makes nesting and exception-safe
+ * restoration possible; this getter just reads its top.
+ *
+ * WHEN TO USE:
+ * Inside render-time code that must behave differently per mode and needs the exact
+ * mode (not just the string/hydrate booleans).
+ *
+ * WHEN NOT TO USE:
+ * In application logic - app code should not branch on render mode.
+ *
+ * EDGE CASES:
+ * - Outside any runInMode call it returns 'dom' (the stack bottom), i.e. plain client
+ *   behavior.
+ *
+ * PERFORMANCE NOTES:
+ * O(1): one array index read. It is on the render hot path, so it stays this cheap.
+ *
+ * DEVELOPER WARNING:
+ * The value is only meaningful during a render; do not cache it across async
+ * boundaries, where the active mode may have been popped.
+ *
+ * @returns The active {@link RenderMode}; 'dom' when no mode is pushed.
+ * @see {@link runInMode}
  * @example
- * ```ts
- * getRenderMode(); // 'dom' outside any runInMode
- * runInMode('string', () => getRenderMode()); // 'string'
- * ```
+ * getRenderMode();                              // 'dom'
+ * runInMode('string', () => getRenderMode());   // 'string'
  */
 export function getRenderMode(): RenderMode
 {
@@ -52,18 +82,11 @@ export function getRenderMode(): RenderMode
 }
 
 /**
- * Whether the framework is currently emitting an HTML string (SSR).
+ * Whether the framework is currently emitting an HTML string (SSR). Hot-path predicate
+ * read at the top of h() and control-flow components; delegates to {@link getRenderMode}.
  *
- * Hot-path predicate read at the top of `h()` and every control-flow
- * component.
- *
- * @returns `true` when the active mode is `'string'`.
- *
- * @example
- * ```ts
- * isStringMode(); // false in the default 'dom' mode
- * runInMode('string', () => isStringMode()); // true
- * ```
+ * @returns true when the active mode is 'string'.
+ * @see {@link runInMode}
  */
 export function isStringMode(): boolean
 {
@@ -71,15 +94,11 @@ export function isStringMode(): boolean
 }
 
 /**
- * Whether the framework is currently hydrating server-rendered DOM.
+ * Whether the framework is currently hydrating server-rendered DOM. Delegates to
+ * {@link getRenderMode}.
  *
- * @returns `true` when the active mode is `'hydrate'`.
- *
- * @example
- * ```ts
- * isHydrating(); // false in the default 'dom' mode
- * runInMode('hydrate', () => isHydrating()); // true
- * ```
+ * @returns true when the active mode is 'hydrate'.
+ * @see {@link runInMode}
  */
 export function isHydrating(): boolean
 {
@@ -87,19 +106,60 @@ export function isHydrating(): boolean
 }
 
 /**
- * Runs `fn` with `mode` active, restoring the previous mode afterwards, even
- * if `fn` throws. Modes nest, so this is safe to call re-entrantly.
+ * runInMode
  *
- * @typeParam T - The return type of `fn`
- * @param mode - The mode to activate for the duration of `fn`
- * @param fn - The work to run in that mode
+ * PURPOSE:
+ * Runs `fn` with `mode` active and restores the previous mode afterwards, even if `fn`
+ * throws.
  *
- * @returns Whatever `fn` returns
+ * WHY IT EXISTS:
+ * It is the only sanctioned way to enter a non-'dom' mode. The server's renderToString
+ * and the client's hydrate() wrap their work in it so the rest of the render tree reads
+ * the right mode, and so the mode is guaranteed to reset when the work completes or
+ * fails.
  *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, render dispatch. The boundary that establishes string/hydrate mode for an
+ * entire render subtree.
+ *
+ * INPUT CONTRACT:
+ * - mode: the {@link RenderMode} to activate for the duration of fn.
+ * - fn: the work to run in that mode.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns fn's return value. The previous mode is restored in a finally, so it is
+ *   restored on both normal return and throw.
+ *
+ * WHY THIS DESIGN:
+ * Push/pop on a stack (in try/finally) makes modes nest and self-heal: a render that
+ * throws cannot leave a server stuck in 'string' mode for the next request.
+ *
+ * WHEN TO USE:
+ * At an SSR or hydration entry point (or a test) that must run a subtree in a specific
+ * mode.
+ *
+ * WHEN NOT TO USE:
+ * In ordinary client rendering - 'dom' is already the default; wrapping needlessly only
+ * adds a push/pop.
+ *
+ * EDGE CASES:
+ * - Re-entrant/nested calls are safe; the inner pop restores to the outer mode.
+ * - If fn throws, the mode is still popped before the throw propagates.
+ *
+ * PERFORMANCE NOTES:
+ * O(1): one push and one pop around fn.
+ *
+ * DEVELOPER WARNING:
+ * Do not push a mode by mutating the stack directly - always use runInMode, or the
+ * finally-based restoration (and thus exception safety) is lost.
+ *
+ * @typeParam T - fn's return type.
+ * @param mode - The mode to activate for the duration of fn.
+ * @param fn - The work to run in that mode.
+ * @returns Whatever `fn` returns.
+ * @see {@link getRenderMode}
  * @example
- * ```ts
  * const html = runInMode('string', () => (App({}) as unknown as SSRNode).html);
- * ```
  */
 export function runInMode<T>(mode: RenderMode, fn: () => T): T
 {

@@ -11,7 +11,8 @@
 
 import { build } from 'esbuild';
 
-const common = {
+const common =
+{
     bundle: true,
     platform: 'node',
     format: 'cjs',

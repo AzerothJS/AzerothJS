@@ -47,9 +47,9 @@ go through one implementation.
 
 | File | Role |
 | --- | --- |
-| `signal.ts` | `createSignal`: the reactive value primitive. |
-| `effect.ts` | `createEffect`: a side effect that re-runs when its dependencies change. |
-| `memo.ts` | `createMemo`: a cached derived value. |
+| `create-signal.ts` | `createSignal`: the reactive value primitive. |
+| `create-effect.ts` | `createEffect`: a side effect that re-runs when its dependencies change. |
+| `create-memo.ts` | `createMemo`: a cached derived value. |
 | `batch.ts` | `batch`: coalesce synchronous writes into one update. |
 | `untrack.ts` | `untrack`: read without subscribing. |
 | `on.ts` | `on`: explicit dependency lists for effects/memos. |
@@ -70,12 +70,6 @@ A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is
 
 ```sh
 npm run build -w @azerothjs/reactivity
-```
-
-## Testing
-
-```sh
-npx vitest run test/reactivity
 ```
 
 ## Examples
@@ -107,4 +101,4 @@ createRoot(dispose => {
 The internal wiring (the current-subscriber register, the effect queue, the
 batching flag) is deliberately not exported; primitives share it through direct
 module imports. Keep new primitives composed from the existing ones where
-possible, and add tests under `test/reactivity`.
+possible.

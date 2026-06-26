@@ -1,111 +1,84 @@
-// onRootDispose() registers a callback that runs exactly once, when the
-// surrounding createRoot() is disposed. Unlike onCleanup it is not tied to an
-// effect, so it fires only on scope teardown, not on every effect re-run.
-//
-// Sibling to onCleanup:
-//   - onCleanup(fn) is called inside a createEffect(), fires before each
-//     re-run and on dispose, and is for per-run resource teardown (timers,
-//     listeners).
-//   - onRootDispose(fn) is called inside a createRoot(), fires only when the
-//     root is disposed, and is for per-scope teardown of resources that
-//     outlive any single effect.
-//
-// Why a separate primitive: the renderer's <For> accumulates per-key state
-// (effects, components, DOM nodes) across many runs of one effect. That state
-// must NOT be torn down when the effect re-runs - that would drop items we
-// still need - only when the surrounding root unmounts. onCleanup can't
-// express this; the previous workaround was a cryptic "sentinel effect with
-// empty deps". The same need shows up elsewhere, e.g. detaching a router's
-// popstate listener or cancelling store subscriptions on scope teardown.
-//
-// It works by registering `fn` with the current root's disposer list;
-// createRoot() runs every disposer in LIFO order on dispose. Called outside a
-// root it is a silent no-op (matching onCleanup outside an effect) - the
-// callback is dropped, no error.
+/**
+ * MODULE: reactivity/on-root-dispose
+ *
+ * onRootDispose() registers a callback that runs exactly once, when the surrounding
+ * createRoot() is disposed. It is the scope-level sibling of onCleanup:
+ *   - onCleanup(fn) lives inside an effect, fires before each re-run and on dispose,
+ *     and is for per-run resource teardown (timers, listeners).
+ *   - onRootDispose(fn) lives inside a root, fires only on scope teardown, and is for
+ *     state that outlives any single effect run.
+ *
+ * It exists because some state is accumulated ACROSS many runs of one effect - the
+ * renderer's <For> keeps per-key effects/components/DOM nodes - and must be torn down
+ * only when the scope unmounts, never on an effect re-run. onCleanup cannot express
+ * that; the same need appears for a router's popstate listener or store subscriptions.
+ */
 
 import { registerDisposer } from './create-root.ts';
 
 /**
- * Registers a callback to run when the current `createRoot()` is
- * disposed.
+ * onRootDispose
  *
- * Use this for cleanup that must outlive any single effect's run
- * cycle: things you accumulated across many effect re-runs and
- * only want to tear down once, when the whole scope unmounts.
+ * PURPOSE:
+ * Registers a callback to run once when the enclosing createRoot() is disposed.
  *
- * The callback fires exactly once. Calling `onRootDispose` outside a
- * `createRoot()` is a safe no-op - the callback is silently discarded.
+ * WHY IT EXISTS:
+ * onCleanup fires on every effect re-run, which is wrong for resources accumulated
+ * across runs that should be released only when the whole scope unmounts. Tying such
+ * teardown to an effect's run cycle either drops state too early or requires a cryptic
+ * empty-deps "sentinel effect"; onRootDispose names the intent directly.
  *
- * @param fn - The function to run on root disposal
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, reactivity lifetime. Used by higher layers (the renderer's <For>, the
+ * router, stores) to attach scope-lifetime teardown; it simply appends to the active
+ * root's disposer list.
  *
- * Why: onCleanup fires on every effect re-run, which is wrong for state that is
- * accumulated across runs and should be torn down only when the scope unmounts.
+ * INPUT CONTRACT:
+ * - fn: the teardown callback. Must be called synchronously inside a createRoot() to
+ *   attach to that root.
  *
- * Without onRootDispose: an effect's onCleanup tears state down too eagerly:
+ * OUTPUT CONTRACT:
+ * - Returns void. The callback runs exactly once, when the root is disposed. Called
+ *   outside any root it is a safe no-op (the callback is discarded).
  *
- *     createEffect(() =>
- *     {
- *         items.set(key(), entry);
- *         onCleanup(() => items.clear()); // wipes the map on every re-run
- *     });
+ * WHY THIS DESIGN:
+ * It delegates to registerDisposer, so root-disposal callbacks share the root's LIFO
+ * disposer list with effect/memo disposers - one teardown order, one mechanism. The
+ * no-op-outside-root rule mirrors onCleanup's no-op-outside-effect for symmetry.
  *
- * With onRootDispose: teardown runs once, when the root is disposed:
+ * WHEN TO USE:
+ * For resources whose lifetime is the scope, not a single effect run: global listeners,
+ * per-key maps built across runs, external subscriptions.
  *
- *     createRoot(() =>
- *     {
- *         createEffect(() => items.set(key(), entry));
- *         onRootDispose(() => items.clear()); // fires only on scope unmount
- *     });
+ * WHEN NOT TO USE:
+ * For per-run teardown (use onCleanup). Outside a root (it does nothing there).
  *
+ * EDGE CASES:
+ * - Fires in LIFO order with the rest of the root's disposers (reverse of registration).
+ * - Outside a createRoot() it silently drops the callback rather than throwing.
+ *
+ * PERFORMANCE NOTES:
+ * O(1): a single push onto the active root's disposer list.
+ *
+ * DEVELOPER WARNING:
+ * The callback runs once and only on root disposal - do not use it for teardown that
+ * must repeat per effect run, and ensure a root is actually active or it is dropped.
+ *
+ * @param fn - The function to run on root disposal.
+ * @returns void
+ * @see {@link createRoot}
+ * @see {@link onCleanup}
  * @example
- * ```ts
- * // Wire up a global listener for the lifetime of a scope
- * createRoot((dispose) =>
- * {
+ * createRoot((dispose) => {
  *     const handler = () => console.log('scrolled');
  *     window.addEventListener('scroll', handler);
  *     onRootDispose(() => window.removeEventListener('scroll', handler));
- *     // later, dispose() removes the listener exactly once
+ *     // dispose() later removes the listener exactly once
  * });
- * ```
- *
- * @example
- * ```ts
- * // Callbacks fire in LIFO order (reverse of registration), the same
- * // order createRoot() unwinds its disposers.
- * createRoot((dispose) =>
- * {
- *     onRootDispose(() => console.log('A'));
- *     onRootDispose(() => console.log('B'));
- *     onRootDispose(() => console.log('C'));
- *     dispose(); // prints C, B, A
- * });
- * ```
- *
- * @example
- * ```ts
- * // Tear down a per-key map accumulated across many effect runs
- * createRoot(() =>
- * {
- *     const items = new Map<string, ItemEntry>();
- *
- *     createEffect(() =>
- *     {
- *         // add/remove entries from `items` based on signals.
- *         // Do NOT clear the map here - that would lose state.
- *     });
- *
- *     onRootDispose(() =>
- *     {
- *         for (const entry of items.values()) entry.dispose();
- *         items.clear();
- *     });
- * });
- * ```
  */
 export function onRootDispose(fn: () => void): void
 {
-    // registerDisposer appends to the active root's disposer list when one is
-    // present and no-ops otherwise - exactly the contract we want.
+    // registerDisposer appends to the active root's disposer list when one is present
+    // and no-ops otherwise - exactly the contract we want.
     registerDisposer(fn);
 }

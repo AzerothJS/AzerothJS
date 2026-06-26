@@ -1,0 +1,103 @@
+name: Feature request
+description: Suggest a new feature or API improvement for AzerothJS
+labels: [ enhancement ]
+body:
+    -   type: markdown
+        attributes:
+            value: |
+                Thanks for taking the time to think through a proposal. The clearer the problem statement
+                and the example code, the easier it is to evaluate and discuss the idea. Check existing
+                issues and discussions first — your idea may already be in flight.
+
+    -   type: textarea
+        id: problem
+        attributes:
+            label: Problem statement
+            description: >
+                What problem are you trying to solve? What can you not do today, or what is unreasonably
+                difficult? Be specific — a concrete pain point makes the proposal easier to evaluate.
+            placeholder: |
+                When building forms with dynamic field arrays (e.g. a list of phone numbers the user can
+                add/remove), there is no idiomatic way to express a variable-length reactive field list
+                with the `form` keyword. Today I have to fall back to createForm + manual signal arrays,
+                losing the compile-time bind:value type-checking.
+        validations:
+            required: true
+
+    -   type: textarea
+        id: proposal
+        attributes:
+            label: Proposed solution
+            description: >
+                What would you like to happen? Show what the feature looks like from the user's perspective.
+                API sketches, example `.azeroth` components, or TypeScript signatures are welcome and
+                strongly encouraged.
+            render: tsx
+            placeholder: |
+                // Proposed: array field in the form keyword
+                form checkout = {
+                    phones: [{ number: '' }]
+                };
+
+                <For each={checkout.phones}>
+                    {(field, i) => <input bind:value={field.number} />}
+                </For>
+                <button onClick={() => checkout.phones.push({ number: '' })}>Add phone</button>
+        validations:
+            required: true
+
+    -   type: dropdown
+        id: package
+        attributes:
+            label: Relevant package
+            description: Which package(s) would this feature primarily touch?
+            multiple: true
+            options:
+                - "@azerothjs/reactivity"
+                - "@azerothjs/renderer"
+                - "@azerothjs/component"
+                - "@azerothjs/compiler (.azeroth syntax / IR / emitter)"
+                - "@azerothjs/router"
+                - "@azerothjs/store"
+                - "@azerothjs/form"
+                - "@azerothjs/server"
+                - "@azerothjs/core"
+                - "@azerothjs/testing"
+                - "@azerothjs/devtools"
+                - "Editor tooling (language-service / language-server / typescript-plugin / eslint-plugin)"
+                - "VS Code extension"
+                - "JetBrains plugin"
+                - "Cross-cutting / not sure"
+        validations:
+            required: true
+
+    -   type: dropdown
+        id: breaking
+        attributes:
+            label: Would this be a breaking change?
+            options:
+                - "No — purely additive"
+                - "Yes — would alter existing public API or behaviour"
+                - "Not sure"
+        validations:
+            required: true
+
+    -   type: textarea
+        id: alternatives
+        attributes:
+            label: Alternatives considered
+            description: >
+                Other approaches you have thought about and why they fall short, or workarounds you are
+                using today that make the need concrete.
+        validations:
+            required: false
+
+    -   type: textarea
+        id: additional
+        attributes:
+            label: Additional context
+            description: >
+                Prior art in other frameworks, links to related discussions, relevant constraints, or
+                anything else that would help evaluate the proposal.
+        validations:
+            required: false

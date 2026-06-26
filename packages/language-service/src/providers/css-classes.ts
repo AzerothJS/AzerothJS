@@ -19,7 +19,6 @@ import { classifyPosition } from '../markup-model.ts';
 import { pathToUri } from '../uri.ts';
 import { CompletionItemKind, type CompletionItem, type Hover, type Location } from '../protocol.ts';
 import type { RequestContext } from '../request.ts';
-import type { ClassDefinition } from '../style-index.ts';
 
 /** A class token under the caret, with the enclosing value's bounds. */
 interface ClassToken
@@ -289,5 +288,3 @@ function fence(css: string): string
 {
     return `\`\`\`css\n${ css }\n\`\`\``;
 }
-
-export type { ClassDefinition };

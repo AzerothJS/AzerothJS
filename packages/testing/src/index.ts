@@ -1,23 +1,21 @@
-// Testing utilities for AzerothJS apps. Every test against a reactive tree
-// repeats the same shape: mount inside a root, mutate signals, assert DOM,
-// dispose. Forgetting the disposal is the common failure - the leaked
-// effects keep running into later tests. These helpers own that lifecycle:
-//
-//   renderTest(component)  mount into a fresh container in document.body
-//                          (attached, so delegated events fire), returning
-//                          { container, unmount }.
-//   cleanup()              unmount everything renderTest mounted. Called
-//                          automatically after each test when a global
-//                          `afterEach` exists (vitest/jest with globals
-//                          enabled); otherwise call it from your own
-//                          afterEach.
-//   leakGuard(...getters)  snapshot signal subscriber counts; the returned
-//                          function throws if any getter has MORE
-//                          subscribers than at the snapshot - the
-//                          assertable form of "unmount released
-//                          everything".
-//   fire(el, type, init?)  dispatch a bubbling event - what delegated
-//                          handlers (the compiled dom target) need.
+/**
+ * MODULE: @azerothjs/testing - testing utilities for AzerothJS apps
+ *
+ * Every test against a reactive tree repeats the same shape: mount inside a root, mutate signals,
+ * assert DOM, dispose. Forgetting the disposal is the common failure - the leaked effects keep running
+ * into later tests. These helpers own that lifecycle:
+ *   - renderTest(component) - mount into a fresh container in document.body (ATTACHED, so delegated
+ *     events fire), returning { container, unmount };
+ *   - cleanup()             - unmount everything renderTest mounted; auto-registered with a global
+ *     `afterEach` when one exists (vitest/jest with globals enabled), else call it from your own;
+ *   - leakGuard(...getters) - snapshot subscriber counts; the returned fn throws if any getter gained
+ *     subscribers - the assertable form of "unmount released everything";
+ *   - fire(el, type, init?) - dispatch a BUBBLING event, which delegated (compiled dom-target)
+ *     handlers need.
+ *
+ * @see {@link renderTest}
+ * @see {@link leakGuard}
+ */
 
 import { createRoot, subscriberCount, type Getter } from '@azerothjs/reactivity';
 import { destroyComponent } from '@azerothjs/component';
@@ -37,12 +35,52 @@ export interface RenderResult
 const mounted = new Set<RenderResult>();
 
 /**
- * Mounts a component for a test: fresh container appended to document.body,
- * the tree built inside its own reactive root. Unmount disposes the root,
- * runs destroy hooks per removed node (the same teardown contract as
- * render()), and removes the container.
+ * renderTest
+ *
+ * PURPOSE:
+ * Mounts a component for a test - a fresh container appended to document.body, the tree built inside
+ * its own reactive root - and returns the container plus an idempotent unmount.
+ *
+ * WHY IT EXISTS:
+ * Every reactive-tree test needs the same mount/dispose lifecycle, and forgetting disposal leaks
+ * effects into later tests. renderTest owns that lifecycle so a test can't get it wrong.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Test-time, testing; wraps createRoot plus the render() teardown contract (root dispose + per-node
+ * destroy hooks).
+ *
+ * INPUT CONTRACT:
+ * - component: a function returning the root element to mount.
+ *
+ * OUTPUT CONTRACT:
+ * - A {@link RenderResult}: `container` (attached to document.body) and `unmount()` (idempotent).
+ *
+ * WHY THIS DESIGN:
+ * The container is ATTACHED to document.body so delegated events actually fire. unmount disposes the
+ * root AND removes nodes one-by-one (not `innerHTML = ''`) so MutationObserver teardown (Portal
+ * auto-cleanup) fires and destroy hooks run per element - the same contract as render()'s remount path.
+ *
+ * WHEN TO USE:
+ * Any unit/integration test of a component or a reactive binding.
+ *
+ * WHEN NOT TO USE:
+ * SSR string-output tests (call renderToString directly - no DOM needed); environments without a DOM.
+ *
+ * EDGE CASES:
+ * - unmount is idempotent (a second call no-ops).
+ * - {@link cleanup} unmounts any result you forgot to unmount.
+ *
+ * PERFORMANCE NOTES:
+ * One container + one root per call; negligible.
+ *
+ * DEVELOPER WARNING:
+ * Requires a DOM (happy-dom/jsdom/browser). The container is attached to document.body, so always
+ * unmount (or rely on cleanup) or trees bleed across tests.
  *
  * @param component - A function returning the root element
+ * @returns A {@link RenderResult} with the attached container and an idempotent unmount
+ * @see {@link cleanup}
+ * @see {@link leakGuard}
  *
  * @example
  * ```ts
@@ -103,9 +141,11 @@ export function renderTest(component: () => HTMLElement): RenderResult
 }
 
 /**
- * Unmounts everything renderTest mounted. Registered automatically with the
- * environment's global `afterEach` when one exists at import time; call it
- * from your own afterEach otherwise.
+ * Unmounts everything {@link renderTest} mounted. Registered automatically with the environment's
+ * global `afterEach` when one exists at import time; call it from your own afterEach otherwise.
+ *
+ * @returns Nothing; every tracked tree is unmounted as a side effect.
+ * @see {@link renderTest}
  */
 export function cleanup(): void
 {
@@ -116,15 +156,50 @@ export function cleanup(): void
 }
 
 /**
- * Snapshots the subscriber count of each signal/memo getter and returns an
- * assertion function: call it after unmounting and it throws (naming the
- * offenders) if any getter holds MORE subscribers than at the snapshot.
+ * leakGuard
  *
- * This is the assertable form of "tearing down the tree released every
- * subscription" - leaked effects are invisible to DOM assertions because a
- * disposed-looking tree can still hold live subscribers.
+ * PURPOSE:
+ * Snapshots the subscriber count of each signal/memo getter and returns an assertion that throws
+ * (naming the offenders) if any getter holds MORE subscribers than at the snapshot.
+ *
+ * WHY IT EXISTS:
+ * Leaked effects are INVISIBLE to DOM assertions - a disposed-looking tree can still hold live
+ * subscribers. This makes "tearing down the tree released every subscription" assertable.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Test-time, testing; built on reactivity's subscriberCount probe.
+ *
+ * INPUT CONTRACT:
+ * - getters: the signal/memo getters to watch.
+ *
+ * OUTPUT CONTRACT:
+ * - A function to call after teardown; it throws (listing each offending getter and its before->after
+ *   counts) if any getter gained subscribers, and returns nothing on success.
+ *
+ * WHY THIS DESIGN:
+ * It compares post-teardown counts to a baseline, so it flags NET leaks regardless of how many
+ * subscribers existed at the start, and names each offender for fast debugging.
+ *
+ * WHEN TO USE:
+ * Leak tests around a mount -> mutate -> unmount cycle.
+ *
+ * WHEN NOT TO USE:
+ * Asserting an exact subscriber count (it only flags increases); getters meant to stay subscribed
+ * past the check.
+ *
+ * EDGE CASES:
+ * - Equal or fewer subscribers passes; only an increase throws.
+ *
+ * PERFORMANCE NOTES:
+ * O(getters) at snapshot and at check.
+ *
+ * DEVELOPER WARNING:
+ * Snapshot BEFORE mounting and check AFTER unmounting - snapshot while mounted and the baseline
+ * already includes the subscriptions you are trying to detect.
  *
  * @param getters - Signal or memo getters to watch
+ * @returns An assertion function that throws if subscriptions were not released
+ * @see {@link renderTest}
  *
  * @example
  * ```ts
@@ -167,6 +242,7 @@ export function leakGuard(...getters: Getter<unknown>[]): () => void
  * @param el - The target element
  * @param type - Event type ('click', 'input', ...)
  * @param init - Extra event init entries, merged over the bubbling defaults
+ * @returns Nothing; the event is dispatched as a side effect.
  *
  * @example
  * ```ts

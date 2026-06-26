@@ -10,10 +10,11 @@ import javax.swing.Icon
 
 /**
  * Exposes the native lexer's highlight categories in
- * Settings → Editor → Color Scheme → AzerothJS, so users can recolour the base
+ * Settings > Editor > Color Scheme > AzerothJS, so users can recolour the base
  * layer. The LSP server's semantic tokens refine this on top at runtime.
  */
-class AzerothColorSettingsPage : ColorSettingsPage {
+class AzerothColorSettingsPage : ColorSettingsPage
+{
     override fun getDisplayName(): String = "AzerothJS"
 
     override fun getIcon(): Icon? = null
@@ -30,7 +31,8 @@ class AzerothColorSettingsPage : ColorSettingsPage {
         import { createSignal } from '@azerothjs/core';
 
         // A counter component
-        export default function Counter(props: { start: number }) {
+        export default function Counter(props: { start: number })
+        {
             const [count, setCount] = createSignal(props.start);
             return (
                 <button class="counter" onClick={() => setCount(count() + 1)}>
@@ -40,9 +42,9 @@ class AzerothColorSettingsPage : ColorSettingsPage {
         }
     """.trimIndent()
 
-    private companion object {
-        private fun key(name: String): TextAttributesKey =
-            TextAttributesKey.createTextAttributesKey("AZEROTH_$name")
+    private companion object
+    {
+        private fun key(name: String): TextAttributesKey = TextAttributesKey.createTextAttributesKey("AZEROTH_$name")
 
         val DESCRIPTORS = arrayOf(
             AttributesDescriptor("Keyword", key("KEYWORD")),

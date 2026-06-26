@@ -80,6 +80,26 @@ export function getTypeDefinition(ctx: RequestContext, offset: number): Location
         .filter((loc): loc is Location => loc !== null));
 }
 
+/**
+ * Implementation location(s) for the symbol at `offset` - the concrete classes
+ * implementing an interface, or the overrides of an abstract/overridable member.
+ * A pure TypeScript query against the virtual module, like {@link getDefinition};
+ * for a symbol with no separate implementation TypeScript returns the definition
+ * itself, so "Go to Implementation" on an ordinary value still lands somewhere useful.
+ */
+export function getImplementation(ctx: RequestContext, offset: number): Location[]
+{
+    const generated = toGenerated(ctx, offset);
+    if (generated === null)
+    {
+        return [];
+    }
+    const impls = ctx.project.service.getImplementationAtPosition(ctx.virtualFile, generated) ?? [];
+    return dedupe(impls
+        .map(impl => resolveLocation(ctx.project, impl.fileName, impl.textSpan))
+        .filter((loc): loc is Location => loc !== null));
+}
+
 /** All references to the symbol at `offset`. */
 export function getReferences(ctx: RequestContext, offset: number): Location[]
 {
@@ -162,6 +182,12 @@ export function getRenameEdits(ctx: RequestContext, offset: number, newName: str
         generated,
         false,
         false,
+        // providePrefixAndSuffixTextForRename is deliberately LEFT OFF. For a VARIABLE rename (what an
+        // `.azeroth` state/prop/local rename is), TS's default - letting a shorthand `{ x }` become
+        // `{ newName }`, which still binds the renamed variable - is correct, and it also returns the
+        // cross-file `.ts` declaration site. Turning the preference on splits shorthands (needed only when
+        // a property name and variable name must DIVERGE) and regressed cross-file rename. The
+        // prefix/suffix fields are still applied below for the rare site where TS does populate them.
         {}
     );
     if (!locations || locations.length === 0)

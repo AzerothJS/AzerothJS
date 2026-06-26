@@ -1,29 +1,28 @@
-// createDeferred() wraps a signal getter and returns a new getter whose value
-// updates are debounced: subscribers only see the new value after a timeout
-// has elapsed since the last change. Use it to keep expensive downstream work
-// (filtering large lists, re-rendering a chart, refetching) from running on
-// every rapid update - e.g. only filter once the user stops typing.
-//
-// It holds the deferred value in an internal signal, watches the source with
-// an effect, and on each source change (re)starts a timer; when the timer
-// fires without further changes it writes the internal signal, re-running its
-// subscribers.
+/**
+ * MODULE: reactivity/create-deferred
+ *
+ * createDeferred() wraps a signal getter and returns a new getter whose updates are
+ * debounced: subscribers see the new value only after a quiet period (no further source
+ * changes) has elapsed. It exists to keep expensive downstream work - filtering large
+ * lists, re-rendering a chart, refetching - off the rapid-update path, e.g. filtering
+ * only once the user stops typing. It holds the deferred value in an internal signal,
+ * watches the source with an effect, and (re)starts a timer on each change; when the
+ * timer fires undisturbed it writes the internal signal, re-running its subscribers.
+ */
 
 import type { Getter } from './types.ts';
-import { createSignal } from './signal.ts';
-import { createEffect } from './effect.ts';
+import { createSignal } from './create-signal.ts';
+import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 
 /**
- * Options for createDeferred.
+ * Options for {@link createDeferred}.
  */
 export interface DeferredOptions
 {
     /**
-     * The debounce timeout in milliseconds.
-     *
-     * The deferred value only updates after this many
-     * milliseconds have passed since the LAST source change.
+     * Debounce timeout in milliseconds: the deferred value updates only after this many
+     * ms have passed since the LAST source change.
      *
      * @default 150
      */
@@ -31,63 +30,76 @@ export interface DeferredOptions
 }
 
 /**
- * Creates a deferred (debounced) version of a signal getter. The returned
- * getter's value updates only after `timeout` ms have passed since the last
- * source change, keeping expensive downstream work off the rapid-update path.
- * The initial value is available immediately, with no delay on first read.
+ * createDeferred
  *
- * @typeParam T - The type of the signal's value
+ * PURPOSE:
+ * Returns a debounced version of `source`. The new getter's value updates only after
+ * `timeout` ms with no further source change; the initial value is available
+ * immediately (no first-read delay).
  *
- * @param source - A signal getter to debounce
- * @param options - Optional configuration (timeout in ms)
+ * WHY IT EXISTS:
+ * Reacting to every keystroke (or other rapid signal) re-runs expensive consumers far
+ * more than needed. Debouncing by hand means a setTimeout/clearTimeout dance in an
+ * effect plus a separate held signal - easy to get wrong (leaked timers, stale writes
+ * after unmount). createDeferred packages that correctly behind one getter.
  *
- * @returns A getter that returns the debounced value
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, reactivity stage. A derived primitive built on createSignal + createEffect;
+ * it is timer-driven, so it is a client-side convenience (timers do not advance during
+ * synchronous SSR).
  *
- * Why: keeping expensive downstream work off the rapid-update path means
- * debouncing the source yourself with a timer and a separate held value.
+ * INPUT CONTRACT:
+ * - source: a getter to debounce. Read reactively inside the internal effect.
+ * - options.timeout: debounce window in ms (default 150).
  *
- * Without createDeferred: a setTimeout/clearTimeout dance in an effect:
+ * OUTPUT CONTRACT:
+ * - Returns a getter for the debounced value, seeded with source's current value and
+ *   thereafter trailing it by the timeout.
  *
- *     const [delayed, setDelayed] = createSignal(search());
- *     createEffect(() =>
- *     {
- *         const v = search();
- *         const id = setTimeout(() => setDelayed(() => v), 300);
- *         onCleanup(() => clearTimeout(id)); // forget this and timers pile up
- *     });
+ * WHY THIS DESIGN:
+ * The value lives in an internal signal so existing reactivity machinery (subscription,
+ * equality) applies unchanged. The effect's cleanup is the single place a pending timer
+ * is cancelled, so both a debounce reset (re-run) and unmount (dispose) clear it - no
+ * leaked timers, no write after teardown.
  *
- * With createDeferred: one call returns the debounced getter:
+ * WHEN TO USE:
+ * To gate costly downstream work on a quiet period: search-as-you-type filtering,
+ * chart redraws, autosave, debounced fetches.
  *
- *     const deferred = createDeferred(search, { timeout: 300 });
- *     deferred(); // the value as of 300ms after the last change
+ * WHEN NOT TO USE:
+ * When every change must be observed (use the source directly). Not meaningful in SSR,
+ * where timers do not fire within the synchronous render.
  *
+ * EDGE CASES:
+ * - First read returns the seeded current value with no delay; only subsequent changes
+ *   are debounced.
+ * - Rapid changes keep resetting the timer, so the value updates once after the burst.
+ *
+ * PERFORMANCE NOTES:
+ * One internal signal + one effect + at most one live timer. Downstream consumers run
+ * at most once per quiet period rather than once per source change.
+ *
+ * DEVELOPER WARNING:
+ * Must be created inside a root/component scope so its internal effect (and any pending
+ * timer) is disposed on unmount; otherwise a trailing timer can fire after teardown.
+ *
+ * @typeParam T - The source value type.
+ * @param source - A signal getter to debounce.
+ * @param options - Optional settings; `options.timeout` is the debounce window (ms).
+ * @returns A getter returning the debounced value.
+ * @see {@link createSignal}
+ * @see {@link createEffect}
  * @example
- * ```ts
- * // Debounced search - filters only after the user stops typing
  * const [search, setSearch] = createSignal('');
  * const deferredSearch = createDeferred(search, { timeout: 300 });
- *
- * createEffect(() =>
- * {
- *     // Only runs 300ms after the last setSearch() call
- *     const results = filterItems(deferredSearch());
- *     renderResults(results);
- * });
- * ```
- *
- * @example
- * ```ts
- * // Default timeout (150ms)
- * const [query, setQuery] = createSignal('');
- * const deferredQuery = createDeferred(query);
- * ```
+ * createEffect(() => renderResults(filterItems(deferredSearch())));
  */
 export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions): Getter<T>
 {
     const timeout = options?.timeout ?? 150;
 
-    // Seed the internal signal with the current source value (no delay).
-    // untrack keeps this read from subscribing any enclosing effect.
+    // Seed the internal signal with the current source value (no delay); untrack keeps
+    // this read from subscribing any enclosing effect.
     const [deferred, setDeferred] = createSignal<T>(untrack(() => source()));
 
     let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -110,13 +122,9 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
             setDeferred(() => current);
         }, timeout);
 
-        // The returned cleanup is the single place a pending timer is
-        // cancelled. It runs in two situations, both intended:
-        //   1. Before the effect re-runs (source changed again) - the debounce
-        //      reset, clearing the previous timer right before a fresh one is
-        //      scheduled above.
-        //   2. On dispose (root teardown) - stops a stale setDeferred from
-        //      firing after unmount.
+        // The single place a pending timer is cancelled. Runs (1) before a re-run when
+        // the source changed again (debounce reset, right before scheduling the next
+        // timer) and (2) on dispose (stops a stale setDeferred after unmount).
         return () =>
         {
             if (timerId !== null)

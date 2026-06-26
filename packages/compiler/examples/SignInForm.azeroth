@@ -1,0 +1,59 @@
+// The canonical AzerothJS form. The `form` keyword owns the fields, validation, and submit lifecycle;
+// `bind:value` / `bind:checked` two-way-bind an input straight to a field. A FIELD is read as `login.email`
+// and bound with `bind:value={login.email}`; the rest of the form API is explicit - `login.errors()`,
+// `login.touched()`, `login.submitting()`, `login.handleSubmit`, `login.setError(...)`.
+import { required, email as emailRule, minLength, combine } from '@azerothjs/core';
+
+interface Credentials
+{
+    email: string;
+    password: string;
+}
+
+export default component SignInForm(props: { onAuthenticate: (credentials: Credentials) => Promise<void> })
+{
+    form login = { email: '', password: '', remember: true } with
+    {
+        validate:
+        {
+            email: combine(required('Email is required'), emailRule('Enter a valid email address')),
+            password: combine(required('Password is required'), minLength(8, 'At least 8 characters'))
+        },
+        onSubmit: async (values) =>
+        {
+            // The submit handler runs only when every validator passes. A server rejection is surfaced on
+            // a field with `setError` - editing the field re-validates and clears it.
+            try
+            {
+                await props.onAuthenticate({ email: values.email, password: values.password });
+            }
+            catch
+            {
+                login.setError('password', 'Invalid email or password');
+            }
+        }
+    };
+
+    <form onSubmit={login.handleSubmit}>
+        <label>
+            Email
+            <input type="email" placeholder="name@example.com" bind:value={login.email} />
+            <Show when={login.touched().email}><span class="field-error">{login.errors().email}</span></Show>
+        </label>
+
+        <label>
+            Password
+            <input type="password" bind:value={login.password} />
+            <Show when={login.touched().password}><span class="field-error">{login.errors().password}</span></Show>
+        </label>
+
+        <label>
+            <input type="checkbox" bind:checked={login.remember} />
+            Stay signed in
+        </label>
+
+        <button type="submit" disabled={login.submitting()}>
+            {login.submitting() ? 'Signing in...' : 'Sign in'}
+        </button>
+    </form>
+}

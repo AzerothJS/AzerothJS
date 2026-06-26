@@ -1,19 +1,19 @@
-// createForm: reactive form state - per-field signals, sync validation, a
-// submit lifecycle (loading + error), and DOM-friendly registration helpers for
-// <input> elements. Same shape and authoring style as createSignal /
-// createResource: no class hierarchy, no schema layer, no framework-specific markup.
-//
-// Validation timing: validators run on every value change and on submit.
-// errors() is always live - callers decide when to display errors by combining
-// with touched() (typical pattern: only show after blur, plus all fields after a
-// submit attempt). Async validators are not supported in v1; compose them
-// externally with createResource. A validateAsync option can be added later
-// without breaking the v1 API.
-//
-// register() targets text inputs: form.register('name') returns a prop bag for
-// <input> / <textarea> text-style elements. Checkboxes, radios, selects, files,
-// and dates need bespoke wiring - call form.setValue from a custom onChange
-// handler. Typed register variants for those input types can come later.
+/**
+ * MODULE: form/create-form
+ *
+ * createForm gives reactive form state: per-field signals, sync validation, a submit lifecycle
+ * (submitting + error), and DOM-friendly registration helpers for <input> elements - same authoring
+ * style as createSignal/createResource, with no class hierarchy or schema layer.
+ *
+ * VALIDATION TIMING: validators run on every value change and on submit; errors() is always live, so
+ * callers decide when to display (typical: show after blur, plus all fields after a submit attempt).
+ * Async validators are not in v1 - compose them externally with createResource (a validateAsync
+ * option can be added later without breaking the API).
+ *
+ * register() targets TEXT inputs: form.register('name') returns a prop bag for <input>/<textarea>.
+ * Checkboxes, radios, selects, files, and dates need bespoke wiring - call form.setValue from a
+ * custom onChange handler. The internal field-signal/validation machinery below carries its own comments.
+ */
 
 import type { Getter } from '@azerothjs/reactivity';
 import {
@@ -125,26 +125,17 @@ export interface FormApi<T extends Record<string, unknown>>
 }
 
 /**
- * Builds a reactive form whose state - values, errors, touched, dirty,
- * submitting - is observable through standard signal getters. Use
- * `register(name)` for ergonomic input wiring.
+ * createForm
  *
- * Validators are sync only in v1. Composes well with everything else in the
- * framework: errors propagate to `<ErrorBoundary>`, `submitting()` plugs
- * straight into `<Suspense>`, and submitted values can flow into a store or a
- * `createResource` invalidate.
+ * PURPOSE:
+ * Builds a reactive form whose state - values, errors, touched, dirty, submitting, isValid - is
+ * observable through standard signal getters, plus register()/handleSubmit()/reset()/setValue()/
+ * setError() for wiring inputs and driving submission.
  *
- * @typeParam T - The form's values shape, inferred from `initial`
- *
- * @param config - The form configuration
- *
- * @returns A {@link FormApi} for reading state and driving submission
- *
- * Why: form state is a pile of moving parts - values, errors, touched, dirty,
- * the submit lifecycle - and wiring each input by hand drifts out of sync fast.
- *
- * Without createForm: a signal per field, a separate errors signal, and an effect
- * to re-run validators, then wire each input and re-validate on submit yourself:
+ * WHY IT EXISTS:
+ * Form state is a pile of moving parts (values, errors, touched, dirty, the submit lifecycle) and
+ * wiring each input + re-validating by hand drifts out of sync fast. Without it you'd hand-roll a
+ * signal per field, a separate errors signal, a validation effect, and the submit handler:
  *
  *     const [name, setName] = createSignal('');
  *     const [errors, setErrors] = createSignal({ name: null });
@@ -152,14 +143,52 @@ export interface FormApi<T extends Record<string, unknown>>
  *     h('input', { value: name, onInput: e => setName(e.target.value) });
  *     // touched/dirty/submitting and the submit handler are still on you
  *
- * With createForm: one config gives reactive values/errors/touched/dirty and a
- * register()/handleSubmit() pair that wires inputs and the submit lifecycle:
+ * createForm packages all of it: one config yields reactive state and a register()/handleSubmit() pair.
  *
- *     const form = createForm({
- *         initial: { name: '' },
- *         validate: { name: v => v.length < 2 ? 'Too short' : null }
- *     });
- *     h('input', form.register('name')); // value, onInput, onBlur all wired
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, form; built on createSignal/createMemo/createEffect/untrack. Composes with the rest of the
+ * framework: errors propagate to <ErrorBoundary>, submitting() plugs into <Suspense>, and submitted
+ * values flow into a store or a createResource invalidate.
+ *
+ * INPUT CONTRACT:
+ * - config.initial: defines the form's shape (its keys ARE the field set) and starting values.
+ * - config.validate?: per-field SYNC validators; a field without one is always valid.
+ * - config.onSubmit?: called with the values snapshot when validation passes; may return a Promise.
+ *
+ * OUTPUT CONTRACT:
+ * - A {@link FormApi}: reactive getters (values/errors/touched/dirty/submitting/submitError/isValid)
+ *   plus imperative methods (register/handleSubmit/reset/setValue/setError).
+ *
+ * WHY THIS DESIGN:
+ * One signal per field means setValue notifies exactly one downstream (the values memo), not every
+ * reader. The validation effect MERGES rather than overwrites, so an error injected via setError()
+ * survives the user editing a different field. handleSubmit re-validates against a fresh snapshot
+ * (robust to out-of-order programmatic state changes) instead of trusting the live effect.
+ *
+ * WHEN TO USE:
+ * Any form needing validation + a submit lifecycle, or several coordinated inputs.
+ *
+ * WHEN NOT TO USE:
+ * A single trivial input (a plain createSignal is lighter); async/cross-field validation (compose
+ * createResource externally - v1 validators are sync only).
+ *
+ * EDGE CASES:
+ * - dirty uses reference comparison, so object/array fields read as "always dirty after first write".
+ * - errors() is always live; gate display with touched() (and handleSubmit marks all fields touched).
+ * - register() assumes a text input/textarea; other input types need a custom onChange + setValue.
+ *
+ * PERFORMANCE NOTES:
+ * Per-field signals give targeted updates; values/dirty/isValid are memos, recomputed only on change.
+ *
+ * DEVELOPER WARNING:
+ * register() is for TEXT inputs only. Validators are SYNC in v1 - returning a Promise from one does
+ * not work; compose async validation via createResource.
+ *
+ * @typeParam T - The form's values shape, inferred from `initial`
+ * @param config - The form configuration
+ * @returns A {@link FormApi} for reading state and driving submission
+ * @see {@link FormApi}
+ * @see {@link RegisteredFieldProps}
  *
  * @example
  * ```ts

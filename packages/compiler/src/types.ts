@@ -1,10 +1,16 @@
-// AST for one markup region. The compiler transforms markup embedded in a
-// JS/TS module into h() calls; these types describe what the parser produces.
-// Everything outside markup is left as opaque source text (the scanner only
-// carves out markup regions), so we never need a full JS grammar.
-//
-// Every node carries start/end byte offsets into the original source, so
-// codegen can emit source maps and errors can point at the right place.
+/**
+ * MODULE: compiler/types - the AST for one markup region
+ *
+ * The compiler transforms markup embedded in a JS/TS module into runtime calls; these types describe
+ * what the markup parser produces. Everything OUTSIDE markup is left as opaque source text (the
+ * scanner only carves out markup regions), so the compiler never needs a full JS grammar.
+ *
+ * Every node carries start/end byte offsets into the original source ({@link Span}), so codegen can
+ * emit source maps and errors can point at the right place.
+ *
+ * @see {@link MarkupElement}
+ * @see {@link MarkupChild}
+ */
 
 /** Offsets into the original source string. */
 export interface Span
@@ -83,14 +89,4 @@ export interface MarkupAttribute extends Span
     value: MarkupAttributeValue;
     /** True when this is a `{...spread}`. */
     spread: boolean;
-}
-
-/**
- * A markup region located by the scanner: the root markup node plus the span
- * it occupies in the source (so `compile()` can splice the generated code
- * back in).
- */
-export interface MarkupRegion extends Span
-{
-    node: MarkupElement | MarkupFragment;
 }

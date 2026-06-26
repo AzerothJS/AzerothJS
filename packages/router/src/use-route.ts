@@ -1,99 +1,26 @@
-// Five small primitives that wrap a Router and give the user the slice they
-// actually care about:
-//
-//   useRoute(router)     ->  the full RouteLocation snapshot
-//   useMatch(router)     ->  the matched route + chain (or null)
-//   useParams(router)    ->  just the path params, slice-memoized
-//   useQuery(router)     ->  just the query, slice-memoized
-//   useNavigate(router)  ->  imperative navigation API as one object
-//
-// Why these exist when router.location already does it:
-//
-//   1. Slice memoization. useParams re-fires only when the params actually
-//      change - navigating from /users/42 to /users/42#bio updates the location
-//      signal but leaves params identical, so useParams skips the notification.
-//      Same for useQuery.
-//
-//   2. Future context API. When we add <RouterProvider> later, these
-//      composables will resolve the router from context instead of taking it as
-//      an argument. Introducing the indirection now means user code doesn't
-//      change shape on that day - only the call signature drops the router
-//      argument.
+/**
+ * MODULE: router/use-route
+ *
+ * Five small composables that wrap a Router and hand the user the slice they care about:
+ *   useRoute(router)    -> the full RouteLocation snapshot
+ *   useMatch(router)    -> the matched route + chain (or null)
+ *   useParams(router)   -> just the path params, slice-memoized
+ *   useQuery(router)    -> just the query, slice-memoized
+ *   useNavigate(router) -> the imperative navigation API as one (destructurable) object
+ *
+ * WHY they exist when router.location already does it: (1) SLICE MEMOIZATION - useParams/useQuery
+ * re-fire only when their slice actually changes (navigating /users/42 -> /users/42#bio updates the
+ * location signal but leaves params identical, so useParams stays quiet); (2) a FUTURE CONTEXT API
+ * - when <RouterProvider> lands these will resolve the router from context instead of an argument,
+ * so user code does not change shape, only the call drops the router argument. Each composable is a
+ * thin wrapper; its contract is documented at its definition below.
+ */
 
 import type { Getter } from '@azerothjs/reactivity';
 import { createMemo } from '@azerothjs/reactivity';
 import type { Params, Query, RouteLocation, RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
-
-/**
- * Shallow-equal comparison for `Record<string, string | string[]>` shapes;
- * covers both `Params` (string values only) and `Query` (string or string[]
- * values).
- *
- * Used as the `equals` option on the params/query memos so they re-fire only
- * when their slice has actually changed, not on every location update that
- * happens to leave their slice intact.
- *
- * `createMemo` never invokes `equals` with its initial placeholder (a memo's
- * first computed value is always accepted), so in practice both arguments are
- * real record objects. The `a === b` fast path and the `== null` guard below
- * are kept as cheap defensive checks regardless.
- *
- * @internal
- */
-function shallowEqualRecord(
-    a: Record<string, string | string[]>,
-    b: Record<string, string | string[]>
-): boolean
-{
-    if (a === b)
-    {
-        return true;
-    }
-    if (a == null || b == null)
-    {
-        return false;
-    }
-
-    const keysA = Object.keys(a);
-    if (keysA.length !== Object.keys(b).length)
-    {
-        return false;
-    }
-
-    for (const k of keysA)
-    {
-        const va = a[k];
-        const vb = b[k];
-        if (va === vb)
-        {
-            continue;
-        }
-
-        // Both arrays: compare element by element. Ordering matters, matching
-        // how parseQuery preserves insertion order.
-        if (Array.isArray(va) && Array.isArray(vb))
-        {
-            if (va.length !== vb.length)
-            {
-                return false;
-            }
-            for (let i = 0; i < va.length; i++)
-            {
-                if (va[i] !== vb[i])
-                {
-                    return false;
-                }
-            }
-            continue;
-        }
-
-        // Mixed shape (one is array, the other isn't): not equal.
-        return false;
-    }
-
-    return true;
-}
+import { shallowEqualRecord } from './shallow-equal.ts';
 
 /**
  * Returns a getter for the full reactive `RouteLocation`.

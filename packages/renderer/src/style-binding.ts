@@ -1,113 +1,83 @@
-// styleMap() converts an object of CSS properties into a reactive inline
-// style-string getter, replacing fragile manual concatenation (a missing
-// semicolon silently breaks the whole declaration).
-//
-// Without styleMap: build the style string by hand.
-//
-//     style: () =>
-//     {
-//         return `color: ${ textColor() } font-size: ${ fontSize() }px`;
-//         // one missing semicolon and the rest of the declaration is dropped
-//     }
-//
-// With styleMap: an object where each property is independently reactive.
-//
-//     style: styleMap({
-//         color: textColor,
-//         'font-size': () => `${ fontSize() }px`,
-//         opacity: () => isVisible() ? 1 : 0
-//     }) // separators are handled for you, so no property can break another
-//
-// camelCase property names are converted to kebab-case automatically
-// (fontSize -> font-size, backgroundColor -> background-color).
+/**
+ * MODULE: renderer/style-binding
+ *
+ * styleMap() converts an object of CSS properties into a reactive inline-style getter,
+ * replacing fragile manual concatenation (where a missing semicolon silently drops the rest
+ * of the declaration). Each property may be static or a getter, so properties update
+ * independently; camelCase names are converted to kebab-case automatically.
+ */
 
 /**
- * A style value. Can be:
- *   - string/number -> static value
- *   - () => string/number -> reactive value
- *   - null/undefined -> property is removed
+ * A style value: a static string/number, a getter for reactivity, or null/undefined to omit
+ * the property.
  */
 type StyleValue = string | number | null | undefined | (() => string | number | null | undefined);
 
 /**
- * An object mapping CSS property names to values.
- *
- * Property names can use either:
- *   - kebab-case: 'font-size', 'background-color'
- *   - camelCase: 'fontSize', 'backgroundColor'
+ * An object mapping CSS property names (kebab-case OR camelCase) to {@link StyleValue}s.
  *
  * @example
- * ```ts
- * {
- *   color: 'red',
- *   'font-size': '16px',
- *   opacity: () => isVisible() ? 1 : 0,
- *   backgroundColor: theme
- * }
- * ```
+ * { color: 'red', 'font-size': '16px', opacity: () => isVisible() ? 1 : 0, backgroundColor: theme }
  */
 export type StyleObject = Record<string, StyleValue>;
 
 /**
- * Converts a style object into a reactive inline style
- * string getter.
+ * styleMap
  *
- * Returns a function that can be passed as the `style` prop
- * to h(). The function re-evaluates whenever reactive values
- * change.
+ * PURPOSE:
+ * Turns a {@link StyleObject} into a `() => string` inline-style getter for the `style` prop,
+ * recomputing when its reactive values change. camelCase keys become kebab-case;
+ * null/undefined values drop their property.
  *
- * Automatically converts camelCase property names to kebab-case
- * (fontSize -> font-size). Null/undefined values are skipped: the property
- * won't appear in the style string.
+ * WHY IT EXISTS:
+ * Hand-built style strings are brittle - one missing separator breaks the whole declaration,
+ * and reactive recomputation must be wired manually. styleMap declares properties as an
+ * object so separators are automatic and each property is independently reactive.
  *
- * @param styles - Object mapping CSS property names to values
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; an authoring helper. Returns a getter that h()'s attribute effect
+ * unwraps (via resolveReactive), so reading a signal value tracks it.
  *
- * @returns A getter function that returns the resolved style string
+ * INPUT CONTRACT:
+ * - styles: a StyleObject; values are strings/numbers, getters, or null/undefined.
  *
+ * OUTPUT CONTRACT:
+ * - Returns a `() => string` of `prop: value` pairs joined by `; `, with camelCase keys
+ *   converted and null/undefined properties omitted.
+ *
+ * WHY THIS DESIGN:
+ * Returning a getter keeps it reactive in h(); the object form makes properties addressable
+ * and individually conditional, and the kebab-case conversion lets authors use JS-style
+ * camelCase keys.
+ *
+ * WHEN TO USE:
+ * For inline styles that depend on state (dynamic color/size/opacity/transform), or to toggle
+ * a property off via null.
+ *
+ * WHEN NOT TO USE:
+ * For static, reusable styling - prefer scoped classes via {@link css} and
+ * {@link classList}. Heavy per-frame style churn is better done with a class swap.
+ *
+ * EDGE CASES:
+ * - null/undefined value omits the property entirely (used to conditionally remove one).
+ * - Numeric values are stringified as-is (no unit is added - write `() => `${ n() }px``).
+ *
+ * PERFORMANCE NOTES:
+ * O(number of properties) per evaluation; runs only when a value signal changes (one
+ * attribute effect in h()).
+ *
+ * DEVELOPER WARNING:
+ * Pass the getter (`style: styleMap({...})`) - do not call it when binding, or it stops being
+ * reactive. Remember numbers carry no implicit unit.
+ *
+ * @param styles - A {@link StyleObject}.
+ * @returns A getter resolving to the inline-style string.
+ * @see {@link classList}
+ * @see {@link css}
  * @example
- * ```ts
- * // Static and reactive values
- * const [color, setColor] = createSignal('blue');
- * const [size, setSize] = createSignal(16);
- *
  * h('p', {
- *   style: styleMap({
- *     color: color,
- *     'font-size': () => `${ size() }px`,
- *     'font-weight': 'bold'
- *   })
- * }, 'Styled text');
- *
- * // Renders: style="color: blue; font-size: 16px; font-weight: bold"
- * setColor('red');
- * // Updates: style="color: red; font-size: 16px; font-weight: bold"
- * ```
- *
- * @example
- * ```ts
- * // Conditional styles: null removes the property
- * h('div', {
- *   style: styleMap({
- *     display: () => isHidden() ? 'none' : null,
- *     opacity: () => isLoading() ? 0.5 : 1,
- *     transform: () => isExpanded() ? 'scale(1.1)' : 'scale(1)'
- *   })
- * });
- * ```
- *
- * @example
- * ```ts
- * // camelCase -> kebab-case conversion
- * h('div', {
- *   style: styleMap({
- *     backgroundColor: theme,
- *     borderRadius: '8px',
- *     boxShadow: () => isElevated()
- *       ? '0 4px 12px rgba(0,0,0,0.3)'
- *       : 'none'
- *   })
- * });
- * ```
+ *   style: styleMap({ color, 'font-size': () => `${ size() }px`, display: () => hidden() ? 'none' : null })
+ * }, 'Styled');
  */
 export function styleMap(styles: StyleObject): () => string
 {

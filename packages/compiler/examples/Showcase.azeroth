@@ -1,6 +1,3 @@
-import { createSignal, createMemo, createEffect, onCleanup, classList, styleMap, AzerothComponent } from '@azerothjs/core';
-
-/** A single todo item. */
 interface Todo
 {
     id: number;
@@ -8,172 +5,98 @@ interface Todo
     done: boolean;
 }
 
-/** The filter applied to the visible list. */
 type Filter = 'all' | 'active' | 'done';
 
-/**
- * One row of the list — a local component, so the editor can resolve `<TodoRow>`
- * in the markup below (completion, hover, go-to-definition, find-references).
- */
-function TodoRow(props: { todo: Todo; onToggle: (id: number) => void; onRemove: (id: number) => void })
+interface TodoRowProps
 {
-    return (
-        // classList(): each class is included by a condition. A getter makes the
-        // class reactive, so `done` toggles on the element without rebuilding it.
-        <li class={classList({
-            'todo': true,
-            'done': () => props.todo.done
-        })}>
-            <label>
-                <input
-                    type="checkbox"
-                    checked={props.todo.done}
-                    onChange={() => props.onToggle(props.todo.id)}
-                />
-                <span class="text">{props.todo.text}</span>
-            </label>
-            <button class="remove" title="Remove" onClick={() => props.onRemove(props.todo.id)}>
-                ✕
-            </button>
-        </li>
-    );
+    todo: Todo;
+    onToggle: (id: number) => void;
+    onRemove: (id: number) => void;
 }
 
-/** Props for the showcase. Both optional, so `<Showcase />` works as-is. */
-interface ShowcaseProps
+// A local component, used as <TodoRow> below. Props are an ordinary typed parameter
+// read as plain values (`props.todo`); callbacks are just props too (`props.onToggle`).
+component TodoRow(props: TodoRowProps)
 {
-    heading?: string;
-    initial?: Todo[];
+    <li class="todo" class:done={props.todo.done}>
+        <label>
+            <input type="checkbox" checked={props.todo.done} onChange={() => props.onToggle(props.todo.id)} />
+            <span class="text">{props.todo.text}</span>
+        </label>
+        <button class="remove" title="Remove" onClick={() => props.onRemove(props.todo.id)}>✕</button>
+    </li>
 }
 
-// Functional components take their props as the first argument. The default
-// `= {}` lets the component be used with no attributes; read each prop where
-// it's needed (`props.heading` below) rather than destructuring up here, so
-// nothing is captured by value.
-/** The showcase component. */
-export default function Showcase(props: ShowcaseProps = {})
+export default component Showcase(props: { heading: string })
 {
-    // Seed `nextId` past any provided ids so new todos never collide.
-    let nextId = (props.initial?.reduce((max, t) => Math.max(max, t.id), 0) ?? 0) + 1;
-    const [todos, setTodos] = createSignal<Todo[]>(props.initial ?? []);
-    const [draft, setDraft] = createSignal('');
-    const [filter, setFilter] = createSignal<Filter>('all');
 
-    // Derived reactive values — plain functions that read signals.
-    const remaining = createMemo(() => todos().filter(t => !t.done).length);
-    const visible = createMemo(() =>
-    {
-        const list = todos();
-        if (filter() === 'active') return list.filter(t => !t.done);
-        if (filter() === 'done') return list.filter(t => t.done);
-        return list;
-    });
+    state todos = [] as Todo[];
+    state draft = '';
+    state filter = 'all' as Filter;
 
-    createEffect(() =>
-    {
-        document.title = `${ remaining() } left`;
-        onCleanup(() => { document.title = 'AzerothJS'; });
-    });
+    // Derived values: plain expressions that read reactive state.
+    derived remaining = todos.filter(t => !t.done).length;
+    derived visible = filter === 'active' ? todos.filter(t => !t.done) : filter === 'done' ? todos.filter(t => t.done) : todos;
 
-    function addTodo(): void
+    // Plain helpers and locals live in the body too. Assignments to state are
+    // rewritten to setters; `nextId` is a non-reactive local.
+    let nextId = 1;
+    const addTodo = () =>
     {
-        const text = draft().trim();
-        if (text === '') return;
-        setTodos(prev => [...prev, { id: nextId++, text, done: false }]);
-        setDraft('');
+        const text = draft.trim();
+        if (text === '')
+            return;
+
+        todos = [...todos, { id: nextId++, text, done: false }];
+        draft = '';
+    };
+    const toggle = (id: number) => { todos = todos.map(t => (t.id === id ? { ...t, done: !t.done } : t)); };
+    const remove = (id: number) => { todos = todos.filter(t => t.id !== id); };
+
+    // An effect re-runs when the state it reads changes.
+    effect
+    {
+        document.title = `${ remaining } left`;
     }
 
-    const toggle = (id: number): void =>
-        setTodos(prev => prev.map(t => (t.id === id ? { ...t, done: !t.done } : t)));
+    <section class="showcase">
+        <header>
+            <h1>{props.heading}</h1>
+            <span class="count" style="font-weight: bold" style:color={remaining === 0 ? '#080' : '#c00'}>
+                {remaining} remaining
+            </span>
+        </header>
 
-    const remove = (id: number): void =>
-        setTodos(prev => prev.filter(t => t.id !== id));
+        <div class="add">
+            <input
+                type="text"
+                value={draft}
+                placeholder="What needs doing?"
+                onInput={(e) => draft = (e.target as HTMLInputElement).value}
+                onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); }}
+            />
+            <button class="addBtn" onClick={() => addTodo()} disabled={draft.trim() === ''}>Add</button>
+        </div>
 
-    return (
-        <section class="showcase">
-            <header>
-                <h1>{props.heading ?? 'Todos'}</h1>
-                {/* styleMap(): each CSS property is independently reactive. Getters
-                    re-evaluate when the signals they read change; camelCase keys
-                    (fontWeight) are converted to kebab-case (font-weight). */}
-                <span
-                    class="count"
-                    style={styleMap({
-                        color: () => remaining() === 0 ? '#080' : '#c00',
-                        fontWeight: 'bold'
-                    })}
-                >
-                    {remaining()} remaining
-                </span>
-            </header>
+        <Show when={todos.length === 0} fallback={<p class="hint">{visible.length} shown</p>}>
+            <p class="empty">Nothing yet — add one above.</p>
+        </Show>
 
-            {/* Dynamic attribute + events; `value={draft()}` is a reactive prop. */}
-            <div class="add">
-                <input
-                    type="text"
-                    value={draft()}
-                    placeholder="What needs doing?"
-                    onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); }}
-                />
-                <button onClick={addTodo} disabled={draft().trim() === ''}>Add</button>
-            </div>
+        <nav class="filters">
+            <Switch>
+                <Match when={filter === 'all'}><strong>All</strong></Match>
+                <Match when={filter === 'active'}><strong>Active</strong></Match>
+                <Match when={filter === 'done'}><strong>Done</strong></Match>
+            </Switch>
+            <button class="f-all" onClick={() => filter = 'all'}>All</button>
+            <button class="f-active" onClick={() => filter = 'active'}>Active</button>
+            <button class="f-done" onClick={() => filter = 'done'}>Done</button>
+        </nav>
 
-            {/* Built-in control flow — auto-imported by the compiler. */}
-            <Show when={todos().length === 0} fallback={<p class="hint">{visible().length} shown</p>}>
-                <p class="empty">Nothing yet — add one above.</p>
-            </Show>
-
-            <nav class="filters">
-                <Switch>
-                    <Match when={filter() === 'all'}><strong>All</strong></Match>
-                    <Match when={filter() === 'active'}><strong>Active</strong></Match>
-                    <Match when={filter() === 'done'}><strong>Done</strong></Match>
-                </Switch>
-                <button onClick={() => setFilter('all')}>All</button>
-                <button onClick={() => setFilter('active')}>Active</button>
-                <button onClick={() => setFilter('done')}>Done</button>
-            </nav>
-
-            {/* Keyed list; the function child receives each item. */}
-            <ul class="list">
-                <For each={visible()} key={(todo) => todo.id}>
-                    {(todo) => <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />}
-                </For>
-            </ul>
-        </section>
-    );
-}
-
-/** Props for the class component below. */
-interface ClockProps
-{
-    label: string;
-}
-
-// Class components declare their props type as the generic parameter and read
-// them through `this.props` (a readonly field, available in field initializers
-// and every method). There is no separate getter/setter: the parent owns the
-// props object, so a child reads `this.props.x` and never assigns to it.
-export class Clock extends AzerothComponent<ClockProps>
-{
-    private now = this.createSignal(new Date().toLocaleTimeString());
-
-    public override onMount(): void
-    {
-        const id = setInterval(() => this.now.set(new Date().toLocaleTimeString()), 1000);
-        onCleanup(() => clearInterval(id));
-    }
-
-    public override render()
-    {
-        return (
-            <div class="clock">
-                <span class="label">{this.props.label}</span>
-                <span class="face">{this.now()}</span>
-                {/* attribute hole → reactive: title: () => `Updated ${this.now()}` */}
-                <small title={`Updated ${this.now()}`}>tick</small>
-            </div>
-        );
-    }
+        <ul class="list">
+            <For each={visible} key={(todo) => todo.id}>
+                {(todo) => <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />}
+            </For>
+        </ul>
+    </section>
 }

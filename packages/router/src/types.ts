@@ -1,11 +1,13 @@
-// Shared router types. Component-specific prop types (LinkProps, RouteProps,
-// OutletProps) live with their components; the Router object's shape lives next
-// to createRouter.
-//
-// Mental model: the browser URL is the source of truth. The history adapter
-// wraps it so we can subscribe to changes. The router parses each URL into a
-// RouteLocation snapshot exposed as a reactive signal, and composables
-// (useParams, useQuery) derive narrower memos from it.
+/**
+ * MODULE: router/types
+ *
+ * Shared router type contracts. Component-specific prop types (LinkProps, RoutesProps, OutletProps)
+ * live with their components; the Router object's shape lives next to createRouter.
+ *
+ * MENTAL MODEL: the browser URL is the source of truth. The HistoryAdapter wraps it so changes can
+ * be subscribed to; the router parses each URL into a RouteLocation snapshot exposed as a reactive
+ * signal, and composables (useParams, useQuery) derive narrower memos from it.
+ */
 
 /**
  * Path parameters extracted from a URL.
@@ -274,6 +276,13 @@ export interface RouterConfig
 
     /** Routing strategy. Default: `'history'`. */
     mode?: RouterMode;
+
+    /**
+     * History adapter the router reads/writes the URL through. Defaults to
+     * `createBrowserHistory()` (window-backed). Inject `createMemoryHistory(url)`
+     * for SSR (one adapter per request, no `window`) or for tests.
+     */
+    history?: HistoryAdapter;
 }
 
 /**

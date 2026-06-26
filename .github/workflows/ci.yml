@@ -1,55 +1,78 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    push:
+        branches: [ main ]
+    pull_request:
+        branches: [ main ]
+
+# Least privilege: CI only needs to read the repository. No job here writes to
+# the repo, comments, or publishes, so no other scope is granted.
+permissions:
+    contents: read
+
+# A new push to a branch/PR cancels the in-progress run for that ref, so only the
+# latest commit is validated (saves CI minutes on rapid pushes).
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
 
 jobs:
-  build-test:
-    name: Build & test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/setup-node@v4
+                with:
+                    node-version: 20
+                    cache: npm
+            -   run: npm ci
+            -   run: npm run lint
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
+    test:
+        name: Test (Node ${{ matrix.node }} / ${{ matrix.os }})
+        runs-on: ${{ matrix.os }}
+        strategy:
+            # One failing cell should not hide failures in the others - we want the
+            # full cross-version/cross-OS picture from a single run.
+            fail-fast: false
+            matrix:
+                # The supported Node range (engines: ">=20") on Linux, plus a Windows
+                # cell on the LTS floor: Windows is the maintainer's primary dev platform
+                # yet was previously never exercised in CI, and the compiler does path /
+                # line-ending work where POSIX-vs-Windows differences actually surface.
+                os: [ ubuntu-latest ]
+                node: [ 20, 22, 24 ]
+                include:
+                    -   os: windows-latest
+                        node: 20
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/setup-node@v4
+                with:
+                    node-version: ${{ matrix.node }}
+                    cache: npm
+            -   run: npm ci
+            # vitest runs against src via the workspace aliases in vitest.config.ts, so
+            # the suite needs no build step.
+            -   run: npm test
 
-      - name: Install
-        run: npm ci
-
-      - name: Build all packages
-        run: npm run build
-
-      - name: Test
-        run: npx vitest run
-
-  package-extension:
-    name: Package VS Code extension
-    runs-on: ubuntu-latest
-    needs: build-test
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
-      - name: Build runtime + language packages
-        run: npm run build
-
-      - name: Package .vsix
-        run: npm run package -w azerothjs-vscode
-
-      - name: Upload .vsix artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: azerothjs-vscode
-          path: editors/vscode/dist/*.vsix
+    build:
+        name: Build & leak check
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/setup-node@v4
+                with:
+                    node-version: 20
+                    cache: npm
+            -   run: npm ci
+            # Proves all 15 packages still compile and emit their declarations.
+            -   run: npm run build
+            # Validates the published package.json contract (exports/types/format/bin),
+            # which the src-aliased test suite never exercises. Requires the build above.
+            -   run: npm run lint:publish
+            # Deterministic reactive-graph leak gate (build output is required: the gate
+            # imports @azerothjs/reactivity from its published dist).
+            -   run: npm run leak

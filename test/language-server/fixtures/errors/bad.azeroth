@@ -1,2 +1,0 @@
-const total: number = 'not a number';
-export const view = <p>{total}</p>;

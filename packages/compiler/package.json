@@ -1,6 +1,7 @@
 {
     "name": "@azerothjs/compiler",
     "version": "0.6.0-beta.1",
+    "engines": { "node": ">=20" },
     "description": "AzerothJS compiler — .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
     "type": "module",
     "main": "./dist/index.js",
@@ -22,8 +23,8 @@
     "sideEffects": false,
     "peerDependencies":
     {
-        "vite": ">=5",
-        "@azerothjs/devtools-overlay": "0.6.0-beta.1"
+        "vite": ">=6",
+        "typescript": ">=5"
     },
     "peerDependenciesMeta":
     {
@@ -31,13 +32,15 @@
         {
             "optional": true
         },
-        "@azerothjs/devtools-overlay":
+        "typescript":
         {
             "optional": true
         }
     },
     "scripts":
     {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
         "build": "tsc -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
@@ -55,12 +58,12 @@
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/compiler"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/compiler",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/compiler",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

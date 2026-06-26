@@ -195,7 +195,7 @@ function condenseRule(text: string, masked: string, segmentStart: number, brace:
     }
     const raw = text.slice(segmentStart, close).trim();
     const condensed = raw.replace(/\s+/g, ' ');
-    return condensed.length > 600 ? `${ condensed.slice(0, 600) } …` : condensed;
+    return condensed.length > 600 ? `${ condensed.slice(0, 600) } ...` : condensed;
 }
 
 /** Per-file memoization: the parsed classes and the mtime they were read at. */
@@ -224,12 +224,6 @@ export class StyleIndex
     public refresh(): void
     {
         this.files = null;
-    }
-
-    /** Forgets a single file's cached classes (call on its change/delete). */
-    public invalidate(filePath: string): void
-    {
-        this.cache.delete(toSlashes(filePath));
     }
 
     /** Every class definition currently known across the workspace. */

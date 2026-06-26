@@ -9,7 +9,8 @@ a single import.
 
 ```ts
 import {
-    createSignal, h, defineComponent,
+    createSignal, createMemo, h, render,
+    Show, For,
     createRouter, Link, Routes,
     createForm, createStore,
     renderToDocument

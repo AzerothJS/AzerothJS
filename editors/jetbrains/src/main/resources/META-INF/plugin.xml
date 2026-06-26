@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.azerothjs.azeroth</id>
     <name>AzerothJS</name>
-    <vendor url="https://github.com/IntelligentQuantum-Dev/AzerothJS">AzerothJS</vendor>
+    <vendor url="https://github.com/AzerothJS/AzerothJS">AzerothJS</vendor>
     <description><![CDATA[
         Language support for AzerothJS <code>.azeroth</code> files.
         <ul>

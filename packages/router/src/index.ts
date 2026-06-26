@@ -1,14 +1,18 @@
-// Public API for the router. A manual-first router: explicit Router instance,
-// <Link>/<Routes>/<Outlet> components, and the useRoute/useParams/useQuery/
-// useNavigate composables. File-based routing layers on top of this later.
-//
-// Internal helpers (joinPaths, flattenRoutes, splitFullPath, shallowEqualParams,
-// shallowEqualRecord) stay unexported in their own files.
+/**
+ * MODULE: @azerothjs/router - public API
+ *
+ * A manual-first client router: an explicit Router instance from createRouter, the
+ * <Link>/<Routes>/<Outlet> components, the useRoute/useParams/useQuery/useNavigate/useLoader
+ * composables, and the path/query/history utilities. Routes are DATA (passed to createRouter), not
+ * a <Route> element; file-based routing can layer on top later. Internal helpers (joinPaths,
+ * flattenRoutes, splitFullPath, shallowEqual*) stay unexported in their own files. Every symbol
+ * below is documented at its definition.
+ */
 
 // Functions
 
 export { createRouter, targetToFullPath } from './router.ts';
-export { createBrowserHistory } from './history.ts';
+export { createBrowserHistory, createMemoryHistory } from './history.ts';
 export { compilePath } from './path-pattern.ts';
 export { parseQuery, stringifyQuery } from './query.ts';
 

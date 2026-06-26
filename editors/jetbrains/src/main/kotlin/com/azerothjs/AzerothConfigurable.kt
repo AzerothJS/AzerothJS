@@ -9,17 +9,21 @@ import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
 
 /**
- * The AzerothJS settings page (Settings → Languages & Frameworks → AzerothJS).
+ * The AzerothJS settings page (Settings > Languages & Frameworks > AzerothJS).
  * Toggles are persisted in [AzerothSettings] and sent to the language server on
  * its next start, so changes take effect after restarting the LSP server (the
  * status widget) or the IDE.
  */
-class AzerothConfigurable : BoundConfigurable("AzerothJS") {
+class AzerothConfigurable : BoundConfigurable("AzerothJS")
+{
     private val s = AzerothSettings.instance.data
 
-    override fun createPanel(): DialogPanel = panel {
-        group("Language server") {
-            row("Node.js path:") {
+    override fun createPanel(): DialogPanel = panel
+    {
+        group("Language server")
+        {
+            row("Node.js path:")
+            {
                 textFieldWithBrowseButton(
                     FileChooserDescriptorFactory.createSingleFileNoJarsDescriptor()
                         .withTitle("Select Node.js Executable"),
@@ -29,11 +33,13 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
                     .comment("Leave blank to auto-detect from PATH and common version managers (nvm, fnm, volta, Homebrew). Restart the language server after changing.")
             }
         }
-        group("Suggestions") {
+        group("Suggestions")
+        {
             row { checkBox("Auto-import suggestions").bindSelected(s::autoImports) }
             row { checkBox("Built-in component snippets").bindSelected(s::componentSnippets) }
         }
-        group("Inlay hints") {
+        group("Inlay hints")
+        {
             row { checkBox("Enable inlay hints").bindSelected(s::inlayHints) }
             row { checkBox("Parameter-name hints").bindSelected(s::parameterNameHints) }
             row { checkBox("Parameter-type hints").bindSelected(s::parameterTypeHints) }
@@ -42,7 +48,8 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
             row { checkBox("Function return-type hints").bindSelected(s::functionLikeReturnTypeHints) }
             row { checkBox("Enum-member-value hints").bindSelected(s::enumMemberValueHints) }
         }
-        group("Intelligence") {
+        group("Intelligence")
+        {
             row { checkBox("Completion").bindSelected(s::completion) }
             row { checkBox("Hover").bindSelected(s::hover) }
             row { checkBox("Signature help").bindSelected(s::signatureHelp) }
@@ -50,7 +57,8 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
             row { checkBox("Semantic tokens").bindSelected(s::semanticTokens) }
             row { checkBox("Code lens").bindSelected(s::codeLens) }
         }
-        group("Navigation") {
+        group("Navigation")
+        {
             row { checkBox("Go to definition").bindSelected(s::definition) }
             row { checkBox("Go to type definition").bindSelected(s::typeDefinition) }
             row { checkBox("Find references").bindSelected(s::references) }
@@ -58,7 +66,8 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
             row { checkBox("Call hierarchy").bindSelected(s::callHierarchy) }
             row { checkBox("Document links").bindSelected(s::documentLinks) }
         }
-        group("Editing") {
+        group("Editing")
+        {
             row { checkBox("Folding ranges").bindSelected(s::folding) }
             row { checkBox("Selection ranges").bindSelected(s::selectionRange) }
             row { checkBox("On-type formatting").bindSelected(s::onTypeFormatting) }
@@ -66,14 +75,17 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS") {
             row { checkBox("Auto-close tags").bindSelected(s::autoClosingTags) }
             row { checkBox("Color swatches").bindSelected(s::documentColor) }
         }
-        group("Refactoring") {
+        group("Refactoring")
+        {
             row { checkBox("Rename").bindSelected(s::rename) }
         }
-        group("Symbols") {
+        group("Symbols")
+        {
             row { checkBox("Document symbols").bindSelected(s::documentSymbol) }
             row { checkBox("Workspace symbols").bindSelected(s::workspaceSymbol) }
         }
-        group("Diagnostics & formatting") {
+        group("Diagnostics & formatting")
+        {
             row { checkBox("Report diagnostics").bindSelected(s::diagnostics) }
             row { checkBox("Enable formatting").bindSelected(s::format) }
         }

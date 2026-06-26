@@ -1,34 +1,23 @@
-// createRouter is the orchestrator. Every other router export (Link, Route,
-// Outlet, useRoute, useParams, useQuery) is a thin reactive layer on top of
-// what the Router object exposes.
-//
-// Flow: navigate() pushes/replaces on the HistoryAdapter; the adapter's
-// subscribe callback updates a single state signal; the location and match
-// memos derive from that signal.
-//
-// Lifecycle: the history subscription is registered with the surrounding
-// createRoot via onRootDispose. When the root unmounts, the subscription is
-// dropped, and if it was the last subscriber on the adapter, the native
-// popstate listener is removed too (see history.ts).
-//
-// So createRouter must be called inside a createRoot() for cleanup to work. In
-// an AzerothJS app the top-level render() already wraps the tree in a root, so
-// the typical render(() => RootComponent({}), document.body) pattern is covered.
-// When using createRouter standalone (tests, isolated components), wrap it:
-//
-//     createRoot((dispose) =>
-//     {
-//         const router = createRouter({ routes: [...] });
-//         // ...use router...
-//         dispose(); // tears down the popstate subscription
-//     });
-//
-// Matching strategy: at construction we walk the (possibly nested) route tree
-// and produce one entry per leaf, holding the compiled full-path matcher and
-// the root-to-leaf chain (so <Outlet> can walk it). Matching is then a linear
-// scan over leaves returning the first hit. Route order in the config defines
-// priority - deliberate, predictable, and matching every other router on the
-// web.
+/**
+ * MODULE: router/router
+ *
+ * createRouter is the orchestrator; every other router export (Link, Routes, Outlet, useRoute,
+ * useParams, useQuery, useLoader) is a thin reactive layer over the Router it returns.
+ *
+ * FLOW: navigate() pushes/replaces on the HistoryAdapter; the adapter's subscribe callback updates
+ * one internal state signal; the `location` and `match` memos derive from it - so the URL is
+ * matched once per change and downstream reads are near-free structural reads.
+ *
+ * LIFECYCLE: the history subscription is registered with the surrounding createRoot via
+ * onRootDispose, so it (and, if it was the last subscriber, the native popstate listener) is torn
+ * down on unmount. createRouter therefore MUST run inside a createRoot - render() wraps the tree
+ * in one, so a top-level component is covered; standalone use (tests) must wrap it explicitly.
+ *
+ * MATCHING: at construction the (possibly nested) route tree is flattened to one entry per leaf
+ * (a compiled full-path matcher + the root-to-leaf chain for <Outlet>); matching is a linear
+ * first-hit scan, so config order defines priority - matching every other router on the web. The
+ * leaf/path/base/state internals below carry their own comments.
+ */
 
 import type { Getter, Resource } from '@azerothjs/reactivity';
 import {
@@ -51,6 +40,7 @@ import type {
 import { compilePath, type PathMatcher } from './path-pattern.ts';
 import { parseQuery, stringifyQuery } from './query.ts';
 import { createBrowserHistory } from './history.ts';
+import { shallowEqualRecord } from './shallow-equal.ts';
 
 /**
  * The object returned by `createRouter()`.
@@ -366,59 +356,73 @@ interface InternalState
 }
 
 /**
- * Creates a `Router` for the given config.
+ * createRouter
  *
- * Must be called inside a `createRoot()` so the underlying history subscription
- * can be cleaned up on unmount. AzerothJS's `render()` wraps the tree in a root
- * automatically, so calling `createRouter` from inside a top-level component is
- * fine.
+ * PURPOSE:
+ * Builds a {@link Router} from a route config: reactive `location`/`match`/`loader` plus imperative
+ * navigate/replace/back/forward/href.
  *
- * @param config - Routes, optional base path, optional mode. `mode` is
- *                 currently always `'history'`; the field exists so future
- *                 modes (`'hash'`, `'memory'`) can be added without breaking.
+ * WHY IT EXISTS:
+ * Hand-rolling client routing means wiring the popstate listener, push/replace, URL matching,
+ * nested layouts, loader cancellation, base-path handling, AND remembering to tear it all down -
+ * fiddly and leak-prone. createRouter packages all of it as reactive signals with automatic
+ * cleanup tied to the surrounding root.
  *
- * @returns A `Router` ready to drive `<Link>`, `<Route>`, `<Outlet>`, and the
- *          route composables.
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, router; the orchestrator the components ({@link Link}/Routes/Outlet) and composables
+ * (useRoute/useParams/useQuery/useLoader) read. Must run inside a createRoot so the history
+ * subscription is disposed on unmount (render() provides one).
  *
- * Without createRouter: you wire the popstate listener, push/replace, and match
- * the URL by hand, then remember to tear it all down:
+ * INPUT CONTRACT:
+ * - config.routes: a (possibly nested) route tree; order defines match priority.
+ * - config.base: optional base path; the router works in base-relative space internally.
+ * - config.history: optional HistoryAdapter (defaults to browser history); config.mode is reserved.
  *
- *     window.addEventListener('popstate', render);
- *     history.pushState(null, '', '/users/42');
- *     const id = matchRoutes(location.pathname);  // re-implement matching
- *     window.removeEventListener('popstate', render); // easy to forget; leaks
+ * OUTPUT CONTRACT:
+ * - A Router: `location()`/`match()` getters, a `loader` resource, and navigate/replace/back/
+ *   forward/href methods. Cleanup is automatic when the surrounding root disposes.
  *
- * With createRouter: one config drives reactive location/match signals, and the
- * history subscription is torn down with the surrounding root:
+ * WHY THIS DESIGN:
+ * One internal state signal updated by the history listener matches the URL once per change; the
+ * `match` memo uses structural equality so cosmetic URL changes (e.g. hash-only) do not invalidate
+ * downstream; the loader is a createResource keyed on `match` (free cancellation + race guard);
+ * base is handled by prefix-on-write / strip-on-read, so routes, params, and <Link to> stay
+ * base-relative.
  *
- *     const router = createRouter({ routes: [{ path: '/users/:id', component: UserPage }] });
- *     router.navigate('/users/42');
- *     router.location().params.id;  // '42'; cleanup is automatic on unmount
+ * WHEN TO USE:
+ * At the app root (or a subtree) to drive client-side routing.
  *
+ * WHEN NOT TO USE:
+ * For a single external link (use a plain <a>). Never call it outside a createRoot - the popstate
+ * subscription would leak.
+ *
+ * EDGE CASES:
+ * - A URL outside the configured base does not match (location still reflects the raw pathname).
+ * - No match, or a matched route without a loader, leaves `loader` in the idle (no-key) state.
+ * - Route order is priority: the first matching leaf wins.
+ *
+ * PERFORMANCE NOTES:
+ * The URL is matched once per change; `location`/`match` are structural memo reads; navigate runs
+ * untracked so calling it inside an effect adds no subscriptions.
+ *
+ * DEVELOPER WARNING:
+ * Must be created inside a createRoot or the history subscription (and native popstate listener)
+ * leaks. Route order matters - put more specific routes before catch-alls.
+ *
+ * @param config - The {@link RouterConfig}: routes (nested), optional base/history/mode.
+ * @returns A {@link Router}.
+ * @see {@link Link}
  * @example
- * ```ts
- * const App = defineComponent(() =>
- * {
- *     const router = createRouter({
- *         routes:
- *         [
- *             { path: '/', component: Home },
- *             { path: '/users/:id', component: UserPage }
- *         ]
- *     });
- *
- *     return h('div', {},
- *         Link({ to: '/', router, children: 'Home' }),
- *         Link({ to: '/users/42', router, children: 'User 42' }),
- *         Routes({ router })
- *     );
+ * const router = createRouter({
+ *   routes: [{ path: '/', component: Home }, { path: '/users/:id', component: UserPage }]
  * });
- * ```
+ * router.navigate('/users/42');
+ * router.location().params.id; // '42'
  */
 export function createRouter(config: RouterConfig): Router
 {
     const leaves = flattenRoutes(config.routes);
-    const history: HistoryAdapter = createBrowserHistory();
+    const history: HistoryAdapter = config.history ?? createBrowserHistory();
 
     // Canonical base prefix ('' when there's no base). The router works in
     // base-relative space internally: route patterns, location.pathname,
@@ -571,7 +575,7 @@ export function createRouter(config: RouterConfig): Router
                 {
                     return false;
                 }
-                return shallowEqualParams(a.params, b.params);
+                return shallowEqualRecord(a.params, b.params);
             }
         }
     );
@@ -618,8 +622,9 @@ export function createRouter(config: RouterConfig): Router
 
         // Optional opt-in scroll to top; the router doesn't restore scroll
         // automatically. Users who need bespoke scroll behavior can subscribe
-        // to `location` instead.
-        if (options.scroll)
+        // to `location` instead. Guarded for SSR / memory-history: the router runs
+        // server-side (createMemoryHistory) where there is no `window`.
+        if (options.scroll && typeof window !== 'undefined')
         {
             window.scrollTo({ top: 0, left: 0 });
         }
@@ -653,30 +658,4 @@ export function createRouter(config: RouterConfig): Router
             return resolve(to);
         }
     };
-}
-
-/**
- * Compares two `Params` records by key and value. Used by the match memo's
- * custom equality so re-renders are skipped when a navigation produces the same
- * route and same params.
- *
- * @internal
- */
-function shallowEqualParams(a: Params, b: Params): boolean
-{
-    const keysA = Object.keys(a);
-    const keysB = Object.keys(b);
-    if (keysA.length !== keysB.length)
-    {
-        return false;
-    }
-
-    for (const k of keysA)
-    {
-        if (a[k] !== b[k])
-        {
-            return false;
-        }
-    }
-    return true;
 }

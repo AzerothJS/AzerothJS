@@ -1,36 +1,19 @@
-// Portal renders children into a different part of the DOM tree, outside the
-// component's parent hierarchy. It returns an invisible placeholder in the
-// original tree and appends the real content to a target (default
-// document.body).
-//
-// Why: modals, tooltips, dropdowns, and toasts need to render at the top level
-// of the page to escape problems imposed by ancestors:
-//   - overflow: hidden clipping
-//   - z-index stacking context issues
-//   - a CSS transform on an ancestor breaking position: fixed
-//
-// Cleanup: a MutationObserver watches the placeholder. When the placeholder is
-// removed from the DOM (e.g. a surrounding Show toggling to false), the
-// portaled content is removed from the target automatically - no manual
-// cleanup needed. For example, inside Show: opening renders the Portal, which
-// appends the modal to body; closing removes the placeholder, the observer
-// fires, and the modal is removed from body.
-//
-// Without Portal: append to document.body by hand and remember to remove it
-// (and dispose its effects) when the owner unmounts.
-//
-//     const modal = h('div', { class: 'modal' }, 'Hi');
-//     document.body.appendChild(modal);
-//     onUnmount(() =>
-//     {
-//         modal.remove(); // forget this and the modal leaks past its owner
-//     });
-//
-// With Portal: returns a placeholder in the local tree.
-//
-//     Portal({
-//         children: () => h('div', { class: 'modal' }, 'Hi')
-//     }); // content mounts to the target, auto-cleans when the placeholder goes
+/**
+ * MODULE: renderer/portal
+ *
+ * <Portal> renders its children into a DIFFERENT part of the DOM tree, outside the
+ * component's parent hierarchy. It returns an invisible placeholder where it was declared
+ * and appends the real content to a target (default document.body). This is how modals,
+ * tooltips, dropdowns, and toasts escape ancestor constraints - overflow:hidden clipping,
+ * z-index stacking contexts, and a CSS transform breaking position:fixed.
+ *
+ * AUTO-CLEANUP: one shared MutationObserver watches all portal placeholders; when a
+ * placeholder leaves the document (e.g. a surrounding <Show> toggles to false), the portaled
+ * content is disposed and removed from the target automatically. Cleanup also runs on the
+ * surrounding root's disposal and via destroyPortal(); all three paths are idempotent. The
+ * single shared observer (plus a registry) keeps cost flat in the number of portals and
+ * disconnects when the last one is gone. The observer/registry helpers below are internal.
+ */
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
@@ -191,40 +174,66 @@ export interface PortalProps
 }
 
 /**
- * Renders children into a target DOM element outside the
- * component's parent hierarchy.
+ * Portal
  *
- * Returns a placeholder element in the original tree. When
- * the placeholder is removed from the DOM (e.g., by Show),
- * the portaled content is automatically cleaned up via
- * MutationObserver.
+ * PURPOSE:
+ * Builds `children` and appends them to `target` (default document.body), returning a hidden
+ * placeholder in the local tree. The content is auto-removed when the placeholder leaves the DOM.
  *
- * @param props - PortalProps with `children` and optional `target`
+ * WHY IT EXISTS:
+ * Some UI (modals, tooltips, toasts) must escape its ancestors' overflow/z-index/transform to
+ * render correctly at the top of the page. Doing this by hand (appendChild to body + manual
+ * removal on unmount) leaks the content and its effects if cleanup is forgotten. Portal
+ * relocates the content AND owns its lifetime, tying removal to the placeholder.
  *
- * @returns A hidden placeholder element in the original tree
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; a relocation component. Mode-dispatched: on the client it relocates to
+ * `target`; in SSR it emits content INLINE (no body to escape into) inside a contents anchor;
+ * on hydration it discards the inline copy and rebuilds the portal at the real target (v1 does
+ * not adopt portaled content in place).
  *
+ * INPUT CONTRACT:
+ * - props.children: a thunk building the content element.
+ * - props.target: optional host element; defaults to document.body.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns a hidden <span> placeholder for the local tree; the content lives under `target`.
+ *
+ * WHY THIS DESIGN:
+ * Content is built in its own createRoot so its effects are owned here (it has no local-tree
+ * parent whose removal would dispose them). A single shared MutationObserver plus a registry
+ * watches all placeholders - cheaper than one observer per portal and self-disconnecting when
+ * none remain. cleanup() is reachable from the observer, the surrounding root's onRootDispose,
+ * and destroyPortal(), and is idempotent so any combination is safe.
+ *
+ * WHEN TO USE:
+ * For overlays that must render outside their local DOM position: modals, tooltips, dropdowns,
+ * toasts, popovers.
+ *
+ * WHEN NOT TO USE:
+ * For content that belongs in the normal flow. Not as a general "move this node" tool - the
+ * content's lifetime is bound to the placeholder.
+ *
+ * EDGE CASES:
+ * - Cleanup fires only when the placeholder is actually removed (directly or via an ancestor),
+ *   not when it simply has not been inserted yet.
+ * - SSR renders inline; the first client hydration relocates to the target and drops the copy.
+ *
+ * PERFORMANCE NOTES:
+ * One shared observer across all portals (flat cost in portal count); cleanup is O(1) per portal.
+ *
+ * DEVELOPER WARNING:
+ * The return value is the PLACEHOLDER, not the content - keep it in the local tree so its
+ * removal triggers cleanup. Removing the content from `target` directly bypasses the
+ * bookkeeping; use {@link destroyPortal} or let placeholder removal handle it.
+ *
+ * @param props - {@link PortalProps}: `children`, optional `target`.
+ * @returns A hidden placeholder element for the local tree.
+ * @see {@link destroyPortal}
  * @example
- * ```ts
- * // Render a modal into document.body
- * Portal({ children: () =>
- *   h('div', { class: 'modal-overlay' },
- *     h('div', { class: 'modal' },
- *       h('h2', {}, 'Are you sure?'),
- *       h('button', { onClick: closeModal }, 'Close')
- *     )
- *   )
- * });
- * ```
- *
- * @example
- * ```ts
- * // Render into a specific container
- * const tooltipLayer = document.getElementById('tooltip-layer')!;
- *
- * Portal({ target: tooltipLayer, children: () =>
- *   h('div', { class: 'tooltip' }, 'Helpful tip!')
- * });
- * ```
+ * Portal({ children: () => h('div', { class: 'modal' }, h('button', { onClick: close }, 'Close')) });
+ * // into a specific layer:
+ * Portal({ target: tooltipLayer, children: () => h('div', { class: 'tooltip' }, 'Tip') });
  */
 export function Portal(props: PortalProps): HTMLElement
 {
@@ -336,19 +345,33 @@ export function Portal(props: PortalProps): HTMLElement
 }
 
 /**
- * Manually removes a Portal's content from its target.
+ * destroyPortal
  *
- * Usually not needed - Portal auto-cleans when its placeholder
- * is removed from the DOM. But available for edge cases.
+ * PURPOSE:
+ * Manually disposes a Portal's content and removes it from its target, given the placeholder
+ * {@link Portal} returned.
  *
- * @param placeholder - The placeholder element returned by Portal()
+ * WHY IT EXISTS:
+ * Portal auto-cleans when its placeholder leaves the DOM, but some flows tear content down
+ * imperatively (e.g. a portal kept at the top level with no surrounding reactive scope). This
+ * is the explicit hook for those cases.
  *
+ * INPUT CONTRACT:
+ * - placeholder: the element returned by {@link Portal}; a non-portal element is a safe no-op.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns void; idempotent (the underlying cleanup runs at most once).
+ *
+ * WHEN NOT TO USE:
+ * When the placeholder sits in a reactive/DOM scope that will remove it - auto-cleanup already
+ * handles that.
+ *
+ * @param placeholder - The placeholder element returned by {@link Portal}.
+ * @returns void
+ * @see {@link Portal}
  * @example
- * ```ts
  * const el = Portal({ children: () => h('div', {}, 'Modal') });
- * // Later:
- * destroyPortal(el);  // Removes the modal from document.body
- * ```
+ * destroyPortal(el); // removes the modal from its target
  */
 export function destroyPortal(placeholder: HTMLElement): void
 {

@@ -1,0 +1,13 @@
+# Force structured reports: a blank issue rarely contains a version or a repro,
+# which is the single biggest time sink when triaging a framework.
+blank_issues_enabled: false
+contact_links:
+    -   name: Questions & Discussions
+        url: https://github.com/AzerothJS/AzerothJS/discussions
+        about: Ask how-to questions, share ideas, or discuss the design here instead of opening an issue.
+    -   name: Documentation
+        url: https://github.com/AzerothJS/AzerothJS#readme
+        about: Check the README and per-package docs first — your answer may already be there.
+    -   name: npm — @azerothjs scope
+        url: https://www.npmjs.com/search?q=%40azerothjs
+        about: Browse published packages and changelogs on npm.

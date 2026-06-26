@@ -42,7 +42,7 @@ invalidates exactly the reactive reads that depend on what changed.
 | File | Role |
 | --- | --- |
 | `router.ts` | `createRouter`, the `Router` type, `targetToFullPath`. |
-| `history.ts` | `createBrowserHistory` and the history adapter. |
+| `history.ts` | `createBrowserHistory` / `createMemoryHistory` and the history adapter. |
 | `path-pattern.ts` | `compilePath`: path matching and param extraction. |
 | `query.ts` | `parseQuery`, `stringifyQuery`. |
 | `routes.ts` | `Routes`: render the matched route. |
@@ -59,12 +59,6 @@ apps served under a sub-path.
 
 ```sh
 npm run build -w @azerothjs/router
-```
-
-## Testing
-
-```sh
-npx vitest run test/router
 ```
 
 ## Examples
@@ -100,4 +94,4 @@ function User() {
 
 Internal helpers (path joining, route flattening, param comparison) stay
 unexported in their own files; keep the public surface to the router instance,
-the three components, and the composables. Add tests under `test/router`.
+the three components, and the composables.

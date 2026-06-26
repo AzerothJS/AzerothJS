@@ -1,23 +1,38 @@
-// @azerothjs/core: umbrella package re-exporting the framework's public
-// packages (@azerothjs/reactivity, @azerothjs/renderer, @azerothjs/component,
-// @azerothjs/store, @azerothjs/form, @azerothjs/router).
-//
-// Install one package, get the whole framework:
-//
-//   import {
-//       createSignal, h, defineComponent,
-//       createRouter, Link, Routes,
-//       createForm, createStore
-//   } from '@azerothjs/core';
-//
-// Or import individual packages directly for the same exports with a smaller
-// dependency surface:
-//
-//   import { createSignal } from '@azerothjs/reactivity';
-//   import { createRouter } from '@azerothjs/router';
-//
-// Tree-shaking drops unused exports either way, so the choice is one of
-// explicitness, not bundle size.
+/**
+ * MODULE: @azerothjs/core - the umbrella package
+ *
+ * Re-exports the framework's public packages behind one install:
+ *   - @azerothjs/reactivity - signals, memos, effects, resources, roots, error handling, render mode;
+ *   - @azerothjs/renderer   - h(), render/hydrate, control flow (Show/For/Switch/Match/Dynamic/
+ *                             Suspense/Transition/Portal), refs, css/class/style bindings;
+ *   - @azerothjs/component  - ErrorBoundary, destroyComponent;
+ *   - @azerothjs/store      - createStore;
+ *   - @azerothjs/form       - createForm + validators + phone/countries;
+ *   - @azerothjs/router     - createRouter, Link/Routes/Outlet, the use* composables, history adapters;
+ *   - @azerothjs/server     - SSR: renderToString / renderToStaticMarkup / renderToDocument.
+ *
+ * INSTALL ONE, GET THE WHOLE FRAMEWORK:
+ *
+ *   import {
+ *       createSignal, createEffect, h, Show, For,
+ *       createRouter, Link, Routes,
+ *       createForm, createStore, renderToString
+ *   } from '@azerothjs/core';
+ *
+ * Or import individual packages directly for the same exports with a smaller dependency surface:
+ *
+ *   import { createSignal } from '@azerothjs/reactivity';
+ *   import { createRouter } from '@azerothjs/router';
+ *
+ * Tree-shaking drops unused exports either way, so the choice is one of EXPLICITNESS, not bundle size.
+ *
+ * Generated `.azeroth` output imports its runtime helpers (tmpl/bindHole/bindSlot/bindProps/setProp)
+ * from THIS package - that block is @internal below and is NOT application API.
+ *
+ * @see {@link createSignal}
+ * @see {@link h}
+ * @see {@link renderToString}
+ */
 
 // Reactivity
 
@@ -40,7 +55,9 @@ export {
     getRenderMode,
     isStringMode,
     isHydrating,
-    runInMode
+    runInMode,
+    getStoreScope,
+    runInStoreScope
 } from '@azerothjs/reactivity';
 
 export type {
@@ -67,10 +84,6 @@ export type {
 
 export {
     h,
-    tmpl,
-    bindHole,
-    bindChild,
-    bindProps,
     render,
     hydrate,
     hydrateIslands,
@@ -89,6 +102,17 @@ export {
     css,
     collectStyleSheet,
     resetStyleSheet
+} from '@azerothjs/renderer';
+
+// Compiler-emitted runtime: imported by generated `.azeroth` output, NOT part
+// of the application API. Kept exported so compiled modules resolve them; each
+// is @internal and may change between releases.
+export {
+    tmpl,
+    bindHole,
+    bindSlot,
+    bindProps,
+    setProp
 } from '@azerothjs/renderer';
 
 export type {
@@ -111,22 +135,8 @@ export type {
 
 // Component
 
-export {
-    defineComponent,
-    destroyComponent,
-    onMount,
-    onDestroy,
-    AzerothComponent,
-    ErrorBoundary
-} from '@azerothjs/component';
-
-export type {
-    Component,
-    ComponentSetup,
-    LifecycleHook,
-    ReactiveState,
-    ErrorBoundaryProps
-} from '@azerothjs/component';
+export { destroyComponent, ErrorBoundary } from '@azerothjs/component';
+export type { ErrorBoundaryProps } from '@azerothjs/component';
 
 // Store
 
@@ -165,6 +175,7 @@ export type {
 export {
     createRouter,
     createBrowserHistory,
+    createMemoryHistory,
     compilePath,
     parseQuery,
     stringifyQuery,

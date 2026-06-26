@@ -1,41 +1,55 @@
-// A thin parser wrapper that lets the AzerothJS markup in a surfaced `.azeroth`
-// script be parsed, while the block keeps its `.ts` identity for rule matching.
+// The `.azeroth` ESLint parser.
 //
-// AzerothJS is its own language; this only concerns the THIRD-PARTY parser we
-// reuse to read it. @typescript-eslint/parser enables markup parsing only for
-// its markup script-kind (selected by a trailing `x` on the extension) - under a
-// plain `.ts` extension it reads `<div>` as a type assertion/generic and fails
-// with "'>' expected". The processor names its virtual block `index.ts` on
-// purpose, so it matches the `**/*.ts` rule globs a project already targets; this
-// wrapper hands that buffer to the upstream parser under the markup script-kind
-// so the AzerothJS markup is understood, then returns the result unchanged.
+// It is set as `languageOptions.parser` for the processor's virtual `.ts` blocks. The processor has
+// already lowered the `.azeroth` file to its virtual TypeScript (the block text); this parser parses
+// that text in PROGRAM mode against the shared AzerothProject's program (see project-pool.ts). The
+// result therefore carries real `parserServices` (`program` + `getTypeChecker` + the ESTree<->TS node
+// map), which is what lets type-aware `@typescript-eslint` rules - `no-floating-promises`,
+// `strict-boolean-expressions`, `no-misused-promises`, ... - run on `.azeroth` exactly as on `.ts`.
+//
+// Node ranges stay in virtual coordinates here; the processor's `postprocess` maps every message and
+// fix back to the original `.azeroth` source and drops anything in generated scaffolding. So this
+// parser stays small: its whole job is to attach the right program to the right virtual file.
 
-import * as tsParser from '@typescript-eslint/parser';
-import type { Linter } from 'eslint';
+import tsParser from '@typescript-eslint/parser';
+import { posix } from 'node:path';
+import { toVirtualFile } from '@azerothjs/language-service';
+import { projectFor, normalize } from './project-pool.ts';
 
-type ParserOptions = Parameters<typeof tsParser.parseForESLint>[1];
-
-// @typescript-eslint's ParseForESLintResult is structurally a superset of
-// ESLint's (its token `type`s are a wider enum), so the object is cast through
-// `unknown` to ESLint's Parser type - the runtime value is exactly what ESLint
-// expects (it IS @typescript-eslint/parser's output).
-const parser =
+interface ParserOptions
 {
-    meta: { name: '@azerothjs/eslint-plugin/parser' },
-    parseForESLint(code: string, options?: ParserOptions)
-    {
-        const merged = { ...(options ?? {}) } as ParserOptions & { filePath?: string; ecmaFeatures?: Record<string, unknown> };
-        // `jsx` is the upstream parser's option name for "parse markup", not a
-        // statement about the AzerothJS language.
-        merged.ecmaFeatures = { ...(merged.ecmaFeatures ?? {}), jsx: true };
-        if (typeof merged.filePath === 'string')
-        {
-            // Select the upstream parser's markup script-kind for the virtual
-            // `…/0_index.ts` buffer (it keys off the trailing `x`).
-            merged.filePath = merged.filePath.replace(/\.ts$/, '.tsx');
-        }
-        return tsParser.parseForESLint(code, merged);
-    }
-};
+    filePath?: string;
+    [key: string]: unknown;
+}
 
-export const azerothParser: Linter.Parser = parser as unknown as Linter.Parser;
+/** ESLint custom-parser entry. `code` is the virtual block; `options.filePath` is `<file>.azeroth/0.ts`. */
+export function parseForESLint(code: string, options: ParserOptions = {}): ReturnType<typeof tsParser.parseForESLint>
+{
+    // The block lives at `<azeroth-file>/0.ts`, so its directory IS the `.azeroth` path the processor
+    // registered in the pool. The program holds that file under its virtual twin name.
+    const azerothPath = posix.dirname(normalize(options.filePath ?? ''));
+    const project = projectFor(azerothPath);
+    const program = project.service.getProgram();
+    const twin = toVirtualFile(azerothPath);
+
+    // Program mode (reusing the LS program) when the twin is in it - that is the type-aware path. If for
+    // any reason it isn't (e.g. a file linted without the processor having registered it), fall back to
+    // a syntactic parse so linting still works, just without type information.
+    //
+    // `project` and `projectService` are forced off REGARDLESS of what the surrounding config set: if the
+    // user enabled `projectService: true` (or a `project`) for their `.ts` files, inheriting it here would
+    // make typescript-estree build its own inferred project and ignore our `programs`, silently degrading
+    // every type to `any` so type-aware rules find nothing. We always drive types from the LS program.
+    if (program !== undefined && program.getSourceFile(twin) !== undefined)
+    {
+        return tsParser.parseForESLint(code, { ...options, programs: [program], filePath: twin, project: null, projectService: false });
+    }
+    return tsParser.parseForESLint(code, { ...options, project: null, projectService: false });
+}
+
+/** The parser object for `languageOptions.parser`. */
+export const azerothParser =
+{
+    meta: { name: '@azerothjs/eslint-plugin/parser', version: '0.6.0-beta.1' },
+    parseForESLint
+};

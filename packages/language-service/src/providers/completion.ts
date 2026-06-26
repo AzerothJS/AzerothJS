@@ -16,24 +16,31 @@ import {
     type CompletionItem,
     type CompletionItemKindValue
 } from '../protocol.ts';
-import { classifyPosition, enclosingElement, type PositionContext } from '../markup-model.ts';
+import { classifyPosition, enclosingElement, withClauseKeyword, type PositionContext } from '../markup-model.ts';
 import {
     BUILTIN_COMPONENTS,
     BUILTIN_COMPONENT_MAP,
     DOM_EVENTS,
-    attributeDocumentation
+    attributeDocumentation,
+    keywordDocumentation,
+    keywordOptions,
+    type KeywordOption
 } from '../language-data.ts';
 import { htmlCompletions, eventDocumentation } from './html-service.ts';
 import { cssCompletions, cssTemplateCompletions, inCssTemplate } from './css-service.ts';
 import { classCompletions, inClassValue } from './css-classes.ts';
 import { styleMapCompletions } from './style-map.ts';
-import { toGenerated, type RequestContext } from '../request.ts';
+import { toGenerated, tokenAt, type RequestContext } from '../request.ts';
 
 // Commit characters that improve the common edit: typing `=` or a space after a
 // prop name accepts the highlighted prop (then continues into `={...}` or the next
 // attribute); a space/`>`/`/` after a tag name accepts the tag and opens the body.
 const PROP_COMMIT_CHARACTERS: readonly string[] = ['=', ' '];
 const TAG_COMMIT_CHARACTERS: readonly string[] = [' ', '>', '/'];
+// `.` accepts a TypeScript symbol and chains into member access. Deliberately just
+// `.`: it is never a surprising commit, unlike `(`/`,` which would fire on
+// non-callable symbols or outside an argument list.
+const TS_COMMIT_CHARACTERS: readonly string[] = ['.'];
 
 /** Payload attached to TS-sourced items so `resolveCompletion` can fill detail. */
 export interface CompletionData
@@ -113,7 +120,8 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
                     ...htmlCompletions(ctx.source, position)
                         .filter(i => !/^on[a-z]/.test(i.label))
                         .map(i => i.documentation ? i : { ...i, documentation: attributeDocumentation(i.label) }),
-                    ...eventCompletions()
+                    ...eventCompletions(),
+                    ...directiveCompletions()
                 ];
 
         case 'attributeValue':
@@ -156,6 +164,20 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
                 return styleMapItems;
             }
 
+            // Inside a keyword's `with { ... }` clause: offer exactly that keyword's
+            // options (each keyword differs - `state`/`derived` take SignalOptions,
+            // `effect` an EffectOptions, `watch` `defer`, ...). The options object is
+            // dropped from the projection, so TypeScript offers nothing useful here.
+            const withKeyword = withClauseKeyword(ctx.source, offset);
+            if (withKeyword !== null)
+            {
+                const withOptions = keywordOptions(withKeyword);
+                if (withOptions && withOptions.length > 0)
+                {
+                    return withOptions.map(optionCompletion);
+                }
+            }
+
             const items = tsCompletions(ctx, offset, options);
             // After a `<`, markup can begin even in plain expression position.
             if (ctx.source[offset - 1] === '<')
@@ -164,7 +186,7 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
             }
             if (context.kind === 'script' && options.componentSnippets !== false)
             {
-                items.push(...scaffoldSnippets());
+                items.push(...keywordCompletions(), ...scaffoldSnippets());
             }
             return items;
         }
@@ -254,9 +276,65 @@ function tagCompletions(ctx: RequestContext, offset: number, options: Completion
 }
 
 /**
- * File-level scaffolding snippets offered in plain script position: a whole
- * component and the signal declaration shape. Prefixed labels keep them out
- * of the way until the user types toward them.
+ * The AzerothJS authoring keywords, offered in script (component-body) position as
+ * snippets that expand to the construct. Typing `sta` / `effe` / ... surfaces them -
+ * TypeScript never would, since they compile away (state -> signal, effect -> effect,
+ * ...) and aren't TypeScript keywords. Brace blocks open on the NEXT line to match the
+ * framework's house style; `${0}` is the final caret stop. Documentation is the same
+ * markdown the hover serves, so the two stay in sync.
+ */
+const KEYWORD_SNIPPETS: readonly { label: string; detail: string; insertText: string }[] =
+[
+    { label: 'state', detail: 'reactive state', insertText: 'state ${1:name} = ${0:value};' },
+    { label: 'derived', detail: 'computed value', insertText: 'derived ${1:name} = ${0:expression};' },
+    { label: 'deferred', detail: 'debounced computed value', insertText: 'deferred ${1:name} = ${0:expression};' },
+    { label: 'effect', detail: 'reactive side effect', insertText: 'effect\n{\n    ${0}\n}' },
+    { label: 'effect (deps)', detail: 'explicit-dependency effect', insertText: 'effect (${1:dependency}) (${2:value})\n{\n    ${0}\n}' },
+    { label: 'resource', detail: 'async data', insertText: 'resource ${1:name} = (${2:arg}) => ${0:fetch(arg)} with { source: ${3:signal} };' },
+    { label: 'stream', detail: 'streaming async data', insertText: 'stream ${1:name} = (${2:arg}) => ${0:open(arg)} with { source: ${3:signal} };' },
+    { label: 'store', detail: 'per-render store', insertText: 'store ${1:name} = { ${0} };' },
+    { label: 'selector', detail: 'keyed selection', insertText: 'selector ${1:name} = ${0:sourceSignal};' },
+    { label: 'form', detail: 'reactive form', insertText: 'form ${1:name} = { ${0} } with {\n    onSubmit: async (values) => {}\n};' },
+    { label: 'component', detail: 'component declaration', insertText: 'component ${1:Name}(props: ${2:Props})\n{\n    ${0}\n}' },
+    { label: 'batch', detail: 'batched writes', insertText: 'batch\n{\n    ${0}\n}' },
+    { label: 'untrack', detail: 'read without tracking', insertText: 'untrack\n{\n    ${0}\n}' },
+    { label: 'cleanup', detail: 'teardown hook', insertText: 'cleanup\n{\n    ${0}\n}' },
+    { label: 'dispose', detail: 'root-disposal hook', insertText: 'dispose\n{\n    ${0}\n}' },
+    { label: 'with', detail: 'reactive options clause', insertText: 'with { ${0} }' }
+];
+
+/** A completion item for one `with { ... }` option key, from the language-data registry. */
+function optionCompletion(option: KeywordOption): CompletionItem
+{
+    return {
+        label: option.name,
+        kind: CompletionItemKind.Field,
+        detail: option.type,
+        documentation: option.doc,
+        sortText: `0_${ option.name }`
+    };
+}
+
+/** Completion items for the AzerothJS authoring keywords (script position). */
+function keywordCompletions(): CompletionItem[]
+{
+    return KEYWORD_SNIPPETS.map(keyword => ({
+        label: keyword.label,
+        kind: CompletionItemKind.Keyword,
+        detail: keyword.detail,
+        documentation: keywordDocumentation(keyword.label),
+        insertText: keyword.insertText,
+        insertTextFormat: 2,
+        // Rank above TypeScript's globals/keywords (sortText `1x`/`15`) so the keyword
+        // a user is typing toward (`sta` -> `state`) leads the list in the body.
+        sortText: `0_${ keyword.label }`
+    }));
+}
+
+/**
+ * File-level scaffolding snippet offered in plain script position: a whole
+ * default-exported component in the current `component { ... }` authoring model.
+ * The prefixed label keeps it out of the way until the user types toward it.
  */
 function scaffoldSnippets(): CompletionItem[]
 {
@@ -265,26 +343,15 @@ function scaffoldSnippets(): CompletionItem[]
             label: 'azeroth-component',
             kind: CompletionItemKind.Snippet,
             detail: 'component scaffold',
-            documentation: 'A default-exported function component with a props type.',
+            documentation: 'A default-exported AzerothJS component.',
             insertText: [
-                'export default function ${1:Name}(props: { ${2} })',
+                'export default component ${1:Name}',
                 '{',
-                '    return (',
-                '        ${0:<div></div>}',
-                '    );',
+                '    ${0}',
                 '}'
             ].join('\n'),
             insertTextFormat: 2,
             sortText: '8_azeroth-component'
-        },
-        {
-            label: 'azeroth-signal',
-            kind: CompletionItemKind.Snippet,
-            detail: 'createSignal declaration',
-            documentation: 'The [getter, setter] signal declaration shape.',
-            insertText: 'const [${1:value}, set${2:Value}] = createSignal(${3:0});',
-            insertTextFormat: 2,
-            sortText: '8_azeroth-signal'
         }
     ];
 }
@@ -304,7 +371,13 @@ const BUILTIN_SNIPPETS: Record<string, string> = {
 /**
  * Attribute completion for a component: prop names derived from the component's
  * actual props type (via TypeScript), falling back to the built-in table when
- * the type can't be resolved (e.g. the tag isn't fully formed yet). Plus events.
+ * the type can't be resolved (e.g. the tag isn't fully formed yet).
+ *
+ * Unlike a host element, a component only accepts the attributes its props type
+ * declares - so we do NOT dump the generic DOM-event list here. A component that
+ * forwards events declares them as handler props (`onClick?: (e) => void`), which
+ * already surface through {@link typedPropCompletions}; offering all 43 `on*`
+ * events on every component just buried the real props.
  */
 function componentAttributeCompletions(ctx: RequestContext, offset: number, tag: string): CompletionItem[]
 {
@@ -329,7 +402,6 @@ function componentAttributeCompletions(ctx: RequestContext, offset: number, tag:
     }
 
     preselectExactPrefix(items, identifierPrefix(ctx.source, offset));
-    items.push(...eventCompletions());
     return items;
 }
 
@@ -420,20 +492,6 @@ function typedPropCompletions(ctx: RequestContext, offset: number): CompletionIt
         }));
 }
 
-/** The TS node whose span contains `pos` (deepest), for a checker query. */
-function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undefined
-{
-    const find = (node: ts.Node): ts.Node | undefined =>
-    {
-        if (pos < node.getStart(sourceFile) || pos >= node.getEnd())
-        {
-            return undefined;
-        }
-        return ts.forEachChild(node, find) ?? node;
-    };
-    return find(sourceFile);
-}
-
 /**
  * Prop completions for an attribute-less `<Comp/>`: the generated `Comp()` has
  * no props object, so derive the names from the component's first call-signature
@@ -472,6 +530,27 @@ function propsFromComponentSignature(ctx: RequestContext, identifierOffset: numb
         }));
 }
 
+/** AzerothJS host-element directives (`bind:` / `class:` / `style:`). */
+function directiveCompletions(): CompletionItem[]
+{
+    const directives =
+    [
+        { label: 'bind:value', detail: 'two-way value binding', insertText: 'bind:value={$0}' },
+        { label: 'bind:checked', detail: 'two-way checked binding', insertText: 'bind:checked={$0}' },
+        { label: 'class:', detail: 'conditional class', insertText: 'class:${1:name}={$0}' },
+        { label: 'style:', detail: 'inline style property', insertText: 'style:${1:property}={$0}' }
+    ];
+    return directives.map(directive => ({
+        label: directive.label,
+        kind: CompletionItemKind.Property,
+        detail: directive.detail,
+        insertText: directive.insertText,
+        insertTextFormat: 2 as const,
+        sortText: `2_${ directive.label }`,
+        commitCharacters: [...PROP_COMMIT_CHARACTERS]
+    }));
+}
+
 /** DOM event handler attributes (`on*`). */
 function eventCompletions(): CompletionItem[]
 {
@@ -482,7 +561,10 @@ function eventCompletions(): CompletionItem[]
         documentation: eventDocumentation(name),
         insertText: `${ name }={$0}`,
         insertTextFormat: 2 as const,
-        sortText: `3_${ name }`
+        sortText: `3_${ name }`,
+        // `=` (or space) accepts the highlighted event then continues into `={...}`,
+        // matching prop completion - typing `=` after `onClic|` shouldn't be ignored.
+        commitCharacters: [...PROP_COMMIT_CHARACTERS]
     }));
 }
 
@@ -503,6 +585,11 @@ function tsCompletions(ctx: RequestContext, offset: number, options: CompletionO
             insertText: entry.insertText,
             sortText: entry.sortText,
             filterText: entry.filterText,
+            // `.` commits the highlighted symbol and chains into member access
+            // (`user|` + `.` -> `user.` + member completion) - the single edit a
+            // developer notices most. Kept to `.` only: it is never a surprising
+            // commit, whereas `(`/`,` would fire on non-callable / non-arg contexts.
+            commitCharacters: [...TS_COMMIT_CHARACTERS],
             data: completionData(ctx, generatedOffset, entry)
         }));
 }

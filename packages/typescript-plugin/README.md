@@ -59,11 +59,10 @@ inside the command-line `tsc`. This is a TypeScript limitation, not a choice
 here - it is also why `vue-tsc` exists. So:
 
 - In the editor, this plugin gives real `.azeroth` types with no shim.
-- For a command-line type-check gate over `.azeroth` files, use `azeroth-tsc`
-  (from `@azerothjs/language-server`).
-
-A single combined `.ts` + `.azeroth` command-line checker (the `vue-tsc`
-equivalent) is tracked as a follow-up.
+- For a command-line type-check gate, use `azeroth-tsc` (from
+  `@azerothjs/language-server`) — the combined `.ts` + `.azeroth` checker (the
+  `vue-tsc` equivalent): it type-checks `.ts` files with `.azeroth` imports
+  resolved to real types, and `.azeroth` files themselves.
 
 ## Building
 

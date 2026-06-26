@@ -1,24 +1,43 @@
 {
     "name": "azerothjs-monorepo",
     "version": "0.6.0-beta.1",
-    "private": false,
+    "engines":
+    {
+        "node": ">=20"
+    },
+    "packageManager": "npm@11.12.1",
+    "private": true,
     "description": "AzerothJS framework monorepo — fine-grained reactivity, zero Virtual DOM, direct DOM updates",
     "type": "module",
-    "workspaces": [
-        "packages/*",
-        "editors/*"
+    "workspaces":
+    [
+        "packages/*"
     ],
-    "scripts": {
-        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/devtools-overlay && npm run build -w @azerothjs/devtools && npm run build -w @azerothjs/component && npm run build -w @azerothjs/testing && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/typescript-plugin && npm run build -w @azerothjs/language-server && npm run build -w @azerothjs/eslint-plugin",
+    "scripts":
+    {
+        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/testing && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/store && npm run build -w @azerothjs/form && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/core && npm run build -w @azerothjs/devtools && npm run build -w @azerothjs/eslint-plugin && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/language-server && npm run build -w @azerothjs/typescript-plugin",
+        "clean": "npm run clean --workspaces --if-present",
         "dev": "tsc --watch",
-        "test": "vitest",
-        "perf:stress": "npm run build -w @azerothjs/language-service && node --expose-gc scripts/perf-stress.mjs",
+        "typecheck": "tsc -p tsconfig.json",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
+        "lint:publish": "node scripts/publint-all.mjs",
+        "leak": "node --expose-gc scripts/leak-check.mjs",
+        "smoke": "node scripts/smoke-publish.mjs",
+        "verify": "npm run lint && npm run typecheck && npm run build && npm run lint:publish && npm test && npm run leak",
         "release": "node scripts/release.mjs",
+        "prepare": "husky",
         "prepublishOnly": "npm run build"
     },
-    "keywords": [
+    "lint-staged":
+    {
+        "*.{ts,mts,cts,js,mjs,cjs,azeroth}": "eslint --fix --no-warn-ignored"
+    },
+    "keywords":
+    [
         "framework",
         "reactive",
         "signals",
@@ -28,28 +47,33 @@
         "typescript",
         "frontend"
     ],
-    "repository": {
+    "repository":
+    {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git"
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git"
     },
-    "author": {
+    "author":
+    {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "devDependencies": {
+    "devDependencies":
+    {
         "@eslint/js": "^10.0.1",
         "@types/node": "^25.9.1",
+        "@vitest/coverage-v8": "^4.1.9",
         "eslint": "^10.4.1",
         "globals": "^17.6.0",
-        "happy-dom": "^20.9.0",
+        "happy-dom": "^20.10.6",
+        "husky": "^9.1.7",
         "jiti": "^2.7.0",
-        "tsx": "^4.20.6",
+        "lint-staged": "^17.0.8",
+        "publint": "^0.3.21",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.60.1",
-        "vitest": "^4.1.8",
-        "vscode-oniguruma": "^2.0.1",
-        "vscode-textmate": "^9.3.2"
+        "vite": "^8.0.16",
+        "vitest": "^4.1.9"
     }
 }

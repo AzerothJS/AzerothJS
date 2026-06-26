@@ -1,0 +1,69 @@
+version: 2
+
+updates:
+    # npm dependencies (root workspace covers every package via the monorepo lockfile).
+    -   package-ecosystem: npm
+        directory: /
+        schedule:
+            interval: weekly
+            day: monday
+        open-pull-requests-limit: 5
+        # Grouping keeps the PR volume sane for a single maintainer: routine minor /
+        # patch bumps arrive as one reviewable PR; majors stay separate so breaking
+        # upgrades get individual attention.
+        groups:
+            dev-minor-patch:
+                dependency-type: development
+                update-types:
+                    - minor
+                    - patch
+            prod-minor-patch:
+                dependency-type: production
+                update-types:
+                    - minor
+                    - patch
+        commit-message:
+            prefix: chore(deps)
+            prefix-development: chore(deps-dev)
+
+    # GitHub Actions used by the workflows (keeps action versions current and
+    # surfaces security advisories for the actions themselves).
+    -   package-ecosystem: github-actions
+        directory: /
+        schedule:
+            interval: weekly
+            day: monday
+        open-pull-requests-limit: 5
+        groups:
+            actions:
+                patterns:
+                    - '*'
+        commit-message:
+            prefix: ci(actions)
+
+    # The VS Code extension is a separate npm project (its own lockfile, outside
+    # the packages/* workspace) and is published to the Marketplace, so its
+    # dependencies need their own update stream.
+    -   package-ecosystem: npm
+        directory: /editors/vscode
+        schedule:
+            interval: weekly
+            day: monday
+        open-pull-requests-limit: 5
+        groups:
+            vscode-minor-patch:
+                update-types:
+                    - minor
+                    - patch
+        commit-message:
+            prefix: chore(deps)
+
+    # The JetBrains plugin is a Gradle project; keep its build dependencies current.
+    -   package-ecosystem: gradle
+        directory: /editors/jetbrains
+        schedule:
+            interval: weekly
+            day: monday
+        open-pull-requests-limit: 5
+        commit-message:
+            prefix: chore(deps)

@@ -1,178 +1,122 @@
-// createStore wraps a factory in lazy-singleton + reactive-ownership behaviour.
-// The factory returns whatever shape you want (typically a bag of signals,
-// memos, and methods) and createStore guarantees:
-//
-//   1. The factory runs at most once, on first use.
-//   2. Internal createEffect/createMemo calls get a real createRoot to live in
-//      (without one, onRootDispose and the root-disposer machinery silently
-//      no-op).
-//   3. Every useStore() call returns the same instance - shared state across
-//      components without prop drilling.
-//
-// A store is just a function that returns an object: no reducer protocol, no
-// Proxy-based deep reactivity, no this-binding magic for actions. The reactive
-// model is the one we already have (signals, memos, effects), packaged in a
-// reusable surface. That keeps stores type-safe (the return type is the public
-// API), composable (a store can use other stores), and easy to debug.
-//
-// Two known limitations:
-//
-//   - Not SSR-safe. Concurrent requests share module scope, so they would share
-//     store state. This is client-only; per-request isolation comes with the
-//     Phase 3 SSR work.
-//   - Not lazy-disposable. The internal createRoot is owned forever - its
-//     dispose function is intentionally unreferenced, since global state is
-//     meant to outlive any single mount. For per-component or per-route state,
-//     call a factory directly without createStore, or use createRoot plus
-//     manual dispose.
-
-import { createRoot } from '@azerothjs/reactivity';
-
 /**
- * A sentinel that marks "factory has not run yet". A plain null/undefined
- * won't do: a factory may legitimately return null/undefined, so we need to
- * distinguish "uninitialized" from "intentionally nullish".
+ * MODULE: store/create-store
  *
- * @internal
+ * createStore wraps a factory in lazy-singleton + reactive-ownership behaviour. The factory returns
+ * whatever shape you want (typically a bag of signals, memos, and methods); createStore guarantees:
+ *   1. it runs at most once per store scope, on first use;
+ *   2. internal createEffect/createMemo/onRootDispose calls get a real createRoot to live in
+ *      (without one, the root-disposer machinery silently no-ops);
+ *   3. every useStore() call within a scope returns the SAME instance - shared state across
+ *      components without prop drilling.
+ *
+ * A store is just a function returning an object: no reducer protocol, no Proxy deep reactivity, no
+ * this-binding magic. The reactive model is the existing one (signals/memos/effects) packaged in a
+ * reusable surface, keeping stores type-safe (the return type IS the public API), composable (a
+ * store can use other stores), and easy to debug.
+ *
+ * SSR ISOLATION: the cached instance is keyed by the active store scope (getStoreScope). On the
+ * client there is one stable scope (a true app-wide singleton); the server runs each render in its
+ * own scope (runInStoreScope), so concurrent requests get ISOLATED store state, GC'd when the
+ * render scope ends. NOT lazy-disposable: the internal createRoot is owned for the scope's lifetime
+ * (global state is meant to outlive any mount); for per-component/route state, call a factory
+ * directly or use createRoot + manual dispose.
  */
-const UNINITIALIZED: unique symbol = Symbol('azeroth_store_uninitialized');
+
+import { createRoot, getStoreScope } from '@azerothjs/reactivity';
 
 /**
- * Wraps a factory in lazy-singleton + reactive-ownership behaviour, returning
- * a `useStore()` function.
+ * createStore
  *
- * The factory runs the first time `useStore()` is called; subsequent calls
- * return the same instance. Inside the factory, `createSignal`, `createMemo`,
- * `createEffect`, and `onRootDispose` all behave normally - they live inside a
- * single internal `createRoot` whose lifetime spans the whole JS context.
+ * PURPOSE:
+ * Wraps a factory into a useStore() that lazily builds and caches ONE instance per store scope,
+ * inside an owned reactive root - giving shared, type-safe global state.
  *
- * @typeParam T - The shape returned by the factory; also the type of every
- *                `useStore()` result.
- * @param factory - Builds the store. Typically returns an object of signal
- *                  getters, memo getters, and methods that mutate the signals.
- * @returns A `useStore()` function that returns the cached store instance.
+ * WHY IT EXISTS:
+ * Shared state needs lazy init, single-instance reuse, AND a reactive owner for its effects/memos -
+ * without a createRoot, onRootDispose and the disposer machinery silently no-op. Hand-rolling the
+ * singleton-plus-root is repetitive and easy to get wrong; createStore packages it.
  *
- * Why: a shared store needs lazy init, single-instance reuse, and a reactive
- * owner for its effects/memos.
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, store; built on createRoot + getStoreScope. The instance is keyed per scope, which is
+ * what makes the same code a client singleton AND per-request-isolated on the server.
  *
- * Without createStore: build the singleton by hand and remember the root, or the
- * reactive ownership machinery silently no-ops:
+ * INPUT CONTRACT:
+ * - factory: () => T; typically returns an object of signal getters, memo getters, and methods.
+ *   Inside it, createSignal/createMemo/createEffect/onRootDispose all behave normally (it runs in a root).
  *
- *     let instance;
- *     function useCounter()
- *     {
- *         if (!instance)
- *         {
- *             createRoot(() =>
- *             {
- *                 const [c, setC] = createSignal(0);
- *                 instance = { c, inc: () => setC(n => n + 1) };
- *             });
- *         }
- *         return instance; // miss the root and onRootDispose just no-ops
- *     }
+ * OUTPUT CONTRACT:
+ * - A useStore() function returning the cached instance for the active scope (built on first call
+ *   within that scope, the same object thereafter).
  *
- * With createStore: the returned useStore() runs the factory lazily in an owned
- * root and hands back the same instance to every caller:
+ * WHY THIS DESIGN:
+ * The instance is cached in a WeakMap keyed by the store scope, so the client (one stable scope)
+ * gets an app-wide singleton while the server (a fresh scope per render) gets isolated instances
+ * that are GC'd when the render ends. The factory runs in createRoot so its reactive nodes have an
+ * owner; that root's dispose is intentionally dropped (global state outlives any mount). The `has`
+ * check (not a truthy check) caches even a factory that returns null/undefined exactly once.
  *
- *     const useCounter = createStore(() =>
- *     {
- *         const [c, setC] = createSignal(0);
- *         return { c, inc: () => setC(n => n + 1) };
- *     });
- *     useCounter().inc(); // one shared instance, effects already owned
+ * WHEN TO USE:
+ * For app-wide shared state (auth, theme, cart). Stores compose - one store's factory may call
+ * another store's useStore().
  *
+ * WHEN NOT TO USE:
+ * For per-component or per-route state - the store's root is never disposed, so its effects would
+ * live for the scope's whole lifetime. Call a factory directly, or use createRoot + manual dispose.
+ *
+ * EDGE CASES:
+ * - A factory returning null/undefined is still cached exactly once.
+ * - Under SSR, each runInStoreScope render gets its own instance (no cross-request leakage).
+ *
+ * PERFORMANCE NOTES:
+ * The factory runs once per scope; every later useStore() is a WeakMap lookup.
+ *
+ * DEVELOPER WARNING:
+ * The internal root is never disposed (by design, for globals) - do NOT use createStore for
+ * ephemeral state, or its effects leak for the scope's lifetime.
+ *
+ * @typeParam T - The factory's return shape; also every useStore() result.
+ * @param factory - Builds the store (typically signal/memo getters + methods).
+ * @returns A useStore() returning the cached per-scope instance.
+ * @see {@link createSignal}
+ * @see {@link createRoot}
  * @example
- * ```ts
- * // A simple counter store.
- * const useCounter = createStore(() =>
- * {
- *     const [count, setCount] = createSignal(0);
- *     const doubled = createMemo(() => count() * 2);
- *
- *     return {
- *         count,
- *         doubled,
- *         increment: () => setCount(c => c + 1),
- *         reset: () => setCount(0)
- *     };
+ * const useCounter = createStore(() => {
+ *   const [count, setCount] = createSignal(0);
+ *   return { count, doubled: createMemo(() => count() * 2), inc: () => setCount(c => c + 1) };
  * });
- *
- * // Anywhere in the app:
- * const counter = useCounter();
- * counter.count();           // 0
- * counter.increment();
- * counter.count();           // 1
- * counter.doubled();         // 2
- * ```
- *
- * @example
- * ```ts
- * // A session store with a side effect: every theme change is mirrored to
- * // the document body. The effect lives inside the store's createRoot so it
- * // never disposes - the right behaviour for global state.
- * const useSession = createStore(() =>
- * {
- *     const [theme, setTheme] = createSignal<'light' | 'dark'>('dark');
- *
- *     createEffect(() =>
- *     {
- *         document.body.dataset.theme = theme();
- *     });
- *
- *     return {
- *         theme,
- *         toggleTheme: () => setTheme(t => t === 'light' ? 'dark' : 'light')
- *     };
- * });
- * ```
- *
- * @example
- * ```ts
- * // Stores can compose. The auth store uses the session store.
- * const useAuth = createStore(() =>
- * {
- *     const session = useSession();
- *     const [user, setUser] = createSignal<User | null>(null);
- *
- *     return {
- *         user,
- *         theme: session.theme,
- *         signIn: (u: User) => setUser(u),
- *         signOut: () => setUser(null)
- *     };
- * });
- * ```
+ * useCounter().inc(); // shared instance, effects already owned
  */
 export function createStore<T>(factory: () => T): () => T
 {
-    // The cached instance, or the UNINITIALIZED sentinel before first use.
-    // Captured in a closure shared by every useStore call, which is what gives
-    // cross-call identity.
-    let instance: T | typeof UNINITIALIZED = UNINITIALIZED;
+    // Cached instance PER store scope. On the client there is one stable scope,
+    // so this behaves as the original app-wide singleton; the server runs each
+    // render in its own scope (runInStoreScope), so concurrent requests get
+    // isolated instances. WeakMap keying lets a per-render scope's instance be
+    // garbage-collected once that render ends.
+    const instances = new WeakMap<object, T>();
 
     /**
-     * Returns the cached store instance, building it on the first call.
-     * Subsequent calls are a closure read plus a sentinel check - effectively
-     * free.
+     * Returns the cached store instance for the active scope, building it on the
+     * first call within that scope.
      */
     return function useStore(): T
     {
-        if (instance === UNINITIALIZED)
+        const scope = getStoreScope();
+
+        if (!instances.has(scope))
         {
             // Run the factory inside a fresh createRoot so every effect, memo,
             // and onRootDispose registered inside has somewhere to attach. The
-            // dispose callback is deliberately dropped: global state lives
-            // until the JS context dies, matching the module-level closure
-            // that holds `instance`.
+            // dispose is deliberately dropped: the instance lives as long as its
+            // scope (the whole JS context on the client; until the render ends on
+            // the server). `has` - not a truthy check - so a factory that returns
+            // null/undefined still caches exactly once.
             createRoot(() =>
             {
-                instance = factory();
+                instances.set(scope, factory());
             });
         }
 
-        // The branch above always assigns a T, so the cast is sound; the union
-        // can't be narrowed without a runtime tag, hence the assertion.
-        return instance as T;
+        return instances.get(scope) as T;
     };
 }

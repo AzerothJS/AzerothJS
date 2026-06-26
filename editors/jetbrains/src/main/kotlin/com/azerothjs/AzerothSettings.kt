@@ -13,8 +13,10 @@ import com.intellij.openapi.components.service
  */
 @Service(Service.Level.APP)
 @State(name = "AzerothSettings", storages = [Storage("azeroth.xml")])
-class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
-    class State {
+class AzerothSettings : PersistentStateComponent<AzerothSettings.State>
+{
+    class State
+    {
         /** Explicit Node.js path; blank = auto-detect (PATH + common version managers). */
         var nodePath: String = ""
 
@@ -58,7 +60,8 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
 
     override fun getState(): State = state
 
-    override fun loadState(s: State) {
+    override fun loadState(s: State)
+    {
         state = s
     }
 
@@ -109,7 +112,8 @@ class AzerothSettings : PersistentStateComponent<AzerothSettings.State> {
         ),
     )
 
-    companion object {
+    companion object
+    {
         val instance: AzerothSettings get() = service()
     }
 }

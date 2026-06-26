@@ -1,71 +1,45 @@
-// Scoped CSS via a tagged template, with no build step. Author plain CSS with
-// simple `.class` selectors; the helper:
-//
-// Without css: write global class names and an external stylesheet, so two
-// components that both define `.card` silently fight.
-//
-//     // styles.css (global):
-//     //   .card { padding: 1rem; }
-//     h('div', { class: 'card' }); // any other .card rule leaks in
-//
-// With css: rules are hashed and scoped per component, and identical rules
-// dedupe to one injected stylesheet.
-//
-//     const s = css`
-//         .card { padding: 1rem; }
-//     `;
-//     h('div', { class: s.card }); // class="card_<scope>", can't collide
-//
-//
-//   1. Hashes the CSS text into a short, stable scope suffix.
-//   2. Rewrites every `.name` selector to `.name_<scope>`.
-//   3. Records the rewritten CSS in a registry (in every environment), and in
-//      the browser injects it into <head> exactly once (deduped by scope, so
-//      re-rendering never re-injects).
-//   4. Returns a map so `styles.name` resolves to `'name_<scope>'`.
-//
-//   const styles = css`
-//     .card  { padding: 1rem; background: #111; }
-//     .title { font-weight: 700; }
-//   `;
-//   h('div', { class: styles.card }, h('h1', { class: styles.title }, 'Hi'));
-//
-// Scoping is by content hash: two components with different rules for `.card`
-// get different suffixes (no collisions); two with the same rules share one
-// injected stylesheet (dedup). Hashing is deterministic, so it's stable across
-// reloads and SSR-friendly.
-//
-// SSR: on the server there's no <head> to inject into, so every scope's CSS is
-// also recorded in the registry. After rendering, flush it into the document
-// head with collectStyleSheet().
+/**
+ * MODULE: renderer/css
+ *
+ * Scoped CSS via a tagged template, with no build step. Author plain CSS with simple
+ * `.class` selectors; css() hashes the rule text into a short stable scope suffix, rewrites
+ * every `.name` to `.name_<scope>`, records the rewritten CSS in a registry (every
+ * environment) and - in the browser - injects it into <head> exactly once per scope, then
+ * returns a map so `styles.name` resolves to `'name_<scope>'`. Global class names instead let
+ * two components that both define `.card` silently fight; scoping by content hash means
+ * different rules get different suffixes (no collisions) and identical rules dedupe to one
+ * stylesheet. Hashing is deterministic, so it is stable across reloads and SSR-friendly.
+ *
+ * SSR: there is no <head> to inject into, so every scope's CSS is recorded in the registry;
+ * after rendering, flush it with {@link collectStyleSheet}.
+ */
 
-/** Scope ids already injected into the document, so we inject once. */
+/** Scope ids already injected into the document, so injection happens once per scope. @internal */
 const injectedScopes = new Set<string>();
 
 /**
- * Every scope's rewritten CSS, recorded in ALL environments (browser
- * and server alike), keyed by scope so it stays deduped. On the server
- * this registry IS the stylesheet (there's no <head> to inject into), so
- * {@link collectStyleSheet} reads it to flush styles into the
- * server-rendered HTML.
+ * Every scope's rewritten CSS, recorded in ALL environments and keyed by scope (deduped). On
+ * the server this registry IS the stylesheet (no <head> to inject into); {@link collectStyleSheet}
+ * reads it to flush styles into the server-rendered HTML.
  *
  * @internal
  */
 const registeredCss = new Map<string, string>();
 
 /**
- * A class-name map returned by {@link css}. Reading any property
- * returns the scoped class name; unknown keys return the key
- * unchanged (so a typo degrades to a harmless no-op class rather
- * than `undefined`).
+ * The class-name map returned by {@link css}. Reading any property returns the scoped class
+ * name; an unknown key returns the key unchanged, so a typo degrades to a harmless no-op
+ * class rather than `undefined`.
  */
 export type ScopedClasses = Record<string, string>;
 
 /**
- * Deterministic djb2 string hash to base36. Stable across runs, so
- * the same CSS always yields the same scope (enables dedup and SSR).
+ * Deterministic djb2 string hash to base36 - stable across runs, so the same CSS always
+ * yields the same scope (enables dedup and SSR).
  *
  * @internal
+ * @param input - The CSS text to hash.
+ * @returns A short base36 scope suffix.
  */
 function hashCss(input: string): string
 {
@@ -78,10 +52,14 @@ function hashCss(input: string): string
 }
 
 /**
- * Rewrites `.name` class selectors to `.name_<scope>`, recording
- * each base name -> scoped name in `classMap`.
+ * Rewrites `.name` class selectors to `.name_<scope>`, recording each base->scoped name in
+ * `classMap`.
  *
  * @internal
+ * @param cssText - The CSS to rewrite.
+ * @param scope - The scope suffix.
+ * @param classMap - Mutated with base-name -> scoped-name entries.
+ * @returns The rewritten CSS.
  */
 function scopeSelectors(cssText: string, scope: string, classMap: Record<string, string>): string
 {
@@ -95,22 +73,63 @@ function scopeSelectors(cssText: string, scope: string, classMap: Record<string,
 }
 
 /**
- * Component-scoped styles. Use as a tagged template (or pass a CSS
- * string). Returns a map of base class name -> scoped class name.
+ * css
  *
- * @param strings - Template strings (or a plain CSS string)
- * @param values - Interpolated values (stringified into the CSS)
+ * PURPOSE:
+ * Component-scoped styles as a tagged template (or plain string). Hashes and rewrites the
+ * rules to a unique scope, injects/records them once, and returns a base->scoped class map.
  *
- * @returns A {@link ScopedClasses} map: `styles.foo` -> `'foo_<scope>'`
+ * WHY IT EXISTS:
+ * Global class names collide across components and require an external stylesheet and a build
+ * step. css() gives collision-proof, deduped, SSR-compatible scoping at runtime with no
+ * tooling: the scope is a content hash, so identical rules share one stylesheet and different
+ * rules never clash.
  *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; an authoring helper independent of the compiler. In the browser it
+ * injects a <style> per scope; on the server it records into the registry for
+ * {@link collectStyleSheet} to flush.
+ *
+ * INPUT CONTRACT:
+ * - strings/values: a tagged-template invocation, or a plain CSS string. Interpolations are
+ *   stringified into the CSS before hashing.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns a {@link ScopedClasses} proxy: `styles.foo` -> `'foo_<scope>'`; an unknown key
+ *   returns the key itself.
+ *
+ * WHY THIS DESIGN:
+ * Content-hash scoping makes dedup and SSR deterministic without a build step. Recording in
+ * every environment (and injecting only in the browser) is what lets the same code produce
+ * client <style> tags and server-collectable CSS. The Proxy degrades typos gracefully.
+ *
+ * WHEN TO USE:
+ * For component-local styling you want collision-free and dedup'd, authored as plain CSS.
+ *
+ * WHEN NOT TO USE:
+ * For one-off dynamic inline values (use {@link styleMap}) or simple conditional class
+ * toggles (use {@link classList}).
+ *
+ * EDGE CASES:
+ * - Identical rule text across components shares ONE injected scope (dedup by hash).
+ * - Reading an unscoped/typo'd key returns the key unchanged (no-op class), not undefined.
+ *
+ * PERFORMANCE NOTES:
+ * Hash + rewrite are O(css length), done once per unique rule text; injection happens once
+ * per scope. Re-rendering never re-injects.
+ *
+ * DEVELOPER WARNING:
+ * Only `.class` selectors are scoped - element/id/attribute selectors stay global. Evaluate
+ * css`` once (e.g. at module load); calling it per render recomputes the (cached) scope
+ * needlessly.
+ *
+ * @param strings - Template strings (or a plain CSS string).
+ * @param values - Interpolated values, stringified into the CSS.
+ * @returns A {@link ScopedClasses} map.
+ * @see {@link collectStyleSheet}
  * @example
- * ```ts
- * const s = css`
- *   .btn { padding: .5rem 1rem; border-radius: 8px; }
- *   .btn:hover { filter: brightness(1.1); }
- * `;
+ * const s = css`.btn { padding: .5rem 1rem; } .btn:hover { filter: brightness(1.1); }`;
  * h('button', { class: s.btn }, 'Click');
- * ```
  */
 export function css(strings: TemplateStringsArray | string, ...values: unknown[]): ScopedClasses
 {
@@ -122,8 +141,8 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
     const classMap: Record<string, string> = {};
     const scopedCss = scopeSelectors(raw, scope, classMap);
 
-    // Record in every environment (idempotent by scope) so SSR can
-    // collect it; in the browser, also inject a <style> once per scope.
+    // Record in every environment (idempotent by scope) so SSR can collect it; in the
+    // browser, also inject a <style> once per scope.
     registeredCss.set(scope, scopedCss);
 
     if (typeof document !== 'undefined' && !injectedScopes.has(scope))
@@ -145,20 +164,35 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
 }
 
 /**
- * Returns every scoped stylesheet registered by {@link css} so far,
- * concatenated into one CSS string. This is the SSR counterpart to the
- * browser's automatic `<style>` injection: render your app, then flush
- * the collected styles into the document `<head>`.
+ * collectStyleSheet
  *
+ * PURPOSE:
+ * Returns every scoped stylesheet registered by {@link css} so far, concatenated into one CSS
+ * string - the SSR counterpart to the browser's automatic <style> injection.
+ *
+ * WHY IT EXISTS:
+ * On the server there is no <head> to inject into, so scoped CSS accumulates in the registry;
+ * after rendering the body you need one call to emit all of it into the document head.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime; an SSR helper (and useful in tests). Reads the registry css() populates.
+ *
+ * OUTPUT CONTRACT:
+ * - The newline-joined CSS of all registered scopes (deduped). Empty when nothing registered.
+ *
+ * WHEN TO USE:
+ * On the server, after rendering, to build the <style> for the document head.
+ *
+ * WHEN NOT TO USE:
+ * In the browser for styling - those styles are already injected; this is mainly for SSR/tests.
+ *
+ * PERFORMANCE NOTES:
+ * O(total CSS length); a join over the registry values.
+ *
+ * @returns All registered scoped CSS, concatenated.
+ * @see {@link css}
  * @example
- * ```ts
- * const body = renderAppToString();
  * const head = `<style data-azeroth-css>${ collectStyleSheet() }</style>`;
- * return `<!doctype html><html><head>${ head }</head><body>${ body }</body></html>`;
- * ```
- *
- * In the browser these styles are already in the DOM, so this is
- * primarily a server-side helper (and useful for tests).
  */
 export function collectStyleSheet(): string
 {
@@ -166,18 +200,32 @@ export function collectStyleSheet(): string
 }
 
 /**
- * Clears the scoped-CSS registry and DOM-injection bookkeeping. The
- * common pattern - `css\`\`` evaluated once at module load - needs no
- * reset, since the registry is the same for every request. Call this
- * only if your server genuinely re-imports component modules per
- * request, or to isolate tests.
+ * resetStyleSheet
  *
+ * PURPOSE:
+ * Clears the scoped-CSS registry and DOM-injection bookkeeping.
+ *
+ * WHY IT EXISTS:
+ * The common pattern (css`` evaluated once at module load) shares one registry across
+ * requests and needs no reset. This exists for the rare server that genuinely re-imports
+ * component modules per request, and for isolating tests.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime; a test/SSR-isolation helper.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns void; empties both the registry and the injected-scope set.
+ *
+ * WHEN NOT TO USE:
+ * In normal apps - clearing the registry mid-session would make {@link collectStyleSheet}
+ * miss already-injected styles.
+ *
+ * @returns void
+ * @see {@link collectStyleSheet}
  * @example
- * ```ts
  * css`.box { color: red; }`;
  * resetStyleSheet();
- * collectStyleSheet(); // '' - the registry is empty again
- * ```
+ * collectStyleSheet(); // ''
  */
 export function resetStyleSheet(): void
 {

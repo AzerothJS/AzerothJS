@@ -18,10 +18,11 @@ import java.awt.Font
  * so these came back unmapped and rendered with no colour at all (the reported
  * bug). We map them here to dedicated, themeable keys (with sensible markup-
  * colour fallbacks) and delegate every standard type (class, function, variable,
- * property, …) to the platform default so plain TypeScript still colours
+ * property, ...) to the platform default so plain TypeScript still colours
  * normally.
  */
-class AzerothSemanticTokens : LspSemanticTokensSupport() {
+class AzerothSemanticTokens : LspSemanticTokensSupport()
+{
     /**
      * Request semantic tokens for `.azeroth` files. The platform default only
      * asks for plain-text and TextMate files, so a custom-language file like
@@ -44,7 +45,8 @@ class AzerothSemanticTokens : LspSemanticTokensSupport() {
     override val tokenTypes: List<String> =
         super.tokenTypes + SEMANTIC_KEYS.keys.filterNot { it in super.tokenTypes }
 
-    companion object {
+    companion object
+    {
         private fun key(name: String, fallback: TextAttributesKey): TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("AZEROTH_SEM_$name", fallback)
 

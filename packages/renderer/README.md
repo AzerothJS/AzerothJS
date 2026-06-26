@@ -56,19 +56,15 @@ it with a hydration cursor instead of creating new nodes.
 | `class-binding.ts` | `classList`: reactive class binding. |
 | `style-binding.ts` | `styleMap`: reactive inline-style binding. |
 | `css.ts` | `css` scoped styles plus `collectStyleSheet`/`resetStyleSheet`. |
-| `ssr.ts`, `hydrate.ts` | Server-output and client-adoption support. |
+| `islands.ts` | `hydrateIslands`: partial hydration of marked islands. |
+| `ssr.ts` | Server-output (string-mode) support. |
+| `delegate.ts`, `template.ts`, `container-disposers.ts` | Event delegation, compiler-emitted clone helpers, and mount-scope disposal. |
 | `types.ts` | `Props`, `Child`, and component prop types. |
 
 ## Building
 
 ```sh
 npm run build -w @azerothjs/renderer
-```
-
-## Testing
-
-```sh
-npx vitest run test/renderer
 ```
 
 ## Examples
@@ -103,4 +99,4 @@ calls; you rarely call `h()` by hand.
 A binding should update the smallest possible piece of the DOM; prefer adding a
 focused effect over re-running a larger subtree. New control-flow components
 follow the existing pattern: a function returning DOM that owns the reactive
-scope for what it mounts. Add tests under `test/renderer`.
+scope for what it mounts.

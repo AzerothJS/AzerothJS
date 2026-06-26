@@ -1,26 +1,25 @@
-// Country dataset for phone validation: ISO 3166-1 alpha-2 codes paired with
-// their ITU-T E.164 calling codes. Used by phone() to filter accepted numbers,
-// and exported for direct consumption (e.g. to populate a country-select
-// dropdown).
-//
-// Scope: all ~245 inhabited territories with assigned calling codes. Calling
-// codes only - no per-country length, mobile/landline, or area-code metadata.
-// That's what libphonenumber ships ~70 KB to provide; we deliberately don't
-// compete with it.
-//
-// Calling-code collisions: several countries share the NANP code +1 (US,
-// Canada, plus the Caribbean and Pacific NANP territories). +7 is shared by
-// Russia and Kazakhstan. +44 by the UK, Guernsey, Jersey, and the Isle of Man.
-// The phone validator accepts any country whose listed code is the calling-code
-// prefix of the input - it cannot distinguish between collisions without
-// per-country area-code metadata. That trade-off is documented on phone().
-//
-// Ordering is alphabetical by ISO code, which keeps <select> rendering and
-// snapshot tests deterministic.
-//
-// Tree-shaking: this file is only pulled into the bundle if countries or
-// getCountry (or phone() with a countries: filter) is imported. Apps using just
-// required() / email() / etc. pay nothing for it.
+/**
+ * MODULE: form/countries
+ *
+ * Country dataset for phone validation: ISO 3166-1 alpha-2 codes paired with their ITU-T E.164
+ * calling codes. Used by phone() to filter accepted numbers, and exported for direct consumption
+ * (e.g. to populate a country-select dropdown).
+ *
+ * SCOPE: all ~245 inhabited territories with assigned calling codes. Calling codes ONLY - no
+ * per-country length, mobile/landline, or area-code metadata. That's what libphonenumber ships ~70 KB
+ * to provide; we deliberately don't compete with it.
+ *
+ * CALLING-CODE COLLISIONS: several countries share one code - the NANP +1 (US, Canada, plus Caribbean
+ * and Pacific NANP territories), +7 (Russia and Kazakhstan), +44 (UK, Guernsey, Jersey, Isle of Man).
+ * The phone validator accepts any country whose listed code is the calling-code prefix of the input;
+ * it cannot disambiguate collisions without per-country area-code metadata (documented on phone()).
+ *
+ * ORDERING: alphabetical by ISO code - which never changes - so <select> rendering and snapshot tests
+ * stay deterministic even when a country is renamed (Czechia, North Macedonia, Eswatini all were).
+ *
+ * TREE-SHAKING: this file enters the bundle only if `countries`/`getCountry` (or phone() with a
+ * countries: filter) is imported. Apps using just required()/email()/etc. pay nothing for it.
+ */
 
 /**
  * One row of the country dataset.
@@ -305,17 +304,54 @@ export const countries: CountryInfo[] =
 ];
 
 /**
- * Looks up a country by either its ISO 3166-1 alpha-2 code or
- * its E.164 calling code (with or without a leading `+`).
+ * getCountry
  *
- * Returns the first match. For calling codes shared by multiple countries (e.g.
- * `1`, `7`, `44`, `590`) the result depends on the dataset's ordering -
- * alphabetical by ISO code. Use `countries.filter(...)` directly when you need
- * every match.
+ * PURPOSE:
+ * Looks up a country by either its ISO 3166-1 alpha-2 code or its E.164 calling code (with or without
+ * a leading `+`), returning the first matching row.
+ *
+ * WHY IT EXISTS:
+ * phone() needs to resolve an ISO code to its calling code (and vice versa) to build its allowed-codes
+ * list and normalize national input; exposing the same lookup lets apps drive country pickers and
+ * prefix displays from the one dataset instead of duplicating the mapping.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, form; the lookup phone() uses internally, also part of the public form surface.
+ *
+ * INPUT CONTRACT:
+ * - codeOrCallingCode: an ISO alpha-2 code ('US', case-insensitive) OR a calling code ('+1' or '1').
+ *   A leading `+` is stripped; empty input returns undefined.
+ *
+ * OUTPUT CONTRACT:
+ * - The first matching {@link CountryInfo}, or undefined when nothing matches.
+ *
+ * WHY THIS DESIGN:
+ * ISO code is tried first (letters, exact match), then calling code (digits, exact match), so an
+ * all-letters query never accidentally matches a numeric code. "First match" keeps the signature
+ * simple; callers needing every country for a shared code use countries.filter() directly.
+ *
+ * WHEN TO USE:
+ * Resolving a single country for display, or mapping an ISO code to its calling code.
+ *
+ * WHEN NOT TO USE:
+ * Enumerating ALL countries that share a calling code (+1, +7, +44, +590) - use countries.filter().
+ *
+ * EDGE CASES:
+ * - Shared calling codes resolve to whichever country sorts first by ISO code (dataset ordering).
+ * - Empty/falsy input returns undefined; unknown codes return undefined.
+ *
+ * PERFORMANCE NOTES:
+ * Linear scan over ~245 rows per call (two passes worst case). Fine for occasional lookups; for
+ * hot paths, build a Map from `countries` once.
+ *
+ * DEVELOPER WARNING:
+ * Do NOT treat the result as authoritative for a shared calling code - +1 resolves to one NANP
+ * country, not the caller's intended one. Disambiguate with the ISO code when it matters.
  *
  * @param codeOrCallingCode - 'US', 'us', '+1', '1' all valid
- *
  * @returns The first matching `CountryInfo`, or `undefined`
+ * @see {@link countries}
+ * @see {@link phone}
  *
  * @example
  * ```ts

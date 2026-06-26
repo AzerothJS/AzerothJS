@@ -35,17 +35,6 @@ import { generateVirtualCode } from '@azerothjs/language-service';
 /** Real `.azeroth` source extension. */
 const AZEROTH_EXT = '.azeroth';
 
-/** Options for {@link decorateLanguageServiceHost}. */
-export interface DecorateOptions
-{
-    /**
-     * Reads a `.azeroth` file's source. Defaults to `ts.sys.readFile`. A host
-     * with live unsaved buffers (an editor) can override this to serve the open
-     * document instead of the on-disk copy.
-     */
-    readAzeroth?: (azerothPath: string) => string | undefined;
-}
-
 /** True for a relative/absolute import specifier that points at a `.azeroth` file. */
 function isAzerothSpecifier(text: string): boolean
 {
@@ -97,15 +86,13 @@ function resolveSibling(containingFile: string, specifier: string): string
  *
  * @param ts - The TypeScript module tsserver handed the plugin.
  * @param host - The language-service host to decorate.
- * @param options - Optional source override (e.g. live editor buffers).
  */
 export function decorateLanguageServiceHost(
     ts: typeof tsModule,
-    host: tsModule.LanguageServiceHost,
-    options: DecorateOptions = {}
+    host: tsModule.LanguageServiceHost
 ): void
 {
-    const read = options.readAzeroth ?? ((azerothPath: string): string | undefined => ts.sys.readFile(azerothPath));
+    const read = (azerothPath: string): string | undefined => ts.sys.readFile(azerothPath);
 
     // Cache the compiled virtual module per source, so an unchanged file isn't
     // recompiled on every host query.

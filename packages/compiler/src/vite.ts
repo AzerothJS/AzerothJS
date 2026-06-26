@@ -1,23 +1,32 @@
-// Vite plugin that teaches Vite to load `.azeroth` files: compile() turns the
-// markup into h() calls, then Vite strips any TS, yielding a normal JS module.
-// Runs with `enforce: 'pre'` so it sees the raw source before Vite's other
-// transforms.
-//
-// `vite` is a peer dependency, imported only at transform time via a dynamic
-// import - so importing `@azerothjs/compiler` elsewhere (the playground, unit
-// tests, an SSR build) never pulls Vite in.
-//
-// HMR: this plugin re-transforms a `.azeroth` file on every edit, so the
-// updated module propagates through Vite's graph like any other. Because
-// AzerothJS has no VDOM, the app accepts the update at its root and re-renders
-// (see the demo's app.ts) - a flash-free swap with no page reload. State
-// resets, which is the honest model for a framework with no component-instance
-// tree.
+/**
+ * MODULE: compiler/vite - the AzerothJS Vite plugin
+ *
+ * Teaches Vite to load `.azeroth` files: generateModule() turns a component module into the unified
+ * runtime output, then Vite strips any TS (via oxc), yielding a normal JS module. Runs with
+ * `enforce: 'pre'` so it sees the raw source before Vite's other transforms.
+ *
+ * `vite` is a PEER dependency, imported only at transform time via a dynamic import - so importing
+ * `@azerothjs/compiler` elsewhere (tooling, unit tests, an SSR build) never pulls Vite in.
+ *
+ * HMR: the plugin re-transforms a `.azeroth` file on every edit, so the updated module propagates
+ * through Vite's graph like any other. Because AzerothJS has no VDOM, the app accepts the update at
+ * its root and re-renders - a flash-free swap with no page reload. State resets, which is the honest
+ * model for a framework with no component-instance tree.
+ *
+ * @see {@link azeroth} - the plugin factory
+ */
+
+import { readdirSync, type Dirent } from 'node:fs';
+import { join } from 'node:path';
 
 import type { Plugin } from 'vite';
-import { compile } from './compile.ts';
+
 import { lintSource } from './lint.ts';
 import { buildLineStarts, locationFor } from './sourcemap.ts';
+import { generateModule } from './codegen.ts';
+import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
+import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
+import { CompileError } from './markup-parser.ts';
 
 /** Options for the AzerothJS Vite plugin. */
 export interface AzerothPluginOptions
@@ -26,38 +35,76 @@ export interface AzerothPluginOptions
     extension?: string;
 
     /**
-     * Compile target for CLIENT transforms. `'dom'` emits template-cloning
-     * output behind a render-mode guard: SSR and hydrate() ride the
-     * universal h() branch, fresh client creation takes the clone path.
-     * Costs the duplicated region code in the bundle. Default:
-     * `'universal'`. SSR transforms always compile universal regardless
-     * (the server bundle has no use for templates).
+     * Run the type-checking layer (real TypeScript Program) and FAIL the build on any type error - a
+     * non-function event handler (`onClick={count}`), a wrong-typed component prop, or a missing
+     * required prop, including across `.azeroth` file boundaries. **Default: `true`.**
+     *
+     * The check is sound (segment-scoped, so it never reports a false error). Set it to `false` to
+     * skip type checking - e.g. to shave build time on a large project, since each `.azeroth` file is
+     * checked with its own TypeScript Program (a shared incremental Program is a future optimization).
      */
-    target?: 'universal' | 'dom';
-
-    /**
-     * Inject the dev error overlay (`@azerothjs/devtools-overlay`) into
-     * index.html during `vite serve`. Never injected into builds. Default:
-     * true.
-     */
-    overlay?: boolean;
+    typeCheck?: boolean;
 }
 
 /**
- * The AzerothJS Vite plugin. Add it to your Vite config so imports
- * of `.azeroth` files compile to runnable modules.
+ * azeroth
  *
- * Without azeroth(): call compile() on each `.azeroth` source yourself, then
- * run the result through a TS-to-JS step and feed it back into the bundler:
+ * PURPOSE:
+ * The AzerothJS Vite plugin. Add it to your Vite config so imports of `.azeroth` files compile to
+ * runnable modules - with source maps back to the markup and build-time lint/diagnostics.
  *
- *     const compiled = compile(readFileSync(file, 'utf8'), file);
+ * WHY IT EXISTS:
+ * It is the supported, batteries-included integration path. Without it you'd hand-wire generateModule
+ * plus a TS->JS step plus source-map chaining plus extension resolution yourself:
+ *
+ *     const compiled = generateModule(readFileSync(file, 'utf8'), file);
  *     const js = transformWithOxc(compiled.code, file, { lang: 'ts' });
  *     // wire js back into the build by hand; source maps to the markup are on you
  *
- * With azeroth(): drop it in `plugins` and Vite loads `.azeroth` files directly:
+ * With azeroth(): drop it in `plugins` and Vite loads `.azeroth` files directly, maps included.
  *
- *     export default defineConfig({ plugins: [azeroth()] });
- *     // imports of *.azeroth just work; maps chain back to the original markup
+ * COMPILER / RUNTIME ROLE:
+ * Build-time, compiler; the package's PRIMARY public API. Bridges the compiler to Vite for both CSR
+ * and SSR builds (one artifact serves both).
+ *
+ * INPUT CONTRACT:
+ * - options.extension?: the file extension to handle (default '.azeroth').
+ *
+ * OUTPUT CONTRACT:
+ * - A Vite {@link Plugin} with `config` (registers the extension) and `transform` (compiles matching
+ *   files) hooks, running at `enforce: 'pre'`.
+ *
+ * WHY THIS DESIGN:
+ * `enforce: 'pre'` so it sees raw source before other transforms. The extension is added ADDITIVELY to
+ * resolve.extensions (preserving Vite's defaults, so .ts/.js still resolve) so component imports may
+ * omit it. Lint + semantic diagnostics run BEFORE compiling and surface as build warnings (catching
+ * mistakes the type system can't). Compilation emits ONE unified, mode-dispatched artifact (clone in
+ * the DOM, serialize in SSR, adopt on hydrate), and the compiler's source map is chained through oxc's
+ * `inMap` so the final map points all the way back to the `.azeroth` source. `vite` is imported
+ * dynamically so non-Vite consumers never pull it in.
+ *
+ * WHEN TO USE:
+ * Any Vite-based AzerothJS app (CSR or SSR).
+ *
+ * WHEN NOT TO USE:
+ * Non-Vite builds - call generateModule yourself and run a TS->JS step (the "without" snippet above).
+ *
+ * EDGE CASES:
+ * - A `?query` suffix on the module id is stripped before the extension check.
+ * - `this?.warn` is optional-chained, so bare (non-Vite) unit-test calls to `transform` don't crash.
+ * - Non-matching files return null (Vite falls through to its normal handling).
+ *
+ * PERFORMANCE NOTES:
+ * One transform per `.azeroth` file (and again on each HMR edit); lint/diagnose are linear in source.
+ *
+ * DEVELOPER WARNING:
+ * Requires `vite` as a peer dependency at >= 6 (where `transformWithOxc` exists; vite 5 hard-crashes
+ * the transform). HMR RESETS app state - there is no component-instance tree to preserve it.
+ *
+ * @param options - Plugin options (currently just `extension`)
+ * @returns A Vite {@link Plugin}
+ * @see {@link AzerothPluginOptions}
+ * @see {@link generateModule}
  *
  * @example
  * ```ts
@@ -68,12 +115,57 @@ export interface AzerothPluginOptions
  * export default defineConfig({ plugins: [azeroth()] });
  * ```
  */
+/** Recursively collects files ending in `ext` under `dir`, skipping dependency/output/hidden folders. */
+function collectFiles(dir: string, ext: string, out: string[] = []): string[]
+{
+    let entries: Dirent<string>[];
+    try
+    {
+        entries = readdirSync(dir, { withFileTypes: true });
+    }
+    catch
+    {
+        return out;
+    }
+    for (const entry of entries)
+    {
+        if (entry.isDirectory())
+        {
+            if (entry.name !== 'node_modules' && entry.name !== 'dist' && entry.name !== 'build' && !entry.name.startsWith('.'))
+            {
+                collectFiles(join(dir, entry.name), ext, out);
+            }
+        }
+        else if (entry.name.endsWith(ext))
+        {
+            out.push(join(dir, entry.name));
+        }
+    }
+    return out;
+}
+
+/**
+ * Creates the Vite plugin that compiles `.azeroth` files. Add it to a Vite config and `.azeroth`
+ * imports work like any other module; by default the build also type-checks each file and fails on a
+ * type error (see {@link AzerothPluginOptions.typeCheck}). Runs `enforce: 'pre'` so it transforms the
+ * raw source before Vite's other plugins.
+ *
+ * @param options - Plugin options; all optional. See {@link AzerothPluginOptions}.
+ * @returns The Vite plugin object.
+ * @example
+ * // vite.config.ts
+ * import { azeroth } from '@azerothjs/compiler';
+ * export default { plugins: [azeroth()] };
+ */
 export function azeroth(options: AzerothPluginOptions = {}): Plugin
 {
     const extension = options.extension ?? '.azeroth';
-    const clientTarget = options.target ?? 'universal';
-    const overlay = options.overlay ?? true;
-    let serving = false;
+    const typeCheck = options.typeCheck ?? true;
+    // ONE incremental type-checker for the whole build: it binds lib.d.ts once and reuses it across
+    // every `.azeroth` file (lazily created on first use), instead of building a fresh ts.Program per
+    // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
+    let checker: AzerothTypeChecker | null = null;
+    let root = process.cwd();
 
     return {
         name: 'azerothjs',
@@ -81,7 +173,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
 
         // Register the extension with Vite's resolver so component imports may
         // omit it (e.g. `import Modal from './modal.component'`). Explicit
-        // `.azeroth` specifiers keep working — this is purely additive. We must
+        // `.azeroth` specifiers keep working - this is purely additive. We must
         // preserve Vite's default list (setting `resolve.extensions` otherwise
         // replaces it and breaks `.ts`/`.js` resolution) and any user entries.
         config(config: { resolve?: { extensions?: string[] } })
@@ -96,34 +188,28 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 : [...current, extension];
         },
 
-        configResolved(config: { command: string })
+        // Capture the resolved project root so buildStart can locate every `.azeroth` file.
+        configResolved(resolved: { root?: string })
         {
-            serving = config.command === 'serve';
-        },
-
-        // Dev server only: load the error overlay before the app, so
-        // uncaught reactive errors surface in the page instead of dying in
-        // the console. Builds are never touched.
-        //
-        // @azerothjs/devtools-overlay is an OPTIONAL peer dependency, so the
-        // injection is a dynamic import with a catch: a project that hasn't
-        // installed it just doesn't get the overlay, instead of a static
-        // import breaking the dev server's module graph.
-        transformIndexHtml()
-        {
-            if (!serving || !overlay)
+            if (resolved.root)
             {
-                return undefined;
+                root = resolved.root;
             }
-            return [{
-                tag: 'script',
-                attrs: { type: 'module' },
-                children: "import('@azerothjs/devtools-overlay').then(m => m.installOverlay()).catch(() => {});",
-                injectTo: 'head' as const
-            }];
         },
 
-        async transform(code: string, id: string, transformOptions?: { ssr?: boolean })
+        // Build the type-checker ONCE per build and PRIME it with the whole project's `.azeroth` files,
+        // so the shared TypeScript Program is constructed a single time (lib + every file bound once)
+        // instead of growing - and being incrementally rebuilt - as files are transformed one by one.
+        buildStart()
+        {
+            if (typeCheck)
+            {
+                checker = createIncrementalChecker();
+                checker.prime(collectFiles(root, extension));
+            }
+        },
+
+        async transform(code: string, id: string)
         {
             // Strip any `?query` suffix Vite appends to module ids.
             const filename = id.split('?')[0];
@@ -144,11 +230,58 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 this?.warn(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
-            // 1) markup -> runtime calls (plus a source map back to
-            //    .azeroth). SSR must stay universal: template cloning has no
-            //    string mode.
-            const target = transformOptions?.ssr ? 'universal' : clientTarget;
-            const compiled = compile(code, filename, { target });
+            // 0) Optional U1 type-check (real TypeScript Program). When enabled, a type error
+            //    (non-function handler, wrong-typed component prop) fails the build here, BEFORE
+            //    compiling - no type-unsafe module reaches codegen. Off by default (see options).
+            if (typeCheck)
+            {
+                // Pass the filename so relative imports of other `.azeroth` files resolve from disk
+                // and cross-file component prop types are checked. One shared incremental checker
+                // across the build (binds lib once) instead of a fresh ts.Program per file.
+                checker ??= createIncrementalChecker();
+                for (const finding of checker.check(filename, code))
+                {
+                    const loc = locationFor(finding.start, lineStarts);
+                    this?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                    throw new Error(`${ finding.code }: ${ finding.message }`);
+                }
+            }
+
+            // 1) Compile. generateModule is the SINGLE enforcement gate: it throws a
+            //    located CompileError for any error-severity diagnostic, malformed/unclosed
+            //    markup, or an illegal write (e.g. assigning a `derived`). The plugin and
+            //    standalone callers therefore reject identical input - no silent emit on
+            //    either path. The output is one mode-dispatched artifact (clone in the DOM,
+            //    serialize in SSR string mode, adopt during hydration).
+            let compiled: ReturnType<typeof generateModule>;
+            try
+            {
+                compiled = generateModule(code, filename);
+            }
+            catch (err)
+            {
+                const offset = err instanceof CompileError ? err.offset : 0;
+                const loc = locationFor(offset, lineStarts);
+                const message = err instanceof Error ? err.message : String(err);
+                // Plugin context error() throws and fails the build; the rethrow covers
+                // bare (non-plugin) invocations (e.g. unit tests calling transform directly).
+                this?.error?.(message, { line: loc.line + 1, column: loc.column });
+                throw (err instanceof Error ? err : new Error(message));
+            }
+
+            // 2) Warning-severity diagnostics. The compile succeeded, so diagnoseModule
+            //    parses cleanly and reports no errors; surface the warnings non-blocking.
+            // Unused-import detection needs the COMPILED JS (markup lowered to calls) + the source, so
+            // it runs here rather than inside diagnoseModule (which would recurse into the compiler).
+            for (const finding of [...diagnoseModule(code), ...diagnoseUnusedImports(code, compiled.code)])
+            {
+                if (finding.severity !== 'warning')
+                {
+                    continue;
+                }
+                const loc = locationFor(finding.start, lineStarts);
+                this?.warn(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+            }
 
             // 2) TS -> JS (the compiled module may still contain types). Vite
             //    transforms via oxc; passing our map as `inMap` chains it, so

@@ -2,53 +2,58 @@
 
 ## Overview
 
-The component system: a way to define components with lifecycle hooks on top of
-the renderer and reactivity. It provides both a function style
-(`defineComponent`) and a class style (`AzerothComponent`), the `onMount` and
-`onDestroy` hooks, an `ErrorBoundary`, and `destroyComponent` for explicit
-teardown.
+The component-runtime layer beneath the renderer. It is **not** a component-definition API —
+components are authored as `component` blocks in `.azeroth` files and compiled. What this package
+provides is the runtime infrastructure those compiled components and the renderer's control flow rely
+on:
+
+- `destroyComponent(element)` — node-bound subtree teardown (dispose reactive scopes, run cleanups,
+  recurse into children);
+- `ErrorBoundary` — catch errors thrown while rendering a subtree and render a fallback, with a reset
+  callback to retry;
+- the **co-range** helpers — comment-marker placement ranges that the renderer's control-flow
+  components (`Show`, `For`, `Switch`, …) use to mark and update where they insert content.
 
 ```ts
-import { defineComponent, onMount } from '@azerothjs/component';
-import { h } from '@azerothjs/renderer';
-import { createSignal } from '@azerothjs/reactivity';
+import { ErrorBoundary } from '@azerothjs/component';
+```
 
-const Hello = defineComponent<{ name: string }>(props => {
-    const [count, setCount] = createSignal(0);
-    onMount(() => console.log('mounted'));
-    return h('button', { onClick: () => setCount(c => c + 1) },
-        () => `Hi ${props.name}, clicked ${count()}`);
-});
+```azeroth
+import { ErrorBoundary } from '@azerothjs/core';
+
+component App
+{
+    <ErrorBoundary fallback={(err, reset) => <button onClick={reset}>Retry — {String(err)}</button>}>
+        <RiskyThing />
+    </ErrorBoundary>
+}
 ```
 
 ## Architecture
 
-A component is a function from props to a DOM element. `defineComponent` wraps a
-setup function so that its reactive state and lifecycle hooks are bound to the
-element it returns: the setup runs inside an ownership scope, `onMount` callbacks
-fire after the element is in the document, and `onDestroy` callbacks (and any
-cleanup returned from `onMount`) run when the element is destroyed.
-`destroyComponent(element)` triggers that teardown for any component element.
+A compiled component's reactive state lives in a `createRoot` scope tied to the element it produces.
+`destroyComponent(element)` walks that element's subtree, disposing the reactive scopes and running
+cleanups so nothing leaks when a node is removed — the same teardown contract `render()` and the test
+helpers use.
 
-`AzerothComponent` is the class equivalent: a base class with an abstract
-`render(): HTMLElement` and the same lifecycle, for code that prefers classes or
-needs to hold instance state. Both styles share one lifecycle implementation.
+`ErrorBoundary` runs its child in a scoped error handler; a throw during render (or in an effect)
+swaps in the fallback instead of crashing the tree, and the fallback receives a `reset` to retry.
 
-`ErrorBoundary` catches errors thrown while rendering its subtree and renders a
-fallback instead, with a reset callback to retry.
+The **co-range** helpers are framework infrastructure, not app-facing API. A control-flow component
+marks its position with a comment-marker range (`createCoMarkers`), appends/clears content within it
+(`appendToCo` / `clearCo`), and adopts an existing range during hydration (`adoptCoRange`). They live
+in this package — rather than the renderer — because they need `destroyComponent`, and the renderer
+depends on `component`, not the reverse.
 
 ## Components
 
 | File | Role |
 | --- | --- |
-| `define-component.ts` | `defineComponent`, `onMount`, `onDestroy`, `destroyComponent`. |
-| `azeroth-component.ts` | `AzerothComponent` base class and `ReactiveState`. |
-| `destroy-hooks.ts` | Lifecycle/cleanup bookkeeping shared by both styles. |
-| `error-boundary.ts` | `ErrorBoundary` and its props. |
-| `types.ts` | `Component`, `ComponentSetup`, `LifecycleHook`. |
-
-`ComponentSetup<P>` is `(props: P) => HTMLElement`. A `LifecycleHook` may return a
-cleanup function; for `onMount` that cleanup runs on destroy.
+| `destroy-component.ts` | `destroyComponent`: node-bound subtree teardown. |
+| `error-boundary.ts` | `ErrorBoundary` and `ErrorBoundaryProps`. |
+| `co-range.ts` | `createCoMarkers`, `appendToCo`, `clearCo`, `adoptCoRange`, `CoTarget`. |
+| `destroy-hooks.ts` | Teardown bookkeeping shared by the above. |
+| `types.ts` | Shared component types. |
 
 ## Building
 
@@ -56,39 +61,8 @@ cleanup function; for `onMount` that cleanup runs on destroy.
 npm run build -w @azerothjs/component
 ```
 
-## Testing
-
-```sh
-npx vitest run test/component
-```
-
-## Examples
-
-Class style:
-
-```ts
-import { AzerothComponent } from '@azerothjs/component';
-import { h } from '@azerothjs/renderer';
-
-class Clock extends AzerothComponent {
-    private timer = 0;
-
-    onMount() {
-        this.timer = setInterval(() => {}, 1000) as unknown as number;
-    }
-
-    onDestroy() {
-        clearInterval(this.timer);
-    }
-
-    render() {
-        return h('time', {}, 'tick');
-    }
-}
-```
-
 ## Contributing
 
-Keep the two styles behaviorally identical; lifecycle and cleanup logic lives in
-one place (`destroy-hooks.ts`) and both `defineComponent` and `AzerothComponent`
-go through it. Add tests under `test/component`.
+Teardown and co-range logic is the load-bearing part: it is what keeps the framework leak-free as
+nodes come and go. Keep it in one place and let both `destroyComponent` and the control-flow
+components go through it, rather than re-implementing range placement per control-flow component.

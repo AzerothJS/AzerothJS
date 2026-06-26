@@ -43,12 +43,12 @@
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/devtools"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/devtools",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/devtools",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

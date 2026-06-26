@@ -4,19 +4,20 @@
     "description": "Language support for AzerothJS .azeroth files — completion, hover, diagnostics, and more, powered by the compiler.",
     "version": "0.6.0-beta.1",
     "publisher": "azerothjs",
-    "author": {
+    "author":
+    {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "engines": {
+    "engines":
+    {
         "vscode": "^1.84.0"
     },
-    "categories": [
-        "Programming Languages"
-    ],
-    "keywords": [
+    "categories": ["Programming Languages"],
+    "keywords":
+    [
         "azeroth",
         "azerothjs",
         "signals",
@@ -24,77 +25,85 @@
         "lsp"
     ],
     "main": "./dist/extension.js",
-    "activationEvents": [
-        "onLanguage:azeroth"
-    ],
-    "contributes": {
-        "commands": [
+    "activationEvents": ["onLanguage:azeroth"],
+    "contributes":
+    {
+        "commands":
+        [
             {
                 "command": "azeroth.restartServer",
                 "title": "AzerothJS: Restart Language Server"
             }
         ],
-        "languages": [
+        "languages":
+        [
             {
                 "id": "azeroth",
-                "aliases": [
-                    "AzerothJS",
-                    "azeroth"
-                ],
-                "extensions": [
-                    ".azeroth"
-                ],
+                "aliases": ["AzerothJS", "azeroth"],
+                "extensions": [".azeroth"],
                 "configuration": "./language-configuration.json"
             }
         ],
-        "grammars": [
+        "grammars":
+        [
             {
                 "language": "azeroth",
                 "scopeName": "source.azeroth",
                 "path": "./syntaxes/azeroth.tmLanguage.json"
             }
         ],
-        "configuration": {
+        "configuration":
+        {
             "title": "AzerothJS",
-            "properties": {
-                "azeroth.diagnostics.enable": {
+            "properties":
+            {
+                "azeroth.diagnostics.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Report markup parse errors and TypeScript type errors in `.azeroth` files."
                 },
-                "azeroth.format.enable": {
+                "azeroth.format.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Enable document formatting for .azeroth files (script and expression regions)."
                 },
-                "azeroth.autoClosingTags": {
+                "azeroth.autoClosingTags":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Automatically insert the closing tag when you type the '>' of an opening tag."
                 },
-                "azeroth.suggest.autoImports": {
+                "azeroth.suggest.autoImports":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Include not-yet-imported symbols in completion and add the import when one is accepted."
                 },
-                "azeroth.suggest.componentSnippets": {
+                "azeroth.suggest.componentSnippets":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Expand built-in components to snippets on completion (e.g. `<For each={…} key={…}>{…}</For>`)."
                 },
-                "azeroth.inlayHints.enabled": {
+                "azeroth.inlayHints.enabled":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Master switch for inlay hints in .azeroth files."
                 },
-                "azeroth.inlayHints.parameterNames": {
+                "azeroth.inlayHints.parameterNames":
+                {
                     "type": "string",
-                    "enum": [
+                    "enum":
+                    [
                         "none",
                         "literals",
                         "all"
                     ],
-                    "enumDescriptions": [
+                    "enumDescriptions":
+                    [
                         "No parameter-name hints.",
                         "Only for literal arguments (numbers, strings, …).",
                         "For all arguments."
@@ -102,154 +111,178 @@
                     "default": "all",
                     "description": "Show parameter-name hints at call sites."
                 },
-                "azeroth.inlayHints.parameterTypes": {
+                "azeroth.inlayHints.parameterTypes":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Show inferred types for un-annotated function parameters."
                 },
-                "azeroth.inlayHints.variableTypes": {
+                "azeroth.inlayHints.variableTypes":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Show inferred types for `const`/`let` declarations."
                 },
-                "azeroth.inlayHints.propertyDeclarationTypes": {
+                "azeroth.inlayHints.propertyDeclarationTypes":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Show inferred types for class property declarations."
                 },
-                "azeroth.inlayHints.functionLikeReturnTypes": {
+                "azeroth.inlayHints.functionLikeReturnTypes":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Show inferred return types for functions."
                 },
-                "azeroth.inlayHints.enumMemberValues": {
+                "azeroth.inlayHints.enumMemberValues":
+                {
                     "type": "boolean",
                     "default": true,
                     "description": "Show computed values for enum members."
                 },
-                "azeroth.trace.server": {
+                "azeroth.trace.server":
+                {
                     "type": "string",
-                    "enum": [
-                        "off",
-                        "messages",
-                        "verbose"
-                    ],
+                    "enum": ["off", "messages", "verbose"],
                     "default": "off",
                     "description": "Traces the communication between VS Code and the AzerothJS language server."
                 },
-                "azeroth.completion.enable": {
+                "azeroth.completion.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable IntelliSense completions in `.azeroth` files."
                 },
-                "azeroth.hover.enable": {
+                "azeroth.hover.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable hover information (types, docs, examples) in `.azeroth` files."
                 },
-                "azeroth.definition.enable": {
+                "azeroth.definition.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Go to Definition in `.azeroth` files."
                 },
-                "azeroth.typeDefinition.enable": {
+                "azeroth.typeDefinition.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Go to Type Definition in `.azeroth` files."
                 },
-                "azeroth.references.enable": {
+                "azeroth.references.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Find All References in `.azeroth` files."
                 },
-                "azeroth.documentHighlight.enable": {
+                "azeroth.documentHighlight.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable highlighting other occurrences of the symbol under the cursor in `.azeroth` files."
                 },
-                "azeroth.rename.enable": {
+                "azeroth.rename.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Rename Symbol (F2), workspace-wide in `.azeroth` files."
                 },
-                "azeroth.documentSymbol.enable": {
+                "azeroth.documentSymbol.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable the document outline / breadcrumbs in `.azeroth` files."
                 },
-                "azeroth.workspaceSymbol.enable": {
+                "azeroth.workspaceSymbol.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable workspace symbol search (Ctrl+T / Cmd+T) in `.azeroth` files."
                 },
-                "azeroth.signatureHelp.enable": {
+                "azeroth.signatureHelp.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable parameter hints while typing call arguments in `.azeroth` files."
                 },
-                "azeroth.semanticTokens.enable": {
+                "azeroth.semanticTokens.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable semantic syntax highlighting in `.azeroth` files."
                 },
-                "azeroth.codeActions.enable": {
+                "azeroth.codeActions.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable quick fixes and refactorings in `.azeroth` files."
                 },
-                "azeroth.folding.enable": {
+                "azeroth.folding.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable code folding ranges in `.azeroth` files."
                 },
-                "azeroth.selectionRange.enable": {
+                "azeroth.selectionRange.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable smart selection expand/shrink (Alt+Shift+Arrow) in `.azeroth` files."
                 },
-                "azeroth.onTypeFormatting.enable": {
+                "azeroth.onTypeFormatting.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable format-on-type (after `;`, `}`, newline) — also requires `azeroth.format.enable` in `.azeroth` files."
                 },
-                "azeroth.linkedEditing.enable": {
+                "azeroth.linkedEditing.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable linked editing of matching open/close tags in `.azeroth` files."
                 },
-                "azeroth.callHierarchy.enable": {
+                "azeroth.callHierarchy.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Call Hierarchy (show callers/callees) in `.azeroth` files."
                 },
-                "azeroth.codeLens.enable": {
+                "azeroth.codeLens.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable Code Lens (\"N references\" over declarations) in `.azeroth` files."
                 },
-                "azeroth.documentLinks.enable": {
+                "azeroth.documentLinks.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable clickable links over relative import specifiers in `.azeroth` files."
                 },
-                "azeroth.documentColor.enable": {
+                "azeroth.documentColor.enable":
+                {
                     "type": "boolean",
                     "default": true,
                     "markdownDescription": "Enable color swatches over CSS colors in `style=\"…\"` attributes and css`` templates in `.azeroth` files."
                 }
             }
         },
-        "configurationDefaults": {
-            "emmet.includeLanguages": {
+        "configurationDefaults":
+        {
+            "emmet.includeLanguages":
+            {
                 "azeroth": "html"
             },
-            "eslint.validate": [
-                "azeroth"
-            ],
-            "tailwindCSS.includeLanguages": {
+            "eslint.validate": ["azeroth"],
+            "tailwindCSS.includeLanguages":
+            {
                 "azeroth": "html"
             },
-            "tailwindCSS.experimental.classRegex": [
+            "tailwindCSS.experimental.classRegex":
+            [
                 [
                     "classList\\(([^)]*)\\)",
                     "[\"'`]([^\"'`]*)[\"'`]"
@@ -258,12 +291,14 @@
                     "class\\s*[:=]\\s*[\"'`]([^\"'`]*)[\"'`]"
                 ]
             ],
-            "[azeroth]": {
+            "[azeroth]":
+            {
                 "editor.autoClosingBrackets": "always",
                 "editor.autoClosingQuotes": "always",
                 "editor.autoSurround": "languageDefined",
                 "editor.suggestOnTriggerCharacters": true,
-                "editor.quickSuggestions": {
+                "editor.quickSuggestions":
+                {
                     "other": true,
                     "comments": false,
                     "strings": true
@@ -274,50 +309,54 @@
                 "editor.formatOnType": false
             }
         },
-        "semanticTokenScopes": [
+        "semanticTokenScopes":
+        [
             {
                 "language": "azeroth",
-                "scopes": {
-                    "component": [
-                        "support.class.component.azeroth"
-                    ],
-                    "tag": [
-                        "entity.name.tag.azeroth"
-                    ],
-                    "attribute": [
-                        "entity.other.attribute-name.azeroth"
-                    ],
-                    "event": [
-                        "entity.other.attribute-name.event.azeroth"
-                    ]
+                "scopes":
+                {
+                    "component": ["support.class.component.azeroth"],
+                    "tag": ["entity.name.tag.azeroth"],
+                    "attribute": ["entity.other.attribute-name.azeroth"],
+                    "event": ["entity.other.attribute-name.event.azeroth"]
                 }
             }
         ],
-        "typescriptServerPlugins": [
+        "typescriptServerPlugins":
+        [
             {
                 "name": "@azerothjs/typescript-plugin",
                 "enableForWorkspaceTypeScriptVersions": true
             }
         ]
     },
-    "dependencies": {
+    "dependencies":
+    {
         "@azerothjs/typescript-plugin": "0.6.0-beta.1",
-        "typescript": ">=5"
+        "typescript": ">=6"
     },
-    "devDependencies": {
+    "devDependencies":
+    {
         "@azerothjs/language-server": "0.6.0-beta.1",
         "vscode-languageclient": "^9",
         "@types/vscode": "^1.84.0"
     },
-    "scripts": {
+    "scripts":
+    {
         "build": "tsc -p tsconfig.json",
         "bundle": "node esbuild.mjs",
         "package": "node package.mjs",
         "install-extension": "node package.mjs --install"
     },
-    "repository": {
+    "repository":
+    {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "editors/vscode"
-    }
+    },
+    "bugs":
+    {
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    },
+    "homepage": "https://github.com/AzerothJS/AzerothJS#readme"
 }

@@ -1,93 +1,84 @@
-// classList() converts objects and arrays into reactive CSS class-string
-// getters, replacing error-prone manual concatenation.
-//
-// Without classList: hand-concatenate the class string, juggling spaces and
-// branches.
-//
-//     class: () =>
-//     {
-//         let c = 'btn';
-//         if (isPrimary()) c += ' btn-primary';
-//         if (isDisabled()) c += ' btn-disabled';
-//         return c; // a forgotten leading space silently merges two classes
-//     }
-//
-// With classList: a condition map, where each value is a static boolean or a
-// signal getter.
-//
-//     class: classList({
-//         'btn': true,
-//         'btn-primary': isPrimary,
-//         'btn-disabled': isDisabled
-//     }) // spacing is automatic; each class is independently reactive
+/**
+ * MODULE: renderer/class-binding
+ *
+ * classList() converts an object or array of class conditions into a reactive class-string
+ * getter, replacing error-prone manual concatenation (where a forgotten space silently
+ * merges two classes, and each branch must be wired by hand). Each condition may be a static
+ * boolean or a signal getter, so individual classes are independently reactive.
+ */
 
 /**
- * A class binding value. Can be:
- *   - boolean -> static include/exclude
- *   - () => boolean -> reactive include/exclude
+ * A class binding value: a static boolean, or a getter for reactivity.
  */
 type ClassValue = boolean | (() => boolean);
 
 /**
- * An object mapping class names to conditions.
- *
- * Each key is a CSS class name. Each value determines
- * whether that class is included.
+ * An object mapping class names to {@link ClassValue} conditions: true always includes,
+ * false never includes, a getter includes reactively.
  *
  * @example
- * ```ts
- * {
- *   'btn': true,              // always included
- *   'btn-primary': isPrimary, // reactive: signal getter
- *   'btn-disabled': false     // never included
- * }
- * ```
+ * { 'btn': true, 'btn-primary': isPrimary, 'btn-disabled': false }
  */
 export type ClassObject = Record<string, ClassValue>;
 
 /**
- * Converts a class binding object or array into a reactive
- * class string getter.
+ * classList
  *
- * Returns a function that can be passed as the `class` prop
- * to h(). The function re-evaluates whenever its reactive
- * conditions change (because it reads signals).
+ * PURPOSE:
+ * Turns a {@link ClassObject} (or an array of strings and ClassObjects) into a `() => string`
+ * getter suitable as the `class` prop, recomputing the class string when its reactive
+ * conditions change.
  *
- * @param classes - Object mapping class names to conditions,
- *                  or array of strings and objects.
+ * WHY IT EXISTS:
+ * Building a class string by hand is bug-prone: spacing, conditional branches, and reactive
+ * recomputation all have to be managed manually. classList declares the mapping once and
+ * produces a getter that h() treats as a reactive attribute, so each class toggles
+ * independently and spacing is automatic.
  *
- * @returns A getter function that returns the resolved class string
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; an authoring helper. It returns a getter that resolveReactive unwraps
+ * inside h()'s attribute effect, so reading a signal condition tracks it.
  *
+ * INPUT CONTRACT:
+ * - classes: a ClassObject, or an array mixing plain class strings and ClassObjects.
+ *   Object values are booleans or getters.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns a `() => string` joining the active class names with single spaces. Calling it
+ *   evaluates each condition (subscribing to any getter it reads).
+ *
+ * WHY THIS DESIGN:
+ * Returning a getter (not a string) is what makes it reactive in h(): the getter is called
+ * inside the attribute effect, so only the touched signals drive updates. Array support lets
+ * static and conditional classes mix without manual joining.
+ *
+ * WHEN TO USE:
+ * For elements whose class set depends on state - active/selected/disabled toggles, variant
+ * combinations.
+ *
+ * WHEN NOT TO USE:
+ * For a single static class (pass the string directly). For inline styles, use
+ * {@link styleMap}.
+ *
+ * EDGE CASES:
+ * - Falsey conditions are omitted; duplicate class names are not de-duplicated (author input).
+ * - Reading it outside an effect returns a one-shot string that will not update.
+ *
+ * PERFORMANCE NOTES:
+ * O(number of entries) per evaluation; runs only when a condition signal changes (h() binds
+ * it as one attribute effect).
+ *
+ * DEVELOPER WARNING:
+ * Pass the RESULT of classList as the prop (`class: classList({...})`) - it must remain a
+ * getter to stay reactive; do not call it yourself when binding.
+ *
+ * @param classes - A {@link ClassObject} or an array of strings and ClassObjects.
+ * @returns A getter resolving to the space-joined active class string.
+ * @see {@link styleMap}
  * @example
- * ```ts
- * // Object syntax
- * const [isActive, setIsActive] = createSignal(false);
- * const [isLarge, setIsLarge] = createSignal(true);
- *
  * h('button', {
- *   class: classList({
- *     'btn': true,
- *     'btn-active': isActive,
- *     'btn-lg': isLarge
- *   })
+ *   class: classList({ 'btn': true, 'btn-active': isActive, 'btn-lg': isLarge })
  * }, 'Click me');
- *
- * // Renders: <button class="btn btn-lg">
- * setIsActive(true);
- * // Renders: <button class="btn btn-active btn-lg">
- * ```
- *
- * @example
- * ```ts
- * // Array syntax: mix strings and objects
- * h('div', {
- *   class: classList([
- *     'card',
- *     { 'card-hover': isHovered },
- *     { 'card-selected': isSelected }
- *   ])
- * });
- * ```
  */
 export function classList(classes: ClassObject | (string | ClassObject)[]): () => string
 {
@@ -121,14 +112,12 @@ export function classList(classes: ClassObject | (string | ClassObject)[]): () =
 }
 
 /**
- * Resolves a ClassObject into an array of active class names. Each entry's
- * condition is evaluated (calling it if it's a function, which reads the
- * signal); if truthy, the class name is added to the result array.
- *
- * @param obj - The class object to resolve
- * @param result - The array to push active class names into
+ * Resolves a {@link ClassObject} into active class names: evaluates each condition (calling
+ * it if a function, which reads the signal) and pushes truthy ones onto `result`.
  *
  * @internal
+ * @param obj - The class object to resolve.
+ * @param result - The array to push active class names into.
  */
 function resolveClassObject(obj: ClassObject, result: string[]): void
 {

@@ -14,32 +14,33 @@ import com.intellij.util.Consumer
  * its `</span>`). A native language routes this through PSI rather than the LSP
  * server, so the pairing is computed natively (see [AzerothTagMatcher]).
  */
-class AzerothTagHighlightHandlerFactory : HighlightUsagesHandlerFactory {
-    override fun createHighlightUsagesHandler(editor: Editor, file: PsiFile): HighlightUsagesHandlerBase<out PsiElement>? {
-        if (file.language != AzerothLanguage) {
+class AzerothTagHighlightHandlerFactory : HighlightUsagesHandlerFactory
+{
+    override fun createHighlightUsagesHandler(editor: Editor, file: PsiFile): HighlightUsagesHandlerBase<out PsiElement>?
+    {
+        if (file.language != AzerothLanguage)
+        {
             return null
         }
-        val ranges = AzerothTagMatcher.matchingTagRanges(editor.document.charsSequence, editor.caretModel.offset)
-            ?: return null
+        val ranges = AzerothTagMatcher.matchingTagRanges(editor.document.charsSequence, editor.caretModel.offset) ?: return null
         return AzerothTagHighlightHandler(editor, file, ranges)
     }
 }
 
-private class AzerothTagHighlightHandler(
-    editor: Editor,
-    file: PsiFile,
-    private val ranges: List<TextRange>
-) : HighlightUsagesHandlerBase<PsiElement>(editor, file) {
+private class AzerothTagHighlightHandler(editor: Editor, file: PsiFile, private val ranges: List<TextRange>) : HighlightUsagesHandlerBase<PsiElement>(editor, file)
+{
 
     // A non-empty target list is required for the handler to run; the file itself
     // stands in (the actual ranges to paint are supplied in computeUsages).
     override fun getTargets(): List<PsiElement> = listOf(myFile)
 
-    override fun selectTargets(targets: List<PsiElement>, selectionConsumer: Consumer<in List<PsiElement>>) {
+    override fun selectTargets(targets: List<PsiElement>, selectionConsumer: Consumer<in List<PsiElement>>)
+    {
         selectionConsumer.consume(targets)
     }
 
-    override fun computeUsages(targets: List<PsiElement>) {
+    override fun computeUsages(targets: List<PsiElement>)
+    {
         // Ranges were computed from the document at factory time; if the document
         // shrank since then, drop any that no longer fit so the editor never paints
         // past the end.

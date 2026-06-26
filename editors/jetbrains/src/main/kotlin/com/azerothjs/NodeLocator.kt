@@ -21,20 +21,24 @@ import java.io.File
  * Returns an absolute path, or null when nothing is found (the caller then
  * notifies the user and points them at the settings field).
  */
-object NodeLocator {
+object NodeLocator
+{
     private val exe: String get() = if (SystemInfo.isWindows) "node.exe" else "node"
 
     /** Locates Node, or null. `override` is the user's configured path (may be blank). */
-    fun locate(override: String?): String? {
+    fun locate(override: String?): String?
+    {
         configured(override)?.let { return it }
         PathEnvironmentVariableUtil.findInPath(exe)?.let { if (it.canExecute() || SystemInfo.isWindows) return it.absolutePath }
         return commonLocations().firstOrNull { it.isFile }?.absolutePath
     }
 
     /** A user-provided path: accept a file directly, or a directory containing node. */
-    private fun configured(override: String?): String? {
+    private fun configured(override: String?): String?
+    {
         val raw = override?.trim().orEmpty()
-        if (raw.isEmpty()) return null
+        if (raw.isEmpty())
+            return null
         val file = File(raw)
         return when {
             file.isFile -> file.absolutePath
@@ -44,11 +48,13 @@ object NodeLocator {
     }
 
     /** Candidate node executables across the common managers/installers. */
-    private fun commonLocations(): List<File> {
+    private fun commonLocations(): List<File>
+    {
         val home = System.getProperty("user.home") ?: ""
         val candidates = mutableListOf<File?>()
 
-        if (SystemInfo.isWindows) {
+        if (SystemInfo.isWindows)
+        {
             System.getenv("ProgramFiles")?.let { candidates += File("$it\\nodejs\\node.exe") }
             System.getenv("ProgramFiles(x86)")?.let { candidates += File("$it\\nodejs\\node.exe") }
             System.getenv("LOCALAPPDATA")?.let { candidates += File("$it\\Volta\\bin\\node.exe") }
@@ -56,7 +62,9 @@ object NodeLocator {
             // nvm-windows keeps versioned dirs under %NVM_HOME% (or %APPDATA%\nvm).
             (System.getenv("NVM_HOME") ?: "$home\\AppData\\Roaming\\nvm").let { candidates += latestVersioned(File(it), "node.exe") }
             candidates += latestVersioned(File("$home\\AppData\\Roaming\\fnm\\node-versions"), "installation\\node.exe")
-        } else {
+        }
+        else
+        {
             candidates += listOf(
                 File("/usr/local/bin/$exe"),
                 File("/opt/homebrew/bin/$exe"),
@@ -76,8 +84,10 @@ object NodeLocator {
      * executable under the lexically-greatest subfolder (a good proxy for the
      * newest installed version), or null when the directory is absent/empty.
      */
-    private fun latestVersioned(dir: File, relative: String): File? {
-        if (!dir.isDirectory) return null
+    private fun latestVersioned(dir: File, relative: String): File?
+    {
+        if (!dir.isDirectory)
+            return null
         // Newest version first - a NUMERIC compare, so v20.x ranks above v9.x (a
         // lexical sort would wrongly pick the older v9 because '9' > '2').
         val newestFirst = Comparator<File> { a, b -> compareVersion(version(b.name), version(a.name)) }
@@ -93,7 +103,8 @@ object NodeLocator {
             .map { seg -> seg.takeWhile(Char::isDigit).toIntOrNull() ?: -1 }
 
     /** Element-wise compare of two numeric version keys (missing segments = 0). */
-    private fun compareVersion(a: List<Int>, b: List<Int>): Int {
+    private fun compareVersion(a: List<Int>, b: List<Int>): Int
+    {
         for (i in 0 until maxOf(a.size, b.size)) {
             val c = a.getOrElse(i) { 0 }.compareTo(b.getOrElse(i) { 0 })
             if (c != 0) return c

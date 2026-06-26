@@ -47,15 +47,16 @@
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
+    "engines": { "node": ">=18" },
     "repository":
     {
         "type": "git",
-        "url": "git+https://github.com/IntelligentQuantum-Dev/AzerothJS.git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/language-service"
     },
-    "homepage": "https://github.com/IntelligentQuantum-Dev/AzerothJS/tree/main/packages/language-service",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/language-service",
     "bugs":
     {
-        "url": "https://github.com/IntelligentQuantum-Dev/AzerothJS/issues"
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

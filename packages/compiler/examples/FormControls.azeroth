@@ -1,0 +1,95 @@
+import { required, minLength, combine } from '@azerothjs/core';
+
+type Plan = 'free' | 'pro' | 'team';
+
+interface PreferenceValues
+{
+    displayName: string;
+    bio: string;
+    age: string;
+    volume: string;
+    newsletter: boolean;
+    plan: Plan;
+    country: string;
+    theme: string;
+}
+
+// Replace with your real persistence (an API call, a store action, ...).
+declare function savePreferences(values: PreferenceValues): Promise<void>;
+
+export default component Preferences
+{
+    form prefs =
+    {
+        displayName: '',
+        bio: '',
+        age: '18',
+        volume: '50',
+        newsletter: true,
+        plan: 'free' as Plan,
+        country: 'us',
+        theme: 'system'
+    }
+    with
+    {
+        validate:
+        {
+            displayName: combine(required('A display name is required'), minLength(2, 'Too short'))
+        },
+        onSubmit: async (values) =>
+        {
+            await savePreferences(values);
+        }
+    };
+
+    <form onSubmit={prefs.handleSubmit}>
+        <label>
+            Display name
+            <input type="text" bind:value={prefs.displayName} />
+            <Show when={prefs.touched().displayName}><span class="field-error">{prefs.errors().displayName}</span></Show>
+        </label>
+
+        <label>
+            Bio
+            <textarea bind:value={prefs.bio}></textarea>
+        </label>
+
+        <label>Age <input type="number" min="13" bind:value={prefs.age} /></label>
+
+        <label>Volume <input type="range" min="0" max="100" bind:value={prefs.volume} /></label>
+
+        <label>
+            <input type="checkbox" bind:checked={prefs.newsletter} />
+            Email me product updates
+        </label>
+
+        <fieldset>
+            <legend>Plan</legend>
+            <label><input type="radio" name="plan" checked={prefs.plan === 'free'} onChange={() => prefs.plan = 'free'} /> Free</label>
+            <label><input type="radio" name="plan" checked={prefs.plan === 'pro'} onChange={() => prefs.plan = 'pro'} /> Pro</label>
+            <label><input type="radio" name="plan" checked={prefs.plan === 'team'} onChange={() => prefs.plan = 'team'} /> Team</label>
+        </fieldset>
+
+        <label>
+            Country
+            <select onChange={(e: Event) => prefs.country = (e.target as HTMLSelectElement).value}>
+                <option value="us" selected={prefs.country === 'us'}>United States</option>
+                <option value="de" selected={prefs.country === 'de'}>Germany</option>
+                <option value="jp" selected={prefs.country === 'jp'}>Japan</option>
+            </select>
+        </label>
+
+        <label>
+            Theme
+            <select onChange={(e: Event) => prefs.theme = (e.target as HTMLSelectElement).value}>
+                <option value="system" selected={prefs.theme === 'system'}>System</option>
+                <option value="light" selected={prefs.theme === 'light'}>Light</option>
+                <option value="dark" selected={prefs.theme === 'dark'}>Dark</option>
+            </select>
+        </label>
+
+        <button type="submit" disabled={prefs.submitting()}>
+            {prefs.submitting() ? 'Saving...' : 'Save preferences'}
+        </button>
+    </form>
+}

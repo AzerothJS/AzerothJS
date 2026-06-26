@@ -16,7 +16,8 @@ import com.intellij.openapi.util.TextRange
  * them is ignored. When no clean match exists it returns null (no highlight)
  * rather than guessing.
  */
-object AzerothTagMatcher {
+object AzerothTagMatcher
+{
     private enum class Kind { OPEN, CLOSE, SELF }
 
     private class Tag(val name: String, val nameStart: Int, val nameEnd: Int, val kind: Kind)
@@ -27,13 +28,14 @@ object AzerothTagMatcher {
     private const val MAX_SCAN_LENGTH = 500_000
 
     /** The open+close tag-name ranges to highlight for the caret, or null. */
-    fun matchingTagRanges(text: CharSequence, offset: Int): List<TextRange>? {
-        if (text.length > MAX_SCAN_LENGTH) {
+    fun matchingTagRanges(text: CharSequence, offset: Int): List<TextRange>?
+    {
+        if (text.length > MAX_SCAN_LENGTH)
+        {
             return null
         }
         val tags = scan(text)
-        val onTag = tags.firstOrNull { offset >= it.nameStart && offset <= it.nameEnd && it.kind != Kind.SELF }
-            ?: return null
+        val onTag = tags.firstOrNull { offset >= it.nameStart && offset <= it.nameEnd && it.kind != Kind.SELF } ?: return null
 
         // Stack-based pairing: each close matches the nearest still-open same name.
         val pair = HashMap<Tag, Tag>()
@@ -42,11 +44,14 @@ object AzerothTagMatcher {
             when (t.kind) {
                 Kind.OPEN -> stack.addLast(t)
                 Kind.SELF -> {}
-                Kind.CLOSE -> {
-                    while (stack.isNotEmpty() && stack.last().name != t.name) {
+                Kind.CLOSE ->
+                {
+                    while (stack.isNotEmpty() && stack.last().name != t.name)
+                    {
                         stack.removeLast()
                     }
-                    if (stack.isNotEmpty()) {
+                    if (stack.isNotEmpty())
+                    {
                         val open = stack.removeLast()
                         pair[open] = t
                         pair[t] = open
@@ -60,11 +65,13 @@ object AzerothTagMatcher {
     }
 
     /** All open/close/self-closing tags in the text, skipping strings and comments. */
-    private fun scan(text: CharSequence): List<Tag> {
+    private fun scan(text: CharSequence): List<Tag>
+    {
         val tags = ArrayList<Tag>()
         var i = 0
         val n = text.length
-        while (i < n) {
+        while (i < n)
+        {
             val c = text[i]
             i = when {
                 c == '/' && i + 1 < n && text[i + 1] == '/' -> skipLineComment(text, i)
@@ -78,20 +85,24 @@ object AzerothTagMatcher {
     }
 
     /** Reads a tag at `lt` (a `<`), appends it if it is one, returns the next index. */
-    private fun readTag(text: CharSequence, lt: Int, out: MutableList<Tag>): Int {
+    private fun readTag(text: CharSequence, lt: Int, out: MutableList<Tag>): Int
+    {
         val n = text.length
         val closing = lt + 1 < n && text[lt + 1] == '/'
         // An OPENING `<` directly after an operand (`a<b`, `arr[i]<x`, `f()<g`) is a
         // comparison/generic, not a tag. Closings (`</name>`) are unambiguous.
-        if (!closing && followsOperand(text, lt)) {
+        if (!closing && followsOperand(text, lt))
+        {
             return lt + 1
         }
         var nameStart = if (closing) lt + 2 else lt + 1
-        if (nameStart >= n || !isNameStart(text[nameStart])) {
+        if (nameStart >= n || !isNameStart(text[nameStart]))
+        {
             return lt + 1 // `<>`, `</>`, `a < b`, or `<` operator - not a named tag
         }
         var nameEnd = nameStart
-        while (nameEnd < n && isNamePart(text[nameEnd])) {
+        while (nameEnd < n && isNamePart(text[nameEnd]))
+        {
             nameEnd++
         }
         val name = text.subSequence(nameStart, nameEnd).toString()
@@ -102,7 +113,8 @@ object AzerothTagMatcher {
         var selfClose = false
         while (i < n) {
             val ch = text[i]
-            when {
+            when
+            {
                 ch == '>' -> { i++; break }
                 ch == '/' && i + 1 < n && text[i + 1] == '>' -> { selfClose = true; i += 2; break }
                 ch == '"' || ch == '\'' || ch == '`' -> i = skipString(text, i)
@@ -116,11 +128,13 @@ object AzerothTagMatcher {
     }
 
     /** Index past a `"`/`'`/`` ` `` string starting at `q` (single-line, escape-aware). */
-    private fun skipString(text: CharSequence, q: Int): Int {
+    private fun skipString(text: CharSequence, q: Int): Int
+    {
         val quote = text[q]
         var j = q + 1
         val n = text.length
-        while (j < n && text[j] != quote && text[j] != '\n') {
+        while (j < n && text[j] != quote && text[j] != '\n')
+        {
             if (text[j] == '\\') j++
             j++
         }
@@ -128,13 +142,15 @@ object AzerothTagMatcher {
     }
 
     /** Index past a balanced `{ ... }` starting at `brace` (skips nested strings/braces). */
-    private fun skipBraces(text: CharSequence, brace: Int): Int {
+    private fun skipBraces(text: CharSequence, brace: Int): Int
+    {
         var depth = 0
         var i = brace
         val n = text.length
         while (i < n) {
             val ch = text[i]
-            when {
+            when
+            {
                 ch == '"' || ch == '\'' || ch == '`' -> { i = skipString(text, i); continue }
                 ch == '{' -> depth++
                 ch == '}' -> { depth--; if (depth == 0) return i + 1 }
@@ -144,14 +160,16 @@ object AzerothTagMatcher {
         return i
     }
 
-    private fun skipLineComment(text: CharSequence, at: Int): Int {
+    private fun skipLineComment(text: CharSequence, at: Int): Int
+    {
         var i = at
         val n = text.length
         while (i < n && text[i] != '\n') i++
         return i
     }
 
-    private fun skipBlockComment(text: CharSequence, at: Int): Int {
+    private fun skipBlockComment(text: CharSequence, at: Int): Int
+    {
         var i = at + 2
         val n = text.length
         while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/')) i++
@@ -166,8 +184,10 @@ object AzerothTagMatcher {
      * so they are unaffected (and `a < b` is already rejected because a space, not
      * a name, follows the `<`).
      */
-    private fun followsOperand(text: CharSequence, lt: Int): Boolean {
-        if (lt == 0) {
+    private fun followsOperand(text: CharSequence, lt: Int): Boolean
+    {
+        if (lt == 0)
+        {
             return false
         }
         val c = text[lt - 1]

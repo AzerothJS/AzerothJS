@@ -1,0 +1,107 @@
+name: Bug report
+description: Report a defect in AzerothJS
+labels: [ bug ]
+body:
+    -   type: markdown
+        attributes:
+            value: |
+                Thanks for taking the time to file a bug. A minimal reproduction is the fastest path to a
+                fix — please include one if you can. Before opening, search existing issues to avoid duplicates.
+
+    -   type: textarea
+        id: description
+        attributes:
+            label: Description
+            description: >
+                A clear description of the bug. What did you expect to happen, and what happened instead?
+            placeholder: |
+                Expected: the signal update should propagate to the bound text node.
+                Actual: the DOM is not updated; the text node keeps the stale value.
+        validations:
+            required: true
+
+    -   type: textarea
+        id: repro
+        attributes:
+            label: Reproduction
+            description: >
+                Minimal steps and/or code to reproduce. Prefer a self-contained snippet or a link to a
+                StackBlitz / GitHub repo. Include the relevant `.azeroth` component or reactive code.
+            render: tsx
+            placeholder: |
+                // counter.component.azeroth
+                export default component Counter {
+                    state count = 0;
+                    <button onClick={() => count++}>{count}</button>
+                }
+
+                // After clicking, count stays at 0 in the DOM.
+        validations:
+            required: true
+
+    -   type: dropdown
+        id: render-mode
+        attributes:
+            label: Render mode
+            description: Where does the bug surface?
+            options:
+                - Client-side render (CSR)
+                - Server-side render (SSR / renderToString)
+                - Hydration
+                - All modes / not render-related
+                - Not sure
+        validations:
+            required: true
+
+    -   type: dropdown
+        id: package
+        attributes:
+            label: Affected package
+            description: The package the bug appears to live in (pick the closest match).
+            options:
+                - "@azerothjs/reactivity — signals, memos, effects, batch, untrack, roots, resources"
+                - "@azerothjs/renderer — h(), render, hydrate, Show, For, Switch, Dynamic, Suspense, Portal"
+                - "@azerothjs/component — destroyComponent, ErrorBoundary, co-range primitives"
+                - "@azerothjs/compiler — .azeroth parser / IR / emitter / Vite plugin"
+                - "@azerothjs/router — client-side routing, loaders, nested layouts"
+                - "@azerothjs/store — reactive state container"
+                - "@azerothjs/form — createForm, validators, bind:value / bind:checked"
+                - "@azerothjs/server — renderToString, renderToStaticMarkup, renderToDocument"
+                - "@azerothjs/core — umbrella re-exports"
+                - "@azerothjs/testing — renderTest, cleanup, leakGuard, fire"
+                - "@azerothjs/devtools — browser devtools panel"
+                - "Editor tooling — language-service / language-server / typescript-plugin / eslint-plugin"
+                - "VS Code extension"
+                - "JetBrains plugin"
+                - "Not sure"
+        validations:
+            required: true
+
+    -   type: input
+        id: version
+        attributes:
+            label: AzerothJS version
+            description: Run `npm list @azerothjs/core` (or whichever package) to find the installed version.
+            placeholder: "e.g. 0.6.0-beta.1"
+        validations:
+            required: true
+
+    -   type: input
+        id: environment
+        attributes:
+            label: Environment
+            description: Node version, OS, and bundler/Vite version if relevant.
+            placeholder: "e.g. Node 22.11 / Windows 11 / Vite 6.3"
+        validations:
+            required: true
+
+    -   type: textarea
+        id: additional
+        attributes:
+            label: Additional context
+            description: >
+                Anything else that might be relevant: related issues, observed stack traces, frequency
+                (always / intermittent), or whether a workaround exists.
+        validations:
+            required: false
+

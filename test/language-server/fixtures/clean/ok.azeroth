@@ -1,2 +1,0 @@
-const greeting: string = 'hi';
-export const view = <p class={greeting}>{greeting}</p>;

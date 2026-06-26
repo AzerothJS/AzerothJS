@@ -1,35 +1,26 @@
-// <Routes> is the bridge between a Router and the DOM. It reads router.match()
-// reactively, renders the matched route chain (layouts wrapping leaves), and
-// swaps content cleanly when the match changes.
-//
-// There's no <Route> component: routes are data-style, defined in
-// createRouter({ routes: [...] }) rather than in the rendered tree. There's
-// nothing for a <Route> element to do; the routes array is the configuration,
-// and <Routes> is the only DOM-side dispatcher we need.
-//
-// Chain wrapping: for a match like [UsersLayout, UserProfile] with params
-// { id: '42' }, the rendered output is
-//
-//     UsersLayout({ children: UserProfile({}) })
-//
-// We walk the matched chain leaf to root, building up the children argument for
-// each layout. Params are not passed as props; components read them via
-// useParams(router). That keeps the route-component contract ({ children? })
-// tiny and uniform.
-//
-// Swap pattern: same as <Show>/<Switch>/<Dynamic> - invisible display:contents
-// placeholder, one branch alive at a time, each branch owned by its own
-// createRoot so its effects and components are disposed on swap. Covered by the
-// leak-regression tests in the renderer suite.
-//
-// router.match is a memo with structural equality on route+params, so the
-// effect only re-runs when the match actually changes, not on every URL update.
-// Cosmetic changes (same path, different hash) leave the rendered tree
-// untouched.
+/**
+ * MODULE: router/routes
+ *
+ * <Routes> is the bridge between a Router and the DOM: it reads router.match() reactively, renders
+ * the matched route chain (layouts wrapping leaves), and swaps content cleanly when the match
+ * changes. There is no <Route> component - routes are data, defined in createRouter({ routes }),
+ * so <Routes> is the only DOM-side dispatcher needed.
+ *
+ * CHAIN WRAPPING: a match [UsersLayout, UserProfile] renders as
+ * UsersLayout({ children: UserProfile({}) }) - the chain is walked leaf-to-root, each layout
+ * placing its `children` (typically via <Outlet>). Params are NOT props; components read them via
+ * useParams(router), keeping the route-component contract ({ children? }) tiny and uniform.
+ *
+ * SWAP PATTERN: the same co-range one as <Show>/<Switch>/<Dynamic> - comment-marker range, one
+ * branch alive at a time, each branch in its own createRoot so effects/onDestroy fire on swap.
+ * Because router.match is a structural-equality memo, the effect re-runs only when the match truly
+ * changes (route or params), not on cosmetic URL updates (same path, different hash/query).
+ */
 
-import type { DisposeFn } from '@azerothjs/reactivity';
-import { createEffect, createRoot } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
+import { hydrateChild } from '@azerothjs/renderer';
 import type { RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
 
@@ -49,89 +40,148 @@ export interface RoutesProps
 }
 
 /**
- * Renders the currently matched route chain into the DOM,
- * automatically swapping content when the route changes.
+ * Routes
  *
- * Place exactly one `<Routes>` somewhere in your component tree, typically
- * inside the top-level layout. The component subscribes to `router.match()` and
- * re-renders only when the match actually changes (route reference or params),
- * so cosmetic URL updates (hash, query, search) leave the tree intact.
+ * PURPOSE:
+ * Renders the router's currently-matched route chain into the DOM, automatically swapping content
+ * (and disposing the previous branch) when the match changes.
  *
- * @param props - `{ router, fallback? }`
+ * WHY IT EXISTS:
+ * A hand-rolled match effect can swap the matched component but leaks the old branch's effects and
+ * does not wrap nested layouts. Routes reads match() reactively, wraps the full layout chain, and
+ * tears the previous branch down on every swap - the routing-aware counterpart of a control-flow swap.
  *
- * @returns An invisible (`display: contents`) container that
- *          holds the currently rendered route chain.
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, router; a control-flow dispatcher built on the co-range. Mode-dispatched: SSR emits the
+ * matched chain once, hydration adopts the server range on the first effect run, the client swaps.
  *
- * Without Routes: a hand-rolled effect can swap the matched component, but it
- * never disposes the old branch's effects or wraps nested layouts:
+ * INPUT CONTRACT:
+ * - router: the Router whose match() drives the dispatch.
+ * - fallback: optional thunk rendered when no route matches (404/catch-all); nothing if absent.
  *
- *     createEffect(() =>
- *     {
- *         const m = router.match();
- *         container.replaceChildren(m ? m.route.component({}) : fallback());
- *     }); // leaks the previous branch's effects; no layout chain
+ * OUTPUT CONTRACT:
+ * - A co-range handle holding the currently rendered route chain, swapping reactively on match change.
  *
- * With Routes: it reads match() reactively, wraps the full layout chain, and
- * disposes the previous branch on every swap:
+ * WHY THIS DESIGN:
+ * router.match's structural equality means the effect re-runs only when route or params change, not
+ * on cosmetic URL updates. Each branch builds in its own createRoot (disposed on swap); renderChain
+ * wraps the matched chain leaf-to-root so layouts nest; the build is read under untrack so a route
+ * component's signal reads do not rebuild the whole branch.
  *
- *     Routes({ router, fallback: () => h('h1', {}, '404') });
- *     // nested layouts rendered, old branch's roots torn down automatically
+ * WHEN TO USE:
+ * Exactly once in the tree (typically inside the top-level layout) to render the active route.
  *
+ * WHEN NOT TO USE:
+ * For non-route conditional content (use {@link Show}). Do not place multiple <Routes> for the same
+ * router unless you intend independent dispatch points.
+ *
+ * EDGE CASES:
+ * - No match and no fallback renders nothing.
+ * - Cosmetic URL changes (hash/query only) leave the rendered tree intact.
+ *
+ * PERFORMANCE NOTES:
+ * Re-renders only when the match changes, not on every URL update; one branch alive at a time.
+ *
+ * DEVELOPER WARNING:
+ * A layout route MUST place its `children` (via {@link Outlet}) or deeper levels will not appear.
+ * Params reach components through useParams(router), not as props.
+ *
+ * @param props - {@link RoutesProps}: `router`, optional `fallback`.
+ * @returns A co-range handle holding the rendered route chain.
+ * @see {@link createRouter}
+ * @see {@link Outlet}
  * @example
- * ```ts
- * const App = defineComponent(() =>
- * {
- *     const router = createRouter({
- *         routes:
- *         [
- *             { path: '/', component: Home },
- *             { path: '/users/:id', component: UserPage }
- *         ]
- *     });
- *
- *     return h('div', { class: 'app' },
- *         h('nav', {},
- *             Link({ to: '/', router, children: 'Home' }),
- *             Link({ to: '/users/42', router, children: 'User 42' })
- *         ),
- *         Routes({ router, fallback: () => h('h1', {}, '404') })
- *     );
- * });
- * ```
+ * Routes({ router, fallback: () => h('h1', {}, '404') });
  */
 export function Routes(props: RoutesProps): HTMLElement
 {
-    const container = document.createElement('span');
-    container.style.display = 'contents';
+    // Server-side rendering: evaluate the match ONCE (no live effect) and emit the
+    // matched chain (or fallback) inside a contents anchor the client hydrator can
+    // adopt - the same pattern as <Show>/<Switch>. (Hydration adoption itself is a
+    // later milestone; on the client this currently re-renders.)
+    if (isStringMode())
+    {
+        const matchResult = untrack(() => props.router.match());
+        const inner = matchResult !== null
+            ? serializeChild(renderChain(matchResult))
+            : (props.fallback ? serializeChild(props.fallback()) : '');
+        return wrapContentsAnchored('routes', inner) as unknown as HTMLElement;
+    }
 
+    // Hydration: adopt the server-rendered range and its current route on the
+    // first effect run; later navigations use the normal DOM swap.
+    if (isHydrating())
+    {
+        return hydrationNode((cursor: HydrationCursorType): void =>
+        {
+            const { target, contentCursor } = adoptCoRange(cursor);
+            driveRoutes(props, target, true, contentCursor);
+        }) as unknown as HTMLElement;
+    }
+
+    // Fresh client render: comment markers bracket the active route (no wrapper
+    // element), so <Routes> works directly inside <table>/<select>/<ul>.
+    const { fragment, target } = createCoMarkers('routes');
+    driveRoutes(props, target, false);
+    return fragment as unknown as HTMLElement;
+}
+
+/**
+ * Wires the match-selection effect onto `target`. Shared by the DOM path (a
+ * marker range) and hydration (the adopted server range). Renders the matched
+ * route chain (or fallback) into its own root so the leaving route's effects and
+ * `onDestroy` hooks run on every swap.
+ *
+ * @internal
+ */
+function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
+{
     let branchDispose: DisposeFn | null = null;
+    let firstRun = hydrateFirstRun;
 
     createEffect(() =>
     {
-        // Tear the previous branch down before drawing the next one. This
-        // disposes any effects and runs `onDestroy` hooks for the old route's
-        // components.
-        teardownBranch();
-
         const matchResult = props.router.match();
-
-        const factory = matchResult !== null
+        const factory: (() => HTMLElement) | null = matchResult !== null
             ? (): HTMLElement => renderChain(matchResult)
-            : props.fallback;
+            : (props.fallback ?? null);
 
-        if (!factory)
+        if (firstRun)
         {
-            return;
+            // Hydration first run: adopt the existing server children rather than
+            // building and appending new ones.
+            firstRun = false;
+            if (factory)
+            {
+                const build = factory;
+                createRoot((dispose) =>
+                {
+                    branchDispose = dispose;
+                    hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
+                });
+            }
+
+            // Every server node in this range must be claimed by the adopted
+            // route chain; a leftover means SSR/CSR diverged. hydrate() recovers.
+            hydrationCursor?.assertExhausted('<Routes> content');
+            return teardownBranch;
         }
 
-        // Each branch owns its own root so the effect lifetimes for the
-        // rendered components are scoped to this match.
-        createRoot((dispose) =>
+        if (factory)
         {
-            branchDispose = dispose;
-            container.appendChild(factory());
-        });
+            // Each branch owns its own root so its effects dispose on swap.
+            // untrack: only `match()` drives this effect - a signal read inside a
+            // route component must not subscribe (and rebuild) the whole branch.
+            const build = factory;
+            createRoot((dispose) =>
+            {
+                branchDispose = dispose;
+                appendToCo(target, untrack(build));
+            });
+        }
 
+        // The SINGLE teardown path: runs before every re-render AND on dispose, so
+        // the leaving route's effects + onDestroy hooks fire before its DOM goes.
         return teardownBranch;
     });
 
@@ -142,22 +192,8 @@ export function Routes(props: RoutesProps): HTMLElement
             branchDispose();
             branchDispose = null;
         }
-
-        // Remove children one by one so MutationObserver-based primitives
-        // (Portal) can detect the removal, and run the component destroy hooks
-        // on each element on the way out.
-        while (container.firstChild)
-        {
-            const node = container.firstChild;
-            container.removeChild(node);
-            if (node instanceof HTMLElement)
-            {
-                destroyComponent(node);
-            }
-        }
+        clearCo(target);
     }
-
-    return container as unknown as HTMLElement;
 }
 
 /**

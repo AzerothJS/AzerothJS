@@ -30,6 +30,10 @@ call the factory runs inside a `createRoot`, which gives any `createEffect`,
 result is cached, so the store is a lazy singleton: it is created on first use and
 shared from then on.
 
+Instances are keyed by the active store scope. On the client there is one stable scope, so the store
+is an app-wide singleton; under SSR each request renders in its own scope (`runInStoreScope`) and gets
+an isolated instance, so concurrent requests never share state.
+
 Stores compose: one store's factory can call another store's `useStore()`.
 
 ## Components
@@ -42,12 +46,6 @@ Stores compose: one store's factory can call another store's `useStore()`.
 
 ```sh
 npm run build -w @azerothjs/store
-```
-
-## Testing
-
-```sh
-npx vitest run test/store
 ```
 
 ## Examples
@@ -73,5 +71,4 @@ const useDashboard = createStore(() => {
 ## Contributing
 
 The package is intentionally minimal; keep it that way. State shape and update
-logic belong in the factory the caller writes, not in this package. Add tests
-under `test/store`.
+logic belong in the factory the caller writes, not in this package.

@@ -7,6 +7,50 @@
 // build, commits, tags, pushes the tag to GitHub, and publishes the
 // @azerothjs/* packages to npm.
 //
+// ----------------------------------------------------------------------------
+// VERSIONING GUIDE (SemVer 2.0.0 + npm dist-tags)
+//
+// A version is MAJOR.MINOR.PATCH, optionally with a `-prerelease` suffix:
+//
+//   MAJOR  incompatible / breaking change - code using the old version may break.
+//   MINOR  new functionality, backward-compatible.
+//   PATCH  backward-compatible bug fix.
+//   Bump the LEFTMOST part that applies and reset the parts to its right to 0
+//   (a MINOR bump zeroes PATCH: 1.4.7 -> 1.5.0).
+//
+//   0.y.z (major version zero) is the "still stabilizing" phase: ANYTHING may
+//   change at any time, so even a MINOR bump is allowed to break. AzerothJS is
+//   here (0.6.x) until it commits to a stable 1.0.0 API.
+//
+// A `-<channel>.<n>` suffix marks a PRE-RELEASE: a version that comes BEFORE the
+// stable release of the same number (1.0.0-beta.2 is OLDER than 1.0.0). The
+// channel names a maturity stage; `.n` is the iteration within that stage:
+//
+//   alpha  earliest, unstable, incomplete; internal / early testers. APIs churn
+//          freely.                         e.g. 1.0.0-alpha.1
+//   beta   feature-complete-ish but still buggy; public testing. APIs mostly
+//          frozen.                         e.g. 1.0.0-beta.1
+//   rc     release candidate: believed shippable; ships AS the final unless a
+//          blocker turns up. Only bug fixes land between an rc and the final.
+//                                          e.g. 1.0.0-rc.1
+//   next / canary  rolling bleeding-edge builds (a moving pointer, not a gate).
+//
+// Precedence, low -> high (this is also the only sane release ORDER):
+//   1.0.0-alpha.1  <  1.0.0-beta.1  <  1.0.0-rc.1  <  1.0.0  <  1.0.1
+// A pre-release ALWAYS ranks below its stable (1.0.0-rc.1 < 1.0.0); within a
+// channel the trailing number is compared numerically (beta.2 < beta.11).
+//
+// A typical road to 1.0:
+//   0.6.0 -> 1.0.0-alpha.1 -> ... -> 1.0.0-beta.1 -> 1.0.0-rc.1 -> 1.0.0
+//
+// npm DIST-TAG (a MOVABLE pointer, separate from the immutable version):
+//   `npm i @azerothjs/core`        installs whatever `latest` points to.
+//   `npm i @azerothjs/core@beta`   installs whatever `beta`   points to.
+//   This script derives the tag from the version: a stable version publishes
+//   under `latest`; a pre-release under its channel (-beta.3 -> beta; a
+//   bare-numeric -0 -> next). See distTag() / prereleaseChannel() below.
+// ----------------------------------------------------------------------------
+//
 // Usage:
 //   npm run release -- <version> [options]
 //   node scripts/release.mjs <version> [options]
@@ -24,6 +68,9 @@
 //   --no-push       Skip the git push.
 //   --no-publish    Skip the npm publish.
 //   --no-promote-latest  Don't move the `latest` dist-tag to a prerelease.
+//   --provenance    Attach an npm provenance attestation to each publish. Only
+//                   valid when publishing from CI with OIDC; the publish
+//                   workflow passes it. A local run must omit it.
 //   --promote-only  Only move `latest` to an already-published version (no
 //                   bump/push/publish). Fixes a `latest` left on an older beta:
 //                     node scripts/release.mjs 0.4.0-beta.2 --promote-only -y
@@ -40,10 +87,6 @@
 // `latest` to the new version - keeping a fresh `npm i` current. Pass
 // `--no-promote-latest` once a real stable release exists and prereleases should
 // stay off `latest`.
-//
-// Editor integrations (editors/*) get their version bumped for consistency but
-// are not published to npm: the VS Code extension ships through vsce and the
-// JetBrains plugin through Gradle.
 
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
@@ -56,14 +99,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Packages published to npm, in dependency order (dependencies first) so a
 // freshly published package can always resolve the ones it depends on.
-// devtools-overlay sits before compiler because compiler optionally peers on
-// it (the dev-serve error overlay); the dev tooling (devtools, testing,
-// eslint-plugin) goes after its own deps.
 const PUBLISH_ORDER =
 [
     'reactivity',
-    'devtools-overlay',
-    'devtools',
     'component',
     'testing',
     'renderer',
@@ -73,10 +111,17 @@ const PUBLISH_ORDER =
     'form',
     'compiler',
     'core',
+    // DevTools: a thin consumer of `@azerothjs/reactivity`'s stable, versioned devtools hook. Builds
+    // and ships now that the hook protocol is in place; ordered after reactivity (its only framework dep).
+    'devtools',
+    // Editor tooling. Published too: the VS Code extension declares
+    // `@azerothjs/language-server` + `@azerothjs/typescript-plugin` as runtime deps,
+    // so a clean Marketplace install resolves them from npm. Ordered after their
+    // deps (language-service before language-server / typescript-plugin).
+    'eslint-plugin',
     'language-service',
-    'typescript-plugin',
     'language-server',
-    'eslint-plugin'
+    'typescript-plugin'
 ];
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -90,6 +135,34 @@ function fail(message)
 function log(message)
 {
     console.log(message);
+}
+
+/** Prints usage + a versioning cheat-sheet (the full detail is in the file header). */
+function printHelp()
+{
+    log(`Release the AzerothJS monorepo (one lockstep version across every package).
+
+Usage:  npm run release -- <version> [options]
+        node scripts/release.mjs <version> [options]
+
+Version:  MAJOR.MINOR.PATCH[-channel.n]      e.g. 1.0.0   1.0.0-beta.2
+  MAJOR breaking | MINOR feature | PATCH fix   (0.y.z: anything may break)
+  channels, low -> high maturity:  alpha  <  beta  <  rc  <  (stable)
+  release order:  1.0.0-alpha.1 < 1.0.0-beta.1 < 1.0.0-rc.1 < 1.0.0
+  the channel becomes the npm dist-tag (stable -> latest). See the file header.
+
+Options:
+  --dry-run            Show every step; change nothing.
+  --skip-checks        Skip the build/lint/test gate (not recommended).
+  --no-bump            Push + publish an existing tag; don't bump/commit/tag.
+  --no-push            Skip the git push.
+  --no-publish         Skip the npm publish.
+  --no-promote-latest  Don't move 'latest' to a pre-release.
+  --promote-only       Only move 'latest' to an already-published version.
+  --provenance         Attach an npm provenance attestation (CI/OIDC only).
+  --otp <code>         npm 2FA one-time password, forwarded to each publish.
+  -y, --yes            Skip the confirmation prompt.
+  -h, --help           Show this help.`);
 }
 
 /** Reads a command's stdout (used for read-only queries; always runs). */
@@ -111,10 +184,10 @@ function act(command, extra)
     execSync(command, { cwd: ROOT, stdio: 'inherit', ...(extra ?? {}) });
 }
 
-/** Every file that carries the shared version (root, packages, editors). */
+/** Every file that carries the shared version (root, packages). */
 function releaseFiles()
 {
-    const files = ['package.json', 'editors/vscode/package.json', 'editors/jetbrains/build.gradle.kts'];
+    const files = ['package.json'];
     for (const entry of readdirSync(path.join(ROOT, 'packages')))
     {
         const relative = path.join('packages', entry, 'package.json');
@@ -123,19 +196,59 @@ function releaseFiles()
             files.push(relative);
         }
     }
+    // The editor integrations share the monorepo version (the header's promise) but live outside
+    // `packages/`. Include their manifests so a release bumps them in lockstep instead of leaving
+    // them stranded at the previous version - bumpFiles replaces the exact version string, which
+    // appears as `"version"` in the VS Code manifest and `version = "..."` in the Gradle build.
+    for (const editorFile of [path.join('editors', 'vscode', 'package.json'), path.join('editors', 'jetbrains', 'build.gradle.kts')])
+    {
+        if (existsSync(path.join(ROOT, editorFile)))
+        {
+            files.push(editorFile);
+        }
+    }
     return files;
 }
 
-/** The npm dist-tag implied by a version string. */
-function distTag(version)
+// Recognized pre-release channels, in increasing maturity order. The channel is
+// the alphabetic id at the start of the `-prerelease` suffix (1.2.0-beta.3 ->
+// `beta`) and becomes the npm dist-tag. `next`/`canary` are rolling pointers, not
+// maturity gates; a bare-numeric pre-release (1.2.0-0) has no channel name and
+// also publishes under `next`. Anything outside this set is rejected as a typo
+// (see the channel check below) so a slip like `1.0.0-bta.1` can't publish under
+// a junk `bta` tag.
+const PRERELEASE_CHANNELS = ['alpha', 'beta', 'rc', 'next', 'canary'];
+
+// Maturity rank of the gated channels; used to warn on a backwards step
+// (e.g. beta -> alpha for the SAME x.y.z). `next`/`canary` are unranked (rolling).
+const CHANNEL_RANK = { alpha: 0, beta: 1, rc: 2 };
+
+/**
+ * The pre-release channel of a version, or null for a stable release.
+ * `1.0.0` -> null; `1.0.0-beta.3` -> 'beta'; `1.0.0-0` -> 'next' (bare numeric).
+ */
+function prereleaseChannel(version)
 {
     const dash = version.indexOf('-');
     if (dash === -1)
     {
-        return 'latest';
+        return null;
     }
     const id = version.slice(dash + 1).split('.')[0];
-    return /^[a-z]+$/i.test(id) ? id : 'next';
+    return /^[a-z]+$/i.test(id) ? id.toLowerCase() : 'next';
+}
+
+/** The npm dist-tag implied by a version: its pre-release channel, or `latest` for a stable release. */
+function distTag(version)
+{
+    return prereleaseChannel(version) ?? 'latest';
+}
+
+/** The MAJOR.MINOR.PATCH part of a version, without any pre-release suffix. */
+function baseVersion(version)
+{
+    const dash = version.indexOf('-');
+    return dash === -1 ? version : version.slice(0, dash);
 }
 
 /**
@@ -188,11 +301,15 @@ function confirm(question)
 function parseArgs()
 {
     const argv = process.argv.slice(2);
-    const options = { skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, otp: null, version: null };
+    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, version: null };
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
-        if (arg === '--dry-run')
+        if (arg === '-h' || arg === '--help')
+        {
+            options.help = true;
+        }
+        else if (arg === '--dry-run')
         {
             dryRun = true;
         }
@@ -215,6 +332,14 @@ function parseArgs()
         else if (arg === '--no-promote-latest')
         {
             options.promoteLatest = false;
+        }
+        else if (arg === '--provenance')
+        {
+            // Attach an npm provenance attestation to each publish. Only works
+            // when publishing from CI with OIDC (a local `npm publish
+            // --provenance` errors), so this stays off by default and is passed
+            // by the publish workflow.
+            options.provenance = true;
         }
         else if (arg === '--promote-only')
         {
@@ -255,19 +380,53 @@ function parseArgs()
 }
 
 const options = parseArgs();
+
+if (options.help)
+{
+    printHelp();
+    process.exit(0);
+}
+
 const next = options.version;
 
 if (!next)
 {
-    fail('a version is required, e.g. `npm run release -- 0.4.0-beta.2`');
+    fail('a version is required, e.g. `npm run release -- 0.4.0-beta.2` (try --help)');
 }
 if (!VERSION_PATTERN.test(next))
 {
     fail(`"${ next }" is not a valid version (expected MAJOR.MINOR.PATCH[-prerelease])`);
 }
 
+// A named (alphabetic) pre-release channel must be one we recognize, so a typo
+// (`1.0.0-bta.1`) is caught here instead of silently publishing under a junk
+// `bta` dist-tag that `npm i @azerothjs/<pkg>@beta` would never find.
+const nextChannel = prereleaseChannel(next);
+if (nextChannel !== null && !PRERELEASE_CHANNELS.includes(nextChannel))
+{
+    fail(`unknown pre-release channel "${ nextChannel }" in ${ next }. `
+        + `Use one of: ${ PRERELEASE_CHANNELS.join(', ') } `
+        + `(e.g. ${ baseVersion(next) }-beta.1), or a stable version like ${ baseVersion(next) }.`);
+}
+
 const tag = 'v' + next;
 const current = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+
+// Soft guard: for the SAME MAJOR.MINOR.PATCH, a pre-release channel should not
+// step BACKWARDS in maturity (alpha -> beta -> rc -> stable). Going beta.1 then
+// alpha.2 confuses consumers and inverts SemVer precedence. Warn, don't block -
+// the operator may have a deliberate reason.
+const currentChannel = prereleaseChannel(current);
+if (
+    baseVersion(current) === baseVersion(next)
+    && currentChannel !== null && nextChannel !== null
+    && currentChannel in CHANNEL_RANK && nextChannel in CHANNEL_RANK
+    && CHANNEL_RANK[nextChannel] < CHANNEL_RANK[currentChannel]
+)
+{
+    log(`\n  ! channel moves BACKWARDS: ${ current } (${ currentChannel }) -> ${ next } (${ nextChannel }). `
+        + 'Pre-releases normally advance alpha -> beta -> rc -> stable.');
+}
 const tagExists = query('git tag -l ' + tag) === tag;
 
 // A previous run can bump the version files and then die before committing or
@@ -294,6 +453,19 @@ log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' package
 if (dryRun)
 {
     log('  (dry run: nothing will be changed)');
+}
+
+// Changelog reminder (non-blocking): a release should describe what changed.
+// Warn if CHANGELOG.md has no entry for this version yet - the operator can
+// still proceed (e.g. a re-publish or promote-only run).
+if (!options.promoteOnly)
+{
+    const changelogPath = path.join(ROOT, 'CHANGELOG.md');
+    const changelog = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '';
+    if (!changelog.includes(next))
+    {
+        log(`\n  ! CHANGELOG.md has no entry for ${ next } - promote the [Unreleased] section before releasing.`);
+    }
 }
 
 if (!options.noBump)
@@ -334,10 +506,15 @@ else if (resuming)
 
 if (!options.skipChecks)
 {
-    log('\nVerifying (build, lint, test)');
+    log('\nVerifying (build, lint, publish contract, publish smoke)');
     act('npm run build');
     act('npm run lint');
-    act('npx vitest run');
+    // Validate the published artifacts before tagging: publint checks each
+    // package.json contract; the smoke test packs + installs the tarballs and
+    // imports them, catching a broken exports map or a corrupted inter-package
+    // pin that the src-aliased suite cannot see.
+    act('npm run lint:publish');
+    act('npm run smoke');
 }
 
 if (!options.noBump)
@@ -359,10 +536,11 @@ if (!options.noPublish)
 {
     log('\nPublishing to npm');
     const otpFlag = options.otp ? ` --otp=${ options.otp }` : '';
+    const provenanceFlag = options.provenance ? ' --provenance' : '';
     const tagName = distTag(next);
     for (const name of PUBLISH_ORDER)
     {
-        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ tagName }${ otpFlag }`);
+        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ tagName }${ provenanceFlag }${ otpFlag }`);
     }
 }
 

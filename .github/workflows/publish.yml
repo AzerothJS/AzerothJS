@@ -1,0 +1,62 @@
+name: Publish (npm, provenance)
+
+# Manual, opt-in publish path that attaches npm provenance attestations via OIDC
+# "trusted publishing" - no long-lived NPM_TOKEN, and consumers can verify each
+# package was built from this repo's CI. It is workflow_dispatch only, so it never
+# fires on its own; the maintainer triggers it for an already-tagged version.
+#
+# ONE-TIME SETUP (per package, on npmjs.com): configure a Trusted Publisher for
+# each @azerothjs/* package pointing at this repo + workflow file
+# (.github/workflows/publish.yml). Until that is done, publishing here will fail
+# auth - that is expected, and the local `npm run release` flow keeps working.
+#
+# This deliberately does NOT bump, commit, tag, push, or move the `latest`
+# dist-tag (see the flags below) - it only publishes the exact tagged code.
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Version to publish (must already be tagged, e.g. 0.7.0-beta.1)'
+                required: true
+                type: string
+
+permissions:
+    contents: read
+    id-token: write # required for npm OIDC trusted publishing + provenance
+
+concurrency:
+    group: npm-publish
+    cancel-in-progress: false
+
+jobs:
+    publish:
+        name: Verify and publish ${{ inputs.version }}
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+                with:
+                    # Publish the exact tagged code, not the branch head.
+                    ref: v${{ inputs.version }}
+
+            -   uses: actions/setup-node@v4
+                with:
+                    node-version: 20
+                    cache: npm
+                    registry-url: 'https://registry.npmjs.org'
+
+            -   run: npm ci
+
+            # Full gate on a clean machine before anything is published.
+            -   run: npm run lint
+            -   run: npm run build
+            -   run: npm run lint:publish
+            -   run: npm test
+            -   run: npm run leak
+            # Publish smoke: pack + install the tarballs into a clean consumer and
+            # import them, validating the real install/resolution path and pin graph.
+            -   run: npm run smoke
+
+            # Publish-only: --skip-checks because the gate above already ran (and is
+            # stricter); --provenance attaches the attestation via the id-token above.
+            -   name: Publish to npm with provenance
+                run: node scripts/release.mjs ${{ inputs.version }} --no-bump --no-push --no-promote-latest --skip-checks --provenance -y

@@ -1,0 +1,4 @@
+# Code ownership for review routing. One maintainer owns the whole repository
+# today; this file makes that explicit and lets branch protection "require review
+# from Code Owners" work as the project grows more contributors.
+* @IntelligentQuantum

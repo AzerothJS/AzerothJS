@@ -41,7 +41,7 @@ back any other host without this package.
 | `cli.ts` | Executable entry point (`azeroth-language-server`); starts the server over stdio. |
 | `tsc.ts` | `runTsc`: the batch type-checker behind the `azeroth-tsc` binary. |
 | `tsc-cli.ts` | Executable entry point (`azeroth-tsc`); runs one check and sets the exit code. |
-| `index.ts` | Library entry point; exports `startServer` and `runTsc`. |
+| `index.ts` | Library entry point; exports `startServer`, the settings API (`parseSettings`, `AzerothSettings`, `FeatureToggles`), and the CLI helpers (`runTsc`, `watchTsc`, `parseArgs`, `runDocgen`). |
 
 ### `azeroth-tsc` (combined command-line type checking)
 

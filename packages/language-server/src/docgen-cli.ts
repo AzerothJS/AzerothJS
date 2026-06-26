@@ -10,7 +10,9 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
+
 import ts from 'typescript';
+
 import { AzerothLanguageService, generateComponentDocs, pathToUri } from '@azerothjs/language-service';
 
 /** Options controlling a single docgen run. */

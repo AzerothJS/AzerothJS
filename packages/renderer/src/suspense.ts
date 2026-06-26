@@ -1,146 +1,116 @@
-// Suspense wraps a subtree, watches a list of `Resource`s, and shows a fallback
-// while any of them is loading. When all settle, the children take over.
-//
-// Without Suspense: thread each resource's loading() through a Show by hand,
-// OR-ing them together and re-editing the condition as resources are added.
-//
-//     Show({
-//         when: () => !a.loading() && !b.loading(),
-//         fallback: spinner,
-//         children: view
-//     }); // every new resource means another && to remember
-//
-// With Suspense: pass the resources in `on` and it collapses their loading
-// states into one flip.
-//
-//     Suspense({
-//         on: [a, b],
-//         fallback: spinner,
-//         children: view
-//     }); // shows the fallback until all settle; add to `on`, nothing else
-//
-// Resources are passed explicitly via the `on` prop rather than auto-tracked,
-// for two reasons:
-//
-//   1. useLoader(router) returns a pre-existing resource constructed at
-//      createRouter time, so auto-tracking by creation context would never
-//      catch it.
-//
-//   2. Auto-tracking across later effect re-runs (e.g. a navigation that
-//      creates a new resource) needs an observer chained through the reactive
-//      owner system - a non-trivial primitive change. An explicit list is
-//      predictable and needs zero new infrastructure. Auto-tracking can ship
-//      later behind the same props without a breaking change.
-//
-// Implementation: a thin layer over Show. We compute a memo
-// anyLoading = on.some(r => r.loading()) and feed when: () => !anyLoading()
-// into Show. The memo gives slice efficiency - subscribers only re-fire when
-// the "any loading" answer actually flips, not on every resource update.
-//
-// Pairs naturally with ErrorBoundary, which handles a disjoint concern: errors
-// in the subtree route to the boundary's fallback, pending resources route to
-// Suspense's fallback, and the two don't fight.
+/**
+ * MODULE: renderer/suspense
+ *
+ * <Suspense> wraps a subtree, watches a list of Resources, and shows a fallback while ANY of
+ * them is loading; when all settle, the children take over. Without it you would thread each
+ * resource's loading() through a <Show> by hand, OR-ing them and re-editing the condition as
+ * resources are added. Resources are passed explicitly via `on` (not auto-tracked) because
+ * (1) useLoader(router) returns a resource built at createRouter time that creation-context
+ * tracking would miss, and (2) auto-tracking across later effect re-runs needs an
+ * owner-chained observer - a bigger primitive change - whereas an explicit list is
+ * predictable and needs no new infrastructure (auto-tracking can ship later behind the same
+ * props). It is a thin layer over {@link Show}: a memo collapses the N loading getters into
+ * one boolean so Show's swap only fires when the "any loading" answer actually flips. It pairs
+ * with <ErrorBoundary>: errors route to the boundary, pending resources to Suspense.
+ */
 
 import type { Resource } from '@azerothjs/reactivity';
 import { createMemo, isStringMode, serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity';
 import { Show } from './show.ts';
 
 /**
- * Props for the `<Suspense>` component.
+ * Props for {@link Suspense}.
  */
 export interface SuspenseProps
 {
-    /**
-     * Renders while any watched resource is loading. Replaced
-     * with `children()` once every resource has settled.
-     */
+    /** Rendered while any watched resource is loading; replaced by children() once all settle. */
     fallback: () => HTMLElement;
 
     /**
-     * Resources to watch. Suspense flips to the fallback if ANY
-     * of them reports `loading() === true`.
-     *
-     * The list is captured at construction - Suspense does not
-     * react to mutations of the array itself. Pass a stable
-     * list of references, not a signal-derived array.
-     *
-     * An empty array is valid; in that case Suspense always
-     * renders `children()` (the degenerate, no-op case).
+     * Resources to watch; Suspense shows the fallback if ANY reports loading() === true. The
+     * list is captured at construction (mutating the array is not observed) - pass a stable
+     * list of references, not a signal-derived array. An empty array always renders children().
      */
     on: Resource<unknown>[];
 
-    /**
-     * The protected subtree, rendered once all watched resources
-     * have settled. Same factory pattern as `<Show>`.
-     */
+    /** The protected subtree, rendered once all watched resources settle. Same factory pattern as <Show>. */
     children: () => HTMLElement;
 }
 
 /**
- * Renders `fallback` while any resource in `on` is loading;
- * renders `children` when all are settled.
+ * Suspense
  *
- * Designed for ergonomic pairing with `<ErrorBoundary>`: errors
- * route to the boundary, pending resources route to Suspense,
- * and the two handle disjoint failure modes without stepping on
- * each other.
+ * PURPOSE:
+ * Renders `fallback` while any resource in `on` is loading, and `children` once all have
+ * settled - a single coordinated pending state over multiple async resources.
  *
- * @param props - `{ fallback, on, children }`
+ * WHY IT EXISTS:
+ * Coordinating several resources' loading flags by hand (a growing `!a.loading() && !b.loading()`
+ * condition) is error-prone and re-edited every time a resource is added. Suspense collapses
+ * them into one declarative boundary.
  *
- * @returns An invisible (`display: contents`) container that
- *          swaps between fallback and children reactively.
+ * COMPILER / RUNTIME ROLE:
+ * Runtime, renderer; an async-coordination control built on Show. Mode-dispatched via Show
+ * plus an SSR branch: in string mode it emits the fallback (resources do not resolve within a
+ * synchronous render; async SSR is a later phase), and the client swaps in children after
+ * hydration once they settle.
  *
+ * INPUT CONTRACT:
+ * - fallback / children: thunks (same contract as Show's branches).
+ * - on: a stable array of Resources, captured at construction.
+ *
+ * OUTPUT CONTRACT:
+ * - Returns an HTMLElement-typed handle (delegated to Show) that swaps fallback<->children as
+ *   the combined loading state flips. In SSR, the serialized fallback in a contents anchor.
+ *
+ * WHY THIS DESIGN:
+ * A createMemo computes `anyLoading = on.some(r => r.loading())`; feeding `when: () =>
+ * !anyLoading()` into Show means the swap effect re-runs only when the boolean genuinely
+ * changes (memo equality), not on every resource ripple. Delegating the swap to Show reuses
+ * its proven per-branch createRoot ownership and destroy-on-swap behavior.
+ *
+ * WHEN TO USE:
+ * For an all-or-nothing reveal over one or more async resources (a route loader, a dashboard's
+ * several fetches), especially alongside <ErrorBoundary>.
+ *
+ * WHEN NOT TO USE:
+ * For per-item skeletons (render each resource's own loading()). For non-async conditionals,
+ * use {@link Show}.
+ *
+ * EDGE CASES:
+ * - Empty `on`: always renders children (degenerate no-op).
+ * - SSR always shows the fallback (sync render cannot await resources).
+ *
+ * PERFORMANCE NOTES:
+ * One memo over the loading getters; the Show swap fires only on a real flip, not per resource
+ * update.
+ *
+ * DEVELOPER WARNING:
+ * `on` is captured at construction - a resource created later (e.g. on navigation) is not
+ * picked up unless you re-mount Suspense with the new list. Keep the array references stable.
+ *
+ * @param props - {@link SuspenseProps}: `fallback`, `on`, `children`.
+ * @returns An HTMLElement-typed handle that swaps fallback/children reactively.
+ * @see {@link Show}
+ * @see {@link createResource}
  * @example
- * ```ts
- * const userResource = createResource(
- *     () => userId(),
- *     async (id, signal) => fetchUser(id, signal)
- * );
- *
  * Suspense({
- *     fallback: () => h('p', {}, 'Loading user...'),
- *     on: [userResource],
- *     children: () => UserCard({ resource: userResource })
+ *   fallback: () => h('div', { class: 'spinner' }),
+ *   on: [router.loader],
+ *   children: () => Routes({ router })
  * });
- * ```
- *
- * @example
- * ```ts
- * // Watching the router's loader resource - pairs with
- * // useLoader inside the route component.
- * Suspense({
- *     fallback: () => h('div', { class: 'spinner' }),
- *     on: [router.loader],
- *     children: () => Routes({ router })
- * });
- * ```
- *
- * @example
- * ```ts
- * // Multiple resources - fallback shows if ANY of them is
- * // pending. All-or-nothing reveal pattern.
- * Suspense({
- *     fallback: loadingView,
- *     on: [profile, posts, friends],
- *     children: () => Dashboard({ profile, posts, friends })
- * });
- * ```
  */
 export function Suspense(props: SuspenseProps): HTMLElement
 {
-    // Server-side rendering.
-    // Resources don't resolve within a synchronous render, so emit the
-    // fallback (async SSR is a later phase). The client resolves the
-    // resources and swaps in `children` after hydration.
+    // SSR: resources don't resolve within a synchronous render, so emit the fallback (async
+    // SSR is a later phase); the client resolves them and swaps in children after hydration.
     if (isStringMode())
     {
         return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as HTMLElement;
     }
 
-    // Memo collapses N loading getters into one boolean. Show
-    // re-evaluates `when` on signal change; the memo's structural
-    // equality means Show's effect only re-runs when the answer
-    // genuinely flips, not on every loading-state ripple.
+    // Collapse N loading getters into one boolean. Show re-evaluates `when` on signal change;
+    // the memo's equality means Show's effect re-runs only when the answer genuinely flips.
     const anyLoading = createMemo<boolean>(() =>
     {
         for (const resource of props.on)
@@ -153,8 +123,8 @@ export function Suspense(props: SuspenseProps): HTMLElement
         return false;
     });
 
-    // Delegate the actual swap to Show: proven, leak-tested, and already does
-    // per-branch createRoot ownership and destroyComponent on swap.
+    // Delegate the swap to Show: proven, leak-tested, with per-branch createRoot ownership and
+    // destroyComponent on swap.
     return Show({
         when: () => !anyLoading(),
         fallback: props.fallback,

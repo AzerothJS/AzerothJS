@@ -1,19 +1,15 @@
 // VS Code extension entry point. It does one job: launch the AzerothJS language
 // server (@azerothjs/language-server) and connect a Language Server Protocol
 // client to it for `.azeroth` documents. Every feature - completion, hover,
-// diagnostics, definitions, rename, semantic tokens, … - is served by that
+// diagnostics, definitions, rename, semantic tokens, ... - is served by that
 // process, so the extension itself stays a thin launcher.
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+
 import * as vscode from 'vscode';
 import type { ExtensionContext } from 'vscode';
-import {
-    LanguageClient,
-    TransportKind,
-    type LanguageClientOptions,
-    type ServerOptions
-} from 'vscode-languageclient/node';
+import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
 
@@ -40,7 +36,13 @@ export function activate(context: ExtensionContext): void
 
     const clientOptions: LanguageClientOptions =
     {
-        documentSelector: [{ scheme: 'file', language: 'azeroth' }],
+        // `file` for saved files (workspace OR a lone open file); `untitled` so a brand-new, never-saved
+        // scratch buffer set to the Azeroth language still gets full features.
+        documentSelector:
+        [
+            { scheme: 'file', language: 'azeroth' },
+            { scheme: 'untitled', language: 'azeroth' }
+        ],
         synchronize:
         {
             // Re-evaluate when the project's TypeScript config changes.

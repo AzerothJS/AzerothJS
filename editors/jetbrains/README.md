@@ -1,149 +1,185 @@
 # AzerothJS for JetBrains
 
-## Overview
+Full language support for `.azeroth` single-file components in JetBrains IDEs —
+powered by the AzerothJS compiler, not heuristics.
 
-A native, self-contained IntelliJ-platform plugin for the paid JetBrains IDEs
-(WebStorm, PhpStorm, IDEA Ultimate, CLion, and others). It provides syntax
-highlighting, completion, hover, diagnostics, navigation, rename, formatting, and
-editing aids for `.azeroth` files.
+## Requirements
 
-The plugin uses the platform's own APIs and bundles the AzerothJS language server
-inside the distribution, so it does not depend on the VS Code extension. The only
-runtime requirement is Node.js on `PATH`.
+| Requirement | Details |
+| --- | --- |
+| JetBrains IDE | **2026.1 or later**, paid edition (WebStorm, PhpStorm, IntelliJ IDEA Ultimate, CLion, GoLand, PyCharm Professional, and others that ship the LSP API). The LSP API is **not** available in free Community editions. |
+| Node.js | Must be on `PATH` — the plugin starts the bundled language server via Node. |
 
-Note: the LSP API ships only in the paid JetBrains IDEs, not the free Community
-editions.
+## Installation
+
+**From the JetBrains Marketplace** (recommended): go to *Settings → Plugins →
+Marketplace*, search for **AzerothJS**, and click Install. Alternatively, visit
+the [plugin page](https://plugins.jetbrains.com/plugin/azerothjs).
+
+**From a `.zip` file**:
+1. *Settings → Plugins → ⚙ → Install Plugin from Disk…* and select the zip, or
+2. Extract it into `<IDE-config-dir>/plugins/` and restart the IDE.
+
+A plugin is loaded at startup — **restart the IDE** after installing or updating.
+
+## Features
+
+Intelligence is provided by the bundled AzerothJS language server, which reuses
+the framework's own compiler for accurate, compiler-aware analysis:
+
+| Feature | Details |
+| --- | --- |
+| **Syntax highlighting** | A native lexer handles strings, comments, and `${ }` interpolations correctly so braces inside them never mispair. Semantic tokens from the server refine components, host tags, and event attributes on top. |
+| **Completion** | HTML tags and user/built-in components, attributes, DOM events, CSS in `style` values, and full TypeScript completion inside `{ ... }` expression holes. |
+| **Hover** | Types, signatures, and JSDoc — including the runtime's built-in components (`Show`, `For`, `Switch`, `Dynamic`, `Suspense`, `Portal`, `ErrorBoundary`). |
+| **Diagnostics** | Markup parse errors and TypeScript type errors, surfaced inline with clear explanations. |
+| **Go to definition / type definition** | Works across `.azeroth` and `.ts` files. |
+| **Find references & rename** | Cross-file, across `.azeroth` and `.ts`. |
+| **Formatting** | Full document formatting. |
+| **Inlay hints** | Parameter names and inferred types at call sites. |
+| **Signature help** | Shows the active parameter while typing function arguments. |
+| **Editing aids** | Tag auto-close on `>` and `/>` via `AzerothTypedHandler`. |
+
+## Configuration
+
+Go to *Settings → Languages & Frameworks → AzerothJS*. The toggles are sent to
+the server as `initializationOptions` and map to the same per-feature options the
+VS Code extension uses. TypeScript intelligence uses the nearest `tsconfig.json`
+in the project.
+
+### ESLint and Tailwind for `.azeroth`
+
+These are JetBrains' own bundled integrations, not something this plugin controls.
+Two one-time IDE settings enable them for `.azeroth`:
+
+- **ESLint** — *Settings → Languages & Frameworks → JavaScript → Code Quality
+  Tools → ESLint → Run for files* — extend the pattern to include `.azeroth`, e.g.
+  `{**/*,*}.{js,ts,vue,html,azeroth}`. ESLint then runs the
+  `@azerothjs/eslint-plugin` processor (script linted; markup masked from rules).
+- **Tailwind CSS** — *Settings → Languages & Frameworks → Style Sheets → Tailwind
+  CSS*, add to the config JSON: `"includeLanguages": { "azeroth": "html" }` (its
+  own language — not jsx/tsx), plus the same `experimental.classRegex` the VS
+  Code extension uses for `classList({ … })`.
+
+A plugin cannot force a third-party integration's file globs, so these stay manual
+until Tailwind completion is served directly by `@azerothjs/language-server` over
+LSP.
 
 ## Architecture
 
-The plugin combines two platform mechanisms with the bundled server:
-
-- A native lexer (`AzerothLexer`) provides base highlighting and correct
-  brace/bracket matching (it handles strings, comments, and template `${ }`
-  interpolations so a brace inside them never mispairs). Semantic tokens from the
-  language server refine components, host tags, and event attributes on top.
-- The platform LSP API (`com.intellij.platform.lsp`, 2023.2 and later) provides
-  the compiler-accurate intelligence by talking to the bundled language server.
-- A settings panel sends per-feature toggles to the server as LSP
-  `initializationOptions`.
+The plugin combines two platform mechanisms with the bundled language server:
 
 ```
 JetBrains IDE
-  native lexer             base highlighting + brace matching
-  LspServerSupportProvider starts the bundled server, routes LSP requests
-  settings panel           toggles sent as initializationOptions
+  AzerothLexer               base highlighting + brace matching
+  LspServerSupportProvider   starts the bundled server, routes LSP requests
+  settings panel             toggles sent as initializationOptions
         |
-        bundled server (server/server.js + its own TypeScript)
+        bundled server  (server/server.js + its own copy of TypeScript)
         |
-        language service (compiler-aware analysis)
+        language service  (compiler-aware analysis — shared with VS Code)
 ```
 
-### How it interacts with the language server and service
+- **`AzerothLexer`** — native lexer for base highlighting and correct
+  brace/bracket matching. It understands strings, comments, and template `${ }`
+  interpolations so braces inside them are never mis-paired.
+- **`AzerothLspServerSupportProvider`** — uses the platform LSP API
+  (`com.intellij.platform.lsp`, 2026.1+) to start the bundled server for
+  `.azeroth` files and delegate completion, hover, diagnostics, navigation, and
+  the rest.
+- **`AzerothTypedHandler`** — type-driven editing behaviour (tag auto-close,
+  triggering completion) on the IDE side.
+- **Settings** — `AzerothSettings` (persistent state) and `AzerothConfigurable`
+  (the UI panel); toggles flow to the server as `initializationOptions`.
 
-`AzerothLspServerSupportProvider` tells the IDE to start the bundled server for
-`.azeroth` files; from there the IDE's LSP client handles completion, hover,
-diagnostics, navigation, and the rest by talking to that server. The server
-forwards each request to `@azerothjs/language-service`. So the same analysis
-backs both editors; only the host wiring differs. `AzerothTypedHandler` adds
-type-driven editing behavior (such as triggering completion) on the IDE side.
-
-### Why LSP plus a native lexer, and not the IDE's TypeScript engine
+### Why LSP plus a native lexer, not the IDE's TypeScript engine
 
 It is tempting to register `.azeroth` as a TypeScript variant and let the IDE's
-native TypeScript engine analyze it. That engine does not know AzerothJS
-semantics and would report false errors (`Show` is not imported, markup needs the
-`h()` factory, reactive wrapping). The bundled server reuses the AzerothJS
-compiler, so its analysis is correct. The native lexer supplies base highlighting
-without a second, incorrect analyzer. WebStorm's
-own TypeScript support also runs a Node `tsserver` under the hood, so a bundled
-Node server is a normal arrangement.
+native engine analyze it. That engine does not know AzerothJS semantics and would
+report false errors (`Show` is not imported, markup needs `h()`, reactive wrapping
+is missing). The bundled server reuses the AzerothJS compiler, so its analysis is
+correct by construction. The native lexer supplies base highlighting without
+introducing a second, incorrect analyzer.
 
-## Components
+## Source layout
 
 | Path | Role |
 | --- | --- |
 | `src/main/kotlin/com/azerothjs/AzerothLspServerSupportProvider.kt` | Starts the bundled server and describes the LSP integration. |
 | `src/main/kotlin/com/azerothjs/AzerothTextMateBundleProvider.kt` | Registers the bundled TextMate grammars. |
-| `src/main/kotlin/com/azerothjs/AzerothTypedHandler.kt` | Type-driven editing behavior on the IDE side. |
+| `src/main/kotlin/com/azerothjs/AzerothTypedHandler.kt` | Type-driven editing behaviour on the IDE side. |
 | `src/main/kotlin/com/azerothjs/AzerothSettings.kt` | Persistent settings state. |
-| `src/main/kotlin/com/azerothjs/AzerothConfigurable.kt` | The Settings panel (Languages and Frameworks, AzerothJS). |
+| `src/main/kotlin/com/azerothjs/AzerothConfigurable.kt` | The Settings panel (Languages and Frameworks → AzerothJS). |
 | `src/main/resources/META-INF/plugin.xml` | Plugin descriptor and extension registrations. |
-| `src/main/resources/textmate/*` | The bundled grammars and language configuration. |
+| `src/main/resources/textmate/*` | Bundled grammars and language configuration. |
 
 ## Development
 
-Open `editors/jetbrains` as a Gradle project. The build runs against a locally
-installed IDE rather than downloading an SDK, so set the `local(...)` path in
-`build.gradle.kts` to your IDE home and adjust `sinceBuild` if needed. The IDE
-build uses Kotlin 2.4.0 and the IntelliJ Platform Gradle plugin 2.16.0, which
-requires Gradle 9 or later.
+Open `editors/jetbrains` as a Gradle project in IntelliJ IDEA or WebStorm.
 
-Pin the Kotlin version to match your IDE's bundled-library metadata; a mismatch
-fails the build with a metadata-version error.
+**Target IDE**: the build is reproducible by default — it downloads the IDE
+version pinned in `gradle.properties` (`platformType` / `platformVersion`). For
+fast local iteration against an already-installed IDE, pass
+`-PlocalIdePath=<path-to-IDE>` to Gradle instead of downloading it.
+
+**Kotlin version**: pin the Kotlin version in `build.gradle.kts` to match your
+IDE's bundled-library metadata; a mismatch fails the build with a
+metadata-version error.
+
+Run the plugin in a sandbox IDE:
+
+```sh
+cd editors/jetbrains
+gradle runIde
+```
 
 ## Building
 
-Requires JDK 21 (set `JAVA_HOME`) and Gradle 9 or later. Build the server bundle
-first, then the plugin:
+Requires **JDK 21** (set `JAVA_HOME`) and **Gradle 9 or later**. Build the
+server bundle first (it must exist before the plugin packages it), then the
+plugin:
 
 ```sh
-npm run bundle -w azerothjs-vscode    # produces editors/vscode/dist/server.js
+# 1. Bundle the language server (from the monorepo root)
+npm run bundle -w azerothjs-vscode    # → editors/vscode/dist/server.js
+
+# 2. Build the plugin zip
 cd editors/jetbrains
-gradle buildPlugin                    # build/distributions/azerothjs-jetbrains-<version>.zip
+gradle buildPlugin
+# → build/distributions/azerothjs-jetbrains-<version>.zip
 ```
 
-`buildPlugin` depends on a `bundleServer` task that copies `server.js` and a
-trimmed copy of TypeScript (its `lib/*.d.ts` is needed at runtime) into the
-plugin's `server/` directory, which is why the npm bundle step must run first.
+The `buildPlugin` task depends on `bundleServer`, which copies `server.js` and a
+trimmed copy of TypeScript (`lib/*.d.ts`) into the plugin's `server/` resource
+directory. If `server.js` is missing, the task fails loudly rather than shipping
+an empty `server/` folder that silently can't start the server.
+
+**Releases** are cut from the monorepo root with `npm run release -- <version>`
+(see `scripts/release.mjs`). The plugin is versioned in lockstep with the
+`@azerothjs/*` packages it bundles.
 
 ## Testing
 
-Run the plugin in a sandbox IDE with `gradle runIde`, then open a `.azeroth` file
-and check highlighting, completion, hover, diagnostics, and tag auto-close. The
-underlying language analysis is covered by the language-service test suite at the
-repository root (`npm test`).
+Run the plugin in a sandbox IDE (`gradle runIde`) and open a `.azeroth` file;
+verify highlighting, completion, hover, diagnostics, and tag auto-close. The
+underlying language analysis is covered by the `@azerothjs/language-service`
+test suite at the repository root (`npm test`).
 
-## Configuration
+## Quick start
 
-Settings are under Settings, Languages and Frameworks, AzerothJS. The toggles are
-stored by `AzerothSettings` and sent to the server as `initializationOptions`, so
-they map onto the same per-feature options the VS Code extension uses. TypeScript
-intelligence uses the nearest `tsconfig.json` in the project.
-
-### ESLint and Tailwind for `.azeroth`
-
-These are JetBrains' own bundled integrations (the JavaScript/Styles plugins),
-not something this plugin controls, and JetBrains does not read a project's
-`.vscode/settings.json`. Two one-time IDE settings enable them for `.azeroth`:
-
-- **ESLint** — Settings → Languages & Frameworks → JavaScript → Code Quality
-  Tools → ESLint → set *Run for files* to also match `.azeroth`, e.g.
-  `{**/*,*}.{js,ts,vue,html,azeroth}`. ESLint then runs the
-  `@azerothjs/eslint-plugin` processor on the whole component (script and markup).
-- **Tailwind** — Settings → Languages & Frameworks → Style Sheets → Tailwind CSS,
-  add to the config JSON: `"includeLanguages": { "azeroth": "html" }` (its own
-  language — not jsx/tsx) plus the same `experimental.classRegex` the VS Code
-  extension uses for `classList({ … })`.
-
-A plugin can't force a third-party integration's file globs, so these stay
-manual until the editor-agnostic path lands: Tailwind completion served directly
-by `@azerothjs/language-server` over LSP, which would need no per-IDE config.
-
-## Installation
-
-Install the built zip through Settings, Plugins, the gear menu, Install Plugin
-from Disk, or extract it into `<IDE-config>/plugins/` and restart. A plugin is
-loaded at startup, so restart the IDE after installing or updating.
-
-## Examples
-
-Open `packages/compiler/examples/Showcase.azeroth` to exercise the features by
-hand.
+1. Install the plugin from the JetBrains Marketplace.
+2. Ensure Node.js is on `PATH` (run `node -v` in a terminal to confirm).
+3. Open any `.azeroth` file — the language server activates automatically.
+4. For a hands-on tour, open `packages/compiler/examples/Showcase.azeroth` and
+   try completion, hover, go-to-definition, and diagnostics.
 
 ## Contributing
 
 Keep language analysis in `@azerothjs/language-service`; the Kotlin side should
 only handle IDE wiring (starting the server, highlighting, settings, editing
-hooks). When the server gains a capability, the LSP client picks it up through
-capability negotiation, so most changes here are limited to settings or editing
-behavior.
+hooks). When the server gains a new capability, the LSP client picks it up
+through capability negotiation — no Kotlin change is needed. Changes here are
+limited to settings, grammar tweaks, and editing behaviour.
+
+See [CONTRIBUTING.md](https://github.com/AzerothJS/AzerothJS/blob/main/CONTRIBUTING.md)
+for the full workflow.
