@@ -318,7 +318,8 @@
                     "component": ["support.class.component.azeroth"],
                     "tag": ["entity.name.tag.azeroth"],
                     "attribute": ["entity.other.attribute-name.azeroth"],
-                    "event": ["entity.other.attribute-name.event.azeroth"]
+                    "event": ["entity.other.attribute-name.event.azeroth"],
+                    "variable.reactive": ["variable.other.constant.azeroth", "variable.other.constant"]
                 }
             }
         ],

@@ -49,7 +49,8 @@ export { diagnoseModule, diagnoseUnusedImports, type AzerothDiagnostic } from '.
 export { typeCheckModuleTS, createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
 // Emits a `.d.ts` for an `.azeroth` module so plain TypeScript (`tsc` and editors) can resolve and
 // type-check `.azeroth` imports from `.ts` files.
-export { emitDeclarations } from './declarations.ts';
+export { emitDeclarations, emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
+export { RUNTIME_FN, type ConstructKind } from './keyword-spec.ts';
 // THE single Azeroth -> TypeScript projection. Every tool (type checker, language service, TS plugin,
 // ESLint processor, declaration emitter) lowers `.azeroth` to TypeScript through this one function.
 export { generateVirtualCode, BUILTIN_COMPONENTS, type VirtualCode } from './project.ts';
@@ -59,6 +60,7 @@ export {
     buildLineStarts,
     locationFor,
     encodeMappings,
+    decodeMappings,
     type SourceMapV3,
     type RawSegment
 } from './sourcemap.ts';

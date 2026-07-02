@@ -1,0 +1,6 @@
+import { formatGold } from './util';
+
+export default component Widget(props: { gold: number })
+{
+    <span title={formatGold(props.gold)}>{formatGold(props.gold)}</span>
+}

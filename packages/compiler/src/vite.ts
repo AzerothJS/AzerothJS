@@ -17,7 +17,7 @@
  */
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, type Dirent } from 'node:fs';
-import { join, relative, dirname } from 'node:path';
+import { join, relative, dirname, basename } from 'node:path';
 
 import type { Plugin } from 'vite';
 
@@ -26,7 +26,7 @@ import { buildLineStarts, locationFor } from './sourcemap.ts';
 import { generateModule } from './codegen.ts';
 import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
 import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
-import { emitDeclarations } from './declarations.ts';
+import { emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
 
 /**
@@ -91,20 +91,23 @@ function writeIfChanged(dtsPath: string, content: string): void
 }
 
 /**
- * Writes the TypeScript projection for one `.azeroth` module into the hidden `.azeroth-types/` mirror,
+ * Writes the TypeScript projection for one `.azeroth` module into the hidden `.azeroth/types/` mirror,
  * preserving its path relative to the project root so `rootDirs` lines the two trees up. Two names are
  * written so both import conventions resolve (a project uses one; the other is inert):
  *   - `<mirror>/<rel>.d.ts`          resolves EXTENSIONLESS imports      - `import X from './x'`
  *   - `<mirror>/<rel>.azeroth.d.ts`  resolves EXPLICIT-extension imports - `import X from './x.azeroth'`
- * A malformed source (already reported with a located error by the compile/type-check gate) is swallowed
- * so declaration emit never crashes the build; any prior projection is left untouched.
+ * Each declaration gets a `.d.ts.map` pointing into the real `.azeroth` SOURCE (the emit remaps
+ * TypeScript's declaration map through the projection), so an editor's go-to-definition follows it
+ * onto the component declaration instead of stopping inside the generated mirror. A malformed source
+ * (already reported with a located error by the compile/type-check gate) is swallowed so declaration
+ * emit never crashes the build; any prior projection is left untouched.
  */
 function writeDeclarationMirror(source: string, azerothFile: string, root: string, extension: string): void
 {
-    let dts: string;
+    let output: DeclarationOutput;
     try
     {
-        dts = emitDeclarations(source, azerothFile);
+        output = emitDeclarationsWithMap(source, azerothFile);
     }
     catch
     {
@@ -113,8 +116,19 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
     const rel = relative(root, azerothFile);
     const mirrorStem = join(root, DECLARATIONS_DIR, rel.slice(0, -extension.length));
     mkdirSync(dirname(mirrorStem), { recursive: true });
-    writeIfChanged(mirrorStem + '.d.ts', dts);
-    writeIfChanged(mirrorStem + extension + '.d.ts', dts);
+    // The map's `sources` must be relative to the map's own directory (the mirror folder).
+    const sourceRel = relative(dirname(mirrorStem), azerothFile).replace(/\\/g, '/');
+    for (const stem of [mirrorStem, mirrorStem + extension])
+    {
+        const dtsName = basename(stem) + '.d.ts';
+        if (output.map === null)
+        {
+            writeIfChanged(stem + '.d.ts', output.dts);
+            continue;
+        }
+        writeIfChanged(stem + '.d.ts', `${ output.dts }//# sourceMappingURL=${ dtsName }.map\n`);
+        writeIfChanged(stem + '.d.ts.map', JSON.stringify({ ...output.map, file: dtsName, sources: [sourceRel] }));
+    }
 }
 
 /**

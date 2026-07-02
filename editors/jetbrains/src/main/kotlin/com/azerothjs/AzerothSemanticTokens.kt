@@ -34,7 +34,14 @@ class AzerothSemanticTokens : LspSemanticTokensSupport()
     override fun shouldAskServerForSemanticTokens(psiFile: PsiFile): Boolean = true
 
     override fun getTextAttributesKey(tokenType: String, modifiers: List<String>): TextAttributesKey? =
-        SEMANTIC_KEYS[tokenType] ?: super.getTextAttributesKey(tokenType, modifiers)
+        when
+        {
+            // The name declared by a reactive keyword (`state count`, `form login`, ...): a
+            // dedicated key so a component's reactive surface reads distinctly from plain
+            // variables, mirroring the VS Code mapping of `variable.reactive`.
+            "reactive" in modifiers -> REACTIVE
+            else -> SEMANTIC_KEYS[tokenType] ?: super.getTextAttributesKey(tokenType, modifiers)
+        }
 
     /**
      * Advertise our markup token types alongside the standard set, so the client
@@ -79,6 +86,17 @@ class AzerothSemanticTokens : LspSemanticTokensSupport()
         val VARIABLE: TextAttributesKey = TextAttributesKey.createTextAttributesKey(
             "AZEROTH_SEM_VARIABLE",
             TextAttributes(JBColor(0x001080, 0x9CDCFE), null, null, null, Font.PLAIN)
+        )
+
+        /**
+         * The name declared by a reactive keyword (`state count`, `derived total`, `form login`).
+         * Bold constant-like colouring (teal on light, aqua on dark - the classic "constant"
+         * palette) so the reactive surface of a component is scannable at a glance. Themeable via
+         * the colour settings page.
+         */
+        val REACTIVE: TextAttributesKey = TextAttributesKey.createTextAttributesKey(
+            "AZEROTH_SEM_REACTIVE",
+            TextAttributes(JBColor(0x0070C1, 0x4FC1FF), null, null, null, Font.BOLD)
         )
 
         /** Server token-type name -> our key. Other standard types fall through to super. */

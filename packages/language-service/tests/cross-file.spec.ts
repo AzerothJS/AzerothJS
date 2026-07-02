@@ -97,3 +97,46 @@ describe('cross-file .ts ↔ .azeroth intelligence', () =>
         expect(diags.length).toBeGreaterThan(0);
     });
 });
+
+describe('project-rooted mode (the language server\'s configuration)', () =>
+{
+    // The language server constructs every service with `rootProjectFiles: true`, so the program
+    // contains the project's real `.ts` files - not just the ones reachable from an open `.azeroth`
+    // import. consumer.ts uses `defaultUser`/`greet` but is imported by NOTHING: only rooting makes
+    // it visible, and without it find-references under-reports and a rename silently leaves the
+    // file stale (the exact bug the editor probe caught).
+    const consumerTsUri = pathToUri(path.join(dir, 'consumer.ts'));
+
+    function openRooted(): { ls: AzerothLanguageService; uri: string }
+    {
+        const ls = new AzerothLanguageService(dir, tsconfig, { rootProjectFiles: true });
+        const uri = pathToUri(path.join(dir, 'Consumer.azeroth'));
+        ls.didOpen(uri, CONSUMER);
+        return { ls, uri };
+    }
+
+    it('find-references reaches a `.ts`-only usage no import chain leads to', () =>
+    {
+        const { ls, uri } = openRooted();
+        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const refs = ls.getReferences(uri, { line: 4, character: col });
+        expect(refs.some(r => r.uri === consumerTsUri)).toBe(true);
+    });
+
+    it('rename covers the `.ts`-only usage (no silent stale code)', () =>
+    {
+        const { ls, uri } = openRooted();
+        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const edit = ls.getRenameEdits(uri, { line: 4, character: col }, 'currentUser');
+        expect(edit).not.toBeNull();
+        expect(Object.keys(edit!.changes ?? {})).toContain(consumerTsUri);
+    });
+
+    it('default (non-rooted) mode misses it - documenting WHY the server roots', () =>
+    {
+        const { ls, uri } = open();
+        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const refs = ls.getReferences(uri, { line: 4, character: col });
+        expect(refs.some(r => r.uri === consumerTsUri)).toBe(false);
+    });
+});

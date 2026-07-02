@@ -160,3 +160,59 @@ export function encodeMappings(lines: RawSegment[][]): string
 
     return encodedLines.join(';');
 }
+
+/** Base64 character -> value, for {@link decodeMappings}. Built once. */
+const BASE64_VALUES: Record<string, number> = Object.fromEntries([...BASE64].map((c, i) => [c, i]));
+
+/**
+ * Decodes a `mappings` string back into per-line absolute segments - the inverse of
+ * {@link encodeMappings}, for rewriting an EXISTING map (e.g. remapping TypeScript's declaration
+ * map from projected-code positions to `.azeroth` source positions). Single-source maps only
+ * (source index 0); a 5-field segment's name index is dropped, and 1-field segments (a generated
+ * position with no source) are skipped since they carry nothing to remap.
+ *
+ * @param mappings - The `mappings` string of a version-3 source map.
+ * @returns Per-generated-line segments with ABSOLUTE positions.
+ */
+export function decodeMappings(mappings: string): RawSegment[][]
+{
+    const lines: RawSegment[][] = [];
+    let sourceLine = 0;
+    let sourceColumn = 0;
+
+    for (const lineText of mappings.split(';'))
+    {
+        const segments: RawSegment[] = [];
+        let genColumn = 0;
+        for (const chunk of lineText === '' ? [] : lineText.split(','))
+        {
+            // Base64 VLQ decode: little-endian 5-bit groups, bit 5 = continuation, bit 0 = sign.
+            const values: number[] = [];
+            let value = 0;
+            let shift = 0;
+            for (const char of chunk)
+            {
+                const digit = BASE64_VALUES[char];
+                value |= (digit & 31) << shift;
+                if ((digit & 32) !== 0)
+                {
+                    shift += 5;
+                    continue;
+                }
+                values.push((value & 1) === 1 ? -(value >>> 1) : value >>> 1);
+                value = 0;
+                shift = 0;
+            }
+            genColumn += values[0];
+            if (values.length >= 4)
+            {
+                sourceLine += values[2];
+                sourceColumn += values[3];
+                segments.push({ genColumn, sourceLine, sourceColumn });
+            }
+        }
+        lines.push(segments);
+    }
+
+    return lines;
+}

@@ -43,6 +43,20 @@
         <highlightUsagesHandlerFactory
             implementation="com.azerothjs.lang.AzerothTagHighlightHandlerFactory"/>
 
+        <!-- Usage visibility for .azeroth files. The IDE's unused-symbol inspections and Find
+             Usages run on the PSI word/reference indices (not tsserver, not the LSP), which never
+             looked inside .azeroth - so a .ts export used only from components was flagged
+             "unused". The words scanner indexes .azeroth identifiers with CODE context; the
+             implicit-usage provider clears false "unused" ONLY when a verified .azeroth usage
+             exists; the references searcher lists those usages in Find Usages. -->
+        <lang.findUsagesProvider
+            language="AzerothJS"
+            implementationClass="com.azerothjs.lang.AzerothFindUsagesProvider"/>
+        <implicitUsageProvider
+            implementation="com.azerothjs.lang.AzerothImplicitUsageProvider"/>
+        <referencesSearch
+            implementation="com.azerothjs.lang.AzerothTsReferencesSearcher"/>
+
         <!-- Compiler-aware intelligence over LSP. -->
         <platform.lsp.serverSupportProvider
             implementation="com.azerothjs.AzerothLspServerSupportProvider"/>

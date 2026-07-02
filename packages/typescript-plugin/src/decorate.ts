@@ -30,7 +30,18 @@ import path from 'node:path';
 // The compiler is reused from the language service - the single source of truth -
 // so the plugin and the editor language server can never disagree on how a
 // `.azeroth` file becomes TypeScript.
-import { generateVirtualCode } from '@azerothjs/language-service';
+import { generateVirtualCode, type CodeMapping } from '@azerothjs/language-service';
+
+/**
+ * Read access to the compiled view of `.azeroth` files, shared between the host decoration (which
+ * serves the virtual code as the file's content) and the language-service decoration (which maps
+ * result spans in that virtual code back to `.azeroth` source offsets - see remap.ts).
+ */
+export interface VirtualAzerothFiles
+{
+    /** The offset mapping for a `.azeroth` file, or undefined when it cannot be read/compiled. */
+    mappingFor(fileName: string): CodeMapping | undefined;
+}
 
 /** Real `.azeroth` source extension. */
 const AZEROTH_EXT = '.azeroth';
@@ -86,19 +97,20 @@ function resolveSibling(containingFile: string, specifier: string): string
  *
  * @param ts - The TypeScript module tsserver handed the plugin.
  * @param host - The language-service host to decorate.
+ * @returns Access to the compiled `.azeroth` views, for the result-span remapping in remap.ts.
  */
 export function decorateLanguageServiceHost(
     ts: typeof tsModule,
     host: tsModule.LanguageServiceHost
-): void
+): VirtualAzerothFiles
 {
     const read = (azerothPath: string): string | undefined => ts.sys.readFile(azerothPath);
 
     // Cache the compiled virtual module per source, so an unchanged file isn't
     // recompiled on every host query.
-    const cache = new Map<string, { source: string; code: string }>();
+    const cache = new Map<string, { source: string; code: string; mapping: CodeMapping }>();
 
-    const virtualCodeFor = (azerothPath: string): string | undefined =>
+    const virtualFor = (azerothPath: string): { code: string; mapping: CodeMapping } | undefined =>
     {
         const source = read(azerothPath);
         if (source === undefined)
@@ -108,12 +120,15 @@ export function decorateLanguageServiceHost(
         const cached = cache.get(azerothPath);
         if (cached && cached.source === source)
         {
-            return cached.code;
+            return cached;
         }
-        const code = generateVirtualCode(source).code;
-        cache.set(azerothPath, { source, code });
-        return code;
+        const { code, mapping } = generateVirtualCode(source);
+        const entry = { source, code, mapping };
+        cache.set(azerothPath, entry);
+        return entry;
     };
+
+    const virtualCodeFor = (azerothPath: string): string | undefined => virtualFor(azerothPath)?.code;
 
     // A `.azeroth` file IS the resolved module now, so the program reads its
     // source through these overrides keyed on the real path. We deliberately do
@@ -211,5 +226,9 @@ export function decorateLanguageServiceHost(
 
             return base[index];
         });
+    };
+
+    return {
+        mappingFor: (fileName) => (isAzerothFile(fileName) ? virtualFor(fileName)?.mapping : undefined)
     };
 }

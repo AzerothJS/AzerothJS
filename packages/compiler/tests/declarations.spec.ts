@@ -5,7 +5,7 @@
 // prop-less components taking no parameter, exported types kept, and non-exported helpers (whose bodies
 // may contain `.azeroth` markup) dropped.
 import { describe, it, expect } from 'vitest';
-import { emitDeclarations } from '@azerothjs/compiler';
+import { emitDeclarations, emitDeclarationsWithMap, decodeMappings, encodeMappings } from '@azerothjs/compiler';
 
 /** Emits the declaration text for a module (virtual path; no external imports need resolving). */
 function dts(source: string): string
@@ -81,5 +81,42 @@ describe('emitDeclarations', () =>
         // The import makes this module-mode, so the non-exported `x` is not emitted.
         const out = dts('import type { T } from \'./t\';\nconst x: number = 1;');
         expect(out).not.toContain('const x');
+    });
+});
+
+describe('emitDeclarationsWithMap - declaration map remapped to the .azeroth SOURCE', () =>
+{
+    it('maps the declared component name onto the `component` declaration in the source', () =>
+    {
+        // TS's declaration map points into the PROJECTED module; the remap must translate it so an
+        // editor following the map (go-to-definition from a `.d.ts`) lands on the REAL declaration.
+        const source = 'export default component App { <div>hi</div> }';
+        const { dts: text, map } = emitDeclarationsWithMap(source, '/virtual/mod.azeroth');
+        expect(text).toContain('export default function App');
+        expect(map).not.toBeNull();
+        expect(map!.sources).toEqual(['/virtual/mod.azeroth']);
+
+        // Decode and assert at least one segment points AT the component name in the source
+        // (line 0, the column of `App`), proving positions are source - not projection - offsets.
+        const segments = decodeMappings(map!.mappings).flat();
+        expect(segments.length).toBeGreaterThan(0);
+        const nameColumn = source.indexOf('App');
+        expect(segments.some(s => s.sourceLine === 0 && s.sourceColumn === nameColumn)).toBe(true);
+        // And no segment can point past the one-line source text - a projected offset would.
+        for (const segment of segments)
+        {
+            expect(segment.sourceLine).toBe(0);
+            expect(segment.sourceColumn).toBeLessThanOrEqual(source.length);
+        }
+    });
+
+    it('round-trips decodeMappings(encodeMappings(x))', () =>
+    {
+        const lines = [
+            [{ genColumn: 0, sourceLine: 0, sourceColumn: 0 }, { genColumn: 15, sourceLine: 0, sourceColumn: 31 }],
+            [],
+            [{ genColumn: 4, sourceLine: 2, sourceColumn: 8 }]
+        ];
+        expect(decodeMappings(encodeMappings(lines))).toEqual(lines);
     });
 });

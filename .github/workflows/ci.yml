@@ -22,10 +22,17 @@ concurrency:
 env:
     NODE_VERSION: 24
 
+# Job layout note: the full 15-package build is deliberately DUPLICATED in the test
+# and build jobs instead of shared via artifacts. Measured locally: the build takes
+# ~15s, which is less than an artifact upload+download round trip would cost - and
+# sharing would serialize jobs that currently run in parallel. Revisit only if the
+# build outgrows ~1 minute.
+
 jobs:
     lint:
         name: Lint
         runs-on: ubuntu-latest
+        timeout-minutes: 10
         steps:
             -   uses: actions/checkout@v7
             -   uses: actions/setup-node@v6
@@ -35,9 +42,26 @@ jobs:
             -   run: npm ci
             -   run: npm run lint
 
+    typecheck:
+        name: Typecheck
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            -   uses: actions/checkout@v7
+            -   uses: actions/setup-node@v6
+                with:
+                    node-version: ${{ env.NODE_VERSION }}
+                    cache: npm
+            -   run: npm ci
+            # tsc over the whole monorepo (tsconfig.json project). The vitest suite
+            # runs through esbuild-style transforms that do NOT type-check, so this
+            # is the only gate that proves the source compiles as TypeScript.
+            -   run: npm run typecheck
+
     test:
         name: Test (Node ${{ matrix.node }} / ${{ matrix.os }})
         runs-on: ${{ matrix.os }}
+        timeout-minutes: 20
         strategy:
             # One failing cell should not hide failures in the others - we want the
             # full cross-OS picture from a single run.
@@ -63,11 +87,43 @@ jobs:
             # `@azerothjs/core` types through node_modules (its `types` points at dist),
             # so the packages must be built first.
             -   run: npm run build
-            -   run: npm test
+            # Linux runs the suite WITH coverage (measured overhead: +6s over the plain
+            # run - not worth a separate job); Windows runs it plain to keep the slower
+            # runner on the critical path minimal. Coverage failing = tests failing, so
+            # the gate is identical.
+            -   name: Test (with coverage)
+                if: runner.os == 'Linux'
+                shell: bash
+                run: npm run test:coverage -- --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=html
+            -   name: Test
+                if: runner.os != 'Linux'
+                run: npm test
+            -   name: Coverage summary
+                if: runner.os == 'Linux'
+                shell: bash
+                run: |
+                    node -e '
+                    const fs = require("fs");
+                    const path = "coverage/coverage-summary.json";
+                    if (!fs.existsSync(path)) process.exit(0);
+                    const total = JSON.parse(fs.readFileSync(path, "utf8")).total;
+                    const row = (k) => `| ${k} | ${total[k].pct}% (${total[k].covered}/${total[k].total}) |`;
+                    const lines = ["## Coverage", "", "| Metric | Covered |", "| --- | --- |",
+                        row("lines"), row("statements"), row("functions"), row("branches")];
+                    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+                    '
+            -   name: Upload coverage report
+                if: runner.os == 'Linux'
+                uses: actions/upload-artifact@v6
+                with:
+                    name: coverage-report
+                    path: coverage/
+                    retention-days: 14
 
     build:
         name: Build & leak check
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         steps:
             -   uses: actions/checkout@v7
             -   uses: actions/setup-node@v6

@@ -211,6 +211,12 @@ export function startServer(connection: Connection = createConnection()): void
 
     const norm = (path: string): string => path.replace(/\\/g, '/').replace(/\/+$/, '');
 
+    // rootProjectFiles: the editor program must contain the project's real `.ts` files, not just
+    // the ones reachable from an open `.azeroth` import. Find References / Rename on a symbol used
+    // from BOTH sides is otherwise silently incomplete - a `.ts`-only usage (e.g. main.ts calling a
+    // util a component also calls) never appears, and a rename quietly leaves it stale.
+    const SERVICE_OPTIONS = { rootProjectFiles: true } as const;
+
     /** Registers a workspace root and eagerly creates its service. */
     const registerRoot = (rootUri: string): void =>
     {
@@ -220,7 +226,7 @@ export function startServer(connection: Connection = createConnection()): void
             roots.push(root);
             if (!services.has(root))
             {
-                services.set(root, new AzerothLanguageService(root));
+                services.set(root, new AzerothLanguageService(root, undefined, SERVICE_OPTIONS));
             }
         }
     };
@@ -258,7 +264,7 @@ export function startServer(connection: Connection = createConnection()): void
         let svc = services.get(key);
         if (!svc)
         {
-            svc = new AzerothLanguageService(key);
+            svc = new AzerothLanguageService(key, undefined, SERVICE_OPTIONS);
             services.set(key, svc);
         }
         return svc;

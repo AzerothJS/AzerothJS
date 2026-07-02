@@ -65,6 +65,7 @@ class AzerothColorSettingsPage : ColorSettingsPage
             AttributesDescriptor("Markup//Event handler", AzerothSemanticTokens.EVENT),
             AttributesDescriptor("Markup//Tag punctuation", AzerothSemanticTokens.DELIMITER),
             AttributesDescriptor("Variable, global & import binding", AzerothSemanticTokens.VARIABLE),
+            AttributesDescriptor("Reactive declaration name", AzerothSemanticTokens.REACTIVE),
         )
     }
 }

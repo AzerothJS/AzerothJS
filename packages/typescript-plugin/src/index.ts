@@ -17,6 +17,7 @@
 
 import type tsModule from 'typescript';
 import { decorateLanguageServiceHost } from './decorate.ts';
+import { remapLanguageService } from './remap.ts';
 
 /** The tsserver plugin factory. tsserver calls this with the `typescript` module. */
 function init(modules: { typescript: typeof tsModule }): tsModule.server.PluginModule
@@ -27,12 +28,14 @@ function init(modules: { typescript: typeof tsModule }): tsModule.server.PluginM
         create(info: tsModule.server.PluginCreateInfo): tsModule.LanguageService
         {
             // Decorate the host in place so resolution/loading of `.azeroth`
-            // modules takes effect on the next program build. The language
-            // service itself is returned unchanged; all behaviour flows from the
-            // host now understanding `.azeroth`.
-            decorateLanguageServiceHost(ts, info.languageServiceHost);
-            info.project.projectService.logger.info('[azerothjs] typescript-plugin: .azeroth module resolution enabled');
-            return info.languageService;
+            // modules takes effect on the next program build, then wrap the
+            // language service so navigation results landing in `.azeroth` files
+            // are translated from virtual-code offsets back to source offsets
+            // (Find References / Go To Definition / Rename would otherwise point
+            // at - and rename would EDIT - the wrong ranges).
+            const virtual = decorateLanguageServiceHost(ts, info.languageServiceHost);
+            info.project.projectService.logger.info('[azerothjs] typescript-plugin: .azeroth module resolution + span remapping enabled');
+            return remapLanguageService(info.languageService, virtual);
         },
 
         getExternalFiles(project: tsModule.server.Project): string[]

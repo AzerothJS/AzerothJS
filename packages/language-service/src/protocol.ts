@@ -340,12 +340,14 @@ export type SemanticTokenType = (typeof SEMANTIC_TOKEN_TYPES)[number];
 /**
  * The token modifiers this service emits, in legend order. Each name's index is
  * the bit position the encoder sets in a token's modifier mask, so this order is
- * a wire contract with the editor and must stay stable. The set mirrors the
- * standard TypeScript modifiers so the legend reads the same as a `.ts` file;
- * the markup provider currently sets only `defaultLibrary` (built-in components).
+ * a wire contract with the editor and must stay stable (append only). The set
+ * mirrors the standard TypeScript modifiers so the legend reads the same as a
+ * `.ts` file, plus `reactive`: the name declared by a reactive keyword (`state`,
+ * `derived`, `form`, ...), so themes can colour the reactive surface of a
+ * component distinctly from plain variables.
  */
 export const SEMANTIC_TOKEN_MODIFIERS = [
-    'declaration', 'readonly', 'static', 'async', 'defaultLibrary', 'local'
+    'declaration', 'readonly', 'static', 'async', 'defaultLibrary', 'local', 'reactive'
 ] as const;
 
 export type SemanticTokenModifier = (typeof SEMANTIC_TOKEN_MODIFIERS)[number];

@@ -1,0 +1,120 @@
+name: Editors
+
+# Builds BOTH editor plugins - the artifacts users actually install - which the
+# package-level CI never touches. A Kotlin/platform-API break (one shipped
+# unnoticed before this workflow existed) or a broken vsix packaging step fails
+# here, and every run uploads installable artifacts.
+#
+# Path-scoped: editor code obviously, but ALSO packages/** because the language
+# server bundled into both plugins is built from the workspace packages - a
+# compiler/language-service change can break the bundle. Root manifest changes
+# affect the shared lockfile, so they trigger too. Docs-only changes skip this
+# workflow entirely.
+on:
+    push:
+        branches: [ main ]
+        paths:
+            - 'editors/**'
+            - 'packages/**'
+            - 'package.json'
+            - 'package-lock.json'
+            - '.github/workflows/editors.yml'
+    pull_request:
+        branches: [ main ]
+        paths:
+            - 'editors/**'
+            - 'packages/**'
+            - 'package.json'
+            - 'package-lock.json'
+            - '.github/workflows/editors.yml'
+
+permissions:
+    contents: read
+
+concurrency:
+    group: editors-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    NODE_VERSION: 24
+
+jobs:
+    vscode:
+        name: VS Code extension (.vsix)
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            -   uses: actions/checkout@v7
+            -   uses: actions/setup-node@v6
+                with:
+                    node-version: ${{ env.NODE_VERSION }}
+                    cache: npm
+                    # Two lockfiles: the workspace root and the extension's own
+                    # (editors/vscode is NOT part of the npm workspace).
+                    cache-dependency-path: |
+                        package-lock.json
+                        editors/vscode/package-lock.json
+            -   run: npm ci
+            # The server bundle's esbuild entry is packages/language-server/dist/cli.js,
+            # so the workspace packages must be built first (measured: ~15s).
+            -   run: npm run build
+            -   run: npm ci
+                working-directory: editors/vscode
+            -   run: npm run bundle
+                working-directory: editors/vscode
+            -   run: node package.mjs
+                working-directory: editors/vscode
+            -   uses: actions/upload-artifact@v6
+                with:
+                    name: azerothjs-vscode-vsix
+                    path: editors/vscode/dist/*.vsix
+                    retention-days: 14
+                    if-no-files-found: error
+
+    jetbrains:
+        name: JetBrains plugin (.zip)
+        runs-on: ubuntu-latest
+        # First uncached run downloads the pinned WebStorm dist (~1.5 GB) plus the
+        # Plugin Verifier and its IDE copy; the gradle cache makes warm runs minutes.
+        timeout-minutes: 45
+        steps:
+            -   uses: actions/checkout@v7
+            -   uses: actions/setup-node@v6
+                with:
+                    node-version: ${{ env.NODE_VERSION }}
+                    cache: npm
+                    cache-dependency-path: |
+                        package-lock.json
+                        editors/vscode/package-lock.json
+            # The Gradle bundleServer task copies editors/vscode/dist/server.js (and
+            # the root node_modules copy of typescript) into the plugin, so the server
+            # bundle must exist first. Rebuilding it here (~20s beyond npm ci) is
+            # cheaper and more parallel than depending on the vscode job's artifact.
+            -   run: npm ci
+            -   run: npm run build
+            -   run: npm ci
+                working-directory: editors/vscode
+            -   run: npm run bundle
+                working-directory: editors/vscode
+            -   uses: actions/setup-java@v5
+                with:
+                    distribution: temurin
+                    java-version: 21
+            # Caches ~/.gradle/caches including the transformed IntelliJ Platform
+            # dist, so the 1.5 GB WebStorm download happens once per dependency set.
+            -   uses: gradle/actions/setup-gradle@v6
+            # The wrapper is committed for reproducibility; the checkout may lose the
+            # exec bit depending on how it was added from Windows, so restore it.
+            -   run: chmod +x editors/jetbrains/gradlew
+            # buildPlugin proves the Kotlin compiles against the pinned platform and
+            # packages the distributable zip; verifyPlugin runs the JetBrains Plugin
+            # Verifier (binary compatibility, plugin.xml structure, internal API use)
+            # against the same pinned IDE - failures compileKotlin alone cannot catch.
+            -   run: ./gradlew buildPlugin verifyPlugin --console=plain
+                working-directory: editors/jetbrains
+            -   uses: actions/upload-artifact@v6
+                with:
+                    name: azerothjs-jetbrains-zip
+                    path: editors/jetbrains/build/distributions/*.zip
+                    retention-days: 14
+                    if-no-files-found: error

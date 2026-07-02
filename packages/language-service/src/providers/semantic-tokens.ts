@@ -7,7 +7,7 @@
 // LSP's packed delta encoding.
 
 import ts from 'typescript';
-import { isWhitespace, isIdentPart } from '@azerothjs/compiler';
+import { isWhitespace, isIdentPart, parseModule } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import {
     SEMANTIC_TOKEN_TYPES,
@@ -33,6 +33,13 @@ const MODIFIER_BIT = new Map<SemanticTokenModifier, number>(
 // make. User components and host tags carry no modifiers.
 const DEFAULT_LIBRARY_BIT = MODIFIER_BIT.get('defaultLibrary') ?? 0;
 const BUILTIN_SET = new Set<string>(BUILTIN_COMPONENTS);
+
+// The name declared by a reactive keyword carries `reactive` (+ `declaration`), so themes can
+// colour a component's reactive surface distinctly from plain variables.
+const REACTIVE_DECL_BITS = (MODIFIER_BIT.get('reactive') ?? 0) | (MODIFIER_BIT.get('declaration') ?? 0);
+
+/** Body-item kinds that declare a reactive name (effect declares none). */
+const REACTIVE_KINDS = new Set(['state', 'derived', 'deferred', 'resource', 'stream', 'store', 'selector', 'form']);
 
 // The 2020 classifier (`SemanticClassificationFormat.TwentyTwenty`) packs each
 // span's classification as `((tokenType + 1) << typeOffset) | modifierBitset`,
@@ -91,11 +98,53 @@ export function getSemanticTokens(ctx: RequestContext): SemanticTokens
         }
     }
 
+    // Before the TS pass, so the classifier's plain `variable` token for the same name yields to
+    // the reactive-marked one (the TS pass skips spans already owned by earlier tokens).
+    collectReactiveDeclTokens(ctx, tokens);
+
     collectScriptTokens(ctx, tokens);
     collectImportTokens(ctx, tokens);
 
     tokens.sort((a, b) => a.offset - b.offset);
     return { data: encode(ctx, tokens) };
+}
+
+/**
+ * Emits a `variable` token with the `reactive` (+ `declaration`) modifiers for every name declared
+ * by a reactive keyword (`state count`, `form login`, ...), so themes can colour a component's
+ * reactive surface distinctly from plain variables. `effect` declares no name and contributes
+ * nothing; a source that fails to parse contributes nothing (diagnostics own that case).
+ */
+function collectReactiveDeclTokens(ctx: RequestContext, tokens: RawToken[]): void
+{
+    let module: ReturnType<typeof parseModule>;
+    try
+    {
+        module = parseModule(ctx.source);
+    }
+    catch
+    {
+        return;
+    }
+    for (const item of module.items)
+    {
+        if (item.kind !== 'component')
+        {
+            continue;
+        }
+        for (const decl of item.body)
+        {
+            if (REACTIVE_KINDS.has(decl.kind) && 'nameStart' in decl && 'nameEnd' in decl)
+            {
+                tokens.push({
+                    offset: decl.nameStart,
+                    length: decl.nameEnd - decl.nameStart,
+                    type: 'variable',
+                    modifiers: REACTIVE_DECL_BITS
+                });
+            }
+        }
+    }
 }
 
 /**

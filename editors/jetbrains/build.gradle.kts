@@ -52,6 +52,20 @@ intellijPlatform {
             untilBuild = provider { null }
         }
     }
+
+    // CI gate: the JetBrains Plugin Verifier checks binary compatibility, plugin.xml
+    // structure, and internal/deprecated API usage against the pinned target IDE -
+    // failures compileKotlin alone cannot catch. Pinned to the same build the plugin
+    // compiles against so the verification matches what we actually target (and the
+    // download caches alongside it).
+    pluginVerification {
+        ides {
+            create(
+                providers.gradleProperty("platformType"),
+                providers.gradleProperty("platformVersion")
+            )
+        }
+    }
 }
 
 // --- Bundle the AzerothJS language server INTO the plugin so it is fully

@@ -29,6 +29,13 @@ jobs:
             -   name: Initialize CodeQL
                 uses: github/codeql-action/init@v4
                 with:
+                    # java-kotlin was evaluated for editors/jetbrains and DECLINED: CodeQL's
+                    # Kotlin analysis needs a working Gradle build inside the CodeQL runner,
+                    # which for this plugin means resolving the ~1.5 GB pinned IntelliJ
+                    # Platform on every weekly run - for ~10 Kotlin UI-adapter files with no
+                    # untrusted-input surface. The security-relevant code (parser/compiler/
+                    # language server operating on untrusted source text) is all TypeScript
+                    # and fully covered below.
                     languages: javascript-typescript
                     # security-and-quality adds maintainability/correctness queries on top
                     # of the default security set - useful for a parser/compiler that runs

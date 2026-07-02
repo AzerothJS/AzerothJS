@@ -131,7 +131,13 @@ describe('azeroth() plugin — emitDeclarations mirror', () =>
             const text = readFileSync(plain, 'utf8');
             expect(text).toContain('C');
             expect(text).toContain('export default');
-            expect(readFileSync(explicit, 'utf8')).toBe(text);
+            // Each name form carries a declaration map pointing back at the REAL `.azeroth` source,
+            // so an editor's go-to-definition lands on the component, not inside the mirror.
+            expect(text).toContain('sourceMappingURL=Widget.d.ts.map');
+            expect(readFileSync(explicit, 'utf8')).toContain('sourceMappingURL=Widget.azeroth.d.ts.map');
+            const map = JSON.parse(readFileSync(plain + '.map', 'utf8')) as { sources: string[]; mappings: string };
+            expect(map.sources).toEqual(['../../Widget.azeroth']);
+            expect(map.mappings.length).toBeGreaterThan(0);
             // The source directory stays clean - nothing written beside Widget.azeroth.
             expect(existsSync(join(dir, 'Widget.d.ts'))).toBe(false);
         }

@@ -1,0 +1,6 @@
+import Widget from './Widget.azeroth';
+
+export default component Consumer
+{
+    <div><Widget gold={5}/></div>
+}
