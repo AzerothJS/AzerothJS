@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/component",
-    "version": "0.6.0-beta.1",
+    "version": "0.7.0-beta.1",
     "engines": { "node": ">=20" },
     "description": "AzerothJS component system — defineComponent, AzerothComponent, lifecycle hooks",
     "type": "module",
@@ -30,7 +30,7 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.6.0-beta.1"
+        "@azerothjs/reactivity": "0.7.0-beta.1"
     },
     "publishConfig":
     {

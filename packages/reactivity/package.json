@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/reactivity",
-    "version": "0.6.0-beta.1",
+    "version": "0.7.0-beta.1",
     "engines": { "node": ">=20" },
     "description": "AzerothJS fine-grained reactivity — signals, effects, memos, batch, untrack",
     "type": "module",

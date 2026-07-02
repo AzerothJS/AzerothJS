@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/renderer",
-    "version": "0.6.0-beta.1",
+    "version": "0.7.0-beta.1",
     "engines": { "node": ">=20" },
     "description": "AzerothJS DOM renderer — h(), Show, For, Switch, Portal, Dynamic, classList, styleMap",
     "type": "module",
@@ -30,8 +30,8 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.6.0-beta.1",
-        "@azerothjs/component": "0.6.0-beta.1"
+        "@azerothjs/reactivity": "0.7.0-beta.1",
+        "@azerothjs/component": "0.7.0-beta.1"
     },
     "publishConfig":
     {

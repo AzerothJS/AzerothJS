@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/server",
-    "version": "0.6.0-beta.1",
+    "version": "0.7.0-beta.1",
     "engines": { "node": ">=20" },
     "description": "AzerothJS server-side rendering — renderToString, renderToStaticMarkup, renderToDocument (pure string emitter, hydration-ready)",
     "type": "module",
@@ -30,8 +30,8 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.6.0-beta.1",
-        "@azerothjs/renderer": "0.6.0-beta.1"
+        "@azerothjs/reactivity": "0.7.0-beta.1",
+        "@azerothjs/renderer": "0.7.0-beta.1"
     },
     "publishConfig":
     {

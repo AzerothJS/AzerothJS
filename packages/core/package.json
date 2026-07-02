@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/core",
-    "version": "0.6.0-beta.1",
+    "version": "0.7.0-beta.1",
     "engines": { "node": ">=20" },
     "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
     "type": "module",
@@ -30,13 +30,13 @@
     },
     "dependencies":
     {
-        "@azerothjs/reactivity": "0.6.0-beta.1",
-        "@azerothjs/renderer": "0.6.0-beta.1",
-        "@azerothjs/component": "0.6.0-beta.1",
-        "@azerothjs/server": "0.6.0-beta.1",
-        "@azerothjs/store": "0.6.0-beta.1",
-        "@azerothjs/form": "0.6.0-beta.1",
-        "@azerothjs/router": "0.6.0-beta.1"
+        "@azerothjs/reactivity": "0.7.0-beta.1",
+        "@azerothjs/renderer": "0.7.0-beta.1",
+        "@azerothjs/component": "0.7.0-beta.1",
+        "@azerothjs/server": "0.7.0-beta.1",
+        "@azerothjs/store": "0.7.0-beta.1",
+        "@azerothjs/form": "0.7.0-beta.1",
+        "@azerothjs/router": "0.7.0-beta.1"
     },
     "publishConfig":
     {
