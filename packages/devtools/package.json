@@ -1,6 +1,7 @@
 {
     "name": "@azerothjs/devtools",
     "version": "0.7.0-beta.1",
+    "engines": { "node": ">=24" },
     "description": "AzerothJS devtools — tabbed in-page panel (tree, dependency graph, timeline, performance) plus an embeddable agent",
     "type": "module",
     "main": "./dist/index.js",

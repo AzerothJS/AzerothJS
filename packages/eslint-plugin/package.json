@@ -46,7 +46,7 @@
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "engines": { "node": ">=18" },
+    "engines": { "node": ">=24" },
     "repository":
     {
         "type": "git",

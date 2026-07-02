@@ -1,7 +1,7 @@
 {
     "name": "@azerothjs/testing",
     "version": "0.7.0-beta.1",
-    "engines": { "node": ">=20" },
+    "engines": { "node": ">=24" },
     "description": "AzerothJS testing utilities — auto-disposing mounts, subscriber leak guards, event helpers",
     "type": "module",
     "main": "./dist/index.js",
