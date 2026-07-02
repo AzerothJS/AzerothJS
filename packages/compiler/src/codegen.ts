@@ -38,7 +38,7 @@ import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
-import { RUNTIME_FN } from './keyword-spec.ts';
+import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY } from './keyword-spec.ts';
 import { rewriteReactive, setterName } from './rewrite.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
@@ -328,7 +328,9 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
         propAliases: analysis.propAliases,
         // `form` declarations: a field read `f.name` becomes `f.values().name`, a write `f.name = v` becomes
         // `f.setValue('name', v)` (so `bind:value={f.name}` works); FormApi access (`f.errors()`) is untouched.
-        forms: analysis.forms
+        forms: analysis.forms,
+        // Array-form `<For>` row variables: `row.name` becomes `row.form.values().name` (through `.form`).
+        rowForms: analysis.rowForms
     };
 
     const lines: string[] = [];
@@ -364,9 +366,23 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const withObj = item.optionsStart !== null && item.optionsEnd !== null
                 ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources)
                 : null;
-            emit.used.add(RUNTIME_FN.form);
-            const config = withObj !== null ? `{ initial: (${ initial }), ...(${ withObj }) }` : `{ initial: (${ initial }) }`;
-            lines.push(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`);
+            if (item.isArray)
+            {
+                // `form NAME[] = { ...blankRow } [with { ... }]` -> a `createFieldArray` declaration: the
+                // `= { ... }` value is the BLANK row (wrapped in a `blank` thunk), and the `with { ... }`
+                // object supplies validate/validateArray/etc. Read explicitly (NAME.rows()/NAME.append()).
+                emit.used.add(RUNTIME_FN_FIELD_ARRAY);
+                const config = withObj !== null
+                    ? `{ blank: () => (${ initial }), ...(${ withObj }) }`
+                    : `{ blank: () => (${ initial }) }`;
+                lines.push(`const ${ item.name } = ${ RUNTIME_FN_FIELD_ARRAY }(${ config });`);
+            }
+            else
+            {
+                emit.used.add(RUNTIME_FN.form);
+                const config = withObj !== null ? `{ initial: (${ initial }), ...(${ withObj }) }` : `{ initial: (${ initial }) }`;
+                lines.push(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`);
+            }
         }
         else if (item.kind === 'resource' || item.kind === 'stream' || item.kind === 'store' || item.kind === 'selector')
         {

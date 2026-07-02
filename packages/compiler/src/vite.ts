@@ -16,8 +16,8 @@
  * @see {@link azeroth} - the plugin factory
  */
 
-import { readdirSync, type Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, type Dirent } from 'node:fs';
+import { join, relative, dirname } from 'node:path';
 
 import type { Plugin } from 'vite';
 
@@ -26,7 +26,14 @@ import { buildLineStarts, locationFor } from './sourcemap.ts';
 import { generateModule } from './codegen.ts';
 import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
 import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
+import { emitDeclarations } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
+
+/**
+ * Directory (under the project root) that holds the generated `.azeroth` type projections. Nested
+ * under `.azeroth/` so that folder can namespace other generated `.azeroth` tooling output in future.
+ */
+const DECLARATIONS_DIR = '.azeroth/types';
 
 /** Options for the AzerothJS Vite plugin. */
 export interface AzerothPluginOptions
@@ -44,6 +51,70 @@ export interface AzerothPluginOptions
      * checked with its own TypeScript Program (a shared incremental Program is a future optimization).
      */
     typeCheck?: boolean;
+
+    /**
+     * Emit a TypeScript projection of every `.azeroth` file so `.ts`/`.js` files that import them
+     * resolve and type-check WITHOUT any editor plugin - in WebStorm/JetBrains as well as plain `tsc`.
+     * **Default: `false`.**
+     *
+     * This is the same technique Vue (Volar) and Svelte (`svelte2tsx`) use - a TypeScript view of each
+     * component that carries its real exported types - except those keep it in memory inside a language
+     * server the IDE ships. WebStorm exposes no third-party API to feed such a projection in-memory, so
+     * this writes the identical {@link emitDeclarations} projection to a hidden `.azeroth/types/` mirror
+     * under the project root. Point TypeScript at it with `rootDirs` so imports resolve across the two:
+     *
+     *     // tsconfig.json
+     *     { "compilerOptions": { "rootDirs": [".", "./.azeroth/types"] } }
+     *
+     * The mirror is generated - add `.azeroth/` to `.gitignore`. It is refreshed at `buildStart` and on
+     * every transform/HMR edit, and only written when a projection actually changes.
+     */
+    emitDeclarations?: boolean;
+}
+
+/** Writes `content` to `dtsPath` only when it differs, so the dev-server watcher does not churn. */
+function writeIfChanged(dtsPath: string, content: string): void
+{
+    let prev: string | null;
+    try
+    {
+        prev = readFileSync(dtsPath, 'utf8');
+    }
+    catch
+    {
+        prev = null;
+    }
+    if (prev !== content)
+    {
+        writeFileSync(dtsPath, content);
+    }
+}
+
+/**
+ * Writes the TypeScript projection for one `.azeroth` module into the hidden `.azeroth-types/` mirror,
+ * preserving its path relative to the project root so `rootDirs` lines the two trees up. Two names are
+ * written so both import conventions resolve (a project uses one; the other is inert):
+ *   - `<mirror>/<rel>.d.ts`          resolves EXTENSIONLESS imports      - `import X from './x'`
+ *   - `<mirror>/<rel>.azeroth.d.ts`  resolves EXPLICIT-extension imports - `import X from './x.azeroth'`
+ * A malformed source (already reported with a located error by the compile/type-check gate) is swallowed
+ * so declaration emit never crashes the build; any prior projection is left untouched.
+ */
+function writeDeclarationMirror(source: string, azerothFile: string, root: string, extension: string): void
+{
+    let dts: string;
+    try
+    {
+        dts = emitDeclarations(source, azerothFile);
+    }
+    catch
+    {
+        return;
+    }
+    const rel = relative(root, azerothFile);
+    const mirrorStem = join(root, DECLARATIONS_DIR, rel.slice(0, -extension.length));
+    mkdirSync(dirname(mirrorStem), { recursive: true });
+    writeIfChanged(mirrorStem + '.d.ts', dts);
+    writeIfChanged(mirrorStem + extension + '.d.ts', dts);
 }
 
 /**
@@ -101,7 +172,7 @@ export interface AzerothPluginOptions
  * Requires `vite` as a peer dependency at >= 6 (where `transformWithOxc` exists; vite 5 hard-crashes
  * the transform). HMR RESETS app state - there is no component-instance tree to preserve it.
  *
- * @param options - Plugin options (currently just `extension`)
+ * @param options - Plugin options (`extension`, `typeCheck`, `emitDeclarations`)
  * @returns A Vite {@link Plugin}
  * @see {@link AzerothPluginOptions}
  * @see {@link generateModule}
@@ -161,6 +232,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
 {
     const extension = options.extension ?? '.azeroth';
     const typeCheck = options.typeCheck ?? true;
+    const emitDecls = options.emitDeclarations ?? false;
     // ONE incremental type-checker for the whole build: it binds lib.d.ts once and reuses it across
     // every `.azeroth` file (lazily created on first use), instead of building a fresh ts.Program per
     // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
@@ -202,10 +274,21 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // instead of growing - and being incrementally rebuilt - as files are transformed one by one.
         buildStart()
         {
+            // Discover every `.azeroth` file once, then share the list between priming the checker and
+            // seeding the projection mirror - so a project-wide type-view exists before any `.ts` import
+            // resolves (WebStorm/tsc see it without waiting for each file to be transformed).
+            const files = (typeCheck || emitDecls) ? collectFiles(root, extension) : [];
             if (typeCheck)
             {
                 checker = createIncrementalChecker();
-                checker.prime(collectFiles(root, extension));
+                checker.prime(files);
+            }
+            if (emitDecls)
+            {
+                for (const file of files)
+                {
+                    writeDeclarationMirror(readFileSync(file, 'utf8'), file, root, extension);
+                }
             }
         },
 
@@ -216,6 +299,13 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             if (!filename.endsWith(extension))
             {
                 return null;
+            }
+
+            // Keep the projection mirror fresh on every edit (HMR), from the live source so it reflects
+            // the in-flight change. Only writes when the projection text actually changes.
+            if (emitDecls)
+            {
+                writeDeclarationMirror(code, filename, root, extension);
             }
 
             // Lint before compiling: the rules catch mistakes the type

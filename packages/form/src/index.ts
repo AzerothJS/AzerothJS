@@ -10,9 +10,11 @@
  * passes on empty values, so combine() produces sensible errors regardless of ordering. phone() plus
  * the countries dataset/getCountry cover international phone input without a libphonenumber dependency.
  *
- * NOT IN V1: async validators (compose with createResource for now), checkbox/radio/select register
- * variants (use setValue), field-array helpers (compose manually with For), and cross-field validation
- * (a top-level validateForm). Every symbol below is documented at its definition.
+ * Cross-field rules go in a top-level validateForm (the whole typed snapshot -> a partial error map);
+ * per-field server checks go in validateAsync (debounced, AbortSignal-cancelled, awaited on submit). A
+ * dynamic list of repeated sub-forms is createFieldArray (one createForm per row + add/remove/reorder). NOT
+ * IN V1: checkbox/radio/select register variants (use setValue). Every symbol below is documented at its
+ * definition.
  */
 
 export { createForm } from './create-form.ts';
@@ -20,8 +22,16 @@ export type {
     FormConfig,
     FormApi,
     FieldValidator,
+    AsyncFieldValidator,
     RegisteredFieldProps
 } from './create-form.ts';
+
+export { createFieldArray } from './field-array.ts';
+export type {
+    FieldArrayConfig,
+    FieldArrayApi,
+    FieldArrayRow
+} from './field-array.ts';
 
 export {
     required,

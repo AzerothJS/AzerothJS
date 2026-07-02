@@ -41,6 +41,17 @@ export interface ReactiveSources
      * (`name.errors()`, `name.handleSubmit`, ...) are NOT fields, so they are left untouched.
      */
     forms?: ReadonlyMap<string, ReadonlySet<string>>;
+
+    /**
+     * Array-form ROW variables: the `<For>` row binding name -> its field-key set (the blank row's keys).
+     * Bound when a For iterates an array-form (`<For each={items.rows()}>{(row) => ...}`). A FIELD read
+     * `row.field` rewrites to `row.form.values().field` and a write `row.field = v` to
+     * `row.form.setValue('field', v)` - the same as a `form` field, but through the row's `.form`. Kept
+     * SEPARATE from `forms` so the row variable (a For arrow param) is not treated as a shadowing local by
+     * the scope walker. `row.key` / `row.form` / FormApi access (`row.form.errors()`) are not fields and
+     * stay untouched.
+     */
+    rowForms?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /** One resolved reactive dependency. */

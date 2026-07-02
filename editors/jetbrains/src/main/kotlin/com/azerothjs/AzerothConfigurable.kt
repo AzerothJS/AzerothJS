@@ -6,7 +6,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
-import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.panel as dslPanel
 
 /**
  * The AzerothJS settings page (Settings > Languages & Frameworks > AzerothJS).
@@ -18,8 +18,10 @@ class AzerothConfigurable : BoundConfigurable("AzerothJS")
 {
     private val s = AzerothSettings.instance.data
 
-    override fun createPanel(): DialogPanel = panel
-    {
+    // `dslPanel` is the Kotlin UI DSL builder (aliased on import): in recent platform versions
+    // `BoundConfigurable`/`DslConfigurableBase` gained a private `panel` member that shadows the
+    // unqualified builder function, so the alias keeps this resolving to the real DSL entry point.
+    override fun createPanel(): DialogPanel = dslPanel {
         group("Language server")
         {
             row("Node.js path:")

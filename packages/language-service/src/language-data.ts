@@ -282,19 +282,30 @@ export const KEYWORD_DOCS: Record<string, string> =
     form:
         '**`form`** - reactive form\n\n' +
         'Declares a form (lowers to `createForm`). The `= { ... }` value is the initial field set; an optional ' +
-        '`with { validate, onSubmit }` clause adds validators and the submit handler. A FIELD reads as `name.field` ' +
-        'and writes via `name.field = v` - so `bind:value={name.field}` works - while `name.errors()`, ' +
-        '`name.submitting()`, and `name.handleSubmit` expose the rest of the form API.\n\n' +
+        '`with { ... }` clause adds `validate` (per-field), `validateForm` (cross-field), `validateAsync` ' +
+        '(debounced server checks), and `onSubmit`. A FIELD reads as `name.field` and writes via ' +
+        '`name.field = v` - so `bind:value={name.field}` works - while `name.errors()`, `name.touched()`, ' +
+        '`name.validating()`, `name.submitting()`, and `name.handleSubmit` expose the rest of the form API.\n\n' +
         '```azeroth\nform login = { email: \'\', password: \'\' } with {\n' +
         '    validate: { email: combine(required(), email()) },\n' +
         '    onSubmit: async (values) => { await signIn(values); }\n};\n\n' +
         '<form onSubmit={login.handleSubmit}>\n' +
-        '    <Input bind:value={login.email} error={login.errors().email} />\n</form>\n```',
+        '    <input bind:value={login.email} />\n</form>\n```\n\n' +
+        '**`form name[]`** - array-form: a dynamic list of repeated sub-forms (lowers to `createFieldArray`). ' +
+        'The `= { ... }` value is the BLANK row; `with { ... }` carries `initial` rows, per-row `validate`, ' +
+        'and the array-level `validateArray`. The name is read explicitly (`name.rows()`, `name.append()`, ' +
+        '`name.remove(i)`, `name.values()`, `name.isValid()`). Rows render through `<For>` and a row field ' +
+        'binds with `bind:value={row.field}`.\n\n' +
+        '```azeroth\nform items[] = { qty: 1, price: 0 } with {\n' +
+        '    validateArray: (rows) => rows.length ? null : \'Add one\'\n};\n\n' +
+        '<For each={items.rows()} key={(item) => item.key}>\n' +
+        '    {(item, i) => <input type="number" bind:value={item.qty} />}\n</For>\n```',
     with:
         '**`with`** - reactive options clause\n\n' +
-        'Attaches an options object to a `state`, `derived`, `deferred`, `effect`, `watch`, `resource`, `stream`, or ' +
-        '`selector`. It is passed straight to the underlying primitive - e.g. a custom `equals` comparator, a debug ' +
-        '`name`, or a resource/stream `source`.\n\n' +
+        'Attaches an options object to a `state`, `derived`, `deferred`, `effect`, `watch`, `resource`, `stream`, ' +
+        '`selector`, or `form`. It supplies the underlying primitive\'s options - e.g. a custom `equals` comparator, ' +
+        'a debug `name`, a resource/stream `source`, or a form\'s `validate`/`validateForm`/`onSubmit`. Hover the ' +
+        '`with` keyword to see exactly which options the enclosing declaration accepts.\n\n' +
         '```azeroth\nstate point = { x: 0 } with { equals: (a, b) => a.x === b.x };\n\neffect with { name: \'sync\' }\n{\n    save(data);\n}\n```'
 };
 
@@ -359,6 +370,20 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     selector:
     [
         { name: 'equals', type: '(prev: T, next: T) => boolean', doc: 'Custom equality for detecting a selection change. Defaults to `Object.is`.' }
+    ],
+    // The `form` keyword covers BOTH a flat form (createForm) and an array-form `form name[]`
+    // (createFieldArray). This one list offers every option either accepts; the projection type-checks the
+    // actual usage (`onSubmit` is flat-only; `initial`/`validateArray` are array-only), so an inapplicable
+    // key surfaces there. Shared: validate / validateForm / validateAsync / asyncDebounceMs.
+    form:
+    [
+        { name: 'validate', type: '{ [K in keyof T]?: (value: T[K]) => string | null }', doc: 'Per-field sync validators. A field without one is always valid. Runs on every change and on submit.' },
+        { name: 'validateForm', type: '(values: T) => { [K in keyof T]?: string | null }', doc: 'Cross-field sync validation over the whole snapshot (password confirm, `end >= start`). Returns a partial field -> error map; a per-field error wins over a cross-field one.' },
+        { name: 'validateAsync', type: '{ [K in keyof T]?: (value, signal: AbortSignal) => Promise<string | null> }', doc: 'Per-field async validators (server checks). Run after the sync validators pass, debounced, with an AbortSignal that cancels superseded requests; awaited on submit.' },
+        { name: 'asyncDebounceMs', type: 'number', doc: 'Debounce (ms) before an async validator fires after the value settles. Default `300`.' },
+        { name: 'onSubmit', type: '(values: T) => void | Promise<void>', doc: 'Flat form only. Called with the values snapshot when validation passes; may return a Promise (`submitting()` is true for its duration).' },
+        { name: 'initial', type: 'T[]', doc: 'Array-form only. The starting rows. Each row is a `createForm` of the blank shape.' },
+        { name: 'validateArray', type: '(rows: T[]) => string | null', doc: 'Array-form only. A rule over the whole list (min/max length, no duplicates). Surfaced as `name.error()`.' }
     ]
 };
 
@@ -383,7 +408,8 @@ export const KEYWORD_WITH_EXAMPLE: Record<string, string> =
     watch: 'watch (count) with { defer: true }\n{\n    log(count);\n}',
     resource: 'resource user = (id) => fetchUser(id) with { source: selectedId };',
     stream: 'stream feed = (id) => openFeed(id) with { source: channelId, parse: \'sse\' };',
-    selector: 'selector isActive = activeId with { equals: Object.is };'
+    selector: 'selector isActive = activeId with { equals: Object.is };',
+    form: 'form login = { email: \'\', password: \'\' } with {\n    validate: { email: combine(required(), email()) },\n    onSubmit: async (values) => { await signIn(values); }\n};'
 };
 
 /** The `with { ... }` usage example for a keyword, or undefined when it takes no options. */

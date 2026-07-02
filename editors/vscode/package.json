@@ -338,8 +338,8 @@
     "devDependencies":
     {
         "@azerothjs/language-server": "0.6.0-beta.1",
-        "vscode-languageclient": "^9",
-        "@types/vscode": "^1.84.0"
+        "vscode-languageclient": "^10",
+        "@types/vscode": "^1.125.0"
     },
     "scripts":
     {

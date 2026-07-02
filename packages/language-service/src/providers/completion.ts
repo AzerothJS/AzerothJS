@@ -16,7 +16,7 @@ import {
     type CompletionItem,
     type CompletionItemKindValue
 } from '../protocol.ts';
-import { classifyPosition, enclosingElement, withClauseKeyword, type PositionContext } from '../markup-model.ts';
+import { classifyPosition, enclosingElement, withClauseAt, type PositionContext } from '../markup-model.ts';
 import {
     BUILTIN_COMPONENTS,
     BUILTIN_COMPONENT_MAP,
@@ -164,14 +164,15 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
                 return styleMapItems;
             }
 
-            // Inside a keyword's `with { ... }` clause: offer exactly that keyword's
-            // options (each keyword differs - `state`/`derived` take SignalOptions,
-            // `effect` an EffectOptions, `watch` `defer`, ...). The options object is
-            // dropped from the projection, so TypeScript offers nothing useful here.
-            const withKeyword = withClauseKeyword(ctx.source, offset);
-            if (withKeyword !== null)
+            // At an OPTION-KEY position inside a keyword's `with { ... }` clause: offer exactly that keyword's
+            // options (each keyword differs - `state`/`derived` take SignalOptions, `effect` an EffectOptions,
+            // `form` validate/validateForm/onSubmit, ...). Only fire at a KEY position (`atOptionKey`); inside
+            // a value expression (e.g. `validateForm: (values) => values.|`) fall through to TypeScript so it
+            // completes members of the typed value - the form config IS projected, so `values` is typed `T`.
+            const withClause = withClauseAt(ctx.source, offset);
+            if (withClause !== null && withClause.atOptionKey)
             {
-                const withOptions = keywordOptions(withKeyword);
+                const withOptions = keywordOptions(withClause.keyword);
                 if (withOptions && withOptions.length > 0)
                 {
                     return withOptions.map(optionCompletion);
@@ -295,6 +296,7 @@ const KEYWORD_SNIPPETS: readonly { label: string; detail: string; insertText: st
     { label: 'store', detail: 'per-render store', insertText: 'store ${1:name} = { ${0} };' },
     { label: 'selector', detail: 'keyed selection', insertText: 'selector ${1:name} = ${0:sourceSignal};' },
     { label: 'form', detail: 'reactive form', insertText: 'form ${1:name} = { ${0} } with {\n    onSubmit: async (values) => {}\n};' },
+    { label: 'form[]', detail: 'array-form (list of sub-forms)', insertText: 'form ${1:name}[] = { ${0} } with {\n    validateArray: (rows) => rows.length ? null : \'Add one\'\n};' },
     { label: 'component', detail: 'component declaration', insertText: 'component ${1:Name}(props: ${2:Props})\n{\n    ${0}\n}' },
     { label: 'batch', detail: 'batched writes', insertText: 'batch\n{\n    ${0}\n}' },
     { label: 'untrack', detail: 'read without tracking', insertText: 'untrack\n{\n    ${0}\n}' },

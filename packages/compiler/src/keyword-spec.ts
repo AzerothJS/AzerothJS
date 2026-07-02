@@ -56,6 +56,13 @@ export const RUNTIME_FN: Record<Exclude<ConstructKind, 'wrapper'>, string> =
     watch: 'on'
 };
 
+/**
+ * The runtime helper an ARRAY-form (`form NAME[] = ...`) lowers to. Not keyed by {@link ConstructKind}
+ * because an array-form shares the `form` kind (distinguished by the declaration's `isArray` flag) yet
+ * lowers to a different helper than a flat `form`.
+ */
+export const RUNTIME_FN_FIELD_ARRAY = 'createFieldArray';
+
 /** A factory keyword kind. */
 export type FactoryKind = 'resource' | 'stream' | 'store' | 'selector' | 'form';
 

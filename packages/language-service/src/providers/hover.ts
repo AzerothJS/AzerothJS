@@ -430,8 +430,15 @@ function withOptionHover(ctx: RequestContext, offset: number): Hover | null
     };
 }
 
-/** Keywords whose construct is followed by a declared NAME (`state x`, `component App`). */
-const NAME_KEYWORDS = new Set(['component', 'state', 'derived', 'deferred']);
+/**
+ * Keywords whose construct is followed by a declared NAME (`state x`, `component App`, `form login`,
+ * `resource user`). Includes the factory declarations (resource/stream/store/selector/form) - each is
+ * `<keyword> <name> = ...`, so its hover must accept a following name, not require an opening `{`.
+ */
+const NAME_KEYWORDS = new Set([
+    'component', 'state', 'derived', 'deferred',
+    'resource', 'stream', 'store', 'selector', 'form'
+]);
 
 /**
  * Hover for an AzerothJS authoring keyword under the caret, or null. The word is
@@ -491,6 +498,19 @@ function keywordHover(ctx: RequestContext, offset: number): Hover | null
         return null;
     }
 
+    // Hovering `with` documents the OWNING declaration's options clause specifically (peeked just inside its
+    // `{`): its own description, option list, and a matching example - `form ... with` shows the form's, an
+    // `effect with` shows the effect's, and so on. A bare/unresolved `with` falls back to the generic blurb.
+    if (word === 'with')
+    {
+        const owner = withClauseKeyword(ctx.source, after + 1);
+        const contents = owner !== null && owner !== 'with'
+            ? `**\`with\`** - \`${ owner }\` options\n\n`
+              + `The options clause for this \`${ owner }\` declaration - passed to the \`${ owner }\` primitive it lowers to.`
+              + withOptionsSection(owner)
+            : doc;
+        return { contents, range: ctx.lineIndex.rangeAt(start, end) };
+    }
     return { contents: doc + withOptionsSection(word), range: ctx.lineIndex.rangeAt(start, end) };
 }
 

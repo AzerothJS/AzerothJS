@@ -6,6 +6,9 @@
 // transform is invoked directly with a mock plugin context (the real Rollup/Vite context's
 // error() throws; warn() reports) - the error path short-circuits before any vite import.
 import { describe, it, expect, vi } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { azeroth } from '@azerothjs/compiler';
 
 type TransformFn = (this: unknown, code: string, id: string) => Promise<unknown>;
@@ -97,5 +100,60 @@ describe('azeroth() plugin — type-check gate (on by default)', () =>
         const transform = azeroth().transform as unknown as TransformFn;
         const source = 'component C { state count = 0; <button onClick={() => count++}>x</button> }';
         await expect(transform.call(throwingCtx(), source, '/X.azeroth')).resolves.toBeTruthy();
+    });
+});
+
+describe('azeroth() plugin — emitDeclarations mirror', () =>
+{
+    // With emitDeclarations on, the plugin writes a TypeScript projection of each `.azeroth` file into
+    // a hidden `.azeroth/types/` mirror under the project root (never beside the source), so `.ts`
+    // imports resolve + type-check without an editor plugin. OFF by default (opt-in).
+    const ctx = { warn: vi.fn(), error: (m: unknown): never =>
+    {
+        throw new Error(String(m));
+    } };
+    const source = 'export default component C { state count = 0; <button onClick={() => count++}>{count}</button> }';
+
+    it('writes the projection into .azeroth/types/ (both name forms), never beside the source', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-dts-'));
+        try
+        {
+            const plugin = azeroth({ emitDeclarations: true, typeCheck: false });
+            (plugin.configResolved as (r: { root?: string }) => void)({ root: dir });
+            await (plugin.transform as unknown as TransformFn).call(ctx, source, join(dir, 'Widget.azeroth'));
+            // `Widget.d.ts` resolves `import W from './Widget'`; `Widget.azeroth.d.ts` resolves the
+            // explicit `./Widget.azeroth` - both under the hidden mirror, not in the source tree.
+            const plain = join(dir, '.azeroth', 'types', 'Widget.d.ts');
+            const explicit = join(dir, '.azeroth', 'types', 'Widget.azeroth.d.ts');
+            expect(existsSync(plain)).toBe(true);
+            expect(existsSync(explicit)).toBe(true);
+            const text = readFileSync(plain, 'utf8');
+            expect(text).toContain('C');
+            expect(text).toContain('export default');
+            expect(readFileSync(explicit, 'utf8')).toBe(text);
+            // The source directory stays clean - nothing written beside Widget.azeroth.
+            expect(existsSync(join(dir, 'Widget.d.ts'))).toBe(false);
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('does NOT write a mirror by default (opt-in only)', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-dts-'));
+        try
+        {
+            const plugin = azeroth({ typeCheck: false });
+            (plugin.configResolved as (r: { root?: string }) => void)({ root: dir });
+            await (plugin.transform as unknown as TransformFn).call(ctx, source, join(dir, 'Widget.azeroth'));
+            expect(existsSync(join(dir, '.azeroth'))).toBe(false);
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

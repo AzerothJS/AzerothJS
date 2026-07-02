@@ -132,7 +132,20 @@ export function parseDeclarationSlice(
     // Slice the value part only - a trailing `with { ... }` options clause is not valid TS here, so it
     // is excluded (valueEnd sits just before `with`, or equals `end` when there is no clause).
     const raw = source.slice(decl.start, decl.valueEnd);
-    const text = replacement + raw.slice(keyword.length);
+    let text = replacement + raw.slice(keyword.length);
+
+    // An array-form (`form NAME[] = ...`) carries an `[]` between the name and `=` that is not valid in a
+    // variable declaration. Blank the two brackets with spaces (offset-preserving) so `NAME[]` parses as
+    // `NAME  ` and the initializer's source positions still map straight back.
+    if (decl.kind === 'form' && decl.isArray)
+    {
+        const open = text.indexOf('[', decl.nameEnd - decl.start);
+        const close = open === -1 ? -1 : text.indexOf(']', open);
+        if (open !== -1 && close !== -1)
+        {
+            text = `${ text.slice(0, open) } ${ text.slice(open + 1, close) } ${ text.slice(close + 1) }`;
+        }
+    }
 
     const sourceFile = parse(text);
     const mapPos = (p: number): number => decl.start + p;

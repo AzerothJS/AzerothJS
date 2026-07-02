@@ -1,0 +1,59 @@
+// Field arrays. The `form NAME[]` keyword declares a DYNAMIC list of repeated sub-forms - it lowers to
+// createFieldArray (one createForm per row) with append/remove/move plus aggregated values()/isValid()/
+// error(). The `= { ... }` is the BLANK row; `with { ... }` carries `initial` rows, per-row `validate`, and
+// the array-level `validateArray`. The name is read explicitly (members.rows()/append()/values()). Rows
+// render through <For> (keyed by the stable `member.key`); a row field two-way-binds straight to an input
+// with `bind:value={member.field}`, while the rest of the row API is explicit through `member.form`
+// (`member.form.errors()`, `member.form.touched()`). validateAll() reveals every row's errors, gating submit.
+import { required, email as emailRule, combine } from '@azerothjs/core';
+
+interface Member
+{
+    name: string;
+    email: string;
+}
+
+export default component TeamMembersForm(props: { onSave: (members: Member[]) => Promise<void> })
+{
+    form members[] = { name: '', email: '' } with
+    {
+        initial: [{ name: '', email: '' }],
+        validate:
+        {
+            name: required('Name is required'),
+            email: combine(required('Email is required'), emailRule('Enter a valid email address'))
+        },
+        validateArray: (rows) => rows.length === 0 ? 'Add at least one team member' : null
+    };
+
+    async function save(event: Event)
+    {
+        event.preventDefault();
+        if (!members.validateAll())
+        {
+            return;
+        }
+        await props.onSave(members.values());
+    }
+
+    <form onSubmit={save}>
+        <For each={members.rows()} key={(member) => member.key}>
+            {(member, index) =>
+                <fieldset>
+                    <input placeholder="Name" bind:value={member.name} />
+                    <Show when={member.form.touched().name}><span class="field-error">{member.form.errors().name}</span></Show>
+
+                    <input type="email" placeholder="Email" bind:value={member.email} />
+                    <Show when={member.form.touched().email}><span class="field-error">{member.form.errors().email}</span></Show>
+
+                    <button type="button" onClick={() => members.remove(index())}>Remove</button>
+                </fieldset>
+            }
+        </For>
+
+        <Show when={members.error()}><p class="field-error">{members.error()}</p></Show>
+
+        <button type="button" onClick={() => members.append()}>Add member</button>
+        <button type="submit" disabled={!members.isValid()}>Save team</button>
+    </form>
+}

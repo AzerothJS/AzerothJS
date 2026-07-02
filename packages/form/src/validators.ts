@@ -16,10 +16,11 @@
  * makes that assignable to any narrower FieldValidator<V> slot, so combine(required(), email()) infers
  * V = string (what the email field expects) with no casts. combine() narrows to the strictest member.
  *
- * NOT IN V1: async validators (await the async-validation contract), cross-field validation (await a
- * top-level validateForm), and i18n message bundles (the per-call message override covers the common
- * case). Each public factory below carries its own concise JSDoc + example; isEmpty/EMAIL_REGEX are
- * @internal.
+ * SCOPE: each validator here checks ONE field's value in isolation. Cross-field rules (password confirm,
+ * date ranges) live in createForm's top-level `validateForm`, which sees the whole values snapshot - so
+ * these stay single-argument and trivially composable. NOT IN V1: async validators (compose createResource
+ * externally) and i18n message bundles (the per-call message override covers the common case). Each public
+ * factory below carries its own concise JSDoc + example; isEmpty/EMAIL_REGEX are @internal.
  */
 
 import type { FieldValidator } from './create-form.ts';

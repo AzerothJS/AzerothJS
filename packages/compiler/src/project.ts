@@ -360,12 +360,13 @@ export function generateVirtualCode(source: string): VirtualCode
     };
 
     /**
-     * Emits a component's markup children as a function VALUE (the per-row builder for `For`, a slot's
-     * content thunk, ...) handed to the type-neutral `__azRender(...)`. This is NOT the `children` prop (that
-     * is the sound `...__children` spread); its purpose is to PROJECT the child markup - so imports used
-     * only inside children count as used and the child gets IntelliSense - without checking it against the
-     * parent's `children` type. `__azRender`'s `(...args: any[]) => unknown` signature widens a render
-     * callback's params to `any`, avoiding both implicit-any noise and brittle generic inference.
+     * Emits a component's MARKUP children as a function VALUE (a slot's content thunk, a `Show`/`Match` body)
+     * handed to the type-neutral `__azRender(...)`. This is NOT the `children` prop (that is the sound
+     * `...__children` spread); its purpose is to PROJECT the child markup - so imports used only inside
+     * children count as used and the child gets IntelliSense - without checking it against the parent's
+     * `children` type. A RENDER-CALLBACK child does not come here at all: `emitNode` passes it as the real
+     * typed `children:` prop so its parameters infer from the component's signature (e.g. `For`'s
+     * `(item, index)`). So the only values `__azRender` receives are no-arg markup thunks (`() => unknown`).
      */
     // When `guard` is set (a `Show`/`Match` `when` span), the children value is emitted under
     // `(<when>) ? (<children>) : null` so TypeScript NARROWS the guarded expression inside the children -
@@ -399,23 +400,16 @@ export function generateVirtualCode(source: string): VirtualCode
             const only = children[0];
             if (only.kind === 'expression')
             {
+                // A single non-callback child (a value, a no-arg thunk, an IIFE `(() => ...)()`) is wrapped
+                // in `() => (...)` so `__azRender` always receives a FUNCTION (a bare IIFE would otherwise
+                // pass its element RESULT). A render-callback child never reaches here - `emitNode` passes it
+                // as the typed `children:` prop instead.
                 const span = { start: only.start + 1, end: only.end - 1 };
-                // A render CALLBACK (`(item) => ...`) is passed straight to `__azRender`, whose
-                // `(...args: any[]) => unknown` signature widens its parameters to `any`. Anything else - an
-                // IIFE `(() => ...)()`, a value, a no-arg thunk - is wrapped in `() => (...)` so `__azRender`
-                // always receives a FUNCTION (a bare IIFE would otherwise pass its element RESULT).
-                if (isRenderCallback(source.slice(span.start, span.end).trim()))
-                {
-                    emitCode(span.start, span.end);
-                }
-                else
-                {
-                    builder.emit('() => (');
-                    guardOpen();
-                    emitCode(span.start, span.end);
-                    guardClose();
-                    builder.emit(')');
-                }
+                builder.emit('() => (');
+                guardOpen();
+                emitCode(span.start, span.end);
+                guardClose();
+                builder.emit(')');
                 return;
             }
             builder.emit('() => ');
@@ -437,6 +431,24 @@ export function generateVirtualCode(source: string): VirtualCode
         });
         builder.emit(']');
         guardClose();
+    };
+
+    // A component whose ONLY child is a render callback (`{(item, i) => ...}`, e.g. `<For>`): returns the
+    // callback's source span so it can be passed as the REAL typed `children:` prop. Returns null otherwise
+    // (markup children, multiple children, a value/thunk), which stay on the type-neutral __azRender path.
+    const onlyRenderCallback = (children: MarkupChild[]): Span | null =>
+    {
+        if (children.length !== 1)
+        {
+            return null;
+        }
+        const only = children[0]!;
+        if (only.kind !== 'expression')
+        {
+            return null;
+        }
+        const span = { start: only.start + 1, end: only.end - 1 };
+        return isRenderCallback(source.slice(span.start, span.end).trim()) ? span : null;
     };
 
     // The narrowing condition for a control-flow tag whose children type-check under it: the `when` span of
@@ -472,9 +484,33 @@ export function generateVirtualCode(source: string): VirtualCode
         if (node.isComponent)
         {
             const hasChildren = node.children.length > 0;
-            // Project the children through a type-neutral `__azRender(...)`, then the comma operator keeps
-            // the component CALL as the expression's value: `(__azRender(<children>), Comp({ ... }))`. For
-            // `Show`/`Match`, the `when` condition is threaded in as a NARROWING guard so the children
+            // Copy the tag identifier verbatim so go-to-definition, hover, and rename resolve the
+            // component symbol through TypeScript.
+            const tagStart = node.start + 1;
+
+            // A single render-callback child is passed as the REAL `children:` prop so TypeScript contextually
+            // types its parameters from the component's declared children signature (e.g. `For`'s
+            // `(item: T, index) => HTMLElement`), instead of the type-neutral __azRender projection that widens
+            // them to `any`. The callback BODY is still projected (imports register, IntelliSense works) since
+            // it is emitted in place. A component that does not declare a callable `children` correctly rejects
+            // a render-callback child. Markup children stay on the loose path below.
+            const renderChild = hasChildren ? onlyRenderCallback(node.children) : null;
+            if (renderChild)
+            {
+                builder.copy(tagStart, tagStart + node.tag.length, 'tag');
+                builder.emit('(');
+                emitProps(node.attributes, () =>
+                {
+                    builder.emit('children: ');
+                    emitCode(renderChild.start, renderChild.end);
+                }, false);
+                builder.emit(')');
+                return;
+            }
+
+            // Otherwise project the children through a type-neutral `__azRender(...)`, then the comma operator
+            // keeps the component CALL as the expression's value: `(__azRender(<children>), Comp({ ... }))`.
+            // For `Show`/`Match`, the `when` condition is threaded in as a NARROWING guard so the children
             // type-check with it narrowed (e.g. a `T | null` `when` is non-null inside).
             if (hasChildren)
             {
@@ -483,9 +519,6 @@ export function generateVirtualCode(source: string): VirtualCode
                 emitChildrenRender(node.children, narrowingGuard(node));
                 builder.emit('), ');
             }
-            // Copy the tag identifier verbatim so go-to-definition, hover, and rename resolve the
-            // component symbol through TypeScript.
-            const tagStart = node.start + 1;
             builder.copy(tagStart, tagStart + node.tag.length, 'tag');
             // Always a `Name({ ... })` call (never `Name()`), so a component with a REQUIRED props type is
             // checked: `<Card/>` -> `Card({})` surfaces the missing prop.
@@ -572,6 +605,32 @@ export function generateVirtualCode(source: string): VirtualCode
                         builder.emit('{}');
                     }
                 };
+                if (c.isArray)
+                {
+                    // `form NAME[] = { ...blankRow } [with { ... }]` projects to
+                    // `createFieldArray({ blank: () => ( ...blankRow ), <with-interior> })`, typed
+                    // `FieldArrayApi<T>`. Like a factory it reads explicitly (NAME.rows()/NAME.append()),
+                    // so there is no `& T` field-sugar half; row field access is sugared on the <For> row
+                    // variable instead.
+                    usedRuntime.add('createFieldArray');
+                    builder.emit('const ');
+                    builder.copy(c.nameStart, c.nameEnd, 'script');
+                    // Wrap with __azRowForm (declared in finalize) so `NAME.rows()` types each row as
+                    // `FieldArrayRow<R> & R`. Now that a `<For>` render-callback child is contextually typed
+                    // from `ForProps<FieldArrayRow<R> & R>`, that `& R` half is what types the row variable's
+                    // field access (`row.field`, `bind:value={row.field}`) - mirroring the runtime rewrite to
+                    // `row.form.values().field`. The createFieldArray config still type-checks (it is wrapped).
+                    builder.emit(' = __azRowForm(createFieldArray({ blank: () => (');
+                    emitInitial();
+                    builder.emit(')');
+                    if (c.optionsStart !== null && c.optionsEnd !== null)
+                    {
+                        builder.emit(', ');
+                        emitCode(c.optionsStart + 1, c.optionsEnd - 1);
+                    }
+                    builder.emit(' }));\n');
+                    return;
+                }
                 usedRuntime.add('createForm');
                 builder.emit('const ');
                 builder.copy(c.nameStart, c.nameEnd, 'script');
@@ -814,9 +873,11 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
     }
     if (usedRender)
     {
-        // Projects a component's children (for import-usage + IntelliSense) without type-checking them
-        // against the parent's `children` type; widens a render callback's params to `any`.
-        parts.push('declare function __azRender(render: (...args: any[]) => unknown): void;');
+        // Projects a component's MARKUP children (for import-usage + IntelliSense) without type-checking them
+        // against the parent's `children` type. A render-callback child does NOT go through here - it is
+        // passed as the real typed `children:` prop so its parameters infer from the component's signature -
+        // so the only values reaching __azRender are markup thunks / narrowing guards, hence `() => unknown`.
+        parts.push('declare function __azRender(render: () => unknown): void;');
     }
     for (const name of usedRuntime)
     {
@@ -825,7 +886,17 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
             parts.push(`declare const ${ name }: typeof import('${ RUNTIME_MODULE }').${ name };`);
         }
     }
-
+    if (usedRuntime.has('createFieldArray'))
+    {
+        // Projection-only helper: re-types `NAME.rows()` so each row is `FieldArrayRow<R> & R`. The `& R`
+        // half is what makes an array-form `<For>` row variable's field access type-check (mirroring the
+        // runtime rewrite of `row.field` to `row.form.values().field`); the rest of FieldArrayApi is kept.
+        parts.push(
+            `declare function __azRowForm<R extends object>(fa: import('${ RUNTIME_MODULE }').FieldArrayApi<R>): `
+            + `Omit<import('${ RUNTIME_MODULE }').FieldArrayApi<R>, 'rows'> `
+            + `& { rows: () => Array<import('${ RUNTIME_MODULE }').FieldArrayRow<R> & R> };`
+        );
+    }
     if (parts.length === 0)
     {
         return { code: builder.out, mapping: new CodeMapping(builder.segments) };

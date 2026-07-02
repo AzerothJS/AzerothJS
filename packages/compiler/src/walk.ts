@@ -40,6 +40,10 @@ export interface ReactiveHooks
     formFieldRead?(node: ts.PropertyAccessExpression): void;
     /** An assignment / `++` / `--` whose target is a `form` field (`formName.field`). Always writable. */
     formWrite?(target: ts.PropertyAccessExpression, expression: ts.Node): void;
+    /** A FIELD read on an array-form ROW variable (`rowName.field`), where `field` is a blank-row key. */
+    rowFieldRead?(node: ts.PropertyAccessExpression): void;
+    /** An assignment / `++` / `--` whose target is a ROW field (`rowName.field`). Always writable. */
+    rowFieldWrite?(target: ts.PropertyAccessExpression, expression: ts.Node): void;
 }
 
 /** True for an `=`/`+=`/`&&=`/... assignment operator. */
@@ -127,6 +131,12 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     /** True when `objName` is an unshadowed `form` source and `fieldName` is one of its initial-object keys. */
     const formFieldOf = (objName: string, fieldName: string): boolean =>
         !isShadowed(objName) && (sources.forms?.get(objName)?.has(fieldName) ?? false);
+
+    /** True when `objName` is an unshadowed array-form ROW variable and `fieldName` is a blank-row key.
+     *  Row variables are NOT in `interesting()`, so a `<For>` arrow param of the same name is never bound
+     *  as a shadowing local - the field access below it still resolves. */
+    const rowFieldOf = (objName: string, fieldName: string): boolean =>
+        !isShadowed(objName) && (sources.rowForms?.get(objName)?.has(fieldName) ?? false);
 
     /** Resolves a name innermost-first: a scoped marker source (with writability), a shadowing local, or
      *  finally the component's flat sources. Returns null when the name is not reactive here. */
@@ -279,6 +289,14 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
                 visit(n.right);
                 return;
             }
+            // A write to an array-form ROW field (`rowName.field = v`) -> the row form's setValue.
+            if (ts.isPropertyAccessExpression(n.left) && ts.isIdentifier(n.left.expression)
+                && rowFieldOf(n.left.expression.text, n.left.name.text))
+            {
+                hooks.rowFieldWrite?.(n.left, n);
+                visit(n.right);
+                return;
+            }
         }
         if ((ts.isPostfixUnaryExpression(n) || ts.isPrefixUnaryExpression(n)) &&
             (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken))
@@ -298,6 +316,12 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
                 hooks.formWrite?.(n.operand, n);
                 return;
             }
+            if (ts.isPropertyAccessExpression(n.operand) && ts.isIdentifier(n.operand.expression)
+                && rowFieldOf(n.operand.expression.text, n.operand.name.text))
+            {
+                hooks.rowFieldWrite?.(n.operand, n);
+                return;
+            }
         }
 
         if (ts.isPropertyAccessExpression(n))
@@ -313,6 +337,14 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             if (ts.isIdentifier(object) && formFieldOf(object.text, n.name.text))
             {
                 hooks.formFieldRead?.(n);
+                return;
+            }
+            // An array-form ROW FIELD read (`rowName.field`) - rewritten to `rowName.form.values().field`.
+            // `rowName.key` / `rowName.form` / FormApi access (`rowName.form.errors()`) are not fields and
+            // fall through unchanged.
+            if (ts.isIdentifier(object) && rowFieldOf(object.text, n.name.text))
+            {
+                hooks.rowFieldRead?.(n);
                 return;
             }
             visit(object);

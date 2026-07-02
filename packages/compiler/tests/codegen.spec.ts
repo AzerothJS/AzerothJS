@@ -157,6 +157,28 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('const f = createForm({ initial: ({ a: 0 }) });');
     });
 
+    it('array-form keyword (form NAME[]) lowers to createFieldArray({ blank, ...with })', () =>
+    {
+        const code = gen('component C { form rows[] = { a: "" } with { validateArray: (r) => r.length ? null : "x" }; <button onClick={() => rows.append()}>Add</button> }');
+        expect(code).toContain('const rows = createFieldArray({ blank: () => ({ a: "" }), ...({');
+        expect(code).toContain('validateArray');
+        expect(code).toContain('import { createFieldArray');   // runtime import wired
+    });
+
+    it('array-form keyword with no with-clause lowers to createFieldArray({ blank })', () =>
+    {
+        const code = gen('component C { form rows[] = { a: 0 }; <button onClick={() => rows.append()}>Add</button> }');
+        expect(code).toContain('const rows = createFieldArray({ blank: () => ({ a: 0 }) });');
+    });
+
+    it('<For> over an array-form sugars the row field through .form (read + bind write)', () =>
+    {
+        const code = gen('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(r) => r.key}>{(r) => <input bind:value={r.a} />}</For> }');
+        expect(code).toContain('r.form.values().a');          // row field read -> row.form.values()
+        expect(code).toContain('r.form.setValue("a"');        // bind: write -> row.form.setValue()
+        expect(code).toContain('(r) => r.key');               // row.key in the key fn stays literal
+    });
+
     it('form FIELD read rewrites to values(); a write (and bind:) to setValue; API access is untouched', () =>
     {
         const code = gen('import { createForm } from "@azerothjs/core"; component C { form f = { a: "" }; <form onSubmit={f.handleSubmit}><input bind:value={f.a} /><p>{f.a}</p><span>{f.submitting()}</span></form> }');

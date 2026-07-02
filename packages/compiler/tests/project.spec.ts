@@ -107,11 +107,15 @@ describe('generateVirtualCode - markup', () =>
         expect(out).toContain("satisfies AzerothHandler<'onClick'>");
     });
 
-    it('passes a render-callback child BARE to __azRender, but WRAPS an IIFE child', () =>
+    it('passes a render-callback child as the typed children: prop, but WRAPS a markup/IIFE child in __azRender', () =>
     {
+        // A render callback becomes the real `children:` prop so its params infer from the component
+        // signature (e.g. For's `(item, index)`), rather than being widened to `any` via __azRender.
         const renderChild = code('component C { state items: number[] = []; <ul><For each={items}>{(i) => <li>{i}</li>}</For></ul> }');
-        expect(renderChild).toContain('__azRender((i)');
+        expect(renderChild).toContain('children: (i) =>');
+        expect(renderChild).not.toContain('__azRender');
 
+        // A non-callback child (IIFE / markup thunk) still goes through the type-neutral __azRender.
         const iife = code('component C { state on = true; <ul><Show when={on}>{(() => <p>x</p>)()}</Show></ul> }');
         expect(iife).toContain('__azRender(() => (');
     });
@@ -120,6 +124,15 @@ describe('generateVirtualCode - markup', () =>
     {
         const out = code('component C { <Box>hi</Box> }');
         expect(out).toContain('...__children');
+    });
+
+    it('types an array-form <For> row via __azRowForm so row.field infers from the blank row', () =>
+    {
+        const out = code('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(r) => r.key}>{(r) => <input bind:value={r.a} />}</For> }');
+        // The array-form declaration is wrapped so rows() types each row as FieldArrayRow<R> & R.
+        expect(out).toContain('__azRowForm(createFieldArray(');
+        // The row callback is the typed children: prop, so `r` (and `r.a`) infer from that.
+        expect(out).toContain('children: (r) =>');
     });
 });
 

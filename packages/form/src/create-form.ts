@@ -5,10 +5,11 @@
  * (submitting + error), and DOM-friendly registration helpers for <input> elements - same authoring
  * style as createSignal/createResource, with no class hierarchy or schema layer.
  *
- * VALIDATION TIMING: validators run on every value change and on submit; errors() is always live, so
- * callers decide when to display (typical: show after blur, plus all fields after a submit attempt).
- * Async validators are not in v1 - compose them externally with createResource (a validateAsync
- * option can be added later without breaking the API).
+ * VALIDATION TIMING: sync validators (per-field `validate` + cross-field `validateForm`) run on every
+ * value change and on submit; errors() is always live, so callers decide when to display (typical: show
+ * after blur, plus all fields after a submit attempt). Async validators (`validateAsync`) run debounced
+ * after the field's sync validator passes, with AbortSignal cancellation, and are awaited before submit;
+ * validating() reports the in-flight fields.
  *
  * register() targets TEXT inputs: form.register('name') returns a prop bag for <input>/<textarea>.
  * Checkboxes, radios, selects, files, and dates need bespoke wiring - call form.setValue from a
@@ -20,16 +21,44 @@ import {
     createSignal,
     createMemo,
     createEffect,
-    untrack
+    untrack,
+    onCleanup
 } from '@azerothjs/reactivity';
 
 /**
- * A sync field validator. Returns the error message for invalid input, or
- * `null` when the value is acceptable.
+ * A sync field validator. Returns the error message for invalid input, or `null` when the value is
+ * acceptable. A validator sees only its OWN field's value - it is a single-argument function, so it
+ * stays trivial to write, wrap, and compose with {@link combine}. Anything that depends on SIBLING
+ * fields (password confirm, `end >= start`, `requiredIf`) belongs in the form-level
+ * {@link FormConfig.validateForm}, which receives the whole typed snapshot.
  *
  * @typeParam V - The field's value type
  */
 export type FieldValidator<V> = (value: V) => string | null;
+
+/**
+ * An async field validator, for checks that need a server round-trip (is this username taken? does this
+ * coupon exist?). Returns a Promise of the error message, or `null` when the value is acceptable.
+ *
+ * It receives an {@link AbortSignal} that is aborted when a newer value supersedes this run (the user kept
+ * typing) or the form unmounts - forward it to `fetch(url, { signal })` so the stale request is cancelled.
+ * Async validators run only AFTER the field's sync validator passes and the field has changed, debounced so
+ * they do not fire on every keystroke; while one is pending, {@link FormApi.validating} reports the field.
+ *
+ * @typeParam V - The field's value type
+ *
+ * @example
+ * ```ts
+ * validateAsync: {
+ *     username: async (value, signal) =>
+ *     {
+ *         const res = await fetch(`/api/username-taken?u=${value}`, { signal });
+ *         return (await res.json()).taken ? 'Username is taken' : null;
+ *     }
+ * }
+ * ```
+ */
+export type AsyncFieldValidator<V> = (value: V, signal: AbortSignal) => Promise<string | null>;
 
 /**
  * Options passed to `createForm()`.
@@ -37,16 +66,52 @@ export type FieldValidator<V> = (value: V) => string | null;
  * @typeParam T - The form's values shape; keys are field names,
  *                values are field types.
  */
-export interface FormConfig<T extends Record<string, unknown>>
+export interface FormConfig<T extends object>
 {
     /** Initial values for every field. The keys here define the form's shape. */
     initial: T;
 
     /**
-     * Per-field sync validators. Optional - fields without a validator are
-     * always considered valid. Run on every value change and on submit.
+     * Per-field sync validators. Optional - fields without a validator are always considered valid. Run on
+     * every value change and on submit. Each validator sees only its own field's value; for checks that
+     * span fields use {@link validateForm}.
      */
     validate?: { [K in keyof T]?: FieldValidator<T[K]> };
+
+    /**
+     * Cross-field sync validation. Receives the full, typed values snapshot and returns a partial map of
+     * field name to error message (or `null`). Runs after the per-field validators, on every change and on
+     * submit. A per-field error always wins over a cross-field one for the same field, so a format error
+     * ("Invalid email") shows before a relationship error ("Passwords must match").
+     *
+     * Return a field's key with `null` when its cross-field constraint passes, so a previously-set
+     * cross-field error clears; omit a field entirely to leave it untouched (e.g. preserving a server error
+     * set via {@link FormApi.setError}).
+     *
+     * @example
+     * ```ts
+     * validateForm: (v) => ({
+     *     confirm: v.confirm !== v.password ? 'Passwords must match' : null,
+     *     endDate: v.endDate < v.startDate ? 'End must be after start' : null
+     * })
+     * ```
+     */
+    validateForm?: (values: T) => { [K in keyof T]?: string | null };
+
+    /**
+     * Per-field ASYNC validators, for checks that need a server round-trip. Each runs only after the field's
+     * own sync validator passes and the field has changed from its initial value, debounced by
+     * {@link asyncDebounceMs}, with an AbortSignal that cancels superseded runs. Results merge into the same
+     * `errors` map; {@link FormApi.validating} reports which fields have a check in flight. On submit, every
+     * configured async validator is awaited before `onSubmit` runs.
+     */
+    validateAsync?: { [K in keyof T]?: AsyncFieldValidator<T[K]> };
+
+    /**
+     * Debounce, in milliseconds, before an async validator fires after the value settles. Default `300`.
+     * Ignored when no {@link validateAsync} is configured.
+     */
+    asyncDebounceMs?: number;
 
     /**
      * Called when the form passes validation on submit. May return a Promise -
@@ -80,7 +145,7 @@ export interface RegisteredFieldProps
  *
  * @typeParam T - The form's values shape
  */
-export interface FormApi<T extends Record<string, unknown>>
+export interface FormApi<T extends object>
 {
     /** Reactive snapshot of every field's current value. */
     values: Getter<T>;
@@ -102,6 +167,12 @@ export interface FormApi<T extends Record<string, unknown>>
 
     /** True when no field has an error. Useful for disabling submit buttons. */
     isValid: Getter<boolean>;
+
+    /** Reactive map of field name to whether an async validator is currently in flight for it. */
+    validating: Getter<{ [K in keyof T]: boolean }>;
+
+    /** True while any field has an async validator in flight. Useful for disabling submit buttons. */
+    isValidating: Getter<boolean>;
 
     /** Returns props to spread onto an `<input>` for the named field. */
     register: <K extends keyof T>(name: K) => RegisteredFieldProps;
@@ -153,11 +224,13 @@ export interface FormApi<T extends Record<string, unknown>>
  * INPUT CONTRACT:
  * - config.initial: defines the form's shape (its keys ARE the field set) and starting values.
  * - config.validate?: per-field SYNC validators; a field without one is always valid.
+ * - config.validateForm?: SYNC cross-field validation over the whole snapshot; returns a partial error map.
+ * - config.validateAsync?: per-field ASYNC validators (debounced, AbortSignal-cancelled, awaited on submit).
  * - config.onSubmit?: called with the values snapshot when validation passes; may return a Promise.
  *
  * OUTPUT CONTRACT:
- * - A {@link FormApi}: reactive getters (values/errors/touched/dirty/submitting/submitError/isValid)
- *   plus imperative methods (register/handleSubmit/reset/setValue/setError).
+ * - A {@link FormApi}: reactive getters (values/errors/touched/dirty/submitting/submitError/isValid/
+ *   validating/isValidating) plus imperative methods (register/handleSubmit/reset/setValue/setError).
  *
  * WHY THIS DESIGN:
  * One signal per field means setValue notifies exactly one downstream (the values memo), not every
@@ -169,8 +242,8 @@ export interface FormApi<T extends Record<string, unknown>>
  * Any form needing validation + a submit lifecycle, or several coordinated inputs.
  *
  * WHEN NOT TO USE:
- * A single trivial input (a plain createSignal is lighter); async/cross-field validation (compose
- * createResource externally - v1 validators are sync only).
+ * A single trivial input (a plain createSignal is lighter). Streaming/long-lived async derivations beyond
+ * one-shot field checks still belong in createResource; validateAsync covers the per-field server check.
  *
  * EDGE CASES:
  * - dirty uses reference comparison, so object/array fields read as "always dirty after first write".
@@ -181,8 +254,8 @@ export interface FormApi<T extends Record<string, unknown>>
  * Per-field signals give targeted updates; values/dirty/isValid are memos, recomputed only on change.
  *
  * DEVELOPER WARNING:
- * register() is for TEXT inputs only. Validators are SYNC in v1 - returning a Promise from one does
- * not work; compose async validation via createResource.
+ * register() is for TEXT inputs only. The per-field `validate` map is SYNC - returning a Promise from one
+ * does not work; put server checks in `validateAsync`, which is the async-aware path.
  *
  * @typeParam T - The form's values shape, inferred from `initial`
  * @param config - The form configuration
@@ -234,7 +307,7 @@ export interface FormApi<T extends Record<string, unknown>>
  * });
  * ```
  */
-export function createForm<T extends Record<string, unknown>>(
+export function createForm<T extends object>(
     config: FormConfig<T>
 ): FormApi<T>
 {
@@ -312,53 +385,111 @@ export function createForm<T extends Record<string, unknown>>(
         return true;
     });
 
-    // Validation effect: re-runs every time any field changes. Reads each field
-    // via the values memo (already a dependency), then writes the new errors map
-    // inside untrack so the effect doesn't subscribe to itself.
-    function runValidators(snapshot: T): { [K in keyof T]: string | null }
-    {
-        if (!config.validate)
-        {
-            return makeRecord(fieldNames, null);
-        }
+    // Async-validation pending state: per-field "is a server check in flight".
+    const [validating, setValidating] = createSignal(
+        makeRecord<keyof T, boolean>(fieldNames, false)
+    );
 
-        const next = {} as { [K in keyof T]: string | null };
+    const isValidating = createMemo<boolean>(() =>
+    {
+        const v = validating();
         for (const name of fieldNames)
         {
-            const validator = config.validate[name];
-            next[name] = validator ? validator(snapshot[name]) : null;
+            if (v[name])
+            {
+                return true;
+            }
         }
+        return false;
+    });
+
+    function setValidatingField(name: keyof T, pending: boolean): void
+    {
+        // Skip the write (and its notification) when the flag is unchanged.
+        setValidating(prev => prev[name] === pending ? prev : { ...prev, [name]: pending });
+    }
+
+    // Computes the FULL fresh errors map for a snapshot: every per-field
+    // validator, then the cross-field validateForm overlaid onto any field its
+    // own validator left valid (per-field errors win). Used by handleSubmit,
+    // which re-validates from scratch.
+    function runValidators(snapshot: T): { [K in keyof T]: string | null }
+    {
+        const next = makeRecord<keyof T, string | null>(fieldNames, null);
+
+        const validate = config.validate;
+        if (validate)
+        {
+            for (const name of fieldNames)
+            {
+                const validator = validate[name];
+                if (validator)
+                {
+                    next[name] = validator(snapshot[name]);
+                }
+            }
+        }
+
+        const cross = config.validateForm ? config.validateForm(snapshot) : undefined;
+        if (cross)
+        {
+            for (const name of fieldNames)
+            {
+                // Only fill a field the per-field pass left valid - format errors
+                // take precedence over relationship errors on the same field.
+                if (next[name] === null && name in cross)
+                {
+                    next[name] = cross[name] ?? null;
+                }
+            }
+        }
+
         return next;
     }
 
+    // Validation effect: re-runs every time any field changes. Reads each field
+    // via the values memo (already a dependency), then writes the new errors map
+    // inside untrack so the effect doesn't subscribe to itself.
     createEffect(() =>
     {
         const snapshot = values();
         untrack(() =>
         {
             const validate = config.validate;
-            // No validators configured: leave the errors map alone, so an
-            // error injected via setError() survives. (The initial map is
-            // already all-null.)
-            if (!validate)
+            const cross = config.validateForm ? config.validateForm(snapshot) : undefined;
+
+            // Nothing to recompute: leave the errors map alone, so an error
+            // injected via setError() survives. (The initial map is all-null.)
+            if (!validate && !cross)
             {
                 return;
             }
 
-            // Merge rather than overwrite: only fields that have a validator are
-            // recomputed here. Fields without one keep their current error
-            // untouched, so a server error injected via setError() (e.g.
-            // "username taken") is not wiped when the user edits some other
-            // field. Validated fields still re-validate live on every change.
+            // Merge rather than overwrite. A field is recomputed only if it has a
+            // per-field validator or appears in the cross-field result; any other
+            // field keeps its current error, so a server error injected via
+            // setError() (e.g. "username taken") is not wiped when the user edits
+            // an unrelated field. Per-field errors win over cross-field ones.
             setErrors(prev =>
             {
                 const next = { ...prev };
                 for (const name of fieldNames)
                 {
-                    const validator = validate[name];
+                    const validator = validate?.[name];
                     if (validator)
                     {
-                        next[name] = validator(snapshot[name]);
+                        const fieldError = validator(snapshot[name]);
+                        next[name] = fieldError;
+                        if (fieldError !== null)
+                        {
+                            continue;
+                        }
+                    }
+                    // Field is valid per-field (or unvalidated): let the
+                    // cross-field result speak for it if it names this key.
+                    if (cross && name in cross)
+                    {
+                        next[name] = cross[name] ?? null;
                     }
                 }
                 return next;
@@ -366,11 +497,138 @@ export function createForm<T extends Record<string, unknown>>(
         });
     });
 
+    // --- Async validation (optional) ---
+    //
+    // A field's async validator runs only after its sync validator passes (no
+    // point asking the server about malformed input) and the field has changed,
+    // debounced so it does not fire on every keystroke, and with an AbortSignal so
+    // a newer keystroke supersedes an in-flight request. Results merge into the
+    // same errors map; validating() reports which fields have a check pending.
+
+    // Per-field in-flight controllers, so a fresh run (or reset / unmount) aborts
+    // the previous request for that field.
+    const asyncControllers = {} as { [K in keyof T]?: AbortController };
+
+    function abortAsync(name: keyof T): void
+    {
+        const controller = asyncControllers[name];
+        if (controller)
+        {
+            asyncControllers[name] = undefined;
+            controller.abort();
+        }
+    }
+
+    // Runs one field's async validator: aborts any in-flight run for the field,
+    // marks it validating, and on completion merges the verdict into errors unless
+    // a newer run has superseded it. Resolves to the verdict (null = valid), or
+    // null when superseded. Rejections propagate to the caller (the submit path
+    // surfaces them; background runs swallow them).
+    function runFieldAsync<K extends keyof T>(name: K, value: T[K]): Promise<string | null>
+    {
+        const asyncValidator = config.validateAsync?.[name];
+        if (!asyncValidator)
+        {
+            return Promise.resolve(null);
+        }
+
+        abortAsync(name);
+        const controller = new AbortController();
+        asyncControllers[name] = controller;
+        setValidatingField(name, true);
+
+        return Promise.resolve(asyncValidator(value, controller.signal)).then(
+            (result) =>
+            {
+                if (controller.signal.aborted)
+                {
+                    return null;
+                }
+                asyncControllers[name] = undefined;
+                setErrors(prev => ({ ...prev, [name]: result }));
+                setValidatingField(name, false);
+                return result;
+            },
+            (error: unknown) =>
+            {
+                if (controller.signal.aborted)
+                {
+                    return null;
+                }
+                asyncControllers[name] = undefined;
+                setValidatingField(name, false);
+                throw error;
+            }
+        );
+    }
+
+    if (config.validateAsync)
+    {
+        const debounceMs = config.asyncDebounceMs ?? 300;
+
+        for (const name of fieldNames)
+        {
+            if (!config.validateAsync[name])
+            {
+                continue;
+            }
+
+            // One effect per async field. It subscribes to that field's value,
+            // gates on "changed and sync-valid", then schedules the debounced run.
+            // onCleanup fires before the next run AND on owner dispose, so it both
+            // cancels a pending debounce and aborts an in-flight request when the
+            // value changes again or the form unmounts.
+            createEffect(() =>
+            {
+                const value = fields[name].value() as T[keyof T];
+
+                const syncValidator = config.validate?.[name];
+                const changed = value !== initial[name];
+                if (!changed || (syncValidator && syncValidator(value) !== null))
+                {
+                    // Nothing to check (unchanged, or sync already failed): clear the
+                    // pending flag. The previous run's onCleanup already aborted any
+                    // in-flight request and cancelled any pending debounce.
+                    setValidatingField(name, false);
+                    return;
+                }
+
+                const timer = setTimeout(() =>
+                {
+                    // Background run: a rejection (e.g. network error) is non-fatal -
+                    // the field simply shows no async error and the user can retry.
+                    void runFieldAsync(name, value).catch(() =>
+                    { /* non-fatal */ });
+                }, debounceMs);
+
+                onCleanup(() =>
+                {
+                    clearTimeout(timer);
+                    abortAsync(name);
+                });
+            });
+        }
+    }
+
     // Imperative API.
+
+    // An <input> always yields a string, but a field may be typed `number`. When a string lands in a field
+    // whose initial value is a number, coerce it so values()/onSubmit (and numeric validators like min/max)
+    // see the typed value rather than a stringified one. This is what makes `bind:value={f.age}` work for a
+    // numeric field with no per-field configuration; `Number('')` is `0`, the natural empty default. A value
+    // already of the right type (a programmatic `setValue('age', 25)`) passes through untouched.
+    function coerceFieldValue<K extends keyof T>(name: K, value: T[K]): T[K]
+    {
+        if (typeof value === 'string' && typeof initial[name] === 'number')
+        {
+            return Number(value) as unknown as T[K];
+        }
+        return value;
+    }
 
     function setValue<K extends keyof T>(name: K, value: T[K]): void
     {
-        (fields[name].setValue as (next: T[K]) => void)(value);
+        (fields[name].setValue as (next: T[K]) => void)(coerceFieldValue(name, value));
     }
 
     function setError<K extends keyof T>(name: K, error: string | null): void
@@ -382,12 +640,14 @@ export function createForm<T extends Record<string, unknown>>(
     {
         for (const name of fieldNames)
         {
+            abortAsync(name);
             (fields[name].setValue as (next: T[keyof T]) => void)(
                 initial[name] as T[keyof T]
             );
         }
         setErrors(makeRecord(fieldNames, null));
         setTouched(makeRecord(fieldNames, false));
+        setValidating(makeRecord(fieldNames, false));
         setSubmitError(null);
     }
 
@@ -400,11 +660,10 @@ export function createForm<T extends Record<string, unknown>>(
             {
                 // h() doesn't restrict input types; if register is wired onto a
                 // non-text element this cast would be wrong. register is
-                // documented as text-only.
+                // documented as text-only. Route through setValue so a numeric
+                // field is coerced from the input's string like bind:value is.
                 const target = event.target as HTMLInputElement;
-                (fields[name].setValue as (next: T[K]) => void)(
-                    target.value as unknown as T[K]
-                );
+                setValue(name, target.value as unknown as T[K]);
             },
             onBlur: (): void =>
             {
@@ -413,34 +672,11 @@ export function createForm<T extends Record<string, unknown>>(
         };
     }
 
-    function handleSubmit(event: Event): void
+    // Invokes onSubmit synchronously with the submitting lifecycle. Used when no
+    // async validation is configured, so a valid submit calls onSubmit in the same
+    // tick (the synchronous-submit contract).
+    function invokeSubmit(snapshot: T): void
     {
-        event.preventDefault();
-
-        // On submit, mark every field touched so previously-hidden
-        // errors become visible to the user.
-        setTouched(makeRecord(fieldNames, true));
-
-        // Re-run validators against the current snapshot. The
-        // value-watching effect above already keeps errors in
-        // sync, but re-running here is robust against any
-        // out-of-order programmatic state changes.
-        const snapshot = values();
-        const fresh = runValidators(snapshot);
-        setErrors(fresh);
-
-        // Bail if anything is invalid. Compute validity from the
-        // freshly-computed errors directly rather than reading isValid() - this
-        // avoids reactive timing edge cases between the effect run and the
-        // isValid memo recompute.
-        for (const name of fieldNames)
-        {
-            if (fresh[name] !== null)
-            {
-                return;
-            }
-        }
-
         if (!config.onSubmit)
         {
             return;
@@ -479,6 +715,92 @@ export function createForm<T extends Record<string, unknown>>(
         }
     }
 
+    // Tail of the async submit path: submitting() is already true and submitError
+    // already cleared. Awaits onSubmit (sync or async) and clears submitting.
+    async function finishSubmitAsync(snapshot: T): Promise<void>
+    {
+        if (!config.onSubmit)
+        {
+            setSubmitting(false);
+            return;
+        }
+        try
+        {
+            await config.onSubmit(snapshot);
+        }
+        catch (err)
+        {
+            setSubmitError(() => err);
+        }
+        finally
+        {
+            setSubmitting(false);
+        }
+    }
+
+    function handleSubmit(event: Event): void
+    {
+        event.preventDefault();
+
+        // On submit, mark every field touched so previously-hidden
+        // errors become visible to the user.
+        setTouched(makeRecord(fieldNames, true));
+
+        // Re-run sync validators against the current snapshot. The value-watching
+        // effect already keeps errors in sync, but re-running here is robust against
+        // out-of-order programmatic state changes.
+        const snapshot = values();
+        const fresh = runValidators(snapshot);
+        setErrors(fresh);
+
+        // Bail if anything is invalid. Compute validity from the freshly-computed
+        // errors directly rather than reading isValid() - this avoids reactive
+        // timing edge cases between the effect run and the isValid memo recompute.
+        for (const name of fieldNames)
+        {
+            if (fresh[name] !== null)
+            {
+                return;
+            }
+        }
+
+        // Fields with an async validator (sync has already passed for every field).
+        const asyncFields = config.validateAsync
+            ? fieldNames.filter((name) => config.validateAsync![name])
+            : [];
+
+        // No async validation: invoke onSubmit synchronously (unchanged behavior).
+        if (asyncFields.length === 0)
+        {
+            invokeSubmit(snapshot);
+            return;
+        }
+
+        // Async validation phase: await every async validator, then submit if all
+        // pass. submitting() stays true across both the checks and onSubmit.
+        setSubmitError(null);
+        setSubmitting(true);
+        Promise.all(asyncFields.map((name) => runFieldAsync(name, snapshot[name]))).then(
+            (results) =>
+            {
+                if (results.some((result) => result !== null))
+                {
+                    // An async check failed; its error is now in errors().
+                    setSubmitting(false);
+                    return;
+                }
+                void finishSubmitAsync(snapshot);
+            },
+            (err: unknown) =>
+            {
+                // An async validator threw (e.g. a network failure): validity cannot
+                // be confirmed, so do not submit; surface it as a submit error.
+                setSubmitError(() => err);
+                setSubmitting(false);
+            }
+        );
+    }
+
     return {
         values,
         errors,
@@ -487,6 +809,8 @@ export function createForm<T extends Record<string, unknown>>(
         submitting,
         submitError,
         isValid,
+        validating,
+        isValidating,
         register,
         handleSubmit,
         reset,

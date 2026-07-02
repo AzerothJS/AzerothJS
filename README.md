@@ -221,11 +221,68 @@ export default component SignIn
 }
 ```
 
-The validators (`required`/`email`/`minLength`/`pattern`/`combine`/`phone`/...) are sync and per-field;
-cross-field checks (password confirmation) and server errors go in `onSubmit` via `setError`. See
-`packages/compiler/examples/SignInForm.azeroth` for the full reference. For a different taste, the
-`createForm` runtime primitive can also be driven by a hand-built field component - both are supported,
-but the `form` keyword is the idiomatic style.
+A field declared with a number initial (`form f = { age: 18 }`) stays a `number` end to end: `bind:value`
+coerces the input's string on the way in, so `f.values().age` and `onSubmit` see `25`, not `"25"`, with no
+per-field wiring (`Number('')` is the empty default, `0`).
+
+The validators (`required`/`email`/`minLength`/`pattern`/`combine`/`phone`/...) are sync and per-field.
+Cross-field rules (password confirmation, `end >= start`) go in a `validateForm` clause that sees the whole
+typed snapshot and returns a partial `field -> error` map; server errors go on a field via `setError`:
+
+```azeroth
+form signup = { email: '', password: '', confirm: '' } with {
+    validate: { password: combine(required(), minLength(8)) },
+    validateForm: (v) => ({ confirm: v.confirm !== v.password ? 'Passwords must match' : null }),
+    onSubmit: async (values) => { await register(values); }
+};
+```
+
+Checks that need a server round-trip (is this username taken?) go in `validateAsync`. Each runs after the
+field's sync validators pass, debounced, with an `AbortSignal` that cancels superseded requests; `validating()`
+reports the in-flight fields and every async check is awaited before submit:
+
+```azeroth
+form signup = { username: '' } with {
+    validate: { username: combine(required(), minLength(3)) },
+    validateAsync: {
+        username: async (value, signal) =>
+        {
+            const res = await fetch(`/api/username-available?u=${value}`, { signal });
+            return (await res.json()).available ? null : 'That username is taken';
+        }
+    },
+    onSubmit: async (values) => { await register(values); }
+};
+```
+
+A dynamic list of repeated sub-forms (invoice line items, team members) is the `form NAME[]` keyword - it
+lowers to `createFieldArray` (one `createForm` per row), with `append`/`remove`/`move` and aggregated
+`values()`/`isValid()`/`error()`. The `= { ... }` is the blank row; `with { ... }` carries `initial` rows,
+per-row `validate`, and the array-level `validateArray`. Rows render through `<For>`, and a row field
+two-way-binds straight to an input with `bind:value={row.field}` (the rest of the row API is explicit
+through `row.form` - `row.form.errors()`, `row.form.touched()`):
+
+```azeroth
+form items[] = { description: '', qty: 1, price: 0 } with {
+    validate: { description: required(), qty: min(1), price: min(0) },
+    validateArray: (rows) => rows.length === 0 ? 'Add at least one item' : null
+};
+
+<For each={items.rows()} key={(item) => item.key}>
+    {(item, i) =>
+        <fieldset>
+            <input bind:value={item.description} />
+            <input type="number" bind:value={item.qty} />
+            <button type="button" onClick={() => items.remove(i())}>Remove</button>
+        </fieldset>
+    }
+</For>
+```
+
+See `packages/compiler/examples/SignInForm.azeroth` (the minimal reference), `SignUpForm.azeroth`
+(cross-field), `AsyncUsernameForm.azeroth` (async), and `TeamMembersForm.azeroth` (field array). For a
+different taste, the `createForm` runtime primitive can also be driven by a hand-built field component - both
+are supported, but the `form` keyword is the idiomatic style.
 
 ## Build integration (Vite)
 

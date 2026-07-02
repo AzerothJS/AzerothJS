@@ -310,6 +310,42 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             const update = expression as ts.PostfixUnaryExpression | ts.PrefixUnaryExpression;
             const op = update.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-';
             edits.push({ start: update.getStart(sourceFile), end: update.getEnd(), text: `${ form }.setValue(${ JSON.stringify(field) }, ${ form }.values()${ memberAccess(field) } ${ op } 1)` });
+        },
+        // An array-form ROW FIELD read `row.name` -> `row.form.values().name`: insert `.form.values()`
+        // between the row and the field. (`row.key` / `row.form` / FormApi access are not reported here.)
+        rowFieldRead: (node) =>
+        {
+            insert(node.expression.getEnd(), '.form.values()');
+        },
+        // A write to a ROW field -> the row form's setValue, through `.form`. `row.n = e` ->
+        // `row.form.setValue('n', e)`; compound/`++` read the current value via `row.form.values()`.
+        rowFieldWrite: (target, expression) =>
+        {
+            const form = `${ target.expression.getText(sourceFile) }.form`;
+            const field = target.name.text;
+            const lhsStart = target.getStart(sourceFile);
+
+            if (ts.isBinaryExpression(expression))
+            {
+                const rightStart = expression.right.getStart(sourceFile);
+                const rightEnd = expression.right.getEnd();
+                if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+                {
+                    edits.push({ start: lhsStart, end: rightStart, text: `${ form }.setValue(${ JSON.stringify(field) }, ` });
+                    insert(rightEnd, ')');
+                }
+                else
+                {
+                    const op = COMPOUND.get(expression.operatorToken.kind) ?? '+';
+                    edits.push({ start: lhsStart, end: rightStart, text: `${ form }.setValue(${ JSON.stringify(field) }, ${ form }.values()${ memberAccess(field) } ${ op } (` });
+                    insert(rightEnd, '))');
+                }
+                return;
+            }
+
+            const update = expression as ts.PostfixUnaryExpression | ts.PrefixUnaryExpression;
+            const op = update.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-';
+            edits.push({ start: update.getStart(sourceFile), end: update.getEnd(), text: `${ form }.setValue(${ JSON.stringify(field) }, ${ form }.values()${ memberAccess(field) } ${ op } 1)` });
         }
     });
 

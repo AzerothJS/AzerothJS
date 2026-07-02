@@ -190,8 +190,19 @@ export interface SelectorDecl extends FactoryDeclBase { kind: 'selector' }
  * a field is read as `name.<field>` and written as `name.<field> = v` (and via `bind:value={name.field}`)
  * once the field-access rewrite is in place, with `name.errors`/`name.submitting`/`name.handleSubmit`/...
  * exposing the rest of the form API.
+ *
+ * `form <name>[] = { ...blankRow } [with { ... }] ;` (isArray) is an ARRAY-form: a dynamic list of repeated
+ * sub-forms. The `= { ... }` is the BLANK row shape, and it lowers to
+ * `createFieldArray({ blank: () => ({ ...blankRow }), ...with })`. Unlike a flat form, the name itself is
+ * read EXPLICITLY (`name.rows()` / `name.append()` / `name.values()`) - it has no top-level field sugar; row
+ * field sugar applies to the `<For>` row variable instead.
  */
-export interface FormDecl extends FactoryDeclBase { kind: 'form' }
+export interface FormDecl extends FactoryDeclBase
+{
+    kind: 'form';
+    /** True for an array-form (`form name[] = ...`): lowers to createFieldArray, read explicitly. */
+    isArray: boolean;
+}
 
 /**
  * An `effect [with { ... }] { ... }` block; `body*` span the block interior.

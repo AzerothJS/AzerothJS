@@ -8,7 +8,7 @@
 // root is disposed at the end of each test. No mocks: real signals, real effects.
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createEffect } from '@azerothjs/reactivity';
-import { createForm, required, minLength, combine, email } from '@azerothjs/form';
+import { createForm, required, minLength, min, combine, email } from '@azerothjs/form';
 import type { FormApi } from '@azerothjs/form';
 
 // Lets a microtask-resolving promise settle and gives the reactive system a tick.
@@ -236,6 +236,97 @@ describe('createForm — setError', () =>
     });
 });
 
+describe('createForm — cross-field validation (validateForm)', () =>
+{
+    it('receives the full typed snapshot and reports an error on a named field', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({
+                initial: { password: '', confirm: '' },
+                validateForm: (v) => ({
+                    confirm: v.confirm !== v.password ? 'Passwords must match' : null
+                })
+            });
+            form.setValue('password', 'hunter2');
+            form.setValue('confirm', 'nope');
+            expect(form.errors().confirm).toBe('Passwords must match');
+            form.setValue('confirm', 'hunter2');
+            expect(form.errors().confirm).toBeNull();
+            dispose();
+        });
+    });
+
+    it('re-validates a dependent field when the field it depends on changes', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({
+                initial: { password: 'hunter2', confirm: 'hunter2' },
+                validateForm: (v) => ({
+                    confirm: v.confirm !== v.password ? 'Passwords must match' : null
+                })
+            });
+            // confirm matches the initial password...
+            expect(form.errors().confirm).toBeNull();
+            // ...but editing the OTHER field (password) re-runs validateForm, so
+            // confirm picks up the mismatch without being touched itself.
+            form.setValue('password', 'changed');
+            expect(form.errors().confirm).toBe('Passwords must match');
+            dispose();
+        });
+    });
+
+    it('lets a per-field error take precedence over a cross-field one on the same field', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({
+                initial: { password: '', confirm: '' },
+                validate: { confirm: required('Confirm your password') },
+                validateForm: (v) => ({
+                    confirm: v.confirm !== v.password ? 'Passwords must match' : null
+                })
+            });
+            // Empty -> required() (per-field) wins over the mismatch (cross-field).
+            expect(form.errors().confirm).toBe('Confirm your password');
+            // Non-empty but mismatched -> per-field passes, cross-field speaks.
+            form.setValue('password', 'hunter2');
+            form.setValue('confirm', 'nope');
+            expect(form.errors().confirm).toBe('Passwords must match');
+            // Matched -> both clear.
+            form.setValue('confirm', 'hunter2');
+            expect(form.errors().confirm).toBeNull();
+            dispose();
+        });
+    });
+
+    it('blocks submit while a cross-field rule fails, then allows it once satisfied', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const onSubmit = vi.fn();
+            const form = createForm({
+                initial: { password: 'a', confirm: 'b' },
+                validateForm: (v) => ({
+                    confirm: v.confirm !== v.password ? 'Passwords must match' : null
+                }),
+                onSubmit
+            });
+            form.handleSubmit({ preventDefault()
+            {} } as unknown as Event);
+            expect(onSubmit).not.toHaveBeenCalled();
+            expect(form.errors().confirm).toBe('Passwords must match');
+
+            form.setValue('confirm', 'a');
+            form.handleSubmit({ preventDefault()
+            {} } as unknown as Event);
+            expect(onSubmit).toHaveBeenCalledOnce();
+            dispose();
+        });
+    });
+});
+
 describe('createForm — handleSubmit', () =>
 {
     it('calls preventDefault and marks every field touched', () =>
@@ -457,7 +548,272 @@ describe('createForm — reset', () =>
     });
 });
 
+describe('createForm — async validation (validateAsync)', () =>
+{
+    it('runs the async validator after the sync pass and toggles validating()', async () =>
+    {
+        const gate = deferred<string | null>();
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: '' },
+            validateAsync: { username: () => gate.promise },
+            asyncDebounceMs: 0
+        }));
+
+        form.setValue('username', 'taken-name');
+        await flush();                              // debounce elapses, request in flight
+        expect(form.validating().username).toBe(true);
+        expect(form.errors().username).toBeNull();
+
+        gate.resolve('Username is taken');
+        await flush();                              // resolution merges into errors
+        expect(form.errors().username).toBe('Username is taken');
+        expect(form.validating().username).toBe(false);
+        dispose();
+    });
+
+    it('does not run on mount for the unchanged initial value', async () =>
+    {
+        const spy = vi.fn(async () => null);
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: 'preset' },
+            validateAsync: { username: spy },
+            asyncDebounceMs: 0
+        }));
+
+        await flush();
+        expect(spy).not.toHaveBeenCalled();
+        expect(form.validating().username).toBe(false);
+        dispose();
+    });
+
+    it('skips the async check when the field\'s sync validator fails', async () =>
+    {
+        const spy = vi.fn(async () => null);
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: '' },
+            validate: { username: minLength(5) },
+            validateAsync: { username: spy },
+            asyncDebounceMs: 0
+        }));
+
+        form.setValue('username', 'ab');           // changed, but too short
+        await flush();
+        expect(spy).not.toHaveBeenCalled();
+        expect(form.errors().username).toBe('Must be at least 5 characters');
+        dispose();
+    });
+
+    it('does not let a superseded (aborted) run overwrite the latest result', async () =>
+    {
+        const gates: Array<(result: string | null) => void> = [];
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: '' },
+            validateAsync: { username: () => new Promise<string | null>((res) =>
+            {
+                gates.push(res);
+            }) },
+            asyncDebounceMs: 0
+        }));
+
+        form.setValue('username', 'a');
+        await flush();                              // run A in flight (gates[0])
+        form.setValue('username', 'ab');
+        await flush();                              // A aborted, run B in flight (gates[1])
+
+        gates[0]('STALE A');                        // resolve the aborted run first
+        await flush();
+        expect(form.errors().username).toBeNull();  // stale result ignored
+
+        gates[1]('Live B error');                   // resolve the live run
+        await flush();
+        expect(form.errors().username).toBe('Live B error');
+        dispose();
+    });
+
+    it('handleSubmit awaits async validators, then submits when they pass', async () =>
+    {
+        const onSubmit = vi.fn();
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: 'ok-name' },
+            validateAsync: { username: async () => null },
+            onSubmit
+        }));
+
+        form.handleSubmit(submitEvent());
+        expect(onSubmit).not.toHaveBeenCalled();    // deferred into the async phase
+        expect(form.submitting()).toBe(true);
+        await flush();
+        expect(onSubmit).toHaveBeenCalledOnce();
+        expect(form.submitting()).toBe(false);
+        dispose();
+    });
+
+    it('handleSubmit blocks onSubmit when an async validator fails', async () =>
+    {
+        const onSubmit = vi.fn();
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: 'taken' },
+            validateAsync: { username: async () => 'Username is taken' },
+            onSubmit
+        }));
+
+        form.handleSubmit(submitEvent());
+        await flush();
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(form.errors().username).toBe('Username is taken');
+        expect(form.submitting()).toBe(false);
+        dispose();
+    });
+
+    it('surfaces a thrown async validator as submitError and does not submit', async () =>
+    {
+        const onSubmit = vi.fn();
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: 'x' },
+            validateAsync: { username: async () =>
+            {
+                throw new Error('network down');
+            } },
+            onSubmit
+        }));
+
+        form.handleSubmit(submitEvent());
+        await flush();
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(form.submitError()).toBeInstanceOf(Error);
+        expect(form.submitting()).toBe(false);
+        dispose();
+    });
+
+    it('reset() clears validating and aborts an in-flight check', async () =>
+    {
+        const gate = deferred<string | null>();
+        let aborted = false;
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: '' },
+            validateAsync: {
+                username: (_value, signal) =>
+                {
+                    signal.addEventListener('abort', () =>
+                    {
+                        aborted = true;
+                    });
+                    return gate.promise;
+                }
+            },
+            asyncDebounceMs: 0
+        }));
+
+        form.setValue('username', 'changing');
+        await flush();
+        expect(form.validating().username).toBe(true);
+
+        form.reset();
+        expect(form.validating().username).toBe(false);
+        expect(aborted).toBe(true);
+        dispose();
+    });
+
+    it('isValidating() is true while any field has a check in flight', async () =>
+    {
+        const gate = deferred<string | null>();
+        const { form, dispose } = withForm(() => createForm({
+            initial: { username: '' },
+            validateAsync: { username: () => gate.promise },
+            asyncDebounceMs: 0
+        }));
+
+        expect(form.isValidating()).toBe(false);
+        form.setValue('username', 'abc');
+        await flush();
+        expect(form.isValidating()).toBe(true);
+        gate.resolve(null);
+        await flush();
+        expect(form.isValidating()).toBe(false);
+        dispose();
+    });
+});
+
+describe('createForm — numeric coercion', () =>
+{
+    it('coerces an input string into a number-typed field (so bind:value works)', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({ initial: { age: 18, name: '' } });
+            // bind:value / register feed a string; a number-typed field must end up numeric.
+            form.setValue('age', '25' as unknown as number);
+            expect(form.values().age).toBe(25);
+            expect(typeof form.values().age).toBe('number');
+            // A string-typed field is left exactly as typed.
+            form.setValue('name', '25');
+            expect(form.values().name).toBe('25');
+            dispose();
+        });
+    });
+
+    it('feeds numeric validators the coerced number, and treats empty as 0', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({
+                initial: { age: 18 },
+                validate: { age: min(21, 'Must be 21 or older') }
+            });
+            form.setValue('age', '16' as unknown as number);
+            expect(form.errors().age).toBe('Must be 21 or older');   // 16 < 21, compared as a number
+            form.setValue('age', '30' as unknown as number);
+            expect(form.errors().age).toBeNull();
+            form.setValue('age', '' as unknown as number);
+            expect(form.values().age).toBe(0);                       // Number('') is the empty default
+            dispose();
+        });
+    });
+
+    it('leaves a programmatically-set number untouched', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const form = createForm({ initial: { age: 18 } });
+            form.setValue('age', 42);
+            expect(form.values().age).toBe(42);
+            dispose();
+        });
+    });
+});
+
 // --- helpers -------------------------------------------------------------
+
+// A resolvable promise handle, for driving an async validator's timing from a test.
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void }
+{
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) =>
+    {
+        resolve = res;
+    });
+    return { promise, resolve };
+}
+
+// Builds a form inside a createRoot and hands back its dispose, so a test can await
+// async work outside the root callback and tear the owner down at the end.
+function withForm<T>(build: () => T): { form: T; dispose: () => void }
+{
+    let dispose!: () => void;
+    const form = createRoot((d) =>
+    {
+        dispose = d;
+        return build();
+    });
+    return { form, dispose };
+}
+
+// A minimal submit Event whose only used member is preventDefault().
+function submitEvent(): Event
+{
+    return { preventDefault()
+    { /* no-op */ } } as unknown as Event;
+}
 
 // Builds a one-field form with an async onSubmit driver, used by the lifecycle
 // tests. Kept generic over the onSubmit body so each test controls timing.

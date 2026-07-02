@@ -11,7 +11,7 @@
 // (`<div clas`); when the region under the caret doesn't parse yet, a resilient
 // local scan still classifies it so completion keeps working as you type.
 
-import { findMarkupStart, skipBalanced, isIdentPart, isWhitespace, parseModule } from '@azerothjs/compiler';
+import { findMarkupStart, skipBalanced, skipString, skipTemplate, isIdentPart, isWhitespace, parseModule } from '@azerothjs/compiler';
 import { parseMarkup, CompileError } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment, MarkupChild } from '@azerothjs/compiler';
 
@@ -442,7 +442,26 @@ function collectNode(source: string, node: MarkupElement | MarkupFragment, out: 
  * is accurate across brace styles and nesting (no hand-rolled brace matching). The parser is total
  * (it never throws), but a malformed buffer is guarded all the same.
  */
-export function withClauseKeyword(source: string, offset: number): string | null
+/** A caret sitting inside a keyword's `with { ... }` options clause. */
+export interface WithClauseContext
+{
+    /** The owning declaration keyword (`state`, `form`, ...). */
+    keyword: string;
+    /** Offset of the clause's opening `{`. */
+    optionsStart: number;
+    /** Offset of the clause's closing `}`. */
+    optionsEnd: number;
+    /**
+     * True when the caret is at a top-level OPTION-KEY position - directly in the options object, before any
+     * `:`, so a NEW key is being typed. False when the caret is inside a value expression (e.g. a
+     * `validateForm: (values) => ...` body), where option-key completion must NOT fire so TypeScript's own
+     * completion (member access on the typed value) takes over.
+     */
+    atOptionKey: boolean;
+}
+
+/** The `with { ... }` clause whose braces enclose `offset`, or null. */
+export function withClauseAt(source: string, offset: number): WithClauseContext | null
 {
     let module;
     try
@@ -467,11 +486,86 @@ export function withClauseKeyword(source: string, offset: number): string | null
                 && offset > bodyItem.optionsStart
                 && offset < bodyItem.optionsEnd)
             {
-                return bodyItem.kind;
+                return {
+                    keyword: bodyItem.kind,
+                    optionsStart: bodyItem.optionsStart,
+                    optionsEnd: bodyItem.optionsEnd,
+                    atOptionKey: atTopLevelOptionKey(source, bodyItem.optionsStart, offset)
+                };
             }
         }
     }
     return null;
+}
+
+/** The owning keyword of the `with { ... }` clause enclosing `offset`, or null. */
+export function withClauseKeyword(source: string, offset: number): string | null
+{
+    return withClauseAt(source, offset)?.keyword ?? null;
+}
+
+/**
+ * Scans the options object from its `{` to the caret, tracking nesting depth (skipping strings, templates,
+ * and comments). The caret is at a top-level KEY position iff it is at depth 0 (directly in the object, not
+ * inside a nested `{`/`(`/`[`) AND no top-level `:` has appeared since the object start or the last top-level
+ * `,` - i.e. a key is being typed, not a value. So `with { validate: {...}, |x }` is a key position, but
+ * `with { validateForm: (values) => values.| }` is not (a `:` precedes the caret at top level).
+ */
+function atTopLevelOptionKey(source: string, optionsStart: number, offset: number): boolean
+{
+    let i = optionsStart + 1;
+    let depth = 0;
+    let sawColon = false;
+    while (i < offset)
+    {
+        const ch = source[i];
+        if (ch === '"' || ch === '\'')
+        {
+            i = skipString(source, i);
+            continue;
+        }
+        if (ch === '`')
+        {
+            i = skipTemplate(source, i);
+            continue;
+        }
+        if (ch === '/' && source[i + 1] === '/')
+        {
+            while (i < offset && source[i] !== '\n')
+            {
+                i++;
+            }
+            continue;
+        }
+        if (ch === '/' && source[i + 1] === '*')
+        {
+            i += 2;
+            while (i < offset && !(source[i] === '*' && source[i + 1] === '/'))
+            {
+                i++;
+            }
+            i += 2;
+            continue;
+        }
+        if (ch === '{' || ch === '(' || ch === '[')
+        {
+            depth++;
+        }
+        else if (ch === '}' || ch === ')' || ch === ']')
+        {
+            depth--;
+        }
+        else if (depth === 0 && ch === ',')
+        {
+            sawColon = false;
+        }
+        else if (depth === 0 && ch === ':')
+        {
+            sawColon = true;
+        }
+        i++;
+    }
+    return depth === 0 && !sawColon;
 }
 
 /**

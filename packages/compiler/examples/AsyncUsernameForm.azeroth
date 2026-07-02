@@ -1,0 +1,54 @@
+// Async validation. `validateAsync` holds per-field checks that need a server round-trip - here, "is this
+// username taken?". Each runs only AFTER the field's sync validators pass and the field has changed,
+// debounced by `asyncDebounceMs`, and receives an AbortSignal that is aborted when a newer keystroke
+// supersedes the request - forward it to fetch so the stale lookup is cancelled. While a check is in
+// flight `signup.validating().username` is true; on submit every async validator is awaited before
+// onSubmit runs, and `signup.isValidating()` is true while any check is pending.
+import { required, minLength, pattern, combine } from '@azerothjs/core';
+
+interface NewAccount
+{
+    username: string;
+}
+
+export default component AsyncUsernameForm(props: { onCreate: (account: NewAccount) => Promise<void> })
+{
+    form signup = { username: '' } with
+    {
+        validate:
+        {
+            username: combine(
+                required('Username is required'),
+                minLength(3, 'At least 3 characters'),
+                pattern(/^[a-z0-9_]+$/, 'Lowercase letters, numbers, and underscores only')
+            )
+        },
+        validateAsync:
+        {
+            username: async (value, signal) =>
+            {
+                const response = await fetch(`/api/username-available?u=${ encodeURIComponent(value) }`, { signal });
+                const body = await response.json() as { available: boolean };
+                return body.available ? null : 'That username is taken';
+            }
+        },
+        asyncDebounceMs: 400,
+        onSubmit: async (values) =>
+        {
+            await props.onCreate(values);
+        }
+    };
+
+    <form onSubmit={signup.handleSubmit}>
+        <label>
+            Username
+            <input type="text" autocomplete="username" bind:value={signup.username} />
+            <Show when={signup.validating().username}><span class="field-hint">Checking availability...</span></Show>
+            <Show when={signup.touched().username}><span class="field-error">{signup.errors().username}</span></Show>
+        </label>
+
+        <button type="submit" disabled={signup.submitting() || signup.isValidating()}>
+            {signup.submitting() ? 'Creating account...' : 'Create account'}
+        </button>
+    </form>
+}

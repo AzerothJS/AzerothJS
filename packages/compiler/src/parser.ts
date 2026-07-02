@@ -659,12 +659,33 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
             n++;
         }
         const name = source.slice(nameAt, n);
-        const end = statementEnd(source, n, limit);
-        const withClause = scanWithClause(source, n, end);
+        // `form NAME[] = ...` is an ARRAY-form (a list of repeated sub-forms). The `[]` sits between the
+        // name and `=`; detect it and resume scanning past it. The name span itself stays `nameAt..n`.
+        let isArray = false;
+        let afterName = n;
+        if (word === 'form')
+        {
+            const bracket = skipTrivia(source, n);
+            if (source[bracket] === '[')
+            {
+                const closeAt = skipTrivia(source, bracket + 1);
+                if (source[closeAt] === ']')
+                {
+                    isArray = true;
+                    afterName = closeAt + 1;
+                }
+            }
+        }
+        const end = statementEnd(source, afterName, limit);
+        const withClause = scanWithClause(source, afterName, end);
         const valueEnd = withClause ? withClause.valueEnd : end;
         const optionsStart = withClause ? withClause.optionsStart : null;
         const optionsEnd = withClause ? withClause.optionsEnd : null;
-        const kind = word as 'state' | 'derived' | 'deferred' | 'resource' | 'stream' | 'store' | 'selector' | 'form';
+        if (word === 'form')
+        {
+            return { kind: 'form', name, nameStart: nameAt, nameEnd: n, start: p, end, valueEnd, optionsStart, optionsEnd, isArray };
+        }
+        const kind = word as 'state' | 'derived' | 'deferred' | 'resource' | 'stream' | 'store' | 'selector';
         return { kind, name, nameStart: nameAt, nameEnd: n, start: p, end, valueEnd, optionsStart, optionsEnd };
     }
 

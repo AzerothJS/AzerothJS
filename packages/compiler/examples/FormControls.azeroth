@@ -6,8 +6,8 @@ interface PreferenceValues
 {
     displayName: string;
     bio: string;
-    age: string;
-    volume: string;
+    age: number;
+    volume: number;
     newsletter: boolean;
     plan: Plan;
     country: string;
@@ -23,8 +23,8 @@ export default component Preferences
     {
         displayName: '',
         bio: '',
-        age: '18',
-        volume: '50',
+        age: 18,
+        volume: 50,
         newsletter: true,
         plan: 'free' as Plan,
         country: 'us',

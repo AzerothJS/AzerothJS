@@ -65,6 +65,8 @@ export interface ReactiveAnalysis
     propAliases?: ReadonlyMap<string, string>;
     /** `form` declarations: form name -> its field-key set (drives the `NAME.field` read/write rewrite). */
     forms: ReadonlyMap<string, ReadonlySet<string>>;
+    /** Array-form `<For>` row variables: row name -> blank-row keys (drives the `row.field` rewrite). */
+    rowForms: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /**
@@ -145,6 +147,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         : undefined;
 
     const forms = new Map<string, ReadonlySet<string>>();
+    const arrayForms = new Map<string, ReadonlySet<string>>();
     for (const item of component.body)
     {
         if (item.kind === 'state' || item.kind === 'derived' || item.kind === 'deferred')
@@ -154,11 +157,28 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         }
         else if (item.kind === 'form')
         {
-            forms.set(item.name, new Set(formFieldKeys(source, item)));
+            // A flat form registers its field keys for the `NAME.field` access sugar. An array-form has no
+            // top-level field sugar (its NAME is read explicitly, like a factory), but its blank-row keys are
+            // used to sugar the `<For>` row variable's field access (collected from the markup below).
+            (item.isArray ? arrayForms : forms).set(item.name, new Set(formFieldKeys(source, item)));
         }
     }
 
-    const reactive: ReactiveSources = { names, hasProps, propAliases, forms };
+    // Array-form row variables: scan the markup for `<For each={NAME.rows()}>{(row) => ...}` whose `each`
+    // iterates an array-form, and bind the render arrow's first param as a ROW form (so `row.field` sugars).
+    const rowForms = new Map<string, ReadonlySet<string>>();
+    if (arrayForms.size > 0)
+    {
+        for (const item of component.body)
+        {
+            if (item.kind === 'markup')
+            {
+                collectRowForms(item.node, arrayForms, rowForms);
+            }
+        }
+    }
+
+    const reactive: ReactiveSources = { names, hasProps, propAliases, forms, rowForms };
     const scopes: ReactiveScope[] = [];
 
     for (const item of component.body)
@@ -186,7 +206,100 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         }
     }
 
-    return { sources, hasProps, scopes, propAliases, forms };
+    return { sources, hasProps, scopes, propAliases, forms, rowForms };
+}
+
+/**
+ * Scans a markup subtree for `<For each={NAME.rows()}>{(row) => ...}` (or `each={NAME}`) whose `each`
+ * iterates one of `arrayForms`, and registers the render arrow's first param as a ROW form (row name ->
+ * the array-form's blank-row keys). Recurses into element/fragment children; a `<For>` nested inside an
+ * expression (e.g. another For's arrow body) is not reached - row sugar is for the direct children form.
+ *
+ * @internal
+ */
+function collectRowForms(
+    node: MarkupElement | MarkupFragment,
+    arrayForms: ReadonlyMap<string, ReadonlySet<string>>,
+    rowForms: Map<string, ReadonlySet<string>>
+): void
+{
+    if (node.kind === 'element' && node.tag === 'For')
+    {
+        const eachAttr = node.attributes.find(a => a.name === 'each');
+        const keys = eachAttr !== undefined && eachAttr.value.kind === 'expression'
+            ? arrayFormEachKeys(eachAttr.value.code, arrayForms)
+            : undefined;
+        if (keys !== undefined)
+        {
+            for (const child of node.children)
+            {
+                if (child.kind === 'expression')
+                {
+                    const rowVar = firstArrowParam(child.code);
+                    if (rowVar !== null)
+                    {
+                        rowForms.set(rowVar, keys);
+                    }
+                }
+            }
+        }
+    }
+
+    for (const child of node.children)
+    {
+        if (child.kind === 'element' || child.kind === 'fragment')
+        {
+            collectRowForms(child, arrayForms, rowForms);
+        }
+    }
+}
+
+/** The blank-row keys when `code` is `NAME` or `NAME.rows()` and NAME is an array-form; else undefined. */
+function arrayFormEachKeys(
+    code: string,
+    arrayForms: ReadonlyMap<string, ReadonlySet<string>>
+): ReadonlySet<string> | undefined
+{
+    const expr = parsedExpression(code);
+    if (expr === undefined)
+    {
+        return undefined;
+    }
+    let base: string | undefined;
+    if (ts.isIdentifier(expr))
+    {
+        base = expr.text;
+    }
+    else if (ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)
+        && ts.isIdentifier(expr.expression.expression) && expr.expression.name.text === 'rows')
+    {
+        base = expr.expression.expression.text;
+    }
+    return base !== undefined ? arrayForms.get(base) : undefined;
+}
+
+/** The first parameter NAME of an arrow-function expression `(row, i) => ...`, or null. */
+function firstArrowParam(code: string): string | null
+{
+    const expr = parsedExpression(projectMarkup(code));
+    if (expr !== undefined && ts.isArrowFunction(expr) && expr.parameters.length > 0)
+    {
+        const first = expr.parameters[0]!.name;
+        if (ts.isIdentifier(first))
+        {
+            return first.text;
+        }
+    }
+    return null;
+}
+
+/** Parses `code` as one expression, unwrapping the parentheses parseExpressionSlice adds. */
+function parsedExpression(code: string): ts.Expression | undefined
+{
+    const { sourceFile } = parseExpressionSlice(code, 0);
+    const statement = sourceFile.statements[0];
+    const expr = statement !== undefined && ts.isExpressionStatement(statement) ? statement.expression : undefined;
+    return expr !== undefined && ts.isParenthesizedExpression(expr) ? expr.expression : expr;
 }
 
 /** Analyzes one expression's source (projecting any nested markup first). */

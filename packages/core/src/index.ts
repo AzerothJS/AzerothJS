@@ -146,6 +146,7 @@ export { createStore } from '@azerothjs/store';
 
 export {
     createForm,
+    createFieldArray,
     required,
     minLength,
     maxLength,
@@ -165,7 +166,11 @@ export type {
     FormConfig,
     FormApi,
     FieldValidator,
+    AsyncFieldValidator,
     RegisteredFieldProps,
+    FieldArrayConfig,
+    FieldArrayApi,
+    FieldArrayRow,
     PhoneOptions,
     CountryInfo
 } from '@azerothjs/form';

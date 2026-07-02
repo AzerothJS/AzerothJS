@@ -1,0 +1,66 @@
+// Cross-field validation. A per-field `validate` entry checks ONE field in isolation; anything that spans
+// fields - here "confirm must equal password" - lives in `validateForm`, which receives the whole typed
+// values snapshot and returns a partial map of field -> error. It runs after the per-field validators, so a
+// field's own format error ("At least 8 characters") shows before the relationship error ("Passwords must
+// match"); return the key with `null` to clear once the constraint is satisfied. Editing EITHER field
+// re-runs `validateForm`, so confirm re-checks the moment password changes.
+import { required, email as emailRule, minLength, combine } from '@azerothjs/core';
+
+interface Registration
+{
+    email: string;
+    password: string;
+    confirm: string;
+}
+
+export default component SignUpForm(props: { onRegister: (account: Registration) => Promise<void> })
+{
+    form signup = { email: '', password: '', confirm: '' } with
+    {
+        validate:
+        {
+            email: combine(required('Email is required'), emailRule('Enter a valid email address')),
+            password: combine(required('Password is required'), minLength(8, 'At least 8 characters')),
+            confirm: required('Confirm your password')
+        },
+        validateForm: (values) =>
+        ({
+            confirm: values.confirm !== values.password ? 'Passwords must match' : null
+        }),
+        onSubmit: async (values) =>
+        {
+            try
+            {
+                await props.onRegister(values);
+            }
+            catch
+            {
+                signup.setError('email', 'That email is already registered');
+            }
+        }
+    };
+
+    <form onSubmit={signup.handleSubmit}>
+        <label>
+            Email
+            <input type="email" placeholder="name@example.com" bind:value={signup.email} />
+            <Show when={signup.touched().email}><span class="field-error">{signup.errors().email}</span></Show>
+        </label>
+
+        <label>
+            Password
+            <input type="password" bind:value={signup.password} />
+            <Show when={signup.touched().password}><span class="field-error">{signup.errors().password}</span></Show>
+        </label>
+
+        <label>
+            Confirm password
+            <input type="password" bind:value={signup.confirm} />
+            <Show when={signup.touched().confirm}><span class="field-error">{signup.errors().confirm}</span></Show>
+        </label>
+
+        <button type="submit" disabled={signup.submitting() || !signup.isValid()}>
+            {signup.submitting() ? 'Creating account...' : 'Create account'}
+        </button>
+    </form>
+}
