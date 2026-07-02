@@ -57,6 +57,26 @@
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"
+            ],
+            "@azerothjs/language-service":
+            [
+                "./packages/language-service/src/index.ts"
+            ],
+            "@azerothjs/language-server":
+            [
+                "./packages/language-server/src/index.ts"
+            ],
+            "@azerothjs/testing":
+            [
+                "./packages/testing/src/index.ts"
+            ],
+            "@azerothjs/devtools":
+            [
+                "./packages/devtools/src/index.ts"
+            ],
+            "@azerothjs/eslint-plugin":
+            [
+                "./packages/eslint-plugin/src/index.ts"
             ]
         }
     },
