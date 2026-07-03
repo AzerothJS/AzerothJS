@@ -4,7 +4,7 @@
 // supersedes the request - forward it to fetch so the stale lookup is cancelled. While a check is in
 // flight `signup.validating().username` is true; on submit every async validator is awaited before
 // onSubmit runs, and `signup.isValidating()` is true while any check is pending.
-import { required, minLength, pattern, combine } from '@azerothjs/core';
+import { required, minLength, pattern, combine } from 'azerothjs';
 
 interface NewAccount
 {
@@ -39,16 +39,16 @@ export default component AsyncUsernameForm(props: { onCreate: (account: NewAccou
         }
     };
 
-    <form onSubmit={signup.handleSubmit}>
+    <form onSubmit={ signup.handleSubmit }>
         <label>
             Username
-            <input type="text" autocomplete="username" bind:value={signup.username} />
-            <Show when={signup.validating().username}><span class="field-hint">Checking availability...</span></Show>
-            <Show when={signup.touched().username}><span class="field-error">{signup.errors().username}</span></Show>
+            <input type="text" autocomplete="username" bind:value={ signup.username } />
+            <Show when={ signup.validating().username }><span class="field-hint">Checking availability...</span></Show>
+            <Show when={ signup.touched().username }><span class="field-error">{ signup.errors().username }</span></Show>
         </label>
 
-        <button type="submit" disabled={signup.submitting() || signup.isValidating()}>
-            {signup.submitting() ? 'Creating account...' : 'Create account'}
+        <button type="submit" disabled={ signup.submitting() || signup.isValidating() }>
+            { signup.submitting() ? 'Creating account...' : 'Create account' }
         </button>
     </form>
 }

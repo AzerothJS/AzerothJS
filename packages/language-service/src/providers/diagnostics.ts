@@ -148,7 +148,9 @@ function markupDiagnostics(ctx: RequestContext): { errors: Diagnostic[]; warning
         try
         {
             const { node, end } = parseMarkup(ctx.source, start);
-            for (const finding of lintMarkup(node))
+            // Passing the source enables the style rules that need raw text (interpolation-spacing
+            // inspects the bytes between an expression's braces, which the AST does not carry).
+            for (const finding of lintMarkup(node, ctx.source))
             {
                 warnings.push({
                     range: ctx.lineIndex.rangeAt(finding.start, Math.min(finding.end, ctx.source.length)),

@@ -5,7 +5,7 @@
 // render through <For> (keyed by the stable `member.key`); a row field two-way-binds straight to an input
 // with `bind:value={member.field}`, while the rest of the row API is explicit through `member.form`
 // (`member.form.errors()`, `member.form.touched()`). validateAll() reveals every row's errors, gating submit.
-import { required, email as emailRule, combine } from '@azerothjs/core';
+import { required, email as emailRule, combine } from 'azerothjs';
 
 interface Member
 {
@@ -37,8 +37,8 @@ export default component TeamMembersForm(props: { onSave: (members: Member[]) =>
     }
 
     <form onSubmit={save}>
-        <For each={members.rows()} key={(member) => member.key}>
-            {(member, index) =>
+        <For each={ members.rows() } key={ (member) => member.key }>
+            { (member, index) =>
                 <fieldset>
                     <input placeholder="Name" bind:value={member.name} />
                     <Show when={member.form.touched().name}><span class="field-error">{member.form.errors().name}</span></Show>
@@ -51,9 +51,9 @@ export default component TeamMembersForm(props: { onSave: (members: Member[]) =>
             }
         </For>
 
-        <Show when={members.error()}><p class="field-error">{members.error()}</p></Show>
+        <Show when={ members.error() }><p class="field-error">{ members.error() }</p></Show>
 
-        <button type="button" onClick={() => members.append()}>Add member</button>
-        <button type="submit" disabled={!members.isValid()}>Save team</button>
+        <button type="button" onClick={ () => members.append() }>Add member</button>
+        <button type="submit" disabled={ !members.isValid() }>Save team</button>
     </form>
 }

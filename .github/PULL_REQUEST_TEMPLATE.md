@@ -17,15 +17,16 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 
 <!-- Check every type that applies. -->
 
-- [ ] `feat` — new feature or public-API addition
-- [ ] `fix` — bug fix
-- [ ] `perf` — performance improvement (no API change)
-- [ ] `refactor` — internal restructure (no behaviour change)
-- [ ] `docs` — documentation only
-- [ ] `test` — adds or corrects tests, no production-code change
-- [ ] `chore` — tooling, scripts, dependency updates, config
-- [ ] `ci` — CI/CD workflow change
-- [ ] **Breaking change** — removes or alters an existing public API
+- [ ] `feat` - new feature or public-API addition
+- [ ] `fix` - bug fix
+- [ ] `perf` - performance improvement (no API change)
+- [ ] `refactor` - internal restructure (no behaviour change)
+- [ ] `docs` - documentation only
+- [ ] `test` - adds or corrects tests, no production-code change
+- [ ] `build` - build wiring (tsconfig, build order, packaging)
+- [ ] `chore` - tooling, scripts, dependency updates, config
+- [ ] `ci` - CI/CD workflow change
+- [ ] **Breaking change** - removes or alters an existing public API
 
 ## Affected packages
 
@@ -40,7 +41,7 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 - [ ] `@azerothjs/router`
 - [ ] `@azerothjs/server`
 - [ ] `@azerothjs/compiler`
-- [ ] `@azerothjs/core`
+- [ ] `azerothjs` (entry package)
 - [ ] `@azerothjs/testing`
 - [ ] `@azerothjs/language-service` / `@azerothjs/language-server` / `@azerothjs/typescript-plugin`
 - [ ] `@azerothjs/eslint-plugin`
@@ -65,6 +66,8 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 
 ## Checklist
 
+<!-- `npm run verify` chains every gate below in one command. -->
+
 - [ ] `npm run lint` passes (`npm run lint:fix` applied for style issues)
 - [ ] `npm test` passes
 - [ ] `npm run build` succeeds for all packages
@@ -74,5 +77,5 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 - [ ] Bug fixes include a regression test
 - [ ] Public API additions/changes have doc comments that explain **why**, not just what
 - [ ] `CHANGELOG.md` `[Unreleased]` section updated *(required when published behaviour changes)*
-- [ ] Commit message(s) follow Conventional Commits — `type(scope): summary`
-- [ ] Comments are ASCII-only and contain no internal lineage references (no ADR IDs, milestone links, internal RFC paths — see CONTRIBUTING.md)
+- [ ] Commit message(s) follow Conventional Commits with a **path scope** - e.g. `feat(packages/form): ...`, `fix(editors/vscode): ...` (see CONTRIBUTING.md for the scope table)
+- [ ] Comments are ASCII-only and contain no internal lineage references (no ADR IDs, milestone links, internal RFC paths - see CONTRIBUTING.md)

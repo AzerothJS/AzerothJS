@@ -1,5 +1,9 @@
 # @azerothjs/language-server
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Flanguage-server?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/language-server)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 A [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
@@ -11,11 +15,17 @@ intelligence (the TypeScript bridge, the markup model, and the providers).
 Editors that speak LSP (the VS Code extension and the JetBrains plugin in this
 repository, among others) launch this server and talk to it over stdio.
 
+## Install
+
+```sh
+npm install -D @azerothjs/language-server
+```
+
 ## Architecture
 
 The server holds one `AzerothLanguageService` **per workspace root** (multi-root
 aware: each document resolves against the service whose root is its longest
-matching prefix — its nearest project — so files in different roots type-check
+matching prefix - its nearest project - so files in different roots type-check
 against their own `tsconfig`; roots added/removed at runtime are tracked via
 `workspace/didChangeWorkspaceFolders`) and a
 document manager (`vscode-languageserver`'s `TextDocuments`). Text changes are
@@ -133,19 +143,6 @@ The legend for semantic tokens is `component`, `tag`, `attribute`, `event`,
 `string`, `delimiter`, with no modifiers. Editors must register the same legend
 so these token types get themed.
 
-## Building
-
-```sh
-npm run build -w @azerothjs/language-server
-```
-
-This runs `tsc -p tsconfig.build.json` and emits `dist/`, including the
-`azeroth-language-server` binary referenced by `bin`. It depends on
-`@azerothjs/language-service` being built first; the repository root
-`npm run build` builds packages in dependency order.
-
-For distribution inside an editor, the server and its dependencies are bundled
-into a single file by the editor's build step (see `editors/vscode/esbuild.mjs`).
 
 ## Testing
 
@@ -162,11 +159,6 @@ Configuration is supplied by the client through `initializationOptions` and
 `workspace/configuration`. TypeScript intelligence uses the nearest
 `tsconfig.json` in the workspace, resolved by the language service.
 
-## Contributing
+## License
 
-A new feature usually means a new method on `AzerothLanguageService` in the
-language-service package plus a new handler here that registers the capability
-and forwards to it. Keep this package free of language logic; if a handler starts
-making language decisions, that logic belongs in the service. See the
-[language-service README](../language-service/README.md) for the full
-architecture.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

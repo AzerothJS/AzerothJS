@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { createSignal, createRoot, batch } from '@azerothjs/reactivity';
 import { h, createRef } from '@azerothjs/renderer';
 
-describe('h — element creation', () =>
+describe('h - element creation', () =>
 {
     it('creates a real element of the requested tag', () =>
     {
@@ -52,7 +52,7 @@ describe('h — element creation', () =>
     });
 });
 
-describe('h — static children', () =>
+describe('h - static children', () =>
 {
     it('appends element children in order', () =>
     {
@@ -85,7 +85,7 @@ describe('h — static children', () =>
     });
 });
 
-describe('h — reactive attributes', () =>
+describe('h - reactive attributes', () =>
 {
     it('re-applies a function attribute in place when its signal changes', () =>
     {
@@ -127,7 +127,7 @@ describe('h — reactive attributes', () =>
     });
 });
 
-describe('h — reactive children', () =>
+describe('h - reactive children', () =>
 {
     it('patches a text node in place (no node churn) when a reactive child changes', () =>
     {
@@ -220,7 +220,7 @@ describe('h — reactive children', () =>
     });
 });
 
-describe('h — events', () =>
+describe('h - events', () =>
 {
     it('binds an on* handler that fires on dispatch', () =>
     {
@@ -251,7 +251,7 @@ describe('h — events', () =>
     });
 });
 
-describe('h — refs', () =>
+describe('h - refs', () =>
 {
     it('assigns the element to a createRef object .current', () =>
     {

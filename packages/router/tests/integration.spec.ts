@@ -18,7 +18,7 @@ import type { Route, Router } from '@azerothjs/router';
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('router integration — nested layout app', () =>
+describe('router integration - nested layout app', () =>
 {
     it('navigate() swaps the rendered Outlet content and params flow into the leaf', () =>
     {

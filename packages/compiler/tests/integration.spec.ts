@@ -132,7 +132,7 @@ describe('integration - generateModule (emitted JS)', () =>
 
     it('imports exactly the runtime helpers the emitted code uses', () =>
     {
-        const importLine = code.split('\n').find(l => l.startsWith('import { ') && l.includes('@azerothjs/core'))!;
+        const importLine = code.split('\n').find(l => l.startsWith('import { ') && l.includes('azerothjs'))!;
         for (const name of ['createSignal', 'createMemo', 'createEffect', 'isStringMode', 'isHydrating', 'Show', 'bindHole', 'bindSlot', 'setProp', 'tmpl'])
         {
             expect(importLine).toContain(name);

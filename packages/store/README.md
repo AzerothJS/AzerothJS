@@ -1,5 +1,9 @@
 # @azerothjs/store
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Fstore?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/store)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 A small reactive state container for state that should be shared across
@@ -19,6 +23,12 @@ const useCounter = createStore(() => {
 
 // Anywhere in the app:
 const { count, increment } = useCounter();
+```
+
+## Install
+
+```sh
+npm install @azerothjs/store
 ```
 
 ## Architecture
@@ -42,11 +52,6 @@ Stores compose: one store's factory can call another store's `useStore()`.
 | --- | --- |
 | `create-store.ts` | `createStore`: the lazy-singleton factory wrapper. |
 
-## Building
-
-```sh
-npm run build -w @azerothjs/store
-```
 
 ## Examples
 
@@ -68,7 +73,6 @@ const useDashboard = createStore(() => {
 });
 ```
 
-## Contributing
+## License
 
-The package is intentionally minimal; keep it that way. State shape and update
-logic belong in the factory the caller writes, not in this package.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

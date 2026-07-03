@@ -38,7 +38,7 @@ function open(source = CONSUMER): { ls: AzerothLanguageService; uri: string }
     return { ls, uri };
 }
 
-describe('cross-file .ts ↔ .azeroth intelligence', () =>
+describe('cross-file .ts <-> .azeroth intelligence', () =>
 {
     it('infers the imported type for member completion', () =>
     {

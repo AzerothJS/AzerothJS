@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 //
-// Re-export integrity for the @azerothjs/core umbrella. core has no implementation of
+// Re-export integrity for the azerothjs umbrella. core has no implementation of
 // its own: it MUST forward every public runtime value from the originating package
 // unchanged. For an umbrella, a dropped or renamed re-export is a real regression that
-// silently breaks `import { x } from '@azerothjs/core'`, so each value is asserted to be
+// silently breaks `import { x } from 'azerothjs'`, so each value is asserted to be
 // (a) defined and (b) the SAME reference as the export from its source package. A pure
 // star-re-export or a typo in a named re-export would fail these identity checks.
 import { describe, it, expect } from 'vitest';
 
-import * as core from '@azerothjs/core';
+import * as core from 'azerothjs';
 import * as reactivity from '@azerothjs/reactivity';
 import * as renderer from '@azerothjs/renderer';
 import * as component from '@azerothjs/component';
@@ -119,7 +119,7 @@ const reExports: Array<[string, Record<string, unknown>]> = [
     ['renderToDocument', server]
 ];
 
-describe('@azerothjs/core re-export integrity', () =>
+describe('azerothjs re-export integrity', () =>
 {
     it.each(reExports)('re-exports "%s" as the same reference as its source package', (name, source) =>
     {

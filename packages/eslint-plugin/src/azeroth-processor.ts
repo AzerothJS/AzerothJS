@@ -15,7 +15,7 @@
 //     handler-not-function, ...) are merged into the SAME list, so the developer sees one unified report.
 
 import type { Linter, Rule } from 'eslint';
-import { generateVirtualCode, diagnoseModule, parseModule, type CodeMapping } from '@azerothjs/compiler';
+import { generateVirtualCode, diagnoseModule, lintSource, parseModule, type CodeMapping } from '@azerothjs/compiler';
 import { registerDocument } from './project-pool.ts';
 
 /** What preprocess stashes for postprocess, keyed by the `.azeroth` file name. */
@@ -270,6 +270,51 @@ function compilerDiagnostics(projection: Projection): Linter.LintMessage[]
     });
 }
 
+/**
+ * The compiler's markup lint (duplicate-attr, event-case, interpolation-spacing, ...) as ESLint
+ * messages. The rules live compiler-side because they concern markup PUNCTUATION the projection
+ * lowers away - no rule running on the virtual TypeScript could ever see an interpolation's braces.
+ * Findings (and their fixes) already carry ORIGINAL source coordinates, which is exactly the space
+ * postprocess returns messages in, so unlike the virtual-block messages they need no mapping - a
+ * carried fix is forwarded as-is and `eslint --fix` rewrites the `.azeroth` source directly.
+ */
+function markupLint(projection: Projection): Linter.LintMessage[]
+{
+    if (projection.source === '')
+    {
+        return [];
+    }
+    let findings;
+    try
+    {
+        findings = lintSource(projection.source);
+    }
+    catch
+    {
+        // Malformed markup: the parse error is reported by the compiler/editor, not lint.
+        return [];
+    }
+    return findings.map((finding) =>
+    {
+        const start = locationAt(projection.sourceStarts, finding.start);
+        const end = locationAt(projection.sourceStarts, finding.end);
+        const message: Linter.LintMessage = {
+            ruleId: finding.code,
+            severity: 1,
+            message: finding.message,
+            line: start.line,
+            column: start.column,
+            endLine: end.line,
+            endColumn: end.column
+        };
+        if (finding.fix !== undefined)
+        {
+            message.fix = { range: finding.fix.range, text: finding.fix.text };
+        }
+        return message;
+    });
+}
+
 export const azerothProcessor: Linter.Processor =
 {
     meta: { name: '@azerothjs/eslint-plugin/azeroth', version: '0.6.0-beta.1' },
@@ -342,8 +387,9 @@ export const azerothProcessor: Linter.Processor =
             }
             out.push(mapped);
         }
-        // Unify the compiler's reactivity diagnostics into the same list.
+        // Unify the compiler's reactivity diagnostics and markup lint into the same list.
         out.push(...compilerDiagnostics(projection));
+        out.push(...markupLint(projection));
         return out;
     }
 };

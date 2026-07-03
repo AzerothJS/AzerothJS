@@ -25,7 +25,7 @@ function makeContainer(): HTMLElement
     return container;
 }
 
-describe('Transition — instant (no name)', () =>
+describe('Transition - instant (no name)', () =>
 {
     it('mounts the child when when is initially true', () =>
     {
@@ -59,7 +59,7 @@ describe('Transition — instant (no name)', () =>
     });
 });
 
-describe('Transition — first-run mount is instant', () =>
+describe('Transition - first-run mount is instant', () =>
 {
     it('does not apply enter classes on the initial mount even with a name', () =>
     {
@@ -78,7 +78,7 @@ describe('Transition — first-run mount is instant', () =>
     });
 });
 
-describe('Transition — animated enter/leave (rAF + timeout backstop)', () =>
+describe('Transition - animated enter/leave (rAF + timeout backstop)', () =>
 {
     it('adds enter classes when showing a hidden element with a name', async () =>
     {
@@ -158,7 +158,7 @@ describe('Transition — animated enter/leave (rAF + timeout backstop)', () =>
     });
 });
 
-describe('Transition — root disposal', () =>
+describe('Transition - root disposal', () =>
 {
     it('removes the child immediately on surrounding-root dispose (no animation)', () =>
     {

@@ -1,7 +1,7 @@
 {
     "name": "azerothjs-vscode",
     "displayName": "AzerothJS",
-    "description": "Language support for AzerothJS .azeroth files — completion, hover, diagnostics, and more, powered by the compiler.",
+    "description": "Language support for AzerothJS .azeroth files - completion, hover, diagnostics, and more, powered by the compiler.",
     "version": "0.7.0-beta.1",
     "publisher": "azerothjs",
     "author":
@@ -85,7 +85,7 @@
                 {
                     "type": "boolean",
                     "default": true,
-                    "markdownDescription": "Expand built-in components to snippets on completion (e.g. `<For each={…} key={…}>{…}</For>`)."
+                    "markdownDescription": "Expand built-in components to snippets on completion (e.g. `<For each={...} key={...}>{...}</For>`)."
                 },
                 "azeroth.inlayHints.enabled":
                 {
@@ -105,7 +105,7 @@
                     "enumDescriptions":
                     [
                         "No parameter-name hints.",
-                        "Only for literal arguments (numbers, strings, …).",
+                        "Only for literal arguments (numbers, strings, ...).",
                         "For all arguments."
                     ],
                     "default": "all",
@@ -236,7 +236,7 @@
                 {
                     "type": "boolean",
                     "default": true,
-                    "markdownDescription": "Enable format-on-type (after `;`, `}`, newline) — also requires `azeroth.format.enable` in `.azeroth` files."
+                    "markdownDescription": "Enable format-on-type (after `;`, `}`, newline) - also requires `azeroth.format.enable` in `.azeroth` files."
                 },
                 "azeroth.linkedEditing.enable":
                 {
@@ -266,7 +266,7 @@
                 {
                     "type": "boolean",
                     "default": true,
-                    "markdownDescription": "Enable color swatches over CSS colors in `style=\"…\"` attributes and css`` templates in `.azeroth` files."
+                    "markdownDescription": "Enable color swatches over CSS colors in `style=\"...\"` attributes and css`` templates in `.azeroth` files."
                 }
             }
         },

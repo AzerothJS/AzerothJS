@@ -1,5 +1,9 @@
 # @azerothjs/language-service
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Flanguage-service?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/language-service)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 Compiler-aware language intelligence for `.azeroth` files, packaged so it can be
@@ -17,6 +21,12 @@ ls.getHover('file:///App.azeroth', { line: 0, character: 32 }); // the type of n
 
 The package depends only on `typescript` and `@azerothjs/compiler`, so it runs
 (and is unit-tested) without an editor in the loop.
+
+## Install
+
+```sh
+npm install @azerothjs/language-service
+```
 
 ## Architecture
 
@@ -208,15 +218,6 @@ A good reading order follows the runtime pipeline: `virtual-code.ts` and
 `mapping.ts`, then `ts-project.ts`, then `markup-model.ts`, then the providers,
 then `service.ts`.
 
-## Building
-
-```sh
-npm run build -w @azerothjs/language-service
-```
-
-This runs `tsc -p tsconfig.build.json` and emits `dist/`. The build depends on
-`@azerothjs/compiler` being built first; the repository root `npm run build`
-builds the packages in dependency order.
 
 ## Testing
 
@@ -270,12 +271,6 @@ npx azeroth-tsc -p tsconfig.json
 (both a function component and a class component) used to exercise the features
 by hand in an editor.
 
-## Contributing
+## License
 
-Keep the seam intact: anything that is really TypeScript should be answered by
-the TypeScript bridge rather than re-implemented, and anything markup-specific
-belongs in `markup-model.ts` or `language-data.ts`. New features generally take
-the shape of a new module under `providers/` plus a method on the facade. Add or
-update tests under `test/language-service/`, and run the build with
-`--noUnusedLocals --noUnusedParameters` (the repository default) before sending a
-change.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

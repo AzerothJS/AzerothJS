@@ -32,7 +32,7 @@ describe('resource keyword', () =>
         const out = proj('state id = 1;\nresource user = (n: number) => fetchUser(n) with { source: id };');
         // projection reads the source PLAIN (no getter-call rewrite) and declares the runtime helper
         expect(out).toContain('const user = createResource(() => (id), (n: number) => fetchUser(n))');
-        expect(out).toContain("declare const createResource: typeof import('@azerothjs/core').createResource;");
+        expect(out).toContain("declare const createResource: typeof import('azerothjs').createResource;");
     });
 });
 

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 //
-// End-to-end integration for the @azerothjs/core umbrella: every symbol used below is
-// imported from '@azerothjs/core' ALONE, proving the umbrella surface is sufficient to
+// End-to-end integration for the azerothjs umbrella: every symbol used below is
+// imported from 'azerothjs' ALONE, proving the umbrella surface is sufficient to
 // build a real app (reactivity + renderer + control flow + store + form + SSR) without
 // reaching into the underlying packages. These are genuine mount -> update -> interact
 // scenarios composing multiple features, NOT re-tests of any single package's unit
@@ -24,7 +24,7 @@ import {
     renderToString,
     renderToStaticMarkup,
     createRoot
-} from '@azerothjs/core';
+} from 'azerothjs';
 
 // Mount a component into a container that is attached to document.body so the renderer's
 // DELEGATED event handlers (which listen at the document level) fire on real .click().
@@ -36,7 +36,7 @@ function mount(component: () => HTMLElement): HTMLElement
     return container;
 }
 
-describe('core CSR — signals + h + control flow, then a store driving the same UI', () =>
+describe('core CSR - signals + h + control flow, then a store driving the same UI', () =>
 {
     it('a signal + Show + For build a live todo list that reacts to clicks', () =>
     {
@@ -159,7 +159,7 @@ describe('core CSR — signals + h + control flow, then a store driving the same
     });
 });
 
-describe('core form — createForm wired to real inputs with validation + submit', () =>
+describe('core form - createForm wired to real inputs with validation + submit', () =>
 {
     it('binds inputs, validates live, blocks an invalid submit, then submits when valid', () =>
     {
@@ -234,7 +234,7 @@ describe('core form — createForm wired to real inputs with validation + submit
     });
 });
 
-describe('core SSR — renderToString / renderToStaticMarkup from the umbrella', () =>
+describe('core SSR - renderToString / renderToStaticMarkup from the umbrella', () =>
 {
     // A component built entirely from core, usable on both server (string mode) and client.
     interface Item

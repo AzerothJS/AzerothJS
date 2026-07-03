@@ -7,7 +7,7 @@ body:
             value: |
                 Thanks for taking the time to think through a proposal. The clearer the problem statement
                 and the example code, the easier it is to evaluate and discuss the idea. Check existing
-                issues and discussions first — your idea may already be in flight.
+                issues and discussions first - your idea may already be in flight.
 
     -   type: textarea
         id: problem
@@ -15,12 +15,12 @@ body:
             label: Problem statement
             description: >
                 What problem are you trying to solve? What can you not do today, or what is unreasonably
-                difficult? Be specific — a concrete pain point makes the proposal easier to evaluate.
+                difficult? Be specific - a concrete pain point makes the proposal easier to evaluate.
             placeholder: |
-                When building forms with dynamic field arrays (e.g. a list of phone numbers the user can
-                add/remove), there is no idiomatic way to express a variable-length reactive field list
-                with the `form` keyword. Today I have to fall back to createForm + manual signal arrays,
-                losing the compile-time bind:value type-checking.
+                Large route components all load in the initial bundle: the router's `component` takes a
+                resolved component, so there is no idiomatic way to code-split a route. Today I wrap
+                everything in a hand-rolled lazy() + Suspense combination per route, which every app
+                reinvents slightly differently.
         validations:
             required: true
 
@@ -34,15 +34,13 @@ body:
                 strongly encouraged.
             render: tsx
             placeholder: |
-                // Proposed: array field in the form keyword
-                form checkout = {
-                    phones: [{ number: '' }]
-                };
-
-                <For each={checkout.phones}>
-                    {(field, i) => <input bind:value={field.number} />}
-                </For>
-                <button onClick={() => checkout.phones.push({ number: '' })}>Add phone</button>
+                // Proposed: a lazy route - the router loads the module on first match
+                const router = createRouter({
+                    routes: [
+                        { path: '/', component: Home },
+                        { path: '/admin', lazy: () => import('./admin.page') }
+                    ]
+                });
         validations:
             required: true
 
@@ -61,7 +59,7 @@ body:
                 - "@azerothjs/store"
                 - "@azerothjs/form"
                 - "@azerothjs/server"
-                - "@azerothjs/core"
+                - "azerothjs (entry package)"
                 - "@azerothjs/testing"
                 - "@azerothjs/devtools"
                 - "Editor tooling (language-service / language-server / typescript-plugin / eslint-plugin)"
@@ -76,8 +74,8 @@ body:
         attributes:
             label: Would this be a breaking change?
             options:
-                - "No — purely additive"
-                - "Yes — would alter existing public API or behaviour"
+                - "No - purely additive"
+                - "Yes - would alter existing public API or behaviour"
                 - "Not sure"
         validations:
             required: true

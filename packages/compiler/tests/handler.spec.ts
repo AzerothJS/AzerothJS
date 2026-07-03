@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { isSetupHandler } from '../src/handler.ts';
 
-describe('isSetupHandler — rejected (provably a setup-time effect)', () =>
+describe('isSetupHandler - rejected (provably a setup-time effect)', () =>
 {
     it('flags assignments (any assignment operator)', () =>
     {
@@ -40,7 +40,7 @@ describe('isSetupHandler — rejected (provably a setup-time effect)', () =>
     });
 });
 
-describe('isSetupHandler — accepted (deferred to the type system)', () =>
+describe('isSetupHandler - accepted (deferred to the type system)', () =>
 {
     it('does not flag bare references (identifier or member path)', () =>
     {

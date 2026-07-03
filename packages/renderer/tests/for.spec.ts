@@ -29,7 +29,7 @@ function ids(container: HTMLElement): string[]
     return rowEls(container).map((el) => el.getAttribute('data-id')!);
 }
 
-describe('For — initial render', () =>
+describe('For - initial render', () =>
 {
     it('renders one element per item in order', () =>
     {
@@ -61,7 +61,7 @@ describe('For — initial render', () =>
     });
 });
 
-describe('For — keyed reconciliation', () =>
+describe('For - keyed reconciliation', () =>
 {
     it('reuses the exact element instances for surviving keys when appending', () =>
     {
@@ -207,7 +207,7 @@ describe('For — keyed reconciliation', () =>
     });
 });
 
-describe('For — reactive index', () =>
+describe('For - reactive index', () =>
 {
     it('updates a row\'s index() binding on reorder without rebuilding it', () =>
     {
@@ -236,7 +236,7 @@ describe('For — reactive index', () =>
     });
 });
 
-describe('For — edge cases', () =>
+describe('For - edge cases', () =>
 {
     it('removes all rows for an empty list, keeping markers usable for refill', () =>
     {

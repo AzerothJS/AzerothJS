@@ -1,8 +1,8 @@
 {
-    "name": "@azerothjs/core",
+    "name": "azerothjs",
     "version": "0.7.0-beta.1",
     "engines": { "node": ">=24" },
-    "description": "AzerothJS core — umbrella package re-exporting all AzerothJS APIs",
+    "description": "AzerothJS - fine-grained reactive framework with compiled .azeroth components: signals, zero Virtual DOM, direct DOM updates",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -38,6 +38,18 @@
         "@azerothjs/form": "0.7.0-beta.1",
         "@azerothjs/router": "0.7.0-beta.1"
     },
+    "keywords":
+    [
+        "framework",
+        "reactive",
+        "signals",
+        "fine-grained",
+        "no-vdom",
+        "dom",
+        "typescript",
+        "frontend",
+        "azeroth"
+    ],
     "publishConfig":
     {
         "access": "public"
@@ -53,9 +65,9 @@
     {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
-        "directory": "packages/core"
+        "directory": "packages/azerothjs"
     },
-    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/core",
+    "homepage": "https://github.com/AzerothJS/AzerothJS#readme",
     "bugs":
     {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"

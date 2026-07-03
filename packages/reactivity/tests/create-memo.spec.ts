@@ -12,7 +12,7 @@ import {
     subscriberCount
 } from '@azerothjs/reactivity';
 
-describe('createMemo — compute lifecycle', () =>
+describe('createMemo - compute lifecycle', () =>
 {
     it('computes eagerly exactly once on creation', () =>
     {
@@ -63,7 +63,7 @@ describe('createMemo — compute lifecycle', () =>
     });
 });
 
-describe('createMemo — propagation and equality', () =>
+describe('createMemo - propagation and equality', () =>
 {
     it('propagates to downstream readers only when its value actually changes', () =>
     {
@@ -110,7 +110,7 @@ describe('createMemo — propagation and equality', () =>
     });
 });
 
-describe('createMemo — chains', () =>
+describe('createMemo - chains', () =>
 {
     it('invalidates transitively through a chain of memos', () =>
     {

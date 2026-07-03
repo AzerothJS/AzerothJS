@@ -4,10 +4,10 @@
 // tool (type checker, language service, TS plugin, declaration emitter, azeroth-tsc) consumes. Asserts
 // the projected shape of each component-body construct, the component call/signature contract, and the
 // four subtle correctness rules the projection enforces:
-//   - state with a type annotation is cast (`= (init as T)`) so reads aren't flow-narrowed to the init;
-//   - effect/wrapper bodies are arrows (`void (() => ...)`) so a `return` does not leak into the component;
-//   - props is a DEFAULTED parameter (optional for callers, typed `P` in the body);
-//   - a render-callback child is passed bare to `__azRender`, an IIFE child is wrapped.
+// - state with a type annotation is cast (`= (init as T)`) so reads aren't flow-narrowed to the init;
+// - effect/wrapper bodies are arrows (`void (() => ...)`) so a `return` does not leak into the component;
+// - props is a DEFAULTED parameter (optional for callers, typed `P` in the body);
+// - a render-callback child is passed bare to `__azRender`, an IIFE child is wrapped.
 import { describe, it, expect } from 'vitest';
 import { generateVirtualCode } from '@azerothjs/compiler';
 
@@ -94,7 +94,7 @@ describe('generateVirtualCode - reactive body keywords', () =>
 
 describe('generateVirtualCode - markup', () =>
 {
-    it('always calls a component as Comp({ … }) (never Comp()), so missing props are checked', () =>
+    it('always calls a component as Comp({ ... }) (never Comp()), so missing props are checked', () =>
     {
         const out = code('component App { <Card /> }');
         expect(out).toMatch(/Card\(\{\s*\}\)/);
@@ -141,7 +141,7 @@ describe('generateVirtualCode - self-contained ambient declarations', () =>
     it('declares h for markup, AzerothHandler for handlers, __children + __azRender for children', () =>
     {
         const out = code('component C { <button onClick={(e) => 0}>x</button><Box>y</Box> }');
-        expect(out).toContain("declare const h: typeof import('@azerothjs/core').h");
+        expect(out).toContain("declare const h: typeof import('azerothjs').h");
         expect(out).toContain('type AzerothHandler<');
         expect(out).toContain('declare const __children:');
         expect(out).toContain('declare function __azRender(');

@@ -11,7 +11,7 @@ import {
     subscriberCount
 } from '@azerothjs/reactivity';
 
-describe('createSignal — value semantics', () =>
+describe('createSignal - value semantics', () =>
 {
     it('returns a [getter, setter] tuple and reads the initial value', () =>
     {
@@ -57,7 +57,7 @@ describe('createSignal — value semantics', () =>
     });
 });
 
-describe('createSignal — change detection (equals)', () =>
+describe('createSignal - change detection (equals)', () =>
 {
     it('uses Object.is by default: writing the same primitive does not notify', () =>
     {
@@ -195,7 +195,7 @@ describe('subscriberCount', () =>
     });
 });
 
-describe('createSignal — isolation', () =>
+describe('createSignal - isolation', () =>
 {
     it('independent signals never cross-trigger', () =>
     {

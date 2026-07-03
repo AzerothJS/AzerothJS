@@ -28,7 +28,7 @@ function makeContainer(): HTMLElement
     return container;
 }
 
-describe('integration — a reactive todo widget', () =>
+describe('integration - a reactive todo widget', () =>
 {
     it('mounts, reacts, handles interaction, and tears down cleanly', () =>
     {

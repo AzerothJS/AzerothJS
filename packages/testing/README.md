@@ -1,11 +1,15 @@
 # @azerothjs/testing
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Ftesting?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/testing)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 Testing utilities for AzerothJS apps: auto-disposing mounts, subscriber
 leak guards, and a bubbling-event helper.
 
 ```ts
 import { renderTest, leakGuard, fire, cleanup } from '@azerothjs/testing';
-import { createSignal, h } from '@azerothjs/core';
+import { createSignal, h } from 'azerothjs';
 
 it('updates and tears down cleanly', () =>
 {
@@ -34,3 +38,13 @@ it('updates and tears down cleanly', () =>
 - `leakGuard(...getters)` snapshots subscriber counts and returns an
   assertion that throws if teardown left subscriptions behind.
 - `fire(el, type, init?)` dispatches a bubbling, cancelable event.
+
+## Install
+
+```sh
+npm install -D @azerothjs/testing
+```
+
+## License
+
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

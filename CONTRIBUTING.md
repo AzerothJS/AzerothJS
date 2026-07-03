@@ -7,8 +7,8 @@ choices worth knowing up front.
 
 ## Prerequisites
 
-- **Node.js >= 20** (see `.nvmrc`; run `nvm use` if you use nvm). The CI matrix
-  tests Node 20, 22, and 24.
+- **Node.js >= 24** (see `.nvmrc`; run `nvm use` if you use nvm). CI tests
+  Node 24 on Linux and Windows.
 - **npm 11+** (the repo pins `packageManager` in `package.json`).
 
 ## Setup
@@ -34,7 +34,7 @@ or `test/` directory - each package owns its own `src/` and `tests/`.
 | `packages/renderer` `packages/component` | DOM rendering, control flow, component teardown. |
 | `packages/store` `packages/form` `packages/router` `packages/server` | App-level building blocks. |
 | `packages/compiler` | The `.azeroth` single-file-component compiler and the Vite plugin. |
-| `packages/core` | Umbrella package re-exporting the runtime. |
+| `packages/azerothjs` | The framework's entry package (`npm i azerothjs`), re-exporting the runtime. |
 | `packages/testing` | Test helpers (`renderTest`, `cleanup`, `leakGuard`, `fire`). |
 | `packages/language-service` `packages/language-server` `packages/typescript-plugin` `packages/eslint-plugin` | Editor tooling. |
 | `packages/devtools` | Browser devtools panel/agent. |
@@ -58,9 +58,12 @@ npm run typecheck  # whole-monorepo type-check (no emit)
 npm run dev        # whole-monorepo type-check in watch mode
 ```
 
-Before opening a PR, make sure `npm run lint`, `npm test`, and `npm run build`
-all pass. CI runs exactly these (plus the leak gate, and the test suite across
-the Node matrix), so a green local run should mean a green CI run.
+Before opening a PR, make sure `npm run lint`, `npm run typecheck`, `npm test`,
+and `npm run build` all pass. CI runs these (plus the leak gate, the publish
+contract check, test coverage on Linux, a Windows test cell, and - when editor
+or package code changes - builds of both editor plugins), so a green local run
+should mean a green CI run. `npm run verify` chains every local gate in one
+command.
 
 ## Testing
 
@@ -97,8 +100,25 @@ These are enforced by `eslint.config.ts`; `npm run lint:fix` applies most of the
 ## Commit messages
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
-`type(scope): summary`, e.g. `fix(reactivity): clear stale deps on re-run`.
-Common types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`.
+`type(scope): summary`. The **scope is a repository path**, not a bare package
+name - it names where the change lives:
+
+| Scope | Used for | Example |
+| --- | --- | --- |
+| `packages/<name>` | one package | `feat(packages/form): field arrays and async validation` |
+| `packages` | a change spanning several packages | `feat(packages): editor plugins, declaration maps, and reactive highlighting` |
+| `editors/<vscode\|jetbrains>` | one editor integration | `feat(editors/jetbrains): native JetBrains Azeroth language support` |
+| `editors` | both editor integrations | `feat(editors): first-class .azeroth support across VS Code & JetBrains` |
+| `ci` / `actions` | workflows | `chore(ci): GitHub Actions to latest versions` |
+| `scripts` | repo scripts | `chore(scripts): support resuming interrupted version bumps` |
+| `build` | build wiring (tsconfig, build order) | `fix(build): missing packages to tsconfig and build order` |
+| `deps` / `deps-dev` | dependency bumps (dependabot's prefixes) | `chore(deps): bump vscode-languageserver to 10.0.1` |
+| `release` | the release commit itself (created by `release.mjs`) | `chore(release): v0.7.0-beta.1` |
+
+Common types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
+`chore`, `ci`. Mark a breaking change with `!` after the scope and a
+`BREAKING CHANGE:` footer, e.g.
+`build(packages)!: raise the Node engines floor to >=24 in every published package`.
 
 This convention is a readability and history aid; it is **not** wired into any
 automated versioning (see Releases below), so it's documented here rather than
@@ -119,15 +139,33 @@ shares one version, and inter-package dependencies are pinned to that exact
 version. Releases are cut with `scripts/release.mjs`:
 
 ```bash
-npm run release -- 0.7.0-beta.1            # bump, verify, commit, tag, push, publish
-npm run release -- 0.7.0-beta.1 --dry-run  # preview every step, change nothing
+npm run release -- beta                    # next beta iteration (0.7.0-beta.1 -> 0.7.0-beta.2)
+npm run release -- rc                      # promote the line to rc.1
+npm run release -- stable                  # cut the stable release (drop the suffix)
+npm run release -- minor                   # next minor, staying on the current channel
+npm run release -- minor --channel stable  # next minor as a stable release
+npm run release -- 0.7.0-beta.1            # or spell out the full version
+npm run release -- beta --dry-run          # preview every step, change nothing
 ```
 
-The script bumps every manifest, updates the lockfile, runs the build/lint gate,
-commits and tags, pushes, and publishes the `@azerothjs/*` packages to npm with
-the dist-tag implied by the version (a prerelease publishes under its prerelease
-id; a stable version under `latest`). Promote the `CHANGELOG.md` `[Unreleased]`
-section to the new version before releasing.
+The version argument is a full version or a **bump keyword** resolved against the
+current version (`alpha`/`beta`/`rc`, `pre`, `stable`, `patch`/`minor`/`major`) -
+run `node scripts/release.mjs --help` for the exact rules.
+
+The script bumps every manifest (packages, both editors, and the version examples
+in the docs), **promotes the `CHANGELOG.md` `[Unreleased]` section automatically**
+(retitles it with the version and date, inserts a fresh empty section, rewrites
+the compare links; `--no-changelog` skips this), updates the lockfile, runs the
+build/lint gate, commits and tags, publishes `azerothjs` and the `@azerothjs/*`
+packages to npm with the dist-tag implied by the version (a prerelease publishes
+under its prerelease id; a stable version under `latest`), syncs the VS Code
+extension's lockfile against the freshly published versions, and pushes.
+
+Publishing happens **before** the push on purpose: the pushed tag triggers CI
+that builds the editor extensions against the just-released registry versions,
+so the registry must be consistent first. Publishing is also **idempotent** -
+versions already on the registry are skipped, so an interrupted run can simply
+be re-run.
 
 This bespoke lockstep model is why the project does **not** use changesets or
 semantic-release - those tools assume independently versioned packages and
@@ -170,8 +208,8 @@ precedence (a pre-release always ranks below its stable):
 ```
 
 The channel becomes the npm dist-tag - a stable version publishes under `latest`,
-a pre-release under its channel - so `npm i @azerothjs/core` gets the newest
-release and `npm i @azerothjs/core@beta` opts into the beta line. `release.mjs`
+a pre-release under its channel - so `npm i azerothjs` gets the newest
+release and `npm i azerothjs@beta` opts into the beta line. `release.mjs`
 derives all of this from the version string and rejects an unknown channel (a
 typo like `-bta.1`); run `node scripts/release.mjs --help` for the full guide.
 
@@ -184,7 +222,7 @@ the already-pushed tag, re-runs the full gate on a clean machine, and publishes
 with `--provenance` via npm OIDC **trusted publishing** (no `NPM_TOKEN`).
 
 This requires a one-time setup on npmjs.com: configure a *Trusted Publisher* for
-each `@azerothjs/*` package, pointing at this repository and
+`azerothjs` and each `@azerothjs/*` package, pointing at this repository and
 `.github/workflows/publish.yml`. Until that is configured, the workflow will fail
 authentication - which is fine; the local `npm run release` flow is unaffected.
 The workflow intentionally does not bump, tag, push, or move the `latest`

@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { countries, getCountry } from '@azerothjs/form';
 
-describe('getCountry — by ISO code', () =>
+describe('getCountry - by ISO code', () =>
 {
     it('resolves a known uppercase ISO code', () =>
     {
@@ -23,7 +23,7 @@ describe('getCountry — by ISO code', () =>
     });
 });
 
-describe('getCountry — by calling code', () =>
+describe('getCountry - by calling code', () =>
 {
     it('resolves a calling code with a leading +', () =>
     {
@@ -36,14 +36,14 @@ describe('getCountry — by calling code', () =>
         expect(getCountry('44')?.callingCode).toBe('44');
     });
 
-    it('tries ISO first, then calling code — an all-letters query never matches a numeric code', () =>
+    it('tries ISO first, then calling code - an all-letters query never matches a numeric code', () =>
     {
         // 'IR' is an ISO code; it must resolve to Iran, never a calling-code row.
         expect(getCountry('IR')?.code).toBe('IR');
     });
 });
 
-describe('getCountry — shared calling codes', () =>
+describe('getCountry - shared calling codes', () =>
 {
     it('resolves a shared calling code to whichever country sorts first by ISO', () =>
     {
@@ -63,7 +63,7 @@ describe('getCountry — shared calling codes', () =>
     });
 });
 
-describe('getCountry — unknown and empty input', () =>
+describe('getCountry - unknown and empty input', () =>
 {
     it('returns undefined for an unknown ISO code', () =>
     {
@@ -83,7 +83,7 @@ describe('getCountry — unknown and empty input', () =>
     });
 });
 
-describe('countries — dataset integrity', () =>
+describe('countries - dataset integrity', () =>
 {
     it('is non-empty and reasonably sized (~245 territories)', () =>
     {

@@ -45,7 +45,7 @@ import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
 import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren } from './ir.ts';
 
-const RUNTIME_MODULE = '@azerothjs/core';
+const RUNTIME_MODULE = 'azerothjs';
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -150,7 +150,7 @@ function handlerSource(source: string, handler: Span): string
  * One parse, then per-component analyze/lower/optimize; template interning dedupes repeated markup.
  *
  * DEVELOPER WARNING:
- * Emitted code imports from '@azerothjs/core' - the output is NOT standalone; it needs the runtime.
+ * Emitted code imports from 'azerothjs' - the output is NOT standalone; it needs the runtime.
  * This is a compiler-internal entry (not re-exported from the package index), so treat its output
  * shape as an implementation detail.
  *

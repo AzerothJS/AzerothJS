@@ -10,7 +10,7 @@ import { typeCheckModuleTS } from '../src/typecheck-ts.ts';
 
 const code = (src: string): string => generateModule(src, 'X.azeroth').code;
 
-describe('compiler audit — verified invariants', () =>
+describe('compiler audit - verified invariants', () =>
 {
     it('codegen is deterministic (identical output for identical input)', () =>
     {
@@ -64,7 +64,7 @@ describe('compiler audit — verified invariants', () =>
     });
 });
 
-describe('compiler audit — Phase 1 fixes (M1 + enforcement consistency)', () =>
+describe('compiler audit - Phase 1 fixes (M1 + enforcement consistency)', () =>
 {
     it('M1: assigning or incrementing a `derived` is a located compile error (no phantom setter)', () =>
     {
@@ -89,7 +89,7 @@ describe('compiler audit — Phase 1 fixes (M1 + enforcement consistency)', () =
     });
 });
 
-describe('compiler audit — M2 fixes (malformed markup is a hard, located error)', () =>
+describe('compiler audit - M2 fixes (malformed markup is a hard, located error)', () =>
 {
     it('M2: markup the parser COMMITTED to (mismatched/nested/attrs) is a located CompileError, not raw passthrough', () =>
     {
@@ -127,7 +127,7 @@ describe('compiler audit — M2 fixes (malformed markup is a hard, located error
     });
 });
 
-describe('compiler audit — Phase 2 (IR validation before codegen)', () =>
+describe('compiler audit - Phase 2 (IR validation before codegen)', () =>
 {
     it('a component exercising every binding kind passes IR validation and compiles', () =>
     {
@@ -147,7 +147,7 @@ describe('compiler audit — Phase 2 (IR validation before codegen)', () =>
     });
 });
 
-describe('compiler audit — current behavior of invalid input (residual; see audit report)', () =>
+describe('compiler audit - current behavior of invalid input (residual; see audit report)', () =>
 {
     it('FIXED: a bare `<Foo>bar` (forgotten `</Foo>`) is now a located error, not an opaque cast', () =>
     {
@@ -180,7 +180,7 @@ describe('compiler audit — current behavior of invalid input (residual; see au
 const codes = (src: string): string[] => diagnoseModule(src).map((d) => `${ d.severity }:${ d.code }`);
 const withDerived = (body: string): string => `component C(props: { id: number }) { state n = 0; derived d = n * 2; ${ body } }`;
 
-describe('correctness — M1 derived mutation (caught in BOTH phases, every context)', () =>
+describe('correctness - M1 derived mutation (caught in BOTH phases, every context)', () =>
 {
     it('the semantic phase (diagnoseModule) reports assign-to-derived in a handler', () =>
     {
@@ -246,7 +246,7 @@ describe('correctness — M1 derived mutation (caught in BOTH phases, every cont
     });
 });
 
-describe('correctness — M2 malformed markup stress (every case is a located error)', () =>
+describe('correctness - M2 malformed markup stress (every case is a located error)', () =>
 {
     const malformed = [
         '<div><span></div>',
@@ -285,7 +285,7 @@ describe('correctness — M2 malformed markup stress (every case is a located er
     });
 });
 
-describe('correctness — M3 handler edge cases (accept functions, reject setup effects)', () =>
+describe('correctness - M3 handler edge cases (accept functions, reject setup effects)', () =>
 {
     const reject = ['count++', '--count', 'count = 5', 'count += 1', 'save()', 'props.onClose()', 'save?.()'];
     const accept = ['save', 'props.onClose', '() => count++', '(e) => save(e)', 'makeHandler(id)'];
@@ -307,7 +307,7 @@ describe('correctness — M3 handler edge cases (accept functions, reject setup 
     }
 });
 
-describe('compiler audit — U1 type-checker (real ts.Program, now implemented)', () =>
+describe('compiler audit - U1 type-checker (real ts.Program, now implemented)', () =>
 {
     it('provides a build-time type-check path: non-function handlers are caught', () =>
     {

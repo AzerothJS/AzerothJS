@@ -7,7 +7,7 @@ contact_links:
         about: Ask how-to questions, share ideas, or discuss the design here instead of opening an issue.
     -   name: Documentation
         url: https://github.com/AzerothJS/AzerothJS#readme
-        about: Check the README and per-package docs first — your answer may already be there.
-    -   name: npm — @azerothjs scope
+        about: Check the README and per-package docs first - your answer may already be there.
+    -   name: npm - @azerothjs scope
         url: https://www.npmjs.com/search?q=%40azerothjs
         about: Browse published packages and changelogs on npm.

@@ -36,7 +36,7 @@ async function until(predicate: () => boolean, max = 100): Promise<void>
     }
 }
 
-describe('createStream — text accumulation', () =>
+describe('createStream - text accumulation', () =>
 {
     it('accumulates chunks into partial and flips done at the end', async () =>
     {
@@ -70,7 +70,7 @@ describe('createStream — text accumulation', () =>
     });
 });
 
-describe('createStream — custom parse', () =>
+describe('createStream - custom parse', () =>
 {
     it('routes each decoded chunk through the parse function', async () =>
     {
@@ -90,7 +90,7 @@ describe('createStream — custom parse', () =>
     });
 });
 
-describe('createStream — error and cancellation', () =>
+describe('createStream - error and cancellation', () =>
 {
     it('captures a fetcher rejection in error() and finishes', async () =>
     {

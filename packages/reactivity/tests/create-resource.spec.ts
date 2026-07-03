@@ -14,7 +14,7 @@ import {
 // Flush pending microtasks + a macrotask so the fetcher promise settles.
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('createResource — standalone', () =>
+describe('createResource - standalone', () =>
 {
     it('starts loading, then resolves to data with no error', async () =>
     {
@@ -107,7 +107,7 @@ describe('createResource — standalone', () =>
     });
 });
 
-describe('createResource — source-driven', () =>
+describe('createResource - source-driven', () =>
 {
     it('re-runs the fetcher when the source signal changes', async () =>
     {

@@ -1,5 +1,9 @@
 # @azerothjs/router
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Frouter?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/router)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 Client-side routing built on the framework's reactivity. The current location is
@@ -17,6 +21,12 @@ const router = createRouter({
         { path: '/users/:id', component: User }
     ]
 });
+```
+
+## Install
+
+```sh
+npm install @azerothjs/router
 ```
 
 ## Architecture
@@ -55,11 +65,6 @@ invalidates exactly the reactive reads that depend on what changed.
 `RouterConfig` requires `routes: Route[]` and accepts an optional `base` path for
 apps served under a sub-path.
 
-## Building
-
-```sh
-npm run build -w @azerothjs/router
-```
 
 ## Examples
 
@@ -90,8 +95,6 @@ function User() {
 }
 ```
 
-## Contributing
+## License
 
-Internal helpers (path joining, route flattening, param comparison) stay
-unexported in their own files; keep the public surface to the router instance,
-the three components, and the composables.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

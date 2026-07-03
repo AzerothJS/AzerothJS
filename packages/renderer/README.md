@@ -1,5 +1,9 @@
 # @azerothjs/renderer
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Frenderer?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/renderer)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 The DOM renderer. It turns the `h()` hyperscript calls that `.azeroth` markup
@@ -17,6 +21,12 @@ function Counter() {
 }
 
 render(Counter, document.getElementById('app')!);
+```
+
+## Install
+
+```sh
+npm install @azerothjs/renderer
 ```
 
 ## Architecture
@@ -61,11 +71,6 @@ it with a hydration cursor instead of creating new nodes.
 | `delegate.ts`, `template.ts`, `container-disposers.ts` | Event delegation, compiler-emitted clone helpers, and mount-scope disposal. |
 | `types.ts` | `Props`, `Child`, and component prop types. |
 
-## Building
-
-```sh
-npm run build -w @azerothjs/renderer
-```
 
 ## Examples
 
@@ -94,9 +99,6 @@ h('section', { class: classList({ panel: true, open }) },
 In a `.azeroth` file the same UI is written as markup and compiled to these
 calls; you rarely call `h()` by hand.
 
-## Contributing
+## License
 
-A binding should update the smallest possible piece of the DOM; prefer adding a
-focused effect over re-running a larger subtree. New control-flow components
-follow the existing pattern: a function returning DOM that owns the reactive
-scope for what it mounts.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

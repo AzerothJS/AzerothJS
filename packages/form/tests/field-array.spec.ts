@@ -26,7 +26,7 @@ function flush(): Promise<void>
     return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe('createFieldArray — rows + mutation', () =>
+describe('createFieldArray - rows + mutation', () =>
 {
     it('starts from initial rows, each a form with a stable key', () =>
     {
@@ -117,7 +117,7 @@ describe('createFieldArray — rows + mutation', () =>
     });
 });
 
-describe('createFieldArray — aggregation + validation', () =>
+describe('createFieldArray - aggregation + validation', () =>
 {
     it('values() tracks edits to a row live', () =>
     {
@@ -185,7 +185,7 @@ describe('createFieldArray — aggregation + validation', () =>
     });
 });
 
-describe('createFieldArray — lifecycle', () =>
+describe('createFieldArray - lifecycle', () =>
 {
     it('disposes a removed row, aborting its in-flight async validation', async () =>
     {

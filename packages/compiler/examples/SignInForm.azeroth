@@ -2,7 +2,7 @@
 // `bind:value` / `bind:checked` two-way-bind an input straight to a field. A FIELD is read as `login.email`
 // and bound with `bind:value={login.email}`; the rest of the form API is explicit - `login.errors()`,
 // `login.touched()`, `login.submitting()`, `login.handleSubmit`, `login.setError(...)`.
-import { required, email as emailRule, minLength, combine } from '@azerothjs/core';
+import { required, email as emailRule, minLength, combine } from 'azerothjs';
 
 interface Credentials
 {
@@ -34,26 +34,26 @@ export default component SignInForm(props: { onAuthenticate: (credentials: Crede
         }
     };
 
-    <form onSubmit={login.handleSubmit}>
+    <form onSubmit={ login.handleSubmit }>
         <label>
             Email
-            <input type="email" placeholder="name@example.com" bind:value={login.email} />
-            <Show when={login.touched().email}><span class="field-error">{login.errors().email}</span></Show>
+            <input type="email" placeholder="name@example.com" bind:value={ login.email } />
+            <Show when={ login.touched().email }><span class="field-error">{ login.errors().email }</span></Show>
         </label>
 
         <label>
             Password
-            <input type="password" bind:value={login.password} />
-            <Show when={login.touched().password}><span class="field-error">{login.errors().password}</span></Show>
+            <input type="password" bind:value={ login.password } />
+            <Show when={ login.touched().password }><span class="field-error">{ login.errors().password }</span></Show>
         </label>
 
         <label>
-            <input type="checkbox" bind:checked={login.remember} />
+            <input type="checkbox" bind:checked={ login.remember } />
             Stay signed in
         </label>
 
-        <button type="submit" disabled={login.submitting()}>
-            {login.submitting() ? 'Signing in...' : 'Sign in'}
+        <button type="submit" disabled={ login.submitting() }>
+            { login.submitting() ? 'Signing in...' : 'Sign in' }
         </button>
     </form>
 }

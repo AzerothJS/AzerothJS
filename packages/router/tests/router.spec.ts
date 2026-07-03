@@ -108,7 +108,7 @@ describe('targetToFullPath', () =>
     });
 });
 
-describe('createRouter — initial match from the live url', () =>
+describe('createRouter - initial match from the live url', () =>
 {
     it('matches a static route at construction', () =>
     {
@@ -143,7 +143,7 @@ describe('createRouter — initial match from the live url', () =>
     });
 });
 
-describe('createRouter — match kinds', () =>
+describe('createRouter - match kinds', () =>
 {
     it('extracts a path param', () =>
     {
@@ -194,7 +194,7 @@ describe('createRouter — match kinds', () =>
     });
 });
 
-describe('createRouter — navigate (reactive updates)', () =>
+describe('createRouter - navigate (reactive updates)', () =>
 {
     it('navigate(string) pushes and updates location + match', () =>
     {
@@ -298,7 +298,7 @@ describe('createRouter — navigate (reactive updates)', () =>
     });
 });
 
-describe('createRouter — match memo structural equality', () =>
+describe('createRouter - match memo structural equality', () =>
 {
     it('does not change identity when only the hash changes', () =>
     {
@@ -342,7 +342,7 @@ describe('createRouter — match memo structural equality', () =>
     });
 });
 
-describe('createRouter — href()', () =>
+describe('createRouter - href()', () =>
 {
     it('returns an internal path unchanged with no base', () =>
     {
@@ -369,7 +369,7 @@ describe('createRouter — href()', () =>
     });
 });
 
-describe('createRouter — base path', () =>
+describe('createRouter - base path', () =>
 {
     it('prefixes the base onto an internal href', () =>
     {
@@ -426,7 +426,7 @@ describe('createRouter — base path', () =>
     });
 });
 
-describe('createRouter — fallback (no match)', () =>
+describe('createRouter - fallback (no match)', () =>
 {
     it('location.fullPath reflects the unmatched path', () =>
     {

@@ -1,5 +1,5 @@
 /**
- * MODULE: @azerothjs/core - the umbrella package
+ * MODULE: azerothjs - the framework's entry package
  *
  * Re-exports the framework's public packages behind one install:
  *   - @azerothjs/reactivity - signals, memos, effects, resources, roots, error handling, render mode;
@@ -17,7 +17,7 @@
  *       createSignal, createEffect, h, Show, For,
  *       createRouter, Link, Routes,
  *       createForm, createStore, renderToString
- *   } from '@azerothjs/core';
+ *   } from 'azerothjs';
  *
  * Or import individual packages directly for the same exports with a smaller dependency surface:
  *

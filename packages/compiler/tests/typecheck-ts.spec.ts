@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { typeCheckModuleTS } from '../src/typecheck-ts.ts';
 
-// A real path inside the compiler package so a bare `@azerothjs/core` import resolves through the
+// A real path inside the compiler package so a bare `azerothjs` import resolves through the
 // workspace node_modules - which is what activates real-type checking of the built-in components.
 const REPO_FILE = fileURLToPath(new URL('../src/__typecheck_probe__.azeroth', import.meta.url));
 
@@ -196,7 +196,7 @@ describe('typeCheckModuleTS - form keyword (real ts.Program)', () =>
 {
     it('accepts a well-typed form (createForm infers the field shape from initial)', () =>
     {
-        const source = `import { createForm, required, email, combine } from '@azerothjs/core';
+        const source = `import { createForm, required, email, combine } from 'azerothjs';
 component SignIn {
     form login = { email: '', password: '' } with {
         validate: { email: combine(required(), email()), password: required() },
@@ -213,7 +213,7 @@ component SignIn {
 
     it('accepts a form with no with-clause', () =>
     {
-        const source = `import { createForm } from '@azerothjs/core';
+        const source = `import { createForm } from 'azerothjs';
 component C {
     form f = { name: '', age: 0 };
     <p>{f.values().name}{f.values().age}</p>
@@ -223,7 +223,7 @@ component C {
 
     it('accepts field-sugar access and bind:value={form.field} (typed via the FormApi<T> & T projection)', () =>
     {
-        const source = `import { createForm } from '@azerothjs/core';
+        const source = `import { createForm } from 'azerothjs';
 component C {
     form f = { name: '', count: 0 };
     <form onSubmit={f.handleSubmit}>
@@ -545,7 +545,7 @@ component App {
     });
 });
 
-describe('typeCheckModuleTS - built-in control-flow components (real types via @azerothjs/core)', () =>
+describe('typeCheckModuleTS - built-in control-flow components (real types via azerothjs)', () =>
 {
     it('accepts a well-formed <For> (each + key + render children)', () =>
     {
@@ -618,9 +618,9 @@ component C {
         expect(typeCheckModuleTS(source, { fileName: REPO_FILE })).toHaveLength(0);
     });
 
-    it('degrades to no built-in check when @azerothjs/core cannot be resolved', () =>
+    it('degrades to no built-in check when azerothjs cannot be resolved', () =>
     {
-        // No file path -> the bare `@azerothjs/core` import does not resolve -> built-ins fall back
+        // No file path -> the bare `azerothjs` import does not resolve -> built-ins fall back
         // to `any`, so even an obviously wrong `each` produces no error (sound: never a false error).
         const source = `component C {
     <ul><For each={5} key={(i: number) => i}>{(i: number) => <li>{i}</li>}</For></ul>

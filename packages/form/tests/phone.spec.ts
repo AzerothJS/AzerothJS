@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { phone } from '@azerothjs/form';
 
-describe('phone — E.164 acceptance and the leading + requirement', () =>
+describe('phone - E.164 acceptance and the leading + requirement', () =>
 {
     it('accepts a well-formed E.164 number with 8 to 15 digits', () =>
     {
@@ -33,7 +33,7 @@ describe('phone — E.164 acceptance and the leading + requirement', () =>
     });
 });
 
-describe('phone — punctuation stripping', () =>
+describe('phone - punctuation stripping', () =>
 {
     it('treats punctuated and bare forms of the same number identically', () =>
     {
@@ -46,7 +46,7 @@ describe('phone — punctuation stripping', () =>
     });
 });
 
-describe('phone — digit-count bounds', () =>
+describe('phone - digit-count bounds', () =>
 {
     it('rejects fewer than 8 total digits', () =>
     {
@@ -68,7 +68,7 @@ describe('phone — digit-count bounds', () =>
     });
 });
 
-describe('phone — country-code filtering', () =>
+describe('phone - country-code filtering', () =>
 {
     it('accepts numbers whose calling code matches an allowed country', () =>
     {
@@ -90,7 +90,7 @@ describe('phone — country-code filtering', () =>
         expect(validate('+14155551234')).toBe('No allowed countries');
     });
 
-    it('does coarse prefix matching only — a shared calling code admits any NANP number', () =>
+    it('does coarse prefix matching only - a shared calling code admits any NANP number', () =>
     {
         // Documented limitation: phone() cannot disambiguate +1 between US and CA.
         const validate = phone({ countries: ['US'] });
@@ -99,7 +99,7 @@ describe('phone — country-code filtering', () =>
     });
 });
 
-describe('phone — national-format normalization', () =>
+describe('phone - national-format normalization', () =>
 {
     it('normalises national input under an explicit defaultCountry, dropping a single trunk 0', () =>
     {
@@ -149,7 +149,7 @@ describe('phone — national-format normalization', () =>
     });
 });
 
-describe('phone — skip-empty and message override', () =>
+describe('phone - skip-empty and message override', () =>
 {
     it('skips empty values (skip-empty convention)', () =>
     {

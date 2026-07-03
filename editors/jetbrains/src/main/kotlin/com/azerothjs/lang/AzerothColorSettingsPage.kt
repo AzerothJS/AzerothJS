@@ -28,7 +28,7 @@ class AzerothColorSettingsPage : ColorSettingsPage
     override fun getAdditionalHighlightingTagToDescriptorMap(): Map<String, TextAttributesKey>? = null
 
     override fun getDemoText(): String = """
-        import { createSignal } from '@azerothjs/core';
+        import { createSignal } from 'azerothjs';
 
         // A counter component
         export default function Counter(props: { start: number })

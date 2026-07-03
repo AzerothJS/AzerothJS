@@ -74,16 +74,21 @@ try
     console.log('Installing tarballs into a clean consumer project...');
     run(`npm install ${ tarballs.join(' ') } --no-save --no-fund --no-audit --ignore-scripts --loglevel=error`, consumer);
 
-    // Importing the umbrella forces every inter-package pin to resolve and every
-    // module to load under Node (the SSR contract).
+    // Importing the entry package forces every inter-package pin to resolve and
+    // every module to load under Node (the SSR contract); a handful of expected
+    // symbols guards against the umbrella silently losing a layer's re-exports.
     const probe = `
-import * as core from '@azerothjs/core';
 import * as compiler from '@azerothjs/compiler';
-for (const [name, mod] of [['@azerothjs/core', core], ['@azerothjs/compiler', compiler]])
+import * as azerothjs from 'azerothjs';
+for (const [name, mod] of [['azerothjs', azerothjs], ['@azerothjs/compiler', compiler]])
 {
     if (Object.keys(mod).length === 0) throw new Error(name + ' resolved but exported nothing');
 }
-console.log('import OK:', Object.keys(core).length, 'core exports,', Object.keys(compiler).length, 'compiler exports');
+for (const key of ['createSignal', 'h', 'render', 'Show', 'For', 'createForm', 'createStore', 'createRouter', 'renderToString'])
+{
+    if (!(key in azerothjs)) throw new Error('azerothjs is missing expected export: ' + key);
+}
+console.log('import OK:', Object.keys(azerothjs).length, 'azerothjs exports,', Object.keys(compiler).length, 'compiler exports');
 `;
     writeFileSync(path.join(consumer, 'probe.mjs'), probe);
     run('node probe.mjs', consumer);

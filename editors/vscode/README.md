@@ -1,6 +1,6 @@
 # AzerothJS for VS Code
 
-Full language support for `.azeroth` single-file components — powered by the
+Full language support for `.azeroth` single-file components - powered by the
 AzerothJS compiler, not heuristics.
 
 ## Requirements
@@ -16,8 +16,8 @@ AzerothJS compiler, not heuristics.
 Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) and click Install, or visit the
 [extension page](https://marketplace.visualstudio.com/items?itemName=azerothjs.azerothjs-vscode).
 
-**From a `.vsix` file**: open the Extensions view, click the `…` menu, choose
-*Install from VSIX…*, and select the file. Alternatively:
+**From a `.vsix` file**: open the Extensions view, click the `...` menu, choose
+*Install from VSIX...*, and select the file. Alternatively:
 
 ```sh
 code --install-extension azerothjs-vscode-<version>.vsix
@@ -31,7 +31,7 @@ the framework's own compiler for accurate, compiler-aware analysis:
 | Feature | Details |
 | --- | --- |
 | **Completion** | HTML tags and user/built-in components in tag position; attributes and DOM events in attribute position; CSS in inline `style` values; full type-aware TypeScript completion inside `{ ... }` expression holes. |
-| **Hover** | Types, signatures, and JSDoc — including the runtime's built-in components (`Show`, `For`, `Switch`, `Dynamic`, `Suspense`, `Portal`, `ErrorBoundary`). |
+| **Hover** | Types, signatures, and JSDoc - including the runtime's built-in components (`Show`, `For`, `Switch`, `Dynamic`, `Suspense`, `Portal`, `ErrorBoundary`). |
 | **Diagnostics** | Markup parse errors from the compiler, plus TypeScript type errors inside expressions and script. Errors describe what is wrong, why, and how to fix it. |
 | **Go to definition / type definition** | Works across `.azeroth` and `.ts` files. |
 | **Find references & rename** | Cross-file, across `.azeroth` and `.ts`. |
@@ -45,7 +45,7 @@ the framework's own compiler for accurate, compiler-aware analysis:
 | **Formatting** | Full document and range (Format Selection) formatting. |
 | **Editing aids** | Tag auto-close on `>` and `/>`, linked editing of matching opening/closing tags. |
 
-### Third-party tooling — zero config
+### Third-party tooling - zero config
 
 The extension pre-wires common companion tools so a project needs **no
 `.vscode/settings.json`**:
@@ -54,24 +54,24 @@ The extension pre-wires common companion tools so a project needs **no
   ESLint runs `@azerothjs/eslint-plugin` on `.azeroth` files (script is linted;
   markup is masked from ESLint rules). `.js`/`.ts` validation is unaffected.
 - **Tailwind CSS** (`bradlc.vscode-tailwindcss`): `tailwindCSS.includeLanguages`
-  maps `azeroth` to `html` (its own language — not jsx/tsx), plus `classRegex`
-  entries so `class="…"`, `class={…}`, and `classList({ '…': … })` all complete.
+  maps `azeroth` to `html` (its own language - not jsx/tsx), plus `classRegex`
+  entries so `class="..."`, `class={...}`, and `classList({ '...': ... })` all complete.
 
-These are *defaults* — a user setting of the same key overrides them. The
+These are *defaults* - a user setting of the same key overrides them. The
 companion extensions are recommended, not bundled; nothing breaks if they are
 absent.
 
 ## Configuration
 
 Settings live under the `azeroth.*` namespace and are accessible through
-*Settings → Extensions → AzerothJS*. They cover per-feature toggles such as
+*Settings -> Extensions -> AzerothJS*. They cover per-feature toggles such as
 completion auto-imports, component snippets, and inlay hints. TypeScript
 intelligence uses the nearest `tsconfig.json` in the workspace.
 
 ## Quick start
 
 1. Install the extension.
-2. Open any `.azeroth` file — the language server activates automatically.
+2. Open any `.azeroth` file - the language server activates automatically.
 3. For a hands-on tour, open `packages/compiler/examples/Showcase.azeroth` and
    try completion, hover, and go-to-definition.
 
@@ -91,12 +91,12 @@ VS Code  --LSP/stdio-->  language server  -->  language service (compiler-aware)
 
 Three pieces work together:
 
-- **`package.json`** — registers the `azeroth` language for `.azeroth`, the
+- **`package.json`** - registers the `azeroth` language for `.azeroth`, the
   `source.azeroth` TextMate grammar, the semantic-token legend, and the
   configuration schema with defaults.
-- **`language-configuration.json`** — brackets, comments, auto-closing pairs,
+- **`language-configuration.json`** - brackets, comments, auto-closing pairs,
   indentation rules, and on-enter rules.
-- **`src/extension.ts`** — starts the server over stdio via `vscode-languageclient`
+- **`src/extension.ts`** - starts the server over stdio via `vscode-languageclient`
   and wires the non-standard `azeroth/autoInsert` request to the editor's
   auto-insert hook for tag auto-close.
 
@@ -160,7 +160,7 @@ running the development host (F5) against a `.azeroth` file.
 Keep this package a thin client. Editor-visible behaviour that depends on language
 analysis belongs in `@azerothjs/language-service`; the extension should only
 register contributions and route requests. When the server gains a new capability,
-the LSP client picks it up through capability negotiation — no extension change is
+the LSP client picks it up through capability negotiation - no extension change is
 needed. Changes here are limited to settings, grammar tweaks, and editing hooks.
 
 See [CONTRIBUTING.md](https://github.com/AzerothJS/AzerothJS/blob/main/CONTRIBUTING.md)

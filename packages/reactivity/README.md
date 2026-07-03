@@ -1,5 +1,9 @@
 # @azerothjs/reactivity
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Freactivity?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/reactivity)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 Fine-grained reactivity primitives: signals, effects, and memos, plus the
@@ -20,6 +24,12 @@ const doubled = createMemo(() => count() * 2);
 
 createEffect(() => console.log(count(), doubled()));  // logs 0 0
 setCount(c => c + 1);                                 // logs 1 2
+```
+
+## Install
+
+```sh
+npm install @azerothjs/reactivity
 ```
 
 ## Architecture
@@ -66,11 +76,6 @@ go through one implementation.
 A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is
 `() => T` and `Setter<T>` is `(next: T | ((prev: T) => T)) => void`.
 
-## Building
-
-```sh
-npm run build -w @azerothjs/reactivity
-```
 
 ## Examples
 
@@ -96,9 +101,6 @@ createRoot(dispose => {
 });
 ```
 
-## Contributing
+## License
 
-The internal wiring (the current-subscriber register, the effect queue, the
-batching flag) is deliberately not exported; primitives share it through direct
-module imports. Keep new primitives composed from the existing ones where
-possible.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

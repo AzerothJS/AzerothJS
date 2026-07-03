@@ -2,7 +2,7 @@
     "name": "@azerothjs/store",
     "version": "0.7.0-beta.1",
     "engines": { "node": ">=24" },
-    "description": "AzerothJS store — minimalist reactive state container with lazy-singleton lifetime",
+    "description": "AzerothJS store - minimalist reactive state container with lazy-singleton lifetime",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

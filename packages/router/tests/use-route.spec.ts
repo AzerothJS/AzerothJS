@@ -103,7 +103,7 @@ describe('useMatch', () =>
     });
 });
 
-describe('useParams — slice memoization', () =>
+describe('useParams - slice memoization', () =>
 {
     it('exposes the current path params', () =>
     {
@@ -169,7 +169,7 @@ describe('useParams — slice memoization', () =>
     });
 });
 
-describe('useQuery — slice memoization', () =>
+describe('useQuery - slice memoization', () =>
 {
     it('exposes the parsed query', () =>
     {

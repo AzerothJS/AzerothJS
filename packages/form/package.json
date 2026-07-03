@@ -2,7 +2,7 @@
     "name": "@azerothjs/form",
     "version": "0.7.0-beta.1",
     "engines": { "node": ">=24" },
-    "description": "AzerothJS forms — reactive validation, submit lifecycle, and per-field state",
+    "description": "AzerothJS forms - reactive validation, submit lifecycle, and per-field state",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

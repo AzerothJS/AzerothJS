@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { compilePath } from '@azerothjs/router';
 
-describe('compilePath — static segments', () =>
+describe('compilePath - static segments', () =>
 {
     it('matches an exact static path and extracts no params', () =>
     {
@@ -42,7 +42,7 @@ describe('compilePath — static segments', () =>
     });
 });
 
-describe('compilePath — index / empty pattern', () =>
+describe('compilePath - index / empty pattern', () =>
 {
     it('the empty pattern matches only "" and "/"', () =>
     {
@@ -60,7 +60,7 @@ describe('compilePath — index / empty pattern', () =>
     });
 });
 
-describe('compilePath — trailing-slash normalization', () =>
+describe('compilePath - trailing-slash normalization', () =>
 {
     it('matches with or without a trailing slash', () =>
     {
@@ -76,7 +76,7 @@ describe('compilePath — trailing-slash normalization', () =>
     });
 });
 
-describe('compilePath — param segments', () =>
+describe('compilePath - param segments', () =>
 {
     it('extracts a single param', () =>
     {
@@ -124,7 +124,7 @@ describe('compilePath — param segments', () =>
     });
 });
 
-describe('compilePath — wildcard segments', () =>
+describe('compilePath - wildcard segments', () =>
 {
     it('a trailing wildcard captures the remaining path joined by slashes', () =>
     {
@@ -167,7 +167,7 @@ describe('compilePath — wildcard segments', () =>
     });
 });
 
-describe('compilePath — invalid patterns', () =>
+describe('compilePath - invalid patterns', () =>
 {
     it('throws for an unnamed param', () =>
     {
@@ -181,7 +181,7 @@ describe('compilePath — invalid patterns', () =>
     });
 });
 
-describe('compilePath — build()', () =>
+describe('compilePath - build()', () =>
 {
     it('substitutes a single param', () =>
     {
@@ -239,7 +239,7 @@ describe('compilePath — build()', () =>
     });
 });
 
-describe('compilePath — pattern metadata', () =>
+describe('compilePath - pattern metadata', () =>
 {
     it('preserves the original pattern string', () =>
     {

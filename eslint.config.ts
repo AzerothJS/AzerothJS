@@ -77,8 +77,6 @@ export default defineConfig([
         }
     },
     {
-        // Return-type annotations can't be expressed in plain JavaScript, so the
-        // explicit-return-type rule only makes sense for TypeScript sources.
         files: ['**/*.{js,mjs,cjs}'],
         rules:
         {
@@ -86,8 +84,6 @@ export default defineConfig([
         }
     },
     {
-        // Test files are not consumed as a typed API surface, so explicit return types on their
-        // helper functions add ceremony without value (the assertions check behaviour, not signatures).
         files: ['**/*.spec.ts', '**/tests/**/*.ts'],
         rules:
         {

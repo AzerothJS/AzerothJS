@@ -1,5 +1,5 @@
 // A plain TypeScript module imported by a `.azeroth` component, to exercise cross-file intelligence
-// (completion / hover / definition / references / rename / type errors) across the `.ts` ↔ `.azeroth`
+// (completion / hover / definition / references / rename / type errors) across the `.ts` <-> `.azeroth`
 // boundary. Used by ../cross-file.spec.ts.
 
 export interface User

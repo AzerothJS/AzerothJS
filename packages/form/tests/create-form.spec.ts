@@ -17,7 +17,7 @@ function flush(): Promise<void>
     return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-describe('createForm — initial state', () =>
+describe('createForm - initial state', () =>
 {
     it('exposes the initial values, with all errors null and nothing touched/dirty', () =>
     {
@@ -52,7 +52,7 @@ describe('createForm — initial state', () =>
     });
 });
 
-describe('createForm — setValue and reactive values', () =>
+describe('createForm - setValue and reactive values', () =>
 {
     it('updates a field via setValue and reflects it in values()', () =>
     {
@@ -88,7 +88,7 @@ describe('createForm — setValue and reactive values', () =>
     });
 });
 
-describe('createForm — live validation on change', () =>
+describe('createForm - live validation on change', () =>
 {
     it('re-validates synchronously on every value change', () =>
     {
@@ -127,7 +127,7 @@ describe('createForm — live validation on change', () =>
     });
 });
 
-describe('createForm — touched, dirty, isValid reactivity', () =>
+describe('createForm - touched, dirty, isValid reactivity', () =>
 {
     it('marks a field touched via the registered onBlur handler', () =>
     {
@@ -187,7 +187,7 @@ describe('createForm — touched, dirty, isValid reactivity', () =>
     });
 });
 
-describe('createForm — setError', () =>
+describe('createForm - setError', () =>
 {
     it('injects a server-side error onto a specific field', () =>
     {
@@ -201,7 +201,7 @@ describe('createForm — setError', () =>
         });
     });
 
-    it('survives editing a DIFFERENT (un-validated) field — the validation effect merges', () =>
+    it('survives editing a DIFFERENT (un-validated) field - the validation effect merges', () =>
     {
         createRoot((dispose) =>
         {
@@ -236,7 +236,7 @@ describe('createForm — setError', () =>
     });
 });
 
-describe('createForm — cross-field validation (validateForm)', () =>
+describe('createForm - cross-field validation (validateForm)', () =>
 {
     it('receives the full typed snapshot and reports an error on a named field', () =>
     {
@@ -327,7 +327,7 @@ describe('createForm — cross-field validation (validateForm)', () =>
     });
 });
 
-describe('createForm — handleSubmit', () =>
+describe('createForm - handleSubmit', () =>
 {
     it('calls preventDefault and marks every field touched', () =>
     {
@@ -416,7 +416,7 @@ describe('createForm — handleSubmit', () =>
     });
 });
 
-describe('createForm — async submit lifecycle', () =>
+describe('createForm - async submit lifecycle', () =>
 {
     it('toggles submitting() true for the duration of a pending onSubmit promise', async () =>
     {
@@ -518,7 +518,7 @@ describe('createForm — async submit lifecycle', () =>
     });
 });
 
-describe('createForm — reset', () =>
+describe('createForm - reset', () =>
 {
     it('restores values, errors, touched and submitError to their initial state', () =>
     {
@@ -548,7 +548,7 @@ describe('createForm — reset', () =>
     });
 });
 
-describe('createForm — async validation (validateAsync)', () =>
+describe('createForm - async validation (validateAsync)', () =>
 {
     it('runs the async validator after the sync pass and toggles validating()', async () =>
     {
@@ -734,7 +734,7 @@ describe('createForm — async validation (validateAsync)', () =>
     });
 });
 
-describe('createForm — numeric coercion', () =>
+describe('createForm - numeric coercion', () =>
 {
     it('coerces an input string into a number-typed field (so bind:value works)', () =>
     {

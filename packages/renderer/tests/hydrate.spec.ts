@@ -19,7 +19,7 @@ function ssrInto(component: () => HTMLElement): HTMLElement
     return container;
 }
 
-describe('hydrate — adoption', () =>
+describe('hydrate - adoption', () =>
 {
     it('adopts the existing server node instead of rebuilding it', () =>
     {
@@ -118,7 +118,7 @@ describe('hydrate — adoption', () =>
     });
 });
 
-describe('hydrate — mismatch fallback', () =>
+describe('hydrate - mismatch fallback', () =>
 {
     it('falls back to a clean client render when the client tree diverges structurally', () =>
     {

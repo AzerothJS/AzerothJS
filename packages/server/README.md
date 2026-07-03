@@ -1,5 +1,9 @@
 # @azerothjs/server
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Fserver?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/server)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+
 ## Overview
 
 Server-side rendering. It renders a component tree to an HTML string without a
@@ -11,6 +15,12 @@ carries hydration markers so the client can adopt it with `hydrate()` from
 import { renderToDocument } from '@azerothjs/server';
 
 const html = renderToDocument(() => App({}), { title: 'Home' });
+```
+
+## Install
+
+```sh
+npm install @azerothjs/server
 ```
 
 ## Architecture
@@ -44,11 +54,11 @@ What renders on the server, and how it behaves:
   effect on the server) and resolved through while it is still a function, so
   `class={classList(...)}`, `style={styleMap(...)}`, and a `{ p.title }` hole
   whose value is itself a getter all serialize to their concrete string. With
-  markers on, a reactive hole is wrapped in exactly one `<!--[-->…<!--]-->`
+  markers on, a reactive hole is wrapped in exactly one `<!--[-->...<!--]-->`
   anchor pair - the span the client hydrator adopts.
 - **Control flow** - `Show`, `For`, `Switch`, `Match`, and `Dynamic` each have a
   string-mode path and wrap their output in a comment co-range marker
-  (`<!--azc:type-->…<!--/azc-->`) the client hydrator adopts. Comments, not a
+  (`<!--azc:type-->...<!--/azc-->`) the client hydrator adopts. Comments, not a
   `display:contents` wrapper, so control-flow output stays valid inside
   `<table>` / `<select>` / `<ul>`.
 - **Suspense** - resources cannot settle during a synchronous render, so the
@@ -81,11 +91,6 @@ render, so the app always boots.
 | `render-to-document.ts` | `renderToDocument` and `RenderToDocumentOptions`. |
 | `island.ts` | `island`: mark an interactivity boundary for partial hydration. |
 
-## Building
-
-```sh
-npm run build -w @azerothjs/server
-```
 
 ## Examples
 
@@ -110,9 +115,6 @@ import { hydrate } from '@azerothjs/renderer';
 hydrate(() => App({}), document.getElementById('app')!);
 ```
 
-## Contributing
+## License
 
-Keep rendering a pure string emission with no DOM dependency, so it stays usable
-in any server runtime. Output that is meant to be hydrated must keep its markers
-consistent with the renderer's hydration cursor, since the client adopts exactly
-what was serialized.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

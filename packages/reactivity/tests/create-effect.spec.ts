@@ -13,7 +13,7 @@ import {
     subscriberCount
 } from '@azerothjs/reactivity';
 
-describe('createEffect — execution', () =>
+describe('createEffect - execution', () =>
 {
     it('runs immediately and re-runs on every tracked change', () =>
     {
@@ -32,7 +32,7 @@ describe('createEffect — execution', () =>
         });
     });
 
-    it('tracks dependencies dynamically — an untaken branch is not subscribed', () =>
+    it('tracks dependencies dynamically - an untaken branch is not subscribed', () =>
     {
         createRoot((dispose) =>
         {
@@ -87,7 +87,7 @@ describe('createEffect — execution', () =>
     });
 });
 
-describe('createEffect — cleanup contract', () =>
+describe('createEffect - cleanup contract', () =>
 {
     it('treats a returned function as cleanup: runs before each re-run and on dispose', () =>
     {
@@ -129,7 +129,7 @@ describe('createEffect — cleanup contract', () =>
     });
 });
 
-describe('createEffect — disposal and ownership', () =>
+describe('createEffect - disposal and ownership', () =>
 {
     it('the returned dispose function stops further runs and unsubscribes', () =>
     {
@@ -193,7 +193,7 @@ describe('createEffect — disposal and ownership', () =>
     });
 });
 
-describe('createEffect — auto-tracking only (no explicit deps/defer)', () =>
+describe('createEffect - auto-tracking only (no explicit deps/defer)', () =>
 {
     it('subscribes to exactly the sources its body reads (deps are discovered by running)', () =>
     {

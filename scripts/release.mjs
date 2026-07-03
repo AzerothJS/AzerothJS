@@ -44,25 +44,40 @@
 //   0.6.0 -> 1.0.0-alpha.1 -> ... -> 1.0.0-beta.1 -> 1.0.0-rc.1 -> 1.0.0
 //
 // npm DIST-TAG (a MOVABLE pointer, separate from the immutable version):
-//   `npm i @azerothjs/core`        installs whatever `latest` points to.
-//   `npm i @azerothjs/core@beta`   installs whatever `beta`   points to.
+//   `npm i azerothjs`              installs whatever `latest` points to.
+//   `npm i azerothjs@beta`         installs whatever `beta`   points to.
 //   This script derives the tag from the version: a stable version publishes
 //   under `latest`; a pre-release under its channel (-beta.3 -> beta; a
 //   bare-numeric -0 -> next). See distTag() / prereleaseChannel() below.
 // ----------------------------------------------------------------------------
 //
 // Usage:
-//   npm run release -- <version> [options]
-//   node scripts/release.mjs <version> [options]
+//   npm run release -- <version | keyword> [options]
+//   node scripts/release.mjs <version | keyword> [options]
+//
+// The version may be a FULL version (1.2.3, 1.2.3-beta.4) or a BUMP KEYWORD resolved
+// against the current version, so nothing has to be computed by hand:
+//
+//   beta | alpha | rc   same base, that channel (.1 to enter, .n+1 when already on it)
+//                       0.7.0-beta.1 -> `beta` -> 0.7.0-beta.2; -> `rc` -> 0.7.0-rc.1
+//   pre                 next iteration of the current prerelease channel
+//   stable              drop the prerelease suffix        0.7.0-beta.3 -> 0.7.0
+//   patch|minor|major   SemVer increment; a prerelease line keeps its channel for
+//                       minor/major (0.7.0-beta.1 -> `minor` -> 0.8.0-beta.1) and
+//                       finalizes for patch (-> 0.7.0). `--channel <c|stable>` overrides.
 //
 // Examples:
-//   npm run release -- 0.4.0-beta.2
-//   npm run release -- 1.0.0
+//   npm run release -- beta                          # next beta iteration
+//   npm run release -- rc                            # promote the line to rc.1
+//   npm run release -- stable                        # cut the stable release
+//   npm run release -- minor --channel stable        # 0.7.x-beta -> 0.8.0 directly
 //   npm run release -- 0.5.0-rc.1 --dry-run
 //   npm run release -- 0.4.0-beta.1 --no-bump        # finish a release already bumped/tagged
 //
 // Options:
 //   --dry-run       Print every step without changing files, committing, or publishing.
+//   --channel <c>   Channel for patch/minor/major bumps (alpha|beta|rc|next|canary|stable).
+//   --no-changelog  Skip the automatic CHANGELOG.md [Unreleased] promotion.
 //   --skip-checks   Skip the build / lint / test gate (not recommended).
 //   --no-bump       Don't bump/commit/tag; just push the existing tag and publish.
 //   --no-push       Skip the git push.
@@ -76,6 +91,11 @@
 //                     node scripts/release.mjs 0.4.0-beta.2 --promote-only -y
 //   --otp <code>    npm one-time password (2FA), forwarded to every publish.
 //   -y, --yes       Don't pause for the confirmation prompt.
+//
+// Publishing is IDEMPOTENT: versions already on the registry are skipped, so an
+// interrupted run can simply be re-run. The bump also promotes CHANGELOG.md's
+// [Unreleased] section and keeps the version examples in CONTRIBUTING.md and the
+// bug-report template current.
 //
 // The npm dist-tag is derived from the version: a prerelease (1.2.0-beta.3) is
 // published under its prerelease id (`beta`); a stable version under `latest`.
@@ -98,30 +118,32 @@ import process from 'node:process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Packages published to npm, in dependency order (dependencies first) so a
-// freshly published package can always resolve the ones it depends on.
+// freshly published package can always resolve the ones it depends on. Full
+// package names: the official entry package `azerothjs` is unscoped, so a
+// hardcoded `@azerothjs/` prefix would misname it.
 const PUBLISH_ORDER =
 [
-    'reactivity',
-    'component',
-    'testing',
-    'renderer',
-    'server',
-    'router',
-    'store',
-    'form',
-    'compiler',
-    'core',
+    '@azerothjs/reactivity',
+    '@azerothjs/component',
+    '@azerothjs/testing',
+    '@azerothjs/renderer',
+    '@azerothjs/server',
+    '@azerothjs/router',
+    '@azerothjs/store',
+    '@azerothjs/form',
+    '@azerothjs/compiler',
+    'azerothjs',
     // DevTools: a thin consumer of `@azerothjs/reactivity`'s stable, versioned devtools hook. Builds
     // and ships now that the hook protocol is in place; ordered after reactivity (its only framework dep).
-    'devtools',
+    '@azerothjs/devtools',
     // Editor tooling. Published too: the VS Code extension declares
     // `@azerothjs/language-server` + `@azerothjs/typescript-plugin` as runtime deps,
     // so a clean Marketplace install resolves them from npm. Ordered after their
     // deps (language-service before language-server / typescript-plugin).
-    'eslint-plugin',
-    'language-service',
-    'language-server',
-    'typescript-plugin'
+    '@azerothjs/eslint-plugin',
+    '@azerothjs/language-service',
+    '@azerothjs/language-server',
+    '@azerothjs/typescript-plugin'
 ];
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -137,13 +159,110 @@ function log(message)
     console.log(message);
 }
 
+/**
+ * Resolves a version INPUT - either a full version string or a bump keyword - against the current
+ * version, so the operator never has to compute the next number by hand:
+ *
+ *   full version   1.2.3 / 1.2.3-beta.4   used as-is
+ *   alpha|beta|rc  same base, that channel: enter it at .1, or increment .n if already on it
+ *                  (0.7.0-beta.1 -> `beta` -> 0.7.0-beta.2; -> `rc` -> 0.7.0-rc.1)
+ *   pre            increment the current prerelease number (alias of the current channel)
+ *   stable         drop the prerelease suffix (0.7.0-beta.3 -> 0.7.0)
+ *   patch|minor|major
+ *                  on a stable current: normal SemVer increment (0.7.0 -> patch -> 0.7.1)
+ *                  on a prerelease: increments the BASE then applies --channel (default: keep the
+ *                  current channel) at .1 (0.7.0-beta.1 -> minor -> 0.8.0-beta.1); pass
+ *                  `--channel stable` to cut a stable directly.
+ */
+function resolveVersion(input, current)
+{
+    if (VERSION_PATTERN.test(input))
+    {
+        return input;
+    }
+
+    const base = baseVersion(current);
+    const [major, minor, patch] = base.split('.').map(Number);
+    const channel = prereleaseChannel(current);
+    const iteration = channel === null ? 0 : Number(current.slice(current.indexOf('-') + 1).split('.')[1] ?? 0);
+
+    // Channel keywords: same base, enter that channel at .1, or advance .n when already on it.
+    if (['alpha', 'beta', 'rc', 'next', 'canary'].includes(input))
+    {
+        return input === channel
+            ? `${ base }-${ channel }.${ iteration + 1 }`
+            : `${ base }-${ input }.1`;
+    }
+
+    if (input === 'pre' || input === 'prerelease')
+    {
+        if (channel === null)
+        {
+            fail(`current version ${ current } is stable - name the channel instead (e.g. \`release -- beta\`)`);
+        }
+        return `${ base }-${ channel }.${ iteration + 1 }`;
+    }
+
+    if (input === 'stable' || input === 'release')
+    {
+        if (channel === null)
+        {
+            fail(`current version ${ current } is already stable - use patch/minor/major`);
+        }
+        return base;
+    }
+
+    // patch/minor/major: compute the next BASE, then decide its channel.
+    let nextBase;
+    if (input === 'patch')
+    {
+        // SemVer: "patch" on a prerelease releases the base it precedes (0.7.0-beta.1 -> 0.7.0).
+        nextBase = channel !== null ? base : `${ major }.${ minor }.${ patch + 1 }`;
+    }
+    else if (input === 'minor')
+    {
+        nextBase = `${ major }.${ minor + 1 }.0`;
+    }
+    else if (input === 'major')
+    {
+        nextBase = `${ major + 1 }.0.0`;
+    }
+    else
+    {
+        fail(`"${ input }" is neither a version nor a bump keyword `
+            + '(alpha, beta, rc, pre, stable, patch, minor, major)');
+    }
+
+    if (options.channel === 'stable')
+    {
+        return nextBase;
+    }
+    if (options.channel)
+    {
+        return `${ nextBase }-${ options.channel }.1`;
+    }
+    // No --channel: a prerelease line stays on its channel for minor/major; `patch` finalizes.
+    if (channel !== null && input !== 'patch')
+    {
+        return `${ nextBase }-${ channel }.1`;
+    }
+    return nextBase;
+}
+
 /** Prints usage + a versioning cheat-sheet (the full detail is in the file header). */
 function printHelp()
 {
     log(`Release the AzerothJS monorepo (one lockstep version across every package).
 
-Usage:  npm run release -- <version> [options]
-        node scripts/release.mjs <version> [options]
+Usage:  npm run release -- <version | keyword> [options]
+        node scripts/release.mjs <version | keyword> [options]
+
+Keywords (resolved against the current version - no math needed):
+  beta / alpha / rc   same base, that channel (.1 to enter, .n+1 when on it)
+  pre                 next iteration of the current prerelease
+  stable              drop the prerelease suffix (cut the release)
+  patch|minor|major   SemVer bump; prerelease lines keep their channel
+                      (override with --channel <c> or --channel stable)
 
 Version:  MAJOR.MINOR.PATCH[-channel.n]      e.g. 1.0.0   1.0.0-beta.2
   MAJOR breaking | MINOR feature | PATCH fix   (0.y.z: anything may break)
@@ -153,6 +272,8 @@ Version:  MAJOR.MINOR.PATCH[-channel.n]      e.g. 1.0.0   1.0.0-beta.2
 
 Options:
   --dry-run            Show every step; change nothing.
+  --channel <c>        Channel for patch/minor/major (alpha|beta|rc|stable).
+  --no-changelog       Skip the CHANGELOG.md [Unreleased] promotion.
   --skip-checks        Skip the build/lint/test gate (not recommended).
   --no-bump            Push + publish an existing tag; don't bump/commit/tag.
   --no-push            Skip the git push.
@@ -207,7 +328,61 @@ function releaseFiles()
             files.push(editorFile);
         }
     }
+    // Docs that quote the current version as an example (the CONTRIBUTING release commands, the
+    // bug-report version placeholder). Including them keeps the examples current for free instead
+    // of drifting a release behind until someone notices.
+    for (const docFile of ['CONTRIBUTING.md', path.join('.github', 'ISSUE_TEMPLATE', 'bug_report.yml')])
+    {
+        if (existsSync(path.join(ROOT, docFile)))
+        {
+            files.push(docFile);
+        }
+    }
     return files;
+}
+
+/**
+ * Promotes CHANGELOG.md's `[Unreleased]` section to `next`: retitles it with the version and
+ * today's date, inserts a fresh empty `[Unreleased]` above it, and rewrites the compare links at
+ * the bottom. Warns and does nothing when the file or section is missing - a changelog problem
+ * should never block a release, only nag.
+ */
+function promoteChangelog(nextVersion)
+{
+    const changelogPath = path.join(ROOT, 'CHANGELOG.md');
+    if (!existsSync(changelogPath))
+    {
+        log('  ! no CHANGELOG.md - skipping changelog promotion');
+        return;
+    }
+    const text = readFileSync(changelogPath, 'utf8');
+    if (!text.includes('## [Unreleased]'))
+    {
+        log('  ! CHANGELOG.md has no [Unreleased] section - skipping changelog promotion');
+        return;
+    }
+    if (text.includes(`## [${ nextVersion }]`))
+    {
+        log(`  CHANGELOG.md already has a ${ nextVersion } section - leaving it as is`);
+        return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    let out = text.replace('## [Unreleased]', `## [Unreleased]\n\n## [${ nextVersion }] - ${ today }`);
+    // Link block: [Unreleased] compares from the NEW tag; the new version compares from the
+    // previous tag (taken from the old [Unreleased] link).
+    const unreleasedLink = out.match(/^\[Unreleased\]: (.+?)compare\/(v\S+)\.\.\.HEAD$/m);
+    if (unreleasedLink)
+    {
+        const [, repoBase, previousTag] = unreleasedLink;
+        out = out.replace(unreleasedLink[0],
+            `[Unreleased]: ${ repoBase }compare/v${ nextVersion }...HEAD\n`
+            + `[${ nextVersion }]: ${ repoBase }compare/${ previousTag }...v${ nextVersion }`);
+    }
+    log(`  CHANGELOG.md: [Unreleased] -> [${ nextVersion }] - ${ today }`);
+    if (!dryRun)
+    {
+        writeFileSync(changelogPath, out);
+    }
 }
 
 // Recognized pre-release channels, in increasing maturity order. The channel is
@@ -281,6 +456,48 @@ function bumpFiles(current, next)
     }
 }
 
+/**
+ * Post-bump safety net for the literal string replace: while versions carry a prerelease suffix
+ * they are effectively unique, but a plain `1.0.0` could coincide with a THIRD-PARTY dependency
+ * pin in a manifest and get clobbered. Re-parse every bumped package.json and flag any
+ * non-AzerothJS dependency that now equals the release version.
+ */
+function guardBumpedManifests(nextVersion)
+{
+    for (const file of releaseFiles())
+    {
+        if (!file.endsWith('package.json'))
+        {
+            continue;
+        }
+        const manifest = JSON.parse(readFileSync(path.join(ROOT, file), 'utf8'));
+        for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'])
+        {
+            for (const [name, pin] of Object.entries(manifest[section] ?? {}))
+            {
+                if (pin === nextVersion && name !== 'azerothjs' && !name.startsWith('@azerothjs/'))
+                {
+                    log(`\n  ! ${ file }: third-party dependency "${ name }" is pinned to ${ nextVersion } - `
+                        + 'the literal version replace may have clobbered it. Check before committing.');
+                }
+            }
+        }
+    }
+}
+
+/** True when `name@version` already exists on the registry (makes publish resumable). */
+function alreadyPublished(name, version)
+{
+    try
+    {
+        return query(`npm view ${ name }@${ version } version`) === version;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
 function confirm(question)
 {
     if (process.argv.includes('-y') || process.argv.includes('--yes') || dryRun || !process.stdin.isTTY)
@@ -301,7 +518,7 @@ function confirm(question)
 function parseArgs()
 {
     const argv = process.argv.slice(2);
-    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, version: null };
+    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, version: null, channel: undefined, changelog: true };
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
@@ -363,6 +580,18 @@ function parseArgs()
         {
             options.otp = arg.slice('--otp='.length);
         }
+        else if (arg === '--channel')
+        {
+            options.channel = argv[++i];
+        }
+        else if (arg.startsWith('--channel='))
+        {
+            options.channel = arg.slice('--channel='.length);
+        }
+        else if (arg === '--no-changelog')
+        {
+            options.changelog = false;
+        }
         else if (arg.startsWith('-'))
         {
             fail('unknown option: ' + arg);
@@ -387,15 +616,25 @@ if (options.help)
     process.exit(0);
 }
 
-const next = options.version;
-
-if (!next)
+if (!options.version)
 {
-    fail('a version is required, e.g. `npm run release -- 0.4.0-beta.2` (try --help)');
+    fail('a version or bump keyword is required, e.g. `npm run release -- beta` or `-- 0.8.0-rc.1` (try --help)');
 }
+if (options.channel !== undefined && options.channel !== 'stable' && !PRERELEASE_CHANNELS.includes(options.channel))
+{
+    fail(`unknown --channel "${ options.channel }". Use one of: ${ PRERELEASE_CHANNELS.join(', ') }, stable.`);
+}
+
+const currentForResolve = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const next = resolveVersion(options.version, currentForResolve);
+
 if (!VERSION_PATTERN.test(next))
 {
     fail(`"${ next }" is not a valid version (expected MAJOR.MINOR.PATCH[-prerelease])`);
+}
+if (options.version !== next)
+{
+    log(`\n  ${ options.version } -> ${ next }  (resolved against current ${ currentForResolve })`);
 }
 
 // A named (alphabetic) pre-release channel must be one we recognize, so a typo
@@ -410,7 +649,7 @@ if (nextChannel !== null && !PRERELEASE_CHANNELS.includes(nextChannel))
 }
 
 const tag = 'v' + next;
-const current = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const current = currentForResolve;
 
 // Soft guard: for the SAME MAJOR.MINOR.PATCH, a pre-release channel should not
 // step BACKWARDS in maturity (alpha -> beta -> rc -> stable). Going beta.1 then
@@ -455,19 +694,6 @@ if (dryRun)
     log('  (dry run: nothing will be changed)');
 }
 
-// Changelog reminder (non-blocking): a release should describe what changed.
-// Warn if CHANGELOG.md has no entry for this version yet - the operator can
-// still proceed (e.g. a re-publish or promote-only run).
-if (!options.promoteOnly)
-{
-    const changelogPath = path.join(ROOT, 'CHANGELOG.md');
-    const changelog = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '';
-    if (!changelog.includes(next))
-    {
-        log(`\n  ! CHANGELOG.md has no entry for ${ next } - promote the [Unreleased] section before releasing.`);
-    }
-}
-
 if (!options.noBump)
 {
     if (tagExists)
@@ -496,6 +722,12 @@ if (!options.noBump && !resuming)
 {
     log('\nBumping versions');
     bumpFiles(current, next);
+    guardBumpedManifests(next);
+    if (options.changelog)
+    {
+        log('\nPromoting the changelog');
+        promoteChangelog(next);
+    }
     log('\nUpdating lockfile');
     act('npm install --package-lock-only --no-audit --no-fund');
 }
@@ -525,13 +757,12 @@ if (!options.noBump)
     act(`git tag -a ${ tag } -m "${ tag }"`);
 }
 
-if (!options.noPush)
-{
-    log('\nPushing to GitHub');
-    act('git push origin HEAD');
-    act('git push origin ' + tag);
-}
-
+// Publish BEFORE pushing: the pushed commit/tag triggers CI that builds the editor
+// extensions, whose manifests pin the just-released @azerothjs/* versions from the
+// REGISTRY. Pushing first raced that publish - CI's `npm ci`/`npm install` asked npm
+// for versions that were still minutes away and failed with ETARGET. Publishing
+// first makes the registry consistent before any CI can start; if a publish dies
+// mid-run, nothing was pushed and the resume flow (`--no-bump`) finishes the job.
 if (!options.noPublish)
 {
     log('\nPublishing to npm');
@@ -540,8 +771,37 @@ if (!options.noPublish)
     const tagName = distTag(next);
     for (const name of PUBLISH_ORDER)
     {
-        act(`npm publish -w @azerothjs/${ name } --access public --tag ${ tagName }${ provenanceFlag }${ otpFlag }`);
+        // Idempotent: a resumed run (a publish that died halfway, or a re-run after a network
+        // hiccup) skips versions already on the registry instead of failing with E403.
+        if (!dryRun && alreadyPublished(name, next))
+        {
+            log(`  ${ name }@${ next } already on the registry - skipping`);
+            continue;
+        }
+        act(`npm publish -w ${ name } --access public --tag ${ tagName }${ provenanceFlag }${ otpFlag }`);
     }
+
+    // The VS Code extension pins the @azerothjs versions released MOMENTS ago, so its lockfile
+    // could not be regenerated at bump time (the registry had nothing to resolve). Now it can;
+    // ship the sync as a small follow-up commit so the next clone's `npm ci` there just works.
+    if (!options.noBump && existsSync(path.join(ROOT, 'editors', 'vscode', 'package-lock.json')))
+    {
+        log('\nSyncing editors/vscode lockfile against the published versions');
+        act('npm install --package-lock-only --no-audit --no-fund', { cwd: path.join(ROOT, 'editors', 'vscode') });
+        const lockDirty = query('git status --porcelain editors/vscode/package-lock.json');
+        if (lockDirty)
+        {
+            act('git add editors/vscode/package-lock.json');
+            act(`git commit -m "chore(release): sync editor lockfile for ${ tag }"`);
+        }
+    }
+}
+
+if (!options.noPush)
+{
+    log('\nPushing to GitHub');
+    act('git push origin HEAD');
+    act('git push origin ' + tag);
 }
 
 // Dist-tag policy: `npm publish --tag beta` does NOT move `latest`, so a plain
@@ -557,9 +817,9 @@ if (willPromoteLatest)
     const otpAdd = options.otp ? ` --otp=${ options.otp }` : '';
     for (const name of PUBLISH_ORDER)
     {
-        act(`npm dist-tag add @azerothjs/${ name }@${ next } latest${ otpAdd }`);
+        act(`npm dist-tag add ${ name }@${ next } latest${ otpAdd }`);
     }
 }
 
 log(`\nDone: ${ next }`);
-log('Verify with: ' + PUBLISH_ORDER.map(n => `npm view @azerothjs/${ n } dist-tags`).slice(0, 1).join('') + '  (repeat per package)');
+log('Verify with: ' + PUBLISH_ORDER.map(n => `npm view ${ n } dist-tags`).slice(0, 1).join('') + '  (repeat per package)');

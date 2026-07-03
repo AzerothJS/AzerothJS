@@ -18,7 +18,7 @@ function flush(): Promise<void>
     return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-describe('integration — composed validators driving reactive state through submit', () =>
+describe('integration - composed validators driving reactive state through submit', () =>
 {
     it('walks a sign-up form from invalid to valid and through an async submit', async () =>
     {
@@ -129,7 +129,7 @@ describe('integration — composed validators driving reactive state through sub
     });
 });
 
-describe('integration — register() + handleSubmit on real DOM elements', () =>
+describe('integration - register() + handleSubmit on real DOM elements', () =>
 {
     it('binds input value, syncs on input, marks touched on blur, and submits via the form', async () =>
     {

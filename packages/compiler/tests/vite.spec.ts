@@ -18,7 +18,7 @@ function transformOf(): TransformFn
     return azeroth().transform as unknown as TransformFn;
 }
 
-describe('azeroth() plugin — diagnostic severity routing', () =>
+describe('azeroth() plugin - diagnostic severity routing', () =>
 {
     it('FAILS the build for an error-severity diagnostic (a handler that runs at setup)', async () =>
     {
@@ -33,7 +33,7 @@ describe('azeroth() plugin — diagnostic severity routing', () =>
                 throw new Error(typeof message === 'string' ? message : String(message));
             }
         };
-        const source = 'component C { state n = 0; <button onClick={n++}>x</button> }';
+        const source = 'component C { state n = 0; <button onClick={ n++ }>x</button> }';
         await expect(transform.call(ctx, source, '/X.azeroth')).rejects.toThrow(/runs at setup/);
         // An error is not also reported as a warning.
         expect(ctx.warn).not.toHaveBeenCalled();
@@ -68,12 +68,12 @@ describe('azeroth() plugin — diagnostic severity routing', () =>
     });
 });
 
-describe('azeroth() plugin — type-check gate (on by default)', () =>
+describe('azeroth() plugin - type-check gate (on by default)', () =>
 {
     // `onClick={count}` is a TYPE-ONLY error: count is a number, not a function. The syntactic
     // guard cannot catch it (a bare identifier read is not assignment/++/call), so only the real
     // type-check gate rejects it.
-    const TYPE_UNSAFE = 'component C { state count = 0; <button onClick={count}>x</button> }';
+    const TYPE_UNSAFE = 'component C { state count = 0; <button onClick={ count }>x</button> }';
     const throwingCtx = (): { warn: ReturnType<typeof vi.fn>; error: (m: unknown) => never } => (
         {
             warn: vi.fn(),
@@ -103,7 +103,7 @@ describe('azeroth() plugin — type-check gate (on by default)', () =>
     });
 });
 
-describe('azeroth() plugin — emitDeclarations mirror', () =>
+describe('azeroth() plugin - emitDeclarations mirror', () =>
 {
     // With emitDeclarations on, the plugin writes a TypeScript projection of each `.azeroth` file into
     // a hidden `.azeroth/types/` mirror under the project root (never beside the source), so `.ts`
@@ -112,7 +112,7 @@ describe('azeroth() plugin — emitDeclarations mirror', () =>
     {
         throw new Error(String(m));
     } };
-    const source = 'export default component C { state count = 0; <button onClick={() => count++}>{count}</button> }';
+    const source = 'export default component C { state count = 0; <button onClick={ () => count++ }>{ count }</button> }';
 
     it('writes the projection into .azeroth/types/ (both name forms), never beside the source', async () =>
     {

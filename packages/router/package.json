@@ -2,7 +2,7 @@
     "name": "@azerothjs/router",
     "version": "0.7.0-beta.1",
     "engines": { "node": ">=24" },
-    "description": "AzerothJS router — fine-grained reactive client-side routing with nested layouts",
+    "description": "AzerothJS router - fine-grained reactive client-side routing with nested layouts",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

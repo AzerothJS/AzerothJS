@@ -17,7 +17,7 @@ describe('emitDeclarations', () =>
 {
     it('emits a default-export component as a default function with an inferred return type', () =>
     {
-        // The return type is inferred from the returned markup (`h()` -> HTMLElement when @azerothjs/core
+        // The return type is inferred from the returned markup (`h()` -> HTMLElement when azerothjs
         // resolves; `any` in this dependency-free unit context). Either way it is a default function decl.
         const out = dts('export default component App { <div>hi</div> }');
         expect(out).toMatch(/export default function App\(props\?: \{\}\): \w+;/);

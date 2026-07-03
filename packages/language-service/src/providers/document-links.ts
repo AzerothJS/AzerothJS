@@ -1,7 +1,7 @@
 // Document links: make a relative import specifier in a `.azeroth` file
 // clickable, so Ctrl/Cmd-clicking the path jumps to the imported file. Only
 // relative specifiers (`./`, `../`, `/`) are linked - bare module specifiers
-// (`@azerothjs/core`, `node:path`) have no single on-disk target worth a link,
+// (`azerothjs`, `node:path`) have no single on-disk target worth a link,
 // and are left to go-to-definition. Each candidate is resolved the way the
 // project's module resolver resolves a relative import: the path as written,
 // then with `.ts` and `.azeroth` appended (an AzerothJS project is `.ts` +

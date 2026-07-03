@@ -14,7 +14,7 @@ const SRC = `export default component Scratch
 {
     state count = 0;
     derived doubled = count * 2;
-    <button onClick={() => count++}>{count} -> {doubled}</button>
+    <button onClick={ () => count++ }>{ count } -> { doubled }</button>
 }
 `;
 

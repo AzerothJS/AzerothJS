@@ -80,7 +80,7 @@ describe('autofix stress: many fixes, correct ranges, ordering, fixpoint', () =>
         expect(fixed).toContain('export default component Stress'); // structure intact
     });
 
-    it('reaches a fixpoint — the fixed source reports no further fixes', () =>
+    it('reaches a fixpoint - the fixed source reports no further fixes', () =>
     {
         const fixed = applyFixes(SOURCE, messages);
         const again = lint(fixed, { quotes: ['error', 'single'], 'comma-spacing': ['error', { after: true }] });

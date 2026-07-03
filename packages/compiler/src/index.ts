@@ -20,7 +20,7 @@
  * Every symbol below is documented at its definition.
  */
 
-export { lintMarkup, lintSource, type LintWarning } from './lint.ts';
+export { lintMarkup, lintSource, type LintWarning, type LintFix, type LintOptions } from './lint.ts';
 export { CompileError, parseMarkup } from './markup-parser.ts';
 export {
     findMarkupStart,

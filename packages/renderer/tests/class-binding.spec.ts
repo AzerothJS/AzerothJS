@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { createSignal, createRoot } from '@azerothjs/reactivity';
 import { h, classList } from '@azerothjs/renderer';
 
-describe('classList — getter output', () =>
+describe('classList - getter output', () =>
 {
     it('returns a getter that joins truthy object keys with single spaces', () =>
     {
@@ -44,7 +44,7 @@ describe('classList — getter output', () =>
     });
 });
 
-describe('classList — reactive binding in h()', () =>
+describe('classList - reactive binding in h()', () =>
 {
     it('toggles a single class when its condition signal flips', () =>
     {

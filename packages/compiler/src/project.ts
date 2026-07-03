@@ -44,7 +44,7 @@ import { RUNTIME_FN } from './keyword-spec.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
 /** Module the auto-injected runtime bindings point at (matches the compiler's codegen). */
-const RUNTIME_MODULE = '@azerothjs/core';
+const RUNTIME_MODULE = 'azerothjs';
 
 /**
  * Built-in control-flow components the compiler auto-imports from the runtime when markup uses them.
@@ -224,7 +224,19 @@ export function generateVirtualCode(source: string): VirtualCode
             isCollectionLiteral(code)
         )
         {
+            // A spread must stay bare (`(...x)` is not an expression); everything else is emitted in
+            // GENERATED parens. The span is the verbatim inner text of the `{...}` hole - padding
+            // included - and without the parens that padding abuts generated punctuation (`, label ,`),
+            // where a style rule linting the virtual module (comma-spacing, ...) would "fix" the
+            // user's markup padding through the byte-identical mapping. Parens insulate every side.
+            if (code.startsWith('...'))
+            {
+                emitCode(span.start, span.end);
+                return;
+            }
+            builder.emit('(');
             emitCode(span.start, span.end);
+            builder.emit(')');
             return;
         }
         builder.emit('() => (');

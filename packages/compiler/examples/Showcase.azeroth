@@ -18,12 +18,12 @@ interface TodoRowProps
 // read as plain values (`props.todo`); callbacks are just props too (`props.onToggle`).
 component TodoRow(props: TodoRowProps)
 {
-    <li class="todo" class:done={props.todo.done}>
+    <li class="todo" class:done={ props.todo.done }>
         <label>
-            <input type="checkbox" checked={props.todo.done} onChange={() => props.onToggle(props.todo.id)} />
-            <span class="text">{props.todo.text}</span>
+            <input type="checkbox" checked={ props.todo.done } onChange={ () => props.onToggle(props.todo.id) } />
+            <span class="text">{ props.todo.text }</span>
         </label>
-        <button class="remove" title="Remove" onClick={() => props.onRemove(props.todo.id)}>✕</button>
+        <button class="remove" title="Remove" onClick={ () => props.onRemove(props.todo.id) }>✕</button>
     </li>
 }
 
@@ -61,41 +61,41 @@ export default component Showcase(props: { heading: string })
 
     <section class="showcase">
         <header>
-            <h1>{props.heading}</h1>
-            <span class="count" style="font-weight: bold" style:color={remaining === 0 ? '#080' : '#c00'}>
-                {remaining} remaining
+            <h1>{ props.heading }</h1>
+            <span class="count" style="font-weight: bold" style:color={ remaining === 0 ? '#080' : '#c00' }>
+                { remaining } remaining
             </span>
         </header>
 
         <div class="add">
             <input
                 type="text"
-                value={draft}
+                value={ draft }
                 placeholder="What needs doing?"
-                onInput={(e) => draft = (e.target as HTMLInputElement).value}
-                onKeyDown={(e) => { if (e.key === 'Enter') addTodo(); }}
+                onInput={ (e) => draft = (e.target as HTMLInputElement).value }
+                onKeyDown={ (e) => { if (e.key === 'Enter') addTodo(); } }
             />
-            <button class="addBtn" onClick={() => addTodo()} disabled={draft.trim() === ''}>Add</button>
+            <button class="addBtn" onClick={ () => addTodo() } disabled={ draft.trim() === '' }>Add</button>
         </div>
 
-        <Show when={todos.length === 0} fallback={<p class="hint">{visible.length} shown</p>}>
-            <p class="empty">Nothing yet — add one above.</p>
+        <Show when={ todos.length === 0 } fallback={ <p class="hint">{visible.length} shown</p> }>
+            <p class="empty">Nothing yet - add one above.</p>
         </Show>
 
         <nav class="filters">
             <Switch>
-                <Match when={filter === 'all'}><strong>All</strong></Match>
-                <Match when={filter === 'active'}><strong>Active</strong></Match>
-                <Match when={filter === 'done'}><strong>Done</strong></Match>
+                <Match when={ filter === 'all' }><strong>All</strong></Match>
+                <Match when={ filter === 'active' }><strong>Active</strong></Match>
+                <Match when={ filter === 'done' }><strong>Done</strong></Match>
             </Switch>
-            <button class="f-all" onClick={() => filter = 'all'}>All</button>
-            <button class="f-active" onClick={() => filter = 'active'}>Active</button>
-            <button class="f-done" onClick={() => filter = 'done'}>Done</button>
+            <button class="f-all" onClick={ () => filter = 'all' }>All</button>
+            <button class="f-active" onClick={ () => filter = 'active' }>Active</button>
+            <button class="f-done" onClick={ () => filter = 'done' }>Done</button>
         </nav>
 
         <ul class="list">
-            <For each={visible} key={(todo) => todo.id}>
-                {(todo) => <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />}
+            <For each={ visible } key={ (todo) => todo.id }>
+                { (todo) => <TodoRow todo={todo} onToggle={toggle} onRemove={remove} /> }
             </For>
         </ul>
     </section>

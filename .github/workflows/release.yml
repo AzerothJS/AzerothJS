@@ -51,7 +51,10 @@ jobs:
             # --- Editor artifacts, built from the exact tagged code. ---
             # VS Code: the server bundle's esbuild entry is the language-server dist,
             # already built by the gate above.
-            -   run: npm ci
+            # `npm install`, not `npm ci`: the extension's @azerothjs pins are bumped by the
+            # release flow BEFORE those versions can exist on the registry, so its lockfile
+            # is perpetually one release behind - npm ci would fail on the manifest mismatch.
+            -   run: npm install --no-audit --no-fund
                 working-directory: editors/vscode
             -   run: npm run bundle
                 working-directory: editors/vscode

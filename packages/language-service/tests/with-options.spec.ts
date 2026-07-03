@@ -35,44 +35,44 @@ function optionLabels(items: { kind?: number; label: string }[])
     return items.filter(item => item.kind === 5).map(item => item.label).sort();
 }
 
-describe('completion: `with { … }` options per keyword', () =>
+describe('completion: `with { ... }` options per keyword', () =>
 {
-    it('state → equals, name', () =>
+    it('state -> equals, name', () =>
     {
         const src = 'export default component A\n{\n    state c = 0 with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('S.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'with { ')))).toEqual(['equals', 'name']);
     });
 
-    it('derived → equals, name (same options as state, after the value)', () =>
+    it('derived -> equals, name (same options as state, after the value)', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    derived t = c() * 2 with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('DV.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'with { ')))).toEqual(['equals', 'name']);
     });
 
-    it('effect → name only (NOT equals - different from state)', () =>
+    it('effect -> name only (NOT equals - different from state)', () =>
     {
         const src = 'export default component A\n{\n    effect with {  }\n    {\n    }\n    <p>x</p>\n}\n';
         const { service, uri } = open('E.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect with { ')))).toEqual(['name']);
     });
 
-    it('deferred → timeout', () =>
+    it('deferred -> timeout', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    deferred d = c() with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('D.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'c() with { ')))).toEqual(['timeout']);
     });
 
-    it('effect (deps) → defer', () =>
+    it('effect (deps) -> defer', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    effect (c) with {  }\n    {\n    }\n    <p>x</p>\n}\n';
         const { service, uri } = open('W.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect (c) with { ')))).toEqual(['defer']);
     });
 
-    it('form → validate/validateForm/validateAsync/asyncDebounceMs/onSubmit (+ array-form initial/validateArray)', () =>
+    it('form -> validate/validateForm/validateAsync/asyncDebounceMs/onSubmit (+ array-form initial/validateArray)', () =>
     {
         const src = 'export default component A\n{\n    form f = { a: \'\' } with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('F.azeroth', src);
@@ -145,7 +145,7 @@ describe('hover: authoring keywords', () =>
     });
 });
 
-describe('hover: `with { … }` option keys', () =>
+describe('hover: `with { ... }` option keys', () =>
 {
     it('documents `equals` inside a state with-clause', () =>
     {
@@ -193,7 +193,10 @@ describe('diagnostics: unknown `with` option', () =>
         expect(unknownOption(uri, service)?.message).toContain('Unknown option \'equals\' for `effect`');
     });
 
-    it('validates a form with-clause: accepts validateForm, flags a typo', () =>
+    // Two independent services = two full TypeScript program builds in one test. Warm local caches
+    // finish in well under a second; a cold CI runner has been observed to blow the default 5s
+    // budget, so this test carries its own generous timeout.
+    it('validates a form with-clause: accepts validateForm, flags a typo', { timeout: 30000 }, () =>
     {
         const ok = 'export default component A\n{\n    form f = { a: \'\' } with { validateForm: (v) => ({}) };\n    <p>x</p>\n}\n';
         const good = open('J4.azeroth', ok);

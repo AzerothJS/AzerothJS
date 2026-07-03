@@ -58,7 +58,10 @@ jobs:
             # The server bundle's esbuild entry is packages/language-server/dist/cli.js,
             # so the workspace packages must be built first (measured: ~15s).
             -   run: npm run build
-            -   run: npm ci
+            # `npm install`, not `npm ci`: the extension's @azerothjs pins are bumped by the
+            # release flow BEFORE those versions can exist on the registry, so its lockfile
+            # is perpetually one release behind - npm ci would fail on the manifest mismatch.
+            -   run: npm install --no-audit --no-fund
                 working-directory: editors/vscode
             -   run: npm run bundle
                 working-directory: editors/vscode
@@ -92,7 +95,10 @@ jobs:
             # cheaper and more parallel than depending on the vscode job's artifact.
             -   run: npm ci
             -   run: npm run build
-            -   run: npm ci
+            # `npm install`, not `npm ci`: the extension's @azerothjs pins are bumped by the
+            # release flow BEFORE those versions can exist on the registry, so its lockfile
+            # is perpetually one release behind - npm ci would fail on the manifest mismatch.
+            -   run: npm install --no-audit --no-fund
                 working-directory: editors/vscode
             -   run: npm run bundle
                 working-directory: editors/vscode

@@ -29,7 +29,7 @@ describe('diagnoseUnusedImports', () =>
 {
     it('flags an imported value that is never used', () =>
     {
-        const out = unused('import { Show, Unused } from \'@azerothjs/core\';\ncomponent C { state n = 0; <div><Show when={n}><p>x</p></Show></div> }');
+        const out = unused('import { Show, Unused } from \'azerothjs\';\ncomponent C { state n = 0; <div><Show when={n}><p>x</p></Show></div> }');
         expect(out).toEqual(['`Unused` is imported but never used - remove the import.']);
     });
 

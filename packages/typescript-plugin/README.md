@@ -1,5 +1,9 @@
 # @azerothjs/typescript-plugin
 
+[![npm](https://img.shields.io/npm/v/%40azerothjs%2Ftypescript-plugin?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/typescript-plugin)
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework.
+
 ## Overview
 
 A TypeScript language-service plugin that teaches `tsserver` (the engine behind
@@ -40,17 +44,21 @@ the editor's TypeScript server loads the plugin.
 
 ## How it works
 
-The plugin reuses the same virtual-code pipeline as the editor language server
+The plugin reuses the same projection as the editor language server
 (`@azerothjs/language-service`): a `.azeroth` file is compiled to a virtual
 TypeScript module whose markup is rewritten to `h()` calls and whose surrounding
-code - every `export` included - is preserved verbatim. The plugin decorates the
-host so that:
+code - every `export` included - is preserved verbatim. Two decorations make
+that seamless inside `tsserver`:
 
-- an `import './x.azeroth'` specifier resolves to a synthetic `x.azeroth.ts`;
-- loading that synthetic file returns the compiled virtual module.
-
-Because the virtual module carries the file's real exported declarations,
-TypeScript infers real types across the `.ts` -> `.azeroth` boundary.
+- **Resolution + loading**: an import of `./x.azeroth` (or the extensionless
+  `./x`) resolves to the REAL on-disk `.azeroth` path, whose content is served
+  as the compiled virtual module - so TypeScript infers real types across the
+  `.ts` -> `.azeroth` boundary.
+- **Result-span remapping**: navigation results that land inside a `.azeroth`
+  file (Find References, Go to Definition, Rename, highlights) are translated
+  from virtual-code offsets back to SOURCE offsets through the projection's
+  offset mapping - so references select the exact identifier, definitions land
+  on the `component` name, and a cross-file rename edits the right ranges.
 
 ## Scope: editors, not `tsc`
 
@@ -60,28 +68,10 @@ here - it is also why `vue-tsc` exists. So:
 
 - In the editor, this plugin gives real `.azeroth` types with no shim.
 - For a command-line type-check gate, use `azeroth-tsc` (from
-  `@azerothjs/language-server`) — the combined `.ts` + `.azeroth` checker (the
+  `@azerothjs/language-server`) - the combined `.ts` + `.azeroth` checker (the
   `vue-tsc` equivalent): it type-checks `.ts` files with `.azeroth` imports
   resolved to real types, and `.azeroth` files themselves.
 
-## Building
+## License
 
-```sh
-npm run build -w @azerothjs/typescript-plugin
-```
-
-`tsserver` loads plugins with `require()`, so the entry must be CommonJS; the
-AzerothJS packages it reuses are ESM. `esbuild` bundles `src/index.ts` and those
-ESM dependencies into a single self-contained `dist/index.js` (with `typescript`
-left external - `tsserver` passes its own copy to the plugin factory).
-
-## Testing
-
-```sh
-npx vitest run test/typescript-plugin
-```
-
-The test drives the plugin's host decoration through a constructed
-`ts.LanguageService` (what `tsserver` builds) over a fixture with no `.azeroth`
-shim, asserting default/named/type imports resolve and that a genuine type error
-still surfaces.
+[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

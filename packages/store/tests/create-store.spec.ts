@@ -17,7 +17,7 @@ import {
 } from '@azerothjs/reactivity';
 import { createStore } from '@azerothjs/store';
 
-describe('createStore — lazy singleton', () =>
+describe('createStore - lazy singleton', () =>
 {
     it('runs the factory at most once, on the first useStore() call', () =>
     {
@@ -75,7 +75,7 @@ describe('createStore — lazy singleton', () =>
     });
 });
 
-describe('createStore — reactivity & ownership', () =>
+describe('createStore - reactivity & ownership', () =>
 {
     it('a store signal drives an external reader effect', () =>
     {
@@ -176,7 +176,7 @@ describe('createStore — reactivity & ownership', () =>
     });
 });
 
-describe('createStore — composition', () =>
+describe('createStore - composition', () =>
 {
     it('one store factory consuming another shares the inner instance', () =>
     {
@@ -208,7 +208,7 @@ describe('createStore — composition', () =>
     });
 });
 
-describe('createStore — SSR scope isolation', () =>
+describe('createStore - SSR scope isolation', () =>
 {
     it('the client default scope yields a stable app-wide singleton', () =>
     {
@@ -296,7 +296,7 @@ describe('createStore — SSR scope isolation', () =>
     });
 });
 
-describe('createStore — edge cases', () =>
+describe('createStore - edge cases', () =>
 {
     it('caches a factory that returns null exactly once', () =>
     {

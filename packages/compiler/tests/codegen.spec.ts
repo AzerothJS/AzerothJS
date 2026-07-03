@@ -20,7 +20,7 @@ describe('generateModule - module shape and imports', () =>
     {
         const code = gen('component Hi { <h1>hi</h1> }');
         expect(code).toContain('function Hi(props)');
-        expect(code).toContain('from \'@azerothjs/core\'');
+        expect(code).toContain('from \'azerothjs\'');
         // A static host output hoists a tmpl() clone.
         expect(code).toMatch(/const _tmpl\$1 = tmpl\(/);
         expect(code).toContain('import { ');
@@ -41,7 +41,7 @@ describe('generateModule - module shape and imports', () =>
 
     it('does not re-import a runtime name the source already imports', () =>
     {
-        const code = gen('import { createSignal } from \'@azerothjs/core\';\ncomponent C { state n = 0; <p>{n}</p> }');
+        const code = gen('import { createSignal } from \'azerothjs\';\ncomponent C { state n = 0; <p>{n}</p> }');
         // createSignal is used but already imported, so the injected import omits it.
         const injected = code.split('\n').find(l => l.startsWith('import { ') && l.includes('bindHole'));
         expect(injected).toBeDefined();
@@ -69,7 +69,7 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('createEffect(() => { console.log(n()); });');
     });
 
-    it('desugars `effect (deps) { … }` to the on() explicit-dependency primitive', () =>
+    it('desugars `effect (deps) { ... }` to the on() explicit-dependency primitive', () =>
     {
         const code = gen('component C { state n = 0; effect (n) { save(n); } <p>{n}</p> }');
         expect(code).toContain('on([() => (n())], () => { save(n()); });');
@@ -146,14 +146,14 @@ describe('generateModule - reactive desugaring', () =>
 
     it('form keyword lowers to createForm({ initial, ...with })', () =>
     {
-        const code = gen('import { createForm } from "@azerothjs/core"; component C { form f = { a: "" } with { onSubmit: (v) => { void v; } }; <p>{f.values().a}</p> }');
+        const code = gen('import { createForm } from "azerothjs"; component C { form f = { a: "" } with { onSubmit: (v) => { void v; } }; <p>{f.values().a}</p> }');
         expect(code).toContain('const f = createForm({ initial: ({ a: "" }), ...({');
         expect(code).toContain('onSubmit');
     });
 
     it('form keyword with no with-clause lowers to createForm({ initial })', () =>
     {
-        const code = gen('import { createForm } from "@azerothjs/core"; component C { form f = { a: 0 }; <p>{f.values().a}</p> }');
+        const code = gen('import { createForm } from "azerothjs"; component C { form f = { a: 0 }; <p>{f.values().a}</p> }');
         expect(code).toContain('const f = createForm({ initial: ({ a: 0 }) });');
     });
 
@@ -181,7 +181,7 @@ describe('generateModule - reactive desugaring', () =>
 
     it('form FIELD read rewrites to values(); a write (and bind:) to setValue; API access is untouched', () =>
     {
-        const code = gen('import { createForm } from "@azerothjs/core"; component C { form f = { a: "" }; <form onSubmit={f.handleSubmit}><input bind:value={f.a} /><p>{f.a}</p><span>{f.submitting()}</span></form> }');
+        const code = gen('import { createForm } from "azerothjs"; component C { form f = { a: "" }; <form onSubmit={f.handleSubmit}><input bind:value={f.a} /><p>{f.a}</p><span>{f.submitting()}</span></form> }');
         expect(code).toContain('f.values().a');          // field read -> values()
         expect(code).toContain('f.setValue("a"');        // bind: write -> setValue
         expect(code).toContain('f.submitting()');        // FormApi access left as-is
@@ -326,7 +326,7 @@ describe('generateModule - nested-scope keywords (composables)', () =>
     });
 });
 
-describe('generateModule - keyword options (`with { … }` clause)', () =>
+describe('generateModule - keyword options (`with { ... }` clause)', () =>
 {
     it('passes a `state` equals/name option through to createSignal', () =>
     {

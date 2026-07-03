@@ -22,7 +22,7 @@ export interface BuiltinComponent
 }
 
 /**
- * The components the compiler auto-imports from `@azerothjs/core` when markup
+ * The components the compiler auto-imports from `azerothjs` when markup
  * uses them. Mirrors @azerothjs/compiler's BUILTIN_COMPONENTS, with prop data
  * taken from the renderer/component prop interfaces.
  */

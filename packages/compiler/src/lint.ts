@@ -8,18 +8,31 @@
  *   - azeroth/duplicate-attr - the same attribute written twice on one element (the later one
  *     silently wins);
  *   - azeroth/event-case - onclick= for a known DOM event, where the framework convention is
- *     camelCase (onClick).
+ *     camelCase (onClick);
+ *   - azeroth/interpolation-spacing - spacing inside markup expression braces ({ expr }, not
+ *     {expr}). The braces are markup punctuation, invisible to any TypeScript-based rule (the
+ *     projection lowers them away), so this is the ONLY layer that can enforce it - the
+ *     eslint-plugin and the editors both surface it from here.
  *
  * Rules walk the parsed element tree of each top-level markup region. Warnings carry source spans, so
- * the Vite plugin can print file:line:col (and any tooling can squiggle them).
+ * the Vite plugin can print file:line:col (and any tooling can squiggle them). A warning MAY carry a
+ * machine-applicable {@link LintFix} in ORIGINAL source coordinates - the eslint-plugin forwards it so
+ * `eslint --fix` rewrites the `.azeroth` source directly.
  *
  * @see {@link lintSource} - lint a whole module
  * @see {@link lintMarkup} - lint one parsed region
  */
 
-import type { MarkupElement, MarkupFragment, MarkupChild } from './types.ts';
+import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute } from './types.ts';
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
+
+/** A machine-applicable fix: replace `[start, end)` of the ORIGINAL source with `text`. */
+export interface LintFix
+{
+    range: [number, number];
+    text: string;
+}
 
 /** One lint finding. Warning severity - lint never fails a build. */
 export interface LintWarning
@@ -33,6 +46,21 @@ export interface LintWarning
     /** Source span of the offending attribute/element. */
     start: number;
     end: number;
+
+    /** Present when the finding is mechanically fixable (original-source coordinates). */
+    fix?: LintFix;
+}
+
+/** Options for the style-level rules (structural rules are always on). */
+export interface LintOptions
+{
+    /**
+     * Spacing inside markup expression braces: 'always' wants `{ expr }`, 'never' wants `{expr}`,
+     * 'off' disables the rule. Default 'always'. A side whose whitespace contains a newline is
+     * always accepted (multiline expressions indent freely). Spreads (`{...props}`) are exempt -
+     * the ecosystem convention keeps them tight.
+     */
+    interpolationSpacing?: 'always' | 'never' | 'off';
 }
 
 /**
@@ -68,27 +96,124 @@ const KNOWN_EVENTS = new Set([
  * lintMarkup(node)[0].code; // 'azeroth/event-case'
  * ```
  */
-export function lintMarkup(node: MarkupElement | MarkupFragment): LintWarning[]
+export function lintMarkup(node: MarkupElement | MarkupFragment, source?: string, options?: LintOptions): LintWarning[]
 {
     const warnings: LintWarning[] = [];
-    visit(node, warnings);
+    const spacing = options?.interpolationSpacing ?? 'always';
+    visit(node, warnings, source, spacing);
     return warnings;
 }
 
 /** @internal */
-function visit(node: MarkupElement | MarkupFragment | MarkupChild, warnings: LintWarning[]): void
+function visit(
+    node: MarkupElement | MarkupFragment | MarkupChild,
+    warnings: LintWarning[],
+    source: string | undefined,
+    spacing: 'always' | 'never' | 'off'
+): void
 {
     if (node.kind === 'element')
     {
         lintElement(node, warnings);
+        if (source !== undefined && spacing !== 'off')
+        {
+            for (const attr of node.attributes)
+            {
+                lintAttributeSpacing(attr, source, spacing, warnings);
+            }
+        }
+    }
+    if (node.kind === 'expression' && source !== undefined && spacing !== 'off')
+    {
+        // A child hole's span covers `{...}`; the inner text sits between the braces.
+        lintBraceSpacing(node.start + 1, node.end - 1, source, spacing, warnings);
     }
     if (node.kind === 'element' || node.kind === 'fragment')
     {
         for (const child of node.children)
         {
-            visit(child, warnings);
+            visit(child, warnings, source, spacing);
         }
     }
+}
+
+/**
+ * Locates the braces of an expression attribute value (`name={ ... }`) and checks their spacing.
+ * Spreads are exempt; static and bare attributes have no braces. The parser guarantees the value's
+ * opening `{` is the first non-whitespace character after `=` and that the attribute span ends
+ * exactly at the closing `}`.
+ * @internal
+ */
+function lintAttributeSpacing(
+    attr: MarkupAttribute,
+    source: string,
+    spacing: 'always' | 'never',
+    warnings: LintWarning[]
+): void
+{
+    if (attr.spread || attr.name === null || attr.value.kind !== 'expression')
+    {
+        return;
+    }
+    const equals = source.indexOf('=', attr.start + attr.name.length);
+    if (equals === -1 || equals >= attr.end)
+    {
+        return;
+    }
+    const brace = source.indexOf('{', equals);
+    if (brace === -1 || brace >= attr.end)
+    {
+        return;
+    }
+    lintBraceSpacing(brace + 1, attr.end - 1, source, spacing, warnings);
+}
+
+/**
+ * The interpolation-spacing check for one brace pair, given the offsets of its INNER region
+ * (`{` at innerStart-1, `}` at innerEnd). A side whose whitespace contains a newline passes in
+ * both modes (multiline expressions lay out freely); an all-whitespace inner region is skipped
+ * (nothing to space). The fix rewrites only the inner region, preserving the expression verbatim.
+ * @internal
+ */
+function lintBraceSpacing(
+    innerStart: number,
+    innerEnd: number,
+    source: string,
+    spacing: 'always' | 'never',
+    warnings: LintWarning[]
+): void
+{
+    const inner = source.slice(innerStart, innerEnd);
+    const expression = inner.trim();
+    // Nothing to space; and spread syntax stays tight ({...props}) wherever it appears - the
+    // attribute path never reaches here for spreads, but a child-position `{...list}` parses as a
+    // plain expression hole, so the exemption must live at the brace level.
+    if (expression === '' || expression.startsWith('...'))
+    {
+        return;
+    }
+    const leading = inner.slice(0, inner.length - inner.trimStart().length);
+    const trailing = inner.slice(inner.trimEnd().length);
+
+    const sideOk = (ws: string): boolean =>
+        (ws.includes('\n') || (spacing === 'always' ? ws === ' ' : ws === ''));
+
+    if (sideOk(leading) && sideOk(trailing))
+    {
+        return;
+    }
+    const pad = spacing === 'always' ? ' ' : '';
+    const fixedLeading = leading.includes('\n') ? leading : pad;
+    const fixedTrailing = trailing.includes('\n') ? trailing : pad;
+    warnings.push({
+        code: 'azeroth/interpolation-spacing',
+        message: spacing === 'always'
+            ? 'Expected exactly one space inside the braces of a markup expression - write `{ expression }`.'
+            : 'Unexpected space inside the braces of a markup expression - write `{expression}`.',
+        start: innerStart - 1,
+        end: innerEnd + 1,
+        fix: { range: [innerStart, innerEnd], text: fixedLeading + expression + fixedTrailing }
+    });
 }
 
 /** @internal */
@@ -182,7 +307,7 @@ function lintElement(el: MarkupElement, warnings: LintWarning[]): void
  * // 'azeroth/event-case'
  * ```
  */
-export function lintSource(source: string): LintWarning[]
+export function lintSource(source: string, options?: LintOptions): LintWarning[]
 {
     const warnings: LintWarning[] = [];
     let i = 0;
@@ -196,7 +321,7 @@ export function lintSource(source: string): LintWarning[]
         try
         {
             const { node, end } = parseMarkup(source, start);
-            warnings.push(...lintMarkup(node));
+            warnings.push(...lintMarkup(node, source, options));
             i = end;
         }
         catch

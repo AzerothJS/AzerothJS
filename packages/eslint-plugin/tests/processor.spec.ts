@@ -3,11 +3,11 @@
 // End-to-end coverage for the `.azeroth` ESLint processor. Each test drives the SAME pipeline ESLint
 // runs: preprocess the `.azeroth` source into a virtual `.ts` block, lint that block with the real
 // `@typescript-eslint/parser` and stock rules, then postprocess the messages back. It verifies that
-//   - core + TypeScript rules actually fire on `.azeroth` content,
-//   - every message maps to the ORIGINAL `.azeroth` location (never the virtual module),
-//   - autofixes map back and, applied, correct the original source,
-//   - diagnostics that would land in generated scaffolding are dropped,
-//   - the compiler's reactivity diagnostics are merged into the same list.
+// - core + TypeScript rules actually fire on `.azeroth` content,
+// - every message maps to the ORIGINAL `.azeroth` location (never the virtual module),
+// - autofixes map back and, applied, correct the original source,
+// - diagnostics that would land in generated scaffolding are dropped,
+// - the compiler's reactivity diagnostics are merged into the same list.
 
 import { describe, it, expect } from 'vitest';
 import { Linter } from 'eslint';
@@ -70,7 +70,7 @@ const SOURCE = [
     ''
 ].join('\n');
 
-describe('azeroth ESLint processor — rules fire and map back', () =>
+describe('azeroth ESLint processor - rules fire and map back', () =>
 {
     it('eqeqeq fires on `==` inside a derived and maps to the original `==`', () =>
     {
@@ -100,7 +100,7 @@ describe('azeroth ESLint processor — rules fire and map back', () =>
     {
         const messages = lint(SOURCE, { 'no-unused-vars': 'warn' });
         const unused = messages.filter(m => m.ruleId === 'no-unused-vars');
-        // Exactly one — the user's `unusedLocal`. The projection's generated `props` param, `h`/`__az*`
+        // Exactly one - the user's `unusedLocal`. The projection's generated `props` param, `h`/`__az*`
         // helpers, etc. live in scaffolding and are dropped, so they never leak in here.
         expect(unused.length).toBe(1);
         const m = unused[0];
@@ -116,7 +116,7 @@ describe('azeroth ESLint processor — rules fire and map back', () =>
         // Both user string literals are re-quoted, in place, in the original source.
         expect(fixed).toContain("const greeting = 'hi';");
         expect(fixed).toContain("count == 0 ? greeting : 'lots'");
-        // The rest of the file is untouched — no scaffolding text leaked into the source.
+        // The rest of the file is untouched - no scaffolding text leaked into the source.
         expect(fixed).toContain('export default component Demo');
         expect(fixed).toContain('<p>{ doubled }</p>');
         expect(fixed).not.toContain('__az');
@@ -124,7 +124,7 @@ describe('azeroth ESLint processor — rules fire and map back', () =>
     });
 });
 
-describe('azeroth ESLint processor — unified compiler diagnostics', () =>
+describe('azeroth ESLint processor - unified compiler diagnostics', () =>
 {
     it('surfaces the compiler reactivity diagnostic alongside ESLint messages', () =>
     {
@@ -139,18 +139,18 @@ describe('azeroth ESLint processor — unified compiler diagnostics', () =>
 
     it('a clean component produces no messages', () =>
     {
-        const src = 'export default component Ok\n{\n    state n = 0;\n    <button onClick={() => { n = n + 1; }}>{ n }</button>\n}\n';
+        const src = 'export default component Ok\n{\n    state n = 0;\n    <button onClick={ () => { n = n + 1; } }>{ n }</button>\n}\n';
         expect(lint(src, { eqeqeq: 'error', quotes: ['error', 'single'], 'no-unused-vars': 'warn' })).toEqual([]);
     });
 });
 
-describe('azeroth ESLint processor — prefer-const distinguishes user `let` from `state`', () =>
+describe('azeroth ESLint processor - prefer-const distinguishes user `let` from `state`', () =>
 {
     const src = [
         'export default component F',
         '{',
-        '    state count = 0;',                         // projects to `let count` — must NOT be flagged
-        '    let label = "x";',                         // genuine user `let`, never reassigned — flag it
+        '    state count = 0;',                         // projects to `let count` - must NOT be flagged
+        '    let label = "x";',                         // genuine user `let`, never reassigned - flag it
         '    derived d = count + label.length;',
         '    <p>{ d }</p>',
         '}',
@@ -176,5 +176,70 @@ describe('azeroth ESLint processor — prefer-const distinguishes user `let` fro
             return src.slice(offset, offset + 'count'.length) === 'count';
         });
         expect(onCount).toBe(false);
+    });
+});
+
+describe('markup lint surfaces through the processor (rules no TS rule can express)', () =>
+{
+    it('interpolation-spacing fires on {expr}, located on the original braces, with a working fix', () =>
+    {
+        const source = 'export default component Demo\n{\n    state count = 0;\n    <p>{count}</p>\n}\n';
+        const messages = lint(source, {});
+        const spacing = messages.find(m => m.ruleId === 'azeroth/interpolation-spacing');
+        expect(spacing, 'interpolation-spacing should fire on {count}').toBeDefined();
+        const offset = toOffset(source, spacing!.line, spacing!.column);
+        expect(source.slice(offset, offset + '{count}'.length)).toBe('{count}');
+        const fixed = applyFixes(source, [spacing!]);
+        expect(fixed).toContain('<p>{ count }</p>');
+        // Idempotent: the fixed source is clean.
+        expect(lint(fixed, {}).find(m => m.ruleId === 'azeroth/interpolation-spacing')).toBeUndefined();
+    });
+
+    it('duplicate-attr and event-case reach ESLint too (previously vite-only)', () =>
+    {
+        const source = 'export default component Demo\n{\n    <button id="a" id="b" onclick={ f }>x</button>\n}\n';
+        const ids = lint(source, {}).map(m => m.ruleId);
+        expect(ids).toContain('azeroth/duplicate-attr');
+        expect(ids).toContain('azeroth/event-case');
+    });
+
+    it('eslint --fix applies EVERY markup fix in one pass (multiple holes)', () =>
+    {
+        const source = 'export default component Demo\n{\n    state a = 0;\n    <div title={a}>{a} <b>{  a  }</b></div>\n}\n';
+        const messages = lint(source, {}).filter(m => m.ruleId === 'azeroth/interpolation-spacing');
+        expect(messages).toHaveLength(3);
+        const fixed = applyFixes(source, messages);
+        expect(fixed).toContain('<div title={ a }>{ a } <b>{ a }</b></div>');
+    });
+});
+
+describe('core ESLint rules reach INSIDE markup expressions (the projection maps them verbatim)', () =>
+{
+    it('space-infix-ops fires on `a+1` inside a child hole and its autofix rewrites the original', () =>
+    {
+        const source = 'export default component Demo\n{\n    state a = 0;\n    <p>{ a+1 }</p>\n}\n';
+        const messages = lint(source, { 'space-infix-ops': 'error' });
+        const infix = messages.find(m => m.ruleId === 'space-infix-ops');
+        expect(infix, 'space-infix-ops should fire inside the hole').toBeDefined();
+        expect(infix!.fix, 'its fix must map back to the original source').toBeDefined();
+        expect(applyFixes(source, [infix!])).toContain('<p>{ a + 1 }</p>');
+    });
+
+    it('eqeqeq fires on `==` inside an ATTRIBUTE expression', () =>
+    {
+        const source = 'export default component Demo\n{\n    state a = 0;\n    <p title={ a == 1 ? "x" : "y" }>t</p>\n}\n';
+        const eq = lint(source, { eqeqeq: 'error' }).find(m => m.ruleId === 'eqeqeq');
+        expect(eq).toBeDefined();
+        const offset = toOffset(source, eq!.line, eq!.column);
+        expect(source.slice(offset, offset + 2)).toBe('==');
+    });
+
+    it('no-unused-expressions style rules see handler expressions', () =>
+    {
+        const source = 'export default component Demo\n{\n    state a = 0;\n    <button onClick={ () => { a++; } }>x</button>\n}\n';
+        // The arrow body is user code in the projection; a rule with a fix inside it maps back.
+        const messages = lint(source, { semi: ['error', 'always'] });
+        // No missing semicolons here - this asserts the pipeline runs clean, not that semi fires.
+        expect(messages.filter(m => m.ruleId === 'semi')).toEqual([]);
     });
 });

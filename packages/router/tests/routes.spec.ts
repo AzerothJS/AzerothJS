@@ -57,7 +57,7 @@ function mountRoutes(initialUrl: string, fallback?: () => HTMLElement): { router
     };
 }
 
-describe('Routes — initial render', () =>
+describe('Routes - initial render', () =>
 {
     it('renders the matched leaf component', () =>
     {
@@ -94,7 +94,7 @@ describe('Routes — initial render', () =>
     });
 });
 
-describe('Routes — reactive swaps', () =>
+describe('Routes - reactive swaps', () =>
 {
     it('swaps content when the route changes', () =>
     {
@@ -168,7 +168,7 @@ describe('Routes — reactive swaps', () =>
     });
 });
 
-describe('Routes — fallback (no match)', () =>
+describe('Routes - fallback (no match)', () =>
 {
     it('renders the fallback when no route matches', () =>
     {

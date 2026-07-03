@@ -34,7 +34,7 @@ async function withRouter(routes: Route[], initialUrl: string, fn: (router: Rout
     }
 }
 
-describe('useLoader — basic data flow', () =>
+describe('useLoader - basic data flow', () =>
 {
     it('returns the same shared resource object the router holds', async () =>
     {
@@ -107,7 +107,7 @@ describe('useLoader — basic data flow', () =>
     });
 });
 
-describe('useLoader — idle states', () =>
+describe('useLoader - idle states', () =>
 {
     it('stays idle when no route matches', async () =>
     {
@@ -134,7 +134,7 @@ describe('useLoader — idle states', () =>
     });
 });
 
-describe('useLoader — re-running on navigation', () =>
+describe('useLoader - re-running on navigation', () =>
 {
     it('re-runs the loader when the param changes', async () =>
     {
@@ -246,7 +246,7 @@ describe('useLoader — re-running on navigation', () =>
     });
 });
 
-describe('useLoader — refetch', () =>
+describe('useLoader - refetch', () =>
 {
     it('refetch() re-runs the active loader', async () =>
     {

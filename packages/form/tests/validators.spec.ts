@@ -113,7 +113,7 @@ describe('min', () =>
         expect(validate(19)).toBeNull();
     });
 
-    it('does NOT skip 0 — it is a real numeric value', () =>
+    it('does NOT skip 0 - it is a real numeric value', () =>
     {
         expect(min(1)(0)).toBe('Must be at least 1');
         expect(min(0)(0)).toBeNull();

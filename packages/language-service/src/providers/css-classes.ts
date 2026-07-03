@@ -5,9 +5,9 @@
 // *which* token the caret sits on.
 //
 // Three authoring forms count as a class value:
-//   - a static attribute:        class="btn btn-lg"
-//   - the reactive helper's keys: class={classList({ 'btn': true, active: f })}
-//   - any string in the binding:  class={cond ? 'on' : 'off'}
+// - a static attribute:        class="btn btn-lg"
+// - the reactive helper's keys: class={classList({ 'btn': true, active: f })}
+// - any string in the binding:  class={cond ? 'on' : 'off'}
 //
 // Tailwind utilities are deliberately NOT handled here - Tailwind ships its own
 // first-class editor tooling (the VS Code "Tailwind CSS IntelliSense" extension,
@@ -44,7 +44,7 @@ export function classCompletions(ctx: RequestContext, offset: number): Completio
     return ctx.project.getStyleIndex().unique().map(def => ({
         label: def.name,
         kind: CompletionItemKind.Value,
-        detail: `class · ${ basename(def.file) }`,
+        detail: `class - ${ basename(def.file) }`,
         documentation: fence(def.rule),
         sortText: `0_${ def.name }`,
         filterText: def.name

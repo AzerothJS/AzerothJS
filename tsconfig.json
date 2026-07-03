@@ -38,10 +38,6 @@
             [
                 "./packages/server/src/index.ts"
             ],
-            "@azerothjs/core":
-            [
-                "./packages/core/src/index.ts"
-            ],
             "@azerothjs/router":
             [
                 "./packages/router/src/index.ts"
@@ -77,6 +73,10 @@
             "@azerothjs/eslint-plugin":
             [
                 "./packages/eslint-plugin/src/index.ts"
+            ],
+            "azerothjs":
+            [
+                "./packages/azerothjs/src/index.ts"
             ]
         }
     },

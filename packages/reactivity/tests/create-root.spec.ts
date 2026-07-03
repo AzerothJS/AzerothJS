@@ -95,7 +95,7 @@ describe('createRoot', () =>
         expect(subscriberCount(n)).toBe(0);
     });
 
-    it('a nested root is an independent scope — the outer dispose does NOT cascade to it', () =>
+    it('a nested root is an independent scope - the outer dispose does NOT cascade to it', () =>
     {
         const [n] = createSignal(0);
         let disposeOuter!: () => void;

@@ -65,7 +65,7 @@ function dispatchClick(anchor: HTMLAnchorElement, ev: MouseEvent): boolean
     return interceptedByLink;
 }
 
-describe('Link — rendered anchor', () =>
+describe('Link - rendered anchor', () =>
 {
     it('renders a real <a> with the resolved href', () =>
     {
@@ -120,7 +120,7 @@ describe('Link — rendered anchor', () =>
     });
 });
 
-describe('Link — click interception', () =>
+describe('Link - click interception', () =>
 {
     it('a plain left click navigates through the router and is prevented', () =>
     {
@@ -290,7 +290,7 @@ describe('Link — click interception', () =>
     });
 });
 
-describe('Link — active class & aria-current', () =>
+describe('Link - active class & aria-current', () =>
 {
     it('applies activeClass when the link pathname matches the current location', () =>
     {

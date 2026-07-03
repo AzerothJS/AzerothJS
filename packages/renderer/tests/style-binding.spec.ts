@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { createSignal, createRoot } from '@azerothjs/reactivity';
 import { h, styleMap } from '@azerothjs/renderer';
 
-describe('styleMap — getter output', () =>
+describe('styleMap - getter output', () =>
 {
     it('returns a getter joining declarations with "; "', () =>
     {
@@ -44,7 +44,7 @@ describe('styleMap — getter output', () =>
     });
 });
 
-describe('styleMap — reactive binding in h()', () =>
+describe('styleMap - reactive binding in h()', () =>
 {
     it('updates the inline style attribute when a value signal changes', () =>
     {
