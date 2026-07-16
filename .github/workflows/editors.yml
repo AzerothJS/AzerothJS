@@ -67,7 +67,7 @@ jobs:
                 working-directory: editors/vscode
             -   run: node package.mjs
                 working-directory: editors/vscode
-            -   uses: actions/upload-artifact@v6
+            -   uses: actions/upload-artifact@v7
                 with:
                     name: azerothjs-vscode-vsix
                     path: editors/vscode/dist/*.vsix
@@ -118,7 +118,7 @@ jobs:
             # against the same pinned IDE - failures compileKotlin alone cannot catch.
             -   run: ./gradlew buildPlugin verifyPlugin --console=plain
                 working-directory: editors/jetbrains
-            -   uses: actions/upload-artifact@v6
+            -   uses: actions/upload-artifact@v7
                 with:
                     name: azerothjs-jetbrains-zip
                     path: editors/jetbrains/build/distributions/*.zip
