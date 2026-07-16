@@ -27,7 +27,7 @@
     "sideEffects": false,
     "dependencies": {
         "@azerothjs/language-service": "0.8.0-beta.1",
-        "typescript": ">=6 <7",
+        "typescript": ">=6 <8",
         "vscode-languageserver": "^10",
         "vscode-languageserver-textdocument": "^1"
     },
