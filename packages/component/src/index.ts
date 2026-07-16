@@ -24,3 +24,6 @@ export {
     clearCo
 } from './co-range.ts';
 export type { CoTarget } from './co-range.ts';
+
+// The client-side return contract for components and control-flow components.
+export type { MountNode } from './types.ts';

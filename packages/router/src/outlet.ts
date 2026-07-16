@@ -10,13 +10,15 @@
  * leaf layout), it returns a display:contents placeholder so the surrounding DOM stays intact.
  */
 
+import type { MountNode } from '@azerothjs/component';
+
 /**
  * Props for {@link Outlet}.
  */
 export interface OutletProps
 {
     /** The nested-route content; provided automatically by <Routes> via the layout's `children` prop, which the developer forwards. */
-    children?: HTMLElement;
+    children?: MountNode | undefined;
 }
 
 /**
@@ -69,7 +71,7 @@ export interface OutletProps
  * const AppLayout = ({ children }) =>
  *   h('div', { class: 'app' }, h('header', {}, 'My App'), h('main', {}, Outlet({ children })));
  */
-export function Outlet(props: OutletProps): HTMLElement
+export function Outlet(props: OutletProps): MountNode
 {
     if (props.children)
     {

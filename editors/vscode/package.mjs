@@ -49,7 +49,10 @@ for (const file of readdirSync(path.join(stage, 'dist')))
 const staged = { ...pkg };
 delete staged.devDependencies;
 delete staged.scripts;
-staged.dependencies = { typescript: pkg.dependencies?.typescript ?? '>=5' };
+// Pin to the classic-API TypeScript line (<7): the tsserver plugin needs createProgram/
+// LanguageService, which TypeScript 7's native package does not expose. A bare `>=6` would
+// resolve 7.x here and break the plugin (and vsce would mark it invalid).
+staged.dependencies = { typescript: pkg.dependencies?.typescript ?? '>=6 <7' };
 writeFileSync(path.join(stage, 'package.json'), JSON.stringify(staged, null, 2));
 writeFileSync(path.join(stage, '.vscodeignore'), 'src/**\n**/*.map\n');
 
@@ -71,7 +74,15 @@ const pluginDest = path.join(stage, 'node_modules', '@azerothjs', 'typescript-pl
 cpSync(path.join(pluginSrc, 'dist'), path.join(pluginDest, 'dist'), { recursive: true });
 copyFileSync(path.join(pluginSrc, 'package.json'), path.join(pluginDest, 'package.json'));
 
-// 5) Package the .vsix.
+// 4c) NOW that the plugin is physically present, DECLARE it in the staged manifest so vsce's
+// `npm list --production` sees it as satisfied (not extraneous). It is written AFTER the
+// install in step 4 so npm never tries to fetch the unpublished package from the registry.
+staged.dependencies = { '@azerothjs/typescript-plugin': pkg.dependencies?.['@azerothjs/typescript-plugin'] ?? '*', ...staged.dependencies };
+writeFileSync(path.join(stage, 'package.json'), JSON.stringify(staged, null, 2));
+
+// 5) Package the .vsix. vsce's npm-list probe now passes (typescript is a valid <7, the
+// plugin is declared and physically present), so node_modules - including typescript's
+// lib/*.d.ts the language service loads at runtime - is packaged.
 run('npx', ['--yes', '@vscode/vsce@latest', 'package'], stage);
 
 // 5) Copy the .vsix back into dist/.

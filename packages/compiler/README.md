@@ -108,15 +108,15 @@ effect { document.title = `${ count } now`; }
 effect with { name: 'sync' } { syncToServer(data); }   // -> createEffect(fn, { name: 'sync' })
 ```
 
-**`watch (deps) [(values, prev)] [with { ... }] { ... }`** - an explicit-dependency effect (the `on`
-primitive). It watches *exactly* the listed deps (the body's other reads do not subscribe); the
-optional `(values, prev)` binds the current and previous dependency-value tuples; `with { defer: true }`
+**`effect (deps) [(values, prev)] [with { ... }] { ... }`** - an explicit-dependency effect (the `on`
+primitive). It tracks *exactly* the listed deps (the body's other reads do not subscribe); the
+optional `(values, prev)` binds the current and previous dependency-value tuples; `with { skipInitial: true }`
 skips the mount run.
 
 ```azeroth
-watch (count) { logServer(count); }                     // -> on([() => count()], () => { ... })
-watch (a, b) (cur, prev) { diff(prev, cur); }            // current + previous value tuples
-watch (count) with { defer: true } { save(count); }      // skip the mount run -> on(..., { defer: true })
+effect (count) { logServer(count); }                     // -> on([() => count()], () => { ... })
+effect (a, b) (cur, prev) { diff(prev, cur); }            // current + previous value tuples
+effect (count) with { skipInitial: true } { save(count); }      // skip the mount run -> on(..., { skipInitial: true })
 ```
 
 **`deferred name = expr [with { ... }]`** - a read-only reactive value like `derived`, but recomputed at

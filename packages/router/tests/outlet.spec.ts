@@ -15,19 +15,19 @@ describe('Outlet', () =>
 
     it('returns a placeholder span when there are no children', () =>
     {
-        const result = Outlet({});
+        const result = Outlet({}) as HTMLElement;
         expect(result.tagName).toBe('SPAN');
     });
 
     it('the placeholder uses display:contents so it does not disturb layout', () =>
     {
-        const result = Outlet({});
+        const result = Outlet({}) as HTMLElement;
         expect(result.style.display).toBe('contents');
     });
 
     it('treats explicitly undefined children as the leaf case', () =>
     {
-        const result = Outlet({ children: undefined });
+        const result = Outlet({ children: undefined }) as HTMLElement;
         expect(result.tagName).toBe('SPAN');
         expect(result.style.display).toBe('contents');
     });

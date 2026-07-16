@@ -17,7 +17,7 @@ import {
     url,
     oneOf,
     combine
-} from '@azerothjs/form';
+} from '@azerothjs/schema';
 
 describe('required', () =>
 {

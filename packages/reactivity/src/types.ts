@@ -112,8 +112,9 @@ export interface Subscriber
     /** Error handler captured at construction (never re-read), or null when no catchError scope was active. Lets an effect created inside a catchError scope keep routing errors there after the scope unwinds. */
     errorHandler: ((error: unknown) => void) | null;
 
-    /** Debug name from EffectOptions.name; surfaced by error tooling. */
-    name?: string;
+    /** Debug name from EffectOptions.name; surfaced by error tooling. Explicit undefined is
+     * equivalent to absent - constructors pass `options?.name` straight through. */
+    name?: string | undefined;
 
     /** Devtools node id (set only while a devtools hook is attached), so the graph snapshot can map this consumer back to its node. @internal */
     devtoolsId?: number;
@@ -155,6 +156,7 @@ export type Signal<T> = [Getter<T>, Setter<T>];
  * The function passed to createEffect. May return a {@link CleanupFn} that runs before
  * the next run and on dispose.
  */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- the void union IS the contract: a plain void-bodied arrow must remain assignable, which `undefined | CleanupFn` would forbid
 export type EffectFn = () => void | CleanupFn;
 
 /**

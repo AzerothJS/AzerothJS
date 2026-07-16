@@ -19,7 +19,7 @@ describe('parseExpressionSlice', () =>
     {
         const { sourceFile } = parseExpressionSlice('{ a: 1 }', 0);
         expect(sourceFile.text).toBe('({ a: 1 })');
-        const stmt = sourceFile.statements[0];
+        const stmt = sourceFile.statements[0]!;
         expect(ts.isExpressionStatement(stmt)).toBe(true);
         const expr = (stmt as ts.ExpressionStatement).expression;
         const inner = ts.isParenthesizedExpression(expr) ? expr.expression : expr;

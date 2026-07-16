@@ -130,6 +130,10 @@ const PUBLISH_ORDER =
     '@azerothjs/server',
     '@azerothjs/router',
     '@azerothjs/store',
+    // schema before form: @azerothjs/form depends on @azerothjs/schema (form re-exports
+    // its validators), so schema must be resolvable on npm before form publishes.
+    // Remaining backend packages follow deps-first when they land: cron, http, ws, api.
+    '@azerothjs/schema',
     '@azerothjs/form',
     '@azerothjs/compiler',
     'azerothjs',

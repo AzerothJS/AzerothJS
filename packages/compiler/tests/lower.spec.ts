@@ -81,7 +81,7 @@ describe('lowerComponent - text holes and dep wiring', () =>
     {
         const plan = lower('component C { state n = 0; <p>{n}</p> }');
         const root = plan.template as TemplateElement;
-        const hole = root.children[0];
+        const hole = root.children[0]!;
         expect(hole.kind).toBe('hole');
 
         const texts = bindingsOf(plan, 'text');
@@ -159,14 +159,14 @@ describe('lowerComponent - components and control-flow use slots', () =>
     {
         const plan = lower('component C { state n = 0; <div><Foo count={n} label="hi" /></div> }');
         const root = plan.template as TemplateElement;
-        expect(root.children[0].kind).toBe('slot');
+        expect(root.children[0]?.kind).toBe('slot');
 
         const comps = bindingsOf(plan, 'component');
         expect(comps).toHaveLength(1);
-        const comp = comps[0] as ComponentBinding;
+        const comp = comps[0]!;
         expect(comp.tag).toBe('Foo');
         expect(comp.builtin).toBe(false);
-        expect(comp.target).toBe(root.children[0].id);
+        expect(comp.target).toBe(root.children[0]!.id);
         // A reactive prop (count) and a static prop (label).
         expect(comp.props).toContainEqual(expect.objectContaining({ kind: 'prop', name: 'count' }));
         expect(comp.props).toContainEqual({ kind: 'static', name: 'label', value: 'hi' });
@@ -222,7 +222,7 @@ describe('lowerComponent - render-fn children (clone path)', () =>
         {
             if ('expr' in binding)
             {
-                expect(binding.expr.reactive).toBe(true);
+                expect('reactive' in binding.expr && binding.expr.reactive).toBe(true);
             }
         }
     });

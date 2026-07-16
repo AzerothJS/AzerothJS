@@ -116,7 +116,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     interface Scope { shadows: Set<string>; scoped: Map<string, boolean> }
     const scopeStack: Scope[] = [];
 
-    const top = (): Scope => scopeStack[scopeStack.length - 1]!;
+    const top = (): Scope | undefined => scopeStack[scopeStack.length - 1];
 
     const isScopedSource = (name: string): boolean =>
         scopeStack.some(scope => scope.scoped.has(name));
@@ -144,7 +144,11 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     {
         for (let k = scopeStack.length - 1; k >= 0; k--)
         {
-            const scope = scopeStack[k]!;
+            const scope = scopeStack[k];
+            if (scope === undefined)
+            {
+                continue;
+            }
             const scoped = scope.scoped.get(name);
             if (scoped !== undefined)
             {

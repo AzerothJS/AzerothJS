@@ -42,7 +42,7 @@ export const requireEffectDisposal: Rule.RuleModule =
                     context.report({
                         node: expression,
                         messageId: 'naked'
-                    } as unknown as Parameters<typeof context.report>[0]);
+                    });
                 }
             }
         };

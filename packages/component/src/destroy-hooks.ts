@@ -26,16 +26,17 @@ const DESTROY_HOOKS = Symbol('azeroth_destroy_hooks');
 interface SymbolStore { [key: symbol]: unknown }
 
 /**
- * Reads a Symbol-keyed property, or undefined if never set.
+ * Reads a Symbol-keyed property, or undefined if never set. Returns unknown - the
+ * caller owns the one cast to the stored shape (a generic here would only disguise it).
  *
  * @internal
  * @param el - The element to read from.
  * @param key - The symbol key.
  * @returns The stored value, or undefined.
  */
-function readSymbol<T>(el: HTMLElement, key: symbol): T | undefined
+function readSymbol(el: HTMLElement, key: symbol): unknown
 {
-    return (el as unknown as SymbolStore)[key] as T | undefined;
+    return (el as unknown as SymbolStore)[key];
 }
 
 /**
@@ -61,7 +62,7 @@ function writeSymbol(el: HTMLElement, key: symbol, value: unknown): void
  */
 export function getDestroyHooks(el: HTMLElement): DestroyHook[] | undefined
 {
-    return readSymbol<DestroyHook[]>(el, DESTROY_HOOKS);
+    return readSymbol(el, DESTROY_HOOKS) as DestroyHook[] | undefined;
 }
 
 /**

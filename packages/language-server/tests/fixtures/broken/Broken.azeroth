@@ -1,0 +1,5 @@
+export default component Broken
+{
+    const wrong: number = 'not a number';
+    <div>{ wrong }</div>
+}

@@ -32,10 +32,12 @@ export {
     useNavigate
 } from './use-route.ts';
 export { useLoader } from './use-loader.ts';
+export { matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID } from './handoff.ts';
 
 // Types
 
 export type {
+    LoaderHandoff,
     Params,
     Query,
     RouteLocation,
@@ -50,6 +52,8 @@ export type {
 } from './types.ts';
 
 export type { Router } from './router.ts';
+// Re-exported from @azerothjs/component: the return contract RouteComponent uses.
+export type { MountNode } from '@azerothjs/component';
 export type { PathMatcher } from './path-pattern.ts';
 export type { LinkProps } from './link.ts';
 export type { RoutesProps } from './routes.ts';

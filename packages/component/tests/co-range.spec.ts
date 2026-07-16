@@ -30,8 +30,8 @@ describe('createCoMarkers', () =>
         expect(fragment.childNodes.length).toBe(2);
 
         const [start, end] = Array.from(fragment.childNodes);
-        expect(start.nodeType).toBe(Node.COMMENT_NODE);
-        expect(end.nodeType).toBe(Node.COMMENT_NODE);
+        expect(start?.nodeType).toBe(Node.COMMENT_NODE);
+        expect(end?.nodeType).toBe(Node.COMMENT_NODE);
         // Marker text encodes the co kind: an opening and a closing comment.
         expect((start as Comment).data).toBe('show');
         expect((end as Comment).data).toBe('/show');

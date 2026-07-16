@@ -33,6 +33,8 @@ export type {
     FieldArrayRow
 } from './field-array.ts';
 
+// The rules live in @azerothjs/schema - THE validation package, shared by this form, the api
+// client, and the server boundary. Re-exported here so existing form imports keep working.
 export {
     required,
     minLength,
@@ -43,11 +45,9 @@ export {
     email,
     url,
     oneOf,
-    combine
-} from './validators.ts';
-
-export { phone } from './phone.ts';
-export type { PhoneOptions } from './phone.ts';
-
-export { countries, getCountry } from './countries.ts';
-export type { CountryInfo } from './countries.ts';
+    combine,
+    phone,
+    countries,
+    getCountry
+} from '@azerothjs/schema';
+export type { PhoneOptions, CountryInfo } from '@azerothjs/schema';

@@ -22,7 +22,7 @@ describe('SVG / MathML namespaces', () =>
 {
     it('an <svg> subtree is created in the SVG namespace', () =>
     {
-        const c = mount(() => h('svg', { viewBox: '0 0 10 10' }, h('circle', { cx: '5', cy: '5', r: '4' })) as HTMLElement);
+        const c = mount(() => h('svg', { viewBox: '0 0 10 10' }, h('circle', { cx: '5', cy: '5', r: '4' })));
         const svg = c.querySelector('svg')!;
         expect(svg.namespaceURI).toBe('http://www.w3.org/2000/svg');
         expect(svg.firstElementChild?.namespaceURI).toBe('http://www.w3.org/2000/svg');
@@ -31,7 +31,7 @@ describe('SVG / MathML namespaces', () =>
 
     it('a <math> subtree is created in the MathML namespace', () =>
     {
-        const c = mount(() => h('math', {}, h('mrow', {}, h('mi', {}, 'x'))) as HTMLElement);
+        const c = mount(() => h('math', {}, h('mrow', {}, h('mi', {}, 'x'))));
         const math = c.querySelector('math')!;
         expect(math.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML');
         expect(math.firstElementChild?.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML');
@@ -39,7 +39,7 @@ describe('SVG / MathML namespaces', () =>
 
     it('a div (HTML) stays in the XHTML namespace', () =>
     {
-        const c = mount(() => h('div', {}, 'hi') as HTMLElement);
+        const c = mount(() => h('div', {}, 'hi'));
         expect(c.querySelector('div')!.namespaceURI).toBe('http://www.w3.org/1999/xhtml');
     });
 });
@@ -52,7 +52,7 @@ describe('control-flow array branches in restricted parents', () =>
         const c = mount(() =>
             h('select', {},
                 Show({ when: on, children: () => [h('option', {}, 'a'), h('option', {}, 'b')] })
-            ) as HTMLElement);
+            ));
         const select = c.querySelector('select')!;
         expect(select.querySelector('span')).toBeNull();
         expect(select.querySelectorAll('option').length).toBe(2);
@@ -64,7 +64,7 @@ describe('control-flow array branches in restricted parents', () =>
         const c = mount(() =>
             h('select', {},
                 Switch({ children: Match({ when: () => n() === 1, children: () => [h('option', {}, 'x'), h('option', {}, 'y')] }) })
-            ) as HTMLElement);
+            ));
         const select = c.querySelector('select')!;
         expect(select.querySelector('span')).toBeNull();
         expect(select.querySelectorAll('option').length).toBe(2);
@@ -76,7 +76,7 @@ describe('control-flow array branches in restricted parents', () =>
         const c = mount(() =>
             h('ul', {},
                 Show({ when: on, children: () => [h('li', {}, '1'), h('li', {}, '2'), h('li', {}, '3')] })
-            ) as HTMLElement);
+            ));
         const ul = c.querySelector('ul')!;
         expect(ul.querySelectorAll('li').length).toBe(3);
         // direct children, not wrapped

@@ -244,7 +244,7 @@ function lintElement(el: MarkupElement, warnings: LintWarning[]): void
         // (and all editor tooling) is camelCase.
         if (!el.isComponent && name.startsWith('on') && KNOWN_EVENTS.has(name.slice(2)))
         {
-            const camel = `on${ name[2].toUpperCase() }${ name.slice(3) }`;
+            const camel = `on${ (name[2] ?? '').toUpperCase() }${ name.slice(3) }`;
             warnings.push({
                 code: 'azeroth/event-case',
                 message: `\`${ name }\` - AzerothJS event handlers are camelCase: use \`${ camel }\`.`,

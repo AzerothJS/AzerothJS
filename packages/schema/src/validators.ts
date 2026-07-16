@@ -1,10 +1,11 @@
 /**
- * MODULE: form/validators
+ * MODULE: schema/validators
  *
- * Built-in field validators: factories that match the shape createForm's `validate` option expects.
- * Each returns a FieldValidator<V> (value -> error message | null) to drop into the per-field
- * validator map, optionally chained with combine(). Every factory takes an optional `message` to
- * override its default text - the common i18n need without a message-bundle layer.
+ * Built-in field validators - the framework's ONE set of rules, shared by the browser form
+ * (createForm's `validate` option), this package's `refine`, and anywhere else a
+ * `(value) => message | null` check fits. Each factory returns a FieldValidator<V>, optionally
+ * chained with combine(). Every factory takes an optional `message` to override its default
+ * text - the common i18n need without a message-bundle layer.
  *
  * SKIP-EMPTY CONVENTION: every validator EXCEPT required() silently passes on empty values ('', null,
  * undefined). This makes combine(required(), email()) produce the right errors in order - empty input
@@ -20,10 +21,10 @@
  * date ranges) live in createForm's top-level `validateForm`, which sees the whole values snapshot - so
  * these stay single-argument and trivially composable. NOT IN V1: async validators (compose createResource
  * externally) and i18n message bundles (the per-call message override covers the common case). Each public
- * factory below carries its own concise JSDoc + example; isEmpty/EMAIL_REGEX are @internal.
+ * factory below carries its own concise JSDoc + example; isEmpty is @internal.
  */
 
-import type { FieldValidator } from './create-form.ts';
+import { EMAIL_PATTERN, type FieldValidator } from './schema.ts';
 
 /**
  * Returns true for the values we treat as "no input": `null`, `undefined`, and
@@ -71,7 +72,7 @@ export function isEmpty(value: unknown): boolean
  * validate: { email: required('Email is required') }  // custom message
  * ```
  */
-export function required(message?: string): FieldValidator<unknown>
+export function required(message?: string): FieldValidator
 {
     return (value: unknown): string | null =>
     {
@@ -145,7 +146,7 @@ export function maxLength(n: number, message?: string): FieldValidator<string>
  */
 export function min(n: number, message?: string): FieldValidator<number>
 {
-    return (value: number): string | null =>
+    return (value: number | null | undefined): string | null =>
     {
         if (value === null || value === undefined)
         {
@@ -167,7 +168,7 @@ export function min(n: number, message?: string): FieldValidator<number>
  */
 export function max(n: number, message?: string): FieldValidator<number>
 {
-    return (value: number): string | null =>
+    return (value: number | null | undefined): string | null =>
     {
         if (value === null || value === undefined)
         {
@@ -202,18 +203,10 @@ export function pattern(regex: RegExp, message?: string): FieldValidator<string>
 }
 
 /**
- * Email regex used by `email()`. Pragmatic, not RFC 5322 exhaustive (which is
- * famously near-impossible). Catches the common case: `local@host.tld`, no
- * whitespace, at least one dot after the `@`.
- *
- * @internal
- */
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/**
  * Validator: string must look like an email address.
  *
- * Uses a pragmatic regex (not RFC 5322 exhaustive). Skips empty
+ * Uses the framework's ONE email rule (EMAIL_PATTERN in schema.ts - the same check
+ * `string({ format: 'email' })` runs). Pragmatic, not RFC 5322 exhaustive. Skips empty
  * values.
  *
  * @example
@@ -229,7 +222,7 @@ export function email(message?: string): FieldValidator<string>
         {
             return null;
         }
-        return EMAIL_REGEX.test(value) ? null : (message ?? 'Invalid email address');
+        return EMAIL_PATTERN.test(value) ? null : (message ?? 'Invalid email address');
     };
 }
 

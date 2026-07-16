@@ -65,7 +65,7 @@ describe('the build gate rejects broken syntax', () =>
         const diags = typeCheckModuleTS('component A { state x = "abc; }');
         const syntax = diags.filter((d) => d.code === 'azeroth/syntax');
         expect(syntax.length).toBeGreaterThan(0);
-        expect(syntax[0].start).toBeGreaterThanOrEqual(0);
+        expect(syntax[0]!.start).toBeGreaterThanOrEqual(0);
     });
 
     it('well-formed source produces no syntax diagnostics', () =>

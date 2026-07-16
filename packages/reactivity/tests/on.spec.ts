@@ -1,7 +1,7 @@
 // @vitest-environment node
 //
 // Full behavioral coverage for on (on.ts): explicit dependency watching, previous
-// values, incidental untracked reads, the defer option, and disposal.
+// values, incidental untracked reads, the skipInitial option, and disposal.
 import { describe, it, expect } from 'vitest';
 import {
     createSignal,
@@ -69,13 +69,13 @@ describe('on', () =>
         });
     });
 
-    it('skips the initial invocation when defer is set', () =>
+    it('skips the initial invocation when skipInitial is set', () =>
     {
         createRoot((dispose) =>
         {
             const [a, setA] = createSignal('start');
             const runs: string[] = [];
-            on([a], ([cur]) => runs.push(cur), { defer: true });
+            on([a], ([cur]) => runs.push(cur), { skipInitial: true });
             expect(runs).toEqual([]);
             setA('next');
             expect(runs).toEqual(['next']);

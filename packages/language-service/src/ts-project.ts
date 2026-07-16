@@ -18,6 +18,9 @@
 import ts from 'typescript';
 import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
 import { StyleIndex } from './style-index.ts';
+import { createNativeLsBackend, type NativeLsBackend, type RawTsDiagnostic } from './native-project.ts';
+
+export type { RawTsDiagnostic } from './native-project.ts';
 
 /** Suffix that marks a synthetic virtual file backing a `.azeroth` module. */
 const VIRTUAL_SUFFIX = '.azeroth.ts';
@@ -154,10 +157,13 @@ export class AzerothProject
     /** Workspace CSS class index (for `class="..."` completion/hover/definition), built on first use. */
     private styleIndex: StyleIndex | null = null;
 
+    /** The native diagnostics backend, when this project opted in and the native API is installed. */
+    private nativeBackend: NativeLsBackend | null = null;
+
     constructor(
         private readonly currentDirectory: string,
         configPath?: string,
-        options: { rootProjectFiles?: boolean } = {}
+        options: { rootProjectFiles?: boolean; nativeDiagnostics?: boolean } = {}
     )
     {
         const resolved = AzerothProject.resolveProject(currentDirectory, configPath);
@@ -168,6 +174,60 @@ export class AzerothProject
         this.intrinsicsFile = `${ currentDirectory.replace(/\\/g, '/').replace(/\/$/, '') }/${ INTRINSICS_BASENAME }`;
         this.discovered = this.discoverWorkspace();
         this.service = ts.createLanguageService(this.createHost(), ts.createDocumentRegistry());
+
+        if (options.nativeDiagnostics ?? false)
+        {
+            this.nativeBackend = createNativeLsBackend({
+                currentDirectory,
+                configFileName: resolved.configFileName,
+                baseOptions: resolved.baseOptions,
+                rootNames: () => this.programRootNames(),
+                version: () => this.projectVersion,
+                virtualContent: (fileName) => this.nativeVirtualContent(fileName),
+                azerothSource: (azerothPath) => this.readAzeroth(azerothPath)
+            });
+        }
+    }
+
+    /**
+     * Raw TypeScript diagnostics (syntactic then semantic) for one program file - the ONE
+     * primitive every diagnostics consumer goes through, so the engine can be swapped under
+     * it. The native backend answers when this project opted in and the native compiler is
+     * installed; otherwise (or after any native failure) the classic language service does,
+     * with identical results.
+     */
+    public rawTsDiagnostics(fileName: string): readonly RawTsDiagnostic[]
+    {
+        if (this.nativeBackend !== null)
+        {
+            const native = this.nativeBackend.diagnosticsFor(fileName);
+            if (native !== null)
+            {
+                return native;
+            }
+            // The backend shut down (spawn or protocol failure); classic serves the rest of
+            // the session.
+            this.nativeBackend = null;
+        }
+        return [
+            ...this.service.getSyntacticDiagnostics(fileName),
+            ...this.service.getSemanticDiagnostics(fileName)
+        ];
+    }
+
+    /** Serves the native overlay's virtual reads: the intrinsics file and `.azeroth.ts` projection twins. */
+    private nativeVirtualContent(fileName: string): string | undefined
+    {
+        if (fileName === this.intrinsicsFile)
+        {
+            return INTRINSICS_CONTENT;
+        }
+        if (isVirtualFile(fileName))
+        {
+            const azerothPath = toAzerothPath(fileName);
+            return this.readAzeroth(azerothPath) === undefined ? undefined : this.getVirtual(azerothPath).code;
+        }
+        return undefined;
     }
 
     /**
@@ -358,6 +418,31 @@ export class AzerothProject
         return version;
     }
 
+    /**
+     * The program's root file names: the intrinsics file, the project's ambient declaration
+     * roots, its real `.ts` files (when rooted), and every `.azeroth` virtual twin (open or
+     * discovered). Shared verbatim by the classic host and the native backend so both engines
+     * check the SAME program. Memoized per project version - TypeScript queries it constantly.
+     */
+    private programRootNames(): string[]
+    {
+        if (this.scriptNamesCache?.version === this.projectVersion)
+        {
+            return this.scriptNamesCache.names;
+        }
+        const names = [
+            this.intrinsicsFile,
+            ...new Set([
+                ...this.ambientFiles,
+                ...(this.rootProjectFiles ? this.projectFiles : []),
+                ...this.openPaths().map(toVirtualFile),
+                ...this.discovered
+            ])
+        ];
+        this.scriptNamesCache = { version: this.projectVersion, names };
+        return names;
+    }
+
     /** Builds the language service host backing the virtual project. */
     private createHost(): ts.LanguageServiceHost
     {
@@ -365,24 +450,7 @@ export class AzerothProject
         // project instance; no alias is needed.
         const host: ts.LanguageServiceHost =
         {
-            getScriptFileNames: () =>
-            {
-                if (this.scriptNamesCache?.version === this.projectVersion)
-                {
-                    return this.scriptNamesCache.names;
-                }
-                const names = [
-                    this.intrinsicsFile,
-                    ...new Set([
-                        ...this.ambientFiles,
-                        ...(this.rootProjectFiles ? this.projectFiles : []),
-                        ...this.openPaths().map(toVirtualFile),
-                        ...this.discovered
-                    ])
-                ];
-                this.scriptNamesCache = { version: this.projectVersion, names };
-                return names;
-            },
+            getScriptFileNames: () => this.programRootNames(),
             getProjectVersion: () => String(this.projectVersion),
 
             getScriptVersion: (fileName) =>
@@ -432,10 +500,12 @@ export class AzerothProject
             getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),
             fileExists: (fileName) => this.hostFileExists(fileName),
             readFile: (fileName) => this.hostReadFile(fileName),
-            readDirectory: ts.sys.readDirectory,
-            directoryExists: ts.sys.directoryExists,
-            getDirectories: ts.sys.getDirectories,
-            realpath: ts.sys.realpath,
+            readDirectory: ts.sys.readDirectory.bind(ts.sys),
+            directoryExists: ts.sys.directoryExists.bind(ts.sys),
+            getDirectories: ts.sys.getDirectories.bind(ts.sys),
+            // ts.sys.realpath is itself optional; under exactOptionalPropertyTypes an
+            // explicit undefined is not assignable to the host's `realpath?:` slot.
+            ...(ts.sys.realpath !== undefined ? { realpath: ts.sys.realpath.bind(ts.sys) } : {}),
             useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
             resolveModuleNameLiterals: (literals, containingFile, _redirect, options) =>
                 this.resolveModules(literals, containingFile, options)
@@ -555,15 +625,15 @@ export class AzerothProject
     private static resolveProject(
         currentDirectory: string,
         configPath?: string
-    ): { options: ts.CompilerOptions; ambientFiles: string[]; projectFiles: string[] }
+    ): { options: ts.CompilerOptions; ambientFiles: string[]; projectFiles: string[]; configFileName: string | undefined; baseOptions: ts.CompilerOptions }
     {
         let options: ts.CompilerOptions = {};
         let ambientFiles: string[] = [];
         let projectFiles: string[] = [];
-        const found = configPath ?? ts.findConfigFile(currentDirectory, ts.sys.fileExists, 'tsconfig.json');
+        const found = configPath ?? ts.findConfigFile(currentDirectory, (p) => ts.sys.fileExists(p), 'tsconfig.json');
         if (found)
         {
-            const read = ts.readConfigFile(found, ts.sys.readFile);
+            const read = ts.readConfigFile(found, (p) => ts.sys.readFile(p));
             const parsed = ts.parseJsonConfigFileContent(read.config ?? {}, ts.sys, found.replace(/[\\/][^\\/]*$/, ''));
             options = parsed.options;
             // The project's real source files (not `.d.ts`), so the combined
@@ -628,7 +698,11 @@ export class AzerothProject
                 lib: options.lib ?? ['lib.esnext.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']
             },
             ambientFiles,
-            projectFiles
+            projectFiles,
+            configFileName: found ? toSlashes(found) : undefined,
+            // The tsconfig's own options BEFORE the overrides above - the native backend
+            // mirrors the same only-if-absent defaults when deriving its config.
+            baseOptions: options
         };
     }
 }

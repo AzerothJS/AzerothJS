@@ -13,6 +13,17 @@ import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 import { assertFunction, describeArg } from './validate.ts';
 
+/** Options for {@link on} (and the `effect (deps) with { ... }` keyword form). */
+export interface OnOptions
+{
+    /**
+     * Skip the initial run: the first dependency read only records baseline values, and `fn`
+     * first runs on the NEXT change (with genuine previous values). Default false - `fn` runs
+     * once immediately, like a plain effect.
+     */
+    skipInitial?: boolean;
+}
+
 /**
  * on
  *
@@ -35,7 +46,7 @@ import { assertFunction, describeArg } from './validate.ts';
  * - deps: a tuple of getters; only these are subscribed (read each run to track them).
  * - fn: receives (values, prevValues) as tuples parallel to deps. prevValues entries
  *   are `V | undefined` because the first run has no prior value.
- * - options.defer: when true, the initial run only records baseline values and does
+ * - options.skipInitial: when true, the initial run only records baseline values and does
  *   not call fn; fn first runs on the next change.
  *
  * OUTPUT CONTRACT:
@@ -56,7 +67,7 @@ import { assertFunction, describeArg } from './validate.ts';
  * no closure overhead for previous values.
  *
  * EDGE CASES:
- * - With `defer: true` the first invocation of fn already has genuine previous values,
+ * - With `skipInitial: true` the first invocation of fn already has genuine previous values,
  *   but the type stays `V | undefined` to remain conservative.
  * - Reading a dep conditionally inside fn does not change what is watched; the watched
  *   set is fixed by `deps`, which is always read in full at the top.
@@ -72,14 +83,14 @@ import { assertFunction, describeArg } from './validate.ts';
  * @typeParam T - Tuple type of the dependency getters.
  * @param deps - The getters to watch.
  * @param fn - Runs on any dep change, receiving current and previous value tuples.
- * @param options - Set `defer: true` to skip the initial run.
+ * @param options - Set `skipInitial: true` to skip the initial run.
  * @returns A dispose function that stops watching.
  * @see {@link createEffect}
  * @see {@link untrack}
  * @example
  * const [count, setCount] = createSignal(0);
  * on([count], ([cur], [prev]) => console.log(`${ prev } -> ${ cur }`));
- * on([count], ([v]) => console.log('changed to', v), { defer: true });
+ * on([count], ([v]) => console.log('changed to', v), { skipInitial: true });
  */
 export function on<T extends readonly Getter<unknown>[]>(
     deps: [...T],
@@ -87,7 +98,7 @@ export function on<T extends readonly Getter<unknown>[]>(
         values: { [K in keyof T]: T[K] extends Getter<infer V> ? V : never },
         prevValues: { [K in keyof T]: T[K] extends Getter<infer V> ? V | undefined : never }
     ) => void,
-    options?: { defer?: boolean }
+    options?: OnOptions
 ): DisposeFn
 {
     if (!Array.isArray(deps))
@@ -113,7 +124,7 @@ export function on<T extends readonly Getter<unknown>[]>(
         // Reading every dep here is what subscribes the effect to them.
         const currentValues = deps.map(dep => dep()) as unknown as Values;
 
-        if (isFirst && options?.defer)
+        if (isFirst && options?.skipInitial)
         {
             isFirst = false;
             prevValues = currentValues;

@@ -209,7 +209,12 @@ interface VirtualMapping
 }
 
 /** Maps a TS ScriptElementKind to an LSP SymbolKind (call-hierarchy subset). */
-function tsKindToSymbolKind(kind: string): SymbolKindValue
+function tsKindToSymbolKind(kind: ts.ScriptElementKind | string): SymbolKindValue
+{
+    return mapTsKind(kind as ts.ScriptElementKind);
+}
+
+function mapTsKind(kind: ts.ScriptElementKind): SymbolKindValue
 {
     switch (kind)
     {

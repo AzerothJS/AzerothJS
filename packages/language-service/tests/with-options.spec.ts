@@ -1,7 +1,7 @@
 // @vitest-environment node
 //
 // The `with { ... }` options clause differs per keyword (state/derived take SignalOptions, effect an
-// EffectOptions, deferred a timeout, watch `defer`). Completion inside the clause and hover on its
+// EffectOptions, deferred a delay, watch `skipInitial`). Completion inside the clause and hover on its
 // keys are both driven by the single KEYWORD_OPTIONS registry in language-data, so these guard that
 // each keyword surfaces exactly its own options - and that adding/removing one stays in sync.
 
@@ -58,18 +58,18 @@ describe('completion: `with { ... }` options per keyword', () =>
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect with { ')))).toEqual(['name']);
     });
 
-    it('deferred -> timeout', () =>
+    it('deferred -> delay', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    deferred d = c() with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('D.azeroth', src);
-        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'c() with { ')))).toEqual(['timeout']);
+        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'c() with { ')))).toEqual(['delay']);
     });
 
-    it('effect (deps) -> defer', () =>
+    it('effect (deps) -> skipInitial', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    effect (c) with {  }\n    {\n    }\n    <p>x</p>\n}\n';
         const { service, uri } = open('W.azeroth', src);
-        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect (c) with { ')))).toEqual(['defer']);
+        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect (c) with { ')))).toEqual(['skipInitial']);
     });
 
     it('form -> validate/validateForm/validateAsync/asyncDebounceMs/onSubmit (+ array-form initial/validateArray)', () =>
@@ -77,7 +77,7 @@ describe('completion: `with { ... }` options per keyword', () =>
         const src = 'export default component A\n{\n    form f = { a: \'\' } with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('F.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'with { ')))).toEqual(
-            ['asyncDebounceMs', 'initial', 'onSubmit', 'validate', 'validateArray', 'validateAsync', 'validateForm']
+            ['asyncDebounceMs', 'initial', 'onSubmit', 'schema', 'validate', 'validateArray', 'validateAsync', 'validateForm']
         );
     });
 
@@ -97,6 +97,48 @@ describe('completion: `with { ... }` options per keyword', () =>
         const labels = service.getCompletions(uri, posAfter(src, 'values.')).map(i => i.label);
         expect(labels).not.toContain('validateForm');
         expect(labels).not.toContain('validate');
+    });
+});
+
+describe('unknown-option diagnostic: no false positives on current options', () =>
+{
+    /** The azeroth/unknown-option diagnostics reported for a source. */
+    function unknownOptions(src: string, name: string): string[]
+    {
+        const { service, uri } = open(name, src);
+        return service.getDiagnostics(uri)
+            .filter(diagnostic => diagnostic.code === 'azeroth/unknown-option')
+            .map(diagnostic => diagnostic.message);
+    }
+
+    it('form with { schema } is accepted (the regression that started this)', () =>
+    {
+        const src = 'export default component A\n{\n    form f = { a: \'\' } with { schema: someSchema };\n    <p>x</p>\n}\n';
+        expect(unknownOptions(src, 'DiagSchema.azeroth')).toEqual([]);
+    });
+
+    it('form with the full current option set produces no unknown-option error', () =>
+    {
+        const src = 'export default component A\n{\n    form f = { a: \'\' } with {\n'
+            + '        validate: {}, schema: s, validateForm: (v) => ({}), validateAsync: {}, asyncDebounceMs: 200, onSubmit: async () => {}\n'
+            + '    };\n    <p>x</p>\n}\n';
+        expect(unknownOptions(src, 'DiagFull.azeroth')).toEqual([]);
+    });
+
+    it('deferred with { delay } and effect (deps) with { skipInitial } are accepted (renamed options)', () =>
+    {
+        const src = 'export default component A\n{\n    state c = 0;\n'
+            + '    deferred d = c() with { delay: 300 };\n'
+            + '    effect (c) with { skipInitial: true }\n    {\n    }\n    <p>x</p>\n}\n';
+        expect(unknownOptions(src, 'DiagRenames.azeroth')).toEqual([]);
+    });
+
+    it('STILL flags a genuinely unknown option (the guard is not disabled)', () =>
+    {
+        const src = 'export default component A\n{\n    form f = { a: \'\' } with { notAnOption: 1 };\n    <p>x</p>\n}\n';
+        const messages = unknownOptions(src, 'DiagBad.azeroth');
+        expect(messages.length).toBe(1);
+        expect(messages[0]).toContain('notAnOption');
     });
 });
 

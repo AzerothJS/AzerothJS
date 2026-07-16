@@ -30,7 +30,7 @@ import type {
 // reactive values - emitted as `name: () => (value)` thunks rather than getters
 // so a branch isn't built until needed. (`fallback` for Show/Switch/Suspense;
 // structural `children` is handled separately and is already a thunk.)
-export const FACTORY_ATTRS = new Set(['fallback']);
+export const FACTORY_ATTRS: ReadonlySet<string> = new Set(['fallback']);
 
 /**
  * True when `code` is an arrow/function literal - pass it through unwrapped.
@@ -141,7 +141,8 @@ export function quoteString(value: string): string
  */
 export function isEventName(name: string): boolean
 {
-    return name.length > 2 && name.startsWith('on') && name[2] === name[2].toUpperCase();
+    const third = name[2];
+    return name.length > 2 && name.startsWith('on') && third !== undefined && third === third.toUpperCase();
 }
 
 /**

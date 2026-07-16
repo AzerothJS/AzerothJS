@@ -118,6 +118,7 @@ export {
 export type {
     Props,
     Child,
+    MountNode,
     ShowProps,
     ForProps,
     MatchCase,

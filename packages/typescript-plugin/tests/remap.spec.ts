@@ -44,11 +44,11 @@ function createPluginService(): ts.LanguageService
         getCurrentDirectory: () => dir,
         getCompilationSettings: () => options,
         getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
-        fileExists: ts.sys.fileExists,
-        readFile: ts.sys.readFile,
-        readDirectory: ts.sys.readDirectory,
-        directoryExists: ts.sys.directoryExists,
-        getDirectories: ts.sys.getDirectories
+        fileExists: ts.sys.fileExists.bind(ts.sys),
+        readFile: ts.sys.readFile.bind(ts.sys),
+        readDirectory: ts.sys.readDirectory.bind(ts.sys),
+        directoryExists: ts.sys.directoryExists.bind(ts.sys),
+        getDirectories: ts.sys.getDirectories.bind(ts.sys)
     };
     const virtual = decorateLanguageServiceHost(ts, host);
     return remapLanguageService(ts.createLanguageService(host, ts.createDocumentRegistry()), virtual);
@@ -89,7 +89,7 @@ describe('tsserver plugin - result spans land on .azeroth SOURCE text (queries f
         const wPos = mainSrc.indexOf('Widget');
         const defs = service.getDefinitionAndBoundSpan(mainPath, wPos)?.definitions ?? [];
         expect(defs.length).toBeGreaterThan(0);
-        const target = defs[0];
+        const target = defs[0]!;
         expect(target.fileName.endsWith('Widget.azeroth')).toBe(true);
         expect(spanText(target.fileName, target.textSpan)).toBe('Widget');
     });

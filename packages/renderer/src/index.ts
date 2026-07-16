@@ -42,6 +42,9 @@ export { tmpl } from './template.ts';
 
 // Public type contracts.
 export type { Props, Child } from './types.ts';
+// Re-exported from @azerothjs/component: the client-side return contract for
+// components and control-flow components (HTMLElement | DocumentFragment).
+export type { MountNode } from '@azerothjs/component';
 export type { ShowProps } from './show.ts';
 export type { ForProps } from './for.ts';
 export type { MatchCase, MatchProps, SwitchProps } from './switch.ts';

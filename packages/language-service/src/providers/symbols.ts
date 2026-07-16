@@ -18,7 +18,7 @@ import type { AzerothProject } from '../ts-project.ts';
 export function getDocumentSymbols(ctx: RequestContext): DocumentSymbol[]
 {
     const tree = ctx.project.service.getNavigationTree(ctx.virtualFile);
-    if (!tree?.childItems)
+    if (!tree.childItems)
     {
         return [];
     }
@@ -144,7 +144,12 @@ function declarationText(project: AzerothProject, fileName: string): string | nu
 }
 
 /** Maps a TS ScriptElementKind to an LSP SymbolKind. */
-function tsKindToSymbolKind(kind: string): SymbolKindValue
+function tsKindToSymbolKind(kind: ts.ScriptElementKind | string): SymbolKindValue
+{
+    return mapTsKind(kind as ts.ScriptElementKind);
+}
+
+function mapTsKind(kind: ts.ScriptElementKind): SymbolKindValue
 {
     switch (kind)
     {

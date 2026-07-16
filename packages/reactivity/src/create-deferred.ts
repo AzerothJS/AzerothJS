@@ -21,12 +21,13 @@ import { untrack } from './untrack.ts';
 export interface DeferredOptions
 {
     /**
-     * Debounce timeout in milliseconds: the deferred value updates only after this many
-     * ms have passed since the LAST source change.
+     * Debounce delay in milliseconds: the deferred value updates only after this many ms
+     * have passed since the LAST source change. Named `delay` (not `timeout`) because it is
+     * a quiet-period debounce, not an abort deadline.
      *
      * @default 150
      */
-    timeout?: number;
+    delay?: number;
 }
 
 /**
@@ -34,7 +35,7 @@ export interface DeferredOptions
  *
  * PURPOSE:
  * Returns a debounced version of `source`. The new getter's value updates only after
- * `timeout` ms with no further source change; the initial value is available
+ * `delay` ms with no further source change; the initial value is available
  * immediately (no first-read delay).
  *
  * WHY IT EXISTS:
@@ -50,11 +51,11 @@ export interface DeferredOptions
  *
  * INPUT CONTRACT:
  * - source: a getter to debounce. Read reactively inside the internal effect.
- * - options.timeout: debounce window in ms (default 150).
+ * - options.delay: debounce window in ms (default 150).
  *
  * OUTPUT CONTRACT:
  * - Returns a getter for the debounced value, seeded with source's current value and
- *   thereafter trailing it by the timeout.
+ *   thereafter trailing it by the delay.
  *
  * WHY THIS DESIGN:
  * The value lives in an internal signal so existing reactivity machinery (subscription,
@@ -85,18 +86,18 @@ export interface DeferredOptions
  *
  * @typeParam T - The source value type.
  * @param source - A signal getter to debounce.
- * @param options - Optional settings; `options.timeout` is the debounce window (ms).
+ * @param options - Optional settings; `options.delay` is the debounce window (ms).
  * @returns A getter returning the debounced value.
  * @see {@link createSignal}
  * @see {@link createEffect}
  * @example
  * const [search, setSearch] = createSignal('');
- * const deferredSearch = createDeferred(search, { timeout: 300 });
+ * const deferredSearch = createDeferred(search, { delay: 300 });
  * createEffect(() => renderResults(filterItems(deferredSearch())));
  */
 export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions): Getter<T>
 {
-    const timeout = options?.timeout ?? 150;
+    const delay = options?.delay ?? 150;
 
     // Seed the internal signal with the current source value (no delay); untrack keeps
     // this read from subscribing any enclosing effect.
@@ -120,7 +121,7 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
         {
             timerId = null;
             setDeferred(() => current);
-        }, timeout);
+        }, delay);
 
         // The single place a pending timer is cancelled. Runs (1) before a re-run when
         // the source changed again (debounce reset, right before scheduling the next

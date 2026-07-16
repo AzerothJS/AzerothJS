@@ -43,7 +43,7 @@ export function generateHtmlSource(source: string): string
             const c = source[k];
             if (c !== '\n' && c !== '\r')
             {
-                chars[k] = c;
+                chars[k] = c ?? ' ';
             }
         }
     };

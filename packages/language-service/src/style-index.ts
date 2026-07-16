@@ -153,9 +153,14 @@ function extractClasses(text: string, baseOffset: number, lineComments: boolean,
         while ((match = CLASS_TOKEN.exec(selectorText)) !== null)
         {
             const nameStart = baseOffset + segmentStart + match.index + 1;
-            const nameEnd = nameStart + match[1].length;
+            const matchedName = match[1];
+            if (matchedName === undefined)
+            {
+                continue;
+            }
+            const nameEnd = nameStart + matchedName.length;
             defs.push({
-                name: match[1],
+                name: matchedName,
                 file,
                 range: lineIndex.rangeAt(nameStart, nameEnd),
                 selector: selectorRaw,

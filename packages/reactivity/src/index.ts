@@ -25,6 +25,7 @@ export { createMemo } from './create-memo.ts';
 export { batch } from './batch.ts';
 export { untrack } from './untrack.ts';
 export { on } from './on.ts';
+export type { OnOptions } from './on.ts';
 
 // Lifetimes: ownership scopes and teardown hooks.
 export { onCleanup } from './on-cleanup.ts';
@@ -33,8 +34,10 @@ export { createRoot } from './create-root.ts';
 
 // Derived helpers built on the core primitives.
 export { createDeferred } from './create-deferred.ts';
+export type { DeferredOptions } from './create-deferred.ts';
 export { createSelector } from './create-selector.ts';
 export { createResource } from './create-resource.ts';
+export type { ResourceOptions } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
 
 // Error handling.
@@ -44,7 +47,7 @@ export type { UncaughtErrorContext } from './catch-error.ts';
 // Render-mode dispatch (dom / string / hydrate) and per-render store scope.
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
 export type { RenderMode } from './render-mode.ts';
-export { getStoreScope, runInStoreScope } from './store-scope.ts';
+export { getStoreScope, runInStoreScope, setStoreScopeResolver } from './store-scope.ts';
 
 // SSR string-emission helpers.
 export {

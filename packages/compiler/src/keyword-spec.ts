@@ -90,3 +90,48 @@ export const SOURCE_KINDS: ReadonlySet<ConstructKind> = new Set<ConstructKind>(
 export const LOWERABLE: ReadonlySet<string> = new Set<string>(
     [...SOURCE_KINDS, ...FACTORY_KINDS, 'effect', 'watch', 'wrapper']
 );
+
+/**
+ * The value-DECLARATION keywords: every construct with the surface shape
+ * `<keyword> NAME = <value> [with { ... }]` - the reactive sources, the factories, and `form`.
+ * The parser consults this set to decide whether a word starts a declaration, so adding a
+ * declaration-shaped keyword here is what makes it parse (block-shaped keywords - effect/watch/
+ * wrapper - have their own grammar and are not in this set).
+ */
+export const DECLARATION_KEYWORDS: ReadonlySet<string> = new Set<string>(
+    [...SOURCE_KINDS, ...FACTORY_KINDS, 'form']
+);
+
+/** Narrows a body item to a factory declaration (the sugar read explicitly via its api). */
+export function isFactoryItem<T extends { kind: string }>(item: T): item is Extract<T, { kind: FactoryKind }>
+{
+    return (FACTORY_KINDS as ReadonlySet<string>).has(item.kind);
+}
+
+/**
+ * How the PROJECTION (the type-facing TS in project.ts) encodes each construct. Deliberately NOT
+ * the runtime lowering: several kinds project a shape optimized for what TypeScript should infer,
+ * not for what executes. This table exists so those divergences are DESIGN, auditable in one
+ * place, and covered by the keyword-drift spec - an emitter changing a kind's shape without
+ * updating this table fails the drift test.
+ *
+ *   value-let-cast  - `let NAME: T = (init as T)`   (state: reads are plain, flow type = declared type)
+ *   value-const     - `const NAME = init`           (derived/deferred: read-only plain reads)
+ *   real-call       - `const NAME = createX(...)`   (factories + watch: the api's inferred type IS the type)
+ *   api-and-fields  - `Object.assign(createForm(...), initial)` (form: FormApi<T> & T field sugar)
+ *   void-arrow      - `void (() => { body })`       (effect/wrapper: statements type-check, no runtime type)
+ */
+export const PROJECTION_STYLE: Record<ConstructKind, 'value-let-cast' | 'value-const' | 'real-call' | 'api-and-fields' | 'void-arrow'> =
+{
+    state: 'value-let-cast',
+    derived: 'value-const',
+    deferred: 'value-const',
+    resource: 'real-call',
+    stream: 'real-call',
+    store: 'real-call',
+    selector: 'real-call',
+    form: 'api-and-fields',
+    effect: 'void-arrow',
+    watch: 'real-call',
+    wrapper: 'void-arrow'
+};

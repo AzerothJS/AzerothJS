@@ -72,16 +72,16 @@ describe('parseMarkup - attributes', () =>
         const e = el('<input class="x" value={v} disabled />');
         expect(e.attributes).toHaveLength(3);
 
-        const cls = e.attributes[0];
+        const cls = e.attributes[0]!;
         expect(cls.name).toBe('class');
         expect(cls.value).toEqual({ kind: 'static', value: 'x' });
         expect(cls.spread).toBe(false);
 
-        const val = e.attributes[1];
+        const val = e.attributes[1]!;
         expect(val.name).toBe('value');
         expect(val.value).toEqual({ kind: 'expression', code: 'v' });
 
-        const dis = e.attributes[2];
+        const dis = e.attributes[2]!;
         expect(dis.name).toBe('disabled');
         expect(dis.value).toEqual({ kind: 'none' });
     });
@@ -89,13 +89,13 @@ describe('parseMarkup - attributes', () =>
     it('trims the expression code inside an attribute brace', () =>
     {
         const e = el('<a href={  url + path  }>x</a>');
-        expect(e.attributes[0].value).toEqual({ kind: 'expression', code: 'url + path' });
+        expect(e.attributes[0]!.value).toEqual({ kind: 'expression', code: 'url + path' });
     });
 
     it('parses a spread attribute (name null, spread true, ... stripped)', () =>
     {
         const e = el('<div {...props}>x</div>');
-        const spread = e.attributes[0];
+        const spread = e.attributes[0]!;
         expect(spread.name).toBeNull();
         expect(spread.spread).toBe(true);
         expect(spread.value).toEqual({ kind: 'expression', code: 'props' });

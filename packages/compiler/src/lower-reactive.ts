@@ -30,19 +30,44 @@ import { parseDeclarationSlice } from './ts-slice.ts';
 import { rewriteStatements, rewriteReactive, setterName } from './rewrite.ts';
 import { MARKER_MEMO, MARKER_SIGNAL, MARKER_DEFERRED } from './markers.ts';
 import { RUNTIME_FN, LOWERABLE } from './keyword-spec.ts';
+import { isWhitespace } from './scanner.ts';
 
-/** Splits a comma list at TOP-LEVEL commas, skipping nested ()/[]/{}, strings, and templates. */
-export function splitTopLevelCommas(code: string): string[]
+/**
+ * Splits `[start, end)` of `source` at TOP-LEVEL commas - skipping nested ()/[]/{}, strings,
+ * templates, comments, and regex literals (the same lexical model the rewriter itself uses via
+ * {@link step}) - returning the trimmed span of each non-empty part. THE one comma splitter:
+ * codegen splits a `watch` dependency list through the string form below, and the projection
+ * splits the SAME list as mapped spans; sharing the scan is what keeps the runtime and the
+ * types agreeing on where each dependency starts and ends.
+ */
+export function splitTopLevelCommaSpans(source: string, start: number, end: number): { start: number; end: number }[]
 {
-    const parts: string[] = [];
+    const spans: { start: number; end: number }[] = [];
     let depth = 0;
-    let start = 0;
-    let i = 0;
+    let segStart = start;
+    let i = start;
     let prevChar = '';
     let prevWord = '';
-    while (i < code.length)
+
+    const push = (from: number, to: number): void =>
     {
-        const ch = code[i];
+        while (from < to && isWhitespace(source[from]))
+        {
+            from++;
+        }
+        while (to > from && isWhitespace(source[to - 1]))
+        {
+            to--;
+        }
+        if (to > from)
+        {
+            spans.push({ start: from, end: to });
+        }
+    };
+
+    while (i < end)
+    {
+        const ch = source[i];
         if (ch === '(' || ch === '[' || ch === '{')
         {
             depth++;
@@ -59,19 +84,25 @@ export function splitTopLevelCommas(code: string): string[]
         }
         if (ch === ',' && depth === 0)
         {
-            parts.push(code.slice(start, i));
+            push(segStart, i);
             i++;
-            start = i;
+            segStart = i;
             prevChar = ',';
             continue;
         }
-        const s = step(code, i, prevChar, prevWord);
+        const s = step(source, i, prevChar, prevWord);
         i = s.next;
         prevChar = s.prevChar;
         prevWord = s.prevWord;
     }
-    parts.push(code.slice(start));
-    return parts.map(part => part.trim()).filter(part => part.length > 0);
+    push(segStart, end);
+    return spans;
+}
+
+/** Splits a comma list at TOP-LEVEL commas; the string form of {@link splitTopLevelCommaSpans}. */
+export function splitTopLevelCommas(code: string): string[]
+{
+    return splitTopLevelCommaSpans(code, 0, code.length).map((span) => code.slice(span.start, span.end));
 }
 
 /** Builds the `on(...)` dependency getters from a `watch (deps)` list. `called` true -> `() => (count())`
@@ -213,7 +244,7 @@ function watchEdits(code: string, w: WatchBlock): Edit[]
 }
 
 /** Edge edits turning a `<keyword> { body }` block-wrapper into a `<fn>(() => { body })` call. */
-function wrapperEdits(code: string, w: WrapperBlock): Edit[]
+function wrapperEdits(w: WrapperBlock): Edit[]
 {
     return [
         { start: w.start, end: w.bodyStart, text: `${ w.fn }(() => {` },
@@ -262,7 +293,7 @@ function toMarkers(code: string): { code: string; hasKeywords: boolean; used: st
         }
         else if (c.kind === 'wrapper')
         {
-            edits.push(...wrapperEdits(code, c));
+            edits.push(...wrapperEdits(c));
             used.add(c.fn);
         }
     }

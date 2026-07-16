@@ -11,7 +11,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
 
 /**
@@ -23,8 +23,8 @@ export interface MatchCase
     /** Reactive condition - true when this case should render. */
     when: () => boolean;
 
-    /** Render function building this case's element. */
-    render: () => HTMLElement;
+    /** Render function building this case's element (or several - siblings render in order). */
+    render: () => MountNode | MountNode[];
 }
 
 /**
@@ -36,7 +36,7 @@ export interface MatchProps
     when: boolean | (() => boolean);
 
     /** Thunk building this case's content (a prop, matching the compiled `<Match when={...}>...</Match>` form). */
-    children: () => HTMLElement;
+    children: () => MountNode | MountNode[];
 }
 
 /**
@@ -88,10 +88,10 @@ export function Match(props: MatchProps): MatchCase
 export interface SwitchProps
 {
     /** Cases in priority order (first match wins). An array (manual API) or a thunk returning one/many - the latter is what compiled `<Switch><Match/>...</Switch>` produces. */
-    children: MatchCase[] | (() => MatchCase[] | MatchCase);
+    children: MatchCase | MatchCase[] | (() => MatchCase[] | MatchCase);
 
     /** Optional content when no case matches; nothing renders if omitted or the thunk returns nullish. */
-    fallback?: () => HTMLElement | null | undefined;
+    fallback?: () => MountNode | null | undefined;
 }
 
 /**
@@ -164,7 +164,7 @@ export interface SwitchProps
  *   ]
  * });
  */
-export function Switch(props: SwitchProps): HTMLElement
+export function Switch(props: SwitchProps): MountNode
 {
     // Normalize once: evaluate a thunk to its cases and wrap a lone case into an array.
     // Building cases reads no signals (only their `when` getters do, in the effect), so
@@ -179,12 +179,12 @@ export function Switch(props: SwitchProps): HTMLElement
         {
             if (untrack(() => matchCase.when()))
             {
-                return wrapContentsAnchored('switch', serializeChild(matchCase.render())) as unknown as HTMLElement;
+                return wrapContentsAnchored('switch', serializeChild(matchCase.render())) as unknown as MountNode;
             }
         }
 
         const fallbackInner = props.fallback ? serializeChild(props.fallback()) : '';
-        return wrapContentsAnchored('switch', fallbackInner) as unknown as HTMLElement;
+        return wrapContentsAnchored('switch', fallbackInner) as unknown as MountNode;
     }
 
     // Hydration: adopt the wrapper + current matching case on the first effect run; later
@@ -195,7 +195,7 @@ export function Switch(props: SwitchProps): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveSwitch(props, cases, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // Fresh client render: NO wrapper element - comment markers bracket the matching case
@@ -204,7 +204,7 @@ export function Switch(props: SwitchProps): HTMLElement
 
     driveSwitch(props, cases, target, false);
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**
@@ -227,7 +227,7 @@ function driveSwitch(props: SwitchProps, cases: MatchCase[], target: CoTarget, h
     {
         // First matching case wins; stopping at the first match means a lower case's
         // condition is tracked (and can trigger a re-render) only when no higher case wins.
-        let factory: (() => HTMLElement | null | undefined) | null = null;
+        let factory: (() => MountNode | MountNode[] | null | undefined) | null = null;
         for (const matchCase of cases)
         {
             if (matchCase.when())

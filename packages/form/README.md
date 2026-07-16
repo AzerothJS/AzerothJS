@@ -10,6 +10,12 @@ Reactive forms: per-field value and error state, synchronous / cross-field / asy
 numeric coercion, a submit lifecycle, and dynamic field arrays - all exposed as signals, so reading
 a field's value or error inside markup subscribes only to that field.
 
+This package owns the form **state**; the validation **rules** live in
+[`@azerothjs/schema`](https://github.com/AzerothJS/AzerothJS/tree/main/packages/schema) - THE
+validation package - and are re-exported here (`required`, `email`, `minLength`, `phone`, ...).
+A field rule can also be a schema node, and `createForm({ schema })` runs one whole-object
+schema - the same declaration the api client and the server boundary enforce.
+
 In a `.azeroth` component the idiomatic way to use this package is the **`form` keyword**, which
 lowers to `createForm` and pairs with `bind:value` / `bind:checked` for two-way input binding:
 

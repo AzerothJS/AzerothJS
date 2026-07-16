@@ -356,6 +356,7 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
         return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort attribute coercion: primitives stringify correctly; an object here is caller error surfaced visibly rather than thrown mid-render
     el.setAttribute(key, String(value));
 }
 
@@ -389,7 +390,7 @@ export function setProp(el: HTMLElement, name: string, value: unknown): void
  *
  * @internal
  */
-function appendChildren(parent: HTMLElement, children: Child[]): void
+function appendChildren(parent: HTMLElement | DocumentFragment, children: Child[]): void
 {
     for (const child of children)
     {
@@ -410,7 +411,7 @@ function appendChildren(parent: HTMLElement, children: Child[]): void
  *
  * @internal
  */
-function appendChild(parent: HTMLElement, child: Child): void
+function appendChild(parent: HTMLElement | DocumentFragment, child: Child): void
 {
     if (child === null || child === undefined || child === false)
     {
@@ -427,7 +428,7 @@ function appendChild(parent: HTMLElement, child: Child): void
     {
         const textNode = document.createTextNode('');
         parent.appendChild(textNode);
-        driveReactiveChild(parent, textNode, child as () => unknown);
+        driveReactiveChild(parent, textNode, child);
         return;
     }
 
@@ -443,6 +444,7 @@ function appendChild(parent: HTMLElement, child: Child): void
         return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort child coercion: primitives stringify correctly; a plain object is caller error surfaced visibly rather than thrown mid-render
     parent.appendChild(document.createTextNode(String(child)));
 }
 
@@ -488,7 +490,7 @@ function destroyNodes(nodes: readonly ChildNode[]): void
  *
  * @internal
  */
-function driveReactiveChild(parent: HTMLElement, initialNode: ChildNode, child: () => unknown): void
+function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode: ChildNode, child: () => unknown): void
 {
     let currentNode: ChildNode = initialNode;
     // Extra nodes when the value is an array: rendered as DIRECT siblings of `currentNode` (no wrapper),
@@ -545,18 +547,20 @@ function driveReactiveChild(parent: HTMLElement, initialNode: ChildNode, child: 
             // Render the items as direct siblings in this binding's slot. An empty array keeps the slot
             // with an empty text node so `currentNode` stays a real node (this binding's invariant).
             let nodes = insertArrayChildren(parent, value, currentNode);
-            if (nodes.length === 0)
+            let head = nodes[0];
+            if (head === undefined)
             {
                 const placeholder = document.createTextNode('');
                 parent.insertBefore(placeholder, currentNode);
                 nodes = [placeholder];
+                head = placeholder;
             }
             if (currentNode instanceof HTMLElement)
             {
                 destroyComponent(currentNode);
             }
             parent.removeChild(currentNode);
-            currentNode = nodes[0];
+            currentNode = head;
             extras = nodes.slice(1);
             return () =>
             {
@@ -592,7 +596,7 @@ function driveReactiveChild(parent: HTMLElement, initialNode: ChildNode, child: 
  *
  * @internal
  */
-function isPrimitiveValue(value: unknown): boolean
+function isPrimitiveValue(value: unknown): value is string | number | null | undefined | false
 {
     return (
         typeof value === 'string' ||
@@ -610,7 +614,7 @@ function isPrimitiveValue(value: unknown): boolean
  *
  * @internal
  */
-function primitiveToText(value: unknown): string
+function primitiveToText(value: string | number | null | undefined | false): string
 {
     if (value === null || value === undefined || value === false)
     {
@@ -676,6 +680,7 @@ function buildNode(value: unknown): ChildNode
         return value as ChildNode;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort text coercion: primitives stringify correctly; a plain object is caller error surfaced visibly rather than thrown mid-render
     return document.createTextNode(String(value));
 }
 
@@ -711,7 +716,7 @@ export function materializeChild(value: unknown): Node | null
         // appendChildren resolves getters/nested arrays/nodes through the full pipeline;
         // items become the fragment's direct children, then move into the co-range as a
         // group when the fragment is inserted before the end marker.
-        appendChildren(fragment as unknown as HTMLElement, value as Child[]);
+        appendChildren(fragment, value as Child[]);
         return fragment;
     }
 
@@ -771,7 +776,7 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
 
     if (typeof child === 'function')
     {
-        driveHoleRange(parent, closeAnchor, [], child as () => unknown);
+        driveHoleRange(parent, closeAnchor, [], child);
         return;
     }
 
@@ -795,7 +800,7 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
  *
  * @internal Compiler-emitted runtime; not part of the application API.
  */
-export function bindSlot(marker: ChildNode, result: Node | null): void
+export function bindSlot(marker: ChildNode, result: Node | null | undefined): void
 {
     const parent = marker.parentNode as Node;
     if (result !== null && result !== undefined)
@@ -821,7 +826,7 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
     // The hole's live anchor node: the single primitive text node in the common
     // case. Extra nodes (an array-valued hole) are removed the first time the
     // value is materialised as a real node.
-    let currentNode: ChildNode | null = content.length > 0 ? content[0] : null;
+    let currentNode: ChildNode | null = content[0] ?? null;
     let extras: ChildNode[] = content.slice(1);
 
     createEffect(() =>
@@ -845,7 +850,7 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
                 {
                     (currentNode as Text).data = text;
                 }
-                localDispose!();
+                localDispose?.();
                 return;
             }
 
@@ -876,11 +881,11 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
                     }
                     parent.removeChild(currentNode);
                 }
-                currentNode = nodes.length > 0 ? nodes[0] : null;
+                currentNode = nodes[0] ?? null;
                 extras = nodes.slice(1);
                 return () =>
                 {
-                    localDispose!();
+                    localDispose?.();
                     destroyNodes(nodes);
                 };
             }
@@ -904,7 +909,7 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
 
             return () =>
             {
-                localDispose!();
+                localDispose?.();
                 if (nextNode instanceof HTMLElement)
                 {
                     destroyComponent(nextNode);
@@ -1009,7 +1014,7 @@ export function hydrateChild(child: Child, cursor: HydrationCursorType): void
 
     if (typeof child === 'function')
     {
-        adoptReactiveHole(child as () => unknown, cursor);
+        adoptReactiveHole(child, cursor);
         return;
     }
 

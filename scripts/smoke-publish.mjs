@@ -22,7 +22,11 @@ function run(command, cwd)
     execSync(command, { cwd, stdio: 'inherit' });
 }
 
-const packages = [];
+// Collect every workspace manifest first: published packages are always packed, and a
+// PRIVATE package is packed too when a published one (transitively) depends on it - that is
+// exactly the set a real publish must ship, so a published package gaining a dependency on a
+// still-private one fails HERE instead of at release time.
+const manifests = new Map();
 for (const entry of readdirSync(packagesDir))
 {
     const dir = path.join(packagesDir, entry);
@@ -32,16 +36,32 @@ for (const entry of readdirSync(packagesDir))
         continue;
     }
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    if (manifest.private)
+    manifests.set(manifest.name, { name: manifest.name, dir, private: manifest.private === true, deps: Object.keys(manifest.dependencies ?? {}) });
+}
+
+const include = new Set([...manifests.values()].filter((pkg) => !pkg.private).map((pkg) => pkg.name));
+for (const name of include) // Set iteration sees additions: this walks the dep closure.
+{
+    for (const dep of manifests.get(name).deps)
     {
-        continue;
+        if (manifests.has(dep) && !include.has(dep))
+        {
+            console.log(`smoke: including private ${ dep } (a published package depends on it - it must ship with the next release).`);
+            include.add(dep);
+        }
     }
-    if (!existsSync(path.join(dir, 'dist')))
+}
+
+const packages = [];
+for (const name of include)
+{
+    const pkg = manifests.get(name);
+    if (!existsSync(path.join(pkg.dir, 'dist')))
     {
-        console.error(`smoke: ${ manifest.name } has no dist/ - run \`npm run build\` first.`);
+        console.error(`smoke: ${ pkg.name } has no dist/ - run \`npm run build\` first.`);
         process.exit(1);
     }
-    packages.push({ name: manifest.name, dir });
+    packages.push({ name: pkg.name, dir: pkg.dir });
 }
 
 const work = mkdtempSync(path.join(tmpdir(), 'azeroth-smoke-'));

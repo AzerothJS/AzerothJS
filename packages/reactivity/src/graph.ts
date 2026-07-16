@@ -114,35 +114,43 @@ export function track(producer: Producer): void
     const deps = consumer.deps;
     const cursor = consumer.cursor;
 
+    // The link currently occupying the cursor slot (undefined when the cursor is at the
+    // list's end). One read serves the fast path, the swap, and the append below.
+    const occupant = deps[cursor];
+
     // Fast path: same producer at the same position as the previous run.
-    if (cursor < deps.length && deps[cursor].producer === producer)
+    if (occupant !== undefined && occupant.producer === producer)
     {
-        deps[cursor].version = producer.version;
+        occupant.version = producer.version;
         consumer.cursor++;
         return;
     }
 
     // The dependency order changed (a branch flipped): find an existing link later in
-    // the list and swap it into place.
-    for (let i = cursor + 1; i < deps.length; i++)
+    // the list and swap it into place. (No occupant means the cursor is past the end,
+    // so there is nothing later in the list either - the loop body cannot run.)
+    if (occupant !== undefined)
     {
-        if (deps[i].producer === producer)
+        for (let i = cursor + 1; i < deps.length; i++)
         {
-            const link = deps[i];
-            deps[i] = deps[cursor];
-            deps[cursor] = link;
-            link.version = producer.version;
-            consumer.cursor++;
-            return;
+            const candidate = deps[i];
+            if (candidate !== undefined && candidate.producer === producer)
+            {
+                deps[i] = occupant;
+                deps[cursor] = candidate;
+                candidate.version = producer.version;
+                consumer.cursor++;
+                return;
+            }
         }
     }
 
     // Genuinely new dependency.
     const link: Link = { producer, consumer, slot: producer.subs.length, version: producer.version };
     producer.subs.push(link);
-    if (cursor < deps.length)
+    if (occupant !== undefined)
     {
-        deps.push(deps[cursor]);
+        deps.push(occupant);
         deps[cursor] = link;
     }
     else
@@ -180,7 +188,11 @@ export function endTrack(consumer: Subscriber): void
     const keep = Math.min(consumer.cursor < 0 ? deps.length : consumer.cursor, deps.length);
     for (let i = deps.length - 1; i >= keep; i--)
     {
-        unlink(deps[i]);
+        const link = deps[i];
+        if (link !== undefined)
+        {
+            unlink(link);
+        }
     }
     deps.length = keep;
     consumer.cursor = -1;
@@ -219,7 +231,11 @@ export function unlinkAll(consumer: Subscriber): void
     const deps = consumer.deps;
     for (let i = deps.length - 1; i >= 0; i--)
     {
-        unlink(deps[i]);
+        const link = deps[i];
+        if (link !== undefined)
+        {
+            unlink(link);
+        }
     }
     deps.length = 0;
 }
@@ -248,9 +264,10 @@ export function notify(producer: Producer, viaMemo = false): void
 
     if (subs.length === 1)
     {
-        const only = subs[0].consumer;
-        if (!only.isDisposed)
+        const solo = subs[0];
+        if (solo !== undefined && !solo.consumer.isDisposed)
         {
+            const only = solo.consumer;
             if (only.notifyDirty)
             {
                 only.notifyDirty(viaMemo);
@@ -297,6 +314,10 @@ export function depsChanged(consumer: Subscriber): boolean
     for (let i = 0; i < deps.length; i++)
     {
         const link = deps[i];
+        if (link === undefined)
+        {
+            continue;
+        }
         const producer = link.producer;
         if (producer.pull)
         {

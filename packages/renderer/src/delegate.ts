@@ -54,7 +54,13 @@ export function isDelegatedEvent(type: string): boolean
 export function delegateEvent(el: HTMLElement, type: string, handler: EventListener): void
 {
     const store = el as unknown as DelegatedStore;
-    (store[HANDLERS] ??= {})[type] = handler;
+    let handlers = store[HANDLERS];
+    if (handlers === undefined)
+    {
+        handlers = {};
+        store[HANDLERS] = handlers;
+    }
+    handlers[type] = handler;
 
     if (!installed.has(type))
     {
@@ -80,6 +86,7 @@ function dispatchDelegated(event: Event): void
         if (handler !== undefined)
         {
             handler.call(node, event);
+            // eslint-disable-next-line @typescript-eslint/no-deprecated -- reading cancelBubble is the only way to OBSERVE a handler's stopPropagation() from outside; the deprecation targets writing it
             if (event.cancelBubble)
             {
                 return;

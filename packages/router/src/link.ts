@@ -233,9 +233,11 @@ export function Link(props: LinkProps): HTMLElement
     // Without activeClass we leave the user's class as-is (string, getter, or
     // undefined; h() handles all three).
     const userClass = props.class;
+    // Const capture so the undefined-narrowing below survives into the getter closure.
+    const activeClass = props.activeClass;
 
     const classProp =
-        props.activeClass === undefined
+        activeClass === undefined
             ? userClass
             : (): string =>
             {
@@ -248,9 +250,9 @@ export function Link(props: LinkProps): HTMLElement
 
                 if (!isActive)
                 {
-                    return String(base);
+                    return base;
                 }
-                return base.length > 0 ? `${ base } ${ props.activeClass }` : props.activeClass!;
+                return base.length > 0 ? `${ base } ${ activeClass }` : activeClass;
             };
 
     const ariaCurrentProp =
@@ -292,5 +294,5 @@ export function Link(props: LinkProps): HTMLElement
         linkAttrs['aria-current'] = ariaCurrentProp;
     }
 
-    return h('a', linkAttrs, props.children as Child);
+    return h('a', linkAttrs, props.children);
 }

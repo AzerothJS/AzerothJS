@@ -122,6 +122,10 @@ export function getReferences(ctx: RequestContext, offset: number): Location[]
 function isHostTagPair(ctx: RequestContext, tagPair: { start: { line: number; character: number }; end: { line: number; character: number } }[]): boolean
 {
     const open = tagPair[0];
+    if (open === undefined)
+    {
+        return false;
+    }
     const name = ctx.source.slice(ctx.lineIndex.offsetAt(open.start), ctx.lineIndex.offsetAt(open.end));
     return /^[a-z]/.test(name) && !name.includes('.');
 }

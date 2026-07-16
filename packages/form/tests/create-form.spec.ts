@@ -620,11 +620,11 @@ describe('createForm - async validation (validateAsync)', () =>
         form.setValue('username', 'ab');
         await flush();                              // A aborted, run B in flight (gates[1])
 
-        gates[0]('STALE A');                        // resolve the aborted run first
+        gates[0]!('STALE A');                        // resolve the aborted run first
         await flush();
         expect(form.errors().username).toBeNull();  // stale result ignored
 
-        gates[1]('Live B error');                   // resolve the live run
+        gates[1]!('Live B error');                   // resolve the live run
         await flush();
         expect(form.errors().username).toBe('Live B error');
         dispose();

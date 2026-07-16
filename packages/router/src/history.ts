@@ -227,7 +227,7 @@ export function createMemoryHistory(initial: string = '/'): HistoryAdapter
     // callback doesn't corrupt the loop - same guard as the browser adapter.
     function notify(): void
     {
-        const fullPath = stack[cursor];
+        const fullPath = stack[cursor] ?? initial;
         for (const listener of Array.from(subscribers))
         {
             listener(fullPath);
@@ -237,7 +237,7 @@ export function createMemoryHistory(initial: string = '/'): HistoryAdapter
     return {
         current(): string
         {
-            return stack[cursor];
+            return stack[cursor] ?? initial;
         },
 
         push(fullPath: string): void

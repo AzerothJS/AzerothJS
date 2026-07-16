@@ -171,6 +171,7 @@ describe('ErrorBoundary', () =>
             },
             children: () =>
             {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- the thrown-null case IS the behavior under test (the { value } wrapper must distinguish it from "no error")
                 throw null;
             }
         });

@@ -13,7 +13,8 @@
  * `const`, `effect`/wrappers->block, `watch (deps)`->`on([...getters...], ...)`) at ANY nesting depth (a
  * composable, a render callback, an effect body); markup becomes `h(...)` / component-call expressions with
  * the same reactive wrapping the runtime codegen uses; and the rendered markup is `return`ed so a
- * component's inferred type is its real `HTMLElement` return. Every user-authored span is copied
+ * component's inferred type is its real return (`HTMLElement` for element roots, `MountNode` for
+ * control-flow roots). Every user-authored span is copied
  * byte-for-byte and registered as a mapping segment; generated scaffolding is emitted unmapped.
  *
  * SELF-CONTAINED: the runtime bindings the projection references (`h`, `on`, the built-in control-flow
@@ -24,7 +25,7 @@
 import type { ComponentDecl, BodyItem } from './ast.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 
-import { findMarkupStart, skipString, skipTemplate, skipLineComment, skipBlockComment, isWhitespace } from './scanner.ts';
+import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
 import {
     walkComponentTags,
@@ -38,7 +39,7 @@ import {
     alreadyImports
 } from './markup-util.ts';
 import { parseModule } from './parser.ts';
-import { findConstructs } from './lower-reactive.ts';
+import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
 import { RUNTIME_FN } from './keyword-spec.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
@@ -407,9 +408,9 @@ export function generateVirtualCode(source: string): VirtualCode
             }
         };
 
-        if (children.length === 1)
+        const only = children[0];
+        if (children.length === 1 && only !== undefined)
         {
-            const only = children[0];
             if (only.kind === 'expression')
             {
                 // A single non-callback child (a value, a no-arg thunk, an IIFE `(() => ...)()`) is wrapped
@@ -454,8 +455,8 @@ export function generateVirtualCode(source: string): VirtualCode
         {
             return null;
         }
-        const only = children[0]!;
-        if (only.kind !== 'expression')
+        const only = children[0];
+        if (only === undefined || only.kind !== 'expression')
         {
             return null;
         }
@@ -820,7 +821,8 @@ export function generateVirtualCode(source: string): VirtualCode
             if (item.kind === 'markup')
             {
                 // The rendered output. The last markup is the component's return value, so its inferred
-                // type IS the component's real return type (`h()` returns HTMLElement).
+                // type IS the component's real return type (`h()` returns HTMLElement; a control-flow
+                // root returns MountNode).
                 collect(item.node);
                 builder.emit(index === lastMarkup ? 'return (' : ';(');
                 emitNode(item.node);
@@ -859,7 +861,7 @@ function shiftConstruct(c: BodyItem, delta: number): BodyItem
     {
         if (typeof out[field] === 'number')
         {
-            out[field] = (out[field] as number) + delta;
+            out[field] = (out[field]) + delta;
         }
     }
     return out as unknown as BodyItem;
@@ -914,62 +916,6 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
         return { code: builder.out, mapping: new CodeMapping(builder.segments) };
     }
     return { code: `${ builder.out }\n${ parts.join('\n') }\n`, mapping: new CodeMapping(builder.segments) };
-}
-
-/**
- * Splits `[start, end)` at top-level commas (ignoring commas nested in brackets, strings, templates, or
- * comments), returning the trimmed span of each part. Used for a `watch`'s dependency list.
- */
-function splitTopLevelCommaSpans(source: string, start: number, end: number): Span[]
-{
-    const spans: Span[] = [];
-    let depth = 0;
-    let segStart = start;
-    let i = start;
-    while (i < end)
-    {
-        const ch = source[i];
-        if (ch === '"' || ch === '\'')
-        {
-            i = skipString(source, i);
-            continue;
-        }
-        if (ch === '`')
-        {
-            i = skipTemplate(source, i);
-            continue;
-        }
-        if (ch === '/' && source[i + 1] === '/')
-        {
-            i = skipLineComment(source, i);
-            continue;
-        }
-        if (ch === '/' && source[i + 1] === '*')
-        {
-            i = skipBlockComment(source, i);
-            continue;
-        }
-        if (ch === '(' || ch === '[' || ch === '{')
-        {
-            depth++;
-        }
-        else if (ch === ')' || ch === ']' || ch === '}')
-        {
-            depth--;
-        }
-        else if (ch === ',' && depth === 0)
-        {
-            spans.push(trimSpan(source, segStart, i));
-            segStart = i + 1;
-        }
-        i++;
-    }
-    const last = trimSpan(source, segStart, end);
-    if (last.end > last.start)
-    {
-        spans.push(last);
-    }
-    return spans;
 }
 
 /** Trimmed inner span of an attribute whose value is `{expr}`. */

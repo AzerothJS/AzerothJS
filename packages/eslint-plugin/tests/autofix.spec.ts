@@ -16,7 +16,7 @@ function lint(source: string, rules: Linter.RulesRecord): Linter.LintMessage[]
 {
     const blocks = azerothProcessor.preprocess!(source, 'Stress.azeroth');
     const raw = linter.verify(
-        typeof blocks[0] === 'string' ? blocks[0] : blocks[0].text,
+        typeof blocks[0] === 'string' ? blocks[0] : (blocks[0]?.text ?? ''),
         { files: ['**/*.ts'], languageOptions: { parser: tsParser, ecmaVersion: 2022, sourceType: 'module' }, rules },
         'v.ts'
     );
@@ -64,7 +64,7 @@ describe('autofix stress: many fixes, correct ranges, ordering, fixpoint', () =>
         }
         for (let i = 1; i < ranges.length; i++)
         {
-            expect(ranges[i][0], 'fix ranges must not overlap').toBeGreaterThanOrEqual(ranges[i - 1][1]);
+            expect(ranges[i]![0], 'fix ranges must not overlap').toBeGreaterThanOrEqual(ranges[i - 1]![1]);
         }
     });
 

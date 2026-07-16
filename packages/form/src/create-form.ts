@@ -24,17 +24,17 @@ import {
     untrack,
     onCleanup
 } from '@azerothjs/reactivity';
+import type { Schema, FieldValidator } from '@azerothjs/schema';
 
 /**
- * A sync field validator. Returns the error message for invalid input, or `null` when the value is
- * acceptable. A validator sees only its OWN field's value - it is a single-argument function, so it
- * stays trivial to write, wrap, and compose with {@link combine}. Anything that depends on SIBLING
- * fields (password confirm, `end >= start`, `requiredIf`) belongs in the form-level
- * {@link FormConfig.validateForm}, which receives the whole typed snapshot.
- *
- * @typeParam V - The field's value type
+ * Re-exported from @azerothjs/schema - THE validation package owns the validator shape and the
+ * built-in rules (required/email/minLength/...). A sync field validator returns the error
+ * message for invalid input, or `null` when the value is acceptable; it sees only its OWN
+ * field's value (single-argument by design). Anything spanning SIBLING fields (password
+ * confirm, `end >= start`) belongs in {@link FormConfig.validateForm}; one schema over the
+ * whole object goes in {@link FormConfig.schema}.
  */
-export type FieldValidator<V> = (value: V) => string | null;
+export type { FieldValidator } from '@azerothjs/schema';
 
 /**
  * An async field validator, for checks that need a server round-trip (is this username taken? does this
@@ -72,11 +72,25 @@ export interface FormConfig<T extends object>
     initial: T;
 
     /**
-     * Per-field sync validators. Optional - fields without a validator are always considered valid. Run on
-     * every value change and on submit. Each validator sees only its own field's value; for checks that
-     * span fields use {@link validateForm}.
+     * Per-field sync rules. Each entry is a FieldValidator OR an @azerothjs/schema node - a
+     * schema used per-field reports its first issue's message. Optional - fields without a
+     * rule are always considered valid. Run on every value change and on submit. Each rule
+     * sees only its own field's value; for checks that span fields use {@link validateForm};
+     * for one schema over the whole values object use {@link schema}.
      */
-    validate?: { [K in keyof T]?: FieldValidator<T[K]> };
+    validate?: { [K in keyof T]?: FieldValidator<T[K]> | Schema<T[K]> } | undefined;
+
+    /**
+     * ONE schema for the whole values object - the same declaration the api client
+     * pre-validates with and the server boundary enforces, so all three report identical
+     * failures. Issues land per-field (first issue per field wins; a nested path lands on its
+     * top-level field). Runs after the per-field rules and before {@link validateForm}; a
+     * per-field error wins over a schema error for the same field. The schema only ever
+     * speaks for fields it has reported on, so a server error injected via
+     * {@link FormApi.setError} on an untouched field survives. For code-driven UX (switching
+     * on issue codes), parse with the schema directly.
+     */
+    schema?: Schema<T>;
 
     /**
      * Cross-field sync validation. Receives the full, typed values snapshot and returns a partial map of
@@ -96,7 +110,7 @@ export interface FormConfig<T extends object>
      * })
      * ```
      */
-    validateForm?: (values: T) => { [K in keyof T]?: string | null };
+    validateForm?: ((values: T) => { [K in keyof T]?: string | null }) | undefined;
 
     /**
      * Per-field ASYNC validators, for checks that need a server round-trip. Each runs only after the field's
@@ -105,13 +119,13 @@ export interface FormConfig<T extends object>
      * `errors` map; {@link FormApi.validating} reports which fields have a check in flight. On submit, every
      * configured async validator is awaited before `onSubmit` runs.
      */
-    validateAsync?: { [K in keyof T]?: AsyncFieldValidator<T[K]> };
+    validateAsync?: { [K in keyof T]?: AsyncFieldValidator<T[K]> } | undefined;
 
     /**
      * Debounce, in milliseconds, before an async validator fires after the value settles. Default `300`.
      * Ignored when no {@link validateAsync} is configured.
      */
-    asyncDebounceMs?: number;
+    asyncDebounceMs?: number | undefined;
 
     /**
      * Called when the form passes validation on submit. May return a Promise -
@@ -123,9 +137,12 @@ export interface FormConfig<T extends object>
 
 /**
  * The prop bag returned by `register(name)`, ready to spread onto
- * an `<input>` or `<textarea>` element.
+ * an `<input>` or `<textarea>` element. A type alias (not an interface) on purpose: aliases
+ * get an implicit index signature, so the bag is assignable to the renderer's `Props`
+ * parameter and `h('input', form.register('name'))` type-checks as documented.
  */
-export interface RegisteredFieldProps
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- the alias is load-bearing (see doc above)
+export type RegisteredFieldProps =
 {
     /** The field name (HTML form semantics + accessibility). */
     name: string;
@@ -175,7 +192,7 @@ export interface FormApi<T extends object>
     isValidating: Getter<boolean>;
 
     /** Returns props to spread onto an `<input>` for the named field. */
-    register: <K extends keyof T>(name: K) => RegisteredFieldProps;
+    register: (name: keyof T) => RegisteredFieldProps;
 
     /**
      * Form-element submit handler. Calls `event.preventDefault()`,
@@ -192,7 +209,7 @@ export interface FormApi<T extends object>
     setValue: <K extends keyof T>(name: K, value: T[K]) => void;
 
     /** Inject a server-side error into the form (e.g., "email taken"). */
-    setError: <K extends keyof T>(name: K, error: string | null) => void;
+    setError: (name: keyof T, error: string | null) => void;
 }
 
 /**
@@ -329,9 +346,78 @@ export function createForm<T extends object>(
     {
         const [getter, setter] = createSignal<T[keyof T]>(initial[name]);
         fields[name] = {
-            value: getter as Getter<T[keyof T]>,
-            setValue: setter as (next: T[keyof T]) => void
+            value: getter,
+            setValue: setter
         };
+    }
+
+    // Per-field rules normalize ONCE: a schema node (anything with safeParse) wraps into the
+    // FieldValidator shape the rest of the machinery speaks - its first issue is the message.
+    const fieldRules = {} as { [K in keyof T]?: FieldValidator<T[K]> };
+    if (config.validate)
+    {
+        for (const name of Object.keys(config.validate) as (keyof T)[])
+        {
+            // The explicit annotation flattens the mapped-indexed type into a plain
+            // union, which is what lets `typeof` narrow it (function -> FieldValidator,
+            // object -> Schema) without casts.
+            const rule: FieldValidator<T[keyof T]> | Schema<T[keyof T]> | undefined = config.validate[name];
+            if (rule === undefined)
+            {
+                continue;
+            }
+            if (typeof rule === 'function')
+            {
+                fieldRules[name] = rule;
+            }
+            else
+            {
+                const schema = rule;
+                fieldRules[name] = (value: T[keyof T]): string | null =>
+                {
+                    const parsed = schema.safeParse(value, { mode: 'first' });
+                    return parsed.ok ? null : (parsed.issues[0]?.message ?? 'Invalid value');
+                };
+            }
+        }
+    }
+
+    // Whole-form schema: issues map onto their top-level field. The accumulating set records
+    // which fields the schema has EVER spoken for, so a fixed field is explicitly cleared
+    // (null) while a field the schema never flagged keeps errors injected via setError().
+    const schemaSpoke = new Set<keyof T>();
+    function runSchema(snapshot: T): { [K in keyof T]?: string | null } | undefined
+    {
+        if (!config.schema)
+        {
+            return undefined;
+        }
+        const overlay = {} as { [K in keyof T]?: string | null };
+        const parsed = config.schema.safeParse(snapshot);
+        if (!parsed.ok)
+        {
+            for (const issue of parsed.issues)
+            {
+                if (issue.path === '')
+                {
+                    continue; // a root-level issue has no field to land on
+                }
+                const field = issue.path.split('.')[0] as keyof T;
+                schemaSpoke.add(field);
+                if (overlay[field] === undefined)
+                {
+                    overlay[field] = issue.message; // first issue per field wins
+                }
+            }
+        }
+        for (const field of schemaSpoke)
+        {
+            if (!(field in overlay))
+            {
+                overlay[field] = null; // previously flagged, now passing: clear
+            }
+        }
+        return overlay;
     }
 
     // Errors / touched / submit signals.
@@ -352,7 +438,7 @@ export function createForm<T extends object>(
         const out = {} as T;
         for (const name of fieldNames)
         {
-            out[name] = fields[name].value() as T[keyof T];
+            out[name] = fields[name].value();
         }
         return out;
     });
@@ -417,29 +503,29 @@ export function createForm<T extends object>(
     {
         const next = makeRecord<keyof T, string | null>(fieldNames, null);
 
-        const validate = config.validate;
-        if (validate)
+        for (const name of fieldNames)
         {
-            for (const name of fieldNames)
+            const validator = fieldRules[name];
+            if (validator)
             {
-                const validator = validate[name];
-                if (validator)
-                {
-                    next[name] = validator(snapshot[name]);
-                }
+                next[name] = validator(snapshot[name]);
             }
         }
 
-        const cross = config.validateForm ? config.validateForm(snapshot) : undefined;
-        if (cross)
+        // Overlay order: whole-form schema first, then cross-field - structure/format errors
+        // read before relationship errors, and a per-field error wins for its field either way.
+        const overlays = [runSchema(snapshot), config.validateForm ? config.validateForm(snapshot) : undefined];
+        for (const overlay of overlays)
         {
-            for (const name of fieldNames)
+            if (overlay)
             {
-                // Only fill a field the per-field pass left valid - format errors
-                // take precedence over relationship errors on the same field.
-                if (next[name] === null && name in cross)
+                for (const name of fieldNames)
                 {
-                    next[name] = cross[name] ?? null;
+                    // Only fill a field the earlier passes left valid.
+                    if (next[name] === null && name in overlay)
+                    {
+                        next[name] = overlay[name] ?? null;
+                    }
                 }
             }
         }
@@ -455,27 +541,27 @@ export function createForm<T extends object>(
         const snapshot = values();
         untrack(() =>
         {
-            const validate = config.validate;
+            const schemaOverlay = runSchema(snapshot);
             const cross = config.validateForm ? config.validateForm(snapshot) : undefined;
 
             // Nothing to recompute: leave the errors map alone, so an error
             // injected via setError() survives. (The initial map is all-null.)
-            if (!validate && !cross)
+            if (!config.validate && !schemaOverlay && !cross)
             {
                 return;
             }
 
             // Merge rather than overwrite. A field is recomputed only if it has a
-            // per-field validator or appears in the cross-field result; any other
+            // per-field rule or appears in the schema/cross-field results; any other
             // field keeps its current error, so a server error injected via
             // setError() (e.g. "username taken") is not wiped when the user edits
-            // an unrelated field. Per-field errors win over cross-field ones.
+            // an unrelated field. Per-field errors win, then schema, then cross-field.
             setErrors(prev =>
             {
                 const next = { ...prev };
                 for (const name of fieldNames)
                 {
-                    const validator = validate?.[name];
+                    const validator = fieldRules[name];
                     if (validator)
                     {
                         const fieldError = validator(snapshot[name]);
@@ -485,8 +571,16 @@ export function createForm<T extends object>(
                             continue;
                         }
                     }
-                    // Field is valid per-field (or unvalidated): let the
-                    // cross-field result speak for it if it names this key.
+                    // Field is valid per-field (or unvalidated): the whole-form schema
+                    // speaks first, then the cross-field result, for fields they name.
+                    if (schemaOverlay && name in schemaOverlay)
+                    {
+                        next[name] = schemaOverlay[name] ?? null;
+                        if (next[name] !== null)
+                        {
+                            continue;
+                        }
+                    }
                     if (cross && name in cross)
                     {
                         next[name] = cross[name] ?? null;
@@ -580,9 +674,9 @@ export function createForm<T extends object>(
             // value changes again or the form unmounts.
             createEffect(() =>
             {
-                const value = fields[name].value() as T[keyof T];
+                const value = fields[name].value();
 
-                const syncValidator = config.validate?.[name];
+                const syncValidator = fieldRules[name];
                 const changed = value !== initial[name];
                 if (!changed || (syncValidator && syncValidator(value) !== null))
                 {
@@ -628,10 +722,10 @@ export function createForm<T extends object>(
 
     function setValue<K extends keyof T>(name: K, value: T[K]): void
     {
-        (fields[name].setValue as (next: T[K]) => void)(coerceFieldValue(name, value));
+        (fields[name].setValue)(coerceFieldValue(name, value));
     }
 
-    function setError<K extends keyof T>(name: K, error: string | null): void
+    function setError(name: keyof T, error: string | null): void
     {
         setErrors(prev => ({ ...prev, [name]: error }));
     }
@@ -641,17 +735,18 @@ export function createForm<T extends object>(
         for (const name of fieldNames)
         {
             abortAsync(name);
-            (fields[name].setValue as (next: T[keyof T]) => void)(
-                initial[name] as T[keyof T]
+            (fields[name].setValue)(
+                initial[name]
             );
         }
+        schemaSpoke.clear();
         setErrors(makeRecord(fieldNames, null));
         setTouched(makeRecord(fieldNames, false));
         setValidating(makeRecord(fieldNames, false));
         setSubmitError(null);
     }
 
-    function register<K extends keyof T>(name: K): RegisteredFieldProps
+    function register(name: keyof T): RegisteredFieldProps
     {
         return {
             name: String(name),
@@ -663,7 +758,7 @@ export function createForm<T extends object>(
                 // documented as text-only. Route through setValue so a numeric
                 // field is coerced from the input's string like bind:value is.
                 const target = event.target as HTMLInputElement;
-                setValue(name, target.value as unknown as T[K]);
+                setValue(name, target.value as unknown as T[keyof T]);
             },
             onBlur: (): void =>
             {
@@ -702,7 +797,7 @@ export function createForm<T extends object>(
         {
             result.then(
                 () => setSubmitting(false),
-                (err) =>
+                (err: unknown) =>
                 {
                     setSubmitError(() => err);
                     setSubmitting(false);
@@ -765,8 +860,9 @@ export function createForm<T extends object>(
         }
 
         // Fields with an async validator (sync has already passed for every field).
-        const asyncFields = config.validateAsync
-            ? fieldNames.filter((name) => config.validateAsync![name])
+        const asyncRules = config.validateAsync;
+        const asyncFields = asyncRules
+            ? fieldNames.filter((name) => asyncRules[name])
             : [];
 
         // No async validation: invoke onSubmit synchronously (unchanged behavior).

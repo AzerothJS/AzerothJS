@@ -61,9 +61,13 @@ export function parseArgs(argv: string[]): TscOptions
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
+        if (arg === undefined)
+        {
+            continue;
+        }
         if (arg === '--project' || arg === '-p')
         {
-            options.project = argv[++i];
+            options.project = argv[++i] ?? '';
         }
         else if (arg.startsWith('--project='))
         {
@@ -103,7 +107,9 @@ export function runTsc(options: TscOptions = {}): TscResult
     // rootProjectFiles: pull the project's real `.ts` files into the same
     // program as the `.azeroth` virtual modules, so the `.ts` side is checked and
     // the `.ts` -> `.azeroth` import boundary resolves real types.
-    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true });
+    // nativeDiagnostics: run the raw type check on the native TypeScript compiler when it is
+    // installed (diagnostics are identical; the classic service remains the fallback).
+    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true, nativeDiagnostics: true });
     return checkPass(service, cwd, write, new Set());
 }
 
@@ -236,7 +242,8 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
     // `.azeroth` files are parsed once and reused across passes via the document
     // registry, instead of building a fresh program on every change. `open`
     // tracks the open document set so deleted files are closed between passes.
-    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true });
+    // nativeDiagnostics: the raw type check runs on the native compiler when installed.
+    const service = new AzerothLanguageService(cwd, options.project, { rootProjectFiles: true, nativeDiagnostics: true });
     const open = new Set<string>();
 
     const recheck = (): TscResult =>
@@ -274,7 +281,7 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
             // Recursive watch reports every file; only react to source the
             // combined checker covers. AzerothJS projects are `.ts` + `.azeroth`
             // (markup lives in `.azeroth`), so those two extensions.
-            if (fileName && !/\.(?:azeroth|ts)$/.test(String(fileName)))
+            if (fileName && !/\.(?:azeroth|ts)$/.test(fileName))
             {
                 return;
             }
@@ -310,7 +317,7 @@ export function watchTsc(options: TscOptions = {}): TscWatcher
 function formatDiagnostic(
     cwd: string,
     file: string,
-    diag: { range: { start: { line: number; character: number } }; message: string; code?: string | number },
+    diag: { range: { start: { line: number; character: number } }; message: string; code?: string | number | undefined },
     isError: boolean
 ): string
 {

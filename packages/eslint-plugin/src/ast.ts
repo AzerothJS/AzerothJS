@@ -67,7 +67,7 @@ export function findAncestor(
 ): AstNode | null
 {
     let current = node.parent;
-    while (current !== undefined && current !== null && current !== boundary)
+    while (current != null && current !== boundary)
     {
         if (predicate(current))
         {
@@ -110,7 +110,7 @@ export function collectSignalPair(declarator: AstNode, pairs: SignalPairs): void
     const setter = elements[1];
     if (getter !== null && setter !== null && isIdentifier(getter) && isIdentifier(setter))
     {
-        pairs.getterOf.set((setter as IdentifierNode).name, (getter as IdentifierNode).name);
-        pairs.getters.add((getter as IdentifierNode).name);
+        pairs.getterOf.set((setter).name, (getter).name);
+        pairs.getters.add((getter).name);
     }
 }

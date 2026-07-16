@@ -88,7 +88,7 @@ export function parseQuery(search: string): Query
     for (const key of new Set(params.keys()))
     {
         const all = params.getAll(key);
-        result[key] = all.length === 1 ? all[0] : all;
+        result[key] = all.length === 1 ? (all[0] ?? '') : all;
     }
 
     return result;

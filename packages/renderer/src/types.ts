@@ -25,7 +25,7 @@ export interface Props
 }
 
 /**
- * A child accepted by h(): a string/number (text node), an HTMLElement (nested h() output), a
+ * A child accepted by h(): a string/number (text node), a Node (nested h() output, or a control-flow DocumentFragment), a
  * function (reactive hole, wired to an effect), null/undefined/false (skipped, for conditional
  * rendering), or a (recursively) nested array of children.
  *
@@ -40,7 +40,7 @@ export interface Props
 export type Child =
     | string
     | number
-    | HTMLElement
+    | Node
     | (() => unknown)
     | null
     | undefined

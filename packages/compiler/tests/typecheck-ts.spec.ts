@@ -26,10 +26,10 @@ describe('typeCheckModuleTS - handler type checking (real ts.Program)', () =>
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/handler-type');
-        expect(diagnostics[0].severity).toBe('error');
+        expect(diagnostics[0]!.code).toBe('azeroth/handler-type');
+        expect(diagnostics[0]!.severity).toBe('error');
         // The message carries the real TypeScript wording (a `satisfies` failure).
-        expect(diagnostics[0].message).toContain('satisfy');
+        expect(diagnostics[0]!.message).toContain('satisfy');
     });
 
     it('locates the error on the offending handler value', () =>
@@ -38,7 +38,7 @@ describe('typeCheckModuleTS - handler type checking (real ts.Program)', () =>
     state count = 0;
     <button onClick={count}>tick</button>
 }`;
-        const { start, end } = typeCheckModuleTS(source)[0];
+        const { start, end } = typeCheckModuleTS(source)[0]!;
         expect(source.slice(start, end)).toBe('count');
     });
 
@@ -80,7 +80,7 @@ describe('typeCheckModuleTS - handler type checking (real ts.Program)', () =>
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/handler-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/handler-type');
     });
 
     it('uses props types: a number prop is rejected, a function prop is accepted', () =>
@@ -109,7 +109,7 @@ component B {
         const diagnostics = typeCheckModuleTS(source);
         // Only A's handler is a non-function; B's is fine.
         expect(diagnostics).toHaveLength(1);
-        expect(source.slice(diagnostics[0].start, diagnostics[0].end)).toBe('n');
+        expect(source.slice(diagnostics[0]!.start, diagnostics[0]!.end)).toBe('n');
     });
 
     it('returns nothing for a component with no handlers', () =>
@@ -148,8 +148,8 @@ describe('typeCheckModuleTS - component prop type checking (real ts.Program)', (
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
-        expect(source.slice(diagnostics[0].start, diagnostics[0].end)).toBe('count');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
+        expect(source.slice(diagnostics[0]!.start, diagnostics[0]!.end)).toBe('count');
     });
 
     it('accepts a correctly-typed prop fed from state', () =>
@@ -168,7 +168,7 @@ describe('typeCheckModuleTS - component prop type checking (real ts.Program)', (
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('treats on* on a COMPONENT as a component-typed prop, not a DOM Event handler', () =>
@@ -188,7 +188,7 @@ describe('typeCheckModuleTS - component prop type checking (real ts.Program)', (
 }`;
         const diagnostics = typeCheckModuleTS(bad);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 });
 
@@ -282,8 +282,8 @@ component Parent {
 }`;
         const diagnostics = typeCheckModuleTS(parent, { fileName: '/proj/parent.azeroth', readFile: fs() });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
-        expect(parent.slice(diagnostics[0].start, diagnostics[0].end)).toBe('count');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
+        expect(parent.slice(diagnostics[0]!.start, diagnostics[0]!.end)).toBe('count');
     });
 
     it('accepts a correctly-typed cross-file prop', () =>
@@ -391,8 +391,8 @@ describe('typeCheckModuleTS - missing required props (real ts.Program)', () =>
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
-        expect(source.slice(diagnostics[0].start, diagnostics[0].end)).toBe('<Card');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
+        expect(source.slice(diagnostics[0]!.start, diagnostics[0]!.end)).toBe('<Card');
     });
 
     it('still reports a missing required prop even when children are provided', () =>
@@ -402,7 +402,7 @@ describe('typeCheckModuleTS - missing required props (real ts.Program)', () =>
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('reports a missing required `children` when none are given', () =>
@@ -415,7 +415,7 @@ component App {
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('reports a missing required prop across a .azeroth file boundary', () =>
@@ -428,7 +428,7 @@ component App {
 }`;
         const diagnostics = typeCheckModuleTS(source, { fileName: '/proj/app.azeroth', readFile: (p) => files.get(p) });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 });
 
@@ -500,7 +500,7 @@ component App {
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 
     it('still rejects a wrong union member', () =>
@@ -541,7 +541,7 @@ component App {
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 });
 
@@ -564,7 +564,7 @@ describe('typeCheckModuleTS - built-in control-flow components (real types via a
 }`;
         const diagnostics = typeCheckModuleTS(source, { fileName: REPO_FILE });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('rejects a <For> whose `each` is not iterable', () =>
@@ -574,7 +574,7 @@ describe('typeCheckModuleTS - built-in control-flow components (real types via a
 }`;
         const diagnostics = typeCheckModuleTS(source, { fileName: REPO_FILE });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 
     it('rejects a <Show> missing its required `when`', () =>
@@ -584,7 +584,7 @@ describe('typeCheckModuleTS - built-in control-flow components (real types via a
 }`;
         const diagnostics = typeCheckModuleTS(source, { fileName: REPO_FILE });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('accepts a factory prop (`fallback`) given the inner value (codegen wraps it in a thunk)', () =>
@@ -604,7 +604,7 @@ describe('typeCheckModuleTS - built-in control-flow components (real types via a
 }`;
         const diagnostics = typeCheckModuleTS(source, { fileName: REPO_FILE });
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 
     it('does not treat a user component named like a built-in as the built-in', () =>
@@ -648,7 +648,7 @@ component C {
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/handler-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/handler-type');
     });
 });
 
@@ -663,7 +663,7 @@ component Card(props: CardProps) { <h1>{props.title}</h1> }
 
         const bad = typeCheckModuleTS(base + 'component App { <Card title={5} /> }');
         expect(bad).toHaveLength(1);
-        expect(bad[0].code).toBe('azeroth/prop-type');
+        expect(bad[0]!.code).toBe('azeroth/prop-type');
     });
 
     it('reports a missing required prop with an interface signature', () =>
@@ -673,7 +673,7 @@ component Card(props: CardProps) { <h1>{props.title}</h1> }
 component App { <Card /> }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-missing');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-missing');
     });
 
     it('type-checks a generic component signature', () =>

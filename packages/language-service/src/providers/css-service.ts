@@ -32,11 +32,11 @@ function styleValueSpan(source: string, offset: number): { start: number; end: n
     {
         i--;
     }
-    if (i < 0 || (source[i] !== '"' && source[i] !== '\''))
+    const quote = source[i];
+    if (i < 0 || (quote !== '"' && quote !== '\''))
     {
         return null;
     }
-    const quote = source[i];
     const start = i + 1;
     let j = offset;
     while (j < source.length && source[j] !== quote && source[j] !== '<' && source[j] !== '>')
@@ -68,7 +68,7 @@ function mapCssItems(items: CssCompletionItem[]): CompletionItem[]
         detail: item.detail,
         documentation: typeof item.documentation === 'string' ? item.documentation : item.documentation?.value,
         insertText: item.textEdit && 'newText' in item.textEdit ? item.textEdit.newText : item.insertText ?? item.label,
-        insertTextFormat: (item.insertTextFormat as 1 | 2 | undefined) ?? 1,
+        insertTextFormat: (item.insertTextFormat) ?? 1,
         sortText: item.sortText
     }));
 }

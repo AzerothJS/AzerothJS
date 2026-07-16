@@ -6,57 +6,49 @@
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports":
-    {
-        ".":
-        {
+    "exports": {
+        ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
-    "files":
-    [
+    "files": [
         "dist"
     ],
     "sideEffects": false,
-    "dependencies":
-    {
+    "dependencies": {
         "@azerothjs/compiler": "0.7.0-beta.1",
         "vscode-css-languageservice": "^6",
         "vscode-html-languageservice": "^5",
         "vscode-languageserver-textdocument": "^1"
     },
-    "peerDependencies":
-    {
-        "typescript": ">=5"
+    "peerDependencies": {
+        "typescript": ">=5 <7"
     },
-    "scripts":
-    {
-        "build": "tsc -p tsconfig.build.json",
+    "scripts": {
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "publishConfig":
-    {
+    "publishConfig": {
         "access": "public"
     },
-    "author":
-    {
+    "author": {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "engines": { "node": ">=24" },
-    "repository":
-    {
+    "engines": {
+        "node": ">=24"
+    },
+    "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/language-service"
     },
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/language-service",
-    "bugs":
-    {
+    "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

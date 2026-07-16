@@ -46,6 +46,7 @@ import {
     scanTypeParams
 } from './scanner.ts';
 import { parseMarkup, CompileError } from './markup-parser.ts';
+import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 
 /** The class of a single structural unit produced by {@link step}. */
 export type StepKind = 'trivia' | 'literal' | 'identifier' | 'markup' | 'open' | 'close' | 'punct';
@@ -76,6 +77,12 @@ export interface Step
 export function step(source: string, i: number, prevChar: string, prevWord: string): Step
 {
     const ch = source[i];
+    if (ch === undefined)
+    {
+        // Callers loop while i < source.length, so this is unreachable; a one-char
+        // "punct" step keeps the contract total for the indexed-access check.
+        return { next: i + 1, prevChar, prevWord, kind: 'punct', text: '' };
+    }
 
     // Trivia (transparent: prev* unchanged).
     if (isWhitespace(ch))
@@ -143,7 +150,7 @@ export function step(source: string, i: number, prevChar: string, prevWord: stri
             j++;
         }
         const word = source.slice(i, j);
-        return { next: j, prevChar: source[j - 1], prevWord: word, kind: 'identifier', text: word };
+        return { next: j, prevChar: source[j - 1] ?? '', prevWord: word, kind: 'identifier', text: word };
     }
 
     // Brackets.
@@ -644,9 +651,7 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
     // All seven share the same surface shape: `<keyword> <name> = <value> [with { ... }] ;`. A keyword
     // only starts a declaration when an identifier (the name) follows it; otherwise `store.foo()` or
     // `selector(x)` (a value named like a keyword) falls through unchanged.
-    if (word === 'state' || word === 'derived' || word === 'deferred'
-        || word === 'resource' || word === 'stream' || word === 'store' || word === 'selector'
-        || word === 'form')
+    if (DECLARATION_KEYWORDS.has(word))
     {
         const nameAt = skipTrivia(source, j);
         if (nameAt >= limit || !isIdentStart(source[nameAt]))

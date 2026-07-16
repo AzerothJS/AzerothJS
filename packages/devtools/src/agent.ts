@@ -26,7 +26,7 @@ export interface AgentNode
 {
     id: number;
     kind: 'signal' | 'effect' | 'memo' | 'root';
-    name?: string;
+    name?: string | undefined;
     owner: number;
     /** Source file (relative to /src), or '(unknown)'. */
     file: string;
@@ -52,14 +52,14 @@ export interface TimelineEntry
     t: number;
     type: 'created' | 'disposed' | 'run' | 'write';
     id: number;
-    kind?: string;
-    name?: string;
+    kind?: string | undefined;
+    name?: string | undefined;
     /**
      * For `run` events: why it ran - the name of the signal/memo whose write
      * triggered this run, or '(initial)' for a first run. This is the
      * "why did it run?" answer React/Vue devtools approximate.
      */
-    cause?: string;
+    cause?: string | undefined;
 }
 
 /** Per-kind liveness, for the leak detector. */
@@ -90,7 +90,7 @@ export interface AgentGraphNode
 {
     id: number;
     kind: 'signal' | 'effect' | 'memo' | 'root';
-    name?: string;
+    name?: string | undefined;
     owner: number;
     file: string;
     loc: string;
@@ -193,7 +193,7 @@ export function detectLeakTrend(samples: number[]): boolean
     // The recent half averages materially higher than the older half AND is
     // still climbing within itself - a plateau (even after a startup ramp)
     // fails the second test, and noise fails the first.
-    return avg(recent) > avg(older) + 10 && recent[recent.length - 1] > recent[0];
+    return avg(recent) > avg(older) + 10 && (recent[recent.length - 1] ?? 0) > (recent[0] ?? 0);
 }
 
 /** Resolves the first /src/ frame of the current stack (creation site). */
@@ -209,7 +209,7 @@ function captureOrigin(): { file: string; loc: string; open: string }
         const match = /\/src\/([^?\s:)]+)[^:]*:(\d+):(\d+)/.exec(line);
         if (match)
         {
-            const [, file, lineNo, col] = match;
+            const [, file = '(unknown)', lineNo = '0', col = '0'] = match;
             // The `open` form is what Vite's /__open-in-editor middleware
             // resolves (relative to the project root).
             return { file, loc: `${ file }:${ lineNo }`, open: `src/${ file }:${ lineNo }:${ col }` };
@@ -235,7 +235,7 @@ export function previewValue(v: unknown): string
         const s = JSON.stringify(v);
         return s.length > 120 ? `${ s.slice(0, 117) }...` : s;
     }
-    if (t === 'number' || t === 'boolean' || t === 'bigint')
+    if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'bigint')
     {
         return String(v);
     }
@@ -259,6 +259,7 @@ export function previewValue(v: unknown): string
             return 'Object';
         }
     }
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort preview of an unknown value; [object X] is acceptable panel output
     return String(v);
 }
 
@@ -403,7 +404,7 @@ export function createAgent(): Agent
                 id: node.id,
                 kind: node.kind,
                 name: node.name,
-                owner: node.owner ?? 0,
+                owner: node.owner,
                 file: origin.file,
                 loc: origin.loc,
                 open: origin.open,

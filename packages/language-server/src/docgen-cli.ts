@@ -55,9 +55,13 @@ export function parseArgs(argv: string[]): DocgenOptions
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
+        if (arg === undefined)
+        {
+            continue;
+        }
         if (arg === '--project' || arg === '-p')
         {
-            options.project = argv[++i];
+            options.project = argv[++i] ?? '';
         }
         else if (arg.startsWith('--project='))
         {
@@ -65,7 +69,7 @@ export function parseArgs(argv: string[]): DocgenOptions
         }
         else if (arg === '--out' || arg === '-o')
         {
-            options.out = argv[++i];
+            options.out = argv[++i] ?? '';
         }
         else if (arg.startsWith('--out='))
         {
@@ -179,7 +183,7 @@ export function runDocgen(options: DocgenOptions = {}): DocgenResult
 function componentName(markdown: string): string | null
 {
     const match = markdown.match(/^# (.+)$/m);
-    return match ? match[1].trim() : null;
+    return match?.[1]?.trim() ?? null;
 }
 
 /**
@@ -197,7 +201,7 @@ function markdownToHtml(markdown: string): string
     for (let i = 0; i < lines.length; i++)
     {
         const line = lines[i];
-        if (line === '')
+        if (line === undefined || line === '')
         {
             continue;
         }
@@ -216,9 +220,9 @@ function markdownToHtml(markdown: string): string
             const header = tableCells(line);
             const rows: string[][] = [];
             i += 2;
-            for (; i < lines.length && isTableRow(lines[i]); i++)
+            for (; i < lines.length && isTableRow(lines[i] ?? ''); i++)
             {
-                rows.push(tableCells(lines[i]));
+                rows.push(tableCells(lines[i] ?? ''));
             }
             i--;
             html.push(renderTable(header, rows));

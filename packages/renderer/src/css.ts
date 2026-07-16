@@ -158,7 +158,7 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
     return new Proxy(classMap, {
         get(target, key: string): string
         {
-            return key in target ? target[key] : key;
+            return target[key] ?? key;
         }
     });
 }

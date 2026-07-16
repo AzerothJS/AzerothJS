@@ -164,6 +164,10 @@ function parsePattern(pattern: string): Segment[]
     for (let i = 0; i < parts.length; i++)
     {
         const part = parts[i];
+        if (part === undefined)
+        {
+            continue; // splitPath returns a dense array; satisfies the indexed-access check
+        }
 
         if (part.startsWith(':') || part.startsWith('*'))
         {
@@ -216,6 +220,10 @@ function matchSegments(segments: Segment[], pathname: string): { params: Params 
     for (let si = 0; si < segments.length; si++)
     {
         const seg = segments[si];
+        if (seg === undefined)
+        {
+            continue; // parsePattern builds a dense array; satisfies the indexed-access check
+        }
 
         if (seg.kind === 'wildcard')
         {
@@ -234,6 +242,10 @@ function matchSegments(segments: Segment[], pathname: string): { params: Params 
         }
 
         const part = pathParts[pi];
+        if (part === undefined)
+        {
+            return null; // pi < pathParts.length was just checked; unreachable in practice
+        }
 
         if (seg.kind === 'param')
         {

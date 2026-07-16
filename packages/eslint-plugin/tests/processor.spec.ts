@@ -25,7 +25,7 @@ function lint(source: string, rules: Linter.RulesRecord): Linter.LintMessage[]
     // here we lint it directly with an equivalent flat config (a `files` pattern is required so ESLint's
     // flat-config matcher considers the file lintable).
     const raw = linter.verify(
-        typeof blocks[0] === 'string' ? blocks[0] : blocks[0].text,
+        typeof blocks[0] === 'string' ? blocks[0] : (blocks[0]?.text ?? ''),
         { files: ['**/*.ts'], languageOptions: { parser: tsParser, ecmaVersion: 2022, sourceType: 'module' }, rules },
         'virtual.ts'
     );
@@ -43,7 +43,7 @@ function toOffset(source: string, line: number, column: number): number
             starts.push(i + 1);
         }
     }
-    return starts[line - 1] + (column - 1);
+    return (starts[line - 1] ?? 0) + (column - 1);
 }
 
 /** Applies mapped fixes to the original source (descending, so earlier edits don't shift later ranges). */
@@ -103,7 +103,7 @@ describe('azeroth ESLint processor - rules fire and map back', () =>
         // Exactly one - the user's `unusedLocal`. The projection's generated `props` param, `h`/`__az*`
         // helpers, etc. live in scaffolding and are dropped, so they never leak in here.
         expect(unused.length).toBe(1);
-        const m = unused[0];
+        const m = unused[0]!;
         const offset = toOffset(SOURCE, m.line, m.column);
         expect(SOURCE.slice(offset, offset + 'unusedLocal'.length)).toBe('unusedLocal');
         expect(m.severity).toBe(1);
@@ -162,7 +162,7 @@ describe('azeroth ESLint processor - prefer-const distinguishes user `let` from 
         const messages = lint(src, { 'prefer-const': 'error' });
         const pc = messages.filter(m => m.ruleId === 'prefer-const');
         expect(pc.length).toBe(1);
-        const offset = toOffset(src, pc[0].line, pc[0].column);
+        const offset = toOffset(src, pc[0]!.line, pc[0]!.column);
         expect(src.slice(offset, offset + 'label'.length)).toBe('label');
     });
 

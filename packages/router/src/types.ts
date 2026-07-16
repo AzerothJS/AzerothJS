@@ -9,6 +9,8 @@
  * signal, and composables (useParams, useQuery) derive narrower memos from it.
  */
 
+import type { MountNode } from '@azerothjs/component';
+
 /**
  * Path parameters extracted from a URL.
  *
@@ -96,7 +98,7 @@ export interface RouteLocation
  *     h('h1', {}, 'Welcome');
  * ```
  */
-export type RouteComponent = (props: { children?: HTMLElement }) => HTMLElement;
+export type RouteComponent = (props: { children?: MountNode | undefined }) => MountNode;
 
 /**
  * A route definition.
@@ -246,7 +248,7 @@ export interface NavigateOptions
      * navigations, or wire your own scroll-restoration logic via the location
      * signal. Default: `false`.
      */
-    scroll?: boolean;
+    scroll?: boolean | undefined;
 }
 
 /**
@@ -272,7 +274,7 @@ export interface RouterConfig
      * Useful when the app is served under a sub-path (`/app`).
      * Must start with `/`. Default: `'/'`.
      */
-    base?: string;
+    base?: string | undefined;
 
     /** Routing strategy. Default: `'history'`. */
     mode?: RouterMode;
@@ -283,6 +285,25 @@ export interface RouterConfig
      * for SSR (one adapter per request, no `window`) or for tests.
      */
     history?: HistoryAdapter;
+
+    /**
+     * Server-loaded data adopted for the INITIAL location (the SSR/hydration handoff).
+     * On the server: pass what `matchAndLoad` returned so the render sees loader data
+     * synchronously. On the client: pass `readLoaderHandoff()` so hydration does not
+     * refetch what the server just loaded. Ignored (a normal fetch runs) unless `path`
+     * exactly equals the initial pathname + search.
+     */
+    initialLoaderData?: LoaderHandoff | undefined;
+}
+
+/** One route's server-loaded output, keyed by the exact URL it was loaded for. */
+export interface LoaderHandoff
+{
+    /** The base-relative pathname + search the data belongs to. */
+    path: string;
+
+    /** Whatever the matched route's loader returned (must be JSON-serializable to cross the wire). */
+    data: unknown;
 }
 
 /**

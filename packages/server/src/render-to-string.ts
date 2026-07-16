@@ -27,7 +27,7 @@ import { runInMode, runInStoreScope, setSSRMarkers, getSSRMarkers, isSSRNode } f
  * @param markers - Whether to emit hydration markers.
  * @returns The serialized HTML.
  */
-function renderBody(component: () => HTMLElement, markers: boolean): string
+function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean): string
 {
     const previousMarkers = getSSRMarkers();
     setSSRMarkers(markers);
@@ -105,7 +105,7 @@ function renderBody(component: () => HTMLElement, markers: boolean): string
  * @example
  * const html = renderToString(() => App({ user }));
  */
-export function renderToString(component: () => HTMLElement): string
+export function renderToString(component: () => HTMLElement | DocumentFragment): string
 {
     return renderBody(component, true);
 }
@@ -146,7 +146,7 @@ export function renderToString(component: () => HTMLElement): string
  * @example
  * const html = renderToStaticMarkup(() => EmailTemplate({ name }));
  */
-export function renderToStaticMarkup(component: () => HTMLElement): string
+export function renderToStaticMarkup(component: () => HTMLElement | DocumentFragment): string
 {
     return renderBody(component, false);
 }

@@ -33,7 +33,7 @@ describe('analyzeComponent - sources and hasProps', () =>
             { kind: 'state', name: 'n' },
             { kind: 'derived', name: 'd' }
         ]);
-        expect(src.slice(a.sources[0].span.start, a.sources[0].span.end)).toBe('n');
+        expect(src.slice(a.sources[0]!.span.start, a.sources[0]!.span.end)).toBe('n');
     });
 
     it('sets hasProps when (and only when) the component declares a parameter', () =>

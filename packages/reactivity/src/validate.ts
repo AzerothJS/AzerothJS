@@ -29,7 +29,7 @@ export function describeArg(value: unknown): string
     const t = typeof value;
     if (t === 'object')
     {
-        const name = (value as { constructor?: { name?: string } })?.constructor?.name;
+        const name = (value as { constructor?: { name?: string } }).constructor?.name;
         return name && name !== 'Object' ? `a ${ name }` : 'an object';
     }
     if (t === 'undefined')

@@ -3,7 +3,7 @@
 // Full behavioral coverage for createResource (create-resource.ts): the data/loading/
 // error/refetch state machine, the standalone and source-driven forms, falsy-source
 // skipping, and re-fetching. Uses real promises (no mocked async).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     createSignal,
     createResource,
@@ -160,5 +160,85 @@ describe('createResource - source-driven', () =>
         expect(resource.loading()).toBe(false);
         expect(resource.data()).toBeUndefined();
         dispose();
+    });
+});
+
+describe('initialValue: the SSR/hydration adoption seam', () =>
+{
+    it('serves the seed synchronously with loading false and SKIPS the first fetch', async () =>
+    {
+        const fetcher = vi.fn(async () => 'fetched');
+        let resource!: Resource<string>;
+        createRoot(() =>
+        {
+            resource = createResource(() => 'key-1', fetcher, { initialValue: 'seeded' });
+            // Synchronous availability - a server render reads this immediately.
+            expect(resource.data()).toBe('seeded');
+            expect(resource.loading()).toBe(false);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(fetcher).not.toHaveBeenCalled(); // adoption, not a refetch
+        expect(resource.data()).toBe('seeded');
+    });
+
+    it('a SOURCE CHANGE after adoption fetches normally', async () =>
+    {
+        const fetcher = vi.fn(async (key: string) => `fetched:${ key }`);
+        let resource!: Resource<string>;
+        let setKey!: (value: string) => void;
+        createRoot(() =>
+        {
+            const [key, set] = createSignal('first');
+            setKey = set;
+            resource = createResource(key, fetcher, { initialValue: 'seeded' });
+        });
+        setKey('second');
+        await vi.waitFor(() => expect(resource.data()).toBe('fetched:second'));
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(fetcher).toHaveBeenCalledWith('second', expect.anything());
+    });
+
+    it('refetch() after adoption performs a real fetch', async () =>
+    {
+        const fetcher = vi.fn(async () => 'fresh');
+        let resource!: Resource<string>;
+        createRoot(() =>
+        {
+            resource = createResource(() => 'k', fetcher, { initialValue: 'seeded' });
+        });
+        resource.refetch();
+        await vi.waitFor(() => expect(resource.data()).toBe('fresh'));
+        expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('a skip-key start discards the seed along with the data it resets', async () =>
+    {
+        const fetcher = vi.fn(async (key: string) => `fetched:${ key }`);
+        let resource!: Resource<string>;
+        let setKey!: (value: string | null) => void;
+        createRoot(() =>
+        {
+            const [key, set] = createSignal<string | null>(null);
+            setKey = set;
+            resource = createResource(key, fetcher, { initialValue: 'seeded' });
+            expect(resource.data()).toBeUndefined(); // the skip reset already ran
+        });
+        setKey('real');
+        await vi.waitFor(() => expect(resource.data()).toBe('fetched:real'));
+        expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('the standalone overload accepts options too', async () =>
+    {
+        const fetcher = vi.fn(async () => 'fetched');
+        let resource!: Resource<string>;
+        createRoot(() =>
+        {
+            resource = createResource(fetcher, { initialValue: 'seeded' });
+        });
+        await Promise.resolve();
+        expect(resource.data()).toBe('seeded');
+        expect(fetcher).not.toHaveBeenCalled();
     });
 });

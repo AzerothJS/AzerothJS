@@ -1,5 +1,5 @@
 /**
- * MODULE: form/countries
+ * MODULE: schema/countries
  *
  * Country dataset for phone validation: ISO 3166-1 alpha-2 codes paired with their ITU-T E.164
  * calling codes. Used by phone() to filter accepted numbers, and exported for direct consumption

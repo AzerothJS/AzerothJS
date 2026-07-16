@@ -255,6 +255,10 @@ export function createFieldArray<T extends object>(config: FieldArrayConfig<T>):
             }
             const next = [...prev];
             const [moved] = next.splice(from, 1);
+            if (moved === undefined)
+            {
+                return prev;
+            }
             next.splice(to, 0, moved);
             return next;
         });

@@ -48,9 +48,8 @@ export interface CompletionData
     virtualFile: string;
     generatedOffset: number;
     name: string;
-    source?: string;
-    tsData?: unknown;
-}
+    source?: string | undefined;
+    tsData?: unknown;}
 
 /** Toggles for which completion sources contribute. All on by default. */
 export interface CompletionOptions
@@ -411,7 +410,7 @@ function componentAttributeCompletions(ctx: RequestContext, offset: number, tag:
 function identifierPrefix(source: string, offset: number): string
 {
     let start = offset;
-    while (start > 0 && /[A-Za-z0-9_-]/.test(source[start - 1]))
+    while (start > 0 && /[A-Za-z0-9_-]/.test(source[start - 1] ?? ''))
     {
         start--;
     }
@@ -433,7 +432,11 @@ function preselectExactPrefix(items: CompletionItem[], prefix: string): void
     const matches = items.filter(item => item.label.toLowerCase().startsWith(lower));
     if (matches.length === 1)
     {
-        matches[0].preselect = true;
+        const first = matches[0];
+        if (first !== undefined)
+        {
+            first.preselect = true;
+        }
     }
 }
 
@@ -662,7 +665,12 @@ function mappedOrAnchor(ctx: RequestContext, offset: number): number | null
 }
 
 /** Maps a TS completion entry kind to an LSP CompletionItemKind. */
-function tsKindToCompletionKind(kind: string): CompletionItemKindValue
+function tsKindToCompletionKind(kind: ts.ScriptElementKind | string): CompletionItemKindValue
+{
+    return mapTsCompletionKind(kind as ts.ScriptElementKind);
+}
+
+function mapTsCompletionKind(kind: ts.ScriptElementKind): CompletionItemKindValue
 {
     switch (kind)
     {

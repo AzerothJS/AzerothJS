@@ -137,7 +137,8 @@ describe('onUncaughtError', () =>
             uninstall();
         }
         expect(seen).toHaveLength(1);
-        expect(seen[0].message).toBe('uncaught');
-        expect(typeof seen[0].source).toBe('string');
+        const first = seen[0];
+        expect(first?.message).toBe('uncaught');
+        expect(typeof first?.source).toBe('string');
     });
 });

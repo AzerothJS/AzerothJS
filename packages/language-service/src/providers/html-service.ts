@@ -121,7 +121,7 @@ function toCompletionItem(item: HtmlCompletionItem): CompletionItem
         detail: item.detail,
         documentation: markupToString(item.documentation),
         insertText,
-        insertTextFormat: (item.insertTextFormat as 1 | 2 | undefined) ?? 1,
+        insertTextFormat: (item.insertTextFormat) ?? 1,
         sortText: item.sortText,
         filterText: item.filterText
     };
@@ -129,6 +129,7 @@ function toCompletionItem(item: HtmlCompletionItem): CompletionItem
 
 /** Flattens the HTML service's documentation/hover content into Markdown. */
 function markupToString(
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the html service still RETURNS MarkedString; this is the compat shim that flattens it
     content: string | MarkupContent | MarkedString | MarkedString[] | undefined
 ): string
 {

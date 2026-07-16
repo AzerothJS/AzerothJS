@@ -222,6 +222,10 @@ export class HydrationCursor
         while (this.index < this.nodes.length)
         {
             const node = this.nodes[this.index];
+            if (node === undefined)
+            {
+                break; // falls through to the unterminated-anchor error below
+            }
 
             if (node.nodeType === 8 && (node as Comment).data === ']')
             {
@@ -274,6 +278,10 @@ export class HydrationCursor
         while (this.index < this.nodes.length)
         {
             const node = this.nodes[this.index];
+            if (node === undefined)
+            {
+                break; // falls through to the unterminated-anchor error below
+            }
 
             if (node.nodeType === 8)
             {

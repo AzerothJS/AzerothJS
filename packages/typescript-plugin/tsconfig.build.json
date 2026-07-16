@@ -1,0 +1,36 @@
+{
+    // Typecheck-only project: esbuild.mjs produces the actual bundle. The root
+    // tsconfig excludes this package (CommonJS `export = init` entry cannot live
+    // under the root's `module: ESNext`), so this project is what typechecks it.
+    // `module: preserve` accepts the package's mixed shape - ESM import syntax
+    // in source that esbuild bundles down to a single CJS file.
+    "extends": "../../tsconfig.json",
+    "compilerOptions":
+    {
+        "module": "preserve",
+        "moduleResolution": "bundler",
+        "verbatimModuleSyntax": false,
+        "noEmit": true,
+        // No declaration output (esbuild bundles; tsserver loads the bundle
+        // untyped), so the root's isolatedDeclarations is inapplicable (TS5069).
+        "isolatedDeclarations": false,
+        "declaration": false,
+        "declarationMap": false,
+        "sourceMap": false,
+        "outDir": null,
+        "paths": {}
+    },
+    "include":
+    [
+        "src/**/*",
+        "tests/**/*"
+    ],
+    "exclude":
+    [
+        "node_modules",
+        "dist",
+        // Fixture files import `.azeroth` modules - resolving those is the
+        // plugin's own job at test runtime; bare tsc cannot and should not.
+        "tests/fixtures"
+    ]
+}

@@ -14,4 +14,4 @@ import type { DisposeFn } from '@azerothjs/reactivity';
  *
  * @internal
  */
-export const containerDisposers = new WeakMap<HTMLElement, DisposeFn>();
+export const containerDisposers: WeakMap<HTMLElement, DisposeFn> = new WeakMap();

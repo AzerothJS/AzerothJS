@@ -233,7 +233,7 @@ function evalConst(node: ts.Expression): { value: string | number | boolean } | 
         }
         if (node.operator === ts.SyntaxKind.PlusToken)
         {
-            return { value: +operand.value };
+            return { value: operand.value };
         }
         return null;
     }

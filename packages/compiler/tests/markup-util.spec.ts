@@ -6,7 +6,6 @@ import { describe, it, expect } from 'vitest';
 import { walkComponentTags } from '@azerothjs/compiler';
 import { wrapDynamic, quoteString, objectKey, isEventName } from '../src/markup-util.ts';
 import { parseMarkup } from '@azerothjs/compiler';
-import type { MarkupElement, MarkupFragment } from '@azerothjs/compiler';
 
 describe('wrapDynamic', () =>
 {
@@ -90,7 +89,7 @@ describe('walkComponentTags', () =>
     {
         const { node } = parseMarkup(src, 0);
         const out: string[] = [];
-        walkComponentTags(node as MarkupElement | MarkupFragment, (t) => out.push(t));
+        walkComponentTags(node, (t) => out.push(t));
         return out;
     }
 

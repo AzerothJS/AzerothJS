@@ -90,7 +90,7 @@ export interface RenderToDocumentOptions
  *   head: '<meta name="viewport" content="width=device-width, initial-scale=1">'
  * });
  */
-export function renderToDocument(component: () => HTMLElement, options: RenderToDocumentOptions = {}): string
+export function renderToDocument(component: () => HTMLElement | DocumentFragment, options: RenderToDocumentOptions = {}): string
 {
     const lang = options.lang ?? 'en';
 

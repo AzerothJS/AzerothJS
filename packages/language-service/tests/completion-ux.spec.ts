@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// Phase 4 editor-UX guarantees for completion:
+// Editor-UX guarantees for completion:
 //  - a TypeScript symbol commits on `.` (so `user|` + `.` chains into member completion);
 //  - an event attribute commits on `=`/space, like a prop;
 //  - a COMPONENT's attribute completion is not flooded with the generic DOM-event list (a component

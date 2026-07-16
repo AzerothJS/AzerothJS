@@ -48,7 +48,7 @@ export function parseForESLint(code: string, options: ParserOptions = {}): Retur
 }
 
 /** The parser object for `languageOptions.parser`. */
-export const azerothParser =
+export const azerothParser: { meta: { name: string; version: string }; parseForESLint: typeof parseForESLint } =
 {
     meta: { name: '@azerothjs/eslint-plugin/parser', version: '0.6.0-beta.1' },
     parseForESLint

@@ -1,5 +1,5 @@
 /**
- * MODULE: form/phone
+ * MODULE: schema/phone
  *
  * phone() validator: checks phone numbers in E.164 international format. Pragmatic scope - starts
  * with `+`, total digit count 8-15, and (optionally) the calling-code prefix matches one of a
@@ -24,7 +24,7 @@
  * when the field is mandatory.
  */
 
-import type { FieldValidator } from './create-form.ts';
+import type { FieldValidator } from './schema.ts';
 import { getCountry } from './countries.ts';
 import { isEmpty } from './validators.ts';
 
@@ -218,8 +218,9 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
         }
 
         // Step 1: strip human punctuation. Whitespace, hyphens, dots,
-        // parentheses, and Unicode soft-hyphens all go. Keep `+` and digits only.
-        let cleaned = value.replace(/[\s\-().­]/g, '');
+        // parentheses, and Unicode soft-hyphens (U+00AD, escaped below because
+        // the character itself is invisible) all go. Keep `+` and digits only.
+        let cleaned = value.replace(/[\s\-().\u00AD]/g, '');
 
         // Step 1b (optional): national-format normalization. If the input is
         // all digits with no `+` and a default country is configured, convert it
@@ -267,7 +268,7 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
             );
             if (!matches)
             {
-                return message ?? `Phone must be from one of: ${ countryFilter!.join(', ') }`;
+                return message ?? `Phone must be from one of: ${ countryFilter?.join(', ') ?? '' }`;
             }
         }
 

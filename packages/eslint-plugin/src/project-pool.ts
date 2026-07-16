@@ -27,7 +27,7 @@ export function normalize(filePath: string): string
 function rootFor(filePath: string): string
 {
     const dir = posix.dirname(normalize(filePath));
-    const config = ts.findConfigFile(dir, ts.sys.fileExists, 'tsconfig.json');
+    const config = ts.findConfigFile(dir, (p) => ts.sys.fileExists(p), 'tsconfig.json');
     return normalize(config ? posix.dirname(config) : dir);
 }
 

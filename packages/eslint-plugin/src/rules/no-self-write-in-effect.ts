@@ -65,9 +65,10 @@ export const noSelfWriteInEffect: Rule.RuleModule = {
                 const call = node as unknown as CallNode;
 
                 // Entering an effect: the callback is argument 0.
-                if (isCallTo(call, 'createEffect') && isFunctionNode(call.arguments[0]))
+                const effectFn = call.arguments[0];
+                if (isCallTo(call, 'createEffect') && effectFn !== undefined && isFunctionNode(effectFn))
                 {
-                    stack.push({ fn: call.arguments[0], reads: new Set(), writes: [] });
+                    stack.push({ fn: effectFn, reads: new Set(), writes: [] });
                     return;
                 }
 
@@ -109,7 +110,7 @@ export const noSelfWriteInEffect: Rule.RuleModule = {
                             node: write.node,
                             messageId: 'selfWrite',
                             data: { getter, setter: write.setterName }
-                        } as unknown as Parameters<typeof context.report>[0]);
+                        });
                     }
                 }
             }

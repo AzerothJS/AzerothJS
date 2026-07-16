@@ -1,0 +1,8 @@
+import { formatGold } from './util';
+
+/** Shows a labelled gold balance. */
+export default component Widget(props: { label: string; amount?: number })
+{
+    const text: string = formatGold(props.amount ?? 0);
+    <div title={ props.label }>{ text }</div>
+}

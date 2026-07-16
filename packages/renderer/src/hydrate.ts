@@ -11,6 +11,7 @@
  */
 
 import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
+import type { MountNode } from '@azerothjs/component';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
 
@@ -74,7 +75,7 @@ import { render } from './render.ts';
  * @example
  * hydrate(() => App({}), document.getElementById('app')!);
  */
-export function hydrate(component: () => HTMLElement, container: HTMLElement): void
+export function hydrate(component: () => MountNode, container: HTMLElement): void
 {
     // Tear down any previous mount on this container first.
     const previousDispose = containerDisposers.get(container);

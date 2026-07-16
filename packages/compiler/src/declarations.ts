@@ -173,7 +173,7 @@ export function emitDeclarationsWithMap(source: string, fileName: string): Decla
     const remapped: RawSegment[][] = decodeMappings(parsed.mappings).map(line => line
         .map((segment): RawSegment | null =>
         {
-            const projectedOffset = projectedLineStarts[segment.sourceLine] + segment.sourceColumn;
+            const projectedOffset = (projectedLineStarts[segment.sourceLine] ?? 0) + segment.sourceColumn;
             const original = mapping.toOriginal(projectedOffset);
             if (original === null)
             {

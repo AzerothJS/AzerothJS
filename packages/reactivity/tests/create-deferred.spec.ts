@@ -26,7 +26,7 @@ describe('createDeferred', () =>
         createRoot((dispose) =>
         {
             const [text] = createSignal('hello');
-            const deferred = createDeferred(text, { timeout: 100 });
+            const deferred = createDeferred(text, { delay: 100 });
             expect(deferred()).toBe('hello');
             dispose();
         });
@@ -37,7 +37,7 @@ describe('createDeferred', () =>
         createRoot((dispose) =>
         {
             const [text, setText] = createSignal('a');
-            const deferred = createDeferred(text, { timeout: 100 });
+            const deferred = createDeferred(text, { delay: 100 });
             setText('b');
             expect(deferred()).toBe('a');
             vi.advanceTimersByTime(99);
@@ -53,7 +53,7 @@ describe('createDeferred', () =>
         createRoot((dispose) =>
         {
             const [text, setText] = createSignal('a');
-            const deferred = createDeferred(text, { timeout: 100 });
+            const deferred = createDeferred(text, { delay: 100 });
             setText('b');
             vi.advanceTimersByTime(50);
             setText('c'); // resets the debounce timer
@@ -73,7 +73,7 @@ describe('createDeferred', () =>
         {
             const [text, set] = createSignal('a');
             setText = set;
-            deferred = createDeferred(text, { timeout: 100 });
+            deferred = createDeferred(text, { delay: 100 });
             return d;
         });
         dispose();

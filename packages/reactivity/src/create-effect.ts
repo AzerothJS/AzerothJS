@@ -232,6 +232,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
                 );
             }
         }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runOnce() -> fn() -> schedule() mutates both flags through the closure; the rule's flow analysis cannot see it
         while (rerunPending && !subscriber.isDisposed);
     }
 
@@ -264,12 +265,15 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         try
         {
             // Run the body; its reads ARE the subscription (auto-tracking). A returned function is
-            // registered as a cleanup, run before the next re-run and on dispose.
-            const returned = fn() ?? undefined;
+            // registered as a cleanup, run before the next re-run and on dispose. The typeof guard
+            // (not truthiness) matters: a concise arrow like `() => list.push(x)` returns a truthy
+            // number, and pushing THAT would crash the next run's cleanup pass ("c is not a function")
+            // far from the cause. Non-function returns are ignored, exactly as `void` promises.
+            const returned: unknown = fn();
 
-            if (returned)
+            if (typeof returned === 'function')
             {
-                cleanups.push(returned);
+                cleanups.push(returned as CleanupFn);
             }
         }
         catch (err)

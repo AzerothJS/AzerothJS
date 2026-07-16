@@ -8,8 +8,9 @@ ESLint rules for AzerothJS reactivity foot-guns in plain `.ts` files, plus a pro
 `.azeroth` a **first-class lint target**: your normal core + `@typescript-eslint` rules run on `.azeroth`
 files (reported at original `.azeroth` locations, with autofix), alongside the compiler's own reactivity
 diagnostics - all in the same `eslint .` run. It reuses the compiler's projection, so there is no second
-parser and no JSX/TSX assumptions. See [COMPATIBILITY.md](./COMPATIBILITY.md) for exactly which rules
-work, which need an Azeroth caveat, and which can't (whitespace/formatting and type-aware rules) and why.
+parser and no JSX/TSX assumptions. The exceptions are whitespace/formatting rules and type-aware rules:
+the projection rearranges markup around the embedded expressions, so those rules only run reliably on
+`.ts` files - scope them there.
 
 Requires ESLint 9+ (flat config).
 

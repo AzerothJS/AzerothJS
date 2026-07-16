@@ -13,7 +13,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createSignal, createMemo, createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
 import type { Child } from './types.ts';
 
@@ -39,7 +39,7 @@ export interface ShowProps<W = boolean>
      * Optional fallback rendered when `when` is falsy. Nothing is rendered if omitted OR if the thunk
      * returns a nullish value, so a conditionally-present fallback (`fallback={maybeNode}`) is valid.
      */
-    fallback?: () => HTMLElement | null | undefined;
+    fallback?: () => MountNode | null | undefined;
 
     /**
      * Content shown while `when` is truthy. Two forms, both built lazily (only while visible):
@@ -49,7 +49,7 @@ export interface ShowProps<W = boolean>
      *     stays reactive and never yields null while the branch is mounted - no `!`, no snapshot IIFE.
      * A plain thunk simply ignores the accessor argument, so both forms share this one signature.
      */
-    children: (value: () => NonNullable<W>) => HTMLElement;
+    children: (value: () => NonNullable<W>) => MountNode | MountNode[];
 }
 
 /**
@@ -124,7 +124,7 @@ export interface ShowProps<W = boolean>
  *   children: () => h('button', { onClick: logout }, 'Logout')
  * });
  */
-export function Show<W>(props: ShowProps<W>): HTMLElement
+export function Show<W>(props: ShowProps<W>): MountNode
 {
     // SSR: evaluate `when` ONCE (no live effect), emit the active branch inside a
     // contents anchor the client hydrator can adopt. The children callback gets a
@@ -135,7 +135,7 @@ export function Show<W>(props: ShowProps<W>): HTMLElement
         const inner = whenValue
             ? serializeChild(props.children((): NonNullable<W> => whenValue as NonNullable<W>))
             : (props.fallback ? serializeChild(props.fallback()) : '');
-        return wrapContentsAnchored('show', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('show', inner) as unknown as MountNode;
     }
 
     // Hydration: adopt the server wrapper and its current branch on the first effect run;
@@ -146,7 +146,7 @@ export function Show<W>(props: ShowProps<W>): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveShow(props, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // Fresh client render: NO wrapper element - comment markers bracket the active branch
@@ -155,7 +155,7 @@ export function Show<W>(props: ShowProps<W>): HTMLElement
 
     driveShow(props, target, false);
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**

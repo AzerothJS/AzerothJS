@@ -6,16 +6,13 @@
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "bin":
-    {
+    "bin": {
         "azeroth-language-server": "./dist/cli.js",
         "azeroth-tsc": "./dist/tsc-cli.js",
         "azeroth-docgen": "./dist/docgen-cli.js"
     },
-    "exports":
-    {
-        ".":
-        {
+    "exports": {
+        ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
@@ -24,44 +21,39 @@
         "./tsc": "./dist/tsc.js",
         "./docgen": "./dist/docgen-cli.js"
     },
-    "files":
-    [
+    "files": [
         "dist"
     ],
     "sideEffects": false,
-    "dependencies":
-    {
+    "dependencies": {
         "@azerothjs/language-service": "0.7.0-beta.1",
-        "typescript": ">=6",
+        "typescript": ">=6 <7",
         "vscode-languageserver": "^10",
         "vscode-languageserver-textdocument": "^1"
     },
-    "scripts":
-    {
-        "build": "tsc -p tsconfig.build.json",
+    "scripts": {
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "publishConfig":
-    {
+    "publishConfig": {
         "access": "public"
     },
-    "author":
-    {
+    "author": {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "engines": { "node": ">=24" },
-    "repository":
-    {
+    "engines": {
+        "node": ">=24"
+    },
+    "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/language-server"
     },
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/language-server",
-    "bugs":
-    {
+    "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

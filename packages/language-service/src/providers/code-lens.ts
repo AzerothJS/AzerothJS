@@ -7,7 +7,7 @@
 // resolveCodeLens via the references provider, mirroring completion/resolve.
 
 import ts from 'typescript';
-import type { CodeLens, Location } from '../protocol.ts';
+import type { CodeLens } from '../protocol.ts';
 import { type RequestContext } from '../request.ts';
 import { getReferences } from './navigation.ts';
 
@@ -26,7 +26,7 @@ const LENS_KINDS = new Set<string>([
 export function getCodeLenses(ctx: RequestContext): CodeLens[]
 {
     const tree = ctx.project.service.getNavigationTree(ctx.virtualFile);
-    if (!tree?.childItems)
+    if (!tree.childItems)
     {
         return [];
     }
@@ -69,7 +69,7 @@ export function resolveCodeLens(ctx: RequestContext, lens: CodeLens): CodeLens
         {
             title: `${ count } reference${ count === 1 ? '' : 's' }`,
             command: 'editor.action.showReferences',
-            arguments: [data.uri, lens.range.start, references as Location[]]
+            arguments: [data.uri, lens.range.start, references]
         }
     };
 }

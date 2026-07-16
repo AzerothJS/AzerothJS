@@ -27,9 +27,9 @@ function decode(data: number[]): DecodedToken[]
     let character = 0;
     for (let i = 0; i + 4 < data.length + 1; i += 5)
     {
-        line += data[i];
-        character = data[i] === 0 ? character + data[i + 1] : data[i + 1];
-        tokens.push({ line, character, length: data[i + 2], type: data[i + 3], modifiers: data[i + 4] });
+        line += data[i] ?? 0;
+        character = data[i] === 0 ? character + (data[i + 1] ?? 0) : (data[i + 1] ?? 0);
+        tokens.push({ line, character, length: data[i + 2] ?? 0, type: data[i + 3] ?? 0, modifiers: data[i + 4] ?? 0 });
     }
     return tokens;
 }
@@ -58,7 +58,7 @@ describe('semantic tokens: reactive declaration names', () =>
 
     function tokenAt(tokens: DecodedToken[], lines: string[], line: number, name: string): DecodedToken | undefined
     {
-        const character = lines[line].indexOf(name);
+        const character = lines[line]!.indexOf(name);
         return tokens.find(t => t.line === line && t.character === character && t.length === name.length);
     }
 

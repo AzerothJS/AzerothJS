@@ -7,12 +7,12 @@
 import { describe, it, expect } from 'vitest';
 import { lintMarkup, lintSource } from '@azerothjs/compiler';
 import { parseMarkup } from '@azerothjs/compiler';
-import type { MarkupElement, MarkupFragment, LintWarning } from '@azerothjs/compiler';
+import type { MarkupElement, LintWarning } from '@azerothjs/compiler';
 
 function lint(src: string): LintWarning[]
 {
     const { node } = parseMarkup(src, 0);
-    return lintMarkup(node as MarkupElement | MarkupFragment);
+    return lintMarkup(node);
 }
 
 describe('lintMarkup - duplicate-attr', () =>
@@ -21,8 +21,8 @@ describe('lintMarkup - duplicate-attr', () =>
     {
         const warnings = lint('<div id="a" id="b">x</div>');
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].code).toBe('azeroth/duplicate-attr');
-        expect(warnings[0].message).toContain('Duplicate attribute `id`');
+        expect(warnings[0]!.code).toBe('azeroth/duplicate-attr');
+        expect(warnings[0]!.message).toContain('Duplicate attribute `id`');
     });
 
     it('does not flag distinct attributes', () =>
@@ -33,7 +33,7 @@ describe('lintMarkup - duplicate-attr', () =>
     it('carries the source span of the offending (later) attribute', () =>
     {
         const src = '<div id="a" id="b">x</div>';
-        const warning = lint(src)[0];
+        const warning = lint(src)[0]!;
         expect(src.slice(warning.start, warning.end)).toBe('id="b"');
     });
 });
@@ -44,8 +44,8 @@ describe('lintMarkup - event-case', () =>
     {
         const warnings = lint('<button onclick={f}>go</button>');
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].code).toBe('azeroth/event-case');
-        expect(warnings[0].message).toContain('onClick');
+        expect(warnings[0]!.code).toBe('azeroth/event-case');
+        expect(warnings[0]!.message).toContain('onClick');
     });
 
     it('does not flag the camelCase form', () =>
@@ -72,7 +72,7 @@ describe('lintSource - whole module', () =>
     {
         const warnings = lintSource('const x = <button onclick={ f }>go</button>;');
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].code).toBe('azeroth/event-case');
+        expect(warnings[0]!.code).toBe('azeroth/event-case');
     });
 
     it('returns no warnings for clean source', () =>
@@ -99,7 +99,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
     function lintWith(src: string, options?: Parameters<typeof lintMarkup>[2]): LintWarning[]
     {
         const { node } = parseMarkup(src, 0);
-        return lintMarkup(node as MarkupElement | MarkupFragment, src, options);
+        return lintMarkup(node, src, options);
     }
     const spacing = (src: string, options?: Parameters<typeof lintMarkup>[2]): LintWarning[] =>
         lintWith(src, options).filter(w => w.code === 'azeroth/interpolation-spacing');
@@ -109,8 +109,8 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         const src = '<p>{count}</p>';
         const warnings = spacing(src);
         expect(warnings).toHaveLength(1);
-        expect(src.slice(warnings[0].start, warnings[0].end)).toBe('{count}');
-        expect(warnings[0].fix).toEqual({ range: [4, 9], text: ' count ' });
+        expect(src.slice(warnings[0]!.start, warnings[0]!.end)).toBe('{count}');
+        expect(warnings[0]!.fix).toEqual({ range: [4, 9], text: ' count ' });
     });
 
     it('flags an unspaced attribute expression', () =>
@@ -118,7 +118,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         const src = '<div title={message}>x</div>';
         const warnings = spacing(src);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].fix!.text).toBe(' message ');
+        expect(warnings[0]!.fix!.text).toBe(' message ');
     });
 
     it('flags directive and event expressions too (class:, onClick)', () =>
@@ -130,7 +130,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
     it('collapses runs of spaces to exactly one', () =>
     {
         const src = '<p>{  wide  }</p>';
-        expect(spacing(src)[0].fix!.text).toBe(' wide ');
+        expect(spacing(src)[0]!.fix!.text).toBe(' wide ');
     });
 
     it('accepts the canonical form on both positions', () =>
@@ -143,7 +143,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         const src = '<div title={\n    long()\n}>{a}</div>';
         const warnings = spacing(src);
         expect(warnings).toHaveLength(1);
-        expect(src.slice(warnings[0].start, warnings[0].end)).toBe('{a}');
+        expect(src.slice(warnings[0]!.start, warnings[0]!.end)).toBe('{a}');
     });
 
     it('fixes only the tight side of a mixed multiline hole, preserving the layout', () =>
@@ -151,7 +151,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         const src = '<p>{\n    value}</p>';
         const warnings = spacing(src);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].fix!.text).toBe('\n    value ');
+        expect(warnings[0]!.fix!.text).toBe('\n    value ');
     });
 
     it('exempts spreads in attribute and child position', () =>
@@ -169,7 +169,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         expect(spacing('<C opts={ { a: 1 } } />')).toEqual([]);
         const warnings = spacing('<C opts={{ a: 1 }} />');
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].fix!.text).toBe(' { a: 1 } ');
+        expect(warnings[0]!.fix!.text).toBe(' { a: 1 } ');
     });
 
     it('preserves string content verbatim in the fix (braces inside strings)', () =>
@@ -177,7 +177,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         const src = '<p>{fn("} x")}</p>';
         const warnings = spacing(src);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].fix!.text).toBe(' fn("} x") ');
+        expect(warnings[0]!.fix!.text).toBe(' fn("} x") ');
     });
 
     it('never mode inverts the rule', () =>
@@ -185,7 +185,7 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         expect(spacing('<p>{x}</p>', { interpolationSpacing: 'never' })).toEqual([]);
         const warnings = spacing('<p>{ x }</p>', { interpolationSpacing: 'never' });
         expect(warnings).toHaveLength(1);
-        expect(warnings[0].fix).toEqual({ range: [4, 7], text: 'x' });
+        expect(warnings[0]!.fix).toEqual({ range: [4, 7], text: 'x' });
     });
 
     it('off mode and the source-less legacy call disable the rule', () =>

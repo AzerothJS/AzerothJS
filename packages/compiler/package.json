@@ -1,69 +1,59 @@
 {
     "name": "@azerothjs/compiler",
     "version": "0.7.0-beta.1",
-    "engines": { "node": ">=24" },
+    "engines": {
+        "node": ">=24"
+    },
     "description": "AzerothJS compiler - .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports":
-    {
-        ".":
-        {
+    "exports": {
+        ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
-    "files":
-    [
+    "files": [
         "dist"
     ],
     "sideEffects": false,
-    "peerDependencies":
-    {
+    "peerDependencies": {
         "vite": ">=6",
-        "typescript": ">=5"
+        "typescript": ">=5 <7"
     },
-    "peerDependenciesMeta":
-    {
-        "vite":
-        {
+    "peerDependenciesMeta": {
+        "vite": {
             "optional": true
         },
-        "typescript":
-        {
+        "typescript": {
             "optional": true
         }
     },
-    "scripts":
-    {
+    "scripts": {
         "clean": "node ../../scripts/clean.mjs dist",
         "prebuild": "npm run clean",
-        "build": "tsc -p tsconfig.build.json",
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "publishConfig":
-    {
+    "publishConfig": {
         "access": "public"
     },
-    "author":
-    {
+    "author": {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "repository":
-    {
+    "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/compiler"
     },
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/compiler",
-    "bugs":
-    {
+    "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

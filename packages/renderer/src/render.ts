@@ -9,7 +9,7 @@
  */
 
 import { createRoot } from '@azerothjs/reactivity';
-import { destroyComponent } from '@azerothjs/component';
+import { destroyComponent, type MountNode } from '@azerothjs/component';
 import { containerDisposers } from './container-disposers.ts';
 
 /**
@@ -71,7 +71,7 @@ import { containerDisposers } from './container-disposers.ts';
  * @example
  * render(() => App({}), document.getElementById('app')!);
  */
-export function render(component: () => HTMLElement, container: HTMLElement): void
+export function render(component: () => MountNode, container: HTMLElement): void
 {
     // Tear down the previous mount, if any.
     const previousDispose = containerDisposers.get(container);

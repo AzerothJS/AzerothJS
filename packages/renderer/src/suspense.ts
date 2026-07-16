@@ -16,6 +16,7 @@
 
 import type { Resource } from '@azerothjs/reactivity';
 import { createMemo, isStringMode, serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity';
+import type { MountNode } from '@azerothjs/component';
 import { Show } from './show.ts';
 
 /**
@@ -24,7 +25,7 @@ import { Show } from './show.ts';
 export interface SuspenseProps
 {
     /** Rendered while any watched resource is loading; replaced by children() once all settle. */
-    fallback: () => HTMLElement;
+    fallback: () => MountNode;
 
     /**
      * Resources to watch; Suspense shows the fallback if ANY reports loading() === true. The
@@ -34,7 +35,7 @@ export interface SuspenseProps
     on: Resource<unknown>[];
 
     /** The protected subtree, rendered once all watched resources settle. Same factory pattern as <Show>. */
-    children: () => HTMLElement;
+    children: () => MountNode;
 }
 
 /**
@@ -100,13 +101,13 @@ export interface SuspenseProps
  *   children: () => Routes({ router })
  * });
  */
-export function Suspense(props: SuspenseProps): HTMLElement
+export function Suspense(props: SuspenseProps): MountNode
 {
     // SSR: resources don't resolve within a synchronous render, so emit the fallback (async
     // SSR is a later phase); the client resolves them and swaps in children after hydration.
     if (isStringMode())
     {
-        return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as HTMLElement;
+        return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as MountNode;
     }
 
     // Collapse N loading getters into one boolean. Show re-evaluates `when` on signal change;

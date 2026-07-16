@@ -54,8 +54,9 @@ export interface UncaughtErrorContext
     /** The kind of node whose run threw. */
     source: 'effect' | 'memo';
 
-    /** The effect's debug name (`createEffect(fn, { name })`), if any. */
-    name?: string;
+    /** The effect's debug name (`createEffect(fn, { name })`), if any. Explicit undefined is
+     * equivalent to absent - the effect forwards its possibly-unset name as-is. */
+    name?: string | undefined;
 }
 
 /**

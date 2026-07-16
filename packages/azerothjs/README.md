@@ -108,9 +108,47 @@ const html = renderToString(() => App()); // server - pure string emission, no D
 hydrate(() => App(), root);                // adopt server HTML, don't rebuild
 ```
 
+## The server side
+
+SSR ships in `azerothjs` itself (`renderToString` above). The rest of the backend is its own
+zero-dependency stack under the same scope - run it behind an AzerothJS frontend, or entirely on
+its own: nothing in it requires the client packages.
+
+```ts
+import { App, json, serve, readValidated } from '@azerothjs/http';
+import { object, string, number } from '@azerothjs/schema';
+
+const createUser = object({ name: string({ min: 2 }), age: number({ int: true }) });
+
+const app = new App();
+
+app.get('/users/:id', (request, ctx) => json({ id: ctx.params.id })); // params typed from the pattern
+
+app.post('/users', async (request) =>
+{
+    const input = await readValidated(request, createUser); // typed, normalized; failure -> 422
+    return json({ created: input.name }, { status: 201 });
+});
+
+const served = await serve(app, { port: 3000 });
+```
+
+| Package | What it is |
+| --- | --- |
+| [`@azerothjs/http`](https://www.npmjs.com/package/@azerothjs/http) | Web-standard `Request`/`Response` HTTP kernel: radix router, typed middleware, body limits on by default, SSE, cookies, static files, graceful shutdown. |
+| [`@azerothjs/schema`](https://www.npmjs.com/package/@azerothjs/schema) | Validation whose TypeScript types are inferred from the declaration - one source of rules for browser forms and server DTOs. |
+| [`@azerothjs/api`](https://www.npmjs.com/package/@azerothjs/api) | Declare an API contract once: the server mount, the handler signatures, and a fully inferred client - no codegen, no drift. |
+| [`@azerothjs/ws`](https://www.npmjs.com/package/@azerothjs/ws) | WebSocket server implementing RFC 6455 from scratch, attached to the same `serve()`. |
+| [`@azerothjs/cron`](https://www.npmjs.com/package/@azerothjs/cron) | Job scheduler: real cron expressions with honest timezone/DST semantics and overlap policies. |
+
+The halves are designed to meet: every request is a reactive root with the same per-request
+`createStore` isolation SSR renders have, `sse()` emits exactly what the `stream` keyword
+consumes, and a server validation failure's field map drops straight into a browser form's
+`setError`.
+
 ## Editor support
 
-- **VS Code** - the [AzerothJS extension](https://marketplace.visualstudio.com/items?itemName=azerothjs.azerothjs-vscode):
+- **VS Code** - the AzerothJS extension (built from `editors/vscode` in this repo):
   bundled language server, completion, hover docs for every keyword, cross-file navigation and
   rename across the `.ts` <-> `.azeroth` boundary, semantic highlighting.
 - **JetBrains** (WebStorm, IntelliJ IDEA Ultimate, ...) - the AzerothJS plugin: native `.azeroth`
@@ -120,9 +158,12 @@ hydrate(() => App(), root);                // adopt server HTML, don't rebuild
 
 ## Fine-grained packages
 
-`azerothjs` re-exports the full framework. The layers are also published individually under the
-`@azerothjs/*` scope - depend on one directly when you want a narrower surface (for example, a
-library that only needs `@azerothjs/reactivity`). Tree-shaking drops unused exports either way.
+`azerothjs` re-exports the full client framework plus SSR. Every layer is also published
+individually under the `@azerothjs/*` scope - depend on one directly when you want a narrower
+surface (a library that only needs `@azerothjs/reactivity`, a service that only needs
+`@azerothjs/http`). Tree-shaking drops unused exports either way. The scope also carries the
+tooling: `@azerothjs/testing` (leak-guarded component tests), `@azerothjs/devtools` (in-page
+reactive-graph panel), and `@azerothjs/eslint-plugin` (`.azeroth` as a first-class lint target).
 
 ## Documentation
 

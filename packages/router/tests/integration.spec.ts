@@ -14,7 +14,7 @@ import {
     useParams,
     useLoader
 } from '@azerothjs/router';
-import type { Route, Router } from '@azerothjs/router';
+import type { Route, Router, MountNode } from '@azerothjs/router';
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -32,7 +32,7 @@ describe('router integration - nested layout app', () =>
         };
         const UserList = (): HTMLElement => h('ul', { id: 'list' }, h('li', {}, 'all users'));
 
-        const UsersLayout = (props: { children?: HTMLElement }): HTMLElement =>
+        const UsersLayout = (props: { children?: MountNode | undefined }): MountNode =>
             h('div', { id: 'users-layout' },
                 h('h2', {}, 'Users'),
                 h('main', {}, Outlet({ children: props.children })));
@@ -93,7 +93,7 @@ describe('router integration - nested layout app', () =>
             const params = useParams(router);
             return h('section', { id: 'profile' }, () => params().id);
         };
-        const UsersLayout = (props: { children?: HTMLElement }): HTMLElement =>
+        const UsersLayout = (props: { children?: MountNode | undefined }): MountNode =>
             h('div', { id: 'layout' }, Outlet({ children: props.children }));
 
         const routes: Route[] =

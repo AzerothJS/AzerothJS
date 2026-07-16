@@ -6,7 +6,7 @@
 // dataset integrity (alphabetical by ISO, required well-known members). Pure
 // data + a synchronous lookup, so no reactive root is needed.
 import { describe, it, expect } from 'vitest';
-import { countries, getCountry } from '@azerothjs/form';
+import { countries, getCountry } from '@azerothjs/schema';
 
 describe('getCountry - by ISO code', () =>
 {

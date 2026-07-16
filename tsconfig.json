@@ -1,12 +1,25 @@
 {
     "compilerOptions":
     {
+        "types":
+        [
+            "node"
+        ],
         "target": "ESNext",
         "module": "ESNext",
         "moduleResolution": "bundler",
         "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "exactOptionalPropertyTypes": true,
+        "isolatedDeclarations": true,
+        "noImplicitOverride": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitReturns": true,
+        "verbatimModuleSyntax": true,
+        "useUnknownInCatchVariables": true,
         "esModuleInterop": true,
-        "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "declaration": true,
         "declarationMap": true,
@@ -50,6 +63,26 @@
             [
                 "./packages/form/src/index.ts"
             ],
+            "@azerothjs/schema":
+            [
+                "./packages/schema/src/index.ts"
+            ],
+            "@azerothjs/cron":
+            [
+                "./packages/cron/src/index.ts"
+            ],
+            "@azerothjs/http":
+            [
+                "./packages/http/src/index.ts"
+            ],
+            "@azerothjs/ws":
+            [
+                "./packages/ws/src/index.ts"
+            ],
+            "@azerothjs/api":
+            [
+                "./packages/api/src/index.ts"
+            ],
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"
@@ -82,7 +115,8 @@
     },
     "include":
     [
-        "packages/*/src/**/*"
+        "packages/*/src/**/*",
+        "packages/*/tests/**/*"
     ],
     "exclude":
     [

@@ -39,7 +39,7 @@ export { azeroth, type AzerothPluginOptions } from './vite.ts';
 
 // The component pipeline: the parser/analysis/codegen for `component` syntax.
 export { parseModule } from './parser.ts';
-export type { Module, ModuleItem, OpaqueRegion, ComponentDecl } from './ast.ts';
+export type { Module, ModuleItem, OpaqueRegion, ComponentDecl, StateDecl, DerivedDecl } from './ast.ts';
 // NOTE: this pipeline (and `diagnoseModule`) pulls the TypeScript-backed analysis
 // into this index; the compiler requires `typescript` as a peer dep.
 export { diagnoseModule, diagnoseUnusedImports, type AzerothDiagnostic } from './diagnostics.ts';
@@ -47,6 +47,21 @@ export { diagnoseModule, diagnoseUnusedImports, type AzerothDiagnostic } from '.
 // default (a non-function handler or a wrong/missing component prop fails the build); createIncrementalChecker
 // is the incremental form that binds the lib once and is reused across every file in a build.
 export { typeCheckModuleTS, createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
+// The loader/adapter for the NATIVE TypeScript compiler's API (TypeScript 7+). Tooling that only needs
+// raw diagnostics (the command-line checker) runs on the native engine when it is installed; everything
+// returns null without it and callers keep their classic path.
+export {
+    loadNativeTs,
+    adaptDiagnostics,
+    type NativeApi,
+    type NativeSnapshot,
+    type NativeProject,
+    type NativeProgram,
+    type NativeDiagnostic,
+    type NativeFileSystem,
+    type NativeUpdateParams,
+    type AdaptedDiagnostic
+} from './native-ts.ts';
 // Emits a `.d.ts` for an `.azeroth` module so plain TypeScript (`tsc` and editors) can resolve and
 // type-check `.azeroth` imports from `.ts` files.
 export { emitDeclarations, emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';

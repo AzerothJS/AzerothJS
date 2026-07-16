@@ -6,13 +6,13 @@
 import { describe, it, expect } from 'vitest';
 import { onCleanup } from '@azerothjs/reactivity';
 import { h, render } from '@azerothjs/renderer';
-import { createRouter, createMemoryHistory, Routes, Outlet } from '@azerothjs/router';
+import { createRouter, createMemoryHistory, Routes, Outlet, type MountNode } from '@azerothjs/router';
 import type { Route, Router } from '@azerothjs/router';
 
 const Home = (): HTMLElement => h('h1', { id: 'home' }, 'Home');
 const About = (): HTMLElement => h('h1', { id: 'about' }, 'About');
 
-const UsersLayout = (props: { children?: HTMLElement }): HTMLElement =>
+const UsersLayout = (props: { children?: MountNode | undefined }): MountNode =>
     h('div', { id: 'users-layout' }, h('header', {}, 'Users'), Outlet({ children: props.children }));
 const UserList = (): HTMLElement => h('ul', { id: 'user-list' }, h('li', {}, 'list'));
 const UserProfile = (): HTMLElement => h('section', { id: 'user-profile' }, 'profile');

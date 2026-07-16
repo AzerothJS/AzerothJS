@@ -66,7 +66,7 @@ export class CompileError extends Error
  * Shared with the SSR serializer (codegen) so the parser and the emitter agree on which tags close
  * themselves.
  */
-export const VOID_ELEMENTS = new Set
+export const VOID_ELEMENTS: ReadonlySet<string> = new Set
 ([
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr'
@@ -147,6 +147,17 @@ class MarkupParser
             const children = this.parseChildren();
             this.expectClosingTag(''); // </>
             return { kind: 'fragment', children, start, end: this.pos };
+        }
+
+        // An HTML comment gets its own message (field-reported confusion): the generic
+        // literal-'<' hint reads as nonsense when the author wrote `<!-- -->`.
+        if (this.peek() === '!')
+        {
+            throw new CompileError(
+                'HTML comments (<!-- -->) are not supported in .azeroth markup - remove the '
+                + 'comment (use a // or /* */ comment in the surrounding code instead).',
+                start
+            );
         }
 
         // A `<` that is neither a fragment, a closing tag, nor the start of a

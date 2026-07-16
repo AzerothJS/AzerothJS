@@ -23,6 +23,7 @@ import {
 } from '../protocol.ts';
 import { keywordOptions } from '../language-data.ts';
 import { resolveLocation, type RequestContext } from '../request.ts';
+import type { RawTsDiagnostic } from '../ts-project.ts';
 
 /** All diagnostics for the document. */
 export function getDiagnostics(ctx: RequestContext): Diagnostic[]
@@ -183,10 +184,9 @@ function markupDiagnostics(ctx: RequestContext): { errors: Diagnostic[]; warning
 /** TypeScript syntactic + semantic diagnostics, mapped to original ranges. */
 function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
 {
-    const raw = [
-        ...ctx.project.service.getSyntacticDiagnostics(ctx.virtualFile),
-        ...ctx.project.service.getSemanticDiagnostics(ctx.virtualFile)
-    ];
+    // One raw-diagnostics primitive serves both engines (classic service or native compiler);
+    // everything below is engine-agnostic mapping.
+    const raw = ctx.project.rawTsDiagnostics(ctx.virtualFile);
 
     const out: Diagnostic[] = [];
     for (const diag of raw)
@@ -260,7 +260,7 @@ function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
  * that land in generated scaffolding (or have no span) are skipped, and the
  * field is left off entirely when nothing maps.
  */
-function withRelated(ctx: RequestContext, diag: ts.Diagnostic, out: Diagnostic): Diagnostic
+function withRelated(ctx: RequestContext, diag: RawTsDiagnostic, out: Diagnostic): Diagnostic
 {
     if (diag.relatedInformation === undefined)
     {
@@ -299,7 +299,7 @@ function withRelated(ctx: RequestContext, diag: ts.Diagnostic, out: Diagnostic):
  */
 const COMPONENT_PROP_CODES = new Set<number>([2345, 2739, 2741]);
 
-/** Maps a TS diagnostic category to an LSP severity. */
+/** Maps a TS diagnostic category (same numeric values in both engines) to an LSP severity. */
 function categoryToSeverity(category: ts.DiagnosticCategory): DiagnosticSeverityValue
 {
     switch (category)

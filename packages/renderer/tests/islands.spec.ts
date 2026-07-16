@@ -23,7 +23,7 @@ function pageInto(component: () => HTMLElement): HTMLElement
 
 const Counter = (props: Props): HTMLElement =>
 {
-    const [count, setCount] = createSignal((props.start as number) ?? 0);
+    const [count, setCount] = createSignal(typeof props.start === 'number' ? props.start : 0);
     return h('button', { onClick: () => setCount((c) => c + 1) }, () => `${ count() }`);
 };
 
@@ -79,7 +79,7 @@ describe('hydrateIslands', () =>
         const revived = await hydrateIslands({}, root);
         expect(revived).toBe(0);
         expect(warn).toHaveBeenCalled();
-        expect(warn.mock.calls[0][0]).toContain('no loader registered');
+        expect(warn.mock.calls[0]?.[0]).toContain('no loader registered');
         warn.mockRestore();
         root.remove();
     });
@@ -96,10 +96,10 @@ describe('hydrateIslands', () =>
         const revived = await hydrateIslands(registry, root);
         expect(revived).toBe(2);
         const buttons = Array.from(root.querySelectorAll('button'));
-        buttons[0].click();
+        buttons[0]?.click();
         // Each island has its own independent state.
-        expect(buttons[0].textContent).toBe('2');
-        expect(buttons[1].textContent).toBe('10');
+        expect(buttons[0]?.textContent).toBe('2');
+        expect(buttons[1]?.textContent).toBe('10');
         root.remove();
     });
 });

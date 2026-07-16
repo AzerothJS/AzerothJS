@@ -358,7 +358,7 @@ export function parsePropsPattern(patternText: string): Map<string, string>
     const decl = stmt !== undefined && ts.isVariableStatement(stmt)
         ? stmt.declarationList.declarations[0]
         : undefined;
-    if (decl === undefined || decl.name === undefined || !ts.isObjectBindingPattern(decl.name))
+    if (decl === undefined || !ts.isObjectBindingPattern(decl.name))
     {
         return aliases;
     }

@@ -1,55 +1,48 @@
 {
     "name": "@azerothjs/devtools",
     "version": "0.7.0-beta.1",
-    "engines": { "node": ">=24" },
+    "engines": {
+        "node": ">=24"
+    },
     "description": "AzerothJS devtools - tabbed in-page panel (tree, dependency graph, timeline, performance) plus an embeddable agent",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports":
-    {
-        ".":
-        {
+    "exports": {
+        ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
-    "files":
-    [
+    "files": [
         "dist"
     ],
     "sideEffects": false,
-    "scripts":
-    {
-        "build": "tsc -p tsconfig.build.json",
+    "scripts": {
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "dependencies":
-    {
+    "dependencies": {
         "@azerothjs/reactivity": "0.7.0-beta.1"
     },
-    "publishConfig":
-    {
+    "publishConfig": {
         "access": "public"
     },
-    "author":
-    {
+    "author": {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "repository":
-    {
+    "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/devtools"
     },
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/devtools",
-    "bugs":
-    {
+    "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

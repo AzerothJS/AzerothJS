@@ -75,7 +75,7 @@ describe('useLoader - basic data flow', () =>
                 component: leaf,
                 loader: async ({ params }) =>
                 {
-                    received.push(params.id);
+                    received.push(params.id ?? '');
                     return params.id;
                 }
             }
@@ -146,7 +146,7 @@ describe('useLoader - re-running on navigation', () =>
                 component: leaf,
                 loader: async ({ params }) =>
                 {
-                    calls.push(params.id);
+                    calls.push(params.id ?? '');
                     return `user-${ params.id }`;
                 }
             }
@@ -176,7 +176,7 @@ describe('useLoader - re-running on navigation', () =>
                 component: leaf,
                 loader: async ({ params }) =>
                 {
-                    calls.push(params.id);
+                    calls.push(params.id ?? '');
                     return params.id;
                 }
             }
@@ -224,7 +224,7 @@ describe('useLoader - re-running on navigation', () =>
                     {
                         signal.addEventListener('abort', () =>
                         {
-                            aborted.push(params.id);
+                            aborted.push(params.id ?? '');
                             reject(new Error('aborted'));
                         });
                         // Resolve after a macrotask so a quick navigation can abort it.

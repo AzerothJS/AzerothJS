@@ -40,8 +40,9 @@ export interface DevtoolsNode
     /** What kind of reactive primitive this is. */
     kind: DevtoolsNodeKind;
 
-    /** Optional debug name (from the primitive's `options.name`). */
-    name?: string;
+    /** Optional debug name (from the primitive's `options.name`). Explicit undefined is
+     * equivalent to absent. */
+    name?: string | undefined;
 
     /** Id of the owning root, or 0 when created outside any root. */
     owner: number;
@@ -73,7 +74,7 @@ export interface GraphSnapshotNode
 {
     id: number;
     kind: DevtoolsNodeKind;
-    name?: string;
+    name?: string | undefined;
     owner: number;
     /** Producer version (bumps on value change); 0 for a pure consumer (effect/root). */
     version: number;
@@ -112,7 +113,7 @@ export interface PeekResult
 interface NodeRecord
 {
     kind: DevtoolsNodeKind;
-    name?: string;
+    name?: string | undefined;
     owner: number;
     /** The producer side (signal value, memo cache, or a memo acting as a producer). */
     producer?: Producer;
@@ -157,12 +158,6 @@ export function setDevtoolsHook(next: DevtoolsHook): () => void
     };
 }
 
-/** Whether a devtools hook is currently attached. Hot-path guard for the primitives. @internal */
-export function devtoolsActive(): boolean
-{
-    return hook !== null;
-}
-
 /**
  * Registers a newly created node and announces it to the hook. Returns the assigned id, or 0 when no
  * hook is attached (the caller stores 0 and skips all later devtools work for that node). The owning
@@ -172,7 +167,7 @@ export function devtoolsActive(): boolean
  */
 export function dtRegister(
     kind: DevtoolsNodeKind,
-    record: Omit<NodeRecord, 'kind' | 'owner'> & { name?: string }
+    record: Omit<NodeRecord, 'kind' | 'owner'> & { name?: string | undefined }
 ): number
 {
     if (hook === null)

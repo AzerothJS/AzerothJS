@@ -143,7 +143,7 @@ describe('parseModule - totality and documented limitations', () =>
         // The `component` keyword is recognised at depth 0, but the leading
         // `export ` is NOT absorbed into the component - it stays opaque before it.
         expect(m.items.map(i => i.kind)).toEqual(['opaque', 'component']);
-        const opaque = m.items[0];
+        const opaque = m.items[0]!;
         expect(src.slice(opaque.start, opaque.end)).toBe('export ');
         const c = m.items[1] as ComponentDecl;
         expect(c.start).toBe('export '.length);

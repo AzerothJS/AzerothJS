@@ -49,6 +49,13 @@ export function tmpl(html: string): () => HTMLElement
             template.innerHTML = html;
         }
 
-        return template.content.firstChild!.cloneNode(true) as HTMLElement;
+        const root = template.content.firstChild;
+        if (root === null)
+        {
+            // Compiled templates always carry one root element; an empty one means
+            // corrupted compiler output - fail with a message, not a TypeError.
+            throw new Error('tmpl(): compiled template HTML produced no root node.');
+        }
+        return root.cloneNode(true) as HTMLElement;
     };
 }

@@ -176,7 +176,7 @@ describe('For - keyed reconciliation', () =>
         expect(after[1]).toBe(rowA);
         // E is brand new.
         expect(after[2]).not.toBe(rowA);
-        expect(after[2].textContent).toBe('e');
+        expect(after[2]?.textContent).toBe('e');
         container.remove();
     });
 
@@ -288,7 +288,7 @@ describe('For - edge cases', () =>
             children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
         })));
         expect(warn).toHaveBeenCalledTimes(1);
-        expect(warn.mock.calls[0][0]).toContain('duplicate key');
+        expect(warn.mock.calls[0]?.[0]).toContain('duplicate key');
 
         // A subsequent update with another duplicate does not warn again.
         setItems([

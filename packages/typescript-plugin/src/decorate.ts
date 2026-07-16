@@ -135,7 +135,7 @@ export function decorateLanguageServiceHost(
     // NOT override getScriptVersion: the original (in tsserver, the Project's)
     // both creates+attaches the ScriptInfo and reports a version that tracks the
     // file on disk - exactly what the document registry needs.
-    const origSnapshot = host.getScriptSnapshot?.bind(host);
+    const origSnapshot = host.getScriptSnapshot.bind(host);
     host.getScriptSnapshot = (fileName): tsModule.IScriptSnapshot | undefined =>
     {
         if (isAzerothFile(fileName))
@@ -143,7 +143,7 @@ export function decorateLanguageServiceHost(
             const code = virtualCodeFor(fileName);
             return code === undefined ? undefined : ts.ScriptSnapshot.fromString(code);
         }
-        return origSnapshot ? origSnapshot(fileName) : undefined;
+        return origSnapshot(fileName);
     };
 
     const origKind = host.getScriptKind?.bind(host);
@@ -159,7 +159,7 @@ export function decorateLanguageServiceHost(
         return origKind ? origKind(fileName) : scriptKindFromName(ts, fileName);
     };
 
-    const origReadFile = host.readFile?.bind(host);
+    const origReadFile = host.readFile.bind(host);
     host.readFile = (fileName, encoding): string | undefined =>
     {
         // Present `.azeroth` as its compiled TypeScript to anything reading
@@ -168,7 +168,7 @@ export function decorateLanguageServiceHost(
         {
             return virtualCodeFor(fileName);
         }
-        return origReadFile ? origReadFile(fileName, encoding) : ts.sys.readFile(fileName, encoding);
+        return origReadFile(fileName, encoding);
     };
 
     const origResolve = host.resolveModuleNameLiterals?.bind(host);
@@ -201,6 +201,10 @@ export function decorateLanguageServiceHost(
         {
             const text = literal.text;
 
+            // base and literals walk in lockstep (one resolution per literal);
+            // the fallback covers a misbehaving upstream resolver.
+            const resolved = base[index] ?? { resolvedModule: undefined };
+
             // Explicit `./x.azeroth`.
             if (isAzerothSpecifier(text))
             {
@@ -215,7 +219,7 @@ export function decorateLanguageServiceHost(
             // for `x.component.azeroth`) - try the `.azeroth` sibling. The base
             // resolver runs first, so a real `.ts` of the same name wins.
             const relative = text.startsWith('.') || text.startsWith('/');
-            if (!base[index].resolvedModule && relative && !text.endsWith(AZEROTH_EXT))
+            if (resolved.resolvedModule === undefined && relative && !text.endsWith(AZEROTH_EXT))
             {
                 const azerothPath = resolveSibling(containingFile, text + AZEROTH_EXT);
                 if (read(azerothPath) !== undefined)
@@ -224,7 +228,7 @@ export function decorateLanguageServiceHost(
                 }
             }
 
-            return base[index];
+            return resolved;
         });
     };
 

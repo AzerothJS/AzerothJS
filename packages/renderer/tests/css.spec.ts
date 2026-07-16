@@ -23,7 +23,7 @@ describe('css', () =>
         const s = css('.btn { color: red; }');
         expect(s.btn).toMatch(/^btn_[0-9a-z]+$/);
         // Scoped name carries the base name as a prefix.
-        expect(s.btn.startsWith('btn_')).toBe(true);
+        expect(s.btn?.startsWith('btn_')).toBe(true);
     });
 
     it('returns an unknown key unchanged (typo degrades to a harmless class)', () =>
@@ -48,7 +48,7 @@ describe('css', () =>
         const second = css('.same { color: green; }');
         expect(first.same).toBe(second.same);
         // Only one stylesheet recorded for identical text.
-        expect(collectStyleSheet()).toBe('.' + first.same + ' { color: green; }');
+        expect(collectStyleSheet()).toBe('.' + (first.same ?? '') + ' { color: green; }');
     });
 
     it('gives different rule text different scope suffixes (no collision)', () =>
@@ -63,9 +63,9 @@ describe('css', () =>
         const s = css('.inject { padding: 1px; }');
         const tags = document.head.querySelectorAll('style[data-azeroth-css]');
         expect(tags.length).toBe(1);
-        const scope = s.inject.split('_')[1];
-        expect(tags[0].getAttribute('data-azeroth-css')).toBe(scope);
-        expect(tags[0].textContent).toContain(`.${ s.inject }`);
+        const scope = s.inject?.split('_')[1];
+        expect(tags[0]?.getAttribute('data-azeroth-css')).toBe(scope);
+        expect(tags[0]?.textContent).toContain(`.${ s.inject }`);
 
         // Re-evaluating identical CSS does not inject a second tag.
         css('.inject { padding: 1px; }');

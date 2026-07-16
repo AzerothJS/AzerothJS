@@ -38,7 +38,7 @@ import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
-import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY } from './keyword-spec.ts';
+import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem } from './keyword-spec.ts';
 import { rewriteReactive, setterName } from './rewrite.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
@@ -178,6 +178,10 @@ export function generateModule(source: string, filename = 'module.azeroth'): Com
     if (errors.length > 0)
     {
         const first = errors[0];
+        if (first === undefined)
+        {
+            throw new CompileError('markup parse failed', 0);
+        }
         throw new CompileError(`${ first.code }: ${ first.message }`, first.start);
     }
 
@@ -384,7 +388,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
                 lines.push(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`);
             }
         }
-        else if (item.kind === 'resource' || item.kind === 'stream' || item.kind === 'store' || item.kind === 'selector')
+        else if (isFactoryItem(item))
         {
             // Factory keywords are declaration sugar: `const NAME = createX(...)`, read explicitly
             // (NAME.data()/NAME.items()/NAME(key)). The value and any with-clause expressions still go
@@ -464,7 +468,9 @@ function emitOutput(source: string, plan: RenderPlan | null, sources: ReactiveSo
     // can't clone (no single element root), but are still IR-driven - the mode-aware
     // IR->h() emitter builds in dom, serializes in string, and adopts in hydrate, all
     // through h(): one emitter for top-level output.
-    return `return ${ emitNode(source, plan.template, plan, sources, emit) };`;
+    // Parenthesized so a leading newline in the emitted expression cannot trigger ASI
+    // (`return` + line break silently becomes `return;`).
+    return `return (${ emitNode(source, plan.template, plan, sources, emit) });`;
 }
 
 /** Emits the template-clone path for a host-only output. */
@@ -594,7 +600,7 @@ function emitUnifiedBody(source: string, plan: RenderPlan, sources: ReactiveSour
     emit.used.add('isHydrating');
     const adoptOrSerialize = emitNode(source, plan.template, plan, sources, emit);
     const clone = emitTemplatePath(source, plan, sources, emit);
-    return `if (isStringMode() || isHydrating())\n    {\n        return ${ adoptOrSerialize };\n    }\n    ${ clone }`;
+    return `if (isStringMode() || isHydrating())\n    {\n        return (${ adoptOrSerialize });\n    }\n    ${ clone }`;
 }
 
 /**
@@ -624,7 +630,8 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         else if (prop.kind === 'event')
         {
             const handler = maybeRewrite(emit, handlerSource(source, prop.handler), sources, prop.handler.start);
-            parts.push(`get on${ capitalize(prop.event) }() { return ${ handler }; }`);
+            // Parens guard against ASI when the user-authored handler starts on its own line.
+            parts.push(`get on${ capitalize(prop.event) }() { return (${ handler }); }`);
         }
         else if (prop.kind === 'bind')
         {
@@ -635,20 +642,23 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
             const bound = source.slice(prop.expr.start, prop.expr.end);
             const value = rewriteReactive(bound, sources, prop.expr.start);
             const handler = `($event) => ${ rewriteReactive(`${ bound } = $event`, sources, prop.expr.start) }`;
-            parts.push(`get ${ objectKey(prop.prop) }() { return ${ value }; }`);
-            parts.push(`get on${ capitalize(prop.event) }() { return ${ handler }; }`);
+            parts.push(`get ${ objectKey(prop.prop) }() { return (${ value }); }`);
+            parts.push(`get on${ capitalize(prop.event) }() { return (${ handler }); }`);
         }
         else
         {
             const value = rewriteExpr(source, prop.expr, sources, emit);
             // Factory props (`fallback`) are lazy thunks; value props are reactive getters.
-            parts.push(FACTORY_ATTRS.has(prop.name) ? `${ objectKey(prop.name) }: () => (${ value })` : `get ${ objectKey(prop.name) }() { return ${ value }; }`);
+            parts.push(FACTORY_ATTRS.has(prop.name) ? `${ objectKey(prop.name) }: () => (${ value })` : `get ${ objectKey(prop.name) }() { return (${ value }); }`);
         }
     }
 
     if (binding.children !== null)
     {
-        parts.push(`get children() { return ${ emitChildrenValue(source, binding.children, sources, emit) }; }`);
+        // Parens are load-bearing: a children expression starting on the line after the
+        // opening brace would otherwise emit `return` + newline, which ASI silently turns
+        // into `return;` - children becomes undefined and <For> crashes at runtime.
+        parts.push(`get children() { return (${ emitChildrenValue(source, binding.children, sources, emit) }); }`);
     }
 
     return parts.length === 0 ? `${ binding.tag }()` : `${ binding.tag }({ ${ parts.join(', ') } })`;
@@ -702,7 +712,8 @@ function emitMarkupChildren(source: string, plan: RenderPlan, sources: ReactiveS
     const root = plan.template;
     const children = root.kind === 'fragment' ? root.children : [root];
     const items = children.map(child => emitNode(source, child, plan, sources, emit));
-    return items.length === 1 ? items[0] : `[${ items.join(', ') }]`;
+    const solo = items[0];
+    return items.length === 1 && solo !== undefined ? solo : `[${ items.join(', ') }]`;
 }
 
 /**
@@ -750,7 +761,7 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
 /** `click` -> `Click`, for reconstructing a component's `onEvent` prop name. */
 function capitalize(text: string): string
 {
-    return text.length === 0 ? text : text[0].toUpperCase() + text.slice(1);
+    return text.length === 0 ? text : (text[0] ?? '').toUpperCase() + text.slice(1);
 }
 
 /**
@@ -1110,7 +1121,8 @@ function findPiece<T extends { outStart: number }>(pieces: T[], outOffset: numbe
     while (lo < hi)
     {
         const mid = (lo + hi + 1) >> 1;
-        if (pieces[mid].outStart <= outOffset)
+        const piece = pieces[mid];
+        if (piece !== undefined && piece.outStart <= outOffset)
         {
             lo = mid;
         }
@@ -1119,7 +1131,13 @@ function findPiece<T extends { outStart: number }>(pieces: T[], outOffset: numbe
             hi = mid - 1;
         }
     }
-    return pieces[lo];
+    const found = pieces[lo];
+    if (found === undefined)
+    {
+        // The emit loop always produces at least one piece before mapping runs.
+        throw new Error('findPiece: the piece table is empty.');
+    }
+    return found;
 }
 
 /** Builds a line-level source map (one segment per generated line). */

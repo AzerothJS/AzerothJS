@@ -94,7 +94,7 @@ const mounted = new Set<RenderResult>();
  * unmount();
  * ```
  */
-export function renderTest(component: () => HTMLElement): RenderResult
+export function renderTest(component: () => HTMLElement | DocumentFragment): RenderResult
 {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -221,10 +221,16 @@ export function leakGuard(...getters: Getter<unknown>[]): () => void
         const leaks: string[] = [];
         for (let i = 0; i < getters.length; i++)
         {
-            const now = subscriberCount(getters[i]);
-            if (now > baseline[i])
+            const getter = getters[i];
+            const before = baseline[i];
+            if (getter === undefined || before === undefined)
             {
-                leaks.push(`getter #${ i }: ${ baseline[i] } -> ${ now } subscribers`);
+                continue;
+            }
+            const now = subscriberCount(getter);
+            if (now > before)
+            {
+                leaks.push(`getter #${ i }: ${ before } -> ${ now } subscribers`);
             }
         }
         if (leaks.length > 0)

@@ -37,8 +37,8 @@ describe('createFieldArray - rows + mutation', () =>
                 initial: [{ description: 'Setup', qty: 2, price: 100 }]
             });
             expect(items.rows()).toHaveLength(1);
-            expect(items.rows()[0].form.values()).toEqual({ description: 'Setup', qty: 2, price: 100 });
-            expect(typeof items.rows()[0].key).toBe('number');
+            expect(items.rows()[0]!.form.values()).toEqual({ description: 'Setup', qty: 2, price: 100 });
+            expect(typeof items.rows()[0]!.key).toBe('number');
             dispose();
         });
     });
@@ -91,11 +91,11 @@ describe('createFieldArray - rows + mutation', () =>
                     { description: 'C', qty: 1, price: 3 }
                 ]
             });
-            const keyA = items.rows()[0].key;
+            const keyA = items.rows()[0]!.key;
             items.move(0, 2);
             expect(items.values().map((v) => v.description)).toEqual(['B', 'C', 'A']);
             // The moved row kept its identity (same key, same form instance).
-            expect(items.rows()[2].key).toBe(keyA);
+            expect(items.rows()[2]!.key).toBe(keyA);
             dispose();
         });
     });
@@ -124,8 +124,8 @@ describe('createFieldArray - aggregation + validation', () =>
         createRoot((dispose) =>
         {
             const items = createFieldArray<LineItem>({ blank: blankItem, initial: [blankItem()] });
-            items.rows()[0].form.setValue('qty', 5);
-            expect(items.values()[0].qty).toBe(5);
+            items.rows()[0]!.form.setValue('qty', 5);
+            expect(items.values()[0]?.qty).toBe(5);
             dispose();
         });
     });
@@ -141,7 +141,7 @@ describe('createFieldArray - aggregation + validation', () =>
             });
             // The blank row has an empty description -> invalid.
             expect(items.isValid()).toBe(false);
-            items.rows()[0].form.setValue('description', 'Widget');
+            items.rows()[0]!.form.setValue('description', 'Widget');
             expect(items.isValid()).toBe(true);
             dispose();
         });
@@ -174,11 +174,11 @@ describe('createFieldArray - aggregation + validation', () =>
                 validate: { description: combine(required('Required')) }
             });
             // Nothing touched yet, but validity is live.
-            expect(items.rows()[0].form.touched().description).toBe(false);
+            expect(items.rows()[0]!.form.touched().description).toBe(false);
             const ok = items.validateAll();
             expect(ok).toBe(false);                                    // blank description is invalid
-            expect(items.rows()[0].form.touched().description).toBe(true);  // revealed
-            items.rows()[0].form.setValue('description', 'Widget');
+            expect(items.rows()[0]!.form.touched().description).toBe(true);  // revealed
+            items.rows()[0]!.form.setValue('description', 'Widget');
             expect(items.validateAll()).toBe(true);
             dispose();
         });
@@ -207,7 +207,7 @@ describe('createFieldArray - lifecycle', () =>
             }
         }));
 
-        items.rows()[0].form.setValue('sku', 'changed');    // changed + sync-valid -> async fires
+        items.rows()[0]!.form.setValue('sku', 'changed');    // changed + sync-valid -> async fires
         await flush();
         expect(aborted).toBe(false);
         items.remove(0);                                    // disposing the row aborts its in-flight check
@@ -235,7 +235,7 @@ describe('createFieldArray - lifecycle', () =>
             }
         }));
 
-        items.rows()[0].form.setValue('sku', 'changed');
+        items.rows()[0]!.form.setValue('sku', 'changed');
         await flush();
         dispose();                                          // unmount -> onRootDispose tears down the row
         expect(aborted).toBe(true);

@@ -70,7 +70,7 @@ function locationAt(starts: number[], offset: number): { line: number; column: n
     while (lo <= hi)
     {
         const mid = (lo + hi) >> 1;
-        if (starts[mid] <= offset)
+        if ((starts[mid] ?? 0) <= offset)
         {
             idx = mid;
             lo = mid + 1;
@@ -80,7 +80,7 @@ function locationAt(starts: number[], offset: number): { line: number; column: n
             hi = mid - 1;
         }
     }
-    return { line: idx + 1, column: offset - starts[idx] + 1 };
+    return { line: idx + 1, column: offset - (starts[idx] ?? 0) + 1 };
 }
 
 /**
@@ -96,7 +96,11 @@ function locationAt(starts: number[], offset: number): { line: number; column: n
  */
 function mapFix(fix: Rule.Fix, projection: Projection): Rule.Fix | null
 {
-    const mapping = projection.mapping!;
+    const mapping = projection.mapping;
+    if (mapping === null)
+    {
+        return null;
+    }
     const start = mapping.toOriginal(fix.range[0]);
     const end = mapping.toOriginal(fix.range[1]);
     if (start === null || end === null || end < start)

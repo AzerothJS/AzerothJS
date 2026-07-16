@@ -191,7 +191,7 @@ describe('Show value-callback', () =>
     it('SSR: serializes the callback branch with the evaluated value', () =>
     {
         const App = (): HTMLElement => h('div', {}, Show<User | null>({
-            when: () => ({ name: 'Server' }) as User | null,
+            when: () => ({ name: 'Server' }),
             children: (u) => h('span', {}, () => u().name)
         }));
         const html = renderToString(App);

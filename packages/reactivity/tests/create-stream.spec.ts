@@ -114,7 +114,7 @@ describe('createStream - error and cancellation', () =>
 
     it('cancel() ends the stream and preserves the partial text', async () =>
     {
-        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
         const body = new ReadableStream<Uint8Array>({
             start(c)
             {
@@ -130,7 +130,7 @@ describe('createStream - error and cancellation', () =>
         });
 
         await until(() => controller !== undefined);
-        controller.enqueue(encoder.encode('partial-data'));
+        controller!.enqueue(encoder.encode('partial-data'));
         await until(() => stream.partial() === 'partial-data');
         expect(stream.done()).toBe(false);
 

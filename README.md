@@ -143,6 +143,11 @@ Everything is versioned in lockstep. `azerothjs` is the one package an applicati
 | [`@azerothjs/form`](packages/form) | Forms: sync/cross-field/async validation, field arrays, submit lifecycle. |
 | [`@azerothjs/router`](packages/router) | Reactive client-side routing with nested layouts and loaders. |
 | [`@azerothjs/server`](packages/server) | `renderToString` / `renderToStaticMarkup` / `renderToDocument`. |
+| [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. |
+| [`@azerothjs/schema`](packages/schema) | Validation combinators whose TypeScript types are inferred from the declaration. |
+| [`@azerothjs/api`](packages/api) | One API contract: the server mount and a fully inferred client, no codegen. |
+| [`@azerothjs/ws`](packages/ws) | WebSocket server implementing RFC 6455 from scratch. |
+| [`@azerothjs/cron`](packages/cron) | Cron scheduler with honest timezone/DST semantics and overlap policies. |
 | [`@azerothjs/testing`](packages/testing) | `renderTest`, `cleanup`, `leakGuard`, `fire` for app tests. |
 | [`@azerothjs/devtools`](packages/devtools) | Dev-only in-page panel: reactive tree, dependency graph, timeline. |
 | [`@azerothjs/eslint-plugin`](packages/eslint-plugin) | Reactivity lint rules + a processor that makes `.azeroth` a first-class lint target. |
@@ -180,7 +185,7 @@ An npm-workspaces monorepo, Node >= 24.
 ```sh
 npm install
 npm run build        # all packages, dependency order
-npm test             # vitest (1450+ tests)
+npm test             # vitest (the full suite)
 npm run lint         # ESLint (includes .azeroth via the plugin)
 npm run typecheck    # tsc over the whole workspace
 npm run verify       # everything above + publish contract + leak gate

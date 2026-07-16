@@ -32,7 +32,7 @@ export interface ReactiveSources
      * for a defaulted binding, or `props.orig` for a rename `{ orig: a }`. So a destructured prop stays
      * reactive exactly as `props.a` would. Empty/absent for the plain `props: P` form.
      */
-    propAliases?: ReadonlyMap<string, string>;
+    propAliases?: ReadonlyMap<string, string> | undefined;
 
     /**
      * `form` declarations: form name -> its field-key set (the keys of the form's `initial` object). A

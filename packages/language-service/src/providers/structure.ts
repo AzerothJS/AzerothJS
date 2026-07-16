@@ -243,7 +243,11 @@ function convertSelectionRange(ctx: RequestContext, tsRange: ts.SelectionRange):
     let result: SelectionRange | undefined;
     for (let i = ranges.length - 1; i >= 0; i--)
     {
-        result = { range: ranges[i], parent: result };
+        const range = ranges[i];
+        if (range !== undefined)
+        {
+            result = { range, parent: result };
+        }
     }
     return result ?? null;
 }

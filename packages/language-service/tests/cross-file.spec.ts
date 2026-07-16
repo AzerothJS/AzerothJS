@@ -44,7 +44,7 @@ describe('cross-file .ts <-> .azeroth intelligence', () =>
     {
         const { ls, uri } = open();
         // Caret right after `defaultUser.` in `{ defaultUser.name }` on line 6.
-        const dot = CONSUMER.split('\n')[6].indexOf('defaultUser.') + 'defaultUser.'.length;
+        const dot = CONSUMER.split('\n')[6]!.indexOf('defaultUser.') + 'defaultUser.'.length;
         const items = ls.getCompletions(uri, { line: 6, character: dot });
         const labels = items.map(i => i.label);
         expect(labels).toContain('id');
@@ -54,7 +54,7 @@ describe('cross-file .ts <-> .azeroth intelligence', () =>
     it('hovers an imported function with its real signature', () =>
     {
         const { ls, uri } = open();
-        const col = CONSUMER.split('\n')[5].indexOf('greet(') + 1;
+        const col = CONSUMER.split('\n')[5]!.indexOf('greet(') + 1;
         const hover = ls.getHover(uri, { line: 5, character: col });
         expect(hover).not.toBeNull();
         expect(JSON.stringify(hover)).toContain('User');
@@ -63,7 +63,7 @@ describe('cross-file .ts <-> .azeroth intelligence', () =>
     it('jumps to definition in the .ts file', () =>
     {
         const { ls, uri } = open();
-        const col = CONSUMER.split('\n')[5].indexOf('greet(') + 1;
+        const col = CONSUMER.split('\n')[5]!.indexOf('greet(') + 1;
         const defs = ls.getDefinition(uri, { line: 5, character: col });
         expect(defs.some(d => d.uri === helpersUri)).toBe(true);
     });
@@ -71,7 +71,7 @@ describe('cross-file .ts <-> .azeroth intelligence', () =>
     it('finds references spanning both files', () =>
     {
         const { ls, uri } = open();
-        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const col = CONSUMER.split('\n')[4]!.indexOf('defaultUser');
         const refs = ls.getReferences(uri, { line: 4, character: col });
         expect(refs.some(r => r.uri === helpersUri)).toBe(true); // the declaration
         expect(refs.some(r => r.uri === uri)).toBe(true);        // the usage in the component
@@ -80,10 +80,10 @@ describe('cross-file .ts <-> .azeroth intelligence', () =>
     it('renames safely across the file boundary', () =>
     {
         const { ls, uri } = open();
-        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const col = CONSUMER.split('\n')[4]!.indexOf('defaultUser');
         const edit = ls.getRenameEdits(uri, { line: 4, character: col }, 'currentUser');
         expect(edit).not.toBeNull();
-        const uris = Object.keys(edit!.changes ?? {});
+        const uris = Object.keys(edit!.changes);
         expect(uris).toContain(helpersUri); // edits the `.ts` declaration
         expect(uris).toContain(uri);        // and the `.azeroth` usages
     });
@@ -118,7 +118,7 @@ describe('project-rooted mode (the language server\'s configuration)', () =>
     it('find-references reaches a `.ts`-only usage no import chain leads to', () =>
     {
         const { ls, uri } = openRooted();
-        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const col = CONSUMER.split('\n')[4]!.indexOf('defaultUser');
         const refs = ls.getReferences(uri, { line: 4, character: col });
         expect(refs.some(r => r.uri === consumerTsUri)).toBe(true);
     });
@@ -126,16 +126,16 @@ describe('project-rooted mode (the language server\'s configuration)', () =>
     it('rename covers the `.ts`-only usage (no silent stale code)', () =>
     {
         const { ls, uri } = openRooted();
-        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const col = CONSUMER.split('\n')[4]!.indexOf('defaultUser');
         const edit = ls.getRenameEdits(uri, { line: 4, character: col }, 'currentUser');
         expect(edit).not.toBeNull();
-        expect(Object.keys(edit!.changes ?? {})).toContain(consumerTsUri);
+        expect(Object.keys(edit!.changes)).toContain(consumerTsUri);
     });
 
     it('default (non-rooted) mode misses it - documenting WHY the server roots', () =>
     {
         const { ls, uri } = open();
-        const col = CONSUMER.split('\n')[4].indexOf('defaultUser');
+        const col = CONSUMER.split('\n')[4]!.indexOf('defaultUser');
         const refs = ls.getReferences(uri, { line: 4, character: col });
         expect(refs.some(r => r.uri === consumerTsUri)).toBe(false);
     });

@@ -7,13 +7,13 @@
 import { describe, it, expect } from 'vitest';
 import { createRoot } from '@azerothjs/reactivity';
 import { createRouter, createMemoryHistory, targetToFullPath } from '@azerothjs/router';
-import type { Route } from '@azerothjs/router';
+import type { Route, MountNode } from '@azerothjs/router';
 
 // Each route component is a DISTINCT function so match().route identity
 // assertions are meaningful. They return a real (empty) element.
 const Home = (): HTMLElement => document.createElement('div');
 const About = (): HTMLElement => document.createElement('div');
-const UsersLayout = (props: { children?: HTMLElement }): HTMLElement =>
+const UsersLayout = (props: { children?: MountNode | undefined }): MountNode =>
 {
     const el = document.createElement('div');
     if (props.children)
@@ -155,14 +155,14 @@ describe('createRouter - match kinds', () =>
     {
         const m = withRouter('/users', (r) => r.match()!);
         expect(m.route.component).toBe(UserList);
-        expect(m.matched).toEqual([routes[2], routes[2].children![0]]);
+        expect(m.matched).toEqual([routes[2], routes[2]!.children![0]]);
     });
 
     it('matches a nested param route and records the root-to-leaf chain', () =>
     {
         const m = withRouter('/users/42', (r) => r.match()!);
         expect(m.route.component).toBe(UserProfile);
-        expect(m.matched).toEqual([routes[2], routes[2].children![1]]);
+        expect(m.matched).toEqual([routes[2], routes[2]!.children![1]]);
         expect(m.params).toEqual({ id: '42' });
     });
 

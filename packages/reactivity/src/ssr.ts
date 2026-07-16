@@ -201,6 +201,7 @@ export function serializeChild(child: unknown): string
         return markersOn ? `<!--[-->${ inner }<!--]-->` : inner;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort fallback: primitives stringify correctly, and a plain object landing here is caller error surfaced as visible "[object Object]" rather than a throw mid-render
     return escapeText(String(child));
 }
 

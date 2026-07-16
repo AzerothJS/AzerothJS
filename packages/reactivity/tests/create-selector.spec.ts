@@ -25,7 +25,7 @@ describe('createSelector', () =>
                 createEffect(() =>
                 {
                     state[id] = isSelected(id);
-                    runs[id]++;
+                    runs[id] = (runs[id] ?? 0) + 1;
                 });
             }
             expect(state).toEqual({ 1: true, 2: false, 3: false });

@@ -243,7 +243,7 @@ export function startServer(connection: Connection = createConnection()): void
     const nearestProjectDir = (filePath: string): string | null =>
     {
         let dir = norm(dirname(filePath));
-        while (true)
+        for (;;)
         {
             if (existsSync(join(dir, 'tsconfig.json')))
             {
@@ -336,7 +336,7 @@ export function startServer(connection: Connection = createConnection()): void
         }
         try
         {
-            applyConfig(await connection.workspace.getConfiguration('azeroth'));
+            applyConfig(await connection.workspace.getConfiguration('azeroth') as Record<string, unknown> | undefined);
         }
         catch
         {
@@ -357,8 +357,10 @@ export function startServer(connection: Connection = createConnection()): void
                 registerRoot(folder.uri);
             }
         }
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- rootUri is the fallback for clients that do not send workspaceFolders
         else if (params.rootUri)
         {
+            // eslint-disable-next-line @typescript-eslint/no-deprecated -- see above
             registerRoot(params.rootUri);
         }
 
@@ -538,7 +540,7 @@ export function startServer(connection: Connection = createConnection()): void
             return;
         }
         const diagnostics = settings.diagnostics.enable ? safe(() => serviceFor(uri).getDiagnostics(uri), []) : [];
-        connection.sendDiagnostics({ uri, diagnostics });
+        void connection.sendDiagnostics(wire({ uri, diagnostics }));
     };
 
     documents.onDidOpen((event) =>
@@ -568,7 +570,7 @@ export function startServer(connection: Connection = createConnection()): void
             return;
         }
         serviceFor(event.document.uri).didClose(event.document.uri);
-        connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+        void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
     });
 
     // --- Feature requests: forward to the service, return its (LSP-shaped) results. ---
@@ -583,8 +585,17 @@ export function startServer(connection: Connection = createConnection()): void
     // were already plain (props, attributes, built-ins) look identical.
     const markdownDoc = <T extends { documentation?: unknown }>(item: T): T =>
         typeof item.documentation === 'string'
-            ? { ...item, documentation: { kind: 'markdown', value: item.documentation } } as T
+            ? { ...item, documentation: { kind: 'markdown', value: item.documentation } }
             : item;
+
+    /**
+     * The in-repo wire types (language-service protocol.ts) and the vscode-languageserver
+     * declarations are the SAME JSON on the wire - an optional field carrying undefined
+     * serializes identically to an absent one - but exactOptionalPropertyTypes makes the two
+     * declaration families nominally incompatible. Every handler result crosses here, once.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the parameter IS the point: it names the LSP-side target
+    const wire = <T,>(value: unknown): T => value as T;
 
     connection.onCompletion((params) =>
     {
@@ -593,12 +604,12 @@ export function startServer(connection: Connection = createConnection()): void
             return [];
         }
         lastCompletionUri = params.textDocument.uri;
-        return safe(
+        return wire(safe(
             () => serviceFor(params.textDocument.uri)
                 .getCompletions(params.textDocument.uri, params.position, settings.suggest)
                 .map(markdownDoc),
             []
-        );
+        ));
     });
 
     connection.onCompletionResolve((item) =>
@@ -609,7 +620,7 @@ export function startServer(connection: Connection = createConnection()): void
         }
         // The service's CompletionItem mirrors the LSP one; the only shape
         // difference is `kind` optionality, so the cast at this boundary is safe.
-        return safe(() =>
+        return wire(safe(() =>
         {
             const resolved = serviceFor(lastCompletionUri).resolveCompletion(lastCompletionUri, item as unknown as ServiceCompletionItem);
             return {
@@ -620,7 +631,7 @@ export function startServer(connection: Connection = createConnection()): void
                     : { kind: 'markdown', value: resolved.documentation },
                 additionalTextEdits: resolved.additionalTextEdits
             };
-        }, item);
+        }, wire(item)));
     });
 
     connection.onHover((params) =>
@@ -630,7 +641,7 @@ export function startServer(connection: Connection = createConnection()): void
             return null;
         }
 
-        return safe(() =>
+        return wire(safe(() =>
         {
             const hover = serviceFor(params.textDocument.uri).getHover(params.textDocument.uri, params.position);
             if (!hover)
@@ -638,7 +649,7 @@ export function startServer(connection: Connection = createConnection()): void
                 return null;
             }
             return { contents: { kind: 'markdown', value: hover.contents }, range: hover.range };
-        }, null);
+        }, null));
     });
 
     connection.onDefinition((params) =>
@@ -657,14 +668,14 @@ export function startServer(connection: Connection = createConnection()): void
             : []);
 
     connection.onReferences((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.references
+        wire(isAzeroth(params.textDocument.uri) && settings.features.references
             ? safe(() => serviceFor(params.textDocument.uri).getReferences(params.textDocument.uri, params.position), [])
-            : []);
+            : []));
 
     connection.onDocumentHighlight((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.documentHighlight
+        wire(isAzeroth(params.textDocument.uri) && settings.features.documentHighlight
             ? safe(() => serviceFor(params.textDocument.uri).getDocumentHighlights(params.textDocument.uri, params.position), [])
-            : []);
+            : []));
 
     // prepareRename shares the rename toggle: validating the target up-front is
     // the first half of the same feature, so it gates behind features.rename.
@@ -679,26 +690,26 @@ export function startServer(connection: Connection = createConnection()): void
             : null);
 
     connection.onDocumentSymbol((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.documentSymbol
+        wire(isAzeroth(params.textDocument.uri) && settings.features.documentSymbol
             ? safe(() => serviceFor(params.textDocument.uri).getDocumentSymbols(params.textDocument.uri), [])
-            : []);
+            : []));
 
     connection.onWorkspaceSymbol((params) =>
-        // Workspace symbols span every root, so query each per-root service and
+        wire(// Workspace symbols span every root, so query each per-root service and
         // merge - the one handler that isn't keyed to a single document.
-        settings.features.workspaceSymbol
-            ? safe(() => [...services.values()].flatMap((s) => s.getWorkspaceSymbols(params.query)), [])
-            : []);
+            settings.features.workspaceSymbol
+                ? safe(() => [...services.values()].flatMap((s) => s.getWorkspaceSymbols(params.query)), [])
+                : []));
 
     connection.onSignatureHelp((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.signatureHelp
+        wire(isAzeroth(params.textDocument.uri) && settings.features.signatureHelp
             ? safe(() => serviceFor(params.textDocument.uri).getSignatureHelp(params.textDocument.uri, params.position), null)
-            : null);
+            : null));
 
     connection.onFoldingRanges((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.folding
+        wire(isAzeroth(params.textDocument.uri) && settings.features.folding
             ? safe(() => serviceFor(params.textDocument.uri).getFoldingRanges(params.textDocument.uri), [])
-            : []);
+            : []));
 
     connection.onCodeAction((params) =>
     {
@@ -706,13 +717,13 @@ export function startServer(connection: Connection = createConnection()): void
         {
             return [];
         }
-        return safe(() =>
+        return wire(safe(() =>
         {
             const codes = params.context.diagnostics
                 .map(diagnostic => (typeof diagnostic.code === 'number' ? diagnostic.code : undefined))
                 .filter((code): code is number => code !== undefined);
             return serviceFor(params.textDocument.uri).getCodeActions(params.textDocument.uri, params.range, codes);
-        }, []);
+        }, []));
     });
 
     connection.onDocumentFormatting((params) =>
@@ -726,9 +737,9 @@ export function startServer(connection: Connection = createConnection()): void
             : []);
 
     connection.languages.inlayHint.on((params) =>
-        isAzeroth(params.textDocument.uri)
+        wire(isAzeroth(params.textDocument.uri)
             ? safe(() => serviceFor(params.textDocument.uri).getInlayHints(params.textDocument.uri, params.range, settings.inlayHints), [])
-            : []);
+            : []));
 
     connection.onSelectionRanges((params) =>
         isAzeroth(params.textDocument.uri) && settings.features.selectionRange
@@ -801,9 +812,9 @@ export function startServer(connection: Connection = createConnection()): void
     });
 
     connection.onCodeLens((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.codeLens
+        wire(isAzeroth(params.textDocument.uri) && settings.features.codeLens
             ? safe(() => serviceFor(params.textDocument.uri).getCodeLenses(params.textDocument.uri), [])
-            : []);
+            : []));
 
     connection.onCodeLensResolve((lens) =>
     {
@@ -822,9 +833,9 @@ export function startServer(connection: Connection = createConnection()): void
     });
 
     connection.onDocumentLinks((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.documentLinks
+        wire(isAzeroth(params.textDocument.uri) && settings.features.documentLinks
             ? safe(() => serviceFor(params.textDocument.uri).getDocumentLinks(params.textDocument.uri), [])
-            : []);
+            : []));
 
     connection.onDocumentColor((params) =>
         isAzeroth(params.textDocument.uri) && settings.features.documentColor
@@ -832,9 +843,9 @@ export function startServer(connection: Connection = createConnection()): void
             : []);
 
     connection.onColorPresentation((params) =>
-        isAzeroth(params.textDocument.uri) && settings.features.documentColor
+        wire(isAzeroth(params.textDocument.uri) && settings.features.documentColor
             ? safe(() => serviceFor(params.textDocument.uri).getColorPresentations(params.textDocument.uri, params.color, params.range), [])
-            : []);
+            : []));
 
     // Custom request: the client calls this after the user types `>` so the
     // editor can auto-close the opening tag (VS Code has no built-in tag close

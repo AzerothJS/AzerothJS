@@ -130,9 +130,14 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
         let failed = false;
         for (let i = disposers.length - 1; i >= 0; i--)
         {
+            const disposer = disposers[i];
+            if (disposer === undefined)
+            {
+                continue;
+            }
             try
             {
-                disposers[i]();
+                disposer();
             }
             catch (err)
             {

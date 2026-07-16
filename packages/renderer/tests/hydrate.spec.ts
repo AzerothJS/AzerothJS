@@ -113,7 +113,7 @@ describe('hydrate - adoption', () =>
         const finalRows = Array.from(container.querySelectorAll('li'));
         expect(finalRows[0]).toBe(serverRows[0]);
         expect(finalRows[1]).toBe(serverRows[1]);
-        expect(finalRows[2].getAttribute('data-id')).toBe('3');
+        expect(finalRows[2]?.getAttribute('data-id')).toBe('3');
         container.remove();
     });
 });

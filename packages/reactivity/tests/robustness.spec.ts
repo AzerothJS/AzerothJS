@@ -23,7 +23,7 @@ describe('cyclic dependency detection', () =>
                 });
                 d();
             })
-        ).toThrowError(/[Cc]yclic effect/);
+        ).toThrow(/[Cc]yclic effect/);
     });
 
     it('the cyclic error is not a stack overflow', () =>
@@ -100,7 +100,7 @@ describe('argument validation', () =>
     it('createEffect / createMemo / batch / untrack reject non-functions with a TypeError', () =>
     {
 
-        const bad = (undefined as any);
+        const bad = (undefined as never);
         expect(() => createRoot((d) =>
         {
             createEffect(bad); d();
@@ -119,7 +119,7 @@ describe('argument validation', () =>
 
         expect(() => createRoot((d) =>
         {
-            on(123 as any, () =>
+            on(123 as never, () =>
             {}); d();
         })).toThrow(TypeError);
     });
@@ -127,7 +127,7 @@ describe('argument validation', () =>
     it('the error message names the API and the bad type', () =>
     {
 
-        expect(() => batch(42 as any)).toThrow(/batch expects a function, received a number/);
+        expect(() => batch(42 as never)).toThrow(/batch expects a function, received a number/);
     });
 });
 

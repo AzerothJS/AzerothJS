@@ -109,6 +109,23 @@ describe('createEffect - cleanup contract', () =>
         });
     });
 
+    it('ignores a truthy non-function return instead of treating it as a cleanup', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const list: number[] = [];
+            const [n, setN] = createSignal(0);
+            // The ubiquitous concise-arrow shape (as a JS consumer writes it): the body
+            // "returns" push()'s result, a truthy number. It must be ignored -
+            // registering it as a cleanup would crash the NEXT run's cleanup pass
+            // with "c is not a function".
+            createEffect((() => list.push(n())) as unknown as () => void);
+            expect(() => setN(1)).not.toThrow();
+            expect(list).toEqual([0, 1]);
+            dispose();
+        });
+    });
+
     it('onCleanup matches the returned-cleanup timing and supports multiple registrations', () =>
     {
         const calls: string[] = [];

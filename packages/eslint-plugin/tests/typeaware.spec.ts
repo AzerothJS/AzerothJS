@@ -33,11 +33,11 @@ function lint(source: string, rules: Linter.RulesRecord): Linter.LintMessage[]
     writeFileSync(path.join(fixtureAbs, 'src', 'C.azeroth'), source);
     const blocks = azerothProcessor.preprocess!(source, azPath);
     const raw = linter.verify(
-        typeof blocks[0] === 'string' ? blocks[0] : blocks[0].text,
+        typeof blocks[0] === 'string' ? blocks[0] : (blocks[0]?.text ?? ''),
         [{
             files: ['**/*.ts'],
             languageOptions: { parser: azerothParser },
-            plugins: { '@typescript-eslint': tsPlugin },
+            plugins: { '@typescript-eslint': tsPlugin as unknown as import('eslint').ESLint.Plugin },
             rules
         }],
         `${ azPath }/0.ts`

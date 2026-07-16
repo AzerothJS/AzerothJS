@@ -122,7 +122,7 @@ describe('useParams - slice memoization', () =>
             const seen: string[] = [];
             createEffect(() =>
             {
-                seen.push(params().id);
+                seen.push(params().id ?? '');
             });
             router.navigate('/users/2');
             router.navigate('/users/3');

@@ -125,7 +125,7 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
 ];
 
 /** Fast lookup of built-in component data by name. */
-export const BUILTIN_COMPONENT_MAP = new Map(BUILTIN_COMPONENTS.map(component => [component.name, component]));
+export const BUILTIN_COMPONENT_MAP: ReadonlyMap<string, BuiltinComponent> = new Map(BUILTIN_COMPONENTS.map(component => [component.name, component]));
 
 // Host-element vocabulary (HTML tags, attributes, and attribute values, with
 // MDN documentation) is provided by `vscode-html-languageservice` - the same
@@ -347,7 +347,7 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     derived: SIGNAL_OPTIONS,
     deferred:
     [
-        { name: 'timeout', type: 'number', doc: 'Debounce window in milliseconds - the value updates only after this many ms with no further source change. Default `150`.' }
+        { name: 'delay', type: 'number', doc: 'Debounce window in milliseconds - the value updates only after this many ms with no further source change. Default `150`.' }
     ],
     effect:
     [
@@ -355,7 +355,7 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     ],
     watch:
     [
-        { name: 'defer', type: 'boolean', doc: 'When `true`, skip the initial run - the body runs only on the first dependency change (with genuine previous values).' }
+        { name: 'skipInitial', type: 'boolean', doc: 'When `true`, skip the initial run - the body runs only on the first dependency change (with genuine previous values).' }
     ],
     resource:
     [
@@ -377,7 +377,8 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     // key surfaces there. Shared: validate / validateForm / validateAsync / asyncDebounceMs.
     form:
     [
-        { name: 'validate', type: '{ [K in keyof T]?: (value: T[K]) => string | null }', doc: 'Per-field sync validators. A field without one is always valid. Runs on every change and on submit.' },
+        { name: 'validate', type: '{ [K in keyof T]?: FieldValidator<T[K]> | Schema<T[K]> }', doc: 'Per-field sync rules - a validator function or an @azerothjs/schema node. A field without one is always valid. Runs on every change and on submit.' },
+        { name: 'schema', type: 'Schema<T>', doc: 'ONE @azerothjs/schema declaration validating the whole values object - the same schema the api client and the server boundary enforce. Issues land per-field; a per-field rule wins over a schema issue for the same field.' },
         { name: 'validateForm', type: '(values: T) => { [K in keyof T]?: string | null }', doc: 'Cross-field sync validation over the whole snapshot (password confirm, `end >= start`). Returns a partial field -> error map; a per-field error wins over a cross-field one.' },
         { name: 'validateAsync', type: '{ [K in keyof T]?: (value, signal: AbortSignal) => Promise<string | null> }', doc: 'Per-field async validators (server checks). Run after the sync validators pass, debounced, with an AbortSignal that cancels superseded requests; awaited on submit.' },
         { name: 'asyncDebounceMs', type: 'number', doc: 'Debounce (ms) before an async validator fires after the value settles. Default `300`.' },
@@ -403,9 +404,9 @@ export const KEYWORD_WITH_EXAMPLE: Record<string, string> =
 {
     state: 'state termsAccepted = false with { name: \'terms\' };',
     derived: 'derived total = price * quantity with { equals: (a, b) => a === b };',
-    deferred: 'deferred results = query with { timeout: 300 };',
+    deferred: 'deferred results = query with { delay: 300 };',
     effect: 'effect with { name: \'sync\' }\n{\n    save(data);\n}',
-    watch: 'watch (count) with { defer: true }\n{\n    log(count);\n}',
+    watch: 'watch (count) with { skipInitial: true }\n{\n    log(count);\n}',
     resource: 'resource user = (id) => fetchUser(id) with { source: selectedId };',
     stream: 'stream feed = (id) => openFeed(id) with { source: channelId, parse: \'sse\' };',
     selector: 'selector isActive = activeId with { equals: Object.is };',

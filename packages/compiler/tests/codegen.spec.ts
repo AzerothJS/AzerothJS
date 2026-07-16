@@ -126,16 +126,16 @@ describe('generateModule - reactive desugaring', () =>
     {
         const code = gen('import Field from "./Field.azeroth"; component C { state name = ""; <Field bind:value={name} /> }');
         // Value side: a reactive getter for the bound state.
-        expect(code).toContain('get value() { return name(); }');
+        expect(code).toContain('get value() { return (name()); }');
         // Write-back: the component calls onInput with the new VALUE (not a DOM event), rewritten to setter.
-        expect(code).toContain('get onInput() { return ($event) => setName($event); }');
+        expect(code).toContain('get onInput() { return (($event) => setName($event)); }');
     });
 
     it('bind:checked on a component writes back through onChange', () =>
     {
         const code = gen('import Toggle from "./Toggle.azeroth"; component C { state on = false; <Toggle bind:checked={on} /> }');
-        expect(code).toContain('get checked() { return on(); }');
-        expect(code).toContain('get onChange() { return ($event) => setOn($event); }');
+        expect(code).toContain('get checked() { return (on()); }');
+        expect(code).toContain('get onChange() { return (($event) => setOn($event)); }');
     });
 
     it('rejects bind: to a read-only derived on a component (same write-back guard as DOM)', () =>
@@ -425,14 +425,14 @@ describe('generateModule - control flow and components (slots)', () =>
         expect(code).toContain('Show');
         expect(code).toMatch(/bindSlot\(_n\d+, Show\(\{/);
         // The when prop is a reactive getter.
-        expect(code).toContain('get when() { return on(); }');
+        expect(code).toContain('get when() { return (on()); }');
     });
 
     it('emits a user component call with getter props and static props left literal', () =>
     {
         const code = gen('component C { state n = 0; <Foo count={n} label="hi" /> }');
         expect(code).toContain('Foo({');
-        expect(code).toContain('get count() { return n(); }');
+        expect(code).toContain('get count() { return (n()); }');
         expect(code).toContain('label: \'hi\'');
     });
 });
@@ -449,8 +449,21 @@ describe('generateModule - constant folding and fragments', () =>
     it('emits a fragment-rooted output as an h()-built array (no clone)', () =>
     {
         const code = gen('component F { state n = 0; <><p>{n}</p></> }');
-        expect(code).toMatch(/return \[h\('p'/);
+        expect(code).toMatch(/return \(\[h\('p'/);
         expect(code).not.toContain('tmpl(');
+    });
+
+    it('a children expression starting on the line AFTER the brace survives ASI', () =>
+    {
+        // Regression (field report): `get children() { return\n    (item) => ... }` -
+        // automatic semicolon insertion silently turned that into `return;`, children
+        // became undefined, and <For> crashed with "renderItem is not a function".
+        // The emitted return is parenthesized now, so the newline is harmless.
+        const code = gen('component L { <For each={[1]} key={(i) => i}>{\n    (item) => <li>{item}</li>\n}</For> }');
+        const childrenGetter = /get children\(\) \{ return \(([\s\S]*?)\); \}/.exec(code);
+        expect(childrenGetter).not.toBeNull();
+        // The load-bearing property: no bare `return` followed by a line break.
+        expect(code).not.toMatch(/\breturn\s*\n/);
     });
 });
 
@@ -462,7 +475,7 @@ describe('generateModule - source map', () =>
         expect(result.map).not.toBeNull();
         expect(result.map!.version).toBe(3);
         expect(result.map!.sources).toEqual(['C.azeroth']);
-        expect(result.map!.sourcesContent![0]).toContain('component C');
+        expect(result.map!.sourcesContent[0]).toContain('component C');
         expect(typeof result.map!.mappings).toBe('string');
         expect(result.map!.mappings.length).toBeGreaterThan(0);
     });

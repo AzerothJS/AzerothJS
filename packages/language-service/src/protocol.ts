@@ -55,19 +55,19 @@ export interface CompletionItem
 {
     label: string;
     kind: CompletionItemKindValue;
-    detail?: string;
-    documentation?: string;
-    insertText?: string;
+    detail?: string | undefined;
+    documentation?: string | undefined;
+    insertText?: string | undefined;
     /** 2 = Snippet (LSP InsertTextFormat). */
-    insertTextFormat?: 1 | 2;
-    sortText?: string;
-    filterText?: string;
+    insertTextFormat?: 1 | 2 | undefined;
+    sortText?: string | undefined;
+    filterText?: string | undefined;
     /** Characters that accept this item and are typed through (e.g. `=`, ` `). */
-    commitCharacters?: string[];
+    commitCharacters?: string[] | undefined;
     /** Pre-selects this item when the list opens (the clear contextual winner). */
-    preselect?: boolean;
+    preselect?: boolean | undefined;
     /** Edits applied alongside the insertion (e.g. an auto-import line). */
-    additionalTextEdits?: TextEdit[];
+    additionalTextEdits?: TextEdit[] | undefined;
     /** Opaque payload so a resolve step can fetch lazy detail from TS. */
     data?: unknown;
 }
@@ -77,15 +77,15 @@ export interface Hover
 {
     /** Markdown contents. */
     contents: string;
-    range?: Range;
+    range?: Range | undefined;
 }
 
 /** A signature-help overload. */
 export interface SignatureInformation
 {
     label: string;
-    documentation?: string;
-    parameters: { label: string; documentation?: string }[];
+    documentation?: string | undefined;
+    parameters: { label: string; documentation?: string | undefined }[];
 }
 
 /** Signature help at a call site. */
@@ -137,7 +137,7 @@ export interface ColorPresentation
 {
     label: string;
     /** Edit that rewrites the literal to this spelling; absent when `label` is inserted verbatim. */
-    textEdit?: TextEdit;
+    textEdit?: TextEdit | undefined;
 }
 
 /** LSP SymbolKind values (subset). */
@@ -167,11 +167,11 @@ export type SymbolKindValue = (typeof SymbolKind)[keyof typeof SymbolKind];
 export interface DocumentSymbol
 {
     name: string;
-    detail?: string;
+    detail?: string | undefined;
     kind: SymbolKindValue;
     range: Range;
     selectionRange: Range;
-    children?: DocumentSymbol[];
+    children?: DocumentSymbol[] | undefined;
 }
 
 /** A flat workspace symbol. */
@@ -180,7 +180,7 @@ export interface WorkspaceSymbol
     name: string;
     kind: SymbolKindValue;
     location: Location;
-    containerName?: string;
+    containerName?: string | undefined;
 }
 
 /**
@@ -192,11 +192,11 @@ export interface CallHierarchyItem
 {
     name: string;
     kind: SymbolKindValue;
-    detail?: string;
+    detail?: string | undefined;
     uri: string;
     range: Range;
     selectionRange: Range;
-    data?: { uri: string; offset: number };
+    data?: { uri: string; offset: number } | undefined;
 }
 
 /** A caller of the queried item, with the ranges where the calls appear. */
@@ -237,16 +237,16 @@ export interface Diagnostic
     range: Range;
     severity: DiagnosticSeverityValue;
     message: string;
-    code?: string | number;
+    code?: string | number | undefined;
     source: string;
-    relatedInformation?: DiagnosticRelatedInformation[];
+    relatedInformation?: DiagnosticRelatedInformation[] | undefined;
 }
 
 /** A smart-selection range and its enclosing parent (for Expand Selection). */
 export interface SelectionRange
 {
     range: Range;
-    parent?: SelectionRange;
+    parent?: SelectionRange | undefined;
 }
 
 /** An inline hint. `kind`: 1 Type, 2 Parameter. */
@@ -254,16 +254,16 @@ export interface InlayHint
 {
     position: Position;
     label: string;
-    kind?: 1 | 2;
-    paddingLeft?: boolean;
-    paddingRight?: boolean;
+    kind?: 1 | 2 | undefined;
+    paddingLeft?: boolean | undefined;
+    paddingRight?: boolean | undefined;
 }
 
 /** An occurrence of a symbol to highlight. `kind`: 1 text, 2 read, 3 write. */
 export interface DocumentHighlight
 {
     range: Range;
-    kind?: 1 | 2 | 3;
+    kind?: 1 | 2 | 3 | undefined;
 }
 
 /** A collapsible region. */
@@ -271,7 +271,7 @@ export interface FoldingRange
 {
     startLine: number;
     endLine: number;
-    kind?: 'comment' | 'region' | 'imports';
+    kind?: 'comment' | 'region' | 'imports' | undefined;
 }
 
 /** An editor command (title + identifier + optional arguments). */
@@ -279,7 +279,7 @@ export interface Command
 {
     title: string;
     command: string;
-    arguments?: unknown[];
+    arguments?: unknown[] | undefined;
 }
 
 /**
@@ -290,7 +290,7 @@ export interface Command
 export interface CodeLens
 {
     range: Range;
-    command?: Command;
+    command?: Command | undefined;
     data?: unknown;
 }
 
@@ -301,8 +301,8 @@ export interface CodeLens
 export interface DocumentLink
 {
     range: Range;
-    target?: string;
-    tooltip?: string;
+    target?: string | undefined;
+    tooltip?: string | undefined;
 }
 
 /** A code action (quick fix / refactor). */
@@ -310,9 +310,9 @@ export interface CodeAction
 {
     title: string;
     kind: string;
-    edit?: WorkspaceEdit;
+    edit?: WorkspaceEdit | undefined;
     /** True for the preferred fix at a position. */
-    isPreferred?: boolean;
+    isPreferred?: boolean | undefined;
 }
 
 /** Raw semantic-token data in LSP's packed delta encoding. */

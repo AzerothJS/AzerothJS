@@ -140,6 +140,7 @@ export function serializeAttrs(props: Props): string
             continue;
         }
 
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort attribute coercion, mirroring the DOM path's setAttribute fallback
         out += ` ${ key }="${ escapeAttr(String(value)) }"`;
     }
 
@@ -209,10 +210,12 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
     if ('innerHTML' in props)
     {
         // Raw passthrough: same trust model as `el.innerHTML = x`.
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- innerHTML is caller-trusted raw content; non-string input is caller error surfaced visibly
         inner = String(resolveValue(props.innerHTML) ?? '');
     }
     else if ('textContent' in props)
     {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- textContent coerces like the DOM property; non-string input is caller error surfaced visibly
         inner = escapeText(String(resolveValue(props.textContent) ?? ''));
     }
     else

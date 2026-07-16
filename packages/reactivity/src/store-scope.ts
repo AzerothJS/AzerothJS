@@ -9,6 +9,14 @@
  * a module-level closure. This is sound because an SSR render is synchronous: one
  * render's scope is set and restored before the event loop can start another.
  *
+ * ASYNC EXECUTION (an HTTP request handler that awaits) breaks the synchronous
+ * save/restore model: after the first await, the module variable has been restored and
+ * another request may have replaced it. A host that needs isolation ACROSS awaits
+ * installs a {@link setStoreScopeResolver | scope resolver} backed by its runtime's
+ * async-context primitive (AsyncLocalStorage on Node); this module stays dependency-free
+ * and browser-portable - the resolver is one nullable function pointer, and clients
+ * never install one.
+ *
  * The scope is just an opaque object used as a WeakMap key, so a per-render scope (and
  * the store instances cached under it) is garbage-collected once the render returns.
  */
@@ -18,6 +26,66 @@ const DEFAULT_SCOPE: object = {};
 
 /** The currently active store scope. @internal */
 let currentScope: object = DEFAULT_SCOPE;
+
+/** The installed async-context resolver, if any. @internal */
+let scopeResolver: (() => object | undefined) | null = null;
+
+/**
+ * setStoreScopeResolver
+ *
+ * PURPOSE:
+ * Installs (or, with null, removes) a resolver consulted by getStoreScope BEFORE the
+ * synchronous module scope - the seam that makes store isolation survive `await`.
+ *
+ * WHY IT EXISTS:
+ * runInStoreScope's save/restore is only sound for synchronous work (an SSR render). An
+ * HTTP server's handlers are async: isolation there needs an async-context carrier, and
+ * WHICH carrier is a host concern (AsyncLocalStorage on Node; TC39 AsyncContext one
+ * day). This hook lets the host own the carrier while this module stays zero-dependency
+ * and portable.
+ *
+ * COMPILER / RUNTIME ROLE:
+ * Runtime; installed once at server startup by the HTTP layer's request root. Never
+ * called on the client.
+ *
+ * INPUT CONTRACT:
+ * - resolver: returns the active scope object, or undefined to fall through to the
+ *   synchronous scope (so SSR renders nested inside a request still isolate correctly);
+ *   null uninstalls.
+ *
+ * OUTPUT CONTRACT:
+ * - None. Subsequent getStoreScope calls consult the resolver first.
+ *
+ * WHY THIS DESIGN:
+ * A single nullable function pointer costs one null check on the read path and nothing
+ * at all until a host opts in - the browser bundle carries no async_hooks import and no
+ * behavioural change.
+ *
+ * WHEN TO USE:
+ * From a server host that runs user code across awaits (the @azerothjs/http request
+ * root does this).
+ *
+ * WHEN NOT TO USE:
+ * Application code. Client code. Anywhere a fresh scope per synchronous render is
+ * enough - that is runInStoreScope's job.
+ *
+ * EDGE CASES:
+ * - Installing twice replaces the previous resolver (last write wins).
+ * - A resolver returning undefined defers to runInStoreScope's scope, then the default.
+ *
+ * PERFORMANCE NOTES:
+ * O(1); adds one null check to getStoreScope when installed.
+ *
+ * DEVELOPER WARNING:
+ * The resolver runs on EVERY store access - it must be cheap and must never throw.
+ *
+ * @param resolver - The async-context scope resolver, or null to uninstall.
+ * @see {@link getStoreScope}
+ */
+export function setStoreScopeResolver(resolver: (() => object | undefined) | null): void
+{
+    scopeResolver = resolver;
+}
 
 /**
  * getStoreScope
@@ -69,6 +137,21 @@ let currentScope: object = DEFAULT_SCOPE;
  */
 export function getStoreScope(): object
 {
+    // Precedence: an EXPLICIT synchronous scope (a runInStoreScope frame - e.g. an SSR
+    // render nested inside a request handler) always wins; the async-context resolver
+    // covers everything between such frames; the default scope is the client fallback.
+    if (currentScope !== DEFAULT_SCOPE)
+    {
+        return currentScope;
+    }
+    if (scopeResolver !== null)
+    {
+        const resolved = scopeResolver();
+        if (resolved !== undefined)
+        {
+            return resolved;
+        }
+    }
     return currentScope;
 }
 

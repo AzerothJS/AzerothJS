@@ -34,3 +34,10 @@ out/
 
 # Packaged extension artifacts (also covered by dist/, kept explicit)
 *.vsix
+
+# Generated .azeroth type mirrors (vite emitDeclarations; wired via tsconfig rootDirs)
+.azeroth/
+
+# Playwright artifacts
+test-results/
+playwright-report/

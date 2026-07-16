@@ -7,7 +7,7 @@
 // defaultCountry (explicit and auto-inferred), the skip-empty convention, and
 // the message override. phone() is a pure synchronous factory.
 import { describe, it, expect } from 'vitest';
-import { phone } from '@azerothjs/form';
+import { phone } from '@azerothjs/schema';
 
 describe('phone - E.164 acceptance and the leading + requirement', () =>
 {

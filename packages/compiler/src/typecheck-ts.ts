@@ -36,6 +36,20 @@ import type { AzerothDiagnostic } from './diagnostics.ts';
 
 import { parseModule } from './parser.ts';
 import { generateVirtualCode } from './project.ts';
+import { nativeCheckOnce, createNativeIncrementalBackend } from './native-check.ts';
+
+/**
+ * The diagnostic fields the mappers consume. Both the classic `ts.Diagnostic` and the
+ * native-adapted diagnostic satisfy it structurally, so one mapping implementation serves
+ * whichever engine produced the raw diagnostics.
+ */
+interface DiagnosticLike
+{
+    start?: number | undefined;
+    length?: number | undefined;
+    code: number;
+    messageText: string | ts.DiagnosticMessageChain;
+}
 
 /** Optional inputs that enable cross-file resolution. */
 export interface TypeCheckOptions
@@ -76,11 +90,16 @@ const COMPILER_OPTIONS: ts.CompilerOptions =
  *   2322 Type X is not assignable to type Y           (wrong-typed prop / on* component prop)
  *   2345 Argument of type X not assignable to param   (missing/!assignable component props)
  *   2353 Object literal may only specify known props  (a typo'd / unknown component prop)
+ *   2739 Type X is missing properties from type Y     (missing component props, member-level report)
+ *   2741 Property P is missing in type X              (one missing component prop, member-level report)
  *   2769 No overload matches this call                (overloaded handler/prop signatures)
- * Everything else (e.g. "cannot find name" projection-gap noise, "property does not exist") is dropped, so
- * the checker stays sound (no false positives) at the cost of some false negatives, by design.
+ * 2739/2741 are the same missing-prop failure as 2345 reported at member level - which engine picks which
+ * wording differs (the native checker favors the member-level codes), and the editor's component-prop set
+ * enforces all three, so the gate must too. Everything else (e.g. "cannot find name" projection-gap noise,
+ * "property does not exist") is dropped, so the checker stays sound (no false positives) at the cost of
+ * some false negatives, by design.
  */
-const ENFORCED_CODES: ReadonlySet<number> = new Set([1360, 2322, 2345, 2353, 2769]);
+const ENFORCED_CODES: ReadonlySet<number> = new Set([1360, 2322, 2345, 2353, 2739, 2741, 2769]);
 
 // The TypeScript lib directory and a process-lifetime cache of its parsed SourceFiles - large, immutable
 // `.d.ts` files whose re-parse dominates per-file cost; reused across every Program build.
@@ -302,6 +321,19 @@ export function typeCheckModuleTS(source: string, options: TypeCheckOptions = {}
 
     const { code, mapping } = generateVirtualCode(source);
     const mainAzerothPath = normalizeSlashes(options.fileName ?? '/virtual/__main__.azeroth');
+
+    // The native engine first: same projection, same mapping, same filtering - only the raw
+    // diagnostics come from the native compiler. Unavailable or failed -> the classic Program.
+    const readAzeroth = options.readFile ?? ((path: string): string | undefined => ts.sys.readFile(path));
+    const native = nativeCheckOnce(`${ mainAzerothPath }.ts`, code, readAzeroth);
+    if (native !== null)
+    {
+        return [
+            ...mapSyntacticDiagnostics(native.syntactic, mapping),
+            ...mapDiagnostics(native.semantic, mapping)
+        ];
+    }
+
     const { host, mainTsPath } = createHost(mainAzerothPath, code, options);
     const program = ts.createProgram([mainTsPath], COMPILER_OPTIONS, host);
     const sourceFile = program.getSourceFile(mainTsPath);
@@ -324,7 +356,7 @@ export function typeCheckModuleTS(source: string, options: TypeCheckOptions = {}
  * scaffolding -> the component tag). Shared by the one-shot {@link typeCheckModuleTS} and the
  * incremental {@link createIncrementalChecker} so both produce identical results.
  */
-function mapDiagnostics(diagnostics: readonly ts.Diagnostic[], mapping: CodeMapping): AzerothDiagnostic[]
+function mapDiagnostics(diagnostics: readonly DiagnosticLike[], mapping: CodeMapping): AzerothDiagnostic[]
 {
     const out: AzerothDiagnostic[] = [];
     for (const diagnostic of diagnostics)
@@ -385,7 +417,7 @@ function mapDiagnostics(diagnostics: readonly ts.Diagnostic[], mapping: CodeMapp
  * scaffolding (no source mapping and no preceding source segment) are dropped - they reflect an
  * internal projection issue, not the user's code, and surface via the editor's own checks.
  */
-function mapSyntacticDiagnostics(diagnostics: readonly ts.Diagnostic[], mapping: CodeMapping): AzerothDiagnostic[]
+function mapSyntacticDiagnostics(diagnostics: readonly DiagnosticLike[], mapping: CodeMapping): AzerothDiagnostic[]
 {
     const out: AzerothDiagnostic[] = [];
     for (const diagnostic of diagnostics)
@@ -450,6 +482,10 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
 {
     const sys = ts.sys;
     const readAzeroth = options.readFile ?? ((path: string): string | undefined => sys.readFile(path));
+
+    // The native engine when available; diagnostics are identical, so the classic service
+    // below is only built if the native backend is absent or fails mid-run.
+    const nativeBackend = createNativeIncrementalBackend(readAzeroth);
 
     // The live source's projection (the file under check / HMR) overrides any on-disk copy of the same
     // path; on-disk dep projections are cached. Versions drive the LanguageService's incremental recheck.
@@ -541,7 +577,10 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
             })
     };
 
-    const service = ts.createLanguageService(host, ts.createDocumentRegistry());
+    // Built on first classic use only - when the native backend serves every check, the
+    // classic service (and its lib binding cost) never materializes.
+    let service: ts.LanguageService | null = null;
+    const ensureService = (): ts.LanguageService => (service ??= ts.createLanguageService(host, ts.createDocumentRegistry()));
 
     return {
         prime(fileNames: readonly string[]): void
@@ -550,6 +589,7 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
             {
                 roots.add(`${ normalizeSlashes(fileName) }.ts`);
             }
+            nativeBackend?.prime([...roots]);
         },
 
         check(fileName: string, source: string): AzerothDiagnostic[]
@@ -573,6 +613,21 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
                 overrides.set(tsPath, { code, version: (previous?.version ?? 0) + 1 });
                 diskCache.delete(tsPath);
             }
+            // Classic bookkeeping above runs unconditionally so a native failure mid-run can
+            // fall back with the full override state; diagnostics come from whichever engine
+            // answers first.
+            if (nativeBackend !== null)
+            {
+                const result = nativeBackend.check(tsPath, code);
+                if (result !== null)
+                {
+                    return [
+                        ...mapSyntacticDiagnostics(result.syntactic, mapping),
+                        ...mapDiagnostics(result.semantic, mapping)
+                    ];
+                }
+            }
+            const service = ensureService();
             const syntactic = mapSyntacticDiagnostics(service.getSyntacticDiagnostics(tsPath), mapping);
             return [...syntactic, ...mapDiagnostics(service.getSemanticDiagnostics(tsPath), mapping)];
         }

@@ -71,7 +71,7 @@ describe('core CSR - signals + h + control flow, then a store driving the same U
         // Initial render: list visible with the seeded row.
         let items = container.querySelectorAll('li');
         expect(items.length).toBe(1);
-        expect(items[0].textContent).toBe('1: first');
+        expect(items[0]?.textContent).toBe('1: first');
 
         // Click "add" twice -> For appends two rows, reusing the existing one.
         const firstRow = container.querySelector('li')!;

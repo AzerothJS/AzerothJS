@@ -58,7 +58,7 @@ export function vlqEncode(value: number): string
         {
             digit |= 0b100000; // continuation bit
         }
-        out += BASE64[digit];
+        out += BASE64[digit] ?? '';
     } while (vlq > 0);
     return out;
 }
@@ -105,7 +105,7 @@ export function locationFor(offset: number, lineStarts: number[]): { line: numbe
     while (lo < hi)
     {
         const mid = (lo + hi + 1) >> 1;
-        if (lineStarts[mid] <= offset)
+        if ((lineStarts[mid] ?? 0) <= offset)
         {
             lo = mid;
         }
@@ -114,7 +114,7 @@ export function locationFor(offset: number, lineStarts: number[]): { line: numbe
             hi = mid - 1;
         }
     }
-    return { line: lo, column: offset - lineStarts[lo] };
+    return { line: lo, column: offset - (lineStarts[lo] ?? 0) };
 }
 
 /**
@@ -162,7 +162,7 @@ export function encodeMappings(lines: RawSegment[][]): string
 }
 
 /** Base64 character -> value, for {@link decodeMappings}. Built once. */
-const BASE64_VALUES: Record<string, number> = Object.fromEntries([...BASE64].map((c, i) => [c, i]));
+const BASE64_VALUES: Record<string, number> = Object.fromEntries(BASE64.split('').map((c, i) => [c, i]));
 
 /**
  * Decodes a `mappings` string back into per-line absolute segments - the inverse of
@@ -192,7 +192,7 @@ export function decodeMappings(mappings: string): RawSegment[][]
             let shift = 0;
             for (const char of chunk)
             {
-                const digit = BASE64_VALUES[char];
+                const digit = BASE64_VALUES[char] ?? 0;
                 value |= (digit & 31) << shift;
                 if ((digit & 32) !== 0)
                 {
@@ -203,11 +203,11 @@ export function decodeMappings(mappings: string): RawSegment[][]
                 value = 0;
                 shift = 0;
             }
-            genColumn += values[0];
+            genColumn += values[0] ?? 0;
             if (values.length >= 4)
             {
-                sourceLine += values[2];
-                sourceColumn += values[3];
+                sourceLine += values[2] ?? 0;
+                sourceColumn += values[3] ?? 0;
                 segments.push({ genColumn, sourceLine, sourceColumn });
             }
         }

@@ -29,6 +29,9 @@ import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-t
 import { emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
 
+/** The Rollup plugin context when Vite binds it; unit tests invoke hooks bare, so it may be absent. */
+type MaybeCtx = { warn?: (message: string, position?: { line: number; column: number }) => void; error?: (message: string, position?: { line: number; column: number }) => void } | undefined;
+
 /**
  * Directory (under the project root) that holds the generated `.azeroth` type projections. Nested
  * under `.azeroth/` so that folder can namespace other generated `.azeroth` tooling output in future.
@@ -203,7 +206,7 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
 /** Recursively collects files ending in `ext` under `dir`, skipping dependency/output/hidden folders. */
 function collectFiles(dir: string, ext: string, out: string[] = []): string[]
 {
-    let entries: Dirent<string>[];
+    let entries: Dirent[];
     try
     {
         entries = readdirSync(dir, { withFileTypes: true });
@@ -309,7 +312,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         async transform(code: string, id: string)
         {
             // Strip any `?query` suffix Vite appends to module ids.
-            const filename = id.split('?')[0];
+            const filename = id.split('?')[0] ?? id;
             if (!filename.endsWith(extension))
             {
                 return null;
@@ -331,7 +334,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 const loc = locationFor(finding.start, lineStarts);
                 // Optional call: vite always binds the plugin context, but
                 // unit tests invoke transform bare.
-                this?.warn(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
             // 0) Optional U1 type-check (real TypeScript Program). When enabled, a type error
@@ -346,7 +349,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 for (const finding of checker.check(filename, code))
                 {
                     const loc = locationFor(finding.start, lineStarts);
-                    this?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                    (this as MaybeCtx)?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
                     throw new Error(`${ finding.code }: ${ finding.message }`);
                 }
             }
@@ -369,7 +372,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 const message = err instanceof Error ? err.message : String(err);
                 // Plugin context error() throws and fails the build; the rethrow covers
                 // bare (non-plugin) invocations (e.g. unit tests calling transform directly).
-                this?.error?.(message, { line: loc.line + 1, column: loc.column });
+                (this as MaybeCtx)?.error?.(message, { line: loc.line + 1, column: loc.column });
                 throw (err instanceof Error ? err : new Error(message));
             }
 
@@ -384,7 +387,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                     continue;
                 }
                 const loc = locationFor(finding.start, lineStarts);
-                this?.warn(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
             // 2) TS -> JS (the compiled module may still contain types). Vite

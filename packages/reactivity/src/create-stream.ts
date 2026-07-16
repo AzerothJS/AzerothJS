@@ -640,7 +640,7 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
                     // the cancel() path or will be by the next
                     // effect run - don't fight it here.
                 },
-                err =>
+                (err: unknown) =>
                 {
                     if (controller.signal.aborted)
                     {
@@ -712,7 +712,7 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
         let sourceValue: S = undefined as S;
         if (hasSource)
         {
-            const v = source!();
+            const v = source();
             if (isSkipSource(v))
             {
                 // No source, no fetch. Reset to initial state

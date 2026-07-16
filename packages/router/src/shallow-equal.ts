@@ -33,10 +33,6 @@ export function shallowEqualRecord(
     {
         return true;
     }
-    if (a == null || b == null)
-    {
-        return false;
-    }
 
     const keysA = Object.keys(a);
     if (keysA.length !== Object.keys(b).length)

@@ -454,6 +454,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             return null;
         }
         const paramText = arrow[1];
+        if (paramText === undefined)
+        {
+            return null;
+        }
         const paramStart = innerSpan.start + code.indexOf(paramText);
         const param: Span = { start: paramStart, end: paramStart + paramText.length };
         const subCtx: Ctx = { next: 0, bindings: [] };
@@ -481,9 +485,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
         {
             return null;
         }
-        if (children.length === 1 && children[0].kind === 'expression')
+        const soloChild = children[0];
+        if (children.length === 1 && soloChild !== undefined && soloChild.kind === 'expression')
         {
-            const child = children[0];
+            const child = soloChild;
             const span: Span = { start: child.start + 1, end: child.end - 1 };
             const expr = exprFor(span, child.start);
             const code = source.slice(span.start, span.end).trim();

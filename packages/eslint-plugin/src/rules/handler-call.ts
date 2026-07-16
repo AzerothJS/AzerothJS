@@ -83,7 +83,7 @@ export const handlerCall: Rule.RuleModule = {
                             node: value,
                             messageId: 'called',
                             data: { key: key.name, callee: source }
-                        } as unknown as Parameters<typeof context.report>[0]);
+                        });
                     }
                 }
             }

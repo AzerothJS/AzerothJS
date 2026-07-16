@@ -19,7 +19,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { destroyComponent, type CoTarget, createCoMarkers, adoptCoRange } from '@azerothjs/component';
+import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, resolveReactive } from './h.ts';
 
 /**
@@ -58,6 +58,11 @@ export interface ForProps<T>
      * Named `children` and passed as a prop so the manual API
      * matches the compiled `.azeroth` form:
      * `<For each={...} key={...}>{(item, i) => ...}</For>`.
+     *
+     * Each row MUST render exactly one element (not a fragment-rooted
+     * control-flow region): the reconciler tracks and moves rows by
+     * element identity, and a DocumentFragment empties itself on
+     * insertion, which would break both.
      */
     children: (item: T, index: () => number) => HTMLElement;
 }
@@ -192,7 +197,7 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
  *   children: (item, index) => h('li', {}, () => `${ index() + 1 }. ${ item.name }`)
  * });
  */
-export function For<T>(props: ForProps<T>): HTMLElement
+export function For<T>(props: ForProps<T>): MountNode
 {
     const renderItem = props.children;
 
@@ -205,13 +210,14 @@ export function For<T>(props: ForProps<T>): HTMLElement
         const items = untrack(() => resolveReactive(props.each)) as T[];
         let inner = '';
 
-        for (let i = 0; i < items.length; i++)
+        // entries() (not index reads) keeps each element typed T even when T itself
+        // includes undefined - a guard would silently skip such rows.
+        for (const [index, item] of items.entries())
         {
-            const index = i;
-            inner += serializeChild(renderItem(items[index], () => index));
+            inner += serializeChild(renderItem(item, () => index));
         }
 
-        return wrapContentsAnchored('for', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('for', inner) as unknown as MountNode;
     }
 
     // Hydration.
@@ -223,7 +229,7 @@ export function For<T>(props: ForProps<T>): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveFor(props, renderItem, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // Fresh client render: NO wrapper element. Two comment markers bracket the
@@ -237,7 +243,7 @@ export function For<T>(props: ForProps<T>): HTMLElement
 
     driveFor(props, renderItem, target, false);
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**
@@ -285,9 +291,8 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
             const cursor = hydrationCursor as HydrationCursorType;
             const adoptedMap = new Map<string | number, KeyEntry>();
 
-            for (let i = 0; i < items.length; i++)
+            for (const [i, item] of items.entries())
             {
-                const item = items[i];
                 const key = props.key(item, i);
                 const index = createRowIndex(i);
 
@@ -324,14 +329,13 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
         orphans = [];
 
         const newMap = new Map<string | number, KeyEntry>();
-        const newOrder: HTMLElement[] = new Array(items.length);
+        const newOrder: HTMLElement[] = new Array<HTMLElement>(items.length);
 
         // Pass 1: build the new key map. Reuse existing entries
         // where possible; create new ones (in their own root) for
         // new keys.
-        for (let i = 0; i < items.length; i++)
+        for (const [i, item] of items.entries())
         {
-            const item = items[i];
             const key = props.key(item, i);
             const existing = keyMap.get(key);
 
@@ -529,8 +533,9 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     }
 
     // Everything in the window goes before the first node of the common suffix,
-    // or before the end anchor when the window runs to the end.
-    const windowAnchor: ChildNode | null = newEnd < newOrder.length ? newOrder[newEnd] : end;
+    // or before the end anchor when the window runs to the end. (newOrder is dense,
+    // so the ?? only fires when newEnd === newOrder.length.)
+    const windowAnchor: ChildNode = newOrder[newEnd] ?? end;
 
     // Pure insertion (append/prepend/splice-in): no old nodes in the window,
     // so place the new ones left to right. Plain per-node insertion - a
@@ -541,7 +546,11 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     {
         for (let i = startIdx; i < newEnd; i++)
         {
-            parent.insertBefore(newOrder[i], windowAnchor);
+            const el = newOrder[i];
+            if (el !== undefined)
+            {
+                parent.insertBefore(el, windowAnchor);
+            }
         }
         return;
     }
@@ -551,14 +560,19 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     const oldPosition = new Map<HTMLElement, number>();
     for (let i = startIdx; i < oldEnd; i++)
     {
-        oldPosition.set(survivors[i], i);
+        const survivor = survivors[i];
+        if (survivor !== undefined)
+        {
+            oldPosition.set(survivor, i);
+        }
     }
 
     const windowLength = newEnd - startIdx;
     const positions = new Array<number>(windowLength);
     for (let i = 0; i < windowLength; i++)
     {
-        const pos = oldPosition.get(newOrder[startIdx + i]);
+        const el = newOrder[startIdx + i];
+        const pos = el === undefined ? undefined : oldPosition.get(el);
         positions[i] = pos === undefined ? -1 : pos;
     }
 
@@ -567,11 +581,15 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     // Right-to-left: a node on the stable run is already correctly placed
     // relative to everything to its right; anything else moves in front of
     // the previously placed node.
-    let anchor: ChildNode | null = windowAnchor;
+    let anchor: ChildNode = windowAnchor;
     let stableIdx = stable.length - 1;
     for (let i = windowLength - 1; i >= 0; i--)
     {
         const el = newOrder[startIdx + i];
+        if (el === undefined)
+        {
+            continue; // newOrder is dense; satisfies the indexed-access check only
+        }
         if (stableIdx >= 0 && stable[stableIdx] === i)
         {
             stableIdx--;
@@ -601,7 +619,7 @@ function longestIncreasingRun(positions: number[]): number[]
     for (let i = 0; i < positions.length; i++)
     {
         const pos = positions[i];
-        if (pos === -1)
+        if (pos === undefined || pos === -1)
         {
             continue;
         }
@@ -611,7 +629,12 @@ function longestIncreasingRun(positions: number[]): number[]
         while (lo < hi)
         {
             const mid = (lo + hi) >> 1;
-            if (positions[tails[mid]] < pos)
+            // mid < tails.length and tails holds valid positions indices, so both
+            // lookups are total; the ?? arms are unreachable and exist for the
+            // indexed-access check alone.
+            const tailIndex = tails[mid] ?? -1;
+            const tailPos = positions[tailIndex] ?? -1;
+            if (tailPos < pos)
             {
                 lo = mid + 1;
             }
@@ -623,17 +646,17 @@ function longestIncreasingRun(positions: number[]): number[]
 
         if (lo > 0)
         {
-            parent[i] = tails[lo - 1];
+            parent[i] = tails[lo - 1] ?? -1;
         }
         tails[lo] = i;
     }
 
     const run = new Array<number>(tails.length);
-    let i = tails.length > 0 ? tails[tails.length - 1] : -1;
+    let i = tails[tails.length - 1] ?? -1;
     for (let k = tails.length - 1; k >= 0; k--)
     {
         run[k] = i;
-        i = parent[i];
+        i = parent[i] ?? -1;
     }
 
     return run;

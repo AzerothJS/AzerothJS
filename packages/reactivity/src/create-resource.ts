@@ -123,28 +123,50 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  * );
  * post.loading(); post.data(); post.refetch();
  */
+/** Options for {@link createResource}. */
+export interface ResourceOptions<T>
+{
+    /**
+     * Seeds the resource as ALREADY SETTLED: `data()` returns this value synchronously and
+     * the FIRST fetch is skipped entirely (loading never flips). This is the hydration/SSR
+     * handoff seam - the server rendered with this data, so the client adopting it must not
+     * refetch it, and a synchronous server render must see it without waiting for an effect.
+     * Everything AFTER the first key behaves normally: a source change fetches, refetch()
+     * fetches, and a skip-key reset discards the seed along with the data it clears.
+     */
+    initialValue?: T;
+}
+
 export function createResource<T>(
-    fetcher: StandaloneFetcher<T>
+    fetcher: StandaloneFetcher<T>,
+    options?: ResourceOptions<T>
 ): Resource<T>;
 export function createResource<T, S>(
     source: () => S | false | null | undefined,
-    fetcher: SourceFetcher<S, T>
+    fetcher: SourceFetcher<S, T>,
+    options?: ResourceOptions<T>
 ): Resource<T>;
 export function createResource<T, S>(
     sourceOrFetcher: (() => S | false | null | undefined) | StandaloneFetcher<T>,
-    maybeFetcher?: SourceFetcher<S, T>
+    maybeFetcherOrOptions?: SourceFetcher<S, T> | ResourceOptions<T>,
+    maybeOptions?: ResourceOptions<T>
 ): Resource<T>
 {
-    // Discriminate the overloads by whether a second argument was supplied.
-    const hasSource = maybeFetcher !== undefined;
+    // Discriminate the overloads by whether the second argument is a fetcher FUNCTION.
+    const hasSource = typeof maybeFetcherOrOptions === 'function';
     const source = hasSource
         ? (sourceOrFetcher as () => S | false | null | undefined)
         : null;
-    const fetcher = (hasSource ? maybeFetcher! : sourceOrFetcher) as
+    const fetcher = (hasSource ? maybeFetcherOrOptions : sourceOrFetcher) as
         | StandaloneFetcher<T>
         | SourceFetcher<S, T>;
+    const options = hasSource ? maybeOptions : maybeFetcherOrOptions;
 
-    const [data, setData] = createSignal<T | undefined>(undefined);
+    // The hydration seed: consumed by (or discarded at) the effect's first run - see the
+    // ResourceOptions doc for the exact semantics.
+    let pendingInitial = options !== undefined && 'initialValue' in options;
+
+    const [data, setData] = createSignal<T | undefined>(options?.initialValue);
     const [loading, setLoading] = createSignal<boolean>(false);
     const [error, setError] = createSignal<unknown>(null);
 
@@ -184,6 +206,7 @@ export function createResource<T, S>(
         }
         catch (error)
         {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the fetcher's thrown value propagates VERBATIM to error(); wrapping it would change what consumers observe
             pending = Promise.reject(error);
         }
 
@@ -203,7 +226,7 @@ export function createResource<T, S>(
                     setLoading(false);
                 });
             },
-            (err) =>
+            (err: unknown) =>
             {
                 if (controller.signal.aborted)
                 {
@@ -239,9 +262,18 @@ export function createResource<T, S>(
                     setLoading(false);
                     setError(null);
                 });
+                pendingInitial = false; // the reset cleared the seeded data; the seed is gone
                 return;
             }
             sourceValue = v as S;
+        }
+
+        if (pendingInitial)
+        {
+            // The seed IS this key's result: data() has been serving it since construction,
+            // loading never flips, and no fetch happens - the SSR/hydration adoption path.
+            pendingInitial = false;
+            return;
         }
 
         const controller = new AbortController();

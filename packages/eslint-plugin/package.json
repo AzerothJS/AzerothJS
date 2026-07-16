@@ -6,56 +6,48 @@
     "main": "./dist/index.js",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports":
-    {
-        ".":
-        {
+    "exports": {
+        ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
-    "files":
-    [
+    "files": [
         "dist"
     ],
     "sideEffects": false,
-    "scripts":
-    {
-        "build": "tsc -p tsconfig.build.json",
+    "scripts": {
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "dependencies":
-    {
+    "dependencies": {
         "@azerothjs/compiler": "0.7.0-beta.1",
         "@azerothjs/language-service": "0.7.0-beta.1"
     },
-    "peerDependencies":
-    {
+    "peerDependencies": {
         "@typescript-eslint/parser": ">=8",
         "eslint": ">=9"
     },
-    "publishConfig":
-    {
+    "publishConfig": {
         "access": "public"
     },
-    "author":
-    {
+    "author": {
         "name": "IntelligentQuantum",
         "email": "IntelligentQuantum@Gmail.Com",
         "url": "https://IntelligentQuantum.Dev/"
     },
     "license": "MIT",
-    "engines": { "node": ">=24" },
-    "repository":
-    {
+    "engines": {
+        "node": ">=24"
+    },
+    "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/eslint-plugin"
     },
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/eslint-plugin",
-    "bugs":
-    {
+    "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }
 }

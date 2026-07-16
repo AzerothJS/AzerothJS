@@ -13,7 +13,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, materializeChild } from './h.ts';
 
 /**
@@ -26,7 +26,7 @@ export interface DynamicProps
      * component is removed and the new one rendered in its place. Return null to render
      * nothing.
      */
-    component: () => ((props: Record<string, unknown>) => HTMLElement) | null;
+    component: () => ((props: Record<string, unknown>) => MountNode) | null;
 
     /** Optional getter returning props for the component; read (untracked) when the component changes. */
     props?: () => Record<string, unknown>;
@@ -100,7 +100,7 @@ export interface DynamicProps
  * Dynamic({ component: view, props: () => ({ title: 'Tab' }) });
  * setView(() => About); // wrap in arrow: a setter treats a bare function as an updater
  */
-export function Dynamic(dynamicProps: DynamicProps): HTMLElement
+export function Dynamic(dynamicProps: DynamicProps): MountNode
 {
     // SSR: resolve component + props ONCE and emit its output in a contents anchor.
     if (isStringMode())
@@ -108,11 +108,12 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
         const Component = untrack(() => dynamicProps.component());
         if (!Component)
         {
-            return wrapContentsAnchored('dynamic', '') as unknown as HTMLElement;
+            return wrapContentsAnchored('dynamic', '') as unknown as MountNode;
         }
 
-        const resolvedProps = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
-        return wrapContentsAnchored('dynamic', serializeChild(Component(resolvedProps))) as unknown as HTMLElement;
+        const propsGetter = dynamicProps.props;
+        const resolvedProps = propsGetter ? untrack(() => propsGetter()) : {};
+        return wrapContentsAnchored('dynamic', serializeChild(Component(resolvedProps))) as unknown as MountNode;
     }
 
     // Hydration: adopt the wrapper + current component on the first effect run; a later
@@ -123,7 +124,7 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveDynamic(dynamicProps, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // Fresh client render: NO wrapper element - comment markers bracket the active
@@ -132,7 +133,7 @@ export function Dynamic(dynamicProps: DynamicProps): HTMLElement
 
     driveDynamic(dynamicProps, target, false);
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**
@@ -160,7 +161,8 @@ function driveDynamic(dynamicProps: DynamicProps, target: CoTarget, hydrateFirst
         if (Component)
         {
             // Read props WITHOUT subscribing (initial value only).
-            const props = dynamicProps.props ? untrack(() => dynamicProps.props!()) : {};
+            const propsGetter = dynamicProps.props;
+            const props = propsGetter ? untrack(() => propsGetter()) : {};
 
             if (firstRun)
             {

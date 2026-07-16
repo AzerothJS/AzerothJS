@@ -226,6 +226,10 @@ function collectScriptTokens(ctx: RequestContext, tokens: RawToken[]): void
         const start = spans[i];
         const length = spans[i + 1];
         const classification = spans[i + 2];
+        if (start === undefined || length === undefined || classification === undefined)
+        {
+            continue; // spans is a dense triplet list; satisfies the indexed-access check
+        }
 
         const tsType = (classification >> TS_TYPE_OFFSET) - 1;
         const type = TS_TYPE_TO_LEGEND[tsType];
@@ -262,7 +266,7 @@ function remapModifiers(bitset: number): number
     {
         if (bitset & (1 << bit))
         {
-            mask |= TS_MODIFIER_TO_BIT[bit];
+            mask |= TS_MODIFIER_TO_BIT[bit] ?? 0;
         }
     }
     return mask;
@@ -303,7 +307,8 @@ function collectElementTokens(source: string, node: MarkupElement, tokens: RawTo
         {
             continue;
         }
-        const isEvent = attr.name.length > 2 && attr.name.startsWith('on') && attr.name[2] === attr.name[2].toUpperCase();
+        const third = attr.name[2];
+        const isEvent = attr.name.length > 2 && attr.name.startsWith('on') && third !== undefined && third === third.toUpperCase();
         tokens.push({ offset: attr.start, length: attr.name.length, type: isEvent ? 'event' : 'attribute', modifiers: 0 });
 
         if (attr.value.kind === 'static')

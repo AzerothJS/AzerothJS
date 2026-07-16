@@ -131,30 +131,35 @@ function importBindings(source: string): ImportBinding[]
     {
         const stmtStart = m.index;
         const stmtEnd = m.index + m[0].length;
-        const clauseStart = m.index + m[0].indexOf(m[1]);
         const clause = m[1];
+        if (clause === undefined)
+        {
+            continue; // group 1 always captures; satisfies the indexed-access check
+        }
+        const clauseStart = m.index + m[0].indexOf(clause);
 
         // default import: leading `Foo` before any `{`/`*`
-        const def = clause.match(/^\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/);
-        if (def && !clause.trimStart().startsWith('{') && !clause.trimStart().startsWith('*'))
+        const defName = clause.match(/^\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/)?.[1];
+        if (defName !== undefined && !clause.trimStart().startsWith('{') && !clause.trimStart().startsWith('*'))
         {
-            const at = clauseStart + clause.indexOf(def[1]);
-            out.push({ name: def[1], start: at, end: at + def[1].length, stmtStart, stmtEnd });
+            const at = clauseStart + clause.indexOf(defName);
+            out.push({ name: defName, start: at, end: at + defName.length, stmtStart, stmtEnd });
         }
         // namespace: `* as NS`
-        const ns = clause.match(/\*\s*as\s+([A-Za-z_$][\w$]*)/);
-        if (ns)
+        const nsName = clause.match(/\*\s*as\s+([A-Za-z_$][\w$]*)/)?.[1];
+        if (nsName !== undefined)
         {
-            const at = clauseStart + clause.indexOf(ns[1], clause.indexOf('as'));
-            out.push({ name: ns[1], start: at, end: at + ns[1].length, stmtStart, stmtEnd });
+            const at = clauseStart + clause.indexOf(nsName, clause.indexOf('as'));
+            out.push({ name: nsName, start: at, end: at + nsName.length, stmtStart, stmtEnd });
         }
         // named: `{ a, b as c, type T }` - the LOCAL name is after `as`, else the imported name
         const namedMatch = clause.match(/\{([^}]*)\}/);
-        if (namedMatch)
+        const namedInner = namedMatch?.[1];
+        if (namedMatch && namedInner !== undefined)
         {
             const blockStart = clauseStart + clause.indexOf(namedMatch[0]) + 1;
             let cursor = 0;
-            for (const raw of namedMatch[1].split(','))
+            for (const raw of namedInner.split(','))
             {
                 const partStart = blockStart + cursor;
                 cursor += raw.length + 1; // + the comma
@@ -229,7 +234,8 @@ export function diagnoseUnusedImports(source: string, compiledJs: string): Azero
         let occ: RegExpExecArray | null;
         while ((occ = re.exec(source)) !== null)
         {
-            if (!bindings.some(other => occ!.index >= other.stmtStart && occ!.index < other.stmtEnd))
+            const at = occ.index;
+            if (!bindings.some(other => at >= other.stmtStart && at < other.stmtEnd))
             {
                 usedElsewhere = true;
                 break;
@@ -307,6 +313,23 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
         {
             diagnoseEventHandlers(item.node, out);
         }
+    }
+
+    // azeroth/multiple-roots. The generator returns the LAST top-level markup region,
+    // so every earlier one would be built and silently discarded - a section that
+    // "vanishes" with no error (field-reported). Make it loud at compile time.
+    const markupItems = component.body.filter((item) => item.kind === 'markup');
+    for (const extra of markupItems.slice(0, -1))
+    {
+        out.push({
+            code: 'azeroth/multiple-roots',
+            severity: 'error',
+            message: 'A component renders exactly one top-level markup region, and only the last '
+                + 'one is returned - this region would be silently discarded. Wrap sibling roots '
+                + 'in a fragment (<>...</>) or a single host element.',
+            start: extra.start,
+            end: extra.end
+        });
     }
 }
 

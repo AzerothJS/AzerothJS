@@ -19,7 +19,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { type CoTarget, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild } from '@azerothjs/renderer';
 import type { RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
@@ -36,7 +36,7 @@ export interface RoutesProps
      * Optional fallback component, rendered when no route matches. Use it for
      * 404 / catch-all UI. If absent, nothing is rendered for unmatched URLs.
      */
-    fallback?: () => HTMLElement;
+    fallback?: (() => MountNode) | undefined;
 }
 
 /**
@@ -93,19 +93,19 @@ export interface RoutesProps
  * @example
  * Routes({ router, fallback: () => h('h1', {}, '404') });
  */
-export function Routes(props: RoutesProps): HTMLElement
+export function Routes(props: RoutesProps): MountNode
 {
     // Server-side rendering: evaluate the match ONCE (no live effect) and emit the
     // matched chain (or fallback) inside a contents anchor the client hydrator can
-    // adopt - the same pattern as <Show>/<Switch>. (Hydration adoption itself is a
-    // later milestone; on the client this currently re-renders.)
+    // adopt - the same pattern as <Show>/<Switch>. (On the client, hydration currently
+    // re-renders the matched chain rather than adopting it in place.)
     if (isStringMode())
     {
         const matchResult = untrack(() => props.router.match());
         const inner = matchResult !== null
             ? serializeChild(renderChain(matchResult))
             : (props.fallback ? serializeChild(props.fallback()) : '');
-        return wrapContentsAnchored('routes', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('routes', inner) as unknown as MountNode;
     }
 
     // Hydration: adopt the server-rendered range and its current route on the
@@ -116,14 +116,14 @@ export function Routes(props: RoutesProps): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveRoutes(props, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // Fresh client render: comment markers bracket the active route (no wrapper
     // element), so <Routes> works directly inside <table>/<select>/<ul>.
     const { fragment, target } = createCoMarkers('routes');
     driveRoutes(props, target, false);
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**
@@ -142,8 +142,8 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
     createEffect(() =>
     {
         const matchResult = props.router.match();
-        const factory: (() => HTMLElement) | null = matchResult !== null
-            ? (): HTMLElement => renderChain(matchResult)
+        const factory: (() => MountNode) | null = matchResult !== null
+            ? (): MountNode => renderChain(matchResult)
             : (props.fallback ?? null);
 
         if (firstRun)
@@ -210,19 +210,26 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
  *
  * @internal
  */
-function renderChain(matchResult: RouteMatch): HTMLElement
+function renderChain(matchResult: RouteMatch): MountNode
 {
     const chain = matchResult.matched;
-    let current: HTMLElement | undefined = undefined;
+    let current: MountNode | undefined = undefined;
 
     for (let i = chain.length - 1; i >= 0; i--)
     {
         const route = chain[i];
+        if (route === undefined)
+        {
+            continue; // matched chains are dense; satisfies the indexed-access check
+        }
         current = route.component({ children: current });
     }
 
-    // chain.length is always >= 1 for a non-null RouteMatch (the matched route
-    // is the chain), so `current` is guaranteed to be assigned. The non-null
-    // assertion encodes that invariant.
-    return current!;
+    if (current === undefined)
+    {
+        // chain.length is always >= 1 for a non-null RouteMatch (the matched route
+        // IS the chain) - an empty chain means the match table is corrupted.
+        throw new Error('renderChain: RouteMatch carried an empty matched chain.');
+    }
+    return current;
 }

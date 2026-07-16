@@ -169,10 +169,10 @@ export function installDevtools(): () => void
         return agent.peek(id);
     }
 
-    let root: HTMLElement | null = null;
-    let launcher: HTMLElement | null = null;
-    let badge: HTMLElement | null = null;
-    let panel: HTMLElement | null = null;
+    /** The mounted chrome, built once by mount(). One record instead of four nullable
+     *  lets: every consumer narrows a single value, so no per-site non-null assertions. */
+    interface PanelDom { root: HTMLElement; launcher: HTMLElement; badge: HTMLElement; panel: HTMLElement }
+    let dom: PanelDom | null = null;
 
     // The agent already coalesces its notifications, so render directly.
     const unsubscribe = agent.subscribe(() => render());
@@ -182,20 +182,17 @@ export function installDevtools(): () => void
 
     function render(): void
     {
-        if (root === null)
-        {
-            mount();
-        }
+        const d = dom ?? mount();
 
         const model = viewModel();
-        badge!.textContent = String(model.counts.effect);
+        d.badge.textContent = String(model.counts.effect);
 
-        const summary = panel!.querySelector('[data-devtools-summary]') as HTMLElement;
+        const summary = d.panel.querySelector('[data-devtools-summary]') as HTMLElement;
         summary.textContent =
             `${ model.counts.signal } sig | ${ model.counts.effect } eff | ${ model.counts.memo } memo` +
             (model.lastWrite ? ` | last: ${ model.lastWrite.name }` : '');
 
-        const content = panel!.querySelector('[data-devtools-content]') as HTMLElement;
+        const content = d.panel.querySelector('[data-devtools-content]') as HTMLElement;
         content.textContent = '';
         navOrder = [];
 
@@ -350,7 +347,7 @@ export function installDevtools(): () => void
         svg.appendChild(poly);
 
         // Marker on the latest value.
-        const last = point(values[values.length - 1], values.length - 1);
+        const last = point(values[values.length - 1] ?? 0, values.length - 1);
         const dot = document.createElementNS(SVG_NS, 'circle');
         dot.setAttribute('cx', last.x.toFixed(1));
         dot.setAttribute('cy', last.y.toFixed(1));
@@ -775,19 +772,20 @@ export function installDevtools(): () => void
 
     function copyText(text: string): Promise<void>
     {
-        return navigator.clipboard?.writeText(text).catch(() => undefined) ?? Promise.resolve();
+        // Insecure contexts (plain-HTTP dev hosts) have no clipboard - the types say otherwise.
+        return (navigator as { clipboard?: Clipboard }).clipboard?.writeText(text).catch(() => undefined) ?? Promise.resolve();
     }
 
     async function loadSnapshotFile(file: File): Promise<void>
     {
         try
         {
-            const parsed = JSON.parse(await file.text()) as SessionSnapshot;
+            const parsed = JSON.parse(await file.text()) as Partial<SessionSnapshot> | null;
             if (!parsed || typeof parsed !== 'object' || !parsed.model || !parsed.graph)
             {
                 return;
             }
-            snapshot = parsed;
+            snapshot = parsed as SessionSnapshot;
             selectedId = null;
             ui.tab = 'tree';
             saveUi(ui);
@@ -884,18 +882,19 @@ export function installDevtools(): () => void
 
     function scrollSelectedIntoView(): void
     {
-        if (selectedId === null || panel === null)
+        const d = dom;
+        if (selectedId === null || d === null)
         {
             return;
         }
-        const el = panel.querySelector(`[data-devtools-content] [data-node-id="${ selectedId }"]`);
+        const el = d.panel.querySelector(`[data-devtools-content] [data-node-id="${ selectedId }"]`);
         el?.scrollIntoView({ block: 'nearest' });
     }
 
     /** Arrow keys move the selection; Escape closes the inspector. */
     function onKeyDown(e: KeyboardEvent): void
     {
-        if (ui.collapsed || panel === null)
+        if (ui.collapsed || dom === null)
         {
             return;
         }
@@ -945,7 +944,12 @@ export function installDevtools(): () => void
     /** The inspector drawer: everything known about the selected node. */
     function renderDetail(): void
     {
-        const drawer = panel!.querySelector('[data-devtools-detail]') as HTMLElement;
+        const d = dom;
+        if (d === null)
+        {
+            return;
+        }
+        const drawer = d.panel.querySelector('[data-devtools-detail]') as HTMLElement;
         drawer.textContent = '';
 
         if (selectedId === null)
@@ -973,7 +977,7 @@ export function installDevtools(): () => void
         tag.textContent = node.kind;
         const who = document.createElement('strong');
         who.setAttribute('style', 'color:#e8f3ec;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        who.textContent = `${ node.name ?? `#${ node.id }` }`;
+        who.textContent = node.name ?? `#${ node.id }`;
         const close = document.createElement('button');
         close.textContent = 'x';
         close.setAttribute('title', 'Close inspector');
@@ -1032,7 +1036,7 @@ export function installDevtools(): () => void
                 set.addEventListener('click', () => applyEdit(node.id, input.value));
                 input.addEventListener('keydown', (e) =>
                 {
-                    if ((e as KeyboardEvent).key === 'Enter')
+                    if ((e).key === 'Enter')
                     {
                         applyEdit(node.id, input.value);
                     }
@@ -1150,7 +1154,7 @@ export function installDevtools(): () => void
         return wrap;
     }
 
-    function labelOf(n: { name?: string; id: number }): string
+    function labelOf(n: { name?: string | undefined; id: number }): string
     {
         return n.name ?? `#${ n.id }`;
     }
@@ -1175,15 +1179,16 @@ export function installDevtools(): () => void
 
     // --- chrome ----------------------------------------------------------
 
-    function mount(): void
+    function mount(): PanelDom
     {
-        root = document.createElement('div');
+        const root = document.createElement('div');
         root.id = PANEL_ID;
         root.setAttribute('style', 'position:fixed;z-index:2147483646;font:11px/1.5 ui-monospace,Consolas,monospace');
 
-        launcher = buildLauncher();
-        panel = buildPanel();
-        badge = launcher.querySelector('[data-devtools-badge]') as HTMLElement;
+        const launcher = buildLauncher();
+        const panel = buildPanel();
+        const badge = launcher.querySelector('[data-devtools-badge]') as HTMLElement;
+        dom = { root, launcher, badge, panel };
 
         root.append(launcher, panel);
         document.body.appendChild(root);
@@ -1199,6 +1204,7 @@ export function installDevtools(): () => void
         document.addEventListener('keydown', onKeyDown);
 
         applyLayout();
+        return dom;
     }
 
     function buildLauncher(): HTMLElement
@@ -1310,7 +1316,7 @@ export function installDevtools(): () => void
         // Enter jumps straight to the first match's inspector.
         search.addEventListener('keydown', (e) =>
         {
-            if ((e as KeyboardEvent).key !== 'Enter')
+            if ((e).key !== 'Enter')
             {
                 return;
             }
@@ -1346,9 +1352,14 @@ export function installDevtools(): () => void
 
     function refreshTabStyles(): void
     {
+        const d = dom;
+        if (d === null)
+        {
+            return;
+        }
         for (const t of TABS)
         {
-            const el = panel!.querySelector(`[data-devtools-tab="${ t.id }"]`) as HTMLElement;
+            const el = d.panel.querySelector(`[data-devtools-tab="${ t.id }"]`) as HTMLElement;
             el.setAttribute('style', tabStyle(ui.tab === t.id));
         }
     }
@@ -1357,15 +1368,16 @@ export function installDevtools(): () => void
 
     function applyLayout(): void
     {
-        if (root === null)
+        const d = dom;
+        if (d === null)
         {
             return;
         }
-        launcher!.style.display = ui.collapsed ? 'flex' : 'none';
-        panel!.style.display = ui.collapsed ? 'none' : 'flex';
+        d.launcher.style.display = ui.collapsed ? 'flex' : 'none';
+        d.panel.style.display = ui.collapsed ? 'none' : 'flex';
 
-        const handle = panel!.querySelector('[data-devtools-resize]') as HTMLElement;
-        const header = panel!.querySelector('[data-devtools-header]') as HTMLElement;
+        const handle = d.panel.querySelector('[data-devtools-resize]') as HTMLElement;
+        const header = d.panel.querySelector('[data-devtools-header]') as HTMLElement;
 
         if (ui.collapsed)
         {
@@ -1376,8 +1388,8 @@ export function installDevtools(): () => void
         if (ui.dock === 'float')
         {
             placeFloating();
-            panel!.style.width = `${ ui.floatW }px`;
-            panel!.style.height = `${ ui.floatH }px`;
+            d.panel.style.width = `${ ui.floatW }px`;
+            d.panel.style.height = `${ ui.floatH }px`;
             header.style.cursor = 'grab';
             handle.setAttribute('style', resizeHandleStyle('corner'));
             return;
@@ -1385,40 +1397,45 @@ export function installDevtools(): () => void
 
         // Docked: pin to an edge, full span on the cross axis.
         header.style.cursor = 'default';
-        root.style.left = ui.dock === 'right' ? 'auto' : '0';
-        root.style.right = ui.dock === 'right' ? '0' : 'auto';
-        root.style.top = ui.dock === 'bottom' ? 'auto' : '0';
-        root.style.bottom = ui.dock === 'bottom' ? '0' : 'auto';
+        d.root.style.left = ui.dock === 'right' ? 'auto' : '0';
+        d.root.style.right = ui.dock === 'right' ? '0' : 'auto';
+        d.root.style.top = ui.dock === 'bottom' ? 'auto' : '0';
+        d.root.style.bottom = ui.dock === 'bottom' ? '0' : 'auto';
 
         if (ui.dock === 'bottom')
         {
-            panel!.style.width = '100vw';
-            panel!.style.height = `${ ui.dockSize }px`;
+            d.panel.style.width = '100vw';
+            d.panel.style.height = `${ ui.dockSize }px`;
             handle.setAttribute('style', resizeHandleStyle('top'));
         }
         else
         {
-            panel!.style.width = `${ ui.dockSize }px`;
-            panel!.style.height = '100vh';
+            d.panel.style.width = `${ ui.dockSize }px`;
+            d.panel.style.height = '100vh';
             handle.setAttribute('style', resizeHandleStyle(ui.dock === 'right' ? 'left' : 'right'));
         }
     }
 
     function placeFloating(): void
     {
+        const d = dom;
+        if (d === null)
+        {
+            return;
+        }
         if (ui.floatLeft !== null && ui.floatTop !== null)
         {
-            root!.style.left = `${ ui.floatLeft }px`;
-            root!.style.top = `${ ui.floatTop }px`;
-            root!.style.right = 'auto';
-            root!.style.bottom = 'auto';
+            d.root.style.left = `${ ui.floatLeft }px`;
+            d.root.style.top = `${ ui.floatTop }px`;
+            d.root.style.right = 'auto';
+            d.root.style.bottom = 'auto';
         }
         else
         {
-            root!.style.right = '12px';
-            root!.style.bottom = '12px';
-            root!.style.left = 'auto';
-            root!.style.top = 'auto';
+            d.root.style.right = '12px';
+            d.root.style.bottom = '12px';
+            d.root.style.left = 'auto';
+            d.root.style.top = 'auto';
         }
     }
 
@@ -1427,11 +1444,12 @@ export function installDevtools(): () => void
         handle.addEventListener('pointerdown', (down: PointerEvent) =>
         {
             // Dragging only repositions a floating panel (or the launcher).
-            if (down.button !== 0 || root === null || (!isLauncher && ui.dock !== 'float'))
+            const d = dom;
+            if (down.button !== 0 || d === null || (!isLauncher && ui.dock !== 'float'))
             {
                 return;
             }
-            const rect = root.getBoundingClientRect();
+            const rect = d.root.getBoundingClientRect();
             const offsetX = down.clientX - rect.left;
             const offsetY = down.clientY - rect.top;
             let moved = 0;
@@ -1449,10 +1467,10 @@ export function installDevtools(): () => void
                 moved += Math.abs(e.movementX) + Math.abs(e.movementY);
                 const left = Math.min(Math.max(0, e.clientX - offsetX), window.innerWidth - rect.width);
                 const top = Math.min(Math.max(0, e.clientY - offsetY), window.innerHeight - rect.height);
-                root!.style.left = `${ left }px`;
-                root!.style.top = `${ top }px`;
-                root!.style.right = 'auto';
-                root!.style.bottom = 'auto';
+                d.root.style.left = `${ left }px`;
+                d.root.style.top = `${ top }px`;
+                d.root.style.right = 'auto';
+                d.root.style.bottom = 'auto';
             };
             const up = (): void =>
             {
@@ -1469,7 +1487,7 @@ export function installDevtools(): () => void
                 if (moved >= 4)
                 {
                     justDragged.add(handle);
-                    const r = root!.getBoundingClientRect();
+                    const r = d.root.getBoundingClientRect();
                     ui.floatLeft = r.left;
                     ui.floatTop = r.top;
                     saveUi(ui);
@@ -1484,7 +1502,7 @@ export function installDevtools(): () => void
     {
         handle.addEventListener('pointerdown', (down: PointerEvent) =>
         {
-            if (down.button !== 0 || panel === null)
+            if (down.button !== 0 || dom === null)
             {
                 return;
             }
@@ -1622,11 +1640,8 @@ export function installDevtools(): () => void
         unsubscribe();
         document.removeEventListener('keydown', onKeyDown);
         agent.uninstall();
-        root?.remove();
-        root = null;
-        launcher = null;
-        panel = null;
-        badge = null;
+        dom?.root.remove();
+        dom = null;
     }
 
     active = { uninstall };

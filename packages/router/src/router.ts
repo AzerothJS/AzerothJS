@@ -96,7 +96,7 @@ export interface Router
      * router.navigate('/login', { replace: true, scroll: true });
      * ```
      */
-    navigate(to: NavigateTarget, options?: NavigateOptions): void;
+    navigate: (to: NavigateTarget, options?: NavigateOptions) => void;
 
     /**
      * Replaces the current history entry with `to`.
@@ -111,13 +111,13 @@ export interface Router
      * router.replace('/dashboard');
      * ```
      */
-    replace(to: NavigateTarget, options?: Omit<NavigateOptions, 'replace'>): void;
+    replace: (to: NavigateTarget, options?: Omit<NavigateOptions, 'replace'>) => void;
 
     /** Steps back one history entry, same as the browser's Back button. */
-    back(): void;
+    back: () => void;
 
     /** Steps forward one history entry, same as the browser's Forward button. */
-    forward(): void;
+    forward: () => void;
 
     /**
      * Resolves a `NavigateTarget` to the actual URL string that belongs in an
@@ -136,7 +136,7 @@ export interface Router
      * router.href('https://x.com');    // -> 'https://x.com' (unchanged)
      * ```
      */
-    href(to: NavigateTarget): string;
+    href: (to: NavigateTarget) => string;
 }
 
 /**
@@ -202,7 +202,7 @@ function joinPaths(parent: string, child: string): string
  *
  * @internal
  */
-function flattenRoutes(
+export function flattenRoutes(
     routes: Route[],
     parentPath = '',
     parentChain: Route[] = []
@@ -237,7 +237,7 @@ function flattenRoutes(
  *
  * @internal
  */
-function splitFullPath(fullPath: string): { pathname: string; search: string; hash: string }
+export function splitFullPath(fullPath: string): { pathname: string; search: string; hash: string }
 {
     const hashIdx = fullPath.indexOf('#');
     const hash = hashIdx >= 0 ? fullPath.slice(hashIdx) : '';
@@ -305,7 +305,7 @@ export function targetToFullPath(target: NavigateTarget): string
  * EXTERNAL_URL.test('/users/42');           // -> false (internal app path)
  * ```
  */
-export const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+export const EXTERNAL_URL: RegExp = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
 /**
  * Normalizes a configured base path into a canonical prefix:
@@ -476,8 +476,14 @@ export function createRouter(config: RouterConfig): Router
                 continue;
             }
 
+            const leaf = entry.matched[entry.matched.length - 1];
+            if (leaf === undefined)
+            {
+                continue; // matched chains are never empty; satisfies the indexed-access check
+            }
+
             return {
-                route: entry.matched[entry.matched.length - 1],
+                route: leaf,
                 params: result.params,
                 matched: entry.matched,
                 pathname
@@ -580,6 +586,16 @@ export function createRouter(config: RouterConfig): Router
         }
     );
 
+    // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
+    // and only when its path (pathname + search) is EXACTLY what this router booted at, so
+    // a stale payload or a URL mismatch falls back to a normal fetch instead of serving the
+    // wrong page's data. Adoption seeds the resource as already settled (see
+    // ResourceOptions.initialValue): data is synchronously readable during an SSR render
+    // and the hydrating client never refetches what the server just loaded.
+    const seed = config.initialLoaderData;
+    const initialState = untrack(state);
+    const adopt = seed !== undefined && seed.path === initialState.pathname + initialState.search;
+
     // Loader resource. The source returns a LoaderTrigger when the matched leaf
     // has a loader, and null otherwise (no match, or matched route declines to
     // load). createResource handles cancellation and race-condition guarding so
@@ -593,7 +609,7 @@ export function createRouter(config: RouterConfig): Router
                 return null;
             }
             const leaf = m.matched[m.matched.length - 1];
-            if (!leaf.loader)
+            if (leaf === undefined || !leaf.loader)
             {
                 return null;
             }
@@ -602,7 +618,8 @@ export function createRouter(config: RouterConfig): Router
         async (trigger, signal) =>
         {
             return trigger.loader({ params: trigger.params, signal });
-        }
+        },
+        adopt ? { initialValue: seed.data } : undefined
     );
 
     function performNavigate(target: NavigateTarget, options: NavigateOptions): void

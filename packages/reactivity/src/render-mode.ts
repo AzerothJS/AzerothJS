@@ -78,7 +78,9 @@ const modeStack: RenderMode[] = ['dom'];
  */
 export function getRenderMode(): RenderMode
 {
-    return modeStack[modeStack.length - 1];
+    // The stack bottom is permanent, but index math cannot prove it - the fallback IS
+    // the documented outside-any-runInMode semantic.
+    return modeStack[modeStack.length - 1] ?? 'dom';
 }
 
 /**

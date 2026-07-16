@@ -235,12 +235,12 @@ function cell(value: string): string
 function tagNameRange(ctx: RequestContext, offset: number): Range | undefined
 {
     let start = offset;
-    while (start > 0 && /[A-Za-z0-9_$.-]/.test(ctx.source[start - 1]) && ctx.source[start - 1] !== '<')
+    while (start > 0 && /[A-Za-z0-9_$.-]/.test(ctx.source[start - 1] ?? '') && ctx.source[start - 1] !== '<')
     {
         start--;
     }
     let end = offset;
-    while (end < ctx.source.length && /[A-Za-z0-9_$.-]/.test(ctx.source[end]))
+    while (end < ctx.source.length && /[A-Za-z0-9_$.-]/.test(ctx.source[end] ?? ''))
     {
         end++;
     }
@@ -536,12 +536,12 @@ function withOptionsSection(keyword: string): string
 function fullTagName(ctx: RequestContext, offset: number): string
 {
     let start = offset;
-    while (start > 0 && /[A-Za-z0-9_$.-]/.test(ctx.source[start - 1]) && ctx.source[start - 1] !== '<')
+    while (start > 0 && /[A-Za-z0-9_$.-]/.test(ctx.source[start - 1] ?? '') && ctx.source[start - 1] !== '<')
     {
         start--;
     }
     let end = offset;
-    while (end < ctx.source.length && /[A-Za-z0-9_$.-]/.test(ctx.source[end]))
+    while (end < ctx.source.length && /[A-Za-z0-9_$.-]/.test(ctx.source[end] ?? ''))
     {
         end++;
     }
@@ -552,12 +552,12 @@ function fullTagName(ctx: RequestContext, offset: number): string
 function fullAttributeName(ctx: RequestContext, offset: number): string
 {
     let start = offset;
-    while (start > 0 && /[A-Za-z0-9_$:-]/.test(ctx.source[start - 1]))
+    while (start > 0 && /[A-Za-z0-9_$:-]/.test(ctx.source[start - 1] ?? ''))
     {
         start--;
     }
     let end = offset;
-    while (end < ctx.source.length && /[A-Za-z0-9_$:-]/.test(ctx.source[end]))
+    while (end < ctx.source.length && /[A-Za-z0-9_$:-]/.test(ctx.source[end] ?? ''))
     {
         end++;
     }

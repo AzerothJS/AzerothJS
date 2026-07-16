@@ -40,7 +40,7 @@ export class LineIndex
         while (lo < hi)
         {
             const mid = (lo + hi + 1) >> 1;
-            if (this.lineStarts[mid] <= clamped)
+            if ((this.lineStarts[mid] ?? 0) <= clamped)
             {
                 lo = mid;
             }
@@ -49,7 +49,7 @@ export class LineIndex
                 hi = mid - 1;
             }
         }
-        return { line: lo, character: clamped - this.lineStarts[lo] };
+        return { line: lo, character: clamped - (this.lineStarts[lo] ?? 0) };
     }
 
     /** Converts a zero-based position to a byte offset. */
@@ -63,9 +63,9 @@ export class LineIndex
         {
             return this.text.length;
         }
-        const lineStart = this.lineStarts[position.line];
+        const lineStart = this.lineStarts[position.line] ?? 0;
         const nextLine = position.line + 1 < this.lineStarts.length
-            ? this.lineStarts[position.line + 1]
+            ? (this.lineStarts[position.line + 1] ?? this.text.length + 1)
             : this.text.length + 1;
         return Math.min(lineStart + Math.max(0, position.character), nextLine - 1);
     }

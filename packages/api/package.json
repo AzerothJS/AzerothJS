@@ -1,0 +1,57 @@
+{
+    "name": "@azerothjs/api",
+    "version": "0.7.0-beta.1",
+    "private": true,
+    "engines": {
+        "node": ">=24"
+    },
+    "description": "AzerothJS typed contract layer - define an API once, get the server mount and a fully inferred client with no codegen",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        },
+        "./client": {
+            "types": "./dist/client-entry.d.ts",
+            "import": "./dist/client-entry.js",
+            "default": "./dist/client-entry.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "sideEffects": false,
+    "scripts": {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "dependencies": {
+        "@azerothjs/schema": "0.7.0-beta.1",
+        "@azerothjs/http": "0.7.0-beta.1"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "author": {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
+        "directory": "packages/api"
+    },
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/api",
+    "bugs": {
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    }
+}

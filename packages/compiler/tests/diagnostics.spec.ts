@@ -58,9 +58,9 @@ describe('diagnoseUnusedImports', () =>
     {
         const src = 'import { Gone } from \'./x\';\ncomponent C { <p>hi</p> }';
         const diag = diagnoseUnusedImports(src, generateModule(src).code);
-        expect(diag[0].severity).toBe('warning');
-        expect(diag[0].code).toBe('azeroth/unused-import');
-        expect(src.slice(diag[0].start, diag[0].end)).toBe('Gone');
+        expect(diag[0]!.severity).toBe('warning');
+        expect(diag[0]!.code).toBe('azeroth/unused-import');
+        expect(src.slice(diag[0]!.start, diag[0]!.end)).toBe('Gone');
     });
 });
 
@@ -174,6 +174,28 @@ describe('diagnoseModule - handler-not-function', () =>
     it('does NOT flag an arrow-function handler', () =>
     {
         expect(codes('component C { state n = 0; <button onClick={() => n++}>x</button> }')).not.toContain('azeroth/handler-not-function');
+    });
+});
+
+describe('diagnoseModule - multiple-roots', () =>
+{
+    it('flags every top-level markup region except the last (only the last is returned)', () =>
+    {
+        // Regression (field report): a component with <section> + <Show> silently rendered
+        // only the <Show> - the first root vanished with no error.
+        const src = 'component C { state on = false; <section>main</section> <Show when={on}>{() => <p>bar</p>}</Show> }';
+        const diagnostic = find(src, 'azeroth/multiple-roots');
+        expect(diagnostic).toBeDefined();
+        expect(diagnostic?.severity).toBe('error');
+        expect(diagnostic?.message).toContain('fragment');
+        // The span points at the DISCARDED region (the first one).
+        expect(src.slice(diagnostic!.start, diagnostic!.end)).toContain('<section>');
+    });
+
+    it('a single root - element, fragment, or control flow - is not flagged', () =>
+    {
+        expect(codes('component A { <section>one</section> }')).not.toContain('azeroth/multiple-roots');
+        expect(codes('component B { state n = 0; <><p>{n}</p><p>two</p></> }')).not.toContain('azeroth/multiple-roots');
     });
 });
 

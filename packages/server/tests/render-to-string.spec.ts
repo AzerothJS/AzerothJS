@@ -215,7 +215,7 @@ describe('renderToString - control-flow string-mode paths (co-range comment mark
 
     it('Switch emits the first matching case in azc:switch markers', () =>
     {
-        const status = 'error';
+        const status = 'error' as 'loading' | 'error';
         const html = renderToString(() =>
             h('div', {}, Switch({
                 fallback: () => h('span', {}, 'idle'),

@@ -58,8 +58,8 @@ describe('h - static children', () =>
     {
         const el = h('ul', {}, h('li', {}, 'a'), h('li', {}, 'b'));
         expect(el.children.length).toBe(2);
-        expect(el.children[0].textContent).toBe('a');
-        expect(el.children[1].textContent).toBe('b');
+        expect(el.children[0]?.textContent).toBe('a');
+        expect(el.children[1]?.textContent).toBe('b');
     });
 
     it('renders string and number children as text nodes', () =>
@@ -67,7 +67,7 @@ describe('h - static children', () =>
         const el = h('span', {}, 'count: ', 7);
         expect(el.textContent).toBe('count: 7');
         expect(el.childNodes.length).toBe(2);
-        expect(el.childNodes[0].nodeType).toBe(3);
+        expect(el.childNodes[0]?.nodeType).toBe(3);
     });
 
     it('flattens array children', () =>

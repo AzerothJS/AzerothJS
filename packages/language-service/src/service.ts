@@ -99,7 +99,7 @@ export class AzerothLanguageService
     constructor(
         workspaceDirectory: string,
         configPath?: string,
-        options: { rootProjectFiles?: boolean } = {}
+        options: { rootProjectFiles?: boolean; nativeDiagnostics?: boolean } = {}
     )
     {
         this.scratchRoot = workspaceDirectory.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -142,11 +142,9 @@ export class AzerothLanguageService
      */
     public getTsDiagnostics(filePath: string): Diagnostic[]
     {
-        const service = this.project.service;
-        const raw = [
-            ...service.getSyntacticDiagnostics(filePath),
-            ...service.getSemanticDiagnostics(filePath)
-        ];
+        // One raw-diagnostics primitive serves both engines (classic service or native
+        // compiler); the shaping below is engine-agnostic.
+        const raw = this.project.rawTsDiagnostics(filePath);
 
         const out: Diagnostic[] = [];
         for (const diag of raw)

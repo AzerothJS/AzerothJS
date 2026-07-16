@@ -71,12 +71,15 @@ export function remapLanguageService(
             .map(remapDocumentSpan)
             .filter((entry): entry is T => entry !== null));
 
-    const proxy: tsModule.LanguageService = Object.create(null);
+    // Built as a plain record because the members are enumerated at runtime; the
+    // assertion below is the one place the record is blessed as a LanguageService.
+    const record = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(service) as (keyof tsModule.LanguageService)[])
     {
         const member = service[key];
-        (proxy as Record<string, unknown>)[key] = typeof member === 'function' ? (member as (...a: unknown[]) => unknown).bind(service) : member;
+        record[key] = typeof member === 'function' ? (member as (...a: unknown[]) => unknown).bind(service) : member;
     }
+    const proxy = record as unknown as tsModule.LanguageService;
 
     proxy.findReferences = (fileName, position) =>
     {
@@ -111,10 +114,9 @@ export function remapLanguageService(
         // `textSpan` (the bound span) is in the QUERY file - the caller's coordinates - so it is
         // remapped only when the query itself targets a `.azeroth` file.
         const bound = remapSpan(fileName, result.textSpan);
-        return {
-            definitions: mapEntries(result.definitions),
-            textSpan: bound ?? result.textSpan
-        };
+        const textSpan = bound ?? result.textSpan;
+        const definitions = mapEntries(result.definitions);
+        return definitions === undefined ? { textSpan } : { definitions, textSpan };
     };
 
     proxy.getDefinitionAtPosition = (fileName, position) =>
@@ -126,10 +128,15 @@ export function remapLanguageService(
     proxy.getImplementationAtPosition = (fileName, position) =>
         mapEntries(service.getImplementationAtPosition(fileName, position));
 
+    // tsserver still invokes the legacy boolean overload on some code paths; a
+    // pass-through proxy must forward whichever call shape arrives, so it cannot
+    // migrate to the preferences-object overload the deprecation points at.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     proxy.findRenameLocations = ((fileName: string, position: number, findInStrings: boolean, findInComments: boolean, preferences?: tsModule.UserPreferences | boolean) =>
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
         mapEntries((service.findRenameLocations as (...args: unknown[]) => readonly tsModule.RenameLocation[] | undefined)(
             fileName, position, findInStrings, findInComments, preferences
-        ))) as tsModule.LanguageService['findRenameLocations'];
+        )));
 
     proxy.getDocumentHighlights = (fileName, position, filesToSearch) =>
     {
@@ -146,15 +153,16 @@ export function remapLanguageService(
                     return doc;
                 }
                 const spans = doc.highlightSpans
-                    .map((span) =>
+                    .map((span): tsModule.HighlightSpan | null =>
                     {
                         const textSpan = remapSpan(doc.fileName, span.textSpan);
                         if (textSpan === null)
                         {
                             return null;
                         }
-                        const contextSpan = span.contextSpan === undefined ? undefined : remapSpan(doc.fileName, span.contextSpan) ?? undefined;
-                        return { ...span, textSpan, contextSpan };
+                        const { contextSpan, ...rest } = span;
+                        const remappedContext = contextSpan === undefined ? undefined : remapSpan(doc.fileName, contextSpan) ?? undefined;
+                        return remappedContext === undefined ? { ...rest, textSpan } : { ...rest, textSpan, contextSpan: remappedContext };
                     })
                     .filter((span): span is tsModule.HighlightSpan => span !== null);
                 return spans.length === 0 ? null : { ...doc, highlightSpans: spans };

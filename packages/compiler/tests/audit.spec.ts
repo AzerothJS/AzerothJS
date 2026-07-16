@@ -40,8 +40,8 @@ describe('compiler audit - verified invariants', () =>
     {
         const out = code('component C { state n = 0; <Child a="lit" b={n} onPick={() => n++} {...rest}><span>kid</span></Child> }');
         expect(out).toContain("a: 'lit'");
-        expect(out).toMatch(/get b\(\) \{ return n\(\); \}/);
-        expect(out).toMatch(/get onPick\(\) \{ return \(\) => setN/);
+        expect(out).toMatch(/get b\(\) \{ return \(n\(\)\); \}/);
+        expect(out).toMatch(/get onPick\(\) \{ return \(\(\) => setN/);
         expect(out).toContain('...rest');
         expect(out).toMatch(/get children\(\)/);
     });
@@ -64,9 +64,9 @@ describe('compiler audit - verified invariants', () =>
     });
 });
 
-describe('compiler audit - Phase 1 fixes (M1 + enforcement consistency)', () =>
+describe('compiler audit - derived is read-only + error severities enforce', () =>
 {
-    it('M1: assigning or incrementing a `derived` is a located compile error (no phantom setter)', () =>
+    it('assigning or incrementing a `derived` is a located compile error (no phantom setter)', () =>
     {
         expect(() => code('component C { state n = 0; derived d = n * 2; <button onClick={() => d = 5}>{d}</button> }'))
             .toThrow(/Cannot assign to `d`: a `derived` value is read-only/);
@@ -89,9 +89,9 @@ describe('compiler audit - Phase 1 fixes (M1 + enforcement consistency)', () =>
     });
 });
 
-describe('compiler audit - M2 fixes (malformed markup is a hard, located error)', () =>
+describe('compiler audit - malformed markup is a hard, located error', () =>
 {
-    it('M2: markup the parser COMMITTED to (mismatched/nested/attrs) is a located CompileError, not raw passthrough', () =>
+    it('markup the parser COMMITTED to (mismatched/nested/attrs) is a located CompileError, not raw passthrough', () =>
     {
         // `<div><span></div>` committed (nested element + a `</` close tag), so it now hard-errors
         // instead of degrading to invalid raw TS that only oxc would later choke on.
@@ -101,7 +101,7 @@ describe('compiler audit - M2 fixes (malformed markup is a hard, located error)'
         expect(() => code('component C { <>x }')).toThrow();                    // committed via fragment
     });
 
-    it('M2: the committed-markup error is located (carries a source offset)', () =>
+    it('the committed-markup error is located (carries a source offset)', () =>
     {
         let caught: unknown;
         try
@@ -116,7 +116,7 @@ describe('compiler audit - M2 fixes (malformed markup is a hard, located error)'
         expect((caught as { offset?: number }).offset).toBeGreaterThan(0);
     });
 
-    it('M2 boundary: generic arrows fall back, but angle-bracket casts are now rejected', () =>
+    it('boundary: generic arrows fall back, but angle-bracket casts are now rejected', () =>
     {
         // A generic arrow throws in attribute-name reading (the `,`) before the opening tag commits,
         // so it still falls back to opaque TS. An angle-bracket cast completes an opening tag and
@@ -127,7 +127,7 @@ describe('compiler audit - M2 fixes (malformed markup is a hard, located error)'
     });
 });
 
-describe('compiler audit - Phase 2 (IR validation before codegen)', () =>
+describe('compiler audit - IR validation before codegen', () =>
 {
     it('a component exercising every binding kind passes IR validation and compiles', () =>
     {
@@ -180,7 +180,7 @@ describe('compiler audit - current behavior of invalid input (residual; see audi
 const codes = (src: string): string[] => diagnoseModule(src).map((d) => `${ d.severity }:${ d.code }`);
 const withDerived = (body: string): string => `component C(props: { id: number }) { state n = 0; derived d = n * 2; ${ body } }`;
 
-describe('correctness - M1 derived mutation (caught in BOTH phases, every context)', () =>
+describe('correctness - derived mutation (caught in BOTH phases, every context)', () =>
 {
     it('the semantic phase (diagnoseModule) reports assign-to-derived in a handler', () =>
     {
@@ -246,7 +246,7 @@ describe('correctness - M1 derived mutation (caught in BOTH phases, every contex
     });
 });
 
-describe('correctness - M2 malformed markup stress (every case is a located error)', () =>
+describe('correctness - malformed markup stress (every case is a located error)', () =>
 {
     const malformed = [
         '<div><span></div>',
@@ -315,7 +315,7 @@ describe('compiler audit - U1 type-checker (real ts.Program, now implemented)', 
         // guard cannot see (a bare identifier read is not assignment/++/call).
         const diagnostics = typeCheckModuleTS('component C { state count = 0; <button onClick={count}>x</button> }');
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/handler-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/handler-type');
     });
 
     it('provides a build-time type-check path: wrong component prop types are caught', () =>
@@ -328,7 +328,7 @@ component Parent {
 }`;
         const diagnostics = typeCheckModuleTS(source);
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/prop-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 
     it('type-checks setup-effect handlers wrapped in comma/conditional expressions', () =>
@@ -337,6 +337,6 @@ component Parent {
         // the comma expression as number -> not assignable to an event handler -> rejected.
         const diagnostics = typeCheckModuleTS('component C { state count = 0; <button onClick={(count, count++)}>x</button> }');
         expect(diagnostics).toHaveLength(1);
-        expect(diagnostics[0].code).toBe('azeroth/handler-type');
+        expect(diagnostics[0]!.code).toBe('azeroth/handler-type');
     });
 });

@@ -22,7 +22,7 @@
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
 import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
-import { destroyComponent, type CoTarget, createCoMarkers, appendToCo, adoptCoRange } from '@azerothjs/component';
+import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, appendToCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, resolveReactive } from './h.ts';
 
 /**
@@ -130,7 +130,7 @@ const FALLBACK_TIMEOUT_MS = 1000;
  * Transition({ when: isOpen, name: 'fade', children: () => h('div', { class: 'modal' }, 'Hi') });
  * // CSS: .fade-enter-from,.fade-leave-to{opacity:0} .fade-enter-active,.fade-leave-active{transition:opacity .3s}
  */
-export function Transition(props: TransitionProps): HTMLElement
+export function Transition(props: TransitionProps): MountNode
 {
     // Server-side rendering.
     // Emit the static initial content (no animation classes - there
@@ -139,7 +139,7 @@ export function Transition(props: TransitionProps): HTMLElement
     if (isStringMode())
     {
         const inner = untrack(() => resolveReactive(props.when)) ? serializeChild(props.children()) : '';
-        return wrapContentsAnchored('transition', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('transition', inner) as unknown as MountNode;
     }
 
     // Hydration.
@@ -151,7 +151,7 @@ export function Transition(props: TransitionProps): HTMLElement
         {
             const { target, contentCursor } = adoptCoRange(cursor);
             driveTransition(props, target, true, contentCursor);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // No wrapper element: comment markers bracket the (single) animated child so
@@ -160,7 +160,7 @@ export function Transition(props: TransitionProps): HTMLElement
 
     driveTransition(props, target, false);
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }
 
 /**

@@ -28,7 +28,7 @@
  * isWhitespace('x'); // false
  * ```
  */
-export function isWhitespace(ch: string): boolean
+export function isWhitespace(ch: string | undefined): boolean
 {
     return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v';
 }
@@ -42,9 +42,11 @@ export function isWhitespace(ch: string): boolean
  * isIdentStart('1'); // false (digits cannot start an identifier)
  * ```
  */
-export function isIdentStart(ch: string): boolean
+export function isIdentStart(ch: string | undefined): boolean
 {
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$';
+    // An out-of-bounds read (undefined) is simply "not a match" - callers scan with
+    // `source[i]` and rely on that, mirroring isTagOrFragmentStart in the parser.
+    return ch !== undefined && ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$');
 }
 
 /**
@@ -56,9 +58,9 @@ export function isIdentStart(ch: string): boolean
  * isIdentPart('-'); // false
  * ```
  */
-export function isIdentPart(ch: string): boolean
+export function isIdentPart(ch: string | undefined): boolean
 {
-    return isIdentStart(ch) || (ch >= '0' && ch <= '9');
+    return isIdentStart(ch) || (ch !== undefined && ch >= '0' && ch <= '9');
 }
 
 /**
@@ -575,12 +577,12 @@ export function findMarkupStart(src: string, from: number): number
                 j++;
             }
             prevWord = src.slice(i, j);
-            prevChar = src[j - 1];
+            prevChar = src[j - 1] ?? '';
             i = j;
             continue;
         }
 
-        prevChar = ch;
+        prevChar = ch ?? '';
         prevWord = '';
         i++;
     }

@@ -298,6 +298,25 @@ describe('createStore - SSR scope isolation', () =>
 
 describe('createStore - edge cases', () =>
 {
+    it('a throwing factory propagates the error and is retried, not cached as broken', () =>
+    {
+        let attempts = 0;
+        const useStore = createStore(() =>
+        {
+            attempts++;
+            if (attempts === 1)
+            {
+                throw new Error('factory exploded');
+            }
+            return { ok: true };
+        });
+
+        expect(() => useStore()).toThrow('factory exploded');
+        // The failure is NOT cached: the next call re-runs the factory and succeeds.
+        expect(useStore()).toEqual({ ok: true });
+        expect(attempts).toBe(2);
+    });
+
     it('caches a factory that returns null exactly once', () =>
     {
         let factoryRuns = 0;

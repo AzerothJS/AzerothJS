@@ -182,9 +182,10 @@ export class CodeMapping
         while (lo <= hi)
         {
             const mid = (lo + hi) >> 1;
-            if (start(segments[mid]) <= offset)
+            const segment = segments[mid];
+            if (segment !== undefined && start(segment) <= offset)
             {
-                candidate = segments[mid];
+                candidate = segment;
                 lo = mid + 1;
             }
             else

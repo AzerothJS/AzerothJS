@@ -18,6 +18,7 @@
  */
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import type { MountNode } from './types.ts';
 import {
     createSignal,
     createEffect,
@@ -43,14 +44,14 @@ export interface ErrorBoundaryProps
      * error and re-renders children. Use `reset` to wire up
      * "Try again" buttons.
      */
-    fallback: (error: unknown, reset: () => void) => HTMLElement;
+    fallback: (error: unknown, reset: () => void) => MountNode;
 
     /**
      * The protected subtree. Re-evaluated every time the boundary
      * resets. Anything thrown synchronously here, or by any
      * effect/memo created here on a later run, is caught.
      */
-    children: () => HTMLElement;
+    children: () => MountNode;
 }
 
 /**
@@ -131,7 +132,7 @@ interface ErrorState
  *   children: () => RiskyComponent({})
  * });
  */
-export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
+export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
 {
     // Server-side rendering: render children; if they throw synchronously,
     // fall back. A plain try/catch suffices on the server - there are no later
@@ -148,7 +149,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
         {
             inner = serializeChild(props.fallback(err, () => undefined));
         }
-        return wrapContentsAnchored('errorboundary', inner) as unknown as HTMLElement;
+        return wrapContentsAnchored('errorboundary', inner) as unknown as MountNode;
     }
 
     // Hydration: adopt the comment markers and rebuild the boundary's subtree
@@ -172,7 +173,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
             }
             parent.removeChild(start);
             parent.removeChild(end);
-        }) as unknown as HTMLElement;
+        }) as unknown as MountNode;
     }
 
     // No wrapper element: comment markers bracket the active branch so the
@@ -224,7 +225,12 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
                         // happened during construction) and
                         // mounts the fallback. The repeated
                         // teardownBranch on the next re-run is a
-                        // benign no-op.
+                        // benign no-op. The loop CONVERGES (error
+                        // null -> caught -> fallback branch, which
+                        // does not re-throw into this handler), so
+                        // the syntactic self-write rule's warning
+                        // does not apply.
+                        // eslint-disable-next-line azeroth/no-self-write-in-effect -- convergent by design; see above
                         setError({ value: err });
                     }
                 );
@@ -258,5 +264,5 @@ export function ErrorBoundary(props: ErrorBoundaryProps): HTMLElement
         clearCo(target);
     }
 
-    return fragment as unknown as HTMLElement;
+    return fragment;
 }

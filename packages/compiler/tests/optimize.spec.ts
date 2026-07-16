@@ -42,7 +42,7 @@ describe('foldConstants - text holes', () =>
         const { src, plan } = lower('component C { state n = 0; <p>{n + 1}</p> }');
         const folded = optimize(src, plan);
         // The hole stays a hole and its binding survives.
-        expect((folded.template as TemplateElement).children[0].kind).toBe('hole');
+        expect((folded.template as TemplateElement).children[0]!.kind).toBe('hole');
         expect(folded.bindings).toHaveLength(1);
     });
 

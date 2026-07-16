@@ -62,7 +62,7 @@ export interface ReactiveAnalysis
     hasProps: boolean;
     scopes: ReactiveScope[];
     /** Destructured-prop aliases from a `component Name({ a, b }: P)` signature (local name -> read expr). */
-    propAliases?: ReadonlyMap<string, string>;
+    propAliases?: ReadonlyMap<string, string> | undefined;
     /** `form` declarations: form name -> its field-key set (drives the `NAME.field` read/write rewrite). */
     forms: ReadonlyMap<string, ReadonlySet<string>>;
     /** Array-form `<For>` row variables: row name -> blank-row keys (drives the `row.field` rewrite). */
@@ -282,9 +282,10 @@ function arrayFormEachKeys(
 function firstArrowParam(code: string): string | null
 {
     const expr = parsedExpression(projectMarkup(code));
-    if (expr !== undefined && ts.isArrowFunction(expr) && expr.parameters.length > 0)
+    const firstParam = expr !== undefined && ts.isArrowFunction(expr) ? expr.parameters[0] : undefined;
+    if (expr !== undefined && ts.isArrowFunction(expr) && firstParam !== undefined)
     {
-        const first = expr.parameters[0]!.name;
+        const first = firstParam.name;
         if (ts.isIdentifier(first))
         {
             return first.text;
