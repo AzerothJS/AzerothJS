@@ -788,10 +788,33 @@ if (!options.noPublish)
     // The VS Code extension pins the @azerothjs versions released MOMENTS ago, so its lockfile
     // could not be regenerated at bump time (the registry had nothing to resolve). Now it can;
     // ship the sync as a small follow-up commit so the next clone's `npm ci` there just works.
-    if (!options.noBump && existsSync(path.join(ROOT, 'editors', 'vscode', 'package-lock.json')))
+    // Runs on resumed (--no-bump) runs too: the install is idempotent and the commit below
+    // only happens when the lockfile actually changed.
+    if (existsSync(path.join(ROOT, 'editors', 'vscode', 'package-lock.json')))
     {
         log('\nSyncing editors/vscode lockfile against the published versions');
-        act('npm install --package-lock-only --no-audit --no-fund', { cwd: path.join(ROOT, 'editors', 'vscode') });
+        // The registry can lag a publish by seconds while packuments propagate through its
+        // caches, so an ETARGET here is TRANSIENT - retry with a pause instead of dying after
+        // every package is already live. --prefer-online defeats the stale local packument.
+        const syncCommand = 'npm install --package-lock-only --prefer-online --no-audit --no-fund';
+        const attempts = 5;
+        for (let attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                act(syncCommand, { cwd: path.join(ROOT, 'editors', 'vscode') });
+                break;
+            }
+            catch (error)
+            {
+                if (attempt === attempts)
+                {
+                    throw error;
+                }
+                log(`  registry not caught up yet (attempt ${ attempt }/${ attempts }); retrying in 15s`);
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15_000);
+            }
+        }
         const lockDirty = query('git status --porcelain editors/vscode/package-lock.json');
         if (lockDirty)
         {

@@ -22,7 +22,12 @@ const common =
     // Prefer ESM entry points: vscode-html-languageservice's UMD build uses
     // dynamic requires esbuild can't follow, so bundling it would leave broken
     // relative requires. Its `module` (ESM) build bundles statically.
-    mainFields: ['module', 'main']
+    mainFields: ['module', 'main'],
+    // `import.meta.url` is empty under format:cjs; the compiler's native-ts
+    // anchors module resolution on it. Substitute the bundle's real file URL so
+    // inlined ESM sees the same value it would as a true module.
+    define: { 'import.meta.url': '__bundledImportMetaUrl' },
+    banner: { js: "const __bundledImportMetaUrl = require('node:url').pathToFileURL(__filename).href;" }
 };
 
 await build({

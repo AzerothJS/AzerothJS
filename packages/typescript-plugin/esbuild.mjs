@@ -25,5 +25,10 @@ await esbuild.build({
     target: 'node18',
     outfile: 'dist/index.js',
     external: ['typescript', 'vite', 'lightningcss', 'esbuild'],
+    // `import.meta.url` is empty under format:cjs; the compiler's native-ts
+    // anchors module resolution on it. Substitute the bundle's real file URL so
+    // inlined ESM sees the same value it would as a true module.
+    define: { 'import.meta.url': '__bundledImportMetaUrl' },
+    banner: { js: "const __bundledImportMetaUrl = require('node:url').pathToFileURL(__filename).href;" },
     logLevel: 'info'
 });
