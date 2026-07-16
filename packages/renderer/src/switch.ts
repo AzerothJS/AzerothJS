@@ -30,10 +30,15 @@ export interface MatchCase
 /**
  * Props for {@link Match}.
  */
-export interface MatchProps
+export interface MatchProps<W = boolean>
 {
-    /** Condition: a value or a getter (thunk/signal). The compiler emits a getter-object prop; Match re-wraps it via resolveReactive into the case thunk Switch calls. */
-    when: boolean | (() => boolean);
+    /**
+     * Condition: a value or a getter (thunk/signal). The compiler emits a getter-object prop;
+     * Match re-wraps it via resolveReactive into the case thunk Switch calls. Like `Show`'s
+     * `when`, any type is accepted and the case matches while the value is TRUTHY - so
+     * `phase() === 'connected' && activeConfig()` works without an explicit boolean coercion.
+     */
+    when: W | (() => W);
 
     /** Thunk building this case's content (a prop, matching the compiled `<Match when={...}>...</Match>` form). */
     children: () => MountNode | MountNode[];
@@ -72,12 +77,12 @@ export interface MatchProps
  * @example
  * Match({ when: () => status() === 'loading', children: () => h('div', {}, 'Loading...') });
  */
-export function Match(props: MatchProps): MatchCase
+export function Match<W = boolean>(props: MatchProps<W>): MatchCase
 {
     return {
         // props.when may be a value (getter-object prop) or a function; resolveReactive
         // unwraps it. Re-read lazily so the case stays reactive when Switch calls it.
-        when: () => resolveReactive(props.when) as boolean,
+        when: () => Boolean(resolveReactive(props.when)),
         render: props.children
     };
 }

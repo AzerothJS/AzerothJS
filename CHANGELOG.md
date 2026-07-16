@@ -9,6 +9,22 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed
+
+- `<Match when>` accepts any value and matches while it is truthy, exactly like
+  `<Show when>` - `when={ phase() === 'connected' && activeConfig() }` no longer
+  needs an explicit boolean coercion.
+- CJS bundles (tsserver plugin, VS Code server) carry a real `import.meta.url`,
+  anchoring native-TypeScript resolution at the installed bundle instead of the
+  process working directory.
+- Release flow retries the editor-lockfile sync while the npm registry catches up
+  with a fresh publish, and runs it on resumed (`--no-bump`) releases too.
+
+### Fixed
+
+- Docs: `<For>`'s keyed row reuse - and how to keep row values live through
+  getters - is now documented in the renderer README.
+
 ## [0.8.0-beta.1] - 2026-07-16
 
 ### Added

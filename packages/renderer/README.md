@@ -40,7 +40,10 @@ listeners; a `ref` prop gives direct access to the created element.
 Control-flow components (`Show`, `For`, `Switch`/`Match`, `Portal`, `Dynamic`,
 `Suspense`, `Transition`) are ordinary functions returning DOM, built on the same
 reactive effects. `For` is keyed: it reuses existing DOM nodes across updates by
-key, so only changed rows touch the DOM. Each control-flow component manages the
+key, so only changed rows touch the DOM. The flip side is deliberate: a value baked
+into a surviving row at creation time (a captured label, a formatted date) stays as
+it was - read changing values through a getter or signal inside the row so they
+update in place. Each control-flow component manages the
 disposal of the reactive scope for the content it mounts and unmounts, so
 removing an element also tears down its effects.
 

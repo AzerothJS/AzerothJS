@@ -140,6 +140,24 @@ describe('Switch', () =>
         container.remove();
     });
 
+    it('matches on any TRUTHY when value, like Show (objects, strings, null)', () =>
+    {
+        const [user, setUser] = createSignal<{ name: string } | null>(null);
+        const container = mount(() => h('div', {}, Switch({
+            children: [
+                // `when` is an object-or-null accessor - no boolean coercion required.
+                Match({ when: () => user(), children: () => h('p', { class: 'user' }, 'hi') }),
+                Match({ when: 'always truthy', children: () => h('p', { class: 'fallback-ish' }, 'anon') })
+            ]
+        })));
+        expect(container.querySelector('.user')).toBeNull();
+        expect(container.querySelector('.fallback-ish')).not.toBeNull();
+        setUser({ name: 'thrall' });
+        expect(container.querySelector('.user')).not.toBeNull();
+        expect(container.querySelector('.fallback-ish')).toBeNull();
+        container.remove();
+    });
+
     it('works directly inside a select element (no wrapper)', () =>
     {
         createRoot((dispose) =>
