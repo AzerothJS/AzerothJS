@@ -9,6 +9,8 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.0-beta.1] - 2026-07-16
+
 ### Added
 
 - The backend, published for the first time: [`@azerothjs/http`](packages/http)
@@ -96,6 +98,7 @@ follow [Semantic Versioning](https://semver.org).
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v0.7.0-beta.1...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v0.8.0-beta.1...HEAD
+[0.8.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v0.7.0-beta.1...v0.8.0-beta.1
 [0.7.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v0.6.0-beta.1...v0.7.0-beta.1
 [0.6.0-beta.1]: https://github.com/AzerothJS/AzerothJS/releases/tag/v0.6.0-beta.1

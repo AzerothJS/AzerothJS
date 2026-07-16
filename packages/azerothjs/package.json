@@ -1,6 +1,6 @@
 {
     "name": "azerothjs",
-    "version": "0.7.0-beta.1",
+    "version": "0.8.0-beta.1",
     "engines": {
         "node": ">=24"
     },
@@ -27,13 +27,13 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "0.7.0-beta.1",
-        "@azerothjs/renderer": "0.7.0-beta.1",
-        "@azerothjs/component": "0.7.0-beta.1",
-        "@azerothjs/server": "0.7.0-beta.1",
-        "@azerothjs/store": "0.7.0-beta.1",
-        "@azerothjs/form": "0.7.0-beta.1",
-        "@azerothjs/router": "0.7.0-beta.1"
+        "@azerothjs/reactivity": "0.8.0-beta.1",
+        "@azerothjs/renderer": "0.8.0-beta.1",
+        "@azerothjs/component": "0.8.0-beta.1",
+        "@azerothjs/server": "0.8.0-beta.1",
+        "@azerothjs/store": "0.8.0-beta.1",
+        "@azerothjs/form": "0.8.0-beta.1",
+        "@azerothjs/router": "0.8.0-beta.1"
     },
     "keywords": [
         "framework",
