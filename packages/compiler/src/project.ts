@@ -317,6 +317,18 @@ export function generateVirtualCode(source: string): VirtualCode
         // a double-wrapped `prop={() => x}` (passing a function to a value prop) correctly surface.
         if (!isHost && FACTORY_ATTRS.has(name))
         {
+            // A function LITERAL is the factory itself: pass it through unwrapped so its
+            // parameters take contextual types from the prop's declared signature (e.g.
+            // ErrorBoundary's `fallback={ (error, reset) => ... }` - inside a `() => (...)`
+            // wrap the arrow sits in return position and its params fall to implicit any).
+            // The runtime tolerates either shape (resolveReactive unwraps thunks two deep).
+            if (isFunctionLiteral(source.slice(span.start, span.end)))
+            {
+                builder.emit('(');
+                emitCode(span.start, span.end, 'attribute');
+                builder.emit(')');
+                return;
+            }
             builder.emit('() => (');
             emitCode(span.start, span.end, 'attribute');
             builder.emit(')');

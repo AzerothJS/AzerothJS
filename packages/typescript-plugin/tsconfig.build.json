@@ -4,6 +4,12 @@
     // under the root's `module: ESNext`), so this project is what typechecks it.
     // `module: preserve` accepts the package's mixed shape - ESM import syntax
     // in source that esbuild bundles down to a single CJS file.
+    //
+    // It deliberately INHERITS the root's `paths` (do not reset to `{}`): this is a
+    // typecheck/lint project, not a real build config, so `@azerothjs/*` imports
+    // must resolve to workspace SOURCE. Reset them and `@azerothjs/language-service`
+    // resolves to its built `dist/*.d.ts` instead - absent on a fresh `npm ci`, so
+    // `npm run lint` / `npm run typecheck` fail in CI (which does not build first).
     "extends": "../../tsconfig.json",
     "compilerOptions":
     {
@@ -17,8 +23,7 @@
         "declaration": false,
         "declarationMap": false,
         "sourceMap": false,
-        "outDir": null,
-        "paths": {}
+        "outDir": null
     },
     "include":
     [

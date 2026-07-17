@@ -16,8 +16,9 @@
  */
 
 // These three mark SOURCE-introducing declarations, so the reactive walk (walk.ts) can recognise the
-// lowered binding as a scoped source (its bare reads gain `()`). Non-source keywords (effect/watch/the
-// block-wrappers) don't need walk recognition - the lowering emits their runtime call directly.
+// lowered binding as a scoped source (its bare reads gain `()`). Non-source blocks (the `effect` forms -
+// AST kinds `effect` and `watch` - and the block-wrappers) don't need walk recognition; the lowering
+// emits their runtime call directly.
 
 /** Marker for a `derived` lowered inside a nested scope (becomes `createMemo`). */
 export const MARKER_MEMO = '__azMemo';

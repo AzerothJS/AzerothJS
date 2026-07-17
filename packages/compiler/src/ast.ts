@@ -208,8 +208,9 @@ export interface FormDecl extends FactoryDeclBase
  * An `effect [with { ... }] { ... }` block; `body*` span the block interior.
  *
  * `effect { ... }` always auto-tracks: it runs on mount and re-runs when any reactive source it reads
- * changes. An optional `with { ... }` clause passes options (e.g. `name`) to `createEffect`. To run an
- * effect only AFTER mount, watch a specific dependency set with `watch (deps) with { skipInitial: true }`.
+ * changes. An optional `with { ... }` clause passes options (e.g. `name`) to `createEffect`. To track an
+ * explicit dependency set instead, use the `effect (deps)` form (parsed to {@link WatchBlock}); its
+ * `with { skipInitial: true }` skips the mount run.
  */
 export interface EffectBlock extends Span
 {
@@ -223,10 +224,12 @@ export interface EffectBlock extends Span
 }
 
 /**
- * A `watch (deps) [(values, prev)] [with { ... }] { body }` block - an explicit-dependency effect that
- * compiles to the `on([...deps...], (values, prev) => { body }, options?)` runtime primitive. It watches
- * exactly the listed deps (the body's other reads do not subscribe); `with { skipInitial: true }` skips the
- * mount run. The optional `(values, prev)` binds the current and previous dependency-value tuples.
+ * The explicit-dependency form of `effect`: `effect (deps) [(values, prev)] [with { ... }] { body }`,
+ * which compiles to the `on([...deps...], (values, prev) => { body }, options?)` runtime primitive. It
+ * tracks exactly the listed deps (the body's other reads do not subscribe); `with { skipInitial: true }`
+ * skips the mount run. The optional `(values, prev)` binds the current and previous dependency-value
+ * tuples. The interface and `kind` keep the internal name `watch` after the `on` primitive it lowers to -
+ * there is no `watch` keyword in the surface language.
  */
 export interface WatchBlock extends Span
 {

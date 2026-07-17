@@ -687,3 +687,28 @@ component Box<T>(props: BoxProps<T>) { <p>{props.render(props.value)}</p> }
         expect(bad.some((d) => d.code === 'azeroth/prop-type')).toBe(true);
     });
 });
+
+describe('typeCheckModuleTS - factory props keep contextual typing (real ts.Program)', () =>
+{
+    it('types ErrorBoundary fallback params from the prop signature (no implicit any)', () =>
+    {
+        const source = `import { ErrorBoundary } from 'azerothjs';
+component App {
+    <ErrorBoundary fallback={(error, reset) => <button onClick={() => reset()}>retry</button>}>
+        <p>content</p>
+    </ErrorBoundary>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+
+    it('accepts the function form of Show fallback unchanged', () =>
+    {
+        const source = `import { Show } from 'azerothjs';
+component App {
+    <Show when={true} fallback={() => <p>no</p>}>
+        <b>yes</b>
+    </Show>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+});

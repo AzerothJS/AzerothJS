@@ -1,0 +1,9 @@
+# Mirror the CI gates that block a merge, so a red build is caught HERE - before
+# the push reaches GitHub - not minutes later in Actions. These are the exact two
+# jobs that were failing (CI / Lint, CI / Typecheck). Full-repo, ~seconds; the &&
+# fails fast and makes the hook exit non-zero (aborting the push) if either fails.
+#
+# Note both run against workspace SOURCE (no build step), matching CI - so keep the
+# typescript-plugin's tsconfig paths inheriting the root's @azerothjs -> src map.
+echo "pre-push: lint + typecheck (CI gate)…"
+npm run lint && npm run typecheck

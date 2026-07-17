@@ -89,4 +89,21 @@ describe('LSP diagnostics: Show/Match narrowing', () =>
         );
         expect(diagnostics.filter((d) => d.code === 2774)).toHaveLength(0);
     });
+
+    it('gives factory-prop function literals contextual parameter types (no implicit any)', () =>
+    {
+        // A function literal passed to a factory prop (ErrorBoundary's fallback) is the factory
+        // itself; wrapped in the `() => (...)` value projection its params fell to implicit any
+        // (TS7006) under a strict consumer tsconfig. The projection passes literals through.
+        const diagnostics = diagnose(
+            'Boundary.azeroth',
+            "import { ErrorBoundary } from 'azerothjs';\n"
+            + 'export default component Boundary {\n'
+            + '    <ErrorBoundary fallback={(error, reset) => <button onClick={() => reset()}>retry</button>}>\n'
+            + '        <p>content</p>\n'
+            + '    </ErrorBoundary>\n'
+            + '}\n'
+        );
+        expect(diagnostics.filter((d) => d.code === 7006)).toHaveLength(0);
+    });
 });

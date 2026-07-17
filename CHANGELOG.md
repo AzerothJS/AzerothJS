@@ -22,6 +22,10 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- Editor/CI type checking: a function literal passed to a factory prop
+  (`<ErrorBoundary fallback={ (error, reset) => ... }>`) now takes its parameter
+  types from the prop's declared signature instead of falling to implicit `any`
+  under a strict tsconfig.
 - Docs: `<For>`'s keyed row reuse - and how to keep row values live through
   getters - is now documented in the renderer README.
 
