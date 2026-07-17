@@ -113,7 +113,7 @@ name - it names where the change lives:
 | `scripts` | repo scripts | `chore(scripts): support resuming interrupted version bumps` |
 | `build` | build wiring (tsconfig, build order) | `fix(build): missing packages to tsconfig and build order` |
 | `deps` / `deps-dev` | dependency bumps (dependabot's prefixes) | `chore(deps): bump vscode-languageserver to 10.0.1` |
-| `release` | the release commit itself (created by `release.mjs`) | `chore(release): v0.8.0-beta.1` |
+| `release` | the release commit itself (created by `release.mjs`) | `chore(release): v0.8.0-beta.2` |
 
 Common types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
 `chore`, `ci`. Mark a breaking change with `!` after the scope and a
@@ -139,12 +139,12 @@ shares one version, and inter-package dependencies are pinned to that exact
 version. Releases are cut with `scripts/release.mjs`:
 
 ```bash
-npm run release -- beta                    # next beta iteration (0.8.0-beta.1 -> 0.7.0-beta.2)
+npm run release -- beta                    # next beta iteration (0.8.0-beta.2 -> 0.7.0-beta.2)
 npm run release -- rc                      # promote the line to rc.1
 npm run release -- stable                  # cut the stable release (drop the suffix)
 npm run release -- minor                   # next minor, staying on the current channel
 npm run release -- minor --channel stable  # next minor as a stable release
-npm run release -- 0.8.0-beta.1            # or spell out the full version
+npm run release -- 0.8.0-beta.2            # or spell out the full version
 npm run release -- beta --dry-run          # preview every step, change nothing
 ```
 

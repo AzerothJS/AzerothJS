@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.azerothjs"
-version = "0.8.0-beta.1"
+version = "0.8.0-beta.2"
 
 repositories {
     mavenCentral()
