@@ -786,6 +786,85 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
 }
 
 /**
+ * Drives a hole that is its element's ONLY child (`<td>{ expr }</td>`): the
+ * element itself bounds the content, so no anchor pair exists in the clone.
+ * The dominant case - a scalar value - keeps ONE text node and updates its
+ * `data` in place; a non-scalar (element/fragment/array) value replaces the
+ * element's content through the ordinary child pipeline. A static (non-function)
+ * child is placed once with no effect at all.
+ *
+ * @param el - The element whose entire content the hole owns
+ * @param child - The hole's value: a getter for a reactive hole, or the value itself
+ *
+ * @internal Compiler-emitted runtime; not part of the application API.
+ */
+export function bindContent(el: HTMLElement, child: Child): void
+{
+    if (typeof child !== 'function')
+    {
+        placeContent(el, null, child);
+        return;
+    }
+
+    // The current scalar text node, reused across runs; null after a non-scalar
+    // value (or an empty string, which leaves no node behind).
+    let text: Text | null = null;
+    createEffect(() =>
+    {
+        text = placeContent(el, text, (child)());
+    });
+}
+
+/**
+ * Writes one bindContent value into `el`. Returns the scalar text node to reuse
+ * on the next run, or null when the value was non-scalar or rendered empty.
+ *
+ * @internal
+ */
+function placeContent(el: HTMLElement, text: Text | null, value: unknown): Text | null
+{
+    if (value === null || value === undefined || typeof value !== 'object')
+    {
+        // Scalar path - matches buildNode's text coercion (null/undefined/false
+        // render as nothing).
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- scalar by the guard above
+        const s = value === null || value === undefined || value === false ? '' : String(value);
+        if (text !== null)
+        {
+            text.data = s;
+            return text;
+        }
+        el.textContent = s;
+        return el.firstChild as Text | null;
+    }
+    el.textContent = '';
+    el.appendChild(buildNode(value));
+    return null;
+}
+
+/**
+ * Wires one event handler the way the template path does everywhere else:
+ * bubbling event types are DELEGATED to one document-level listener (a property
+ * write per element instead of an addEventListener per element per row); types
+ * that do not reliably bubble keep a per-element listener.
+ *
+ * @param el - The element the handler belongs to
+ * @param type - The lowercase event type (`'click'`)
+ * @param handler - The handler to invoke
+ *
+ * @internal Compiler-emitted runtime; not part of the application API.
+ */
+export function bindEvent(el: HTMLElement, type: string, handler: EventListener): void
+{
+    if (isDelegatedEvent(type))
+    {
+        delegateEvent(el, type, handler);
+        return;
+    }
+    el.addEventListener(type, handler);
+}
+
+/**
  * Drives a control-flow / component SLOT in a template clone: inserts the
  * component's already-built output (`result` - a co-range fragment for built-ins,
  * an element/fragment for user components, or `null` when it renders nothing) at

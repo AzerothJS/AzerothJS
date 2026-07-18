@@ -32,7 +32,7 @@ describe('compiler audit - verified invariants', () =>
         // semantics (e.g. how a boolean child is rendered) are never pre-decided.
         for (const expr of ['1 < 2', 'true', 'null', 'cond ? a : b'])
         {
-            expect(code(`component C { <p>{${ expr }}</p> }`)).toContain('bindHole');
+            expect(code(`component C { <p>{${ expr }}</p> }`)).toContain('bindContent');
         }
     });
 
@@ -134,9 +134,9 @@ describe('compiler audit - IR validation before codegen', () =>
         // text hole, attribute, event, and a component slot (Show) -> the IR has text/attribute/
         // event/component bindings over hole/element/slot nodes; validatePlan accepts it.
         const out = code('component C { state n = 0; <div class={n}><button onClick={() => n++}>{n}</button><Show when={n}><p>+</p></Show></div> }');
-        expect(out).toContain('bindHole(');
+        expect(out).toContain('bindContent(');
         expect(out).toContain('bindSlot(');
-        expect(out).toContain('addEventListener(');
+        expect(out).toContain('bindEvent(');
         expect(out).toContain('setProp(');
     });
 
@@ -173,7 +173,7 @@ describe('compiler audit - current behavior of invalid input (residual; see audi
         // whose last operand is a write slips through and the setter runs at setup. A type-checker
         // would reject it (number is not a handler); see U1.
         const out = code('component C { state n = 0; <button onClick={(a, n++)}>x</button> }');
-        expect(out).toMatch(/addEventListener\('click', \(a, setN/);
+        expect(out).toMatch(/bindEvent\(_n\d+, 'click', \(a, setN/);
     });
 });
 

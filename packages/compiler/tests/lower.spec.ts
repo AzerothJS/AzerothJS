@@ -217,12 +217,14 @@ describe('lowerComponent - render-fn children (clone path)', () =>
         expect(src.slice(render.param!.start, render.param!.end)).toBe('(item)');
         // The body is a clonable sub-plan (has a template).
         expect('template' in render.body).toBe(true);
-        // Every binding in a render-row sub-plan is forced reactive (per-row signals).
+        // Row-binding reactivity is decided by codegen's shape heuristic (a
+        // call-shaped expression like `item.name()` is wrapped reactive; a bare
+        // reference is bound once) - the lowerer no longer forces a flag.
         for (const binding of render.body.bindings)
         {
             if ('expr' in binding)
             {
-                expect('reactive' in binding.expr && binding.expr.reactive).toBe(true);
+                expect('reactive' in binding.expr ? binding.expr.reactive : undefined).toBeUndefined();
             }
         }
     });

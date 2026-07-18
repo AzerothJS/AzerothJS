@@ -14,8 +14,27 @@
  * bookkeeping would cost more than the listeners do).
  */
 
-/** Per-element delegated handler store, keyed by event type. @internal */
-const HANDLERS = Symbol('azeroth_delegated_handlers');
+/**
+ * Per-event-type Symbol keys: a delegated handler is stored DIRECTLY on the element under its
+ * type's Symbol (`el[SYM_click] = handler`) - one property write and NO per-element store
+ * object. With thousands of rows each carrying a couple of handlers, the old
+ * `{ click: fn, ... }` wrapper object per element was pure resident overhead.
+ *
+ * @internal
+ */
+const TYPE_KEYS = new Map<string, symbol>();
+
+/** The Symbol key for one event type (created on first use). @internal */
+function typeKey(type: string): symbol
+{
+    let key = TYPE_KEYS.get(type);
+    if (key === undefined)
+    {
+        key = Symbol(`azeroth_on_${ type }`);
+        TYPE_KEYS.set(type, key);
+    }
+    return key;
+}
 
 /** Event types with a document listener installed. @internal */
 const installed = new Set<string>();
@@ -37,7 +56,7 @@ const DELEGATED_EVENTS = new Set([
 ]);
 
 /** @internal */
-interface DelegatedStore { [HANDLERS]?: Record<string, EventListener> }
+interface DelegatedStore { [key: symbol]: EventListener | undefined }
 
 /** Whether bindProps should delegate this (lowercase) event type. @internal */
 export function isDelegatedEvent(type: string): boolean
@@ -53,14 +72,7 @@ export function isDelegatedEvent(type: string): boolean
  */
 export function delegateEvent(el: HTMLElement, type: string, handler: EventListener): void
 {
-    const store = el as unknown as DelegatedStore;
-    let handlers = store[HANDLERS];
-    if (handlers === undefined)
-    {
-        handlers = {};
-        store[HANDLERS] = handlers;
-    }
-    handlers[type] = handler;
+    (el as unknown as DelegatedStore)[typeKey(type)] = handler;
 
     if (!installed.has(type))
     {
@@ -79,10 +91,11 @@ export function delegateEvent(el: HTMLElement, type: string, handler: EventListe
 function dispatchDelegated(event: Event): void
 {
     let node: Node | null = event.target as Node | null;
+    const key = typeKey(event.type);
 
     while (node !== null)
     {
-        const handler = (node as unknown as DelegatedStore)[HANDLERS]?.[event.type];
+        const handler = (node as unknown as DelegatedStore)[key];
         if (handler !== undefined)
         {
             handler.call(node, event);

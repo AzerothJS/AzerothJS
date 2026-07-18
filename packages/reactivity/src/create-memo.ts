@@ -39,7 +39,7 @@ import { attachSubscriberProbe } from './create-signal.ts';
 import { registerDisposer } from './create-root.ts';
 import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
-import { dtRegister, dtRun, dtDispose } from './devtools.ts';
+import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 
 /** Invalidation states: CLEAN (cached), MAYBE_DIRTY (upstream memo changed - validate), DIRTY (recompute). @internal */
 const CLEAN = 0;
@@ -292,7 +292,7 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
     // Announce to devtools before the eager first compute, so 'created' precedes the first 'run'. A memo
     // is both a producer (other nodes subscribe to it) and a consumer (it reads sources), so it carries
     // both refs; its value is readable but not writable from the panel.
-    devtoolsId = dtRegister('memo', { name: options?.name, producer, subscriber: node, getValue: (): unknown => value });
+    devtoolsId = dtEnabled() ? dtRegister('memo', { name: options?.name, producer, subscriber: node, getValue: (): unknown => value }) : 0;
 
     // Eager first compute. If it throws with no catchError handler, tear down before
     // rethrowing - the caller never receives a getter, so nothing could dispose it.

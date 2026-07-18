@@ -9,6 +9,40 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- Client-only builds: `azeroth({ ssr: false })` compiles every component without
+  its SSR/hydration branch and substitutes a constant render mode, so the SSR
+  machinery minifies out of the bundle entirely - the js-framework-benchmark app
+  dropped from 24.0 kB to 16.1 kB (5.4 kB gzip). Leave the default on for any app
+  that calls `renderToString`/`hydrate`.
+
+### Changed
+
+- Compiled markup got materially faster, measured on
+  [js-framework-benchmark](https://github.com/krausest/js-framework-benchmark)
+  (keyed): CPU geometric mean went from 1.29x to 1.07x of hand-written vanilla
+  DOM, ahead of React, Angular, and Vue and even with Solid and Ripple, with the
+  field's best select-row, swap-rows, and first-paint numbers. The work behind it:
+  - A text hole that is its element's only child (`<td>{ row.id }</td>`) compiles
+    anchor-free: one text node driven in place, no comment-marker pair per hole.
+  - A `<For>` row expression with no reactive reads (`{ row.id }`) binds once
+    instead of carrying a per-row effect; reactivity is decided by expression
+    shape, so getter calls (`{ row.label() }`) stay live.
+  - Compiled event handlers on bubbling event types are now DELEGATED to one
+    document-level listener per type (matching the documented template-path
+    contract); non-bubbling types keep per-element listeners.
+  - `<For>` clears and full replacements collapse to one bulk `textContent`
+    write when the list spans its parent, and a two-row swap reconciles with two
+    moves instead of a position map and LIS pass.
+  - `destroyComponent` returns in constant time when no element anywhere holds a
+    destroy hook - removing a thousand hook-free rows no longer walks each
+    subtree.
+  - Devtools registration records are only allocated while a devtools hook is
+    attached, taking a per-signal/effect/root allocation off the hot paths.
+  - A single `class:` toggle compiles to a bare conditional instead of an
+    array/filter/join per evaluation.
+
 ## [0.8.0-beta.2] - 2026-07-17
 
 ### Changed

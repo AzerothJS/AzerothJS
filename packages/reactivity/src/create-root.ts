@@ -14,7 +14,7 @@
 
 import type { DisposeFn } from './types.ts';
 import { assertFunction } from './validate.ts';
-import { dtRegister, dtDispose, dtEnterOwner, dtExitOwner } from './devtools.ts';
+import { dtRegister, dtDispose, dtEnterOwner, dtExitOwner, dtEnabled } from './devtools.ts';
 
 /**
  * The active root's disposer collector, or null when no root is active.
@@ -117,7 +117,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
 
     // Announce the root to devtools and make it the OWNER of everything created in its body, so the panel
     // can group nodes by their root. Children read the active owner at registration.
-    const devtoolsId = dtRegister('root', {});
+    const devtoolsId = dtEnabled() ? dtRegister('root', {}) : 0;
     const previousOwner = dtEnterOwner(devtoolsId);
 
     // Dispose in reverse (stack order); clearing the array makes it idempotent. A

@@ -37,7 +37,7 @@ export { css, collectStyleSheet, resetStyleSheet, type ScopedClasses } from './c
 
 // Compiler-emitted runtime: imported by generated `.azeroth` output, NOT part of the
 // application API. Exported only so compiled modules resolve them; @internal, may change.
-export { bindHole, bindSlot, bindProps, setProp, hydrateChild } from './h.ts';
+export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './h.ts';
 export { tmpl } from './template.ts';
 
 // Public type contracts.

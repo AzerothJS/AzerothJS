@@ -110,6 +110,8 @@ export {
 export {
     tmpl,
     bindHole,
+    bindContent,
+    bindEvent,
     bindSlot,
     bindProps,
     setProp

@@ -462,20 +462,13 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
         const param: Span = { start: paramStart, end: paramStart + paramText.length };
         const subCtx: Ctx = { next: 0, bindings: [] };
         const template = lowerNode(parsed.node, subCtx);
-        // A render-fn row reads the param's per-row signals
-        // (`r.label()`), which the component-source dep analysis cannot see, so
-        // their dep sets are empty. Mark every binding in the sub-plan reactive
-        // unconditionally - otherwise the unified codegen would bake the row
-        // static and the row would never update (silently stale rows).
-        for (const binding of subCtx.bindings)
-        {
-            // `bind` carries a plain Span (and is always emitted reactive anyway); the others' ReactiveExpr
-            // gets the flag so the unified codegen never bakes a per-row binding static.
-            if ('expr' in binding && binding.kind !== 'bind')
-            {
-                binding.expr.reactive = true;
-            }
-        }
+        // A render-fn row reads the param's per-row signals (`r.label()`), which
+        // the component-source dep analysis cannot see, so their dep sets are
+        // empty. Reactivity is decided by codegen's shape heuristic instead
+        // (wrapDynamic): a call-shaped expression stays reactive, while a bare
+        // reference (`row.id`) is bound ONCE - safe because a row render runs
+        // exactly once per key, so anything that changes during the row's life
+        // must be read through a getter call, which the heuristic wraps.
         return { kind: 'render', param, body: { template, bindings: subCtx.bindings } };
     };
 

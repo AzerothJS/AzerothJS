@@ -57,11 +57,26 @@ export interface CompileResult
     map: SourceMapV3 | null;
 }
 
+/** Options for {@link generateModule}. */
+export interface GenerateOptions
+{
+    /**
+     * Emit for SSR/hydration as well as the client (the default). Set `false` for a
+     * CLIENT-ONLY build: each component body emits just the template-clone path, dropping
+     * the `isStringMode()/isHydrating()` guard and the entire h()-tree branch - roughly
+     * half the compiled output - for apps that never server-render.
+     */
+    ssr?: boolean;
+}
+
 /** Tracks runtime names used and templates hoisted while emitting a module. */
 interface Emit
 {
     used: Set<string>;
     templates: Map<string, string>;
+
+    /** Client-only build: skip the SSR/hydration branch in every component body. */
+    clientOnly: boolean;
     /**
      * True while emitting markup embedded inside an expression (`emitMarkupExpr`).
      * In this mode the emit helpers leave reads RAW - a single outer
@@ -168,7 +183,7 @@ function handlerSource(source: string, handler: Span): string
  *
  * @internal
  */
-export function generateModule(source: string, filename = 'module.azeroth'): CompileResult
+export function generateModule(source: string, filename = 'module.azeroth', options: GenerateOptions = {}): CompileResult
 {
     // Semantic-validation gate: ANY error-severity diagnostic fails the compile here, before
     // a single line is emitted. generateModule is the one enforcement point, so the Vite
@@ -186,7 +201,7 @@ export function generateModule(source: string, filename = 'module.azeroth'): Com
     }
 
     const module = parseModule(source);
-    const emit: Emit = { used: new Set(), templates: new Map(), raw: false };
+    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, raw: false };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -473,9 +488,47 @@ function emitOutput(source: string, plan: RenderPlan | null, sources: ReactiveSo
     return `return (${ emitNode(source, plan.template, plan, sources, emit) });`;
 }
 
+/**
+ * True when an element's children are exactly one hole (`<td>{ expr }</td>`).
+ * Such a hole needs NO comment anchors: the element itself bounds the content,
+ * so the template stays anchor-free and the binding drives the element's
+ * textContent directly (bindContent) - one text node instead of two comments
+ * plus a marker scan per hole.
+ */
+function onlyChildHoleOf(node: TemplateNode): TemplateNode | null
+{
+    if (node.kind !== 'element' || node.children.length !== 1)
+    {
+        return null;
+    }
+    const child = node.children[0];
+    return child !== undefined && child.kind === 'hole' ? child : null;
+}
+
+/** Collects the ids of holes that are their element's only child. */
+function collectOnlyChildHoles(node: TemplateNode, into: Set<number>): void
+{
+    const hole = onlyChildHoleOf(node);
+    if (hole !== null)
+    {
+        into.add(hole.id);
+        return;
+    }
+    if (node.kind === 'element' || node.kind === 'fragment')
+    {
+        for (const child of node.children)
+        {
+            collectOnlyChildHoles(child, into);
+        }
+    }
+}
+
 /** Emits the template-clone path for a host-only output. */
 function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSources, emit: Emit): string
 {
+    const onlyChildHoles = new Set<number>();
+    collectOnlyChildHoles(plan.template, onlyChildHoles);
+
     const html = serialize(plan.template);
     const templateName = allocateTemplate(emit, html);
 
@@ -545,7 +598,11 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
             }
             else if (binding.kind === 'event')
             {
-                binds.push(`${ nodeVar(target) }.addEventListener(${ quoteString(binding.event) }, ${ rewriteReactive(handlerSource(source, binding.handler), sources, binding.handler.start) });`);
+                // bindEvent delegates bubbling event types to one document-level
+                // listener (matching the bindProps path); non-bubbling types fall
+                // back to a per-element listener inside the helper.
+                emit.used.add('bindEvent');
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ rewriteReactive(handlerSource(source, binding.handler), sources, binding.handler.start) });`);
             }
             else if (binding.kind === 'bind')
             {
@@ -553,8 +610,9 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                 // control's input/change event.
                 emit.used.add('setProp');
                 emit.used.add('createEffect');
+                emit.used.add('bindEvent');
                 binds.push(`createEffect(() => setProp(${ nodeVar(target) }, ${ quoteString(binding.prop) }, ${ bindValue(source, binding, sources) }));`);
-                binds.push(`${ nodeVar(target) }.addEventListener(${ quoteString(binding.event) }, ${ bindHandler(source, binding, sources) });`);
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ bindHandler(source, binding, sources) });`);
             }
             else if (binding.kind === 'class')
             {
@@ -573,8 +631,18 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
     }
     for (const binding of textBindings)
     {
-        emit.used.add('bindHole');
-        binds.push(`bindHole(${ nodeVar(binding.target) }, ${ exprValue(source, binding.expr, sources, emit) });`);
+        // An only-child hole drives its element's content directly (no anchors
+        // in the clone); any other hole goes through the anchor-pair scheme.
+        if (onlyChildHoles.has(binding.target))
+        {
+            emit.used.add('bindContent');
+            binds.push(`bindContent(${ nodeVar(binding.target) }, ${ exprValue(source, binding.expr, sources, emit) });`);
+        }
+        else
+        {
+            emit.used.add('bindHole');
+            binds.push(`bindHole(${ nodeVar(binding.target) }, ${ exprValue(source, binding.expr, sources, emit) });`);
+        }
     }
     for (const binding of componentBindings)
     {
@@ -596,6 +664,11 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
  */
 function emitUnifiedBody(source: string, plan: RenderPlan, sources: ReactiveSources, emit: Emit): string
 {
+    // Client-only build: no mode dispatch, no h()-tree branch - just the clone.
+    if (emit.clientOnly)
+    {
+        return emitTemplatePath(source, plan, sources, emit);
+    }
     emit.used.add('isStringMode');
     emit.used.add('isHydrating');
     const adoptOrSerialize = emitNode(source, plan.template, plan, sources, emit);
@@ -862,6 +935,13 @@ function classCombined(source: string, binding: ClassBinding, sources: ReactiveS
         const cond = rewriteReactive(source.slice(toggle.expr.start, toggle.expr.end), sources, toggle.expr.start);
         parts.push(`(${ cond }) ? ${ quoteString(toggle.name) } : ''`);
     }
+    // A single toggle is already a plain string expression - the array/filter/
+    // join machinery would only re-derive it (and allocate on every run).
+    const only = parts[0];
+    if (only !== undefined && parts.length === 1 && binding.toggles.length === 1)
+    {
+        return only;
+    }
     return `[${ parts.join(', ') }].filter(Boolean).join(' ')`;
 }
 
@@ -951,6 +1031,14 @@ function pathExpr(path: number[]): string
 function computePaths(node: TemplateNode, path: number[], into: Map<number, number[]>): void
 {
     into.set(node.id, path);
+    // An only-child hole has no anchors in the clone - its binding targets the
+    // PARENT element itself (bindContent drives the element's content).
+    const onlyHole = onlyChildHoleOf(node);
+    if (onlyHole !== null)
+    {
+        into.set(onlyHole.id, path);
+        return;
+    }
     if (node.kind === 'element' || node.kind === 'fragment')
     {
         let offset = 0;
@@ -1022,9 +1110,14 @@ function serialize(node: TemplateNode): string
     {
         return html;
     }
-    for (const child of node.children)
+    // An only-child hole serializes to NOTHING: the element bounds the content,
+    // so bindContent needs no anchor pair (see onlyChildHoleOf).
+    if (onlyChildHoleOf(node) === null)
     {
-        html += serialize(child);
+        for (const child of node.children)
+        {
+            html += serialize(child);
+        }
     }
     return `${ html }</${ node.tag }>`;
 }

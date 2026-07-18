@@ -37,7 +37,7 @@ import { isStringMode } from './render-mode.ts';
 import { registerDisposer } from './create-root.ts';
 import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
-import { dtRegister, dtRun, dtDispose } from './devtools.ts';
+import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 
 /**
  * Cap on consecutive self-triggered re-runs of one effect before we declare a feedback
@@ -306,7 +306,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
     }
 
     // Announce the effect to devtools before its first run, so the 'created' event precedes 'run'.
-    devtoolsId = dtRegister('effect', { name: options?.name, subscriber });
+    devtoolsId = dtEnabled() ? dtRegister('effect', { name: options?.name, subscriber }) : 0;
 
     // SSR string mode: an effect has nowhere to run on the server (no DOM, no
     // client). Skip the run; it executes on the client during hydrate(). Still return

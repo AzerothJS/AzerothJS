@@ -127,7 +127,7 @@ describe('integration - generateModule (emitted JS)', () =>
         expect(code).toContain('bindSlot(');
         expect(code).toMatch(/setProp\(_n\d+, 'data-id'/);
         // The valid handler (props.onClose) is passed as a function reference.
-        expect(code).toMatch(/addEventListener\('click', props\.onClose\)/);
+        expect(code).toMatch(/bindEvent\(_n\d+, 'click', props\.onClose\)/);
     });
 
     it('imports exactly the runtime helpers the emitted code uses', () =>

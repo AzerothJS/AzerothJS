@@ -43,7 +43,7 @@ describe('generateModule - module shape and imports', () =>
     {
         const code = gen('import { createSignal } from \'azerothjs\';\ncomponent C { state n = 0; <p>{n}</p> }');
         // createSignal is used but already imported, so the injected import omits it.
-        const injected = code.split('\n').find(l => l.startsWith('import { ') && l.includes('bindHole'));
+        const injected = code.split('\n').find(l => l.startsWith('import { ') && l.includes('bindContent'));
         expect(injected).toBeDefined();
         expect(injected).not.toContain('createSignal');
     });
@@ -388,10 +388,20 @@ describe('generateModule - element-rooted unified body', () =>
         expect(code).toContain('return _r;');
     });
 
-    it('drives a reactive text hole with bindHole and a getter thunk', () =>
+    it('drives a reactive only-child text hole with bindContent and a getter thunk', () =>
     {
         const code = gen('component C { state n = 0; <p>{n}</p> }');
+        // The hole is its element's only child: no anchor pair, the binding
+        // drives the element's content directly.
+        expect(code).toMatch(/bindContent\(_n\d+, \(\) => \(n\(\)\)\)/);
+        expect(code).not.toContain('<!--[-->');
+    });
+
+    it('drives a text hole with siblings through the bindHole anchor pair', () =>
+    {
+        const code = gen('component C { state n = 0; <p><b>x</b>{n}</p> }');
         expect(code).toMatch(/bindHole\(_n\d+, \(\) => \(n\(\)\)\)/);
+        expect(code).toContain('<!--[--><!--]-->');
     });
 
     it('drives a reactive attribute via createEffect(setProp(...)) in the dom clone path', () =>
@@ -403,10 +413,12 @@ describe('generateModule - element-rooted unified body', () =>
         expect(code).toContain('class: () => (cls())');
     });
 
-    it('wires an event handler with addEventListener (dom path) and an on* prop (ssr path)', () =>
+    it('wires an event handler with bindEvent (dom path) and an on* prop (ssr path)', () =>
     {
         const code = gen('component C { <button onClick={save}>x</button> }');
-        expect(code).toMatch(/_n\d+\.addEventListener\('click', save\)/);
+        // bindEvent delegates bubbling types to one document listener and
+        // falls back to addEventListener for non-bubbling ones.
+        expect(code).toMatch(/bindEvent\(_n\d+, 'click', save\)/);
         expect(code).toContain('onclick: save');
     });
 
@@ -516,14 +528,14 @@ describe('generateModule - event-handler validation', () =>
     it('accepts the arrow form {() => count++} and emits a real function handler', () =>
     {
         const code = gen('component C { state count = 0; <button onClick={() => count++}>x</button> }');
-        expect(code).toMatch(/addEventListener\('click', \(\) => setCount\(__p => __p \+ 1\)\)/);
+        expect(code).toMatch(/bindEvent\(_n\d+, 'click', \(\) => setCount\(__p => __p \+ 1\)\)/);
     });
 
     it('accepts a bare function reference {save}', () =>
     {
         const code = gen('component C { <button onClick={save}>x</button> }');
         expect(() => gen('component C { <button onClick={save}>x</button> }')).not.toThrow();
-        expect(code).toMatch(/addEventListener\('click', save\)/);
+        expect(code).toMatch(/bindEvent\(_n\d+, 'click', save\)/);
     });
 
     it('accepts the handler-factory idiom {makeHandler(id)} (a call WITH arguments)', () =>

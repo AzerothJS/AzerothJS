@@ -459,11 +459,21 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     // marker itself when the range is empty.
     const first: ChildNode | null = start.nextSibling;
 
-    // Emptied list: drop every row in the range from the back. Back-first
-    // removal is O(1) per node in array-backed DOM implementations; front-first
-    // would shift the whole child array every time.
+    // Emptied list: when the marker range spans the WHOLE parent (the common
+    // shape - <For> as the sole content of a <tbody>/<ul>), one bulk
+    // textContent clear replaces N removals; the markers are re-appended to
+    // preserve their identity. Otherwise drop every row in the range from the
+    // back - back-first removal is O(1) per node in array-backed DOM
+    // implementations; front-first would shift the whole child array every time.
     if (newOrder.length === 0)
     {
+        if (start.previousSibling === null && end.nextSibling === null)
+        {
+            parent.textContent = '';
+            parent.appendChild(start);
+            parent.appendChild(end);
+            return;
+        }
         let node: ChildNode | null = end.previousSibling;
         while (node !== null && node !== start)
         {
@@ -488,11 +498,13 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
 
     const wanted = new Set<HTMLElement>(newOrder);
 
-    // Snapshot survivors in DOM order and remove departed nodes. The walk is
-    // bounded by the end anchor so it never escapes the range into following
-    // siblings (critical on the marker path, where the parent holds more than
-    // just these rows). After this loop the range holds exactly the survivors.
+    // Snapshot survivors in DOM order, DEFERRING removals: a full replacement
+    // (zero survivors) of a whole-parent range then collapses to one bulk
+    // textContent clear instead of N removals. The walk is bounded by the end
+    // anchor so it never escapes the range into following siblings (critical on
+    // the marker path, where the parent holds more than just these rows).
     const survivors: HTMLElement[] = [];
+    const departed: ChildNode[] = [];
     let node: ChildNode | null = first;
     while (node !== null && node !== end)
     {
@@ -503,10 +515,31 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
         }
         else
         {
-            parent.removeChild(node);
+            departed.push(node);
         }
         node = next;
     }
+
+    // Full replacement of a whole-parent range: bulk-clear, restore the
+    // markers, and insert the new rows in order.
+    if (survivors.length === 0 && start.previousSibling === null && end.nextSibling === null)
+    {
+        parent.textContent = '';
+        parent.appendChild(start);
+        parent.appendChild(end);
+        for (const el of newOrder)
+        {
+            parent.insertBefore(el, end);
+        }
+        return;
+    }
+
+    for (const gone of departed)
+    {
+        parent.removeChild(gone);
+    }
+
+    // After this point the range holds exactly the survivors.
 
     // Trim the common prefix and suffix. The dominant real updates (append,
     // prepend, a localized splice) collapse to a tiny middle window, and the
@@ -553,6 +586,50 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
             }
         }
         return;
+    }
+
+    // Pure two-element EXCHANGE (the classic swap): same elements in the
+    // window, crossed at exactly two positions. Two insertBefore calls and an
+    // allocation-free O(window) scan - skipping the position map and the LIS
+    // the general path would build over everything BETWEEN the swapped pair.
+    if (oldEnd - startIdx === newEnd - startIdx)
+    {
+        let first = -1;
+        let second = -1;
+        let extra = false;
+        for (let i = startIdx; i < newEnd; i++)
+        {
+            if (survivors[i] !== newOrder[i])
+            {
+                if (first === -1)
+                {
+                    first = i;
+                }
+                else if (second === -1)
+                {
+                    second = i;
+                }
+                else
+                {
+                    extra = true;
+                    break;
+                }
+            }
+        }
+        const a = first === -1 ? undefined : survivors[first];
+        const b = second === -1 ? undefined : survivors[second];
+        if (!extra && a !== undefined && b !== undefined && a === newOrder[second] && b === newOrder[first])
+        {
+            // Put b in a's slot, then a where b was (ref captured before b
+            // moves). Adjacent pair: the first insert already yields b,a.
+            const ref: ChildNode | null = b.nextSibling;
+            parent.insertBefore(b, a);
+            if (a.nextSibling !== ref)
+            {
+                parent.insertBefore(a, ref);
+            }
+            return;
+        }
     }
 
     // General window: positions[i] = where the window's i-th new node sits

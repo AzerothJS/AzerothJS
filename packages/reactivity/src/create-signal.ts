@@ -23,7 +23,7 @@
 
 import type { Getter, Setter, Signal, SignalOptions, EqualsFn } from './types.ts';
 import { createProducer, track, notify } from './graph.ts';
-import { dtRegister, dtWrite } from './devtools.ts';
+import { dtRegister, dtWrite, dtEnabled } from './devtools.ts';
 
 /**
  * Symbol key under which a getter exposes its live subscriber count. Symbol-keyed
@@ -189,12 +189,14 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
         }
     };
 
-    devtoolsId = dtRegister('signal', {
-        name: options?.name,
-        producer,
-        getValue: (): unknown => value,
-        setValue: (v: unknown): void => setter(v as T)
-    });
+    devtoolsId = dtEnabled()
+        ? dtRegister('signal', {
+            name: options?.name,
+            producer,
+            getValue: (): unknown => value,
+            setValue: (v: unknown): void => setter(v as T)
+        })
+        : 0;
 
     return [getter, setter];
 }

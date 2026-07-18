@@ -9,7 +9,7 @@
  * rides on a DOM node.
  */
 
-import { getDestroyHooks, setDestroyHooks } from './destroy-hooks.ts';
+import { getDestroyHooks, setDestroyHooks, hasAnyDestroyHooks } from './destroy-hooks.ts';
 
 /**
  * destroyComponent
@@ -68,6 +68,14 @@ import { getDestroyHooks, setDestroyHooks } from './destroy-hooks.ts';
  */
 export function destroyComponent(element: HTMLElement): void
 {
+    // No element anywhere holds an undrained hook: the walk cannot find
+    // anything, so skip it entirely. This turns the common teardown path
+    // (removing hook-free rows/branches) into a constant-time no-op.
+    if (!hasAnyDestroyHooks())
+    {
+        return;
+    }
+
     runOwnDestroyHooks(element);
 
     // Snapshot the child list before recursing: a teardown hook may mutate the DOM (e.g. tear

@@ -73,6 +73,17 @@ export interface AzerothPluginOptions
      * every transform/HMR edit, and only written when a projection actually changes.
      */
     emitDeclarations?: boolean;
+
+    /**
+     * Emit components for SSR/hydration as well as the client. **Default: `true`.**
+     *
+     * Set `false` for a client-only app: each compiled component drops its
+     * `isStringMode()/isHydrating()` h()-tree branch and emits just the template-clone
+     * path - roughly half the compiled output per component, and the SSR runtime
+     * machinery tree-shakes out of the bundle. Do not disable this if anything in the
+     * app calls `renderToString`/`hydrate`.
+     */
+    ssr?: boolean;
 }
 
 /** Writes `content` to `dtsPath` only when it differs, so the dev-server watcher does not churn. */
@@ -260,6 +271,30 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         name: 'azerothjs',
         enforce: 'pre',
 
+        // Client-only build (`ssr: false`): substitute the reactivity package's internal
+        // render-mode module with its constant-mode client stub. The stub's getters return
+        // literals, so the minifier folds every `if (isStringMode() || isHydrating())`
+        // branch across the runtime and the SSR/hydration machinery those branches
+        // reference drops out of the bundle. Matched by the RELATIVE specifier its
+        // sibling modules use, scoped to the reactivity package's files.
+        ...(options.ssr === false
+            ? {
+                resolveId(source: string, importer: string | undefined): string | null
+                {
+                    if (
+                        (source === './render-mode.js' || source === './render-mode.ts') &&
+                        importer !== undefined &&
+                        /[\\/]reactivity[\\/](dist|src)[\\/]/.test(importer)
+                    )
+                    {
+                        const clientName = source.replace('render-mode', 'render-mode-client');
+                        return join(dirname(importer), clientName);
+                    }
+                    return null;
+                }
+            }
+            : {}),
+
         // Register the extension with Vite's resolver so component imports may
         // omit it (e.g. `import Modal from './modal.component'`). Explicit
         // `.azeroth` specifiers keep working - this is purely additive. We must
@@ -363,7 +398,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             let compiled: ReturnType<typeof generateModule>;
             try
             {
-                compiled = generateModule(code, filename);
+                compiled = generateModule(code, filename, { ssr: options.ssr !== false });
             }
             catch (err)
             {

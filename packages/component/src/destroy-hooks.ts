@@ -53,6 +53,28 @@ function writeSymbol(el: HTMLElement, key: symbol, value: unknown): void
 }
 
 /**
+ * Number of elements currently holding a NON-EMPTY hook array. Most apps never attach a destroy
+ * hook, and even in apps that do, most teardown paths remove hook-free subtrees - so
+ * destroyComponent consults this count to skip the whole subtree walk when it cannot possibly
+ * find anything. The count can only over-estimate (an element GC'd with hooks still attached is
+ * never decremented), which merely re-enables the walk - never skips a real hook.
+ *
+ * @internal
+ */
+let liveHookElements = 0;
+
+/**
+ * True when at least one element in the page holds undrained destroy hooks - the gate for
+ * destroyComponent's subtree walk.
+ *
+ * @internal
+ */
+export function hasAnyDestroyHooks(): boolean
+{
+    return liveHookElements > 0;
+}
+
+/**
  * Returns the teardown hooks attached to an element, or undefined if none were registered (or
  * they were already drained to []).
  *
@@ -75,5 +97,14 @@ export function getDestroyHooks(el: HTMLElement): DestroyHook[] | undefined
  */
 export function setDestroyHooks(el: HTMLElement, hooks: DestroyHook[]): void
 {
+    const had = (readSymbol(el, DESTROY_HOOKS) as DestroyHook[] | undefined)?.length ?? 0;
+    if (had === 0 && hooks.length > 0)
+    {
+        liveHookElements++;
+    }
+    else if (had > 0 && hooks.length === 0)
+    {
+        liveHookElements--;
+    }
     writeSymbol(el, DESTROY_HOOKS, hooks);
 }

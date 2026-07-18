@@ -159,6 +159,19 @@ export function setDevtoolsHook(next: DevtoolsHook): () => void
 }
 
 /**
+ * True when a devtools hook is attached. Callers gate the CONSTRUCTION of a node's registration
+ * record on this: the record (an object literal, often carrying getValue/setValue closures) would
+ * otherwise be allocated per signal/effect/root only for dtRegister to discard it - pure GC
+ * pressure on the hottest creation paths.
+ *
+ * @internal
+ */
+export function dtEnabled(): boolean
+{
+    return hook !== null;
+}
+
+/**
  * Registers a newly created node and announces it to the hook. Returns the assigned id, or 0 when no
  * hook is attached (the caller stores 0 and skips all later devtools work for that node). The owning
  * root id is captured automatically from the active scope.
