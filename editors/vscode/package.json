@@ -2,7 +2,7 @@
     "name": "azerothjs-vscode",
     "displayName": "AzerothJS",
     "description": "Language support for AzerothJS .azeroth files - completion, hover, diagnostics, and more, powered by the compiler.",
-    "version": "0.8.0-beta.2",
+    "version": "0.9.0-beta.1",
     "icon": "icon.png",
     "publisher": "azerothjs",
     "author":
@@ -334,12 +334,12 @@
     },
     "dependencies":
     {
-        "@azerothjs/typescript-plugin": "0.8.0-beta.2",
+        "@azerothjs/typescript-plugin": "0.9.0-beta.1",
         "typescript": ">=6 <7"
     },
     "devDependencies":
     {
-        "@azerothjs/language-server": "0.8.0-beta.2",
+        "@azerothjs/language-server": "0.9.0-beta.1",
         "vscode-languageclient": "^10",
         "@types/vscode": "^1.125.0"
     },
