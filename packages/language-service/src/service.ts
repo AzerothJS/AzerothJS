@@ -91,10 +91,10 @@ import type { Metrics } from './perf.ts';
  */
 export class AzerothLanguageService
 {
-    private readonly project: AzerothProject;
+    readonly #project: AzerothProject;
 
     /** Workspace root (forward-slash, no trailing slash); the anchor for scratch (untitled) docs. */
-    private readonly scratchRoot: string;
+    readonly #scratchRoot: string;
 
     constructor(
         workspaceDirectory: string,
@@ -102,8 +102,8 @@ export class AzerothLanguageService
         options: { rootProjectFiles?: boolean; nativeDiagnostics?: boolean } = {}
     )
     {
-        this.scratchRoot = workspaceDirectory.replace(/\\/g, '/').replace(/\/+$/, '');
-        this.project = new AzerothProject(workspaceDirectory, configPath, options);
+        this.#scratchRoot = workspaceDirectory.replace(/\\/g, '/').replace(/\/+$/, '');
+        this.#project = new AzerothProject(workspaceDirectory, configPath, options);
     }
 
     /**
@@ -114,14 +114,14 @@ export class AzerothLanguageService
      * so hover / completion / diagnostics work on it instead of throwing "source file not found"; the
      * content is served from the open-document buffer, never from disk.
      */
-    private docPath(uri: string): string
+    #docPath(uri: string): string
     {
         if (uri.startsWith('file://') || uri.startsWith('/') || /^[A-Za-z]:[\\/]/.test(uri))
         {
             return uriToPath(uri);
         }
         const safe = uri.replace(/[^A-Za-z0-9._-]/g, '_');
-        return `${ this.scratchRoot }/__azeroth_scratch__/${ safe }.azeroth`;
+        return `${ this.#scratchRoot }/__azeroth_scratch__/${ safe }.azeroth`;
     }
 
     /**
@@ -131,7 +131,7 @@ export class AzerothLanguageService
      */
     public getProjectTsFiles(): readonly string[]
     {
-        return this.project.getProjectFiles();
+        return this.#project.getProjectFiles();
     }
 
     /**
@@ -144,7 +144,7 @@ export class AzerothLanguageService
     {
         // One raw-diagnostics primitive serves both engines (classic service or native
         // compiler); the shaping below is engine-agnostic.
-        const raw = this.project.rawTsDiagnostics(filePath);
+        const raw = this.#project.rawTsDiagnostics(filePath);
 
         const out: Diagnostic[] = [];
         for (const diag of raw)
@@ -171,19 +171,19 @@ export class AzerothLanguageService
     /** Registers or replaces a document's content. */
     public didOpen(uri: string, source: string): void
     {
-        this.project.openDocument(this.docPath(uri), source);
+        this.#project.openDocument(this.#docPath(uri), source);
     }
 
     /** Updates a document's content. */
     public didChange(uri: string, source: string): void
     {
-        this.project.openDocument(this.docPath(uri), source);
+        this.#project.openDocument(this.#docPath(uri), source);
     }
 
     /** Drops a document. */
     public didClose(uri: string): void
     {
-        this.project.closeDocument(this.docPath(uri));
+        this.#project.closeDocument(this.#docPath(uri));
     }
 
     /**
@@ -194,7 +194,7 @@ export class AzerothLanguageService
      */
     public getCacheStats(): { openDocuments: number; virtualCache: number; mtimeCache: number }
     {
-        return this.project.cacheStats();
+        return this.#project.cacheStats();
     }
 
     /**
@@ -204,7 +204,7 @@ export class AzerothLanguageService
      */
     public refreshWorkspace(): void
     {
-        this.project.refreshWorkspace();
+        this.#project.refreshWorkspace();
     }
 
     /**
@@ -215,7 +215,7 @@ export class AzerothLanguageService
      */
     public refreshStyles(): void
     {
-        this.project.refreshStyles();
+        this.#project.refreshStyles();
     }
 
     /**
@@ -226,83 +226,83 @@ export class AzerothLanguageService
      */
     public invalidateDiskCache(): void
     {
-        this.project.invalidateDiskCache();
+        this.#project.invalidateDiskCache();
     }
 
     /** Context-aware completion at a position. */
     public getCompletions(uri: string, position: Position, options?: CompletionOptions): CompletionItem[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('completion', () => getCompletions(ctx, ctx.lineIndex.offsetAt(position), options)) : [];
     }
 
     /** Lazily fills in a completion item's documentation/detail. */
     public resolveCompletion(uri: string, item: CompletionItem): CompletionItem
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? resolveCompletion(ctx, item) : item;
     }
 
     /** Hover information at a position. */
     public getHover(uri: string, position: Position): Hover | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('hover', () => getHover(ctx, ctx.lineIndex.offsetAt(position))) : null;
     }
 
     /** Definition location(s) for the symbol at a position. */
     public getDefinition(uri: string, position: Position): Location[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('definition', () => getDefinition(ctx, ctx.lineIndex.offsetAt(position))) : [];
     }
 
     /** Type-definition location(s) for the symbol at a position. */
     public getTypeDefinition(uri: string, position: Position): Location[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getTypeDefinition(ctx, ctx.lineIndex.offsetAt(position)) : [];
     }
 
     /** All references to the symbol at a position. */
     public getReferences(uri: string, position: Position): Location[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getReferences(ctx, ctx.lineIndex.offsetAt(position)) : [];
     }
 
     /** Implementation location(s) for the symbol at a position (interface implementors, member overrides). */
     public getImplementation(uri: string, position: Position): Location[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('implementation', () => getImplementation(ctx, ctx.lineIndex.offsetAt(position))) : [];
     }
 
     /** Occurrences of the symbol at a position, for editor highlighting. */
     public getDocumentHighlights(uri: string, position: Position): DocumentHighlight[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getDocumentHighlights(ctx, ctx.lineIndex.offsetAt(position)) : [];
     }
 
     /** Validates a rename target at a position (identifier range + current name), or null when not renameable. */
     public getPrepareRename(uri: string, position: Position): PrepareRenameResult | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getPrepareRename(ctx, ctx.lineIndex.offsetAt(position)) : null;
     }
 
     /** Workspace edit to rename the symbol at a position. */
     public getRenameEdits(uri: string, position: Position, newName: string): WorkspaceEdit | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getRenameEdits(ctx, ctx.lineIndex.offsetAt(position), newName) : null;
     }
 
     /** The call-hierarchy node(s) for the symbol at a position. */
     public getCallHierarchyPrepare(uri: string, position: Position): CallHierarchyItem[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? prepareCallHierarchy(ctx, ctx.lineIndex.offsetAt(position)) : [];
     }
 
@@ -317,7 +317,7 @@ export class AzerothLanguageService
         {
             return [];
         }
-        const ctx = this.context(item.data.uri);
+        const ctx = this.#context(item.data.uri);
         return ctx ? incomingCalls(ctx, item.data.offset) : [];
     }
 
@@ -328,125 +328,125 @@ export class AzerothLanguageService
         {
             return [];
         }
-        const ctx = this.context(item.data.uri);
+        const ctx = this.#context(item.data.uri);
         return ctx ? outgoingCalls(ctx, item.data.offset) : [];
     }
 
     /** The document outline. */
     public getDocumentSymbols(uri: string): DocumentSymbol[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getDocumentSymbols(ctx) : [];
     }
 
     /** Project-wide symbol search. */
     public getWorkspaceSymbols(query: string): WorkspaceSymbol[]
     {
-        return getWorkspaceSymbols(this.project, query);
+        return getWorkspaceSymbols(this.#project, query);
     }
 
     /** Clickable links over the relative import specifiers in the document. */
     public getDocumentLinks(uri: string): DocumentLink[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getDocumentLinks(ctx) : [];
     }
 
     /** Color swatches over CSS color literals in style attributes and css`` templates. */
     public getDocumentColors(uri: string): ColorInformation[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getDocumentColors(ctx) : [];
     }
 
     /** The spelling choices for a picked color at a range. */
     public getColorPresentations(uri: string, color: Color, range: Range): ColorPresentation[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getColorPresentations(ctx, color, range) : [];
     }
 
     /** Unresolved reference lenses over the document's top-level declarations. */
     public getCodeLenses(uri: string): CodeLens[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getCodeLenses(ctx) : [];
     }
 
     /** Fills a lens's command with its reference count (anchored via `data`). */
     public resolveCodeLens(uri: string, lens: CodeLens): CodeLens
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? resolveCodeLens(ctx, lens) : lens;
     }
 
     /** Signature help for the call enclosing a position. */
     public getSignatureHelp(uri: string, position: Position): SignatureHelp | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getSignatureHelp(ctx, ctx.lineIndex.offsetAt(position)) : null;
     }
 
     /** Diagnostics for the document. */
     public getDiagnostics(uri: string): Diagnostic[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('diagnostics', () => getDiagnostics(ctx)) : [];
     }
 
     /** Packed semantic tokens for the markup in the document. */
     public getSemanticTokens(uri: string): SemanticTokens
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? perf.measure('semanticTokens', () => getSemanticTokens(ctx)) : { data: [] };
     }
 
     /** Folding ranges for the document. */
     public getFoldingRanges(uri: string): FoldingRange[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getFoldingRanges(ctx) : [];
     }
 
     /** Code actions (quick fixes) for a range. */
     public getCodeActions(uri: string, range: Range, errorCodes: number[] = []): CodeAction[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getCodeActions(ctx, range, errorCodes) : [];
     }
 
     /** Whole-document formatting edits (script/expression regions only). */
     public getFormattingEdits(uri: string): TextEdit[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getFormattingEdits(ctx) : [];
     }
 
     /** Format-selection edits for a range (script/expression regions only). */
     public getRangeFormattingEdits(uri: string, range: Range): TextEdit[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getRangeFormattingEdits(ctx, range) : [];
     }
 
     /** Inline parameter-name / inferred-type hints for a range. */
     public getInlayHints(uri: string, range: Range, options?: InlayHintOptions): InlayHint[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getInlayHints(ctx, range, options) : [];
     }
 
     /** Smart-selection (Expand/Shrink Selection) chains for the given carets. */
     public getSelectionRanges(uri: string, positions: Position[]): SelectionRange[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getSelectionRanges(ctx, positions) : positions.map(position => ({ range: { start: position, end: position } }));
     }
 
     /** Formatting edits triggered by typing `ch` at a position. */
     public getOnTypeFormattingEdits(uri: string, position: Position, ch: string): TextEdit[]
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getOnTypeFormattingEdits(ctx, position, ch) : [];
     }
 
@@ -456,21 +456,21 @@ export class AzerothLanguageService
      */
     public getAutoCloseTag(uri: string, position: Position): string | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getAutoCloseTag(ctx, ctx.lineIndex.offsetAt(position)) : null;
     }
 
     /** Opening/closing tag-name ranges to edit together (linked editing). */
     public getLinkedEditingRanges(uri: string, position: Position): Range[] | null
     {
-        const ctx = this.context(uri);
+        const ctx = this.#context(uri);
         return ctx ? getLinkedEditingRanges(ctx, ctx.lineIndex.offsetAt(position)) : null;
     }
 
     /** The compiled virtual TS for a document - exposed for tests/tooling. */
     public getVirtualCode(uri: string): string
     {
-        return this.project.getVirtual(uriToPath(uri)).code;
+        return this.#project.getVirtual(uriToPath(uri)).code;
     }
 
     /**
@@ -480,7 +480,7 @@ export class AzerothLanguageService
      */
     public getProgram(): ts.Program | undefined
     {
-        return this.project.service.getProgram();
+        return this.#project.service.getProgram();
     }
 
     /**
@@ -504,33 +504,33 @@ export class AzerothLanguageService
     }
 
     /** Builds a RequestContext for a known document, or null if unknown. */
-    private context(uri: string): RequestContext | null
+    #context(uri: string): RequestContext | null
     {
         if (!perf.isEnabled())
         {
-            return this.buildContext(uri);
+            return this.#buildContext(uri);
         }
         const start = performance.now();
-        const ctx = this.buildContext(uri);
+        const ctx = this.#buildContext(uri);
         perf.record('total', performance.now() - start);
         return ctx;
     }
 
-    private buildContext(uri: string): RequestContext | null
+    #buildContext(uri: string): RequestContext | null
     {
-        const azerothPath = this.docPath(uri);
-        const source = this.project.getSource(azerothPath);
+        const azerothPath = this.#docPath(uri);
+        const source = this.#project.getSource(azerothPath);
         if (source === undefined)
         {
             return null;
         }
         return {
-            project: this.project,
+            project: this.#project,
             uri,
             azerothPath,
             virtualFile: toVirtualFile(azerothPath),
             source,
-            virtual: this.project.getVirtual(azerothPath),
+            virtual: this.#project.getVirtual(azerothPath),
             lineIndex: new LineIndex(source)
         };
     }

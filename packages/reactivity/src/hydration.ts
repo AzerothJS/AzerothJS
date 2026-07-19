@@ -105,10 +105,10 @@ export class HydrationCursor
     public readonly parent: Node;
 
     /** Snapshot of the parent's children at construction time. @internal */
-    private readonly nodes: ChildNode[];
+    readonly #nodes: ChildNode[];
 
     /** Index of the next unclaimed child. @internal */
-    private index: number = 0;
+    #index: number = 0;
 
     /**
      * @param parent - The node whose children are adopted (used for live DOM ops, e.g.
@@ -121,7 +121,7 @@ export class HydrationCursor
     constructor(parent: Node, nodes?: ChildNode[])
     {
         this.parent = parent;
-        this.nodes = nodes ?? Array.from(parent.childNodes);
+        this.#nodes = nodes ?? Array.from(parent.childNodes);
     }
 
     /**
@@ -131,7 +131,7 @@ export class HydrationCursor
      */
     public peek(): ChildNode | null
     {
-        return this.nodes[this.index] ?? null;
+        return this.#nodes[this.#index] ?? null;
     }
 
     /**
@@ -154,7 +154,7 @@ export class HydrationCursor
      */
     public takeElement(expectedTag?: string): HTMLElement
     {
-        const node = this.nodes[this.index];
+        const node = this.#nodes[this.#index];
 
         if (!node || node.nodeType !== 1)
         {
@@ -168,7 +168,7 @@ export class HydrationCursor
             throw new HydrationMismatchError(`expected <${ expectedTag }>, found <${ el.tagName.toLowerCase() }>`);
         }
 
-        this.index++;
+        this.#index++;
         return el;
     }
 
@@ -180,14 +180,14 @@ export class HydrationCursor
      */
     public takeText(): Text
     {
-        const node = this.nodes[this.index];
+        const node = this.#nodes[this.#index];
 
         if (!node || node.nodeType !== 3)
         {
             throw new HydrationMismatchError(`expected text node, found ${ describe(node) }`);
         }
 
-        this.index++;
+        this.#index++;
         return node as Text;
     }
 
@@ -198,14 +198,14 @@ export class HydrationCursor
      */
     public takeOpenAnchor(): void
     {
-        const node = this.nodes[this.index];
+        const node = this.#nodes[this.#index];
 
         if (!node || node.nodeType !== 8 || (node as Comment).data !== '[')
         {
             throw new HydrationMismatchError(`expected reactive-hole open anchor, found ${ describe(node) }`);
         }
 
-        this.index++;
+        this.#index++;
     }
 
     /**
@@ -219,9 +219,9 @@ export class HydrationCursor
     {
         const content: ChildNode[] = [];
 
-        while (this.index < this.nodes.length)
+        while (this.#index < this.#nodes.length)
         {
-            const node = this.nodes[this.index];
+            const node = this.#nodes[this.#index];
             if (node === undefined)
             {
                 break; // falls through to the unterminated-anchor error below
@@ -229,12 +229,12 @@ export class HydrationCursor
 
             if (node.nodeType === 8 && (node as Comment).data === ']')
             {
-                this.index++;
+                this.#index++;
                 return { content, closeAnchor: node as Comment };
             }
 
             content.push(node);
-            this.index++;
+            this.#index++;
         }
 
         throw new HydrationMismatchError('unterminated reactive-hole anchor');
@@ -249,14 +249,14 @@ export class HydrationCursor
      */
     public takeCoOpen(): Comment
     {
-        const node = this.nodes[this.index];
+        const node = this.#nodes[this.#index];
 
         if (!node || node.nodeType !== 8 || !(node as Comment).data.startsWith('azc:'))
         {
             throw new HydrationMismatchError(`expected control-flow open anchor, found ${ describe(node) }`);
         }
 
-        this.index++;
+        this.#index++;
         return node as Comment;
     }
 
@@ -275,9 +275,9 @@ export class HydrationCursor
         const content: ChildNode[] = [];
         let depth = 0;
 
-        while (this.index < this.nodes.length)
+        while (this.#index < this.#nodes.length)
         {
-            const node = this.nodes[this.index];
+            const node = this.#nodes[this.#index];
             if (node === undefined)
             {
                 break; // falls through to the unterminated-anchor error below
@@ -295,7 +295,7 @@ export class HydrationCursor
                 {
                     if (depth === 0)
                     {
-                        this.index++;
+                        this.#index++;
                         return { content, end: node as Comment };
                     }
                     depth--;
@@ -303,7 +303,7 @@ export class HydrationCursor
             }
 
             content.push(node);
-            this.index++;
+            this.#index++;
         }
 
         throw new HydrationMismatchError('unterminated control-flow anchor');
@@ -319,10 +319,10 @@ export class HydrationCursor
      */
     public assertExhausted(context: string): void
     {
-        if (this.index < this.nodes.length)
+        if (this.#index < this.#nodes.length)
         {
-            const extra = this.nodes.length - this.index;
-            throw new HydrationMismatchError(`${ context }: server rendered ${ extra } unexpected extra node(s), starting with ${ describe(this.nodes[this.index]) }`);
+            const extra = this.#nodes.length - this.#index;
+            throw new HydrationMismatchError(`${ context }: server rendered ${ extra } unexpected extra node(s), starting with ${ describe(this.#nodes[this.#index]) }`);
         }
     }
 }

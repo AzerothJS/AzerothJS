@@ -112,9 +112,29 @@ interface Collector
     first: boolean;
 }
 
+/**
+ * @internal Structural metadata a combinator attaches to its schema, so a consumer can
+ * COMPILE from the declaration - `@azerothjs/http`'s jsonEncoder walks it to build a
+ * serializer the way the validator itself was built from the same declaration. Nodes
+ * without metadata (custom/unknown combinators) simply fall back at the consumer.
+ */
+export interface SchemaMeta
+{
+    kind: 'string' | 'number' | 'boolean' | 'array' | 'object';
+    /** object: the declared field schemas, in declaration order. */
+    shape?: Record<string, Schema<unknown>>;
+    /** array: the item schema. */
+    item?: Schema<unknown>;
+    /** Set by .optional(): undefined (and omitted keys) are accepted. */
+    optional?: boolean;
+}
+
 /** A schema for T: runtime validation whose static type IS T. */
 export interface Schema<T>
 {
+    /** @internal Declaration metadata for compile-from-declaration consumers; see {@link SchemaMeta}. */
+    meta?: SchemaMeta;
+
     /** Validates and returns the (possibly normalized/coerced) value; throws {@link SchemaError}. */
     parse(value: unknown, options?: ParseOptions): T;
 
@@ -154,7 +174,7 @@ function toFieldErrors(issues: Issue[]): FieldErrors
 }
 
 /** @internal Shared plumbing: parse/safeParse/optional/refine derive from run(). */
-function base<T>(run: (value: unknown, path: string, collector: Collector) => T | undefined): Schema<T>
+function base<T>(run: (value: unknown, path: string, collector: Collector) => T | undefined, meta?: SchemaMeta): Schema<T>
 {
     const schema: Schema<T> = {
         run,
@@ -180,13 +200,16 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
         },
         optional(): Schema<T | undefined>
         {
-            const optionalSchema = base<T | undefined>((value, path, collector) =>
-                (value === undefined ? undefined : run(value, path, collector)));
+            const optionalSchema = base<T | undefined>(
+                (value, path, collector) => (value === undefined ? undefined : run(value, path, collector)),
+                meta === undefined ? undefined : { ...meta, optional: true }
+            );
             (optionalSchema as { [IS_OPTIONAL]?: boolean })[IS_OPTIONAL] = true;
             return optionalSchema;
         },
         refine(check: Refinement<T>, options: RefineOptions = {}): Schema<T>
         {
+            // A refinement narrows VALIDATION, not the value's shape - metadata carries over.
             return base<T>((value, path, collector) =>
             {
                 const before = collector.issues.length;
@@ -201,9 +224,13 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
                     return fail(collector, path, options.code ?? 'refine', options.message ?? message);
                 }
                 return parsed;
-            });
+            }, meta);
         }
     };
+    if (meta !== undefined)
+    {
+        schema.meta = meta;
+    }
     return schema;
 }
 
@@ -345,7 +372,7 @@ export function string(options: StringOptions = {}): Schema<string>
             }
         }
         return out;
-    });
+    }, { kind: 'string' });
 }
 
 export interface NumberOptions extends RuleOverrides
@@ -394,7 +421,7 @@ export function number(options: NumberOptions = {}): Schema<number>
             return reject(collector, path, options, 'max', `Must be at most ${ options.max }`);
         }
         return candidate;
-    });
+    }, { kind: 'number' });
 }
 
 /** A boolean; `coerce` accepts 'true'/'false'/'1'/'0' strings (query/form transports). */
@@ -423,7 +450,7 @@ export function boolean(options: { coerce?: boolean } & RuleOverrides = {}): Sch
             return reject(collector, path, options, 'type', 'Expected a boolean');
         }
         return value;
-    });
+    }, { kind: 'boolean' });
 }
 
 /** Exactly `expected` (a literal type). */
@@ -438,7 +465,7 @@ export function literal<const V extends string | number | boolean>(expected: V, 
         return value === expected
             ? expected
             : reject(collector, path, overrides, 'literal', `Expected ${ JSON.stringify(expected) }`);
-    });
+    }, { kind: (typeof expected) as 'string' | 'number' | 'boolean' });
 }
 
 /** One of `values`; the schema's type is their union. */
@@ -453,7 +480,7 @@ export function enumOf<const V extends readonly string[]>(values: V, overrides?:
         return typeof value === 'string' && values.includes(value)
             ? value
             : reject(collector, path, overrides, 'enum', `Expected one of: ${ values.join(', ') }`);
-    });
+    }, { kind: 'string' });
 }
 
 /** An array of `item`; `min`/`max` bound the length. Every element error is collected. */
@@ -488,7 +515,7 @@ export function array<T>(item: Schema<T>, options: { min?: number; max?: number 
             }
         }
         return collector.issues.length > before ? undefined : out as T[];
-    });
+    }, { kind: 'array', item: item });
 }
 
 /** The object type of a shape of schemas. */
@@ -535,7 +562,7 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
             }
         }
         return collector.issues.length > before ? undefined : out as ShapeType<Shape>;
-    });
+    }, { kind: 'object', shape: shape });
 }
 
 /** A dictionary of arbitrary string keys to `value`-schema values. */

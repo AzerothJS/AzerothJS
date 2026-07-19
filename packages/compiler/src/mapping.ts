@@ -45,15 +45,15 @@ export interface MappingSegment
 export class CodeMapping
 {
     /** Segments sorted by `sourceStart` (for original -> generated). */
-    private readonly bySource: MappingSegment[];
+    readonly #bySource: MappingSegment[];
 
     /** Segments sorted by `generatedStart` (for generated -> original). */
-    private readonly byGenerated: MappingSegment[];
+    readonly #byGenerated: MappingSegment[];
 
     constructor(segments: MappingSegment[])
     {
-        this.bySource = [...segments].sort((a, b) => a.sourceStart - b.sourceStart);
-        this.byGenerated = [...segments].sort((a, b) => a.generatedStart - b.generatedStart);
+        this.#bySource = [...segments].sort((a, b) => a.sourceStart - b.sourceStart);
+        this.#byGenerated = [...segments].sort((a, b) => a.generatedStart - b.generatedStart);
     }
 
     /**
@@ -63,7 +63,7 @@ export class CodeMapping
      */
     public toGenerated(sourceOffset: number): number | null
     {
-        const seg = CodeMapping.find(this.bySource, sourceOffset, segment => segment.sourceStart, segment => segment.sourceEnd);
+        const seg = CodeMapping.#find(this.#bySource, sourceOffset, segment => segment.sourceStart, segment => segment.sourceEnd);
         if (seg === null)
         {
             return null;
@@ -77,7 +77,7 @@ export class CodeMapping
      */
     public toOriginal(generatedOffset: number): number | null
     {
-        const seg = CodeMapping.find(this.byGenerated, generatedOffset, segment => segment.generatedStart, segment => segment.generatedEnd);
+        const seg = CodeMapping.#find(this.#byGenerated, generatedOffset, segment => segment.generatedStart, segment => segment.generatedEnd);
         if (seg === null)
         {
             return null;
@@ -92,7 +92,7 @@ export class CodeMapping
      */
     public toGeneratedRange(sourceStart: number, sourceEnd: number): { start: number; end: number } | null
     {
-        const seg = CodeMapping.find(this.bySource, sourceStart, segment => segment.sourceStart, segment => segment.sourceEnd);
+        const seg = CodeMapping.#find(this.#bySource, sourceStart, segment => segment.sourceStart, segment => segment.sourceEnd);
         if (seg === null || sourceEnd > seg.sourceEnd)
         {
             return null;
@@ -109,7 +109,7 @@ export class CodeMapping
      */
     public toOriginalRange(generatedStart: number, generatedEnd: number): { start: number; end: number } | null
     {
-        const seg = CodeMapping.find(this.byGenerated, generatedStart, segment => segment.generatedStart, segment => segment.generatedEnd);
+        const seg = CodeMapping.#find(this.#byGenerated, generatedStart, segment => segment.generatedStart, segment => segment.generatedEnd);
         if (seg === null || generatedEnd > seg.generatedEnd)
         {
             return null;
@@ -135,7 +135,7 @@ export class CodeMapping
     /** The segment whose generated span contains `generatedOffset`, or `null` (a scaffolding position). */
     public segmentAt(generatedOffset: number): MappingSegment | null
     {
-        return CodeMapping.find(this.byGenerated, generatedOffset, segment => segment.generatedStart, segment => segment.generatedEnd);
+        return CodeMapping.#find(this.#byGenerated, generatedOffset, segment => segment.generatedStart, segment => segment.generatedEnd);
     }
 
     /**
@@ -146,7 +146,7 @@ export class CodeMapping
     public nearestSegmentBefore(generatedOffset: number): MappingSegment | null
     {
         let best: MappingSegment | null = null;
-        for (const seg of this.byGenerated)
+        for (const seg of this.#byGenerated)
         {
             if (seg.generatedStart > generatedOffset)
             {
@@ -172,7 +172,7 @@ export class CodeMapping
      * overlap within a coordinate space apart from such shared boundaries, so the rightmost candidate is
      * always the right one.
      */
-    private static find(segments: MappingSegment[], offset: number, start: (segment: MappingSegment) => number, end: (segment: MappingSegment) => number): MappingSegment | null
+    static #find(segments: MappingSegment[], offset: number, start: (segment: MappingSegment) => number, end: (segment: MappingSegment) => number): MappingSegment | null
     {
         let lo = 0;
         let hi = segments.length - 1;

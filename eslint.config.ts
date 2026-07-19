@@ -101,6 +101,35 @@ export default defineConfig([
                 }
             ],
             '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
+            // disallowTypeAnnotations stays off: `import('node:http2').X` annotations are the
+            // deliberate idiom for typing OPTIONAL peers without a top-level import.
+            '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'separate-type-imports', disallowTypeAnnotations: false }],
+            '@typescript-eslint/parameter-properties': ['error', { prefer: 'class-property' }],
+
+            // Native #privates over the erased `private`/`protected` keywords: real runtime
+            // privacy is what a published zero-dependency runtime owes its semver (see
+            // CONTRIBUTING "Coding conventions"). `enum`/`namespace` emit runtime artifacts
+            // union literals and modules provide without.
+            'no-restricted-syntax':
+            [
+                'error',
+                {
+                    selector: ':matches(PropertyDefinition, MethodDefinition, TSAbstractPropertyDefinition, TSAbstractMethodDefinition)[accessibility=private]',
+                    message: 'Use a native #private member - TypeScript `private` is erased and the property stays reachable at runtime.'
+                },
+                {
+                    selector: ':matches(PropertyDefinition, MethodDefinition)[accessibility=protected]',
+                    message: 'No `protected` members - the codebase does not use inheritance-facing state.'
+                },
+                {
+                    selector: 'TSEnumDeclaration',
+                    message: 'Use a union of literal types instead of an enum.'
+                },
+                {
+                    selector: "TSModuleDeclaration[id.type='Identifier']",
+                    message: 'Use ES modules instead of a namespace.'
+                }
+            ],
 
             'azeroth/no-self-write-in-effect': 'warn',
             'azeroth/require-effect-disposal': 'warn',
@@ -151,7 +180,9 @@ export default defineConfig([
         rules:
         {
             '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
-            '@typescript-eslint/no-confusing-void-expression': 'off'
+            '@typescript-eslint/no-confusing-void-expression': 'off',
+            '@typescript-eslint/prefer-readonly': 'error',
+            '@typescript-eslint/switch-exhaustiveness-check': ['error', { considerDefaultExhaustiveForUnions: true }]
         }
     },
     {

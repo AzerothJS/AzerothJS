@@ -17,16 +17,19 @@ import type { Position, Range } from './protocol.ts';
  */
 export class LineIndex
 {
-    private readonly lineStarts: number[];
+    readonly #lineStarts: number[];
 
-    constructor(private readonly text: string)
+    readonly #text: string;
+
+    constructor(text: string)
     {
-        this.lineStarts = [0];
+        this.#text = text;
+        this.#lineStarts = [0];
         for (let i = 0; i < text.length; i++)
         {
             if (text[i] === '\n')
             {
-                this.lineStarts.push(i + 1);
+                this.#lineStarts.push(i + 1);
             }
         }
     }
@@ -34,13 +37,13 @@ export class LineIndex
     /** Converts a byte offset to a zero-based position. */
     public positionAt(offset: number): Position
     {
-        const clamped = Math.max(0, Math.min(offset, this.text.length));
+        const clamped = Math.max(0, Math.min(offset, this.#text.length));
         let lo = 0;
-        let hi = this.lineStarts.length - 1;
+        let hi = this.#lineStarts.length - 1;
         while (lo < hi)
         {
             const mid = (lo + hi + 1) >> 1;
-            if ((this.lineStarts[mid] ?? 0) <= clamped)
+            if ((this.#lineStarts[mid] ?? 0) <= clamped)
             {
                 lo = mid;
             }
@@ -49,7 +52,7 @@ export class LineIndex
                 hi = mid - 1;
             }
         }
-        return { line: lo, character: clamped - (this.lineStarts[lo] ?? 0) };
+        return { line: lo, character: clamped - (this.#lineStarts[lo] ?? 0) };
     }
 
     /** Converts a zero-based position to a byte offset. */
@@ -59,14 +62,14 @@ export class LineIndex
         {
             return 0;
         }
-        if (position.line >= this.lineStarts.length)
+        if (position.line >= this.#lineStarts.length)
         {
-            return this.text.length;
+            return this.#text.length;
         }
-        const lineStart = this.lineStarts[position.line] ?? 0;
-        const nextLine = position.line + 1 < this.lineStarts.length
-            ? (this.lineStarts[position.line + 1] ?? this.text.length + 1)
-            : this.text.length + 1;
+        const lineStart = this.#lineStarts[position.line] ?? 0;
+        const nextLine = position.line + 1 < this.#lineStarts.length
+            ? (this.#lineStarts[position.line + 1] ?? this.#text.length + 1)
+            : this.#text.length + 1;
         return Math.min(lineStart + Math.max(0, position.character), nextLine - 1);
     }
 
@@ -79,6 +82,6 @@ export class LineIndex
     /** Total line count. */
     public get lineCount(): number
     {
-        return this.lineStarts.length;
+        return this.#lineStarts.length;
     }
 }

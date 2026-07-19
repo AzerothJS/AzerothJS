@@ -83,8 +83,33 @@ These are enforced by `eslint.config.ts`; `npm run lint:fix` applies most of the
 
 - **Allman brace style** - opening braces go on their own line.
 - **Single quotes**, 4-space indentation, semicolons, no trailing commas, LF line endings.
-- **Explicit member accessibility** on class members (`public`/`private`/`protected`).
-- **`interface` over `type`** for object shapes.
+- **Explicit member accessibility** on public class members (`public`), and **native
+  `#` privates** for private state and methods - never the TypeScript `private`
+  keyword. `private` is erased at compile time: the property still exists at runtime,
+  so a consumer can reach it and an internal can silently become load-bearing API.
+  `#name` is real privacy - it cannot be observed from outside the class, which is
+  what a published zero-dependency runtime owes its semver. (`protected` has no `#`
+  equivalent; we don't use inheritance-facing state, so it simply doesn't appear.)
+- **No constructor parameter properties** (`constructor(private x: T)`) - declare
+  fields explicitly; the field list IS the class's state documentation.
+- **`interface` over `type`** for object shapes; `type` for unions, mapped, and
+  conditional types.
+- **Top-level `import type`** for type-only imports (`import type { X } from ...`),
+  not inline `import { type X }` - enforced and autofixed by
+  `consistent-type-imports`.
+- **`readonly` wherever it is true** - a field assigned only at construction is
+  `readonly` (enforced for privates by `prefer-readonly`).
+- **Exhaustive switches over discriminated unions** - every `switch` on a union
+  either covers all members or carries a deliberate `default`
+  (`switch-exhaustiveness-check`).
+- **No `enum`, no `namespace`** - union literal types and modules do their jobs
+  without the runtime artifacts.
+- **`satisfies` for lookup tables** - a table of handlers/specs keyed by a union
+  uses `satisfies Record<Kind, ...>` so a missing or misspelled key fails at the
+  table, and the values keep their narrow literal types.
+- `using`/`Symbol.dispose` on public disposables (`serve()`, `createRoot`) was
+  considered and deferred: it is additive public API, worth its own decision when
+  a consumer asks for it, not a side effect of a style pass.
 - **Comments are ASCII-only.** No non-ASCII punctuation or symbols in source comments.
 - **No internal lineage references in doc comments.** Don't cite ADRs, milestones,
   internal RFCs, spec sections, design-doc paths, or decision IDs in code comments -

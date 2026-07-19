@@ -14,16 +14,26 @@ import { PayloadResponse } from './payload.ts';
 const ENCODER = new TextEncoder();
 
 /**
- * @internal The shared constructor: encode once, declare the exact Content-Length from those
- * bytes, and return the kernel's lazy Response (see payload.ts) - adapters write it with a
- * plain writeHead + end, no web-stream or undici machinery on the hot path.
+ * @internal UTF-8 byte length WITHOUT encoding: Buffer.byteLength is a native counter on
+ * Node (no allocation); other runtimes fall back to an actual encode. The body itself stays
+ * a string all the way to the socket, where `end(string)` encodes natively during the write.
  */
-function payloadResponse(body: string, contentType: string, init: ResponseInit): Response
+function byteLengthUtf8(body: string): number
 {
-    const bytes = ENCODER.encode(body);
+    return typeof Buffer !== 'undefined' ? Buffer.byteLength(body, 'utf8') : ENCODER.encode(body).byteLength;
+}
+
+/**
+ * @internal The shared constructor: declare the exact Content-Length, and return the
+ * kernel's lazy Response (see payload.ts) - adapters write it with a plain writeHead + end,
+ * no web-stream, no undici, and no JS-side encoding on the hot path.
+ */
+export function payloadResponse(body: string, contentType: string, init: ResponseInit): Response
+{
+    const length = byteLengthUtf8(body);
     const record: Record<string, string> = {
         'content-type': contentType,
-        'content-length': String(bytes.byteLength)
+        'content-length': String(length)
     };
     if (init.headers !== undefined)
     {
@@ -33,9 +43,9 @@ function payloadResponse(body: string, contentType: string, init: ResponseInit):
         {
             record[name] = value;
         }
-        record['content-length'] = String(bytes.byteLength);
+        record['content-length'] = String(length);
     }
-    return new PayloadResponse(bytes, init.status ?? 200, record);
+    return new PayloadResponse(body, init.status ?? 200, record);
 }
 
 /** A JSON response; the default for API handlers. */

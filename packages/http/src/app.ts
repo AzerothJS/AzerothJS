@@ -100,6 +100,22 @@ function pathnameOf(url: string): string
 }
 
 /**
+ * @internal Post-handler finishing. HEAD via the GET fallback: entity headers stay, the
+ * body must not cross the wire - and a streaming body is cancelled so its producer stops
+ * (dropping the reference would leak the stream's resources until GC). Everything else
+ * passes through synchronously.
+ */
+function finishDispatch(request: Request, response: Response): Response | Promise<Response>
+{
+    if (request.method.toUpperCase() === 'HEAD' && response.body !== null)
+    {
+        return response.body.cancel().then(() =>
+            new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers }));
+    }
+    return response;
+}
+
+/**
  * @internal The context every handler receives. `url` is LAZY via a prototype getter:
  * routing needed only the pathname (a string scan), most handlers never touch the URL
  * object, and a prototype accessor keeps one object shape across every request - a
@@ -109,7 +125,7 @@ class DispatchContext implements RequestContext
 {
     public readonly params: Record<string, string>;
 
-    #urlString: string;
+    readonly #urlString: string;
 
     #url: URL | null = null;
 
@@ -173,19 +189,19 @@ export interface AzerothPlugin<In extends object = object, Out extends object = 
 
 export class App<Ctx extends object = object>
 {
-    private readonly router = new RadixRouter<Handler>();
+    readonly #router = new RadixRouter<Handler>();
 
-    private readonly options: AppOptions;
+    readonly #options: AppOptions;
 
     /** The middleware registered so far; each route snapshots this list when registered. */
-    private readonly middlewares: Array<Middleware<object, Record<string, unknown>>> = [];
+    readonly #middlewares: Array<Middleware<object, Record<string, unknown>>> = [];
 
     /** Installed named plugins, in registration order (introspected via {@link plugins}). */
-    private readonly installed: Array<{ name: string; version?: string | undefined }> = [];
+    readonly #installed: Array<{ name: string; version?: string | undefined }> = [];
 
     constructor(options: AppOptions = {})
     {
-        this.options = options;
+        this.#options = options;
     }
 
     /**
@@ -198,7 +214,7 @@ export class App<Ctx extends object = object>
         middleware: Middleware<Ctx, Added>
     ): App<Ctx & Added>
     {
-        this.middlewares.push(middleware as Middleware<object, Record<string, unknown>>);
+        this.#middlewares.push(middleware as Middleware<object, Record<string, unknown>>);
         return this as unknown as App<Ctx & Added>;
     }
 
@@ -208,29 +224,56 @@ export class App<Ctx extends object = object>
         // Compose ONCE at registration: routes registered before any middleware stay bare
         // (the kernel hot path is untouched), and each route runs exactly the chain that was
         // lexically above it.
-        if (this.middlewares.length === 0)
+        if (this.#middlewares.length === 0)
         {
-            this.router.insert(method, pattern, handler as Handler);
+            this.#router.insert(method, pattern, handler as Handler);
             return this;
         }
-        const chain = this.middlewares.slice();
-        const composed: Handler = async (request, ctx) =>
+        const chain = this.#middlewares.slice();
+        // The chain stays SYNCHRONOUS while middlewares return plain values - awaiting a
+        // non-promise still costs a microtask hop per middleware per request, which is pure
+        // overhead for the common sync guard/context middleware. The first thenable result
+        // switches that request onto the promise path; semantics are identical.
+        const applyResult = (ctx: object, result: unknown): Response | null =>
         {
-            for (const middleware of chain)
+            if (result instanceof Response)
             {
-                const result = await middleware(request, ctx);
-                if (result instanceof Response)
-                {
-                    return result;
-                }
-                if (result !== undefined && result !== null)
-                {
-                    Object.assign(ctx, result);
-                }
+                return result;
             }
-            return (handler as Handler)(request, ctx);
+            if (result !== undefined && result !== null)
+            {
+                Object.assign(ctx, result);
+            }
+            return null;
         };
-        this.router.insert(method, pattern, composed);
+        const composed: Handler = (request, ctx) =>
+        {
+            const step = (index: number): ReturnType<Handler> =>
+            {
+                for (let i = index; i < chain.length; i++)
+                {
+                    const middleware = chain[i];
+                    if (middleware === undefined)
+                    {
+                        continue;
+                    }
+                    const result = middleware(request, ctx);
+                    if (result instanceof Promise)
+                    {
+                        const after = i + 1;
+                        return result.then((resolved) => applyResult(ctx, resolved) ?? step(after));
+                    }
+                    const short = applyResult(ctx, result);
+                    if (short !== null)
+                    {
+                        return short;
+                    }
+                }
+                return (handler as Handler)(request, ctx);
+            };
+            return step(0);
+        };
+        this.#router.insert(method, pattern, composed);
         return this;
     }
 
@@ -293,27 +336,27 @@ export class App<Ctx extends object = object>
      */
     public register<Out extends object>(plugin: AzerothPlugin<Ctx, Out>): App<Out>
     {
-        if (this.installed.some((entry) => entry.name === plugin.name))
+        if (this.#installed.some((entry) => entry.name === plugin.name))
         {
             throw new Error(`Plugin '${ plugin.name }' is already registered.`);
         }
         const next = plugin.install(this);
         // The registry lives on the returned app instance; install() returns `this` re-typed
         // (use/route/query all mutate and return the same object), so the record is shared.
-        (next as unknown as App<Ctx>).installed.push({ name: plugin.name, version: plugin.version });
+        (next as unknown as App<Ctx>).#installed.push({ name: plugin.name, version: plugin.version });
         return next;
     }
 
     /** The installed plugins (name + version), in registration order - print it at boot. */
     public plugins(): ReadonlyArray<{ name: string; version?: string | undefined }>
     {
-        return this.installed;
+        return this.#installed;
     }
 
     /** The registered route table, one line per route - print it at boot. */
     public routes(): string[]
     {
-        return this.router.table();
+        return this.#router.table();
     }
 
     /**
@@ -324,21 +367,23 @@ export class App<Ctx extends object = object>
      */
     public async handle(request: Request): Promise<Response>
     {
-        const observer = this.options.observe;
+        const observer = this.#options.observe;
         const started = observer !== undefined ? performance.now() : 0;
         let response: Response;
         try
         {
-            if (this.options.requestRoot === false)
+            if (this.#options.requestRoot === false)
             {
-                response = await this.dispatch(request);
+                response = await this.#dispatch(request);
             }
             else
             {
-                response = await runInRequestRoot(() => this.dispatch(request), {
+                // One stable dispatch reference and one stable options object for the app's
+                // lifetime - the per-request closure and options allocation were pure garbage.
+                this.#rootOptions ??= {
                     onCleanupError: ((): ((error: unknown) => void) | undefined =>
                     {
-                        const onError = this.options.onError;
+                        const onError = this.#options.onError;
                         return onError !== undefined
                             ? (error): void =>
                             {
@@ -346,12 +391,13 @@ export class App<Ctx extends object = object>
                             }
                             : undefined;
                     })()
-                });
+                };
+                response = await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
             }
         }
         catch (error)
         {
-            response = errorResponse(error, { dev: this.options.dev, observe: this.options.onError });
+            response = errorResponse(error, { dev: this.#options.dev, observe: this.#options.onError });
         }
         if (observer !== undefined)
         {
@@ -367,18 +413,29 @@ export class App<Ctx extends object = object>
         return response;
     }
 
-    /** @internal The throwing core `handle` wraps. */
-    private async dispatch(request: Request): Promise<Response>
+    /** @internal Stable dispatch reference: runInRequestRoot receives this one function
+     * for the app's lifetime and threads the request through as an argument. */
+    readonly #dispatchBound = (request: Request): Response | Promise<Response> => this.#dispatch(request);
+
+    /** @internal Built once on first use; see handle(). */
+    #rootOptions: { onCleanupError?: ((error: unknown) => void) | undefined } | null = null;
+
+    /**
+     * @internal The throwing core `handle` wraps. Synchronous end to end when the route's
+     * handler returns a plain Response - a sync handler pays no promise machinery in the
+     * dispatch itself (handle()'s one await settles either shape).
+     */
+    #dispatch(request: Request): Response | Promise<Response>
     {
         const pathname = pathnameOf(request.url);
-        const result = this.router.match(request.method, pathname);
+        const result = this.#router.match(request.method, pathname);
 
         if (result.kind === 'miss')
         {
             // A routing miss is routine control flow, not an exception. When an error observer
             // is watching, throw so it still sees the 404 (with the path); otherwise return the
             // cached response directly - no Error, no stack capture, no per-request serialization.
-            if (this.options.onError !== undefined)
+            if (this.#options.onError !== undefined)
             {
                 throw new NotFoundError(`Nothing is served at ${ request.method } ${ pathname }.`);
             }
@@ -389,17 +446,12 @@ export class App<Ctx extends object = object>
             throw new MethodNotAllowedError(result.allowed);
         }
 
-        const response = await result.value(request, new DispatchContext(result.params, request.url));
-
-        // HEAD via the GET fallback: entity headers stay, the body must not cross the wire.
-        // A streaming body is cancelled so its producer stops - dropping the reference would
-        // leak the stream's resources until GC.
-        if (request.method.toUpperCase() === 'HEAD' && response.body !== null)
+        const out = result.value(request, new DispatchContext(result.params, request.url));
+        if (out instanceof Promise)
         {
-            await response.body.cancel();
-            return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+            return out.then((response) => finishDispatch(request, response));
         }
-        return response;
+        return finishDispatch(request, out);
     }
 }
 

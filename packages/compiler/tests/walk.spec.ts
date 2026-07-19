@@ -5,7 +5,7 @@
 // write-vs-read separation, props handling, and lexical shadowing across
 // function and block scopes.
 import { describe, it, expect } from 'vitest';
-import * as ts from 'typescript';
+import type * as ts from 'typescript';
 import { traverseReactive } from '../src/walk.ts';
 import { parseExpressionSlice, parseStatementsSlice } from '../src/ts-slice.ts';
 import type { ReactiveSources } from '../src/dep.ts';

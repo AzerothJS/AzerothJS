@@ -99,8 +99,12 @@ class Builder
 
     public readonly segments: MappingSegment[] = [];
 
-    constructor(private readonly src: string)
-    {}
+    readonly #src: string;
+
+    constructor(src: string)
+    {
+        this.#src = src;
+    }
 
     /** Appends generated scaffolding that has no original counterpart. */
     public emit(text: string): void
@@ -117,7 +121,7 @@ class Builder
         }
 
         const generatedStart = this.out.length;
-        this.out += this.src.slice(start, end);
+        this.out += this.#src.slice(start, end);
         this.segments.push({
             sourceStart: start,
             sourceEnd: end,

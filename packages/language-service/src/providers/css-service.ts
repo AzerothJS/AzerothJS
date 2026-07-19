@@ -16,7 +16,7 @@ import {
     type Hover,
     type Range
 } from '../protocol.ts';
-import { LineIndex } from '../text.ts';
+import type { LineIndex } from '../text.ts';
 
 /** The `*{` we prepend so the declaration list parses as a stylesheet. */
 const WRAP_PREFIX = '*{';

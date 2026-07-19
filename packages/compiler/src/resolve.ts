@@ -13,7 +13,7 @@
  * @internal Compiler analysis stage; not part of the package's public API.
  */
 
-import * as ts from 'typescript';
+import type * as ts from 'typescript';
 
 import type { Dep, ReactiveSources } from './dep.ts';
 

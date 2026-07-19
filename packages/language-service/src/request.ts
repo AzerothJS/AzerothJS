@@ -7,8 +7,9 @@ import ts from 'typescript';
 import type { Location, Range } from './protocol.ts';
 import { LineIndex } from './text.ts';
 import { pathToUri } from './uri.ts';
+import type {
+    AzerothProject } from './ts-project.ts';
 import {
-    AzerothProject,
     isVirtualFile,
     toAzerothPath,
     toVirtualFile

@@ -104,21 +104,21 @@ export class AzerothProject
     /** The underlying TypeScript language service. */
     public readonly service: ts.LanguageService;
 
-    private readonly open = new Map<string, OpenDoc>();
+    readonly #open = new Map<string, OpenDoc>();
 
-    private readonly virtualCache = new Map<string, CachedVirtual>();
+    readonly #virtualCache = new Map<string, CachedVirtual>();
 
-    private readonly options: ts.CompilerOptions;
+    readonly #options: ts.CompilerOptions;
 
     /** Virtual names of every `.azeroth` file found in the workspace. */
-    private discovered: string[];
+    #discovered: string[];
 
     /**
      * Memoized `getScriptFileNames` result. TS queries the root file list very
      * frequently; the set only changes when `projectVersion` does (open/close or
      * a workspace refresh), so we rebuild lazily and cache against that version.
      */
-    private scriptNamesCache: { version: number; names: string[] } | null = null;
+    #scriptNamesCache: { version: number; names: string[] } | null = null;
 
     /**
      * Per-file disk mtime cache for `getScriptVersion`. Without it every version
@@ -127,9 +127,9 @@ export class AzerothProject
      * `projectVersion` epoch - any edit (which bumps the version) clears it, so a
      * genuine change is never masked.
      */
-    private readonly mtimeCache = new Map<string, string>();
+    readonly #mtimeCache = new Map<string, string>();
 
-    private mtimeCacheVersion = -1;
+    #mtimeCacheVersion = -1;
 
     /**
      * The consuming project's own ambient/global declaration files (`.d.ts`
@@ -137,7 +137,7 @@ export class AzerothProject
      * so their global augmentations apply inside `.azeroth` - see
      * {@link resolveProject}.
      */
-    private readonly ambientFiles: string[];
+    readonly #ambientFiles: string[];
 
     /**
      * The consuming project's real `.ts` source files (from the tsconfig).
@@ -147,44 +147,47 @@ export class AzerothProject
      * ({@link rootProjectFiles}), so a `.ts` file importing a `.azeroth`
      * component is type-checked in the SAME program as the `.azeroth` files.
      */
-    private readonly projectFiles: string[];
+    readonly #projectFiles: string[];
 
     /** When true, {@link projectFiles} are program roots (the CLI checker). */
-    private readonly rootProjectFiles: boolean;
+    readonly #rootProjectFiles: boolean;
 
-    private projectVersion = 0;
+    #projectVersion = 0;
 
     /** Workspace CSS class index (for `class="..."` completion/hover/definition), built on first use. */
-    private styleIndex: StyleIndex | null = null;
+    #styleIndex: StyleIndex | null = null;
 
     /** The native diagnostics backend, when this project opted in and the native API is installed. */
-    private nativeBackend: NativeLsBackend | null = null;
+    #nativeBackend: NativeLsBackend | null = null;
+
+    readonly #currentDirectory: string;
 
     constructor(
-        private readonly currentDirectory: string,
+        currentDirectory: string,
         configPath?: string,
         options: { rootProjectFiles?: boolean; nativeDiagnostics?: boolean } = {}
     )
     {
-        const resolved = AzerothProject.resolveProject(currentDirectory, configPath);
-        this.options = resolved.options;
-        this.ambientFiles = resolved.ambientFiles;
-        this.projectFiles = resolved.projectFiles;
-        this.rootProjectFiles = options.rootProjectFiles ?? false;
-        this.intrinsicsFile = `${ currentDirectory.replace(/\\/g, '/').replace(/\/$/, '') }/${ INTRINSICS_BASENAME }`;
-        this.discovered = this.discoverWorkspace();
-        this.service = ts.createLanguageService(this.createHost(), ts.createDocumentRegistry());
+        this.#currentDirectory = currentDirectory;
+        const resolved = AzerothProject.#resolveProject(currentDirectory, configPath);
+        this.#options = resolved.options;
+        this.#ambientFiles = resolved.ambientFiles;
+        this.#projectFiles = resolved.projectFiles;
+        this.#rootProjectFiles = options.rootProjectFiles ?? false;
+        this.#intrinsicsFile = `${ currentDirectory.replace(/\\/g, '/').replace(/\/$/, '') }/${ INTRINSICS_BASENAME }`;
+        this.#discovered = this.#discoverWorkspace();
+        this.service = ts.createLanguageService(this.#createHost(), ts.createDocumentRegistry());
 
         if (options.nativeDiagnostics ?? false)
         {
-            this.nativeBackend = createNativeLsBackend({
+            this.#nativeBackend = createNativeLsBackend({
                 currentDirectory,
                 configFileName: resolved.configFileName,
                 baseOptions: resolved.baseOptions,
-                rootNames: () => this.programRootNames(),
-                version: () => this.projectVersion,
-                virtualContent: (fileName) => this.nativeVirtualContent(fileName),
-                azerothSource: (azerothPath) => this.readAzeroth(azerothPath)
+                rootNames: () => this.#programRootNames(),
+                version: () => this.#projectVersion,
+                virtualContent: (fileName) => this.#nativeVirtualContent(fileName),
+                azerothSource: (azerothPath) => this.#readAzeroth(azerothPath)
             });
         }
     }
@@ -198,16 +201,16 @@ export class AzerothProject
      */
     public rawTsDiagnostics(fileName: string): readonly RawTsDiagnostic[]
     {
-        if (this.nativeBackend !== null)
+        if (this.#nativeBackend !== null)
         {
-            const native = this.nativeBackend.diagnosticsFor(fileName);
+            const native = this.#nativeBackend.diagnosticsFor(fileName);
             if (native !== null)
             {
                 return native;
             }
             // The backend shut down (spawn or protocol failure); classic serves the rest of
             // the session.
-            this.nativeBackend = null;
+            this.#nativeBackend = null;
         }
         return [
             ...this.service.getSyntacticDiagnostics(fileName),
@@ -216,16 +219,16 @@ export class AzerothProject
     }
 
     /** Serves the native overlay's virtual reads: the intrinsics file and `.azeroth.ts` projection twins. */
-    private nativeVirtualContent(fileName: string): string | undefined
+    #nativeVirtualContent(fileName: string): string | undefined
     {
-        if (fileName === this.intrinsicsFile)
+        if (fileName === this.#intrinsicsFile)
         {
             return INTRINSICS_CONTENT;
         }
         if (isVirtualFile(fileName))
         {
             const azerothPath = toAzerothPath(fileName);
-            return this.readAzeroth(azerothPath) === undefined ? undefined : this.getVirtual(azerothPath).code;
+            return this.#readAzeroth(azerothPath) === undefined ? undefined : this.getVirtual(azerothPath).code;
         }
         return undefined;
     }
@@ -236,23 +239,23 @@ export class AzerothProject
      */
     public getProjectFiles(): readonly string[]
     {
-        return this.projectFiles;
+        return this.#projectFiles;
     }
 
     /** Path of the injected ambient declarations file. */
-    private readonly intrinsicsFile: string;
+    readonly #intrinsicsFile: string;
 
     /**
      * Finds every `.azeroth` file in the workspace so they all join the TS
      * program - enabling cross-file go-to-definition and auto-import of
      * components defined in other `.azeroth` files, plus workspace symbols.
      */
-    private discoverWorkspace(): string[]
+    #discoverWorkspace(): string[]
     {
         try
         {
             const files = ts.sys.readDirectory(
-                this.currentDirectory,
+                this.#currentDirectory,
                 ['.azeroth'],
                 ['**/node_modules/**', '**/dist/**', '**/.git/**'],
                 ['**/*.azeroth']
@@ -269,25 +272,25 @@ export class AzerothProject
     public openDocument(azerothPath: string, source: string): void
     {
         const key = toSlashes(azerothPath);
-        const prev = this.open.get(key);
-        this.open.set(key, { source, version: (prev?.version ?? 0) + 1 });
-        this.virtualCache.delete(key);
-        this.projectVersion++;
+        const prev = this.#open.get(key);
+        this.#open.set(key, { source, version: (prev?.version ?? 0) + 1 });
+        this.#virtualCache.delete(key);
+        this.#projectVersion++;
     }
 
     /** Drops an open document (e.g. the editor closed it). */
     public closeDocument(azerothPath: string): void
     {
         const key = toSlashes(azerothPath);
-        this.open.delete(key);
-        this.virtualCache.delete(key);
-        this.projectVersion++;
+        this.#open.delete(key);
+        this.#virtualCache.delete(key);
+        this.#projectVersion++;
     }
 
     /** All currently-open `.azeroth` paths. */
     public openPaths(): string[]
     {
-        return [...this.open.keys()];
+        return [...this.#open.keys()];
     }
 
     /**
@@ -299,9 +302,9 @@ export class AzerothProject
     public cacheStats(): { openDocuments: number; virtualCache: number; mtimeCache: number }
     {
         return {
-            openDocuments: this.open.size,
-            virtualCache: this.virtualCache.size,
-            mtimeCache: this.mtimeCache.size
+            openDocuments: this.#open.size,
+            virtualCache: this.#virtualCache.size,
+            mtimeCache: this.#mtimeCache.size
         };
     }
 
@@ -314,9 +317,9 @@ export class AzerothProject
      */
     public refreshWorkspace(): void
     {
-        this.discovered = this.discoverWorkspace();
-        this.styleIndex?.refresh();
-        this.projectVersion++;
+        this.#discovered = this.#discoverWorkspace();
+        this.#styleIndex?.refresh();
+        this.#projectVersion++;
     }
 
     /**
@@ -327,7 +330,7 @@ export class AzerothProject
      */
     public getStyleIndex(): StyleIndex
     {
-        return this.styleIndex ??= new StyleIndex(this.currentDirectory);
+        return this.#styleIndex ??= new StyleIndex(this.#currentDirectory);
     }
 
     /**
@@ -338,7 +341,7 @@ export class AzerothProject
      */
     public refreshStyles(): void
     {
-        this.styleIndex?.refresh();
+        this.#styleIndex?.refresh();
     }
 
     /**
@@ -351,13 +354,13 @@ export class AzerothProject
      */
     public invalidateDiskCache(): void
     {
-        this.projectVersion++;
+        this.#projectVersion++;
     }
 
     /** The current source of a `.azeroth` document (open buffer or disk). */
     public getSource(azerothPath: string): string | undefined
     {
-        return this.readAzeroth(azerothPath);
+        return this.#readAzeroth(azerothPath);
     }
 
     /**
@@ -370,24 +373,24 @@ export class AzerothProject
         // Normalize so the cache key matches the forward-slash key openDocument
         // stores - the read and write sides must agree (see toSlashes).
         const key = toSlashes(azerothPath);
-        const source = this.readAzeroth(key) ?? '';
-        const cached = this.virtualCache.get(key);
+        const source = this.#readAzeroth(key) ?? '';
+        const cached = this.#virtualCache.get(key);
         if (cached && cached.source === source)
         {
             return cached;
         }
         const built = generateVirtualCode(source);
         const entry: CachedVirtual = { ...built, source };
-        this.virtualCache.set(key, entry);
+        this.#virtualCache.set(key, entry);
         return entry;
     }
 
     /** Reads a `.azeroth` source from the open set or disk. */
-    private readAzeroth(azerothPath: string): string | undefined
+    #readAzeroth(azerothPath: string): string | undefined
     {
         // Look the open buffer up under the same forward-slash key openDocument
         // writes; a backslash path would otherwise miss it and serve stale disk.
-        const doc = this.open.get(toSlashes(azerothPath));
+        const doc = this.#open.get(toSlashes(azerothPath));
         if (doc)
         {
             return doc.source;
@@ -401,20 +404,20 @@ export class AzerothProject
      * Cleared on any edit (the version bump), so a real on-disk change is still
      * seen on the next epoch.
      */
-    private diskVersion(fileName: string): string
+    #diskVersion(fileName: string): string
     {
-        if (this.mtimeCacheVersion !== this.projectVersion)
+        if (this.#mtimeCacheVersion !== this.#projectVersion)
         {
-            this.mtimeCache.clear();
-            this.mtimeCacheVersion = this.projectVersion;
+            this.#mtimeCache.clear();
+            this.#mtimeCacheVersion = this.#projectVersion;
         }
-        const cached = this.mtimeCache.get(fileName);
+        const cached = this.#mtimeCache.get(fileName);
         if (cached !== undefined)
         {
             return cached;
         }
         const version = String(ts.sys.getModifiedTime?.(fileName)?.getTime() ?? 0);
-        this.mtimeCache.set(fileName, version);
+        this.#mtimeCache.set(fileName, version);
         return version;
     }
 
@@ -424,38 +427,38 @@ export class AzerothProject
      * discovered). Shared verbatim by the classic host and the native backend so both engines
      * check the SAME program. Memoized per project version - TypeScript queries it constantly.
      */
-    private programRootNames(): string[]
+    #programRootNames(): string[]
     {
-        if (this.scriptNamesCache?.version === this.projectVersion)
+        if (this.#scriptNamesCache?.version === this.#projectVersion)
         {
-            return this.scriptNamesCache.names;
+            return this.#scriptNamesCache.names;
         }
         const names = [
-            this.intrinsicsFile,
+            this.#intrinsicsFile,
             ...new Set([
-                ...this.ambientFiles,
-                ...(this.rootProjectFiles ? this.projectFiles : []),
+                ...this.#ambientFiles,
+                ...(this.#rootProjectFiles ? this.#projectFiles : []),
                 ...this.openPaths().map(toVirtualFile),
-                ...this.discovered
+                ...this.#discovered
             ])
         ];
-        this.scriptNamesCache = { version: this.projectVersion, names };
+        this.#scriptNamesCache = { version: this.#projectVersion, names };
         return names;
     }
 
     /** Builds the language service host backing the virtual project. */
-    private createHost(): ts.LanguageServiceHost
+    #createHost(): ts.LanguageServiceHost
     {
         // Every member below is an arrow function, so `this` is lexically the
         // project instance; no alias is needed.
         const host: ts.LanguageServiceHost =
         {
-            getScriptFileNames: () => this.programRootNames(),
-            getProjectVersion: () => String(this.projectVersion),
+            getScriptFileNames: () => this.#programRootNames(),
+            getProjectVersion: () => String(this.#projectVersion),
 
             getScriptVersion: (fileName) =>
             {
-                if (fileName === this.intrinsicsFile)
+                if (fileName === this.#intrinsicsFile)
                 {
                     return '1';
                 }
@@ -463,20 +466,20 @@ export class AzerothProject
                 if (isVirtualFile(fileName))
                 {
                     const azerothPath = toSlashes(toAzerothPath(fileName));
-                    const doc = this.open.get(azerothPath);
+                    const doc = this.#open.get(azerothPath);
                     if (doc)
                     {
                         return `o${ doc.version }`;
                     }
-                    return `d${ this.diskVersion(azerothPath) }`;
+                    return `d${ this.#diskVersion(azerothPath) }`;
                 }
 
-                return this.diskVersion(fileName);
+                return this.#diskVersion(fileName);
             },
 
             getScriptSnapshot: (fileName) =>
             {
-                if (fileName === this.intrinsicsFile)
+                if (fileName === this.#intrinsicsFile)
                 {
                     return ts.ScriptSnapshot.fromString(INTRINSICS_CONTENT);
                 }
@@ -484,7 +487,7 @@ export class AzerothProject
                 if (isVirtualFile(fileName))
                 {
                     const azerothPath = toAzerothPath(fileName);
-                    if (this.readAzeroth(azerothPath) === undefined)
+                    if (this.#readAzeroth(azerothPath) === undefined)
                     {
                         return undefined;
                     }
@@ -495,11 +498,11 @@ export class AzerothProject
                 return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
             },
 
-            getCurrentDirectory: () => this.currentDirectory,
-            getCompilationSettings: () => this.options,
+            getCurrentDirectory: () => this.#currentDirectory,
+            getCompilationSettings: () => this.#options,
             getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),
-            fileExists: (fileName) => this.hostFileExists(fileName),
-            readFile: (fileName) => this.hostReadFile(fileName),
+            fileExists: (fileName) => this.#hostFileExists(fileName),
+            readFile: (fileName) => this.#hostReadFile(fileName),
             readDirectory: ts.sys.readDirectory.bind(ts.sys),
             directoryExists: ts.sys.directoryExists.bind(ts.sys),
             getDirectories: ts.sys.getDirectories.bind(ts.sys),
@@ -508,16 +511,16 @@ export class AzerothProject
             ...(ts.sys.realpath !== undefined ? { realpath: ts.sys.realpath.bind(ts.sys) } : {}),
             useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
             resolveModuleNameLiterals: (literals, containingFile, _redirect, options) =>
-                this.resolveModules(literals, containingFile, options)
+                this.#resolveModules(literals, containingFile, options)
         };
 
         return host;
     }
 
     /** fileExists that also reports the synthetic virtual twins as present. */
-    private hostFileExists(fileName: string): boolean
+    #hostFileExists(fileName: string): boolean
     {
-        if (fileName === this.intrinsicsFile)
+        if (fileName === this.#intrinsicsFile)
         {
             return true;
         }
@@ -525,16 +528,16 @@ export class AzerothProject
         if (isVirtualFile(fileName))
         {
             const azerothPath = toSlashes(toAzerothPath(fileName));
-            return this.open.has(azerothPath) || ts.sys.fileExists(azerothPath);
+            return this.#open.has(azerothPath) || ts.sys.fileExists(azerothPath);
         }
 
         return ts.sys.fileExists(fileName);
     }
 
     /** readFile that materializes the virtual TS for a `.azeroth` twin. */
-    private hostReadFile(fileName: string): string | undefined
+    #hostReadFile(fileName: string): string | undefined
     {
-        if (fileName === this.intrinsicsFile)
+        if (fileName === this.#intrinsicsFile)
         {
             return INTRINSICS_CONTENT;
         }
@@ -542,7 +545,7 @@ export class AzerothProject
         if (isVirtualFile(fileName))
         {
             const azerothPath = toAzerothPath(fileName);
-            return this.readAzeroth(azerothPath) === undefined
+            return this.#readAzeroth(azerothPath) === undefined
                 ? undefined
                 : this.getVirtual(azerothPath).code;
         }
@@ -556,7 +559,7 @@ export class AzerothProject
      * goes through standard TypeScript resolution (which honours tsconfig
      * `paths` for the `@azerothjs/*` packages and node_modules).
      */
-    private resolveModules(
+    #resolveModules(
         literals: readonly ts.StringLiteralLike[],
         containingFile: string,
         options: ts.CompilerOptions
@@ -583,7 +586,7 @@ export class AzerothProject
             if (relative && text.endsWith('.azeroth'))
             {
                 const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }`));
-                if (this.hostFileExists(toVirtualFile(candidate)))
+                if (this.#hostFileExists(toVirtualFile(candidate)))
                 {
                     return asAzeroth(candidate);
                 }
@@ -597,7 +600,7 @@ export class AzerothProject
             if (!base.resolvedModule && relative && !text.endsWith('.azeroth'))
             {
                 const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }.azeroth`));
-                if (this.hostFileExists(toVirtualFile(candidate)))
+                if (this.#hostFileExists(toVirtualFile(candidate)))
                 {
                     return asAzeroth(candidate);
                 }
@@ -622,7 +625,7 @@ export class AzerothProject
      * "Property 'env' does not exist on type 'ImportMeta'", even though `tsc`
      * (which loads the same `.d.ts`) is happy.
      */
-    private static resolveProject(
+    static #resolveProject(
         currentDirectory: string,
         configPath?: string
     ): { options: ts.CompilerOptions; ambientFiles: string[]; projectFiles: string[]; configFileName: string | undefined; baseOptions: ts.CompilerOptions }

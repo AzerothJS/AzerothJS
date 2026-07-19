@@ -11,7 +11,7 @@
 // throws - a documentation pass over a half-typed file must degrade, not crash.
 
 import ts from 'typescript';
-import { AzerothLanguageService } from './service.ts';
+import type { AzerothLanguageService } from './service.ts';
 import { toVirtualFile } from './ts-project.ts';
 import { uriToPath } from './uri.ts';
 

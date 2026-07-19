@@ -16,7 +16,8 @@
  *     knowingly - the escape hatch is visible in the return type.
  */
 
-import { App, ValidationError, HttpError, json, readJson } from '@azerothjs/http';
+import type { App } from '@azerothjs/http';
+import { ValidationError, HttpError, json, readJson } from '@azerothjs/http';
 import { isRoute, type AnyRoute, type Contract, type Implementation } from './define.ts';
 
 /**

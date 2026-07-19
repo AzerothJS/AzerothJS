@@ -29,7 +29,11 @@ export class PayloadResponse implements Response
     /** Plain lowercase-name header record - what a Node writeHead consumes directly. */
     readonly #headerRecord: Record<string, string>;
 
-    readonly #payload: Uint8Array<ArrayBuffer>;
+    /** String payloads stay strings until someone needs bytes: a Node socket write
+     * encodes natively in `end(string)`, so the hot path never runs TextEncoder. */
+    readonly #payload: Uint8Array<ArrayBuffer> | string;
+
+    #bytesCache: Uint8Array<ArrayBuffer> | null = null;
 
     #headers: Headers | null = null;
 
@@ -41,13 +45,28 @@ export class PayloadResponse implements Response
 
     constructor(payload: Uint8Array<ArrayBuffer> | string, status: number, headerRecord: Record<string, string>)
     {
-        this.#payload = typeof payload === 'string' ? ENCODER.encode(payload) : payload;
+        this.#payload = payload;
         this.#status = status;
         this.#headerRecord = headerRecord;
     }
 
-    /** The adapter's fast path: everything a socket write needs, no undici. @internal */
-    public raw(): { status: number; headers: Record<string, string>; payload: Uint8Array }
+    /** @internal The payload as bytes, encoded on first need and cached. */
+    #encoded(): Uint8Array<ArrayBuffer>
+    {
+        if (typeof this.#payload !== 'string')
+        {
+            return this.#payload;
+        }
+        this.#bytesCache ??= ENCODER.encode(this.#payload);
+        return this.#bytesCache;
+    }
+
+    /**
+     * The adapter's fast path: everything a socket write needs, no undici. A string payload
+     * is returned AS a string - `res.end(string)` encodes natively during the write, which
+     * beats encoding in JS first. @internal
+     */
+    public raw(): { status: number; headers: Record<string, string>; payload: Uint8Array | string }
     {
         return { status: this.#status, headers: this.#headerRecord, payload: this.#payload };
     }
@@ -93,7 +112,7 @@ export class PayloadResponse implements Response
     {
         if (this.#body === null)
         {
-            const payload = this.#payload;
+            const payload = this.#encoded();
             const markUsed = (): void =>
             {
                 this.#bodyUsed = true;
@@ -118,19 +137,24 @@ export class PayloadResponse implements Response
     public arrayBuffer(): Promise<ArrayBuffer>
     {
         this.#bodyUsed = true;
-        const copy = this.#payload.slice();
+        const copy = this.#encoded().slice();
         return Promise.resolve(copy.buffer);
     }
 
     public bytes(): Promise<Uint8Array<ArrayBuffer>>
     {
         this.#bodyUsed = true;
-        return Promise.resolve(this.#payload.slice());
+        return Promise.resolve(this.#encoded().slice());
     }
 
     public text(): Promise<string>
     {
         this.#bodyUsed = true;
+        // A string payload round-trips for free - no decode, no encode.
+        if (typeof this.#payload === 'string')
+        {
+            return Promise.resolve(this.#payload);
+        }
         return Promise.resolve(DECODER.decode(this.#payload));
     }
 
@@ -172,7 +196,7 @@ export class PayloadResponse implements Response
     /** @internal A real Response over the same payload, for the members nobody hot-paths. */
     #materialize(): Response
     {
-        this.#real ??= new Response(this.#payload.slice(), { status: this.#status, headers: this.#headerRecord });
+        this.#real ??= new Response(this.#encoded().slice(), { status: this.#status, headers: this.#headerRecord });
         return this.#real;
     }
 }

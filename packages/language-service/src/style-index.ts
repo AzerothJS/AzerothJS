@@ -217,38 +217,41 @@ interface FileEntry
  */
 export class StyleIndex
 {
-    private files: string[] | null = null;
+    #files: string[] | null = null;
 
-    private readonly cache = new Map<string, FileEntry>();
+    readonly #cache = new Map<string, FileEntry>();
 
-    constructor(private readonly workspaceDirectory: string)
+    readonly #workspaceDirectory: string;
+
+    constructor(workspaceDirectory: string)
     {
+        this.#workspaceDirectory = workspaceDirectory;
     }
 
     /** Re-discovers the stylesheet/`.azeroth` file set (call on create/delete). */
     public refresh(): void
     {
-        this.files = null;
+        this.#files = null;
     }
 
     /** Every class definition currently known across the workspace. */
     public all(): ClassDefinition[]
     {
-        const files = this.discover();
+        const files = this.#discover();
         // Prune cache entries for files that have since disappeared so the map
         // can't grow without bound across a long-lived session.
         const live = new Set(files);
-        for (const key of this.cache.keys())
+        for (const key of this.#cache.keys())
         {
             if (!live.has(key))
             {
-                this.cache.delete(key);
+                this.#cache.delete(key);
             }
         }
         const out: ClassDefinition[] = [];
         for (const file of files)
         {
-            out.push(...this.entry(file));
+            out.push(...this.#entry(file));
         }
         return out;
     }
@@ -274,41 +277,41 @@ export class StyleIndex
     }
 
     /** The discovered file list, scanned lazily and cached until `refresh`. */
-    private discover(): string[]
+    #discover(): string[]
     {
-        if (this.files !== null)
+        if (this.#files !== null)
         {
-            return this.files;
+            return this.#files;
         }
         try
         {
-            const styles = ts.sys.readDirectory(this.workspaceDirectory, STYLE_EXTENSIONS, EXCLUDES, ['**/*']);
-            const azeroth = ts.sys.readDirectory(this.workspaceDirectory, ['.azeroth'], EXCLUDES, ['**/*.azeroth']);
-            this.files = [...styles, ...azeroth].map(toSlashes);
+            const styles = ts.sys.readDirectory(this.#workspaceDirectory, STYLE_EXTENSIONS, EXCLUDES, ['**/*']);
+            const azeroth = ts.sys.readDirectory(this.#workspaceDirectory, ['.azeroth'], EXCLUDES, ['**/*.azeroth']);
+            this.#files = [...styles, ...azeroth].map(toSlashes);
         }
         catch
         {
-            this.files = [];
+            this.#files = [];
         }
-        return this.files;
+        return this.#files;
     }
 
     /** Class definitions for one file, re-read only when its mtime changed. */
-    private entry(file: string): ClassDefinition[]
+    #entry(file: string): ClassDefinition[]
     {
         const mtime = String(ts.sys.getModifiedTime?.(file)?.getTime() ?? 0);
-        const cached = this.cache.get(file);
+        const cached = this.#cache.get(file);
         if (cached && cached.mtime === mtime)
         {
             return cached.defs;
         }
-        const defs = this.read(file);
-        this.cache.set(file, { mtime, defs });
+        const defs = this.#read(file);
+        this.#cache.set(file, { mtime, defs });
         return defs;
     }
 
     /** Reads and parses one file into class definitions. */
-    private read(file: string): ClassDefinition[]
+    #read(file: string): ClassDefinition[]
     {
         const text = ts.sys.readFile(file);
         if (text === undefined)

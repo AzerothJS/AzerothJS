@@ -109,10 +109,10 @@ function segmentsOf(path: string): string[]
  */
 export class RadixRouter<T>
 {
-    private readonly root: RadixNode<T> = createNode();
+    readonly #root: RadixNode<T> = createNode();
 
     /** Every registered (method, pattern) in insertion order, for the printable route table. */
-    private readonly registered: Array<{ method: string; pattern: string }> = [];
+    readonly #registered: Array<{ method: string; pattern: string }> = [];
 
     /**
      * Registers a route. Throws (synchronously, at startup) on: a duplicate (method, pattern);
@@ -125,7 +125,7 @@ export class RadixRouter<T>
         const segments = segmentsOf(pattern);
         const verb = method.toUpperCase();
 
-        let node = this.root;
+        let node = this.#root;
         for (let i = 0; i < segments.length; i++)
         {
             const segment = segments[i];
@@ -160,7 +160,7 @@ export class RadixRouter<T>
                     throw new Error(`Route conflict: ${ verb } "${ pattern }" is already registered.`);
                 }
                 node.wildcard.handlers.set(verb, value);
-                this.registered.push({ method: verb, pattern });
+                this.#registered.push({ method: verb, pattern });
                 return;
             }
 
@@ -200,7 +200,7 @@ export class RadixRouter<T>
         }
         node.handlers.set(verb, value);
         node.pattern = node.pattern ?? pattern;
-        this.registered.push({ method: verb, pattern });
+        this.#registered.push({ method: verb, pattern });
     }
 
     /**
@@ -229,7 +229,7 @@ export class RadixRouter<T>
 
         const verb = method.toUpperCase();
         const pairs: string[] = [];
-        const terminal = this.walk(this.root, segments, 0, pairs);
+        const terminal = this.#walk(this.#root, segments, 0, pairs);
         if (terminal === null)
         {
             return { kind: 'miss' };
@@ -261,7 +261,7 @@ export class RadixRouter<T>
      * copy per branch - the match's params object is built once, by the caller, on success.
      * @internal
      */
-    private walk(
+    #walk(
         node: RadixNode<T>,
         segments: string[],
         index: number,
@@ -289,7 +289,7 @@ export class RadixRouter<T>
         const staticChild = node.staticChildren.get(segment);
         if (staticChild !== undefined)
         {
-            const result = this.walk(staticChild, segments, index + 1, pairs);
+            const result = this.#walk(staticChild, segments, index + 1, pairs);
             if (result !== null)
             {
                 return result;
@@ -299,7 +299,7 @@ export class RadixRouter<T>
         if (node.param !== null)
         {
             pairs.push(node.param.name, segment);
-            const result = this.walk(node.param.node, segments, index + 1, pairs);
+            const result = this.#walk(node.param.node, segments, index + 1, pairs);
             if (result !== null)
             {
                 return result;
@@ -322,6 +322,6 @@ export class RadixRouter<T>
      */
     public table(): string[]
     {
-        return this.registered.map(({ method, pattern }) => `${ method.padEnd(7) } ${ pattern }`);
+        return this.#registered.map(({ method, pattern }) => `${ method.padEnd(7) } ${ pattern }`);
     }
 }

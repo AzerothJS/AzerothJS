@@ -30,7 +30,8 @@ import { setStoreScopeResolver } from '@azerothjs/reactivity';
 interface RequestScope
 {
     storeScope: object;
-    cleanups: Array<() => void | Promise<void>>;
+    /** Lazily allocated on the first onRequestCleanup - most requests register none. */
+    cleanups: Array<() => void | Promise<void>> | null;
 }
 
 const storage = new AsyncLocalStorage<RequestScope>();
@@ -61,7 +62,7 @@ export function onRequestCleanup(fn: () => void | Promise<void>): void
         throw new Error('onRequestCleanup was called outside a request. It registers teardown '
             + 'for the current request root, so it only makes sense inside a handler or middleware.');
     }
-    scope.cleanups.push(fn);
+    (scope.cleanups ??= []).push(fn);
 }
 
 /**
@@ -70,28 +71,34 @@ export function onRequestCleanup(fn: () => void | Promise<void>): void
  * isolated (a throwing cleanup is reported and the rest still run; teardown must never
  * clobber the response or a sibling's release).
  */
-export async function runInRequestRoot<T>(
-    fn: () => Promise<T>,
+export async function runInRequestRoot<T, A>(
+    fn: (arg: A) => T | Promise<T>,
+    arg: A,
     options: { onCleanupError?: ((error: unknown) => void) | undefined } = {}
 ): Promise<T>
 {
     installResolver();
-    const scope: RequestScope = { storeScope: {}, cleanups: [] };
+    // `arg` rides through storage.run instead of a per-request closure over `fn`;
+    // the caller passes ONE stable function for the app's lifetime.
+    const scope: RequestScope = { storeScope: {}, cleanups: null };
     try
     {
-        return await storage.run(scope, fn);
+        return await storage.run(scope, fn, arg);
     }
     finally
     {
-        for (let i = scope.cleanups.length - 1; i >= 0; i--)
+        if (scope.cleanups !== null)
         {
-            try
+            for (let i = scope.cleanups.length - 1; i >= 0; i--)
             {
-                await scope.cleanups[i]?.();
-            }
-            catch (error)
-            {
-                options.onCleanupError?.(error);
+                try
+                {
+                    await scope.cleanups[i]?.();
+                }
+                catch (error)
+                {
+                    options.onCleanupError?.(error);
+                }
             }
         }
     }

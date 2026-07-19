@@ -44,6 +44,8 @@ export type { ErrorObserver } from './errors.ts';
 
 export { json, text, html, redirect, noContent, created, queryResult, acceptQuery } from './respond.ts';
 export type { QueryResultOptions } from './respond.ts';
+export { jsonEncoder } from './encode-json.ts';
+export type { EncodableSchema, EncoderMeta } from './encode-json.ts';
 
 export { readRaw, readText, readJson, readForm, readValidated, mediaTypeOf, DEFAULT_BODY_LIMIT } from './body.ts';
 export type { ReadOptions, SchemaLike, ValidationIssue } from './body.ts';

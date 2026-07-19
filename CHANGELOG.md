@@ -11,6 +11,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- `jsonEncoder(schema)` in `@azerothjs/http`: compiles a response declaration (the same
+  `@azerothjs/schema` combinators that validate request bodies) into a shape-specialized
+  JSON serializer - key strings prebuilt, primitive fields quoted inline behind an
+  escape guard, byte-identical output to `json(data)` for declared shapes, with
+  JSON.stringify fallback for anything the declaration cannot describe. The
+  declaration-driven twin of `readValidated`: one reads the boundary through the
+  schema, the other writes it. Schema combinators now carry internal structural
+  metadata to make this compile-from-declaration possible.
 - Client-only builds: `azeroth({ ssr: false })` compiles every component without
   its SSR/hydration branch and substitutes a constant render mode, so the SSR
   machinery minifies out of the bundle entirely - the js-framework-benchmark app
@@ -19,6 +27,11 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed
 
+- Every class across the packages now keeps its internals in native `#` private
+  fields instead of TypeScript's erased `private` keyword: internals are genuinely
+  unreachable at runtime, so nothing internal can silently become load-bearing
+  API. Code that reached into undocumented members via casts will now find them
+  gone - they were never API.
 - Compiled markup got materially faster, measured on
   [js-framework-benchmark](https://github.com/krausest/js-framework-benchmark)
   (keyed): CPU geometric mean went from 1.29x to 1.07x of hand-written vanilla
@@ -42,6 +55,32 @@ follow [Semantic Versioning](https://semver.org).
     attached, taking a per-signal/effect/root allocation off the hot paths.
   - A single `class:` toggle compiles to a bare conditional instead of an
     array/filter/join per evaluation.
+- `@azerothjs/http` got faster on the wire, measured against Express, Koa, NestJS,
+  and Fastify with autocannon (100 connections, interleaved same-machine A/B):
+  ahead of Express/Koa/Nest on every scenario by wide margins, and ahead of
+  Fastify on the five-scenario geometric mean (~4%) - winning JSON echo (+14%),
+  param routes (+9%, via `jsonEncoder`), and 404 (+14%), behind only on
+  hello-world (-9%) and a 5-deep middleware chain (-5%). Part of the hello gap is
+  the per-request reactive root (request-isolated stores + guaranteed cleanup,
+  which the others do not offer; measured at ~3%, opt out with
+  `new App({ requestRoot: false })`). The work behind it:
+  - Response bodies now travel as STRINGS all the way to the socket, where Node
+    encodes natively during the write - no TextEncoder pass, no byte-array
+    allocation per response; Content-Length comes from a native byte count.
+    `PayloadResponse` encodes lazily for anything that genuinely reads bytes.
+  - The per-route middleware chain runs SYNCHRONOUSLY while middlewares return
+    plain values - no microtask hop per middleware per request; the first
+    thenable result switches that request onto the promise path unchanged.
+  - The request root stopped allocating per request: the dispatch closure and
+    cleanup-error options are per-app now, and the cleanup registry only exists
+    once a handler registers teardown.
+  - Dispatch runs synchronously end to end for a handler that returns a plain
+    Response - no promise machinery until something genuinely asynchronous
+    (an async handler, or HEAD body cancellation) enters the path.
+- `@azerothjs/ws` measured against the `ws` library and socket.io (echo, 1000-way
+  broadcast, connection churn, 5000 idle connections): ahead of socket.io on every
+  line, ahead of `ws` on single-connection echo and idle memory (-11%), even on
+  the rest - no code changes needed.
 
 ## [0.8.0-beta.2] - 2026-07-17
 

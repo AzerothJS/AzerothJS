@@ -53,10 +53,13 @@ export class CompileError extends Error
      */
     public committed = false;
 
-    constructor(message: string, public readonly offset: number)
+    public readonly offset: number;
+
+    constructor(message: string, offset: number)
     {
         super(message);
         this.name = 'CompileError';
+        this.offset = offset;
     }
 }
 
@@ -94,36 +97,43 @@ class MarkupParser
     public committed = false;
 
     /** Nesting depth while parsing children; 0 is the outermost element. @internal */
-    private depth = 0;
+    #depth = 0;
 
-    constructor(private readonly src: string, public pos: number)
-    {}
+    readonly #src: string;
+
+    public pos: number;
+
+    constructor(src: string, pos: number)
+    {
+        this.#src = src;
+        this.pos = pos;
+    }
 
     /** Entry point; `pos` must be at the opening `<`. */
     public parse(): MarkupElement | MarkupFragment
     {
-        return this.parseElement();
+        return this.#parseElement();
     }
 
-    private peek(offset = 0): string
+    #peek(offset = 0): string
     {
-        return this.src[this.pos + offset] ?? '';
+        return this.#src[this.pos + offset] ?? '';
     }
 
-    private skipWs(): void
+    #skipWs(): void
     {
-        while (this.pos < this.src.length && isWhitespace(this.src[this.pos]))
+        while (this.pos < this.#src.length && isWhitespace(this.#src[this.pos]))
         {
             this.pos++;
         }
     }
 
-    private expect(ch: string): void
+    #expect(ch: string): void
     {
-        if (this.peek() !== ch)
+        if (this.#peek() !== ch)
         {
             throw new CompileError(
-                `Expected '${ ch }' but found '${ this.peek() || 'EOF' }'`,
+                `Expected '${ ch }' but found '${ this.#peek() || 'EOF' }'`,
                 this.pos
             );
         }
@@ -131,27 +141,27 @@ class MarkupParser
     }
 
     /** `pos` at `<`. Parses an element or `<>...</>` fragment. */
-    private parseElement(): MarkupElement | MarkupFragment
+    #parseElement(): MarkupElement | MarkupFragment
     {
         const start = this.pos;
-        this.expect('<');
+        this.#expect('<');
 
         // Fragment: `<>` (not valid TS, so this is unambiguously markup).
-        if (this.peek() === '>')
+        if (this.#peek() === '>')
         {
-            if (this.depth === 0)
+            if (this.#depth === 0)
             {
                 this.committed = true;
             }
             this.pos++; // past '>'
-            const children = this.parseChildren();
-            this.expectClosingTag(''); // </>
+            const children = this.#parseChildren();
+            this.#expectClosingTag(''); // </>
             return { kind: 'fragment', children, start, end: this.pos };
         }
 
         // An HTML comment gets its own message (field-reported confusion): the generic
         // literal-'<' hint reads as nonsense when the author wrote `<!-- -->`.
-        if (this.peek() === '!')
+        if (this.#peek() === '!')
         {
             throw new CompileError(
                 'HTML comments (<!-- -->) are not supported in .azeroth markup - remove the '
@@ -164,7 +174,7 @@ class MarkupParser
         // tag name is a literal less-than in markup text - the single most
         // common authoring mistake. Diagnose it where it sits instead of the
         // opaque "Expected a tag name".
-        if (this.peek() !== '/' && !isIdentStart(this.peek()))
+        if (this.#peek() !== '/' && !isIdentStart(this.#peek()))
         {
             throw new CompileError(
                 'Unexpected \'<\' in markup; write a literal \'<\' as {\'<\'} or &lt;',
@@ -172,23 +182,23 @@ class MarkupParser
             );
         }
 
-        const tag = this.readTagName();
-        const attributes = this.parseAttributes();
-        this.skipWs();
+        const tag = this.#readTagName();
+        const attributes = this.#parseAttributes();
+        this.#skipWs();
 
         // Self-closing: `<tag ... />` (the `/>` is unambiguously markup).
-        if (this.peek() === '/')
+        if (this.#peek() === '/')
         {
-            if (this.depth === 0)
+            if (this.#depth === 0)
             {
                 this.committed = true;
             }
             this.pos++;
-            this.expect('>');
+            this.#expect('>');
             return {
                 kind: 'element',
                 tag,
-                isComponent: MarkupParser.isComponentTag(tag),
+                isComponent: MarkupParser.#isComponentTag(tag),
                 attributes,
                 children: [],
                 start,
@@ -196,7 +206,7 @@ class MarkupParser
             };
         }
 
-        this.expect('>');
+        this.#expect('>');
         // A completed opening tag `<tag>` is markup. `.azeroth` follows the TSX rule: angle-bracket
         // type assertions (`<Foo>expr`) and bare generic arrows (`<T>(v) => v`) are NOT allowed -
         // write `expr as Foo` and `<T,>(v) => v`. So once we've consumed a full opening tag at the
@@ -204,7 +214,7 @@ class MarkupParser
         // error instead of letting it fall back to an (now-disallowed) opaque cast. Depth-guarded so
         // only the outer tag commits; a generic with a comma (`<T,>`) throws in readAttributeName
         // before reaching here, so it still falls back.
-        if (this.depth === 0)
+        if (this.#depth === 0)
         {
             this.committed = true;
         }
@@ -225,13 +235,13 @@ class MarkupParser
             };
         }
 
-        const children = this.parseChildren();
-        this.expectClosingTag(tag);
+        const children = this.#parseChildren();
+        this.#expectClosingTag(tag);
 
         return {
             kind: 'element',
             tag,
-            isComponent: MarkupParser.isComponentTag(tag),
+            isComponent: MarkupParser.#isComponentTag(tag),
             attributes,
             children,
             start,
@@ -239,23 +249,23 @@ class MarkupParser
         };
     }
 
-    private static isComponentTag(tag: string): boolean
+    static #isComponentTag(tag: string): boolean
     {
         return /[A-Z]/.test(tag[0] ?? '') || tag.includes('.');
     }
 
     /** Reads a tag name: identifiers plus `.` (`Foo.Bar`) and `-` (custom elements). */
-    private readTagName(): string
+    #readTagName(): string
     {
         const start = this.pos;
-        if (!isIdentStart(this.peek()))
+        if (!isIdentStart(this.#peek()))
         {
             throw new CompileError('Expected a tag name after `<`, e.g. `<div>` or `<Component>`.', this.pos);
         }
         this.pos++;
-        while (this.pos < this.src.length)
+        while (this.pos < this.#src.length)
         {
-            const ch = this.src[this.pos];
+            const ch = this.#src[this.pos];
             if (isIdentPart(ch) || ch === '.' || ch === '-')
             {
                 this.pos++;
@@ -265,17 +275,17 @@ class MarkupParser
                 break;
             }
         }
-        return this.src.slice(start, this.pos);
+        return this.#src.slice(start, this.pos);
     }
 
-    private parseAttributes(): MarkupAttribute[]
+    #parseAttributes(): MarkupAttribute[]
     {
         const attrs: MarkupAttribute[] = [];
 
         for (;;)
         {
-            this.skipWs();
-            const ch = this.peek();
+            this.#skipWs();
+            const ch = this.#peek();
 
             // End of the opening tag.
             if (ch === '>' || ch === '/' || ch === '')
@@ -288,12 +298,12 @@ class MarkupParser
             // Spread: `{...expr}` (a `{` here is unambiguously a markup attribute).
             if (ch === '{')
             {
-                if (this.depth === 0)
+                if (this.#depth === 0)
                 {
                     this.committed = true;
                 }
-                const end = skipBalanced(this.src, this.pos);
-                const inner = this.src.slice(this.pos + 1, end - 1).trim();
+                const end = skipBalanced(this.#src, this.pos);
+                const inner = this.#src.slice(this.pos + 1, end - 1).trim();
                 this.pos = end;
                 const code = inner.startsWith('...') ? inner.slice(3).trim() : inner;
                 attrs.push({
@@ -310,14 +320,14 @@ class MarkupParser
             // Named attribute. readAttributeName throws for a non-name char (e.g. the `,`
             // in a generic `<T,>`), so commit only AFTER it succeeds - a real attribute
             // name is unambiguously markup, but a generic/cast must still be able to fall back.
-            const name = this.readAttributeName();
-            if (this.depth === 0)
+            const name = this.#readAttributeName();
+            if (this.#depth === 0)
             {
                 this.committed = true;
             }
-            this.skipWs();
+            this.#skipWs();
 
-            if (this.peek() !== '=')
+            if (this.#peek() !== '=')
             {
                 // Bare attribute -> boolean true.
                 attrs.push({
@@ -332,13 +342,13 @@ class MarkupParser
             }
 
             this.pos++; // past '='
-            this.skipWs();
-            const valueChar = this.peek();
+            this.#skipWs();
+            const valueChar = this.#peek();
 
             if (valueChar === '{')
             {
-                const end = skipBalanced(this.src, this.pos);
-                const code = this.src.slice(this.pos + 1, end - 1).trim();
+                const end = skipBalanced(this.#src, this.pos);
+                const code = this.#src.slice(this.pos + 1, end - 1).trim();
                 this.pos = end;
                 attrs.push({
                     kind: 'attribute',
@@ -351,8 +361,8 @@ class MarkupParser
             }
             else if (valueChar === '"' || valueChar === '\'')
             {
-                const end = skipString(this.src, this.pos);
-                const value = this.src.slice(this.pos + 1, end - 1);
+                const end = skipString(this.#src, this.pos);
+                const value = this.#src.slice(this.pos + 1, end - 1);
                 this.pos = end;
                 attrs.push({
                     kind: 'attribute',
@@ -376,12 +386,12 @@ class MarkupParser
     }
 
     /** Attribute names: identifiers plus `-` and `:` (`data-x`, `aria-label`). */
-    private readAttributeName(): string
+    #readAttributeName(): string
     {
         const start = this.pos;
-        while (this.pos < this.src.length)
+        while (this.pos < this.#src.length)
         {
-            const ch = this.src[this.pos];
+            const ch = this.#src[this.pos];
             if (isIdentPart(ch) || ch === '-' || ch === ':')
             {
                 this.pos++;
@@ -395,28 +405,28 @@ class MarkupParser
         {
             throw new CompileError('Expected an attribute name here, e.g. `class` or `onClick`.', this.pos);
         }
-        return this.src.slice(start, this.pos);
+        return this.#src.slice(start, this.pos);
     }
 
-    private parseChildren(): MarkupChild[]
+    #parseChildren(): MarkupChild[]
     {
         const children: MarkupChild[] = [];
 
-        while (this.pos < this.src.length)
+        while (this.pos < this.#src.length)
         {
             // Closing tag -> stop.
-            if (this.peek() === '<' && this.peek(1) === '/')
+            if (this.#peek() === '<' && this.#peek(1) === '/')
             {
                 break;
             }
 
-            if (this.peek() === '<')
+            if (this.#peek() === '<')
             {
                 // Parse the child one level deeper, so its markup-only evidence does NOT
                 // commit the outer element (an unclosed cast must stay able to fall back even
                 // after greedily absorbing following markup as a "child").
-                this.depth++;
-                if (this.depth > MAX_MARKUP_DEPTH)
+                this.#depth++;
+                if (this.#depth > MAX_MARKUP_DEPTH)
                 {
                     throw new CompileError(
                         `Markup nested deeper than ${ MAX_MARKUP_DEPTH } levels. This is almost ` +
@@ -424,26 +434,26 @@ class MarkupParser
                         this.pos
                     );
                 }
-                children.push(this.parseElement());
-                this.depth--;
+                children.push(this.#parseElement());
+                this.#depth--;
                 continue;
             }
 
-            if (this.peek() === '{')
+            if (this.#peek() === '{')
             {
                 const start = this.pos;
-                const end = skipBalanced(this.src, this.pos);
-                const code = this.src.slice(this.pos + 1, end - 1);
+                const end = skipBalanced(this.#src, this.pos);
+                const code = this.#src.slice(this.pos + 1, end - 1);
                 this.pos = end;
                 // Drop comment-only / empty holes (e.g. `{/* note */}`).
-                if (!MarkupParser.isEmptyExpression(code))
+                if (!MarkupParser.#isEmptyExpression(code))
                 {
                     children.push({ kind: 'expression', code, start, end });
                 }
                 continue;
             }
 
-            const text = this.readText();
+            const text = this.#readText();
             if (text)
             {
                 children.push(text);
@@ -454,14 +464,14 @@ class MarkupParser
     }
 
     /** Reads raw text up to the next `<` or `{`, normalised the usual way. */
-    private readText(): MarkupText | null
+    #readText(): MarkupText | null
     {
         const start = this.pos;
-        while (this.pos < this.src.length && this.peek() !== '<' && this.peek() !== '{')
+        while (this.pos < this.#src.length && this.#peek() !== '<' && this.#peek() !== '{')
         {
             this.pos++;
         }
-        const raw = this.src.slice(start, this.pos);
+        const raw = this.#src.slice(start, this.pos);
 
         // A `//` at the head of a text child is almost always a misplaced line
         // comment (markup has no `//` comments; only `{/* ... */}`). A real
@@ -476,7 +486,7 @@ class MarkupParser
             );
         }
 
-        const value = MarkupParser.normalizeText(raw);
+        const value = MarkupParser.#normalizeText(raw);
         if (value === '')
         {
             return null;
@@ -489,7 +499,7 @@ class MarkupParser
      * (whitespace containing a newline) to a single space, and preserve
      * meaningful same-line spacing like `Count: `.
      */
-    private static normalizeText(raw: string): string
+    static #normalizeText(raw: string): string
     {
         if (/^\s*$/.test(raw))
         {
@@ -499,7 +509,7 @@ class MarkupParser
     }
 
     /** True when a `{ ... }` hole has no actual expression (only comments/space). */
-    private static isEmptyExpression(code: string): boolean
+    static #isEmptyExpression(code: string): boolean
     {
         const stripped = code
             .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -509,11 +519,11 @@ class MarkupParser
     }
 
     /** Consumes `</tag>` (or `</>` when `tag === ''`). */
-    private expectClosingTag(tag: string): void
+    #expectClosingTag(tag: string): void
     {
         // We reach here at a `</` close or at EOF (parseChildren only stops on those). A non-`<`
         // here means the element was never closed - the common "forgot the closing tag" mistake.
-        if (this.peek() !== '<')
+        if (this.#peek() !== '<')
         {
             throw new CompileError(
                 tag === ''
@@ -522,18 +532,18 @@ class MarkupParser
                 this.pos
             );
         }
-        this.expect('<');
-        this.expect('/');
+        this.#expect('<');
+        this.#expect('/');
         // A `</` close token on the OUTERMOST element is unambiguously markup (a cast has no
         // close). Depth-guarded so an absorbed child's valid close can't commit the outer.
-        if (this.depth === 0)
+        if (this.#depth === 0)
         {
             this.committed = true;
         }
-        this.skipWs();
+        this.#skipWs();
         if (tag !== '')
         {
-            const closing = this.readTagName();
+            const closing = this.#readTagName();
             if (closing !== tag)
             {
                 throw new CompileError(
@@ -542,8 +552,8 @@ class MarkupParser
                 );
             }
         }
-        this.skipWs();
-        this.expect('>');
+        this.#skipWs();
+        this.#expect('>');
     }
 }
 
