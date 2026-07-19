@@ -28,6 +28,7 @@ import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
 import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
 import { emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
+import { printBanner } from '@azerothjs/logger';
 
 /** The Rollup plugin context when Vite binds it; unit tests invoke hooks bare, so it may be absent. */
 type MaybeCtx = { warn?: (message: string, position?: { line: number; column: number }) => void; error?: (message: string, position?: { line: number; column: number }) => void } | undefined;
@@ -319,6 +320,28 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             {
                 root = resolved.root;
             }
+        },
+
+        // The framework's face on the dev server: one banner when the server is up,
+        // carrying what the COMPILER knows (component count, whether the type-check
+        // gate guards this session). Vite's own block keeps the URLs; this one keeps
+        // the identity. printBanner self-gates: TTY only, never in production.
+        configureServer(server: { httpServer?: { once(event: string, fn: () => void): void } | null })
+        {
+            const startedAt = performance.now();
+            server.httpServer?.once('listening', () =>
+            {
+                const components = collectFiles(root, extension).length;
+                printBanner({
+                    subtitle: 'dev',
+                    entries:
+                    [
+                        ['Components', String(components)],
+                        ['Type check', typeCheck ? 'on' : 'off']
+                    ],
+                    readyMs: performance.now() - startedAt
+                });
+            });
         },
 
         // Build the type-checker ONCE per build and PRIME it with the whole project's `.azeroth` files,

@@ -28,6 +28,10 @@ export { Portal, destroyPortal } from './portal.ts';
 export { Dynamic } from './dynamic.ts';
 export { Suspense } from './suspense.ts';
 export { Transition } from './transition.ts';
+export { TransitionGroup } from './transition-group.ts';
+export { createVirtualizer, VirtualList } from './virtual.ts';
+export type { VirtualizerOptions, Virtualizer, VirtualRange, VirtualListProps } from './virtual.ts';
+export type { TransitionGroupProps } from './transition-group.ts';
 
 // Bindings: refs and reactive styling.
 export { createRef } from './ref.ts';
@@ -38,6 +42,7 @@ export { css, collectStyleSheet, resetStyleSheet, type ScopedClasses } from './c
 // Compiler-emitted runtime: imported by generated `.azeroth` output, NOT part of the
 // application API. Exported only so compiled modules resolve them; @internal, may change.
 export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './h.ts';
+export { playTransitionClasses } from './transition-classes.ts';
 export { tmpl } from './template.ts';
 
 // Public type contracts.

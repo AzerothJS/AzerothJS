@@ -34,6 +34,13 @@ export interface AttachOptions extends ServerSocketOptions
 
     /** The connection handler: wire onMessage/onClose and start talking. */
     onConnection: (socket: ServerSocket, request: IncomingMessage) => void;
+
+    /**
+     * Lifecycle visibility at debug level: upgrades, closes, heartbeat reclaims.
+     * STRUCTURAL on purpose - `@azerothjs/logger` (or anything with a debug method)
+     * plugs in without this package taking a dependency on it.
+     */
+    logger?: { debug(message: string, fields?: Record<string, unknown>): void };
 }
 
 /** @internal A plain HTTP refusal on the raw socket (no upgrade happened). */
@@ -80,7 +87,12 @@ export function attachWebSockets(server: Server, options: AttachOptions): () => 
         }
 
         live.add(socket);
-        socket.once('close', () => live.delete(socket));
+        options.logger?.debug('ws open', { path: request.url ?? '/', clients: live.size });
+        socket.once('close', () =>
+        {
+            live.delete(socket);
+            options.logger?.debug('ws close', { path: request.url ?? '/', clients: live.size });
+        });
 
         socket.write(upgradeResponse(outcome.key));
         const connection = new ServerSocket(socket, options);

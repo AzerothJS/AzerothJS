@@ -11,6 +11,39 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- Route transitions: `<Routes transition="page">` animates route swaps with
+  `<Transition>`'s 6-class family - the outgoing route plays its leave (removal
+  deferred until it completes) while the incoming enters alongside, so cross-fades
+  and directional drifts are pure CSS. The function form receives
+  `{ from, to, navigation }` and returns a name per swap (or null for instant),
+  and the new `router.navigationKind()` reports what caused each change
+  (`'push' | 'replace' | 'pop'`) - a back-navigation can animate differently
+  than a forward one. Rapid navigation flushes still-leaving routes instantly.
+- `<TransitionGroup>`: keyed list enter/leave animation - items play the enter
+  family when their key joins and the leave family (removal deferred) when it
+  departs. The primitive toast stacks and notification trays hand-roll today.
+- Virtualization: `createVirtualizer` (headless, equality-guarded window memo -
+  scrolling within the same window is a reactive non-event, closing the
+  re-slice-per-scroll-frame trap) and `<VirtualList>` (the packaged vertical
+  scroller: spacer, absolute row positioning, keyed reuse). Fixed row size and
+  explicit viewport height in v1.
+- [`@azerothjs/logger`](packages/logger), the framework's voice: one zero-dependency
+  logger with two faces - colored, iconed developer output on a TTY and pino-class
+  NDJSON in production - with child loggers whose bound context serializes once,
+  free disabled levels (below-threshold methods ARE a no-op), field redaction that
+  runs before any sink, Error serialization with the full `cause` chain, honest
+  color rules (NO_COLOR/FORCE_COLOR/TTY), a browser console face, and
+  `AZEROTH_LOG` environment control. Measured ahead of pino on every emit path and
+  ~10x ahead of winston. It also ships the AzerothJS startup banner: `serve()` now
+  announces the bound addresses and measured ready time on a dev terminal (silence
+  it with `banner: false`; it is always silent piped or in production), the Vite
+  dev server prints the same identity with the compiled component count, and
+  `attachWebSockets` and the cron scheduler take a structural `logger` for
+  lifecycle visibility (connections; job runs, overlap skips, failures) without
+  either package gaining a dependency. The repository also carries the project
+  mark (`assets/`) - now the VS Code extension icon AND the JetBrains plugin
+  icon. The frontend runtime packages deliberately stay logger-free: hot-path
+  browser code carries no logging weight.
 - `jsonEncoder(schema)` in `@azerothjs/http`: compiles a response declaration (the same
   `@azerothjs/schema` combinators that validate request bodies) into a shape-specialized
   JSON serializer - key strings prebuilt, primitive fields quoted inline behind an
@@ -27,6 +60,9 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed
 
+- `<Transition>` now CANCELS a mid-flight run when toggled instead of queueing:
+  a half-entered sheet reverses from exactly where it is (same element, state
+  preserved) - rapid open/close feels crisp instead of "finish, then reverse".
 - Every class across the packages now keeps its internals in native `#` private
   fields instead of TypeScript's erased `private` keyword: internals are genuinely
   unreachable at runtime, so nothing internal can silently become load-bearing

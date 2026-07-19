@@ -61,6 +61,18 @@ export interface SchedulerOptions
     onError?: (error: unknown, jobName: string) => void;
 
     /**
+     * Lifecycle visibility: runs at debug, overlap skips at warn, failures at error
+     * (in addition to onError - the observer is programmatic, this is for humans).
+     * STRUCTURAL on purpose - `@azerothjs/logger` (or anything with these methods)
+     * plugs in without this package taking a dependency on it.
+     */
+    logger?: {
+        debug(message: string, fields?: Record<string, unknown>): void;
+        warn(message: string, fields?: Record<string, unknown>): void;
+        error(message: string, fields?: Record<string, unknown>): void;
+    };
+
+    /**
      * Keep the process alive for armed timers (default false: timers are unref'd, so a
      * server exits on its own terms and a scheduler never pins a finished process).
      */
@@ -186,6 +198,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
         if (job.running > 0 && job.overlap === 'skip')
         {
             job.overlapsSkipped++;
+            options.logger?.warn('cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
         }
         else
         {
@@ -201,16 +214,20 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
     {
         job.running++;
         job.lastRun = new Date();
+        const startedAt = performance.now();
+        options.logger?.debug('cron run', { job: job.name });
         const promise = Promise.resolve()
             .then(() => job.fn())
             .then(
                 () =>
                 {
                     job.lastOutcome = 'ok';
+                    options.logger?.debug('cron ok', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 });
                 },
                 (error: unknown) =>
                 {
                     job.lastOutcome = 'error';
+                    options.logger?.error('cron failed', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100, error });
                     report(error, job.name);
                 }
             )
@@ -307,6 +324,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
             if (job.running > 0 && job.overlap === 'skip')
             {
                 job.overlapsSkipped++;
+                options.logger?.warn('cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
                 return;
             }
             await run(job);

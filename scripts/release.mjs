@@ -130,6 +130,9 @@ const PUBLISH_ORDER =
     '@azerothjs/server',
     '@azerothjs/router',
     '@azerothjs/store',
+    // Logger before the backend packages: @azerothjs/http prints the startup banner
+    // through it, so it must be resolvable on npm before http publishes.
+    '@azerothjs/logger',
     // schema before form: @azerothjs/form depends on @azerothjs/schema (form re-exports
     // its validators), so schema must be resolvable on npm before form publishes.
     // Remaining backend packages follow deps-first when they land: cron, http, ws, api.

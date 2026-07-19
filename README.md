@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo.png" alt="AzerothJS - the A with the dragon" width="160" />
+
 # AzerothJS
 
 **A fine-grained reactive TypeScript framework with compiled single-file components - no Virtual DOM, ever.**

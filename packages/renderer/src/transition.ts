@@ -14,8 +14,10 @@
  * LIFECYCLE: enter = mount, add enter-from+active, force reflow, next frame swap to enter-to,
  * clear classes on transitionend; leave = add leave-from+active, force reflow, next frame swap
  * to leave-to, remove from DOM on transitionend. The FIRST run mounts INSTANTLY (Vue's
- * appear:false default) so a page does not fade in a wave on load. A mid-flight toggle queues a
- * single pending change (v1 does not cancel mid-transition). A transitionend that never fires
+ * appear:false default) so a page does not fade in a wave on load. A mid-flight toggle CANCELS
+ * the in-flight run and reverses FROM THE CURRENT COMPUTED STYLE (the reversal skips the
+ * opposite 'from' class, so a half-entered sheet animates back from exactly where it is - no
+ * finish-then-reverse). A transitionend that never fires
  * (missing CSS transition) is backstopped by a `duration` timeout (default 1000ms) so the state
  * machine cannot wedge. The phase-machine internals below carry their own comments.
  */
@@ -99,7 +101,7 @@ const FALLBACK_TIMEOUT_MS = 1000;
  * - Returns an HTMLElement-typed handle (a comment-marker co-range) owning the single animated child.
  *
  * WHY THIS DESIGN:
- * A phase machine (idle/entering/leaving) plus a one-deep pending-toggle queue sequences
+ * A phase machine (idle/entering/leaving) with mid-flight cancellation sequences
  * enter/leave without overlap; each child mounts in its own createRoot so its effects dispose on
  * leave; a transitionend listener with a duration timeout guarantees progress even without a
  * real CSS transition. The first-run instant mount avoids load-time fade waves.
@@ -112,7 +114,7 @@ const FALLBACK_TIMEOUT_MS = 1000;
  *
  * EDGE CASES:
  * - No `name`: instant swap (Show semantics).
- * - First mount never animates; rapid toggles coalesce to the latest pending state.
+ * - First mount never animates; a mid-flight toggle cancels and reverses from the current visual state.
  * - Missing CSS transition still completes via the duration timeout.
  *
  * PERFORMANCE NOTES:
@@ -121,7 +123,7 @@ const FALLBACK_TIMEOUT_MS = 1000;
  *
  * DEVELOPER WARNING:
  * Define the CSS class family (or pass no `name` for instant) - relying on the duration timeout
- * for every transition makes leaves feel laggy. Mid-flight reversal is queued, not cancelled, in v1.
+ * for every transition makes leaves feel laggy. Mid-flight reversal cancels the in-flight run: rapid open/close stays crisp.
  *
  * @param props - {@link TransitionProps}: `when`, `children`, optional `name`, `duration`.
  * @returns An HTMLElement-typed handle owning the animated child.
@@ -176,14 +178,6 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     let currentEl: HTMLElement | null = null;
     let currentDispose: DisposeFn | null = null;
     let phase: Phase = 'idle';
-
-    /**
-     * Queued target state when a toggle arrives mid-transition.
-     * `null` means no pending change. We only ever queue ONE
-     * level deep - if the user toggles three times in quick
-     * succession, the middle hop is silently coalesced.
-     */
-    let pendingShouldShow: boolean | null = null;
 
     /**
      * Cancels the in-flight `transitionend`/timeout wait, if any -
@@ -338,10 +332,12 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     }
 
     /**
-     * Runs the enter sequence on `currentEl`. No-op if there's
-     * no name (instant mount path).
+     * Runs the enter sequence on `currentEl`. No-op if there's no name (instant
+     * mount path). `fromCurrent` skips the 'enter-from' snap - used when
+     * REVERSING a cancelled leave, so the animation starts from wherever the
+     * element visually is instead of jumping to the hidden state first.
      */
-    function startEnter(): void
+    function startEnter(fromCurrent = false): void
     {
         if (!currentEl)
         {
@@ -351,13 +347,19 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
         if (!cls)
         {
             phase = 'idle';
-            checkPending();
             return;
         }
 
         const el = currentEl;
         phase = 'entering';
-        el.classList.add(cls.from, cls.active);
+        if (fromCurrent)
+        {
+            el.classList.add(cls.active);
+        }
+        else
+        {
+            el.classList.add(cls.from, cls.active);
+        }
 
         // Force a reflow so the browser commits the "from" state
         // before we add the "to" class on the next frame.
@@ -382,16 +384,17 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
                 }
                 el.classList.remove(cls.active, cls.to);
                 phase = 'idle';
-                checkPending();
             });
         });
     }
 
     /**
-     * Runs the leave sequence and removes `currentEl` from the
-     * DOM when it finishes. No-op (just unmounts) if no name.
+     * Runs the leave sequence and removes `currentEl` from the DOM when it
+     * finishes. No-op (just unmounts) if no name. `fromCurrent` skips the
+     * 'leave-from' snap - used when REVERSING a cancelled enter, so a
+     * half-entered element animates out from exactly where it is.
      */
-    function startLeave(): void
+    function startLeave(fromCurrent = false): void
     {
         if (!currentEl)
         {
@@ -403,14 +406,20 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
         {
             unmountElImmediate();
             phase = 'idle';
-            checkPending();
             return;
         }
 
         const el = currentEl;
         const dispose = currentDispose;
         phase = 'leaving';
-        el.classList.add(cls.from, cls.active);
+        if (fromCurrent)
+        {
+            el.classList.add(cls.active);
+        }
+        else
+        {
+            el.classList.add(cls.from, cls.active);
+        }
 
         void el.offsetHeight;
 
@@ -436,34 +445,22 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
                 currentEl = null;
                 currentDispose = null;
                 phase = 'idle';
-                checkPending();
             });
         });
     }
 
     /**
-     * After a transition completes, applies any queued state
-     * change. The queue is at most one element deep - multiple
-     * rapid toggles collapse to the most recent.
+     * Cancels the in-flight run for one direction: detaches its wait (listener
+     * + timer) and strips that direction's classes, leaving the element at its
+     * CURRENT computed style - the starting point the reversal animates from.
      */
-    function checkPending(): void
+    function cancelInFlight(direction: 'enter' | 'leave'): void
     {
-        if (pendingShouldShow === null)
+        cancelPendingWait?.();
+        const cls = classFamily(direction);
+        if (cls && currentEl)
         {
-            return;
-        }
-        const shouldShow = pendingShouldShow;
-        pendingShouldShow = null;
-
-        const isShowing = currentEl !== null;
-        if (shouldShow && !isShowing)
-        {
-            mountEl();
-            startEnter();
-        }
-        else if (!shouldShow && isShowing)
-        {
-            startLeave();
+            currentEl.classList.remove(cls.from, cls.active, cls.to);
         }
     }
 
@@ -507,12 +504,21 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
                 startLeave();
             }
         }
-        else
+        else if (phase === 'entering' && !shouldShow)
         {
-            // A transition is in flight - record where we want
-            // to end up, and let the current cycle finish.
-            pendingShouldShow = shouldShow;
+            // Reverse a half-done enter: cancel it and leave from the element's
+            // current visual state - rapid open/close stays crisp.
+            cancelInFlight('enter');
+            startLeave(true);
         }
+        else if (phase === 'leaving' && shouldShow)
+        {
+            // Reverse a half-done leave: the element is still mounted; re-enter
+            // from wherever it visually is (no rebuild, state preserved).
+            cancelInFlight('leave');
+            startEnter(true);
+        }
+        // Same-direction toggles mid-flight are already heading there: no-op.
     });
 
     // Force-cleanup on root dispose. We skip animations here -

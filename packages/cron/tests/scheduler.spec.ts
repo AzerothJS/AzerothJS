@@ -204,3 +204,41 @@ describe('loud registration', () =>
         void scheduler.stop({ drain: false });
     });
 });
+
+describe('logger seam', () =>
+{
+    it('reports runs, outcomes, overlap skips, and failures through a structural logger', async () =>
+    {
+        const events: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }> = [];
+        const logger = {
+            debug: (message: string, fields?: Record<string, unknown>) => events.push({ level: 'debug', message, fields }),
+            warn: (message: string, fields?: Record<string, unknown>) => events.push({ level: 'warn', message, fields }),
+            error: (message: string, fields?: Record<string, unknown>) => events.push({ level: 'error', message, fields })
+        };
+        const scheduler = createScheduler({ logger, onError: () => undefined });
+
+        let release: () => void = () => undefined;
+        scheduler.every('slow', 60_000, () => new Promise<void>((resolve) =>
+        {
+            release = resolve;
+        }));
+        scheduler.every('boom', 60_000, () =>
+        {
+            throw new Error('job exploded');
+        });
+
+        const first = scheduler.runNow('slow');
+        await scheduler.runNow('slow'); // overlap: previous run still in flight -> skip + warn
+        release();
+        await first;
+        await scheduler.runNow('boom');
+        await scheduler.stop({ drain: true });
+
+        expect(events.some((e) => e.level === 'debug' && e.message === 'cron run' && e.fields?.job === 'slow')).toBe(true);
+        expect(events.some((e) => e.level === 'debug' && e.message === 'cron ok' && e.fields?.job === 'slow')).toBe(true);
+        expect(events.some((e) => e.level === 'warn' && e.message === 'cron overlap skipped' && e.fields?.job === 'slow')).toBe(true);
+        const failure = events.find((e) => e.level === 'error' && e.message === 'cron failed');
+        expect(failure?.fields?.job).toBe('boom');
+        expect(typeof failure?.fields?.durationMs).toBe('number');
+    });
+});

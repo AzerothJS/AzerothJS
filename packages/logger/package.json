@@ -1,10 +1,10 @@
 {
-    "name": "@azerothjs/compiler",
+    "name": "@azerothjs/logger",
     "version": "0.8.0-beta.2",
     "engines": {
         "node": ">=24"
     },
-    "description": "AzerothJS compiler - .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
+    "description": "AzerothJS logger - one zero-dependency logger with two faces: colored, iconed developer output and pino-class NDJSON for production, plus the framework's startup banner",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -20,27 +20,22 @@
         "dist"
     ],
     "sideEffects": false,
-    "dependencies": {
-        "@azerothjs/logger": "0.8.0-beta.2"
-    },
-    "peerDependencies": {
-        "vite": ">=6",
-        "typescript": ">=5 <7"
-    },
-    "peerDependenciesMeta": {
-        "vite": {
-            "optional": true
-        },
-        "typescript": {
-            "optional": true
-        }
-    },
     "scripts": {
         "clean": "node ../../scripts/clean.mjs dist",
         "prebuild": "npm run clean",
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
+    "keywords": [
+        "logger",
+        "logging",
+        "ndjson",
+        "structured-logging",
+        "pretty",
+        "terminal",
+        "banner",
+        "azeroth"
+    ],
     "publishConfig": {
         "access": "public"
     },
@@ -53,9 +48,9 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
-        "directory": "packages/compiler"
+        "directory": "packages/logger"
     },
-    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/compiler",
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/logger",
     "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     }

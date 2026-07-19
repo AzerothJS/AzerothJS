@@ -3,6 +3,7 @@
     "displayName": "AzerothJS",
     "description": "Language support for AzerothJS .azeroth files - completion, hover, diagnostics, and more, powered by the compiler.",
     "version": "0.8.0-beta.2",
+    "icon": "icon.png",
     "publisher": "azerothjs",
     "author":
     {

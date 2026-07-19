@@ -23,6 +23,9 @@
 import type { ServerResponse } from 'node:http';
 import { createServer, type Server } from 'node:http';
 import { createServer as createH2cServer, type Http2Server, type Http2ServerResponse } from 'node:http2';
+import { readFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
+import { printBanner } from '@azerothjs/logger';
 import { createAdapterRequest, type AnyIncoming } from './adapter-request.ts';
 import { PayloadResponse } from './payload.ts';
 
@@ -323,23 +326,83 @@ function applyTimeouts(server: Server, timeouts: SocketTimeouts = {}): void
     server.maxRequestsPerSocket = timeouts.maxRequestsPerSocket ?? DEFAULT_TIMEOUTS.maxRequestsPerSocket;
 }
 
+/** @internal This package's version, read lazily from its own manifest; undefined if unreadable. */
+let cachedVersion: string | undefined | null = null;
+function packageVersion(): string | undefined
+{
+    if (cachedVersion === null)
+    {
+        try
+        {
+            cachedVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string }).version;
+        }
+        catch
+        {
+            cachedVersion = undefined;
+        }
+    }
+    return cachedVersion;
+}
+
+/**
+ * @internal The startup banner - the framework's face. printBanner self-gates (TTY only,
+ * never in production), so a piped or collected stream stays byte-clean. The addresses
+ * shown are the addresses actually BOUND, not the ones requested.
+ */
+function announce(served: Served, subtitle: string, readyMs: number): void
+{
+    const address = served.server.address();
+    const bound = typeof address === 'object' && address !== null ? address.address : undefined;
+    const unspecified = bound === undefined || bound === '0.0.0.0' || bound === '::';
+    const entries: Array<readonly [string, string]> = [];
+    if (unspecified)
+    {
+        entries.push(['Local', `http://localhost:${ served.port }`]);
+        for (const nets of Object.values(networkInterfaces()))
+        {
+            for (const net of nets ?? [])
+            {
+                if (net.family === 'IPv4' && !net.internal)
+                {
+                    entries.push(['Network', `http://${ net.address }:${ served.port }`]);
+                }
+            }
+        }
+    }
+    else
+    {
+        const host = bound === '::1' ? 'localhost' : bound;
+        entries.push(['Local', `http://${ host }:${ served.port }`]);
+    }
+    printBanner({ version: packageVersion(), subtitle, entries, readyMs });
+}
+
 /**
  * Serves an app over HTTP/1.1. `port: 0` binds an ephemeral port (the testing default).
  * `before` mounts a connect-style middleware ahead of the app - the dev-server seam
  * (`serve(app, { before: vite.middlewares })`); see {@link ConnectMiddleware}. `timeouts`
  * tunes the socket-level limits (all bounded by default; see {@link SocketTimeouts}).
+ * On an interactive dev terminal the AzerothJS banner announces the bound addresses and
+ * the measured ready time; `banner: false` silences it (it is always silent when piped
+ * or in production).
  */
-export function serve(
+export async function serve(
     app: WebHandler,
-    options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts } = {}
+    options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts; banner?: boolean } = {}
 ): Promise<Served>
 {
+    const startedAt = performance.now();
     const timeouts = options.timeouts ?? {};
     const server = timeouts.checkIntervalMs !== undefined
         ? createServer({ connectionsCheckingInterval: timeouts.checkIntervalMs })
         : createServer();
     applyTimeouts(server, timeouts);
-    return manage(server, app, options.port ?? 0, options.hostname, options.before);
+    const served = await manage(server, app, options.port ?? 0, options.hostname, options.before);
+    if (options.banner !== false)
+    {
+        announce(served, 'http', performance.now() - startedAt);
+    }
+    return served;
 }
 
 /**

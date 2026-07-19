@@ -42,6 +42,9 @@ import { parseQuery, stringifyQuery } from './query.ts';
 import { createBrowserHistory } from './history.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
 
+/** The cause of a location change; see {@link Router.navigationKind}. */
+export type NavigationKind = 'push' | 'replace' | 'pop';
+
 /**
  * The object returned by `createRouter()`.
  *
@@ -82,6 +85,15 @@ export interface Router
      * composable to apply a per-call cast.
      */
     loader: Resource<unknown>;
+
+    /**
+     * What CAUSED the latest location change: `'push'` (navigate / a Link),
+     * `'replace'`, or `'pop'` (the browser's own back/forward - the two are not
+     * distinguishable without stamping history state, so they share one honest
+     * name). A plain read, not reactive - consult it INSIDE a reaction to the
+     * location, e.g. to pick a directional route-transition name.
+     */
+    navigationKind: () => NavigationKind;
 
     /**
      * Navigates to `to`, pushing a new history entry.
@@ -514,9 +526,18 @@ export function createRouter(config: RouterConfig): Router
     // Initial state, read straight from the live URL.
     const [state, setState] = createSignal<InternalState>(buildState(history.current()));
 
+    // What CAUSED the latest location change. performNavigate stamps a pending
+    // kind just before the adapter call (whose subscribers run synchronously);
+    // a change arriving with NO pending stamp came from the browser itself -
+    // popstate, i.e. back/forward - and reads as 'pop'.
+    let pendingKind: 'push' | 'replace' | null = null;
+    let lastKind: NavigationKind = 'push';
+
     // React to URL changes.
     const unsubHistory = history.subscribe((fullPath) =>
     {
+        lastKind = pendingKind ?? 'pop';
+        pendingKind = null;
         setState(buildState(fullPath));
     });
 
@@ -628,6 +649,7 @@ export function createRouter(config: RouterConfig): Router
         // always holds the real browser URL.
         const fullPath = resolve(target);
 
+        pendingKind = options.replace ? 'replace' : 'push';
         if (options.replace)
         {
             history.replace(fullPath, options.state);
@@ -636,6 +658,7 @@ export function createRouter(config: RouterConfig): Router
         {
             history.push(fullPath, options.state);
         }
+        pendingKind = null;
 
         // Optional opt-in scroll to top; the router doesn't restore scroll
         // automatically. Users who need bespoke scroll behavior can subscribe
@@ -651,6 +674,7 @@ export function createRouter(config: RouterConfig): Router
         location,
         match,
         loader,
+        navigationKind: () => lastKind,
         navigate(to, options = {}): void
         {
             // untrack so navigate can be called from inside an effect without

@@ -51,11 +51,11 @@ export type {
     HistoryAdapter
 } from './types.ts';
 
-export type { Router } from './router.ts';
+export type { Router, NavigationKind } from './router.ts';
 // Re-exported from @azerothjs/component: the return contract RouteComponent uses.
 export type { MountNode } from '@azerothjs/component';
 export type { PathMatcher } from './path-pattern.ts';
 export type { LinkProps } from './link.ts';
-export type { RoutesProps } from './routes.ts';
+export type { RoutesProps, RouteTransitionContext } from './routes.ts';
 export type { OutletProps } from './outlet.ts';
 export type { NavigateApi } from './use-route.ts';

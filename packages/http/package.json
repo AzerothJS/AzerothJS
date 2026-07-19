@@ -28,6 +28,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
+        "@azerothjs/logger": "0.8.0-beta.2",
         "@azerothjs/reactivity": "0.8.0-beta.2"
     },
     "publishConfig": {

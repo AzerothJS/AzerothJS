@@ -18,11 +18,24 @@
  */
 
 import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
-import { hydrateChild } from '@azerothjs/renderer';
+import { hydrateChild, playTransitionClasses } from '@azerothjs/renderer';
 import type { RouteMatch } from './types.ts';
-import type { Router } from './router.ts';
+import type { NavigationKind, Router } from './router.ts';
+
+/** What a `transition` FUNCTION receives to pick (or veto) a name per swap. */
+export interface RouteTransitionContext
+{
+    /** The match being left, or null when the fallback was showing. */
+    from: RouteMatch | null;
+
+    /** The match being entered, or null when swapping to the fallback. */
+    to: RouteMatch | null;
+
+    /** What caused the change - 'push' | 'replace' | 'pop'; the directional-drift hook. */
+    navigation: NavigationKind;
+}
 
 /**
  * Props for the `<Routes>` component.
@@ -37,6 +50,24 @@ export interface RoutesProps
      * 404 / catch-all UI. If absent, nothing is rendered for unmatched URLs.
      */
     fallback?: (() => MountNode) | undefined;
+
+    /**
+     * Animate route swaps with `<Transition>`'s 6-class family: the outgoing
+     * route plays `{name}-leave-*` (removal deferred until it completes) while
+     * the incoming plays `{name}-enter-*` - both mounted simultaneously, so a
+     * cross-fade or a directional drift is pure CSS. A FUNCTION receives
+     * {@link RouteTransitionContext} (from, to, and what caused the change) and
+     * returns the name per swap - or null for an instant swap - which is how a
+     * back-navigation gets a different animation than a forward one.
+     *
+     * Requires the route chain to render a SINGLE ELEMENT root; a fragment root
+     * swaps instantly (classes need one element to land on). The first render
+     * never animates.
+     */
+    transition?: string | ((context: RouteTransitionContext) => string | null) | undefined;
+
+    /** Fallback timeout (ms) for the transition waits; default 1000. */
+    transitionDuration?: number | undefined;
 }
 
 /**
@@ -138,6 +169,43 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
+    let mounted = false;
+
+    // The current branch's SINGLE root element, when it has one - the thing a
+    // transition's classes can land on. null for fragment-rooted branches.
+    let currentEl: HTMLElement | null = null;
+    let previousMatch: RouteMatch | null = null;
+
+    // Outgoing branches still playing their leave: kept in the DOM (and their
+    // roots alive) until the animation settles or the next swap flushes them.
+    const leaving = new Map<HTMLElement, { dispose: DisposeFn; cancel: () => void }>();
+
+    /** Finishes every still-leaving branch NOW - rapid navigation stays crisp. */
+    function flushLeaving(): void
+    {
+        for (const [el, entry] of [...leaving])
+        {
+            entry.cancel();
+            leaving.delete(el);
+            el.parentNode?.removeChild(el);
+            entry.dispose();
+        }
+    }
+
+    /** The name for this swap, from the string or function form; null = instant. */
+    function transitionName(to: RouteMatch | null): string | null
+    {
+        const transition = props.transition;
+        if (transition === undefined)
+        {
+            return null;
+        }
+        if (typeof transition === 'string')
+        {
+            return transition;
+        }
+        return transition({ from: previousMatch, to, navigation: props.router.navigationKind() });
+    }
 
     createEffect(() =>
     {
@@ -151,6 +219,8 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
             // Hydration first run: adopt the existing server children rather than
             // building and appending new ones.
             firstRun = false;
+            mounted = true;
+            previousMatch = matchResult;
             if (factory)
             {
                 const build = factory;
@@ -164,7 +234,42 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
             // Every server node in this range must be claimed by the adopted
             // route chain; a leftover means SSR/CSR diverged. hydrate() recovers.
             hydrationCursor?.assertExhausted('<Routes> content');
-            return teardownBranch;
+            return;
+        }
+
+        // The name only applies when there is an OUTGOING single-element branch
+        // to animate; the very first render mounts instantly.
+        const name = mounted ? untrack(() => transitionName(matchResult)) : null;
+        const animated = name !== null && currentEl !== null;
+        previousMatch = matchResult;
+        mounted = true;
+
+        // A new navigation arriving mid-animation finishes the old exits NOW.
+        flushLeaving();
+
+        if (animated)
+        {
+            // Detach the outgoing branch WITHOUT removing it: it stays in place
+            // playing its leave while the incoming mounts alongside.
+            const el = currentEl as HTMLElement;
+            const dispose = branchDispose;
+            branchDispose = null;
+            currentEl = null;
+            const entry = {
+                dispose: dispose ?? ((): void => undefined),
+                cancel: (): void => undefined
+            };
+            leaving.set(el, entry);
+            entry.cancel = playTransitionClasses(el, name, 'leave', props.transitionDuration, () =>
+            {
+                leaving.delete(el);
+                el.parentNode?.removeChild(el);
+                entry.dispose();
+            });
+        }
+        else
+        {
+            teardownBranch();
         }
 
         if (factory)
@@ -176,13 +281,26 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
             createRoot((dispose) =>
             {
                 branchDispose = dispose;
-                appendToCo(target, untrack(build));
+                const built = untrack(build);
+                appendToCo(target, built);
+                currentEl = built instanceof HTMLElement ? built : null;
+                if (name !== null && currentEl !== null)
+                {
+                    playTransitionClasses(currentEl, name, 'enter', props.transitionDuration, () => undefined);
+                }
             });
         }
+        else
+        {
+            currentEl = null;
+        }
+    });
 
-        // The SINGLE teardown path: runs before every re-render AND on dispose, so
-        // the leaving route's effects + onDestroy hooks fire before its DOM goes.
-        return teardownBranch;
+    // Final teardown: the active branch AND any branches still mid-leave.
+    onRootDispose(() =>
+    {
+        flushLeaving();
+        teardownBranch();
     });
 
     function teardownBranch(): void
@@ -191,6 +309,12 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
         {
             branchDispose();
             branchDispose = null;
+        }
+        if (currentEl !== null)
+        {
+            currentEl.parentNode?.removeChild(currentEl);
+            currentEl = null;
+            return;
         }
         clearCo(target);
     }

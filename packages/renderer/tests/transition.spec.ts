@@ -181,3 +181,80 @@ describe('Transition - root disposal', () =>
         container.remove();
     });
 });
+
+describe('Transition - mid-flight cancellation', () =>
+{
+    it('reverses a half-done enter into a leave without waiting for the enter to finish', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(false);
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 60,
+            children: () => h('p', { class: 'box' }, 'sheet')
+        })), container);
+
+        setOn(true);            // enter starts (60ms backstop)
+        await settle(5);        // mid-flight: entering
+        expect(container.querySelector('.box')).not.toBeNull();
+
+        setOn(false);           // CANCEL the enter, reverse into leave
+        await settle(100);      // one backstop is enough - no queued second cycle
+
+        // The old queue would have finished the enter (60ms) THEN run the full
+        // leave (60ms more). Cancellation completes within a single window.
+        expect(container.querySelector('.box')).toBeNull();
+        container.remove();
+    });
+
+    it('reverses a half-done leave back into an enter, reusing the SAME element', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(true);
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 60,
+            children: () => h('p', { class: 'box' }, 'sheet')
+        })), container);
+        const original = container.querySelector('.box');
+        expect(original).not.toBeNull();
+
+        setOn(false);           // leave starts
+        await settle(5);        // mid-flight: leaving, element still mounted
+        setOn(true);            // CANCEL the leave, re-enter from current state
+        await settle(100);
+
+        const after = container.querySelector('.box');
+        expect(after).not.toBeNull();
+        // No rebuild: the element identity survives the reversal (state preserved).
+        expect(after).toBe(original);
+        container.remove();
+    });
+
+    it('after a reversal completes, the transition classes are fully cleaned up', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(true);
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 40,
+            children: () => h('p', { class: 'box' }, 'sheet')
+        })), container);
+
+        setOn(false);
+        await settle(5);
+        setOn(true);
+        await settle(120);
+
+        const el = container.querySelector('.box');
+        expect(el).not.toBeNull();
+        for (const suffix of ['enter-from', 'enter-active', 'enter-to', 'leave-from', 'leave-active', 'leave-to'])
+        {
+            expect(el?.classList.contains('fade-' + suffix)).toBe(false);
+        }
+        container.remove();
+    });
+});

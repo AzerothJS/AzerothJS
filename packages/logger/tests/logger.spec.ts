@@ -1,0 +1,359 @@
+// @vitest-environment node
+//
+// The logger's promises, exercised for real: level gating (and its zero-cost disabled
+// path), child bindings, redaction reaching no sink, error/cause shapes, NDJSON lines
+// that always parse with stable key order, the color/unicode social contract
+// (NO_COLOR/FORCE_COLOR/TTY), pretty rendering, and the banner's layout and gating.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+    createLogger, ndjsonSink, prettySink, consoleSink,
+    renderBanner, printBanner, formatReady,
+    ndjsonLine, errorShape, colorTier
+} from '@azerothjs/logger';
+import type { LogRecord, WritableLike } from '@azerothjs/logger';
+
+const ANSI = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*m', 'g');
+const strip = (s: string): string => s.replace(ANSI, '');
+
+function capture(isTTY = false): { stream: WritableLike; lines: () => string[]; raw: () => string }
+{
+    let buffer = '';
+    return {
+        stream: {
+            isTTY,
+            write: (chunk: string): boolean =>
+            {
+                buffer += chunk;
+                return true;
+            }
+        },
+        lines: () => buffer.split('\n').filter((line) => line !== ''),
+        raw: () => buffer
+    };
+}
+
+const savedEnv: Record<string, string | undefined> = {};
+const ENV_KEYS = ['NO_COLOR', 'FORCE_COLOR', 'AZEROTH_LOG', 'NODE_ENV', 'TERM', 'COLORTERM', 'WT_SESSION', 'TERM_PROGRAM'];
+
+beforeEach(() =>
+{
+    for (const key of ENV_KEYS)
+    {
+        savedEnv[key] = process.env[key];
+        Reflect.deleteProperty(process.env, key);
+    }
+});
+
+afterEach(() =>
+{
+    for (const key of ENV_KEYS)
+    {
+        if (savedEnv[key] === undefined)
+        {
+            Reflect.deleteProperty(process.env, key);
+        }
+        else
+        {
+            process.env[key] = savedEnv[key];
+        }
+    }
+});
+
+describe('levels', () =>
+{
+    it('drops records below the threshold and emits at or above it', () =>
+    {
+        const records: LogRecord[] = [];
+        const log = createLogger({ level: 'warn', sink: (r) => records.push(r) });
+        log.trace('t'); log.debug('d'); log.info('i'); log.warn('w'); log.error('e'); log.fatal('f');
+        expect(records.map((r) => r.level)).toEqual(['warn', 'error', 'fatal']);
+    });
+
+    it('silent drops everything', () =>
+    {
+        const records: LogRecord[] = [];
+        const log = createLogger({ level: 'silent', sink: (r) => records.push(r) });
+        log.fatal('end of the world');
+        expect(records).toEqual([]);
+    });
+
+    it('enabled() reports the gate so callers can skip expensive field construction', () =>
+    {
+        const log = createLogger({ level: 'info', sink: () => undefined });
+        expect(log.enabled('debug')).toBe(false);
+        expect(log.enabled('info')).toBe(true);
+        expect(log.enabled('error')).toBe(true);
+    });
+
+    it('a disabled call never touches the sink or the fields object', () =>
+    {
+        const sink = vi.fn();
+        const log = createLogger({ level: 'error', sink });
+        log.debug('nope', { expensive: 'value' });
+        expect(sink).not.toHaveBeenCalled();
+    });
+});
+
+describe('children and fields', () =>
+{
+    it('child bindings ride every record, bound context first, call fields after', () =>
+    {
+        const records: LogRecord[] = [];
+        const log = createLogger({ level: 'info', sink: (r) => records.push(r) }).child({ requestId: 'r1' });
+        log.info('hello', { step: 2 });
+        expect(records[0]?.fields).toEqual({ requestId: 'r1', step: 2 });
+        expect(Object.keys(records[0]?.fields ?? {})).toEqual(['requestId', 'step']);
+    });
+
+    it('grandchildren merge cumulatively; later bindings win on collision', () =>
+    {
+        const records: LogRecord[] = [];
+        const log = createLogger({ level: 'info', sink: (r) => records.push(r) })
+            .child({ a: 1, shared: 'parent' })
+            .child({ b: 2, shared: 'kid' });
+        log.info('x');
+        expect(records[0]?.fields).toEqual({ a: 1, shared: 'kid', b: 2 });
+    });
+});
+
+describe('redaction and error shaping', () =>
+{
+    it('redacted fields never reach any sink - call fields, bound fields, and children', () =>
+    {
+        const records: LogRecord[] = [];
+        const log = createLogger({
+            level: 'info',
+            redact: ['authorization', 'cookie'],
+            fields: { cookie: 'session=abc' },
+            sink: (r) => records.push(r)
+        });
+        log.info('req', { authorization: 'Bearer xyz', path: '/x' });
+        log.child({ authorization: 'Bearer child' }).info('nested');
+        expect(records[0]?.fields).toEqual({ cookie: '[redacted]', authorization: '[redacted]', path: '/x' });
+        expect(records[1]?.fields.authorization).toBe('[redacted]');
+    });
+
+    it('errors serialize with name, message, stack, and the cause chain', () =>
+    {
+        const root = new Error('disk gone');
+        const wrapped = new Error('save failed', { cause: root });
+        const shape = errorShape(wrapped);
+        expect(shape.name).toBe('Error');
+        expect(shape.message).toBe('save failed');
+        expect(typeof shape.stack).toBe('string');
+        expect(typeof shape.cause === 'object' && shape.cause.message).toBe('disk gone');
+    });
+
+    it('a cyclic cause chain is depth-capped instead of hanging', () =>
+    {
+        const a = new Error('a');
+        const b = new Error('b', { cause: a });
+        (a as { cause?: unknown }).cause = b;
+        const shape = errorShape(a);
+        let depth = 0;
+        let cursor = shape.cause;
+        while (cursor !== undefined && typeof cursor !== 'string')
+        {
+            depth++;
+            cursor = cursor.cause;
+        }
+        expect(depth).toBeLessThanOrEqual(6);
+    });
+});
+
+describe('NDJSON face', () =>
+{
+    it('emits one parseable line per record with stable leading keys', () =>
+    {
+        const out = capture();
+        const log = createLogger({ level: 'info', sink: ndjsonSink({ stream: out.stream }) });
+        log.info('hello world', { user: 'thrall', count: 3 });
+        const line = out.lines()[0] ?? '';
+        expect(line.startsWith('{"level":"info","time":')).toBe(true);
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        expect(parsed.msg).toBe('hello world');
+        expect(parsed.user).toBe('thrall');
+        expect(parsed.count).toBe(3);
+    });
+
+    it('every hostile string still produces valid JSON, byte-identical to JSON.stringify', () =>
+    {
+        for (const hostile of ['quote " inside', 'back\\slash', 'line\nbreak', 'tab\t', 'unicode čžš 日本語', 'emoji \u{1F600}', 'lone \ud800 surrogate'])
+        {
+            const line = ndjsonLine({ level: 'info', message: hostile, time: 0, fields: { value: hostile } });
+            const parsed = JSON.parse(line) as { msg: string; value: string };
+            expect(parsed.msg).toBe(JSON.parse(JSON.stringify(hostile)));
+            expect(parsed.value).toBe(parsed.msg);
+        }
+    });
+
+    it('non-finite numbers, undefined, null, and nested structures serialize as JSON.stringify would', () =>
+    {
+        const line = ndjsonLine({
+            level: 'warn', message: 'm', time: 1,
+            fields: { nan: NaN, inf: Infinity, u: undefined, n: null, deep: { a: [1, 'two'] } }
+        });
+        expect(JSON.parse(line)).toEqual({ level: 'warn', time: 1, msg: 'm', nan: null, inf: null, u: null, n: null, deep: { a: [1, 'two'] } });
+    });
+
+    it('never emits ANSI codes, even when FORCE_COLOR is set', () =>
+    {
+        process.env.FORCE_COLOR = '3';
+        const out = capture(true);
+        const log = createLogger({ level: 'info', face: 'ndjson', stream: out.stream });
+        log.info('clean');
+        expect(out.raw()).not.toMatch(ANSI);
+    });
+});
+
+describe('pretty face', () =>
+{
+    it('renders time, icon, level, message, and dim key=value fields on one line', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        sink({ level: 'info', message: 'server up', time: Date.UTC(2026, 0, 1, 12, 30, 5, 42), fields: { port: 3000 } });
+        const line = out.lines()[0] ?? '';
+        expect(line).toContain('● info ');
+        expect(line).toContain('server up');
+        expect(line).toContain('port=3000');
+        expect(line).toMatch(/\d\d:\d\d:\d\d\.\d\d\d/);
+    });
+
+    it('falls back to ASCII badges when unicode is off', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: false });
+        sink({ level: 'warn', message: 'careful', time: 0, fields: {} });
+        expect(out.lines()[0]).toContain('! warn ');
+    });
+
+    it('renders a shaped error as an indented block with the cause chain', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        const shape = errorShape(new Error('save failed', { cause: new Error('disk gone') }));
+        sink({ level: 'error', message: 'request failed', time: 0, fields: { error: shape } });
+        const raw = out.raw();
+        expect(raw).toContain('request failed');
+        expect(raw).toContain('caused by: Error: disk gone');
+    });
+
+    it('colors when a tier is forced, and NO_COLOR strips everything', () =>
+    {
+        const colored = capture(true);
+        prettySink({ stream: colored.stream, tier: 'truecolor', unicode: true })(
+            { level: 'info', message: 'x', time: 0, fields: {} });
+        expect(colored.raw()).toMatch(ANSI);
+
+        process.env.NO_COLOR = '1';
+        const plain = capture(true);
+        prettySink({ stream: plain.stream })({ level: 'info', message: 'x', time: 0, fields: {} });
+        expect(plain.raw()).not.toMatch(ANSI);
+    });
+});
+
+describe('face selection and env overrides', () =>
+{
+    it('auto picks NDJSON on a non-TTY stream', () =>
+    {
+        const out = capture(false);
+        const log = createLogger({ stream: out.stream });
+        log.info('piped');
+        expect(out.lines()[0]?.startsWith('{"level"')).toBe(true);
+    });
+
+    it('auto picks NDJSON in production even on a TTY', () =>
+    {
+        process.env.NODE_ENV = 'production';
+        const out = capture(true);
+        const log = createLogger({ stream: out.stream });
+        log.info('prod');
+        expect(out.lines()[0]?.startsWith('{"level"')).toBe(true);
+    });
+
+    it('AZEROTH_LOG overrides level and face from the environment', () =>
+    {
+        process.env.AZEROTH_LOG = 'json:debug';
+        const out = capture(true);
+        const log = createLogger({ level: 'error', face: 'pretty', stream: out.stream });
+        log.debug('visible');
+        const parsed = JSON.parse(out.lines()[0] ?? '{}') as { msg?: string };
+        expect(parsed.msg).toBe('visible');
+    });
+});
+
+describe('console face', () =>
+{
+    it('maps levels onto console methods with a styled badge', () =>
+    {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        consoleSink()({ level: 'warn', message: 'browser side', time: 0, fields: { a: 1 } });
+        expect(spy).toHaveBeenCalledOnce();
+        const [format] = spy.mock.calls[0] as [string];
+        expect(format).toContain('%cwarn%c browser side');
+        spy.mockRestore();
+    });
+});
+
+describe('banner', () =>
+{
+    it('renders the mark, name, version, aligned entries, and the measured ready line', () =>
+    {
+        const banner = strip(renderBanner({
+            version: '0.8.0-beta.2',
+            subtitle: 'http',
+            entries: [['Local', 'http://127.0.0.1:3000'], ['Network', 'http://192.168.1.7:3000']],
+            readyMs: 12.4,
+            stream: capture(false).stream
+        }));
+        expect(banner).toContain('AzerothJS');
+        expect(banner).toContain('v0.8.0-beta.2');
+        expect(banner).toContain('Local    http://127.0.0.1:3000');
+        expect(banner).toContain('Network  http://192.168.1.7:3000');
+        expect(banner).toContain('Ready in 12 ms');
+    });
+
+    it('formats ready times honestly across magnitudes', () =>
+    {
+        expect(formatReady(0.44)).toBe('0.4 ms');
+        expect(formatReady(12.4)).toBe('12 ms');
+        expect(formatReady(999.4)).toBe('999 ms');
+        expect(formatReady(3421)).toBe('3.42 s');
+    });
+
+    it('printBanner refuses non-TTY streams and production mode', () =>
+    {
+        const piped = capture(false);
+        expect(printBanner({ stream: piped.stream })).toBe(false);
+        expect(piped.raw()).toBe('');
+
+        process.env.NODE_ENV = 'production';
+        const tty = capture(true);
+        expect(printBanner({ stream: tty.stream })).toBe(false);
+        expect(tty.raw()).toBe('');
+    });
+
+    it('prints on an interactive dev terminal', () =>
+    {
+        const tty = capture(true);
+        expect(printBanner({ version: '1.0.0', stream: tty.stream })).toBe(true);
+        expect(strip(tty.raw())).toContain('AzerothJS');
+    });
+});
+
+describe('color capability', () =>
+{
+    it('NO_COLOR beats FORCE_COLOR beats TTY detection', () =>
+    {
+        process.env.NO_COLOR = '1';
+        process.env.FORCE_COLOR = '3';
+        expect(colorTier({ isTTY: true })).toBe('none');
+
+        Reflect.deleteProperty(process.env, 'NO_COLOR');
+        expect(colorTier({ isTTY: false })).toBe('truecolor');
+
+        Reflect.deleteProperty(process.env, 'FORCE_COLOR');
+        expect(colorTier({ isTTY: false })).toBe('none');
+    });
+});
