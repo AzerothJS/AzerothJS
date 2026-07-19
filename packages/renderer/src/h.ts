@@ -809,9 +809,39 @@ export function bindContent(el: HTMLElement, child: Child): void
     // The current scalar text node, reused across runs; null after a non-scalar
     // value (or an empty string, which leaves no node behind).
     let text: Text | null = null;
+
+    // The previous run's ROOT when it built a non-scalar subtree - disposed
+    // before the replacement lands, so a swapped-out subtree's effects die with
+    // its DOM (the same ownership contract driveHoleRange keeps).
+    let subtreeDispose: DisposeFn | null = null;
+
     createEffect(() =>
     {
-        text = placeContent(el, text, (child)());
+        let localDispose: DisposeFn | undefined;
+        // resolveReactive, not a bare call: a hole can carry a THUNK CHAIN - the
+        // compiler wraps component children as `() => element` factories, so
+        // `{ props.children }` arrives as a function returning a function. A bare
+        // call would leave the inner thunk unresolved and print its SOURCE TEXT.
+        const value = createRoot((d) =>
+        {
+            localDispose = d;
+            return resolveReactive(child);
+        });
+
+        if (value === null || value === undefined || typeof value !== 'object')
+        {
+            // Scalars build nothing - drop this run's root, and tear down any
+            // subtree a previous run left behind.
+            localDispose?.();
+            subtreeDispose?.();
+            subtreeDispose = null;
+            text = placeContent(el, text, value);
+            return;
+        }
+
+        subtreeDispose?.();
+        subtreeDispose = localDispose ?? null;
+        text = placeContent(el, null, value);
     });
 }
 
