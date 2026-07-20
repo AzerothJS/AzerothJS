@@ -326,8 +326,23 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // carrying what the COMPILER knows (component count, whether the type-check
         // gate guards this session). Vite's own block keeps the URLs; this one keeps
         // the identity. printBanner self-gates: TTY only, never in production.
-        configureServer(server: { httpServer?: { once(event: string, fn: () => void): void } | null })
+        configureServer(server: {
+            httpServer?: { once(event: string, fn: () => void): void } | null;
+            watcher?: { on(event: string, fn: (path: string) => void): void };
+        })
         {
+            // The incremental checker caches dependency snapshots for its lifetime; without
+            // these notices, a plain `.ts` file edited mid-session stays pinned at its first
+            // snapshot and every later `.azeroth` check resolves imports against the STALE
+            // copy (phantom "unknown" prop-type errors until a server restart).
+            if (typeCheck && server.watcher !== undefined)
+            {
+                const notice = (path: string): void => checker?.invalidate(path);
+                server.watcher.on('change', notice);
+                server.watcher.on('add', notice);
+                server.watcher.on('unlink', notice);
+            }
+
             const startedAt = performance.now();
             server.httpServer?.once('listening', () =>
             {

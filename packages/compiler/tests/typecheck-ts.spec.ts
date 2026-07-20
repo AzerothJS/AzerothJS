@@ -8,9 +8,11 @@
  * means the real TypeScript checker found the type error, and an acceptance means it did not.
  */
 
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect } from 'vitest';
-import { typeCheckModuleTS } from '../src/typecheck-ts.ts';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
+import { createIncrementalChecker, typeCheckModuleTS } from '../src/typecheck-ts.ts';
 
 // A real path inside the compiler package so a bare `azerothjs` import resolves through the
 // workspace node_modules - which is what activates real-type checking of the built-in components.
@@ -710,5 +712,47 @@ component App {
     </Show>
 }`;
         expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+});
+
+describe('createIncrementalChecker - disk dependency invalidation', () =>
+{
+    // Inside the compiler package so `azerothjs` resolves through the workspace, same as REPO_FILE.
+    const dir = fileURLToPath(new URL('./.tmp-invalidate', import.meta.url));
+
+    beforeAll(() => mkdirSync(dir, { recursive: true }));
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    it('re-reads a plain .ts dependency after invalidate(); stays pinned without it', () =>
+    {
+        const depPath = join(dir, 'dep.ts');
+        writeFileSync(depPath, 'export type T = string;\n');
+
+        // A prop typed from the dependency: T=string makes `value="hello"` valid; T=number
+        // makes it a real azeroth/prop-type mismatch - mapDiagnostics only surfaces errors
+        // anchored to a JSX attribute, so the probe must be a prop, not a plain statement.
+        const source = `import type { T } from './dep';
+
+component Child(props: { value: T }) {
+    <p>{ props.value }</p>
+}
+
+component View {
+    <Child value="hello" />
+}`;
+        const file = join(dir, 'view.azeroth');
+        const checker = createIncrementalChecker();
+        expect(checker.check(file, source)).toHaveLength(0);
+
+        // The dependency changes incompatibly ON DISK. The checker holds the session-long
+        // snapshot, so without an invalidation notice it must still (wrongly, but by
+        // design of the cache) report the module clean - the dev-server bug this API fixes.
+        writeFileSync(depPath, 'export type T = number;\n');
+        expect(checker.check(file, source)).toHaveLength(0);
+
+        checker.invalidate(depPath);
+        const diagnostics = checker.check(file, source);
+        expect(diagnostics).toHaveLength(1);
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 });

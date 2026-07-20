@@ -468,6 +468,14 @@ export interface AzerothTypeChecker
 
     /** Type-checks one `.azeroth` module from its current `source`, returning located `.azeroth` diagnostics. */
     check(fileName: string, source: string): AzerothDiagnostic[];
+
+    /**
+     * Marks one file as changed on disk, so the next {@link check} re-reads it instead of reusing
+     * the Program's cached snapshot. Wire this to the dev server's file watcher: without it, a
+     * plain `.ts` dependency edited mid-session stays PINNED at its first snapshot for the
+     * checker's lifetime, and every later check resolves imports against the stale copy.
+     */
+    invalidate(fileName: string): void;
 }
 
 /**
@@ -492,6 +500,10 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
     const overrides = new Map<string, { code: string; version: number }>();
     const diskCache = new Map<string, string | undefined>();
     const roots = new Set<string>();
+
+    // Disk generation counters, bumped by invalidate(). Without them every non-override file
+    // reports one constant version and the Program never re-reads a dependency edited mid-session.
+    const diskVersions = new Map<string, number>();
 
     const projectDisk = (tsPath: string): string | undefined =>
     {
@@ -537,7 +549,7 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
         getScriptVersion: (f) =>
         {
             const override = overrides.get(f);
-            return override ? `o${ override.version }` : '1';
+            return override ? `o${ override.version }` : `d${ diskVersions.get(f) ?? 0 }`;
         },
         getScriptSnapshot: (f) =>
         {
@@ -630,6 +642,17 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
             const service = ensureService();
             const syntactic = mapSyntacticDiagnostics(service.getSyntacticDiagnostics(tsPath), mapping);
             return [...syntactic, ...mapDiagnostics(service.getSemanticDiagnostics(tsPath), mapping)];
+        },
+
+        invalidate(fileName: string): void
+        {
+            const normal = normalizeSlashes(fileName);
+            // A changed `.azeroth` dependency lives in the Program as its `.ts` twin; plain
+            // `.ts`/`.tsx` files are themselves the Program entries.
+            const tsPath = normal.endsWith('.azeroth') ? `${ normal }.ts` : normal;
+            diskVersions.set(tsPath, (diskVersions.get(tsPath) ?? 0) + 1);
+            diskCache.delete(tsPath);
+            nativeBackend?.invalidate(tsPath);
         }
     };
 }

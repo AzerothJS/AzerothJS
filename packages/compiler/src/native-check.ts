@@ -282,6 +282,9 @@ export interface NativeIncrementalBackend
 
     /** Checks one module from its current projection, returning raw diagnostics for it. */
     check(tsPath: string, code: string): NativeCheckResult | null;
+
+    /** Marks one file changed on disk; the next check tells the server to re-read it. */
+    invalidate(tsPath: string): void;
 }
 
 /**
@@ -301,6 +304,10 @@ export function createNativeIncrementalBackend(readAzeroth: ReadAzeroth): Native
     const session: Session = { store: new Map(), readAzeroth, projections: new Map() };
     let configPath: string | null = null;
     let rootsDirty = true;
+
+    // Files invalidated between checks (a dependency edited on disk). Reported as `changed`
+    // on the next updateSnapshot so the server re-reads them; cleared once delivered.
+    const pendingChanged = new Set<string>();
 
     const syncConfig = (firstRoot: string): string =>
     {
@@ -341,15 +348,22 @@ export function createNativeIncrementalBackend(readAzeroth: ReadAzeroth): Native
             // The stored override supersedes any projection cached from disk for this path.
             session.projections.delete(name);
 
+            const changed = [...pendingChanged];
+            if (contentChanged)
+            {
+                changed.push(name);
+            }
+
             activeSession = session;
             try
             {
                 const config = syncConfig(name);
                 const snapshot = client.updateSnapshot({
                     openProjects: [config],
-                    fileChanges: rootsDirty ? { invalidateAll: true } : { changed: contentChanged ? [name] : [] }
+                    fileChanges: rootsDirty ? { invalidateAll: true } : { changed }
                 });
                 rootsDirty = false;
+                pendingChanged.clear();
                 try
                 {
                     const project = snapshot.getProject(config) ?? findProject(snapshot.getProjects(), config);
@@ -376,6 +390,15 @@ export function createNativeIncrementalBackend(readAzeroth: ReadAzeroth): Native
             {
                 activeSession = null;
             }
+        },
+
+        invalidate(tsPath: string): void
+        {
+            const name = normalizeSlashes(tsPath);
+            // Drop any projection cached from the old disk content, and queue the change
+            // notice; it rides along on the next check's snapshot update.
+            session.projections.delete(name);
+            pendingChanged.add(name);
         }
     };
 }

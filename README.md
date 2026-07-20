@@ -33,9 +33,6 @@ export default component Counter(props: { start?: number })
 `{count}` updates only its own text node. There is no component re-render and no diff - the
 reactive graph itself is the update mechanism.
 
-> **Status:** `0.7.0-beta`. Feature-complete and dogfooded on production applications; the API may
-> still receive refinements before `1.0`.
-
 ## Quick start
 
 ```sh
