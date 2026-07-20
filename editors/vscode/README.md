@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+</p>
+
 # AzerothJS for VS Code
 
 Full language support for `.azeroth` single-file components - powered by the

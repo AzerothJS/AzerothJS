@@ -788,6 +788,34 @@ if (!options.noPublish)
         act(`npm publish -w ${ name } --access public --tag ${ tagName }${ provenanceFlag }${ otpFlag }`);
     }
 
+    // Registry-readiness gate: `npm publish` returning is NOT the same as the version being
+    // resolvable - packuments propagate through the registry's caches for seconds, and for a
+    // FIRST-EVER publish of a name it can take minutes. Everything downstream resolves these
+    // versions from the registry (the lockfile sync below, and the CI the push triggers), so
+    // wait here until every package actually answers before moving on.
+    if (!dryRun)
+    {
+        log('\nWaiting for the registry to serve every published version');
+        const deadline = Date.now() + 10 * 60_000;
+        let pending = [...PUBLISH_ORDER];
+        for (;;)
+        {
+            pending = pending.filter(name => !alreadyPublished(name, next));
+            if (pending.length === 0)
+            {
+                log('  registry consistent - all versions resolvable');
+                break;
+            }
+            if (Date.now() > deadline)
+            {
+                log(`  WARNING: still unresolvable after 10m: ${ pending.join(', ') } - continuing anyway`);
+                break;
+            }
+            log(`  waiting on ${ pending.length } package(s): ${ pending.join(', ') }`);
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
+        }
+    }
+
     // The VS Code extension pins the @azerothjs versions released MOMENTS ago, so its lockfile
     // could not be regenerated at bump time (the registry had nothing to resolve). Now it can;
     // ship the sync as a small follow-up commit so the next clone's `npm ci` there just works.
@@ -808,11 +836,16 @@ if (!options.noPublish)
                 act(syncCommand, { cwd: path.join(ROOT, 'editors', 'vscode') });
                 break;
             }
-            catch (error)
+            catch
             {
                 if (attempt === attempts)
                 {
-                    throw error;
+                    // NON-FATAL: dying here stranded the release in its worst state - published
+                    // and committed but never pushed. The lockfile sync is a nicety; the push is
+                    // not. Skip the sync and let the release finish; run it by hand afterwards.
+                    log('  WARNING: lockfile sync still failing - continuing WITHOUT it.');
+                    log(`  Run manually later: cd editors/vscode && ${ syncCommand }, then commit the lockfile.`);
+                    break;
                 }
                 log(`  registry not caught up yet (attempt ${ attempt }/${ attempts }); retrying in 15s`);
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15_000);

@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+</p>
+
 # @azerothjs/form
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fform?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/form)

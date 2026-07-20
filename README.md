@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo.png" alt="AzerothJS - the A with the dragon" width="160" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS - the A with the dragon" width="160" />
 
 # AzerothJS
 

@@ -71,6 +71,10 @@
             [
                 "./packages/cron/src/index.ts"
             ],
+            "@azerothjs/logger":
+            [
+                "./packages/logger/src/index.ts"
+            ],
             "@azerothjs/http":
             [
                 "./packages/http/src/index.ts"

@@ -31,7 +31,7 @@ run(process.execPath, [path.join(here, 'esbuild.mjs')], here);
 
 // 2) Stage a standalone copy outside the workspace.
 const stage = mkdtempSync(path.join(tmpdir(), 'azeroth-vsix-'));
-for (const entry of ['dist', 'syntaxes', 'language-configuration.json', 'README.md', 'LICENSE'])
+for (const entry of ['dist', 'syntaxes', 'language-configuration.json', 'README.md', 'LICENSE', 'icon.png'])
 {
     cpSync(path.join(here, entry), path.join(stage, entry), { recursive: true });
 }
