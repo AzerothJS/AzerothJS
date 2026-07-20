@@ -29,7 +29,7 @@
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, VOID_ELEMENTS } from './markup-parser.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
-import { quoteString, wrapDynamic, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
+import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
@@ -583,10 +583,24 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
             {
                 emit.used.add('setProp');
                 const value = rewriteExpr(source, binding.expr, sources, emit);
-                // Reactive when the analysis sees a dependency (or an explicit reactive flag), OR the
+                // Reactive when the analysis sees a dependency (or an explicit reactive flag), the
                 // fallback heuristic treats the value as dynamic (a store/imported-signal read the
-                // analysis can't see). Otherwise set once.
-                if (isReactive(binding.expr) || wrapDynamic(value, false) !== value)
+                // analysis can't see), OR the value is already callable-shaped: a function literal
+                // (`prop={ () => expr }`) or a bare reference (`prop={ rowClass }`, `prop={ someSignal }`).
+                // Both matter on their own: this is a plain DOM attribute (event handlers are a separate
+                // binding kind, already split out before reaching here), so wrapDynamic's own doc comment
+                // calls a bare reference here "a signal getter" - the framework's own stated intent.
+                // Dependency analysis only sees reads written DIRECTLY in this expression, so it can't see
+                // into a function literal's body, and it can't see into whatever a referenced identifier
+                // points at; wrapDynamic passes both shapes through unchanged (to avoid double-wrapping),
+                // so NEITHER existing signal catches either case on its own. Without this, `resolveReactive`
+                // still unwraps the getter inside `setProp`, but only once, at binding time - the attribute
+                // is set correctly on first render and then never again, which reads as "the value looks
+                // right until you change the state." (A bare reference to a genuinely static value, e.g. a
+                // module-level string constant, ends up effect-wrapped for nothing - harmless: the effect
+                // just never re-runs, since nothing reactive was read.)
+                if (isReactive(binding.expr) || wrapDynamic(value, false) !== value
+                    || isFunctionLiteral(value) || isBareReference(value))
                 {
                     emit.used.add('createEffect');
                     binds.push(`createEffect(() => setProp(${ nodeVar(target) }, ${ quoteString(binding.name) }, ${ value }));`);

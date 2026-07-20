@@ -115,6 +115,48 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('name()');
     });
 
+    it('effect-wraps an attribute value that is an explicit getter, even with no VISIBLE dependency', () =>
+    {
+        // `code` is a plain string param here, not a signal - so static analysis finds no dependency, and
+        // wrapDynamic passes an already-function-shaped value through unchanged. Neither signal on its own
+        // would catch this; the fix is the explicit isFunctionLiteral check alongside them. Regression for
+        // a real bug: a DOM element's `class={ () => ... }` (an explicit author-written getter, the same
+        // idiom the framework's own docs teach for list-row labels) was bound with a BARE setProp call - no
+        // createEffect - so it read correctly once at mount and then silently never updated again.
+        const code = gen('component C(props: { code: string }) { <button class={ () => "a " + props.code }>x</button> }');
+        expect(code).toContain('createEffect(() => setProp(');
+        // Every setProp call is effect-wrapped - none left bare.
+        const setPropCalls = code.match(/setProp\(/g) ?? [];
+        const wrappedCalls = code.match(/createEffect\(\(\) => setProp\(/g) ?? [];
+        expect(setPropCalls.length).toBe(wrappedCalls.length);
+    });
+
+    it('still effect-wraps when the getter body has a directly visible dependency (baseline, must not regress)', () =>
+    {
+        const code = gen('component C { state active = false; <button class={ () => (active() ? "on" : "off") }>x</button> }');
+        expect(code).toContain('createEffect(() => setProp(');
+    });
+
+    it('effect-wraps an attribute value that is a bare reference to a locally defined getter function', () =>
+    {
+        // The same bug as the function-literal case, one level of indirection further: `rowClass` is a
+        // const arrow function defined in the component body, referenced by NAME at the attribute site -
+        // dependency analysis sees only the bare identifier `rowClass`, not the signal read inside its
+        // body, so it has no way to know this is reactive without this fix. wrapDynamic's own doc comment
+        // already calls a bare reference here "a signal getter" - this makes the effect-wrapping decision
+        // honor that stated intent, not just the value-wrapping decision.
+        const code = gen(`component C
+        {
+            state active = false;
+            const rowClass = (): string => (active() ? "on" : "off");
+            <button class={ rowClass }>x</button>
+        }`);
+        const setPropCalls = code.match(/setProp\(/g) ?? [];
+        const wrappedCalls = code.match(/createEffect\(\(\) => setProp\(/g) ?? [];
+        expect(setPropCalls.length).toBeGreaterThan(0);
+        expect(setPropCalls.length).toBe(wrappedCalls.length);
+    });
+
     it('bind:checked writes back on `change`, reading `$event.target.checked`', () =>
     {
         const code = gen('component C { state on = false; <input type="checkbox" bind:checked={on} /> }');
