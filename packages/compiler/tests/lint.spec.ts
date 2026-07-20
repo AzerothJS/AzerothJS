@@ -66,6 +66,62 @@ describe('lintMarkup - event-case', () =>
     });
 });
 
+describe('lintMarkup - unsafe-narrow-in-show', () =>
+{
+    it('flags guard()!.x in a plain child when the Show guards the same call', () =>
+    {
+        const warnings = lint('<Show when={ config() }><p>{ config()!.name }</p></Show>');
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.code).toBe('azeroth/unsafe-narrow-in-show');
+        expect(warnings[0]!.message).toContain('config()!');
+        expect(warnings[0]!.message).toContain('(value) => ...');
+    });
+
+    it('flags a dotted guarded call reached through a nested attribute', () =>
+    {
+        const src = '<Show when={ connection.activeConfig() }>'
+            + '<div><button disabled={ !ok(connection.activeConfig()!.id) }>x</button></div>'
+            + '</Show>';
+        const warnings = lint(src);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.code).toBe('azeroth/unsafe-narrow-in-show');
+        expect(src.slice(warnings[0]!.start, warnings[0]!.end)).toBe('disabled={ !ok(connection.activeConfig()!.id) }');
+    });
+
+    it('resolves the guarded call out of a ternary when', () =>
+    {
+        const warnings = lint('<Show when={ done ? configs.lastReport() : null }><ImportReport r={ configs.lastReport()!.id } /></Show>');
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.message).toContain('configs.lastReport()!');
+    });
+
+    it('does not flag the narrowed-accessor callback form', () =>
+    {
+        expect(lint('<Show when={ config() }>{ (config) => <p>{ config().name }</p> }</Show>')).toEqual([]);
+    });
+
+    it('does not flag optional chaining (no runtime crash, left to a future rule)', () =>
+    {
+        expect(lint('<Show when={ config() }><p>{ config()?.name }</p></Show>')).toEqual([]);
+    });
+
+    it('does not flag when the when has no guarded call', () =>
+    {
+        expect(lint('<Show when={ scanning }><p>{ scanning!.toString() }</p></Show>')).toEqual([]);
+    });
+
+    it('does not flag a bare (already type-checked) read with no assertion', () =>
+    {
+        expect(lint('<Show when={ config() }><p>{ config().name }</p></Show>')).toEqual([]);
+    });
+
+    it('finds multiple offending reads across the subtree', () =>
+    {
+        const warnings = lint('<Show when={ config() }><p>{ config()!.a }</p><p>{ config()!.b }</p></Show>');
+        expect(warnings).toHaveLength(2);
+    });
+});
+
 describe('lintSource - whole module', () =>
 {
     it('aggregates findings across the module', () =>

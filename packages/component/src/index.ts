@@ -21,7 +21,8 @@ export {
     adoptCoRange,
     createCoMarkers,
     appendToCo,
-    clearCo
+    clearCo,
+    resolveMountNode
 } from './co-range.ts';
 export type { CoTarget } from './co-range.ts';
 

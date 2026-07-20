@@ -296,4 +296,20 @@ describe('ErrorBoundary', () =>
         dispose();
         container.remove();
     });
+
+    it('resolves a thunk-chain children (a thunk returning a thunk) instead of crashing', () =>
+    {
+        const inner = (): HTMLElement => h('p', { class: 'ok' }, 'ok');
+
+        const { container, dispose } = mountBoundary({
+            fallback: (_err, reset) => h('button', { class: 'retry', onClick: () => reset() }, 'retry'),
+            children: () => inner as unknown as HTMLElement
+        });
+
+        expect(container.querySelector('.ok')).not.toBeNull();
+        expect(container.querySelector('.retry')).toBeNull();
+
+        dispose();
+        container.remove();
+    });
 });

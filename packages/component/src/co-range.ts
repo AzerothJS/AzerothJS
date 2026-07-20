@@ -94,8 +94,36 @@ export function createCoMarkers(coType: string): { fragment: DocumentFragment; t
 }
 
 /**
+ * Unwraps a thunk chain (a function returning a function, e.g. a markup child that compiles to
+ * `() => (() => ...)`) down to its non-function result. A control-flow component's `children`/
+ * `fallback` prop is typed as returning a resolved {@link MountNode}, but the value that actually
+ * reaches it can still be a thunk if the caller passed one through unresolved - `appendToCo`
+ * requires an already-resolved Node (see its own doc comment), so any caller whose value might
+ * still be callable must resolve it first. The bound guards a pathological getter that returns a
+ * function forever; real chains are one or two deep.
+ *
+ * @param value - A possibly-thunked value.
+ * @returns The first non-function value reached.
+ */
+export function resolveMountNode(value: unknown): Node | null | undefined
+{
+    let resolved = value;
+    let depth = 0;
+    while (typeof resolved === 'function' && depth < 16)
+    {
+        resolved = (resolved as () => unknown)();
+        depth++;
+    }
+    return resolved as Node | null | undefined;
+}
+
+/**
  * Appends `node` as the last item in the range (before the end anchor). Used by the single-slot
  * components (Show, Switch, Dynamic, ErrorBoundary).
+ *
+ * CALLER CONTRACT: `node` must already be a resolved Node (or nullish) - this does NOT unwrap a
+ * thunk chain. A caller whose value might still be callable (e.g. a control-flow component's
+ * `children()`/`fallback()` result) must resolve it first, e.g. via {@link resolveMountNode}.
  *
  * @param target - The co-range to append into.
  * @param node - The node to insert before the end marker.

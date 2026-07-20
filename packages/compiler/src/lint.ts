@@ -12,7 +12,16 @@
  *   - azeroth/interpolation-spacing - spacing inside markup expression braces ({ expr }, not
  *     {expr}). The braces are markup punctuation, invisible to any TypeScript-based rule (the
  *     projection lowers them away), so this is the ONLY layer that can enforce it - the
- *     eslint-plugin and the editors both surface it from here.
+ *     eslint-plugin and the editors both surface it from here;
+ *   - azeroth/unsafe-narrow-in-show - `guard()!.x` inside a `<Show when={ guard() }>` whose
+ *     children are NOT the narrowed-accessor callback form. `guard()` here is a second,
+ *     independent read of the same nullable value `when` already checked - it can observe
+ *     null even while the branch is mounted (a signal change between the two reads, an async
+ *     race), and TypeScript's `!` is erased at compile time, so it gives no runtime
+ *     protection. `<Show>`'s callback-children form (`{ (value) => ... }`) exists precisely
+ *     for this: the accessor it hands back is backed by a signal Show only ever updates while
+ *     truthy, so it cannot yield null while the branch is mounted - not "usually doesn't,"
+ *     structurally cannot.
  *
  * Rules walk the parsed element tree of each top-level markup region. Warnings carry source spans, so
  * the Vite plugin can print file:line:col (and any tooling can squiggle them). A warning MAY carry a
@@ -26,6 +35,7 @@
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute } from './types.ts';
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
+import { isFunctionLiteral } from './markup-util.ts';
 
 /** A machine-applicable fix: replace `[start, end)` of the ORIGINAL source with `text`. */
 export interface LintFix
@@ -115,6 +125,10 @@ function visit(
     if (node.kind === 'element')
     {
         lintElement(node, warnings);
+        if (node.tag === 'Show')
+        {
+            lintShowNarrowing(node, warnings);
+        }
         if (source !== undefined && spacing !== 'off')
         {
             for (const attr of node.attributes)
@@ -253,6 +267,102 @@ function lintElement(el: MarkupElement, warnings: LintWarning[]): void
             });
         }
     }
+}
+
+/**
+ * The last zero-argument call chain in a `when` expression - the value a `<Show>` is actually
+ * guarding (`config()` in `config()`, `configs.lastReport()` in `done ? configs.lastReport() :
+ * null`). `null` when `when` has no such call (a plain boolean, a comparison with no guarded
+ * object): nothing to check.
+ * @internal
+ */
+function extractGuardedCall(whenCode: string): string | null
+{
+    const matches = whenCode.match(/[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\(\s*\)/g);
+    if (matches === null || matches.length === 0)
+    {
+        return null;
+    }
+    return matches[matches.length - 1] ?? null;
+}
+
+/**
+ * True when `children` is already the narrowed-accessor callback form (`{ (value) => ... }`) -
+ * a single expression child whose code is a function literal. That form is exactly the fix
+ * {@link lintShowNarrowing} would otherwise suggest, so it is left alone.
+ * @internal
+ */
+function isNarrowedCallbackForm(children: MarkupChild[]): boolean
+{
+    const meaningful = children.filter((child) => child.kind !== 'text' || child.value.trim() !== '');
+    const only = meaningful.length === 1 ? meaningful[0] : undefined;
+    return only !== undefined && only.kind === 'expression' && isFunctionLiteral(only.code.trim());
+}
+
+/**
+ * azeroth/unsafe-narrow-in-show: flags `guard()!.x` inside a `<Show when={ guard() }>` whose
+ * children are plain (not the callback form) - see the module doc comment for why this is a
+ * real bug pattern, not a style nit. Reports the whole offending attribute/expression span,
+ * matching {@link lintElement}'s other rules (no `source` dependency, no auto-fix: rewriting
+ * the branch into the callback form is a structural change, not a mechanical one).
+ * @internal
+ */
+function lintShowNarrowing(el: MarkupElement, warnings: LintWarning[]): void
+{
+    const whenAttr = el.attributes.find((attr) => attr.name === 'when' && attr.value.kind === 'expression');
+    if (whenAttr === undefined || whenAttr.value.kind !== 'expression' || isNarrowedCallbackForm(el.children))
+    {
+        return;
+    }
+    const guarded = extractGuardedCall(whenAttr.value.code);
+    if (guarded === null)
+    {
+        return;
+    }
+    scanForUnsafeNarrowing(el.children, guarded, warnings);
+}
+
+/** @internal */
+function scanForUnsafeNarrowing(children: MarkupChild[], guarded: string, warnings: LintWarning[]): void
+{
+    const needle = `${ guarded }!.`;
+    for (const child of children)
+    {
+        if (child.kind === 'expression' && child.code.includes(needle))
+        {
+            warnings.push(unsafeNarrowWarning(guarded, child.start, child.end));
+        }
+        if (child.kind === 'element')
+        {
+            for (const attr of child.attributes)
+            {
+                if (!attr.spread && attr.value.kind === 'expression' && attr.value.code.includes(needle))
+                {
+                    warnings.push(unsafeNarrowWarning(guarded, attr.start, attr.end));
+                }
+            }
+            scanForUnsafeNarrowing(child.children, guarded, warnings);
+        }
+        if (child.kind === 'fragment')
+        {
+            scanForUnsafeNarrowing(child.children, guarded, warnings);
+        }
+    }
+}
+
+/** @internal */
+function unsafeNarrowWarning(guarded: string, start: number, end: number): LintWarning
+{
+    return {
+        code: 'azeroth/unsafe-narrow-in-show',
+        message: `\`${ guarded }!\` re-reads the value this <Show>'s \`when\` already checked - a second, `
+            + 'independent read that can observe null even while the branch is mounted, and `!` is erased '
+            + 'at compile time so it gives no runtime protection. Use the callback form instead: '
+            + `<Show when={ ${ guarded } }>{ (value) => ... }</Show>, and read through \`value()\` instead `
+            + `of \`${ guarded }!\`.`,
+        start,
+        end
+    };
 }
 
 /**

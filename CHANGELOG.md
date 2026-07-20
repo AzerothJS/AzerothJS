@@ -9,6 +9,41 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- `azeroth/unsafe-narrow-in-show` lint rule: flags `guard()!.x` inside a
+  `<Show when={ guard() }>` whose children read the guarded value a second time
+  via non-null assertion instead of using the callback form. That second read is
+  independent of the one `when` already checked and can observe `null` even
+  while the branch is mounted - `!` is erased at compile time, so it gives no
+  runtime protection. Surfaces through `eslint .`, the Vite build, and editor
+  diagnostics alike, with no separate wiring (it lives in the shared markup
+  lint pass all three already read from).
+
+### Fixed
+
+- Reactive DOM attribute bindings written as a function literal or a bare
+  getter reference (`class={ () => ... }`, `class={ computeClass }`) now
+  update correctly. Dependency analysis cannot see reactive reads hidden
+  inside those forms, so they previously rendered once and silently stopped
+  reacting.
+- `<ErrorBoundary>` no longer crashes ("insertBefore: parameter 1 is not of
+  type 'Node'") when `children`/`fallback` resolves to a thunk chain (a
+  function returning a function) instead of an already-built node.
+- The Vite dev server's incremental type checker no longer serves stale
+  diagnostics after editing a plain `.ts` dependency mid-session - file
+  watcher changes now invalidate the checker's cached snapshot instead of
+  pinning to the first-seen copy for the rest of the session.
+- Same-line whitespace between inline markup children (`{ label } <span>`) is
+  preserved as a single space instead of being dropped, which previously
+  fused neighboring inline content together.
+- `<Transition>` now warns once when its target has `display: contents`
+  (which generates no box, so transform/opacity never paint and
+  `transitionend` never fires) instead of silently snapping at the timeout
+  fallback with no explanation.
+- The packaged VS Code extension ships with its icon again (a missing build
+  step left it out).
+
 ## [0.9.0-beta.2] - 2026-07-19
 
 ## [0.9.0-beta.1] - 2026-07-19

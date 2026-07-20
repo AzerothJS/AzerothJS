@@ -31,7 +31,7 @@ import {
     wrapContentsAnchored,
     hydrationNode
 } from '@azerothjs/reactivity';
-import { createCoMarkers, appendToCo, clearCo } from './co-range.ts';
+import { createCoMarkers, appendToCo, clearCo, resolveMountNode } from './co-range.ts';
 
 /**
  * Props for the `<ErrorBoundary>` component.
@@ -213,7 +213,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
                 catchError(
                     () =>
                     {
-                        appendToCo(target, props.children());
+                        appendToCo(target, resolveMountNode(props.children()));
                     },
                     (err) =>
                     {
@@ -243,7 +243,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
             createRoot((dispose) =>
             {
                 branchDispose = dispose;
-                appendToCo(target, props.fallback(captured.value, reset));
+                appendToCo(target, resolveMountNode(props.fallback(captured.value, reset)));
             });
         }
 
