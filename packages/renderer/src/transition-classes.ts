@@ -12,6 +12,9 @@
 /** @internal Default transitionend backstop (ms). */
 export const TRANSITION_FALLBACK_MS = 1000;
 
+/** Elements already warned about un-animatable display so navigation loops stay quiet. */
+const warnedContents = new WeakSet<HTMLElement>();
+
 /**
  * Plays one direction of the class family on `el`; calls `onDone` exactly once
  * when the transition ends (or the backstop fires). Returns a cancel function
@@ -35,6 +38,15 @@ export function playTransitionClasses(
     const from = `${ name }-${ direction }-from`;
     const active = `${ name }-${ direction }-active`;
     const to = `${ name }-${ direction }-to`;
+
+    // `display: contents` generates no box: transform/opacity never paint and
+    // transitionend never fires, so the element SNAPS at the backstop instead of
+    // animating - a silent "transition sometimes does nothing". Say so once.
+    if (el.isConnected && getComputedStyle(el).display === 'contents' && !warnedContents.has(el))
+    {
+        warnedContents.add(el);
+        console.warn(`transition "${ name }" targets an element with display: contents - it generates no box, so nothing can animate. Give the transition root a real display (e.g. a block wrapper).`);
+    }
 
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;

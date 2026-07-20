@@ -63,6 +63,19 @@ describe('parseMarkup - elements', () =>
         expect(e.children).toHaveLength(1);
         expect((e.children[0] as MarkupElement).tag).toBe('span');
     });
+
+    it('keeps a same-line space between two children as a single-space text node', () =>
+    {
+        // `{ label } <span>` must not render fused: only whitespace runs that
+        // contain a newline are formatting; a same-line space is authored spacing.
+        const e = el('<p>{ a } <span/></p>');
+        expect(e.children).toHaveLength(3);
+        expect((e.children[1] as MarkupText).value).toBe(' ');
+
+        const between = el('<p><b/> <i/></p>');
+        expect(between.children).toHaveLength(3);
+        expect((between.children[1] as MarkupText).value).toBe(' ');
+    });
 });
 
 describe('parseMarkup - attributes', () =>

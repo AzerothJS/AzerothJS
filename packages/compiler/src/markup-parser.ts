@@ -503,7 +503,11 @@ class MarkupParser
     {
         if (/^\s*$/.test(raw))
         {
-            return '';
+            // Only FORMATTING whitespace (a run containing a newline - indentation
+            // between block-ish children) disappears. A same-line space between two
+            // inline children (`{ label } <span>`) is authored spacing and must
+            // survive as a single-space text node, or the neighbours render fused.
+            return raw.includes('\n') ? '' : ' ';
         }
         return raw.replace(/\s*\n\s*/g, ' ');
     }
