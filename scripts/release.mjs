@@ -108,7 +108,7 @@
 // `--no-promote-latest` once a real stable release exists and prereleases should
 // stay off `latest`.
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
@@ -301,23 +301,32 @@ Options:
   -h, --help           Show this help.`);
 }
 
+// `file` + an argv array, not one shell string: execFileSync passes each argument
+// through as its own array element, so a value that happens to contain shell
+// metacharacters (an unusual OTP, a stray character in a tag) cannot change what
+// command runs - there is no string for it to break out of. `shell: true` is still
+// needed on Windows (npm/git resolve to `.cmd` shims cmd.exe must interpret), but
+// Node quotes each array element for that shell itself; this file never builds a
+// combined command string by hand the way `execSync` required.
+const useShell = process.platform === 'win32';
+
 /** Reads a command's stdout (used for read-only queries; always runs). */
-function query(command)
+function query(file, args)
 {
-    return execSync(command, { cwd: ROOT, encoding: 'utf8' }).trim();
+    return execFileSync(file, args, { cwd: ROOT, encoding: 'utf8', shell: useShell }).trim();
 }
 
 let dryRun = false;
 
 /** Runs a state-changing command, honouring --dry-run and forwarding stdio. */
-function act(command, extra)
+function act(file, args, extra)
 {
-    log('  $ ' + command);
+    log('  $ ' + [file, ...args].join(' '));
     if (dryRun)
     {
         return;
     }
-    execSync(command, { cwd: ROOT, stdio: 'inherit', ...(extra ?? {}) });
+    execFileSync(file, args, { cwd: ROOT, stdio: 'inherit', shell: useShell, ...(extra ?? {}) });
 }
 
 /** Every file that carries the shared version (root, packages). */
@@ -512,7 +521,7 @@ function alreadyPublished(name, version)
 {
     try
     {
-        return query(`npm view ${ name }@${ version } version`) === version;
+        return query('npm', ['view', `${ name }@${ version }`, 'version']) === version;
     }
     catch
     {
@@ -692,7 +701,7 @@ if (
     log(`\n  ! channel moves BACKWARDS: ${ current } (${ currentChannel }) -> ${ next } (${ nextChannel }). `
         + 'Pre-releases normally advance alpha -> beta -> rc -> stable.');
 }
-const tagExists = query('git tag -l ' + tag) === tag;
+const tagExists = query('git', ['tag', '-l', tag]) === tag;
 
 // A previous run can bump the version files and then die before committing or
 // tagging (a failed verify, an interrupted push), leaving the files already at
@@ -731,7 +740,7 @@ if (!options.noBump)
     // a prior run left behind, which this run is about to commit and tag.
     if (!resuming)
     {
-        const status = query('git status --porcelain');
+        const status = query('git', ['status', '--porcelain']);
         if (status && !dryRun)
         {
             fail('working tree is not clean; commit or stash first');
@@ -755,7 +764,7 @@ if (!options.noBump && !resuming)
         promoteChangelog(next);
     }
     log('\nUpdating lockfile');
-    act('npm install --package-lock-only --no-audit --no-fund');
+    act('npm', ['install', '--package-lock-only', '--no-audit', '--no-fund']);
 }
 else if (resuming)
 {
@@ -765,22 +774,22 @@ else if (resuming)
 if (!options.skipChecks)
 {
     log('\nVerifying (build, lint, publish contract, publish smoke)');
-    act('npm run build');
-    act('npm run lint');
+    act('npm', ['run', 'build']);
+    act('npm', ['run', 'lint']);
     // Validate the published artifacts before tagging: publint checks each
     // package.json contract; the smoke test packs + installs the tarballs and
     // imports them, catching a broken exports map or a corrupted inter-package
     // pin that the src-aliased suite cannot see.
-    act('npm run lint:publish');
-    act('npm run smoke');
+    act('npm', ['run', 'lint:publish']);
+    act('npm', ['run', 'smoke']);
 }
 
 if (!options.noBump)
 {
     log('\nCommitting and tagging');
-    act('git add -A');
-    act(`git commit -m "chore(release): ${ tag }"`);
-    act(`git tag -a ${ tag } -m "${ tag }"`);
+    act('git', ['add', '-A']);
+    act('git', ['commit', '-m', `chore(release): ${ tag }`]);
+    act('git', ['tag', '-a', tag, '-m', tag]);
 }
 
 // Publish BEFORE pushing: the pushed commit/tag triggers CI that builds the editor
@@ -792,8 +801,8 @@ if (!options.noBump)
 if (!options.noPublish)
 {
     log('\nPublishing to npm');
-    const otpFlag = options.otp ? ` --otp=${ options.otp }` : '';
-    const provenanceFlag = options.provenance ? ' --provenance' : '';
+    const otpArgs = options.otp ? ['--otp', options.otp] : [];
+    const provenanceArgs = options.provenance ? ['--provenance'] : [];
     const tagName = distTag(next);
     for (const name of PUBLISH_ORDER)
     {
@@ -804,7 +813,7 @@ if (!options.noPublish)
             log(`  ${ name }@${ next } already on the registry - skipping`);
             continue;
         }
-        act(`npm publish -w ${ name } --access public --tag ${ tagName }${ provenanceFlag }${ otpFlag }`);
+        act('npm', ['publish', '-w', name, '--access', 'public', '--tag', tagName, ...provenanceArgs, ...otpArgs]);
     }
 
     // Registry-readiness gate: `npm publish` returning is NOT the same as the version being
@@ -846,13 +855,13 @@ if (!options.noPublish)
         // The registry can lag a publish by seconds while packuments propagate through its
         // caches, so an ETARGET here is TRANSIENT - retry with a pause instead of dying after
         // every package is already live. --prefer-online defeats the stale local packument.
-        const syncCommand = 'npm install --package-lock-only --prefer-online --no-audit --no-fund';
+        const syncArgs = ['install', '--package-lock-only', '--prefer-online', '--no-audit', '--no-fund'];
         const attempts = 5;
         for (let attempt = 1; attempt <= attempts; attempt++)
         {
             try
             {
-                act(syncCommand, { cwd: path.join(ROOT, 'editors', 'vscode') });
+                act('npm', syncArgs, { cwd: path.join(ROOT, 'editors', 'vscode') });
                 break;
             }
             catch
@@ -863,18 +872,18 @@ if (!options.noPublish)
                     // and committed but never pushed. The lockfile sync is a nicety; the push is
                     // not. Skip the sync and let the release finish; run it by hand afterwards.
                     log('  WARNING: lockfile sync still failing - continuing WITHOUT it.');
-                    log(`  Run manually later: cd editors/vscode && ${ syncCommand }, then commit the lockfile.`);
+                    log(`  Run manually later: cd editors/vscode && npm ${ syncArgs.join(' ') }, then commit the lockfile.`);
                     break;
                 }
                 log(`  registry not caught up yet (attempt ${ attempt }/${ attempts }); retrying in 15s`);
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15_000);
             }
         }
-        const lockDirty = query('git status --porcelain editors/vscode/package-lock.json');
+        const lockDirty = query('git', ['status', '--porcelain', 'editors/vscode/package-lock.json']);
         if (lockDirty)
         {
-            act('git add editors/vscode/package-lock.json');
-            act(`git commit -m "chore(release): sync editor lockfile for ${ tag }"`);
+            act('git', ['add', 'editors/vscode/package-lock.json']);
+            act('git', ['commit', '-m', `chore(release): sync editor lockfile for ${ tag }`]);
         }
     }
 }
@@ -882,8 +891,8 @@ if (!options.noPublish)
 if (!options.noPush)
 {
     log('\nPushing to GitHub');
-    act('git push origin HEAD');
-    act('git push origin ' + tag);
+    act('git', ['push', 'origin', 'HEAD']);
+    act('git', ['push', 'origin', tag]);
 }
 
 // Dist-tag policy: `npm publish --tag beta` does NOT move `latest`, so a plain
@@ -896,10 +905,10 @@ if (!options.noPush)
 if (willPromoteLatest)
 {
     log(`\nPromoting 'latest' -> ${ next } (newest release; pass --no-promote-latest to skip)`);
-    const otpAdd = options.otp ? ` --otp=${ options.otp }` : '';
+    const otpArgs = options.otp ? ['--otp', options.otp] : [];
     for (const name of PUBLISH_ORDER)
     {
-        act(`npm dist-tag add ${ name }@${ next } latest${ otpAdd }`);
+        act('npm', ['dist-tag', 'add', `${ name }@${ next }`, 'latest', ...otpArgs]);
     }
 }
 

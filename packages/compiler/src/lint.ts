@@ -269,21 +269,81 @@ function lintElement(el: MarkupElement, warnings: LintWarning[]): void
     }
 }
 
+/** True for identifier characters (`[\w$]`), false for `undefined` (past the string's start). @internal */
+function isIdentChar(ch: string | undefined): boolean
+{
+    return ch !== undefined && /[\w$]/.test(ch);
+}
+
+/** True for identifier-START characters (`[A-Za-z_$]`, no leading digit), false for `undefined`. @internal */
+function isIdentStart(ch: string | undefined): boolean
+{
+    return ch !== undefined && /[A-Za-z_$]/.test(ch);
+}
+
 /**
  * The last zero-argument call chain in a `when` expression - the value a `<Show>` is actually
  * guarding (`config()` in `config()`, `configs.lastReport()` in `done ? configs.lastReport() :
  * null`). `null` when `when` has no such call (a plain boolean, a comparison with no guarded
  * object): nothing to check.
+ *
+ * Deliberately NOT `/[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\(\s*\)/` run over the whole
+ * string: a self-repeating group with a flexible run of whitespace on each side is a textbook
+ * polynomial-regex shape, AND (independent of that) any unanchored `.match(/…/g)` whose pattern
+ * can consume a long prefix before failing costs O(n) per start position it's retried at - O(n^2)
+ * together on adversarial input (a large `.azeroth` source is exactly "uncontrolled data" here:
+ * it can arrive from an untrusted PR built in CI, or a file opened in an editor). Finding every
+ * `()` first via a trivially-safe fixed-bracket pattern, then walking backward from the LAST one
+ * a plain character at a time, is linear regardless of the input's shape.
  * @internal
  */
 function extractGuardedCall(whenCode: string): string | null
 {
-    const matches = whenCode.match(/[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\(\s*\)/g);
-    if (matches === null || matches.length === 0)
+    const parenRe = /\(\s*\)/g;
+    let openParenIndex = -1;
+    let callEnd = -1;
+    let m: RegExpExecArray | null;
+
+    while ((m = parenRe.exec(whenCode)) !== null)
+    {
+        openParenIndex = m.index;
+        callEnd = m.index + m[0].length; // end of this call's closing `)`
+    }
+    if (openParenIndex === -1)
     {
         return null;
     }
-    return matches[matches.length - 1] ?? null;
+
+    let cursor = openParenIndex;
+    let chainStart = cursor;
+
+    for (;;)
+    {
+        let segmentStart = cursor;
+
+        while (segmentStart > 0 && isIdentChar(whenCode[segmentStart - 1]))
+        {
+            segmentStart--;
+        }
+        if (segmentStart === cursor || !isIdentStart(whenCode[segmentStart]))
+        {
+            break; // no identifier segment immediately before the cursor - stop
+        }
+        chainStart = segmentStart;
+        cursor = segmentStart;
+
+        if (cursor > 0 && whenCode[cursor - 1] === '.')
+        {
+            cursor--;
+            chainStart = cursor;
+            continue; // a `.` extends the chain - look for another segment before it
+        }
+        break;
+    }
+
+    // Includes the call's own `(...)` - the returned text is matched verbatim as a
+    // needle (`${guarded}!.`) against descendant code, so it must read as a call.
+    return chainStart === openParenIndex ? null : whenCode.slice(chainStart, callEnd);
 }
 
 /**

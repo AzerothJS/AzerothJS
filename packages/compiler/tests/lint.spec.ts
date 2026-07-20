@@ -115,6 +115,18 @@ describe('lintMarkup - unsafe-narrow-in-show', () =>
         expect(lint('<Show when={ config() }><p>{ config().name }</p></Show>')).toEqual([]);
     });
 
+    it('stays fast on an adversarial when with no real call (regression: the old '
+        + 'regex-based extractor was polynomial on strings shaped like this)', () =>
+    {
+        const adversarial = '$.'.repeat(50000); // no '()' anywhere - nothing to guard
+        const start = performance.now();
+        const warnings = lint(`<Show when={ ${ adversarial } }><p>{ config()!.x }</p></Show>`);
+        const elapsed = performance.now() - start;
+
+        expect(elapsed).toBeLessThan(200);
+        expect(warnings).toEqual([]);
+    });
+
     it('finds multiple offending reads across the subtree', () =>
     {
         const warnings = lint('<Show when={ config() }><p>{ config()!.a }</p><p>{ config()!.b }</p></Show>');
