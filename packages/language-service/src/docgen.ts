@@ -283,8 +283,13 @@ function render(doc: ComponentDoc): string
     return lines.join('\n') + '\n';
 }
 
-/** Escapes a value for a one-line markdown table cell. */
+/**
+ * Escapes a value for a one-line markdown table cell. Backslashes must be escaped BEFORE
+ * pipes: escaping only `|` would turn a value that already contains a literal `\|` into
+ * `\\|` in the output, which a markdown renderer reads as an escaped backslash followed by
+ * an UNESCAPED pipe - silently breaking back out of the cell.
+ */
 function cell(value: string): string
 {
-    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim() || '-';
+    return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim() || '-';
 }

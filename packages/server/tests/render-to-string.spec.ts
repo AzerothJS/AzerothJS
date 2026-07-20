@@ -301,9 +301,17 @@ describe('renderToStaticMarkup - markers OFF', () =>
         expect(withMarkers).toBe('<div><!--azc:show--><p><!--[-->hi<!--]--></p><!--/azc--></div>');
         expect(withoutMarkers).toBe('<div><p>hi</p></div>');
         // Stripping the framework comment markers from the hydration-ready output yields exactly
-        // the static output.
-        expect(withMarkers.replace(/<!--\[-->|<!--\]-->|<!--azc:[a-z]+-->|<!--\/azc-->/g, ''))
-            .toBe(withoutMarkers);
+        // the static output. Strip to a fixpoint (not one pass) so the assertion holds even if a
+        // future marker shape could leave a residual `<!--` for a later pass to catch.
+        let stripped = withMarkers;
+        let previous: string;
+        do
+        {
+            previous = stripped;
+            stripped = stripped.replace(/<!--\[-->|<!--\]-->|<!--azc:[a-z]+-->|<!--\/azc-->/g, '');
+        }
+        while (stripped !== previous);
+        expect(stripped).toBe(withoutMarkers);
     });
 });
 

@@ -102,7 +102,17 @@ export class AzerothLanguageService
         options: { rootProjectFiles?: boolean; nativeDiagnostics?: boolean } = {}
     )
     {
-        this.#scratchRoot = workspaceDirectory.replace(/\\/g, '/').replace(/\/+$/, '');
+        // Trailing-slash strip via a manual scan, not a `\/+$` regex: an unbounded trailing
+        // quantifier re-tried at every backtrack position is a textbook polynomial-regex
+        // shape on attacker-influenced paths (a workspace root reachable from an opened
+        // project/editor session), even though this particular one is linear in practice.
+        const forwardSlashed = workspaceDirectory.replace(/\\/g, '/');
+        let trailingEnd = forwardSlashed.length;
+        while (trailingEnd > 0 && forwardSlashed[trailingEnd - 1] === '/')
+        {
+            trailingEnd--;
+        }
+        this.#scratchRoot = forwardSlashed.slice(0, trailingEnd);
         this.#project = new AzerothProject(workspaceDirectory, configPath, options);
     }
 

@@ -155,6 +155,14 @@ const PUBLISH_ORDER =
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
+// A real npm OTP is digits (TOTP) or an alphanumeric recovery code - never shell
+// metacharacters. `--otp` is the one CLI value that reaches `act()`'s shell string
+// unvalidated (the version is checked against VERSION_PATTERN before use, and every other
+// interpolated value is an internal package/tag name); rejecting anything else here means
+// the exec call sites downstream (query/act) never receive an unvalidated value to begin
+// with, rather than trying to escape it after the fact.
+const OTP_PATTERN = /^[A-Za-z0-9]+$/;
+
 function fail(message)
 {
     console.error('release: ' + message);
@@ -357,12 +365,19 @@ function releaseFiles()
 function promoteChangelog(nextVersion)
 {
     const changelogPath = path.join(ROOT, 'CHANGELOG.md');
-    if (!existsSync(changelogPath))
+    // Read directly rather than existsSync-then-readFileSync: a separate existence check
+    // followed by a later read/write leaves a window where the file could be removed or
+    // replaced in between (a TOCTOU race) - catching the read's own failure closes it.
+    let text;
+    try
+    {
+        text = readFileSync(changelogPath, 'utf8');
+    }
+    catch
     {
         log('  ! no CHANGELOG.md - skipping changelog promotion');
         return;
     }
-    const text = readFileSync(changelogPath, 'utf8');
     if (!text.includes('## [Unreleased]'))
     {
         log('  ! CHANGELOG.md has no [Unreleased] section - skipping changelog promotion');
@@ -630,6 +645,10 @@ if (!options.version)
 if (options.channel !== undefined && options.channel !== 'stable' && !PRERELEASE_CHANNELS.includes(options.channel))
 {
     fail(`unknown --channel "${ options.channel }". Use one of: ${ PRERELEASE_CHANNELS.join(', ') }, stable.`);
+}
+if (options.otp !== null && !OTP_PATTERN.test(options.otp))
+{
+    fail('--otp must be alphanumeric (a TOTP code or recovery code) - got a value with other characters.');
 }
 
 const currentForResolve = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;

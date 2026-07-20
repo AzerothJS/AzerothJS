@@ -120,52 +120,106 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
 /** One imported binding: the local name, its source offset, and the span of its whole import statement. */
 interface ImportBinding { name: string; start: number; end: number; stmtStart: number; stmtEnd: number }
 
-/** Parses the `import ... from '...'` statements of a `.azeroth` module (which precede any markup, so they
- *  are plain TS) and yields each bound LOCAL name with its offset. Side-effect imports yield nothing. */
+/** Escapes every regex metacharacter in `value` so it can be embedded in a `new RegExp(...)` pattern
+ *  and still only match itself literally. @internal */
+function escapeRegExp(value: string): string
+{
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Parses the `import ... from '...'` statements of a `.azeroth` module (which precede any markup, so
+ * they are plain TS) and yields each bound LOCAL name with its offset. Side-effect imports yield
+ * nothing.
+ *
+ * Deliberately NOT one `/import\s+(?:type\s+)?([\s\S]*?)\s+from\s*['"][^'"]+['"]\s*;?/g` regex: an
+ * unbounded `[\s\S]*?` immediately followed by a multi-token literal it can also partially match
+ * (`\s+from`) is a textbook polynomial-regex shape on a large adversarial source file (a
+ * `.azeroth`/`.ts` module is exactly "uncontrolled data" here - it can arrive from an untrusted PR
+ * built in CI, or a file opened in an editor). Finding the statement boundary with plain string
+ * scans keeps each step linear.
+ */
 function importBindings(source: string): ImportBinding[]
 {
     const out: ImportBinding[] = [];
-    const importRe = /import\s+(?:type\s+)?([\s\S]*?)\s+from\s*['"][^'"]+['"]\s*;?/g;
-    let m: RegExpExecArray | null;
-    while ((m = importRe.exec(source)) !== null)
+    const importKeywordRe = /\bimport\b/g;
+    let km: RegExpExecArray | null;
+
+    while ((km = importKeywordRe.exec(source)) !== null)
     {
-        const stmtStart = m.index;
-        const stmtEnd = m.index + m[0].length;
-        const clause = m[1];
-        if (clause === undefined)
+        const stmtStart = km.index;
+        const afterImport = /^\s+/.exec(source.slice(stmtStart + 'import'.length));
+        if (afterImport === null)
         {
-            continue; // group 1 always captures; satisfies the indexed-access check
+            continue; // `import(...)` / `import.meta` - not a static import statement
         }
-        const clauseStart = m.index + m[0].indexOf(clause);
+        let clauseStart = stmtStart + 'import'.length + afterImport[0].length;
+
+        // A leading `type` (before any binding) marks a type-only import; skip it too.
+        const typeMatch = /^type\s+/.exec(source.slice(clauseStart));
+        if (typeMatch !== null)
+        {
+            clauseStart += typeMatch[0].length;
+        }
+
+        // Scan forward for a `from` keyword immediately (only whitespace between) followed by a
+        // quoted specifier - that is the statement's end. Each candidate is an O(1) lookahead, so
+        // this whole scan is linear in the statement's length.
+        const fromKeywordRe = /\bfrom\b/g;
+        fromKeywordRe.lastIndex = clauseStart;
+        let clauseEnd = -1;
+        let stmtEnd = -1;
+        let fm: RegExpExecArray | null;
+        while ((fm = fromKeywordRe.exec(source)) !== null)
+        {
+            const specifierMatch = /^\s*(['"])[^'"]*\1\s*;?/.exec(source.slice(fm.index + 'from'.length));
+            if (specifierMatch !== null)
+            {
+                clauseEnd = fm.index;
+                stmtEnd = fm.index + 'from'.length + specifierMatch[0].length;
+                break;
+            }
+        }
+        if (clauseEnd === -1)
+        {
+            continue; // no `from '...'` found - not a well-formed import statement
+        }
+
+        const clause = source.slice(clauseStart, clauseEnd).trimEnd();
 
         // default import: leading `Foo` before any `{`/`*`
-        const defName = clause.match(/^\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/)?.[1];
+        const defName = /^\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/.exec(clause)?.[1];
         if (defName !== undefined && !clause.trimStart().startsWith('{') && !clause.trimStart().startsWith('*'))
         {
             const at = clauseStart + clause.indexOf(defName);
             out.push({ name: defName, start: at, end: at + defName.length, stmtStart, stmtEnd });
         }
         // namespace: `* as NS`
-        const nsName = clause.match(/\*\s*as\s+([A-Za-z_$][\w$]*)/)?.[1];
+        const nsName = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause)?.[1];
         if (nsName !== undefined)
         {
             const at = clauseStart + clause.indexOf(nsName, clause.indexOf('as'));
             out.push({ name: nsName, start: at, end: at + nsName.length, stmtStart, stmtEnd });
         }
-        // named: `{ a, b as c, type T }` - the LOCAL name is after `as`, else the imported name
-        const namedMatch = clause.match(/\{([^}]*)\}/);
-        const namedInner = namedMatch?.[1];
-        if (namedMatch && namedInner !== undefined)
+        // named: `{ a, b as c, type T }` - the LOCAL name is after `as`, else the imported name.
+        // Located by index, not a `{([^}]*)}` regex - unanchored, that regex is retried at every
+        // offset, so a clause with many `{` and no `}` costs O(n) per offset, O(n^2) overall.
+        const braceOpen = clause.indexOf('{');
+        const braceClose = braceOpen === -1 ? -1 : clause.indexOf('}', braceOpen + 1);
+        if (braceOpen !== -1 && braceClose !== -1)
         {
-            const blockStart = clauseStart + clause.indexOf(namedMatch[0]) + 1;
+            const namedInner = clause.slice(braceOpen + 1, braceClose);
+            const blockStart = clauseStart + braceOpen + 1;
             let cursor = 0;
             for (const raw of namedInner.split(','))
             {
                 const partStart = blockStart + cursor;
                 cursor += raw.length + 1; // + the comma
                 const part = raw.replace(/^\s*type\s+/, '');
-                const alias = part.match(/[A-Za-z_$][\w$]*\s+as\s+([A-Za-z_$][\w$]*)/);
-                const name = alias ? alias[1] : part.trim().match(/^[A-Za-z_$][\w$]*/)?.[0];
+                // Anchored (`^\s*`), not a bare search: unanchored, this regex is also retried at
+                // every offset in `part` - the same O(n^2) shape as the brace lookup above.
+                const alias = /^\s*[A-Za-z_$][\w$]*\s+as\s+([A-Za-z_$][\w$]*)/.exec(part);
+                const name = alias ? alias[1] : /^[A-Za-z_$][\w$]*/.exec(part.trim())?.[0];
                 if (name === undefined)
                 {
                     continue;
@@ -229,7 +283,11 @@ export function diagnoseUnusedImports(source: string, compiledJs: string): Azero
             continue;
         }
         // (2) conservative source cross-check: any occurrence outside ALL import statements => keep.
-        const re = new RegExp(`(?<![\\w$.])${ b.name.replace(/[$]/g, '\\$') }(?![\\w$])`, 'g');
+        // `b.name` can only be `[A-Za-z0-9_$]` by construction (it came out of an identifier-shaped
+        // capture above), so escaping just `$` is sufficient today - but escaping every regex
+        // metacharacter (not just the one this call site happens to need) keeps that true by
+        // construction instead of by an invariant a future caller could quietly break.
+        const re = new RegExp(`(?<![\\w$.])${ escapeRegExp(b.name) }(?![\\w$])`, 'g');
         let usedElsewhere = false;
         let occ: RegExpExecArray | null;
         while ((occ = re.exec(source)) !== null)
