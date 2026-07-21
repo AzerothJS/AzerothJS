@@ -135,8 +135,13 @@ const PUBLISH_ORDER =
     '@azerothjs/logger',
     // schema before form: @azerothjs/form depends on @azerothjs/schema (form re-exports
     // its validators), so schema must be resolvable on npm before form publishes.
-    // Remaining backend packages follow deps-first when they land: cron, http, ws, api.
     '@azerothjs/schema',
+    // Backend stack, deps-first (all now public): cron/ws are standalone; http needs
+    // logger + reactivity (both above); api needs schema (above) + http.
+    '@azerothjs/cron',
+    '@azerothjs/http',
+    '@azerothjs/ws',
+    '@azerothjs/api',
     '@azerothjs/form',
     '@azerothjs/compiler',
     'azerothjs',
