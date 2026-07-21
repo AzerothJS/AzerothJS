@@ -108,7 +108,7 @@
 // `--no-promote-latest` once a real stable release exists and prereleases should
 // stay off `latest`.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
@@ -306,19 +306,31 @@ Options:
   -h, --help           Show this help.`);
 }
 
-// `file` + an argv array, not one shell string: execFileSync passes each argument
-// through as its own array element, so a value that happens to contain shell
-// metacharacters (an unusual OTP, a stray character in a tag) cannot change what
-// command runs - there is no string for it to break out of. `shell: true` is still
-// needed on Windows (npm/git resolve to `.cmd` shims cmd.exe must interpret), but
-// Node quotes each array element for that shell itself; this file never builds a
-// combined command string by hand the way `execSync` required.
-const useShell = process.platform === 'win32';
+// Two execution paths so no call ever runs with `shell: true` AND an args array.
+// That combination is what Node's DEP0190 warns about: with a shell the args are
+// concatenated, not escaped - which both risks injection AND word-splits any arg
+// containing a space or `()` (e.g. a `chore(release): vX.Y.Z` commit message, where
+// git then read the version as a stray pathspec and the commit died).
+//   - Real executables (git, cargo, node): execFileSync with shell:false. Each arg
+//     is its own argv entry, passed verbatim - spaces/parens stay intact, no shell.
+//   - npm / npx on Windows only: these resolve to `.cmd` shims that cmd.exe must
+//     interpret, so a shell is unavoidable. Pass ONE pre-quoted command STRING via
+//     execSync (a string, not an args array) - that does not trip DEP0190. Safe
+//     here because every npm arg is an internal package name / static flag /
+//     dist-tag / OTP already validated against OTP_PATTERN: no spaces, no
+//     metacharacters. On macOS/Linux npm is a normal executable, so it takes the
+//     shell-free path like everything else.
+const winShellShim = (file) => process.platform === 'win32' && (file === 'npm' || file === 'npx');
+const winQuote = (arg) => `"${ String(arg).replace(/"/g, '\\"') }"`;
 
 /** Reads a command's stdout (used for read-only queries; always runs). */
 function query(file, args)
 {
-    return execFileSync(file, args, { cwd: ROOT, encoding: 'utf8', shell: useShell }).trim();
+    if (winShellShim(file))
+    {
+        return execSync([file, ...args.map(winQuote)].join(' '), { cwd: ROOT, encoding: 'utf8' }).trim();
+    }
+    return execFileSync(file, args, { cwd: ROOT, encoding: 'utf8', shell: false }).trim();
 }
 
 let dryRun = false;
@@ -331,7 +343,12 @@ function act(file, args, extra)
     {
         return;
     }
-    execFileSync(file, args, { cwd: ROOT, stdio: 'inherit', shell: useShell, ...(extra ?? {}) });
+    if (winShellShim(file))
+    {
+        execSync([file, ...args.map(winQuote)].join(' '), { cwd: ROOT, stdio: 'inherit', ...(extra ?? {}) });
+        return;
+    }
+    execFileSync(file, args, { cwd: ROOT, stdio: 'inherit', shell: false, ...(extra ?? {}) });
 }
 
 /** Every file that carries the shared version (root, packages). */

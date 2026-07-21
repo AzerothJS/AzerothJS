@@ -9,6 +9,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- The backend stack is now published to npm: `@azerothjs/http` (web-standard
+  HTTP kernel), `@azerothjs/ws` (RFC 6455 WebSockets), `@azerothjs/api`
+  (contract-first, type-safe API layer), and `@azerothjs/cron` (zero-dependency
+  scheduler). They were previously private and consumable only via vendored
+  tarballs; a clean `npm install @azerothjs/http` now resolves.
+
 ## [0.9.0-beta.3] - 2026-07-20
 
 ### Added
@@ -47,6 +55,12 @@ follow [Semantic Versioning](https://semver.org).
   step left it out).
 
 ## [0.9.0-beta.2] - 2026-07-19
+
+### Fixed
+
+- Renderer `bindContent` now resolves a `children` thunk to its node instead of
+  stringifying the function, so a component handed a function-returning-node as
+  its children renders correctly.
 
 ## [0.9.0-beta.1] - 2026-07-19
 
