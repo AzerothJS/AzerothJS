@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/typescript-plugin",
-    "version": "0.9.0-beta.3",
+    "version": "0.9.0-beta.4",
     "description": "AzerothJS TypeScript language-service plugin - resolves .azeroth imports with real types in tsserver/editors",
     "type": "commonjs",
     "main": "./dist/index.js",
@@ -19,7 +19,7 @@
         "language-service"
     ],
     "devDependencies": {
-        "@azerothjs/language-service": "0.9.0-beta.3",
+        "@azerothjs/language-service": "0.9.0-beta.4",
         "esbuild": "^0.28.1"
     },
     "peerDependencies": {

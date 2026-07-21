@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/testing",
-    "version": "0.9.0-beta.3",
+    "version": "0.9.0-beta.4",
     "engines": {
         "node": ">=24"
     },
@@ -27,8 +27,8 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/component": "0.9.0-beta.3",
-        "@azerothjs/reactivity": "0.9.0-beta.3"
+        "@azerothjs/component": "0.9.0-beta.4",
+        "@azerothjs/reactivity": "0.9.0-beta.4"
     },
     "publishConfig": {
         "access": "public"
