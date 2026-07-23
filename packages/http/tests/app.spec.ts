@@ -46,6 +46,26 @@ describe('dispatch', () =>
         expect(((await response.json()) as { error: { code: string; message: string } }).error.code).toBe('not-found');
     });
 
+    it('serializeError makes every error speak the app envelope - route-miss 404 included', async () =>
+    {
+        const app = new App({
+            serializeError: ({ error, request }) => ({ success: false, code: error.code, path: new URL(request.url).pathname })
+        });
+        app.get('/boom', () =>
+        {
+            throw new UnauthorizedError('nope');
+        });
+
+        const thrown = await get(app, '/boom');
+        expect(thrown.status).toBe(401);
+        expect(await thrown.json()).toEqual({ success: false, code: 'unauthorized', path: '/boom' });
+
+        // The route-miss 404 takes the same envelope, not the cached default shape.
+        const miss = await get(app, '/absent');
+        expect(miss.status).toBe(404);
+        expect(await miss.json()).toEqual({ success: false, code: 'not-found', path: '/absent' });
+    });
+
     it('a method mismatch is a 405 with Allow, not a 404', async () =>
     {
         const app = new App();

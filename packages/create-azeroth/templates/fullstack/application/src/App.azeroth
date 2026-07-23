@@ -1,0 +1,25 @@
+export default component App()
+{
+    state count = 0;
+    state health = '';
+
+    const ping = async (): Promise<void> =>
+    {
+        const response = await fetch('/api/health'); // proxied to server/ - see vite.config.ts
+        health = JSON.stringify(await response.json());
+    };
+
+    <main class="app">
+        <h1>{{name}}</h1>
+        <p>
+            application/ (vite) + server/ (@azerothjs/http) - one <code>npm run dev</code> runs both.
+        </p>
+        <button onClick={ () => count += 1 }>
+            count is { count }
+        </button>
+        <button onClick={ () => void ping() }>
+            ping the api
+        </button>
+        <p class="health">{ health }</p>
+    </main>
+}

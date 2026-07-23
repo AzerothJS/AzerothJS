@@ -1,0 +1,20 @@
+{
+    "name": "{{name}}",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "azeroth dev",
+        "check": "azeroth check",
+        "build": "azeroth build",
+        "start": "node src/main.ts"
+    },
+    "dependencies": {
+        "@azerothjs/http": "{{version}}"
+    },
+    "devDependencies": {
+        "@azerothjs/cli": "{{version}}",
+        "@types/node": "^24.0.0",
+        "typescript": "^5.7.0"
+    }
+}

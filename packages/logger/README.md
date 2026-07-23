@@ -110,20 +110,59 @@ banner never invents numbers.
 | `FORCE_COLOR` | forces color onto a non-TTY (`1`/`2`/`3` = 16/256/truecolor) |
 | `NODE_ENV=production` | auto face picks NDJSON and the banner stays silent |
 
+## Log files
+
+Point the logger at a file to append forever, or at a FOLDER for day-named files with
+size rotation and retention - rotation is rename-free (a new name opens, the old file
+just stops growing), which is what makes it correct on Windows, where an open file
+cannot be renamed and antivirus loves holding handles:
+
+```ts
+import { createLogger, fileStream } from '@azerothjs/logger';
+
+// logs/app-2026-07-21.ndjson, app-2026-07-21.2.ndjson, ... - NDJSON, never ANSI
+const log = createLogger({ stream: fileStream('logs/', { maxFileBytes: 32 * 1024 * 1024, maxFiles: 14 }) });
+```
+
+This rides the fused NDJSON fast path untouched. Lines batch in a bounded buffer and
+hit disk on a size threshold, a flush interval (default 1 s), `flush()`/`close()`, and
+process exit - so a `process.exit()` or a graceful SIGTERM loses nothing, and an
+external hard kill loses at most the flush interval. When the disk cannot keep up or a
+write fails, lines are DROPPED and counted - never blocking the event loop, never
+growing unbounded - with one stderr notice and a `log lines dropped` record on
+recovery: logging must never break the system.
+
+Both faces at once - pretty for eyes, a file for the record:
+
+```ts
+import { createLogger, prettySink, fileSink, teeSink } from '@azerothjs/logger';
+
+const file = fileSink('logs/');
+const log = createLogger({ sink: teeSink(prettySink(), file) });
+// on shutdown: file.close()  (flushes; process exit also flushes automatically)
+```
+
+And with `@azerothjs/http`, one line per request into the folder:
+
+```ts
+new App({ observe: logRequests(createLogger({ stream: fileStream('logs/') })) });
+```
+
 ## Custom sinks
 
 A sink is one function; everything else is composition:
 
 ```ts
-import { createLogger, ndjsonLine } from '@azerothjs/logger';
-import { createWriteStream } from 'node:fs';
+import { createLogger } from '@azerothjs/logger';
 
-const file = createWriteStream('app.log', { flags: 'a' });
-const log = createLogger({ sink: (record) => file.write(ndjsonLine(record)) });
+const seen: unknown[] = [];
+const log = createLogger({ sink: (record) => seen.push(record) }); // a test spy
 ```
 
 The record - `{ level, message, time, fields }` - is the whole contract; an OpenTelemetry
 adapter, a test spy, or `@azerothjs/http`'s request logging all consume it structurally.
+For files, prefer `fileStream`/`fileSink` above - they add the batching, rotation, and
+crash-safety a bare write stream does not have.
 
 ## License
 

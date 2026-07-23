@@ -13,6 +13,8 @@ export type { LoggerOptions, LoggerFace } from './logger.ts';
 export type { Logger, LogRecord, LogSink, LogLevel, LevelThreshold } from './record.ts';
 export { prettySink, ndjsonSink, consoleSink } from './sinks.ts';
 export type { TerminalSinkOptions, WritableLike } from './sinks.ts';
+export { fileStream, fileSink, teeSink } from './file.ts';
+export type { FileStreamOptions, FileStream, FileSink } from './file.ts';
 export { renderBanner, printBanner, formatReady } from './banner.ts';
 export type { BannerOptions } from './banner.ts';
 export { errorShape, shapeFields, ndjsonLine } from './serialize.ts';

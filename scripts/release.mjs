@@ -155,7 +155,13 @@ const PUBLISH_ORDER =
     '@azerothjs/eslint-plugin',
     '@azerothjs/language-service',
     '@azerothjs/language-server',
-    '@azerothjs/typescript-plugin'
+    '@azerothjs/typescript-plugin',
+    // The CLI last among the framework packages: its templates and `check` reference the
+    // language-server's bins, and it depends on logger (far above).
+    '@azerothjs/cli',
+    // The scaffolder very last: its templates pin the version this release just published,
+    // so everything they reference must already be resolvable on npm.
+    'create-azeroth'
 ];
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

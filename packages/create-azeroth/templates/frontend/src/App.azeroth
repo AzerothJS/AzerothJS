@@ -1,0 +1,14 @@
+export default component App()
+{
+    state count = 0;
+
+    <main class="app">
+        <h1>{{name}}</h1>
+        <p>
+            An AzerothJS app. Edit <code>src/App.azeroth</code> and save - the change is live.
+        </p>
+        <button onClick={ () => count += 1 }>
+            count is { count }
+        </button>
+    </main>
+}

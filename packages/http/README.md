@@ -39,6 +39,69 @@ const served = await serve(app, { port: 3000 });
 // served.shutdown(): graceful - drain in-flight responses, then close.
 ```
 
+Scaffold a complete runnable server like this - a custom error envelope, a scoped `with`
+guard, and graceful shutdown, in one file with no build step - with
+`npm create azeroth@latest` (the backend template).
+
+## Development
+
+There is no build step in the dev loop. Node >= 24 runs TypeScript directly, so
+the whole story is one command:
+
+```sh
+node --watch src/main.ts   # runs the server, restarts on any change it imports
+```
+
+Wire it as your `dev` script and that is the entire setup - no bundler, no
+`tsc -w` in a second terminal. The dev *run* pulls in nothing; the only dev
+dependencies are the two the type-check gate needs (`typescript` for `tsc`, and
+`@types/node` so `tsc` can resolve the `node:http` types this package's adapters
+reference):
+
+```jsonc
+// package.json
+{
+    "type": "module",
+    "scripts": {
+        "dev": "node --watch src/main.ts",
+        "start": "node src/main.ts",
+        "typecheck": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "typescript": "^5.7.0",
+        "@types/node": "^24.0.0"
+    }
+}
+```
+
+Node's native TypeScript is *strip-only*: it erases types and runs, it does not
+check them. So type errors never block `node --watch` (you keep moving), and
+`tsc --noEmit` stays a separate gate you run in CI or on save. A minimal
+`tsconfig.json` for that gate, matching the `.ts` import extensions Node wants -
+`types: ["node"]` is what silences the `Cannot find name 'node:http'` errors from
+the adapter typings:
+
+```jsonc
+{
+    "compilerOptions": {
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "allowImportingTsExtensions": true,
+        "noEmit": true,
+        "strict": true,
+        "types": ["node"]
+    }
+}
+```
+
+Relative imports carry the `.ts` extension (`import { x } from './x.ts'`) - that
+is what Node resolves at runtime, and the tsconfig above lets `tsc` accept it too.
+
+**When you do need a build step:** only if something in your stack relies on
+`emitDecoratorMetadata` - a decorator-driven ORM (TypeORM, etc.) reads type
+metadata that strip-only execution does not emit. Then compile with `tsc` and run
+`node --watch dist/main.js`. A plain `@azerothjs/http` app needs none of that.
+
 ## What is in the box
 
 - **Radix router** - no regex, O(segments), route conflicts FAIL BOOT with a printable
@@ -46,7 +109,8 @@ const served = await serve(app, { port: 3000 });
 - **One error path** - every throw (sync or async) becomes a stable wire shape
   `{ error: { code, message, details? } }`; 4xx messages cross the wire, 5xx internals stay
   home; `ValidationError.details.fields` is the exact map `@azerothjs/form`'s `setError`
-  consumes.
+  consumes. Speak your own envelope with `new App({ serializeError })` - one place to reshape
+  the body (route-miss 404s included), the same guarantees.
 - **Bodies with limits on by default** - JSON, urlencoded, raw, and a from-scratch
   multipart/form-data parser (byte-exact, capped on three axes).
 - **A request is a reactive root** - `createStore` state is request-isolated across
@@ -54,7 +118,9 @@ const served = await serve(app, { port: 3000 });
   runs: success, throw, or client disconnect. The disconnect `AbortSignal` rides on
   `request.signal`.
 - **Typed middleware** - `app.use()` accumulates context in the type system; a `Response`
-  return short-circuits (guards); ordering is lexical; no `next()`.
+  return short-circuits (guards); ordering is lexical; no `next()`. `app.with(mw)` scopes a
+  middleware to just the routes registered through it - `app.with(requireAuth).get(...)` - so
+  auth/throttle live at registration, not as a repeated guard call inside every handler.
 - **Server-Sent Events** - `sse()` produces exactly what the frontend `stream` keyword
   (`createStream({ parse: 'sse' })`) consumes: framed events, comment heartbeats, `[DONE]`.
 - **The rest of a real server** - cookies (loud `__Host-`/SameSite validation), static

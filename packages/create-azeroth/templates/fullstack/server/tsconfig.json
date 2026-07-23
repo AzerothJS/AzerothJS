@@ -1,0 +1,11 @@
+{
+    "compilerOptions": {
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "allowImportingTsExtensions": true,
+        "noEmit": true,
+        "strict": true,
+        "types": ["node"]
+    },
+    "include": ["src"]
+}

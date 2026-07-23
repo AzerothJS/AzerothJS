@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "skipLibCheck": true,
+
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "isolatedModules": true,
+        "noEmit": true,
+
+        /* AzerothJS: real `.azeroth` types inside `.ts` files (tsserver/editors).
+           The command-line gate is `azeroth-tsc` (via `azeroth check`), not `tsc`. */
+        "plugins": [{ "name": "@azerothjs/typescript-plugin" }],
+
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true
+    },
+    "include": ["src"]
+}

@@ -1,0 +1,40 @@
+:root {
+    color-scheme: light dark;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+}
+
+.app {
+    text-align: center;
+    padding: 2rem;
+}
+
+.app h1 {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.app p {
+    opacity: 0.75;
+    margin-bottom: 2rem;
+}
+
+.app button {
+    font: inherit;
+    padding: 0.6rem 1.4rem;
+    border-radius: 0.5rem;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    color: inherit;
+    cursor: pointer;
+}
+
+.app button:hover {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+}

@@ -24,7 +24,10 @@ export default defineConfig([
         // Test fixtures import `.azeroth` modules; resolving those is the plugin's
         // own job at test runtime, so they live outside every TS project (mirrors
         // the exclude in the package's tsconfig.build.json).
-        'packages/typescript-plugin/tests/fixtures/**'
+        'packages/typescript-plugin/tests/fixtures/**',
+        // Scaffolding templates reference dependencies that exist only in a
+        // scaffolded app (and carry {{placeholders}}) - they are data, not code.
+        'packages/create-azeroth/templates/**'
     ]),
     tseslint.configs.recommended,
     {

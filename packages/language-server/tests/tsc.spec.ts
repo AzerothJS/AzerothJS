@@ -60,7 +60,9 @@ describe('parseArgs', () =>
 
 describe('runTsc', () =>
 {
-    it('checks the fixture app clean: 1 .azeroth + 1 .ts, zero errors', () =>
+    // These spin up a real TS program over the fixture; ~300ms alone, but under the
+    // fully parallel suite the default 5s timeout flakes on a loaded machine.
+    it('checks the fixture app clean: 1 .azeroth + 1 .ts, zero errors', { timeout: 30_000 }, () =>
     {
         const { out, fileCount, errorCount } = check(appDir);
         expect(errorCount).toBe(0);
@@ -68,7 +70,7 @@ describe('runTsc', () =>
         expect(out).toContain('Checked 2 file(s) (1 .azeroth, 1 .ts); no type errors.');
     });
 
-    it('reports a .azeroth type error in tsc format with a relative forward-slash path', () =>
+    it('reports a .azeroth type error in tsc format with a relative forward-slash path', { timeout: 30_000 }, () =>
     {
         const { out, fileCount, errorCount } = check(brokenDir);
         expect(fileCount).toBe(2);

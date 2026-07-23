@@ -40,7 +40,7 @@ export {
     MethodNotAllowedError, ConflictError, PayloadTooLargeError, UnsupportedMediaTypeError,
     ValidationError, TooManyRequestsError, errorResponse
 } from './errors.ts';
-export type { ErrorObserver } from './errors.ts';
+export type { ErrorObserver, ErrorSerializer, ErrorSerializerContext } from './errors.ts';
 
 export { json, text, html, redirect, noContent, created, queryResult, acceptQuery } from './respond.ts';
 export type { QueryResultOptions } from './respond.ts';

@@ -24,7 +24,7 @@
 
 import type { PathParams } from './router.ts';
 import { RadixRouter } from './router.ts';
-import { HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver } from './errors.ts';
+import { HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { runInRequestRoot } from './request-root.ts';
 
 /** What every handler receives beside the request. */
@@ -62,6 +62,14 @@ export interface AppOptions
 
     /** Observes every error the app maps (logging seam). Its own throws are swallowed. */
     onError?: ErrorObserver;
+
+    /**
+     * Reshapes the error wire body so the app can speak its own envelope instead of the default
+     * `{ error: { code, message } }` - return a plain value to replace the body, a `Response` for
+     * full control, or `undefined` to keep the default for that error. Applies uniformly to every
+     * error, route-miss 404s included; a broken serializer falls back to the default shape.
+     */
+    serializeError?: ErrorSerializer;
 
     /**
      * Wrap every dispatch in a request root (store isolation across awaits + the
@@ -187,21 +195,37 @@ export interface AzerothPlugin<In extends object = object, Out extends object = 
     install(app: App<In>): App<Out>;
 }
 
+/**
+ * @internal What a {@link App.with} fork inherits from its parent. The router is SHARED (every
+ * route lands in one table), the options are SHARED (one error/observer policy), the plugin
+ * registry is SHARED (a duplicate is caught across forks); only the middleware list is a COPY, so
+ * a fork's added middleware never leaks back to the parent. Not part of the public surface.
+ */
+interface AppInternals
+{
+    router: RadixRouter<Handler>;
+    middlewares: Array<Middleware<object, Record<string, unknown>>>;
+    installed: Array<{ name: string; version?: string | undefined }>;
+}
+
 export class App<Ctx extends object = object>
 {
-    readonly #router = new RadixRouter<Handler>();
+    readonly #router: RadixRouter<Handler>;
 
     readonly #options: AppOptions;
 
     /** The middleware registered so far; each route snapshots this list when registered. */
-    readonly #middlewares: Array<Middleware<object, Record<string, unknown>>> = [];
+    readonly #middlewares: Array<Middleware<object, Record<string, unknown>>>;
 
     /** Installed named plugins, in registration order (introspected via {@link plugins}). */
-    readonly #installed: Array<{ name: string; version?: string | undefined }> = [];
+    readonly #installed: Array<{ name: string; version?: string | undefined }>;
 
-    constructor(options: AppOptions = {})
+    constructor(options: AppOptions = {}, internals?: AppInternals)
     {
         this.#options = options;
+        this.#router = internals?.router ?? new RadixRouter<Handler>();
+        this.#middlewares = internals?.middlewares ?? [];
+        this.#installed = internals?.installed ?? [];
     }
 
     /**
@@ -216,6 +240,35 @@ export class App<Ctx extends object = object>
     {
         this.#middlewares.push(middleware as Middleware<object, Record<string, unknown>>);
         return this as unknown as App<Ctx & Added>;
+    }
+
+    /**
+     * Opens a SCOPED registration view. `app.with(mw)` returns an app that shares this one's route
+     * table but runs `mw` only for the routes registered THROUGH the returned view - and no others.
+     * It is the scoped counterpart to {@link use}: `use` makes a middleware global from its lexical
+     * position onward, `with` confines it to a handful of routes without a manual guard call inside
+     * each handler. Chain it - `app.with(throttle).with(requireAuth).get(...)` - and each middleware's
+     * context additions flow into the next and into the handler, typed end to end. The fork never
+     * mutates this app: routes registered directly on `app` are untouched, and a later `app.use` does
+     * not reach back into an already-opened fork.
+     *
+     * @example
+     * ```ts
+     * const authed = app.with(requireAuth); // Middleware<Ctx, { accountId: number }>
+     * authed.get('/account/me', (request, ctx) => json({ id: ctx.accountId })); // ctx.accountId typed
+     * authed.patch('/account', updateHandler);
+     * app.get('/health', () => text('ok')); // no auth - the fork did not touch app
+     * ```
+     */
+    public with<Added extends Record<string, unknown> = Record<never, never>>(
+        middleware: Middleware<Ctx, Added>
+    ): App<Ctx & Added>
+    {
+        return new App<Ctx & Added>(this.#options, {
+            router: this.#router,
+            middlewares: [...this.#middlewares, middleware as Middleware<object, Record<string, unknown>>],
+            installed: this.#installed
+        });
     }
 
     /** Registers a handler; the pattern's params type the context. Conflicts throw here, at boot. */
@@ -397,7 +450,12 @@ export class App<Ctx extends object = object>
         }
         catch (error)
         {
-            response = errorResponse(error, { dev: this.#options.dev, observe: this.#options.onError });
+            response = errorResponse(error, {
+                dev: this.#options.dev,
+                observe: this.#options.onError,
+                serialize: this.#options.serializeError,
+                request
+            });
         }
         if (observer !== undefined)
         {
@@ -432,10 +490,12 @@ export class App<Ctx extends object = object>
 
         if (result.kind === 'miss')
         {
-            // A routing miss is routine control flow, not an exception. When an error observer
-            // is watching, throw so it still sees the 404 (with the path); otherwise return the
-            // cached response directly - no Error, no stack capture, no per-request serialization.
-            if (this.#options.onError !== undefined)
+            // A routing miss is routine control flow, not an exception. When an error observer is
+            // watching OR a custom error serializer is set (so the 404 must take the app's envelope,
+            // not the cached default), throw so it flows through the one error path with the path;
+            // otherwise return the cached response directly - no Error, no stack capture, no
+            // per-request serialization.
+            if (this.#options.onError !== undefined || this.#options.serializeError !== undefined)
             {
                 throw new NotFoundError(`Nothing is served at ${ request.method } ${ pathname }.`);
             }

@@ -1,0 +1,53 @@
+{
+    "name": "@azerothjs/cli",
+    "version": "0.9.0-beta.4",
+    "engines": {
+        "node": ">=24"
+    },
+    "description": "AzerothJS command line - one verb per job: dev (the fullstack conductor), check, build, doctor, info. Detects your project's shape, composes the tools you already have, and prints exactly what it runs",
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "bin": {
+        "azeroth": "./dist/cli.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "sideEffects": false,
+    "scripts": {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
+        "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
+        "prepublishOnly": "npm run build"
+    },
+    "dependencies": {
+        "@azerothjs/logger": "0.9.0-beta.4"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "author": {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/AzerothJS/AzerothJS.git",
+        "directory": "packages/cli"
+    },
+    "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/cli",
+    "bugs": {
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    }
+}

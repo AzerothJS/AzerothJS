@@ -9,6 +9,52 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- `@azerothjs/logger`: log files. `fileStream(target)` is a buffered NDJSON writer -
+  point it at a file to append forever, or at a folder for day-named files with
+  size rotation and retention. Rotation is RENAME-FREE (a new name opens; the old file
+  stops growing), the design that is correct on Windows where open files cannot be
+  renamed. Lines batch in a bounded buffer and land on a size threshold, a flush
+  interval, `flush()`/`close()`, and process exit; overflow and write failures DROP and
+  are counted (one stderr notice + an in-band `log lines dropped` record on recovery) -
+  logging never blocks the event loop and never breaks the app. `fileSink()` is the
+  record-level form and `teeSink(...sinks)` fans out with per-sink throw isolation
+  (pretty console + file is the canonical pair). Used as the logger's `stream`, the
+  fused fast path is untouched: emit benchmarks are unchanged, and file throughput
+  measured ~10x pino's default file destination (~6x its async mode, at a fraction of
+  the memory) on the reference machine.
+
+- `@azerothjs/cli`: the `azeroth` command line - `dev` (the fullstack conductor: compiler
+  watch when decorators demand one, `node --watch` gated on the first emit, and vite, under
+  one banner with prefixed output), `check` (every gate the project's shape demands),
+  `build` (artifacts in dependency order; a native backend deliberately has none), `doctor`
+  (a catalog of real-world failure diagnoses), and `info`. No config file - the project's
+  shape (frontend / backend native-vs-built / fullstack) is detected from what already
+  exists, and ambiguity fails loud with `--app`/`--server` to disambiguate. `--print` on any
+  orchestrating command prints the exact child invocations and exits: children are always
+  `node <absolute script>` from the project's own node_modules - never a shell, never a cmd
+  shim - so there is nothing hidden and nothing to eject.
+- `create-azeroth`: `npm create azeroth@latest` - the day-one path. Three templates
+  (frontend / backend / fullstack), at most two questions, opinions in the templates
+  instead (eslint with the azeroth rules, the `azeroth-tsc` gate, the CLI verbs as
+  scripts, the vite proxy line in plain sight). The backend template has no build step;
+  the fullstack template is `application/` + `server/` workspaces under one root where
+  one `npm run dev` runs both halves.
+
+- `@azerothjs/http`: `new App({ serializeError })` reshapes the error wire body so an app can
+  speak its own envelope (`{ success, code, field, message }`, JSON:API, ...) without
+  reimplementing the one error path. The hook returns a plain value to replace the body (the
+  kernel keeps the error's status and mandated headers - a 405 `Allow`, a 429 `Retry-After`), a
+  `Response` for full control, or `undefined` to keep the default `{ error: { code, message } }`.
+  It applies uniformly to every error, route-miss 404s included; a throwing serializer falls back
+  to the default shape, so the last-resort error path can never break.
+- `@azerothjs/http`: `app.with(middleware)` opens a SCOPED registration view - the middleware runs
+  only for the routes registered through the returned app, not globally like `use`. It shares the
+  parent's route table, chains (`app.with(throttle).with(auth).get(...)`) with full context-type
+  accumulation, and never mutates the parent (a later `app.use` does not reach into an already-opened
+  fork). Removes the per-handler guard-call boilerplate when only some routes need auth/throttle.
+
 ## [0.9.0-beta.4] - 2026-07-21
 
 ### Added

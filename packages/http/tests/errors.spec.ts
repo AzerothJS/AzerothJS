@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
     HttpError, BadRequestError, NotFoundError, MethodNotAllowedError, ValidationError,
-    PayloadTooLargeError, TooManyRequestsError, errorResponse
+    PayloadTooLargeError, TooManyRequestsError, errorResponse, type ErrorSerializerContext
 } from '../src/errors.ts';
 
 async function wire(response: Response): Promise<{ status: number; body: { error: { code: string; message: string; details?: unknown; stack?: string | undefined } }; headers: Headers }>
@@ -116,5 +116,69 @@ describe('error metadata', () =>
     it('PayloadTooLarge carries its code for client switching', () =>
     {
         expect(new PayloadTooLargeError().code).toBe('payload-too-large');
+    });
+});
+
+describe('the serializeError hook', () =>
+{
+    const req = (): Request => new Request('http://local/thing?q=1');
+
+    it('replaces the body shape while keeping status and mandated headers', async () =>
+    {
+        const serialize = ({ error, request }: ErrorSerializerContext): unknown => ({
+            success: false,
+            code: error.code,
+            message: error.message,
+            path: new URL(request.url).pathname
+        });
+        const response = errorResponse(new NotFoundError('No user.'), { serialize, request: req() });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ success: false, code: 'not-found', message: 'No user.', path: '/thing' });
+        expect(response.headers.get('content-type')).toContain('application/json');
+
+        // A custom body must not drop the error's mandated headers (405 Allow).
+        const mna = errorResponse(new MethodNotAllowedError(['GET']), { serialize: () => ({ ok: false }), request: req() });
+        expect(mna.headers.get('allow')).toBe('GET');
+    });
+
+    it('takes full control when it returns a Response', async () =>
+    {
+        const serialize = (): Response => new Response('nope', { status: 418, headers: { 'x-custom': '1' } });
+        const response = errorResponse(new NotFoundError(), { serialize, request: req() });
+        expect(response.status).toBe(418);
+        expect(response.headers.get('x-custom')).toBe('1');
+        expect(await response.text()).toBe('nope');
+    });
+
+    it('falls back to the default shape when it returns undefined', async () =>
+    {
+        const response = errorResponse(new NotFoundError('gone'), { serialize: () => undefined, request: req() });
+        expect(await response.json()).toEqual({ error: { code: 'not-found', message: 'gone' } });
+    });
+
+    it('never breaks the error path: a throwing serializer falls back to the default', async () =>
+    {
+        const response = errorResponse(new BadRequestError('bad'), {
+            serialize: () =>
+            {
+                throw new Error('serializer blew up');
+            },
+            request: req()
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: { code: 'bad-request', message: 'bad' } });
+    });
+
+    it('reports expose=false for a 5xx so the serializer knows not to leak the message', () =>
+    {
+        let sawExpose = true;
+        errorResponse(new Error('internal detail'), {
+            request: req(),
+            serialize: ({ expose }): unknown =>
+            {
+                sawExpose = expose; return { code: 'x' };
+            }
+        });
+        expect(sawExpose).toBe(false);
     });
 });
