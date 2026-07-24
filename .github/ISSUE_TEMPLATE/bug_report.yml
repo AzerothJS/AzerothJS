@@ -82,7 +82,7 @@ body:
         attributes:
             label: AzerothJS version
             description: Run `npm list azerothjs` (or whichever package) to find the installed version.
-            placeholder: "e.g. 1.0.0-beta.1"
+            placeholder: "e.g. 1.0.0-beta.2"
         validations:
             required: true
 

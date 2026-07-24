@@ -9,6 +9,8 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.0.0-beta.2] - 2026-07-24
+
 The terminal-experience release: `azeroth dev` becomes a designed frame instead of a
 pipe multiplexer, and the logger's developer face renders meaning instead of strings.
 
@@ -454,7 +456,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...HEAD
+[1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...v1.0.0-beta.2
 [0.9.0-beta.4]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.3...v0.9.0-beta.4
 [0.9.0-beta.3]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.2...v0.9.0-beta.3
 [0.9.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.1...v0.9.0-beta.2
