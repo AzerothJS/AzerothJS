@@ -315,7 +315,7 @@
     },
     "dependencies": {
         "@azerothjs/typescript-plugin": "1.0.0-beta.2",
-        "typescript": ">=6 <7"
+        "typescript": ">=6 <8"
     },
     "devDependencies": {
         "@azerothjs/language-server": "1.0.0-beta.2",
