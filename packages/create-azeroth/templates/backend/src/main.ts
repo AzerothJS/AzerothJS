@@ -1,47 +1,35 @@
-// A complete @azerothjs/http server. There is no build step: Node >= 24 runs this file
-// directly, `azeroth dev` (node --watch) restarts it on save, and `azeroth build` will
-// tell you there is nothing to build - deploy src/ as-is.
+// Bootstrap: config, logging, the edge pipeline, serve, graceful shutdown. There is
+// no build step - Node >= 24 runs this file directly; `azeroth dev` restarts it on
+// save and `azeroth build` will tell you there is nothing to build.
 import
 {
-    App, serve, handleShutdownSignals,
-    json, text, readJson,
-    ValidationError,
-    type ErrorSerializerContext
+    serve, pipeline, handleShutdownSignals,
+    requestId, securityHeaders, cors, rateLimit, logRequests
 } from '@azerothjs/http';
+import { createLogger, fileStream } from '@azerothjs/logger';
 
-// serializeError reshapes EVERY error (route-miss 404s included) into one house envelope
-// instead of the default { error: { code, message } }. Delete it to keep the default.
-const app = new App(
-    {
-        dev: process.env.NODE_ENV !== 'production',
-        serializeError: ({ error, expose }: ErrorSerializerContext) => (
-            {
-                ok: false,
-                error:
-                    {
-                        code: error.code,
-                        message: expose ? error.message : 'Something went wrong',
-                        fields: (error.details as { fields?: Record<string, string> } | undefined)?.fields
-                    }
-            })
-    });
+import { buildApp } from './app.ts';
+import { config, isProduction } from './config.ts';
 
-app.get('/', () => text('ok'));
+// One structured line per request: pretty on a dev terminal, NDJSON persisted to
+// logs/ with day-named rotation everywhere.
+const log = createLogger({ stream: fileStream('logs/'), fields: { service: '{{name}}' } });
 
-// `ctx.params` is typed from the pattern string - no annotation, no codegen.
-app.get('/hello/:name', (_request, ctx) => json({ hello: ctx.params.name }));
+const app = buildApp({ dev: !isProduction, observe: logRequests(log) });
 
-// readJson enforces size limits and Content-Type (a bad body is a 400); a
-// ValidationError's field map lands in the envelope above as `error.fields`.
-app.post('/echo', async (request) =>
-{
-    const body = await readJson<{ message?: unknown }>(request);
-    if (typeof body.message !== 'string' || body.message.trim() === '')
-    {
-        throw new ValidationError({ message: 'A message is required.' });
-    }
-    return json({ echoed: body.message }, { status: 201 });
-});
+// Cross-cutting response concerns wrap the app ONCE, at the edge.
+const handler = pipeline(
+    app,
+    requestId(),                     // honor/mint X-Request-Id
+    securityHeaders(),               // nosniff, frame-options, referrer-policy, ...
+    cors({
+        // Locked down by default: add your real origins before going live.
+        origin: isProduction ? [] : true,
+        credentials: true
+    }),
+    rateLimit({ limit: 100, windowMs: 60_000 })
+);
 
-const served = await serve(app, { port: Number(process.env.PORT) || 3000 });
-handleShutdownSignals(served); // SIGTERM/SIGINT: drain in-flight responses, then exit
+const served = await serve(handler, { port: config.port });
+handleShutdownSignals(served);       // SIGTERM/SIGINT: drain in-flight responses, then exit
+log.info('listening', { port: served.port, env: config.env });

@@ -54,7 +54,12 @@ function toolLines(dir: string): string[]
     return lines;
 }
 
-/** Renders the info block for the detected project. */
+/**
+ * Renders the bug-report block: CLI + node + platform, the detected shape, and the
+ * azeroth/vite/typescript versions each half actually has installed (read from
+ * node_modules, falling back to the declared range). Plain text by contract - it is
+ * made to be piped and pasted.
+ */
 export function renderInfo(project: Project, cliVersion: string): string
 {
     const lines: string[] = [];

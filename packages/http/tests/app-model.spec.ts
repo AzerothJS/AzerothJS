@@ -1,7 +1,7 @@
 // @vitest-environment node
 //
 // The middleware model: typed context accumulation with lexical ordering and no next().
-// The properties pinned here ARE the flaw-ledger answers: additions flow by return value
+// The properties pinned here ARE the design's load-bearing answers: additions flow by return value
 // (never mutation from the middleware's side), the type system gates what downstream sees,
 // a Response short-circuits, and a route above a `use` is untouched by it.
 

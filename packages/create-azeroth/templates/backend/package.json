@@ -3,18 +3,24 @@
     "private": true,
     "version": "0.0.0",
     "type": "module",
+    "engines": {
+        "node": ">=24"
+    },
     "scripts": {
         "dev": "azeroth dev",
         "check": "azeroth check",
         "build": "azeroth build",
+        "test": "vitest run",
         "start": "node src/main.ts"
     },
     "dependencies": {
-        "@azerothjs/http": "{{version}}"
+        "@azerothjs/http": "{{version}}",
+        "@azerothjs/logger": "{{version}}"
     },
     "devDependencies": {
         "@azerothjs/cli": "{{version}}",
         "@types/node": "^24.0.0",
-        "typescript": "^5.7.0"
+        "typescript": "~6.0.2",
+        "vitest": "^4.0.0"
     }
 }

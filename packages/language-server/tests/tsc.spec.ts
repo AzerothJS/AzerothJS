@@ -82,7 +82,9 @@ describe('runTsc', () =>
 
 describe('watchTsc', () =>
 {
-    it('runs an initial pass and rechecks on demand', () =>
+    // Same class and medicine as runTsc above: a real TS (watch) program over the
+    // fixture flakes past the 5s default on a loaded machine.
+    it('runs an initial pass and rechecks on demand', { timeout: 30_000 }, () =>
     {
         const chunks: string[] = [];
         const write = (text: string): void =>

@@ -1,12 +1,12 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # @azerothjs/compiler
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fcompiler?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/compiler)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
 ## Overview
 
@@ -98,7 +98,7 @@ The parameter is plain TypeScript, so every natural form works: a named interfac
 (`component Greeting({ name = "world" }: GreetingProps)`), or an inline object type. A destructured
 prop stays reactive - a bare `name` read lowers to `props.name`.
 
-### Reactive keywords: effect, watch, deferred, and the block-wrappers
+### Reactive keywords: effect, deferred, and the block-wrappers
 
 The reactive vocabulary is deliberately small. Each keyword maps to one runtime primitive; everything
 else (resources, roots, stores, error handling, ...) stays an ordinary import + function call.

@@ -2,6 +2,7 @@ package com.azerothjs.lang
 
 import com.intellij.lang.Language
 import com.intellij.openapi.fileTypes.LanguageFileType
+import com.intellij.openapi.util.IconLoader
 import com.intellij.psi.tree.IElementType
 import javax.swing.Icon
 
@@ -14,10 +15,14 @@ object AzerothLanguage : Language("AzerothJS")
 
 object AzerothFileType : LanguageFileType(AzerothLanguage)
 {
+    // The brand tile as the .azeroth file icon; IconLoader picks icons/azeroth_dark.svg
+    // automatically under dark themes (the platform's _dark suffix convention).
+    private val FILE_ICON: Icon = IconLoader.getIcon("/icons/azeroth.svg", AzerothFileType::class.java)
+
     override fun getName(): String = "AzerothJS"
     override fun getDescription(): String = "AzerothJS single-file component"
     override fun getDefaultExtension(): String = "azeroth"
-    override fun getIcon(): Icon? = null
+    override fun getIcon(): Icon = FILE_ICON
 }
 
 /** Token kinds the lexer emits. Brace/paren/bracket tokens are distinct so the

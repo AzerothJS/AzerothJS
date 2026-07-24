@@ -43,6 +43,12 @@ describe('inference: the type IS the declaration', () =>
         expectTypeOf<Infer<typeof id>>().toEqualTypeOf<string | number>();
         expect(id.parse('u1')).toBe('u1');
     });
+
+    it('union called variadically (a JS-caller mistake) throws a precise developer error, not a late TypeError', () =>
+    {
+        expect(() => union(string() as never, number() as never))
+            .toThrow(/union\(\) expects an ARRAY of schemas/);
+    });
 });
 
 describe('combinator behavior', () =>

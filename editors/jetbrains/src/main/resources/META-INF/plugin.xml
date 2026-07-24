@@ -3,19 +3,45 @@
     <name>AzerothJS</name>
     <vendor url="https://github.com/AzerothJS/AzerothJS">AzerothJS</vendor>
     <description><![CDATA[
-        Language support for AzerothJS <code>.azeroth</code> files.
+        <p>Official language support for <a href="https://github.com/AzerothJS/AzerothJS">AzerothJS</a>
+        - the fine-grained fullstack framework. Full intelligence for <code>.azeroth</code>
+        single-file components, powered by the framework's own compiler.</p>
+
+        <p><b>The .ts &#8646; .azeroth boundary, dissolved:</b> go-to-definition, find usages,
+        and safe rename work in both directions between TypeScript files and components -
+        one codebase, not two worlds. The IDE's unused-symbol analysis sees component
+        usages too, so a <code>.ts</code> export used only from markup is never flagged.</p>
+
         <ul>
-            <li>Native <code>.azeroth</code> language: syntax highlighting and correct bracket
-                matching (a real lexer, so braces inside strings, comments, and template
-                interpolations never throw off the pairing).</li>
-            <li>Compiler-aware intelligence — completion, hover, diagnostics, navigation, rename,
-                signature help, formatting, and semantic highlighting — from the AzerothJS
-                language server.</li>
+            <li><b>Native .azeroth language</b>: syntax highlighting, correct bracket matching
+                (a real lexer - braces inside strings and template interpolations never break
+                the pairing), matching-tag highlight, and the AzerothJS file icon.</li>
+            <li><b>Compiler-aware intelligence</b> over LSP: completion with auto-imports,
+                hover documentation for every AzerothJS keyword and built-in component,
+                real type diagnostics, navigation, rename, signature help, formatting,
+                and semantic highlighting with a distinct color for reactive names.</li>
+            <li><b>Zero config</b>: open a project, open a component, everything works.</li>
         </ul>
-        Requires a paid JetBrains IDE (LSP API) and Node.js. Node is auto-detected
-        from PATH and common version managers (nvm, fnm, volta, Homebrew); set an
-        explicit path in Settings → Languages &amp; Frameworks → AzerothJS if needed.
+
+        <p><b>Requirements:</b> WebStorm / a paid JetBrains IDE 2026.1+ (the LSP API) and
+        Node.js. Node is auto-detected from PATH and common version managers (nvm, fnm,
+        volta, Homebrew); set an explicit path under Settings &#8594; Languages &amp;
+        Frameworks &#8594; AzerothJS if needed.</p>
+
+        <p>New to AzerothJS? <code>npm create azeroth@latest</code> scaffolds a working app
+        in one command.</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+        <p><b>1.0.0-beta</b> - the framework's first 1.0 beta, and the plugin grows with it:</p>
+        <ul>
+            <li>The AzerothJS file icon for <code>.azeroth</code> files (light and dark).</li>
+            <li>Find Usages and unused-symbol analysis now see component usages of
+                <code>.ts</code> exports.</li>
+            <li>Language server updated to the 1.0 compiler: keyword hover docs,
+                auto-imports, cross-file rename hardened.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>

@@ -74,12 +74,6 @@ export function styleMapHover(ctx: RequestContext, offset: number): Hover | null
     return { contents: `**${ word }** - CSS property\n\n${ property.documentation }`, range: ctx.lineIndex.rangeAt(start, start + word.length) };
 }
 
-/** Whether the caret is anywhere inside a styleMap object (key or value). */
-export function inStyleMap(source: string, offset: number): boolean
-{
-    return styleMapPositionAt(source, offset) !== null;
-}
-
 /**
  * Content spans of every top-level string *value* in every `styleMap({ ... })`
  * in the source. Powers color swatches on string color values; non-color values

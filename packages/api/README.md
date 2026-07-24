@@ -1,12 +1,12 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # @azerothjs/api
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fapi?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/api)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. The typed contract between a server and its clients: declare an API once, get the server mount, the derived handler signatures, and a fully inferred client - no codegen, no drift.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. The typed contract between a server and its clients: declare an API once, get the server mount, the derived handler signatures, and a fully inferred client - no codegen, no drift.
 
 ## Install
 

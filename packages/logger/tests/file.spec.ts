@@ -217,6 +217,20 @@ describe('composition', () =>
         expect(sink.dropped).toBe(0);
     });
 
+    it('fileSink.dropped is a LIVE getter mirroring the stream, not a snapshot copied at build time', () =>
+    {
+        const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+        const dir = root();
+        writeFileSync(join(dir, 'occupied'), 'a file blocking the parent slot');
+        const sink = fileSink(join(dir, 'occupied', 'out.ndjson'));
+        sink(record('will be dropped'));
+        sink.flush(); // the write fails; the STREAM counts the drop
+        expect(sink.stream.dropped).toBe(1);
+        expect(sink.dropped).toBe(1);
+        sink.close();
+        expect(stderr).toHaveBeenCalled();
+    });
+
     it('rides the fused fast path: createLogger({ stream }) + child yields clean NDJSON, zero ANSI', () =>
     {
         const path = join(root(), 'out.ndjson');
@@ -233,7 +247,10 @@ describe('composition', () =>
 
 describe('crash safety', () =>
 {
-    it('buffered lines land on process exit without an explicit flush (the exit tail-write)', () =>
+    // Spawns a real node child compiling the src natively (~1s solo); under the fully
+    // parallel suite the 5s default can flake on a loaded machine - same class and same
+    // medicine as language-server's tsc.spec.
+    it('buffered lines land on process exit without an explicit flush (the exit tail-write)', { timeout: 30_000 }, () =>
     {
         const path = join(root(), 'exit.ndjson');
         const entry = pathToFileURL(join(import.meta.dirname, '..', 'src', 'index.ts')).href;

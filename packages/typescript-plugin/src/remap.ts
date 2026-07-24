@@ -131,9 +131,9 @@ export function remapLanguageService(
     // tsserver still invokes the legacy boolean overload on some code paths; a
     // pass-through proxy must forward whichever call shape arrives, so it cannot
     // migrate to the preferences-object overload the deprecation points at.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- pass-through must forward tsserver's legacy boolean-overload call shape
     proxy.findRenameLocations = ((fileName: string, position: number, findInStrings: boolean, findInComments: boolean, preferences?: tsModule.UserPreferences | boolean) =>
-        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- same legacy overload, forwarded verbatim
         mapEntries((service.findRenameLocations as (...args: unknown[]) => readonly tsModule.RenameLocation[] | undefined)(
             fileName, position, findInStrings, findInComments, preferences
         )));

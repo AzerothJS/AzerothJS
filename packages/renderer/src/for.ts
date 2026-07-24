@@ -238,7 +238,7 @@ export function For<T>(props: ForProps<T>): MountNode
     // <span> would break layout and `parent > tr` selectors. The reconcile
     // derives its parent live from the end marker's parent, so it works both
     // before this fragment is mounted (parent is the fragment) and after
-    // (parent is the real container). See ./co-range.ts.
+    // (parent is the real container). See @azerothjs/component's co-range.ts.
     const { fragment, target } = createCoMarkers('for');
 
     driveFor(props, renderItem, target, false);

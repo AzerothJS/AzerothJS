@@ -272,7 +272,7 @@ function encodeError(body: unknown, status: number, headers: Record<string, stri
  * @param error - Whatever was thrown.
  * @param options.dev - Expose non-HttpError messages and stacks (development only).
  * @param options.observe - Called with every mapped error, for logging; its own throws are swallowed.
- * @param options.serialize - Reshapes the body (or returns a full Response); falls back to default on undefined.
+ * @param options.serialize - Reshapes the body (or returns a full Response); falls back to default on undefined. Runs only when `request` is also given - the serializer contract includes the request.
  * @param options.request - The failing request, handed to a serializer (path/id context).
  */
 export function errorResponse(

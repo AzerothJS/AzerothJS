@@ -34,6 +34,7 @@ import type { LogRecord, LogSink } from './record.ts';
 import type { WritableLike } from './sinks.ts';
 import { ndjsonLine } from './serialize.ts';
 
+/** Tuning for a {@link fileStream}; the defaults suit a busy server writing local logs. */
 export interface FileStreamOptions
 {
     /** Flush when the buffer reaches this many bytes; default 64 KiB. */
@@ -396,15 +397,16 @@ export function fileSink(target: string, options: FileStreamOptions = {}): FileS
     {
         stream.write(ndjsonLine(record));
     };
-    return Object.assign(sink, {
+    const carrier = Object.assign(sink, {
         stream,
         flush: (): void => stream.flush(),
-        close: (): void => stream.close(),
-        get dropped(): number
-        {
-            return stream.dropped;
-        }
+        close: (): void => stream.close()
     });
+    // `dropped` must be a LIVE getter. Object.assign would INVOKE a getter from a source
+    // object and copy the momentary value (always 0 at build time) - defineProperty is
+    // the only way the property stays a view onto the stream's counter.
+    Object.defineProperty(carrier, 'dropped', { get: (): number => stream.dropped, enumerable: true });
+    return carrier as FileSink;
 }
 
 /**

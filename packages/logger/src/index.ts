@@ -17,6 +17,8 @@ export { fileStream, fileSink, teeSink } from './file.ts';
 export type { FileStreamOptions, FileStream, FileSink } from './file.ts';
 export { renderBanner, printBanner, formatReady } from './banner.ts';
 export type { BannerOptions } from './banner.ts';
+export { select, textInput, intro, outro } from './prompt.ts';
+export type { SelectChoice, PromptIo } from './prompt.ts';
 export { errorShape, shapeFields, ndjsonLine } from './serialize.ts';
 export type { ErrorShape } from './serialize.ts';
 export { colorTier, palette, supportsUnicode } from './color.ts';

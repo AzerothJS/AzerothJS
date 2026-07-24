@@ -109,7 +109,11 @@ function wrap(open: string, close: string): Style
 
 const IDENTITY: Style = (text: string): string => text;
 
-/** Builds the palette for a tier; `none` styles are the identity function. */
+/**
+ * Builds the palette for a capability tier, once per stream - the `none` tier returns
+ * identity functions so callers never branch on "is color on". The brand accent
+ * degrades tier by tier: truecolor #5fb3e8, 256-color 74, basic cyan.
+ */
 export function palette(tier: ColorTier): Palette
 {
     if (tier === 'none')

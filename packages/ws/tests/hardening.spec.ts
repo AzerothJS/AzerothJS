@@ -33,7 +33,7 @@ describe('verifyOrigin', () =>
     it('refuses a disallowed origin with 403 and upgrades an allowed one', async () =>
     {
         const served = await serve(new App());
-        const detach = attachWebSockets(served.server as Parameters<typeof attachWebSockets>[0], {
+        const detach = attachWebSockets(served.server, {
             path: '/ws',
             verifyOrigin: (origin) => origin === 'https://trusted.example',
             onConnection: () => undefined
@@ -62,7 +62,7 @@ describe('heartbeat', () =>
     {
         const served = await serve(new App());
         let closeInfo: { code: number; reason: string } | undefined;
-        const detach = attachWebSockets(served.server as Parameters<typeof attachWebSockets>[0], {
+        const detach = attachWebSockets(served.server, {
             path: '/ws',
             heartbeatMs: 40,
             pongTimeoutMs: 40,
@@ -95,7 +95,7 @@ describe('heartbeat', () =>
     {
         const served = await serve(new App());
         const closed = vi.fn();
-        const detach = attachWebSockets(served.server as Parameters<typeof attachWebSockets>[0], {
+        const detach = attachWebSockets(served.server, {
             path: '/ws',
             heartbeatMs: 40,
             pongTimeoutMs: 60,

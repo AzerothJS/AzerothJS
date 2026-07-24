@@ -1,20 +1,26 @@
 /**
  * MODULE: create-azeroth/scaffold - the copy engine
  *
- * Scaffolding is a recursive copy with two substitutions and one rename, nothing more:
- * `{{name}}` and `{{version}}` are replaced in every file (the version is this package's
- * own - the whole @azerothjs family versions in lockstep), and `_gitignore` becomes
- * `.gitignore` (npm strips real .gitignore files out of published packages, so templates
- * cannot carry one under its own name). Every template file is text by construction.
+ * Scaffolding is a recursive copy with two substitutions and a rename table, nothing
+ * more: `{{name}}` and `{{version}}` are replaced in every file (the version is this
+ * package's own - the whole @azerothjs family versions in lockstep), and a few files
+ * travel under an underscore alias because their real names are live in this repo:
+ * npm strips `.gitignore` out of published packages, and ESLint 10 resolves the
+ * nearest `eslint.config.js` per file, so a real one inside `templates/` would hijack
+ * the monorepo's own lint runs. Every template file is text by construction.
  * The target must not already contain files - scaffolding never overwrites anything.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** The shapes a scaffold can produce, in the order the prompt offers them. */
 export const TEMPLATES = ['frontend', 'backend', 'fullstack'] as const;
+
+/** One of the three template names - the CLI validates free-form input with {@link isTemplateName}. */
 export type TemplateName = (typeof TEMPLATES)[number];
 
+/** Narrows user-typed input (a menu number is resolved before this) to a template name. */
 export function isTemplateName(value: string): value is TemplateName
 {
     return (TEMPLATES as readonly string[]).includes(value);
@@ -37,6 +43,13 @@ export function isEmptyTarget(target: string): boolean
     }
 }
 
+// Files whose real names cannot exist inside templates/ (see the module banner).
+const RENAMES: Record<string, string> =
+{
+    '_gitignore': '.gitignore',
+    '_eslint.config.js': 'eslint.config.js'
+};
+
 function copyTree(from: string, to: string, substitute: (text: string) => string): void
 {
     mkdirSync(to, { recursive: true });
@@ -48,7 +61,7 @@ function copyTree(from: string, to: string, substitute: (text: string) => string
             copyTree(source, join(to, entry.name), substitute);
             continue;
         }
-        const target = join(to, entry.name === '_gitignore' ? '.gitignore' : entry.name);
+        const target = join(to, RENAMES[entry.name] ?? entry.name);
         writeFileSync(target, substitute(readFileSync(source, 'utf8')));
     }
 }

@@ -1,12 +1,12 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # @azerothjs/logger
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Flogger?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/logger)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. One zero-dependency logger with two faces: colored, iconed developer output on a TTY, and pino-class NDJSON for production - plus the banner every AzerothJS process starts with.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. One zero-dependency logger with two faces: colored, iconed developer output on a TTY, and pino-class NDJSON for production - plus the banner every AzerothJS process starts with.
 
 ## Install
 
@@ -145,6 +145,8 @@ const log = createLogger({ sink: teeSink(prettySink(), file) });
 And with `@azerothjs/http`, one line per request into the folder:
 
 ```ts
+import { createLogger, fileStream } from '@azerothjs/logger';
+
 new App({ observe: logRequests(createLogger({ stream: fileStream('logs/') })) });
 ```
 

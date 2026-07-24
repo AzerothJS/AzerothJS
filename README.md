@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS - the A with the dragon" width="160" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS - the A with the dragon" width="160" />
 
 # AzerothJS
 
-**A fine-grained reactive TypeScript framework with compiled single-file components - no Virtual DOM, ever.**
+**The fine-grained fullstack TypeScript framework - compiled components, web-standard servers, one CLI. No Virtual DOM. Zero dependencies.**
 
 [![npm](https://img.shields.io/npm/v/azerothjs?label=azerothjs&color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 [![CI](https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml/badge.svg)](https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml)
@@ -34,6 +34,16 @@ export default component Counter(props: { start?: number })
 reactive graph itself is the update mechanism.
 
 ## Quick start
+
+The fastest path is the scaffolder - a frontend, backend, or fullstack app with the
+whole toolchain wired (one `npm run dev`, `azeroth check` as the gate):
+
+```sh
+npm create azeroth@latest my-app
+cd my-app && npm install && npm run dev
+```
+
+Or wire a Vite project by hand:
 
 ```sh
 npm install azerothjs
@@ -126,6 +136,52 @@ const html = renderToString(() => App());     // server: pure string emission, n
 hydrate(() => App(), root);                   // client over server HTML: adopt, don't rebuild
 ```
 
+## The server half
+
+The backend is the same philosophy, written from scratch: zero dependencies, web-standard
+types, and reactivity as the spine - **every request runs inside a reactive root**, so
+stores are request-isolated across `await` exactly as they are under SSR, and cleanup
+always runs.
+
+```ts
+import { App, serve, json, readValidated } from '@azerothjs/http';
+import { createAccount } from './schema';   // an @azerothjs/schema declaration
+
+const app = new App();
+app.get('/accounts/:id', (request, ctx) => json({ id: ctx.params.id })); // params typed from the pattern
+app.post('/accounts', async (request) =>
+{
+    const input = await readValidated(request, createAccount); // 422s carry the form-compatible field map
+    return json({ created: input }, { status: 201 });
+});
+
+const served = await serve(app, { port: 3000 });
+```
+
+There is no build step - Node >= 24 runs the TypeScript source directly, and
+`app.handle(new Request(...))` is the entire integration-testing story. One error path
+(shape it with `serializeError`), scoped middleware (`app.with(requireAuth)`), typed env
+config, static files, SSE, graceful shutdown - and beside http: [`@azerothjs/schema`](packages/schema)
+validation, [`@azerothjs/api`](packages/api) typed contracts with a fully inferred client,
+[`@azerothjs/ws`](packages/ws) WebSockets, [`@azerothjs/cron`](packages/cron) scheduling, and
+[`@azerothjs/logger`](packages/logger) with file rotation. The same fine-grained discipline,
+the whole way down.
+
+## One CLI
+
+`azeroth` understands every project shape - frontend, backend, or fullstack - by looking
+at what exists, with no config file:
+
+```sh
+azeroth dev      # the fullstack conductor: server watch + vite, one banner, one Ctrl+C
+azeroth check    # every gate the shape demands: azeroth-tsc, tsc --noEmit, eslint
+azeroth build    # artifacts in dependency order (a native backend has none - by design)
+azeroth doctor   # diagnoses the environment against a catalog of real-world failures
+```
+
+`--print` on any command shows the exact child invocations and exits - nothing hidden,
+nothing to eject.
+
 ## Packages
 
 Everything is versioned in lockstep. `azerothjs` is the one package an application installs; the
@@ -147,6 +203,9 @@ Everything is versioned in lockstep. `azerothjs` is the one package an applicati
 | [`@azerothjs/api`](packages/api) | One API contract: the server mount and a fully inferred client, no codegen. |
 | [`@azerothjs/ws`](packages/ws) | WebSocket server implementing RFC 6455 from scratch. |
 | [`@azerothjs/cron`](packages/cron) | Cron scheduler with honest timezone/DST semantics and overlap policies. |
+| [`@azerothjs/logger`](packages/logger) | Two-face logger: pretty on a dev TTY, NDJSON elsewhere; file/folder sinks with rename-free rotation. |
+| [`@azerothjs/cli`](packages/cli) | The `azeroth` command line: `dev` (the fullstack conductor), `check`, `build`, `doctor`, `info`. |
+| [`create-azeroth`](packages/create-azeroth) | `npm create azeroth` - frontend / backend / fullstack templates with the canon wired in. |
 | [`@azerothjs/testing`](packages/testing) | `renderTest`, `cleanup`, `leakGuard`, `fire` for app tests. |
 | [`@azerothjs/devtools`](packages/devtools) | Dev-only in-page panel: reactive tree, dependency graph, timeline. |
 | [`@azerothjs/eslint-plugin`](packages/eslint-plugin) | Reactivity lint rules + a processor that makes `.azeroth` a first-class lint target. |

@@ -1,7 +1,7 @@
 /**
  * MODULE: http/logger - structured logging as an interface, not a dependency
  *
- * The ledger's complaint about the incumbents is coupling (pino wired into the instance),
+ * The complaint about the incumbent frameworks is coupling (pino wired into the instance),
  * not logging itself. Here the LOG RECORD is the contract: a level, a message, a time, and
  * a flat fields object. A sink is one function from record to nowhere - the default writes
  * JSON lines (the format every collector ingests), a pretty sink is provided for humans in

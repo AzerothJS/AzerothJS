@@ -24,6 +24,7 @@ import { fieldsFragment, quotedString, shapeFields } from './serialize.ts';
 /** Which face renders records; `auto` picks by TTY/NODE_ENV/runtime. */
 export type LoggerFace = 'auto' | 'pretty' | 'ndjson' | 'console';
 
+/** Construction-time configuration; everything defaults to the right thing for a dev TTY and a container alike. */
 export interface LoggerOptions
 {
     /** Minimum level that emits; default `info` (or the AZEROTH_LOG override). */

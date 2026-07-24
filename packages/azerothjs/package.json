@@ -4,7 +4,7 @@
     "engines": {
         "node": ">=24"
     },
-    "description": "AzerothJS - fine-grained reactive framework with compiled .azeroth components: signals, zero Virtual DOM, direct DOM updates",
+    "description": "AzerothJS - fine-grained fullstack framework with compiled .azeroth components: signals, zero Virtual DOM, direct DOM updates",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

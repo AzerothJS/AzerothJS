@@ -43,7 +43,13 @@ export function printNotes(plan: Plan): void
     }
 }
 
-/** Sequential executor for check/build: heading, inherit stdio, fail fast. */
+/**
+ * Sequential executor for check/build: prints each step's heading, runs it with
+ * inherited stdio (tool output is never re-formatted), and fails fast.
+ *
+ * @returns The process exit code to use: 0 when every step passed, otherwise the
+ * first failing child's code (or 1 when it died without one).
+ */
 export function runToCompletion(plan: Plan): number
 {
     printNotes(plan);

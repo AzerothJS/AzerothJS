@@ -9,6 +9,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-07-24
+
+The first 1.0 beta. The framework becomes a full stack with one entry point: a
+scaffolder (`npm create azeroth`), a CLI that understands every project shape, an
+error pipeline and middleware model apps can shape without forking, and a logger
+that persists. Everything below rode through the production pass: every new package
+hardened file by file, every gate green (2017 tests), all 23 packages publint-clean.
+
 ### Added
 
 - `@azerothjs/logger`: log files. `fileStream(target)` is a buffered NDJSON writer -

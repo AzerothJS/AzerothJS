@@ -19,7 +19,7 @@
  *
  * SCOPE: each validator here checks ONE field's value in isolation. Cross-field rules (password confirm,
  * date ranges) live in createForm's top-level `validateForm`, which sees the whole values snapshot - so
- * these stay single-argument and trivially composable. NOT IN V1: async validators (compose createResource
+ * these stay single-argument and trivially composable. DELIBERATELY ABSENT: async validators (compose createResource
  * externally) and i18n message bundles (the per-call message override covers the common case). Each public
  * factory below carries its own concise JSDoc + example; isEmpty is @internal.
  */

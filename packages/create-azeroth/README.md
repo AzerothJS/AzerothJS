@@ -1,12 +1,13 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # create-azeroth
 
 [![npm](https://img.shields.io/npm/v/create-azeroth?color=2ea44f)](https://www.npmjs.com/package/create-azeroth)
 
-Scaffold an [AzerothJS](https://github.com/AzerothJS/AzerothJS) app.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework.
+The scaffolder: a frontend, backend, or fullstack app with the whole toolchain wired.
 
 ```sh
 npm create azeroth@latest

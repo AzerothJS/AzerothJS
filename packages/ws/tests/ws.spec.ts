@@ -25,7 +25,7 @@ async function withServer(
     const app = new App();
     app.get('/health', () => textResponse('ok'));
     const served = await serve(app);
-    const detach = attachWebSockets(served.server as Parameters<typeof attachWebSockets>[0], {
+    const detach = attachWebSockets(served.server, {
         path: '/ws',
         onConnection
     });
@@ -256,7 +256,7 @@ describe('the raw-socket protocol matrix', () =>
     {
         const app = new App();
         const served = await serve(app);
-        const detach = attachWebSockets(served.server as Parameters<typeof attachWebSockets>[0], {
+        const detach = attachWebSockets(served.server, {
             path: '/ws',
             maxMessage: 64,
             onConnection: () => undefined

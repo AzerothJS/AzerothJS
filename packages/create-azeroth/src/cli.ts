@@ -2,33 +2,42 @@
 /**
  * MODULE: create-azeroth/cli - `npm create azeroth@latest`
  *
- * The day-one path, interrogation-free: at most two questions (a name if none was given,
- * a shape if --template was not passed), then a scaffold and three printed next steps.
- * Opinions live in the templates - eslint with the azeroth rules, the typecheck gate,
- * the azeroth CLI verbs - not in questions. Non-interactive runs (CI) must pass both
- * answers as arguments; prompting requires a TTY and fails loud without one.
+ * The day-one path, interrogation-free: at most two questions (a name if none was
+ * given, a shape if --template was not passed), asked in the framework's interaction
+ * column (@azerothjs/logger's prompt primitives - see its DESIGN.md), then a scaffold
+ * and an outro with the three next steps. Opinions live in the templates - eslint
+ * with the azeroth rules, the typecheck gate, the azeroth CLI verbs - not in
+ * questions.
+ *
+ * Non-interactive runs (CI) must pass both answers as arguments: the prompts refuse
+ * a non-TTY by contract, so this file guards `isTTY` first and fails loud with the
+ * args form. Piped output renders the intro/outro as plain text (the palette's
+ * none tier) - a CI log stays clean.
  */
 
 import { readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+
+import { colorTier, intro, outro, palette, select, textInput } from '@azerothjs/logger';
 
 import { TEMPLATES, isTemplateName, scaffold, type TemplateName } from './scaffold.ts';
 
 // The scaffolder's user interface writes to stdout/stderr directly (stderr for errors,
-// so stdout stays pipe-clean) - one place, not scattered console calls. The runtime
-// logger (@azerothjs/logger) is telemetry for running apps; none of this is telemetry.
+// so stdout stays pipe-clean). The runtime logger records are telemetry; none of this is.
 function print(line = ''): void
 {
     process.stdout.write(`${ line }\n`);
 }
 
-function printError(line: string): void
+function fail(message: string): void
 {
-    process.stderr.write(`${ line }\n`);
+    const paint = palette(colorTier(process.stderr));
+    process.stderr.write(`${ paint.red('x') } create-azeroth: ${ message }\n`);
 }
+
+const NON_TTY_HINT = 'not a terminal - pass the answers as arguments: create-azeroth <name> --template <frontend|backend|fullstack>';
 
 const VERSION = ((): string =>
 {
@@ -49,25 +58,12 @@ Usage: npm create azeroth@latest [name] [-- --template <frontend|backend|fullsta
 Scaffolds an AzerothJS app. With no arguments it asks two questions; with both
 answers given it asks nothing (CI-safe).`;
 
-const TEMPLATE_DESCRIPTIONS: Record<TemplateName, string> =
+const TEMPLATE_HINTS: Record<TemplateName, string> =
 {
     frontend: 'a vite app in .azeroth components',
     backend: 'an @azerothjs/http server, no build step',
     fullstack: 'application/ + server/, one dev command'
 };
-
-async function ask(question: string): Promise<string>
-{
-    if (!process.stdin.isTTY)
-    {
-        printError('create-azeroth: not a terminal - pass the answers as arguments: create-azeroth <name> --template <frontend|backend|fullstack>');
-        process.exit(2);
-    }
-    const readline = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await readline.question(question);
-    readline.close();
-    return answer.trim();
-}
 
 async function main(): Promise<number>
 {
@@ -86,7 +82,7 @@ async function main(): Promise<number>
     }
     catch (error)
     {
-        printError(`create-azeroth: ${ error instanceof Error ? error.message : String(error) }\n`);
+        fail(error instanceof Error ? error.message : String(error));
         print(USAGE);
         return 2;
     }
@@ -101,36 +97,49 @@ async function main(): Promise<number>
         return 0;
     }
 
+    const interactive = parsed.positionals[0] === undefined || (parsed.values.template ?? '') === '';
+    if (interactive)
+    {
+        if (!process.stdin.isTTY)
+        {
+            fail(NON_TTY_HINT);
+            return 2;
+        }
+        intro('create-azeroth', `v${ VERSION }`);
+    }
+
     let name = parsed.positionals[0] ?? '';
     if (name === '')
     {
-        name = await ask('Project name › ');
-        if (name === '')
+        const answer = await textInput('Project name');
+        if (answer === null)
         {
-            name = 'azeroth-app';
+            return 2; // cancelled - the prompt already said so
         }
+        name = answer === '' ? 'azeroth-app' : answer;
     }
     if (!/^[a-z0-9@/_.-]+$/i.test(name))
     {
-        printError(`create-azeroth: '${ name }' is not a usable directory/package name`);
+        fail(`'${ name }' is not a usable directory/package name`);
         return 2;
     }
 
     let template = parsed.values.template ?? '';
     if (template === '')
     {
-        print('What are you building?');
-        for (const [index, candidate] of TEMPLATES.entries())
+        const choice = await select(
+            'What are you building?',
+            TEMPLATES.map((value) => ({ value, hint: TEMPLATE_HINTS[value] }))
+        );
+        if (choice === null)
         {
-            print(`  ${ index + 1 }. ${ candidate.padEnd(10) } ${ TEMPLATE_DESCRIPTIONS[candidate] }`);
+            return 2; // cancelled - the prompt already said so
         }
-        const answer = await ask('› ');
-        const byNumber = TEMPLATES[Number(answer) - 1];
-        template = byNumber ?? answer;
+        template = choice;
     }
     if (!isTemplateName(template))
     {
-        printError(`create-azeroth: unknown template '${ template }' - expected one of: ${ TEMPLATES.join(', ') }`);
+        fail(`unknown template '${ template }' - expected one of: ${ TEMPLATES.join(', ') }`);
         return 2;
     }
 
@@ -142,14 +151,14 @@ async function main(): Promise<number>
     }
     catch (error)
     {
-        printError(`create-azeroth: ${ error instanceof Error ? error.message : String(error) }`);
+        fail(error instanceof Error ? error.message : String(error));
         return 2;
     }
 
-    print(`\nScaffolded ${ name } (${ template }${ template === 'fullstack' ? ': application/ + server/' : '' })`);
-    print(`\n  cd ${ name }`);
-    print('  npm install');
-    print('  npm run dev\n');
+    outro(
+        `Scaffolded ${ name } (${ template }${ template === 'fullstack' ? ': application/ + server/' : '' })`,
+        [`cd ${ name }`, 'npm install', 'npm run dev']
+    );
     return 0;
 }
 

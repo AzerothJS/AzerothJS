@@ -1,12 +1,12 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # @azerothjs/devtools
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fdevtools?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/devtools)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
 In-page devtools for AzerothJS apps - a tabbed panel that shows your live
 reactive graph the way the React, Vue, and Angular devtools show theirs, but
@@ -44,8 +44,7 @@ import './dev';   // must be the first import
 ```
 
 A small `AZ` launcher appears in the corner with a live effect count. Click
-it to open the panel; drag the launcher to move it. Add
-`?no-devtools` to the URL to skip installing it.
+it to open the panel; drag the launcher to move it.
 
 ## The panel
 
@@ -102,6 +101,8 @@ selection between rows and **Escape** closes the inspector.
 Rows are far more readable when signals and effects are named:
 
 ```ts
+import { createSignal, createEffect } from 'azerothjs';
+
 const [count, setCount] = createSignal(0, { name: 'count' });
 createEffect(() => render(count()), { name: 'count-binding' });
 ```

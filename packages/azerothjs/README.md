@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="160" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="160" />
 
 # AzerothJS
 
-**A fine-grained reactive TypeScript framework with compiled single-file components - no Virtual DOM, ever.**
+**The fine-grained fullstack TypeScript framework - compiled components, web-standard servers, one CLI. No Virtual DOM. Zero dependencies.**
 
 [![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)

@@ -1,11 +1,33 @@
-// The server half. No build step: Node >= 24 runs this file directly, and `azeroth dev`
-// (from the project root) watches it alongside the vite app. Routes live under /api -
-// the same prefix the application's vite proxy forwards.
-import { App, serve, handleShutdownSignals, json } from '@azerothjs/http';
+// Bootstrap: config, logging, the edge pipeline, serve, graceful shutdown. No build
+// step - Node >= 24 runs this file directly; `azeroth dev` (from the project root)
+// watches it alongside the vite app.
+import
+{
+    serve, pipeline, handleShutdownSignals,
+    requestId, securityHeaders, rateLimit, logRequests
+} from '@azerothjs/http';
+import { createLogger, fileStream } from '@azerothjs/logger';
 
-const app = new App({ dev: process.env.NODE_ENV !== 'production' });
+import { buildApp } from './app.ts';
+import { config, isProduction } from './config.ts';
 
-app.get('/api/health', () => json({ ok: true, at: new Date().toISOString() }));
+const log = createLogger({ stream: fileStream('logs/'), fields: { service: '{{name}}-server' } });
 
-const served = await serve(app, { port: Number(process.env.PORT) || 3000 });
-handleShutdownSignals(served); // SIGTERM/SIGINT: drain in-flight responses, then exit
+const app = buildApp({
+    dev: !isProduction,
+    observe: logRequests(log),
+    // In dev, vite serves the client and proxies /api here; in production this
+    // server serves the built client itself - one origin, no CORS between halves.
+    clientDir: isProduction ? config.clientDir : undefined
+});
+
+const handler = pipeline(
+    app,
+    requestId(),
+    securityHeaders(),
+    rateLimit({ limit: 200, windowMs: 60_000 })
+);
+
+const served = await serve(handler, { port: config.port });
+handleShutdownSignals(served);
+log.info('listening', { port: served.port, env: config.env });

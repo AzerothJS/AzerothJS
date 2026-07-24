@@ -16,8 +16,10 @@ import { join } from 'node:path';
 import { allDeps, readPackage, type BackendProject, type FrontendProject, type Project } from './detect.ts';
 import { resolveTool } from './plan.ts';
 
+/** A check's verdict: only `fail` makes the doctor's exit code non-zero. */
 export type DoctorStatus = 'ok' | 'warn' | 'fail' | 'skip';
 
+/** One diagnosis line: the check's name, its verdict, and what to do about it. */
 export interface DoctorResult
 {
     name: string;
@@ -303,7 +305,12 @@ function checkSpawnHazards(dir: string): DoctorResult
     };
 }
 
-/** Runs the catalog against the detected project. Diagnosis only - nothing is mutated. */
+/**
+ * Runs the failure catalog against the detected project - each check targeting the
+ * halves it applies to (backend checks per server, frontend checks per app, the
+ * version-skew check only when both halves exist). Diagnosis only: nothing is mutated,
+ * and a check that cannot run reports `skip` rather than guessing.
+ */
 export function runDoctor(project: Project): DoctorResult[]
 {
     const results: DoctorResult[] = [];

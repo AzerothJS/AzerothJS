@@ -157,7 +157,7 @@ export function Transition(props: TransitionProps): MountNode
     }
 
     // No wrapper element: comment markers bracket the (single) animated child so
-    // <Transition> works inside <table>/<select>/<ul>. See ./co-range.ts.
+    // <Transition> works inside <table>/<select>/<ul>. See @azerothjs/component's co-range.ts.
     const { fragment, target } = createCoMarkers('transition');
 
     driveTransition(props, target, false);

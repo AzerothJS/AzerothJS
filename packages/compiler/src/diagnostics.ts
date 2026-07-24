@@ -360,7 +360,7 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     const stateNames = new Set(analysis.sources.filter(s => s.kind === 'state').map(s => s.name));
     diagnoseSelfWriteEffects(source, component, reactive, stateNames, out);
 
-    // azeroth/assign-to-derived (M1, semantic phase). The reactive rewrite ALSO rejects this
+    // azeroth/assign-to-derived (semantic phase). The reactive rewrite ALSO rejects this
     // (the codegen-time backstop), so derived mutation is caught in both phases.
     diagnoseDerivedWrites(source, component, analysis, out);
 

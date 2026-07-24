@@ -148,10 +148,16 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
 }
 
 /** The served-socket shape `serve`/`serveH2c` return. */
-export interface Served
+/**
+ * The handle serve()/serveH2c() return. Generic over the concrete server class so a
+ * consumer handing  to something that needs the HTTP/1 Server (ws
+ * attachment, socket tuning) gets the REAL type - serve() yields Served<Server>,
+ * serveH2c() Served<Http2Server>; the default keeps existing annotations working.
+ */
+export interface Served<S extends Server | Http2Server = Server | Http2Server>
 {
     /** The listening Node server (for address(), unref(), test hooks). */
-    server: Server | Http2Server;
+    server: S;
 
     /** The bound port (resolved even when 0 was requested). */
     port: number;
@@ -177,13 +183,13 @@ export type ConnectMiddleware = (
 ) => void;
 
 /** @internal Shared listen + drain machinery for both protocol servers - ONE request listener. */
-function manage(
-    server: Server | Http2Server,
+function manage<S extends Server | Http2Server>(
+    server: S,
     app: WebHandler,
     port: number,
     hostname: string | undefined,
     before?: ConnectMiddleware
-): Promise<Served>
+): Promise<Served<S>>
 {
     const inFlight = new Set<AnyOutgoing>();
     server.on('request', (req: AnyIncoming, res: AnyOutgoing) =>
@@ -389,7 +395,7 @@ function announce(served: Served, subtitle: string, readyMs: number): void
 export async function serve(
     app: WebHandler,
     options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts; banner?: boolean } = {}
-): Promise<Served>
+): Promise<Served<Server>>
 {
     const startedAt = performance.now();
     const timeouts = options.timeouts ?? {};
@@ -409,7 +415,7 @@ export async function serve(
  * Serves an app over cleartext HTTP/2 (h2c) - the same listener, the http2 compat surface.
  * Browsers only speak h2 over TLS; h2c is for internal hops, proxies, and gRPC-style peers.
  */
-export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string } = {}): Promise<Served>
+export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string } = {}): Promise<Served<Http2Server>>
 {
     return manage(createH2cServer(), app, options.port ?? 0, options.hostname);
 }

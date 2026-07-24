@@ -602,6 +602,16 @@ export function union<Schemas extends ReadonlyArray<Schema<unknown>>>(
     overrides?: RuleOverrides
 ): Schema<Infer<Schemas[number]>>
 {
+    // A JS caller writing the variadic form union(a, b) passes schema `b` where the
+    // overrides belong and crashes much later with a bare "options is not iterable".
+    // Types prevent this in TS; the guard gives the untyped caller a real answer now.
+    // The `as unknown` keeps Array.isArray's `any[]` predicate from narrowing the
+    // generic - without it, every later `option` in this function degrades to `any`.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- the assertion blocks Array.isArray's `any[]` predicate from narrowing the generic; removing it degrades every later `option` to `any`
+    if (!Array.isArray(options as unknown))
+    {
+        throw new TypeError(`union() expects an ARRAY of schemas - union([a, b]) - received ${ typeof options }. Wrap the options in one array; the second argument is rule overrides, not another schema.`);
+    }
     return base((value, path, collector) =>
     {
         if (isMissing(value))

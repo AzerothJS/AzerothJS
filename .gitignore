@@ -42,3 +42,4 @@ out/
 test-results/
 playwright-report/
 .playwright-mcp
+.readme-snippets/

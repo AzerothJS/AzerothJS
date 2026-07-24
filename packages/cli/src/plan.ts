@@ -40,6 +40,7 @@ export interface Step
     waitForFile: string | null;
 }
 
+/** What one command will run: the ordered steps plus the human notes explaining any gaps. */
 export interface Plan
 {
     command: 'dev' | 'check' | 'build';
@@ -131,7 +132,12 @@ function devWebStep(app: FrontendProject, label: string): Step
     return step({ label, cwd: app.dir, script: vite, args: [], longRunning: true });
 }
 
-/** The dev conductor's plan. Callers pass only runnable shapes. */
+/**
+ * The dev conductor's plan: watchers for every half the shape has, in start order
+ * (a built backend's tsc first, its node --watch gated on the first emit, vite last).
+ *
+ * @throws PlanError when a required tool (vite, tsc) is not installed in the project.
+ */
 export function planDev(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
     switch (project.kind)
@@ -196,7 +202,12 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
     return steps;
 }
 
-/** Every quality gate the project's shape demands; fullstack runs the server's first. */
+/**
+ * Every quality gate the project's shape demands - azeroth-tsc for a frontend,
+ * `tsc --noEmit` for a backend, eslint wherever a config exists; a fullstack app
+ * checks its server half first (fail-fast on the cheaper gate). A missing tool is
+ * never a silent skip: it becomes a printed note.
+ */
 export function planCheck(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
     const notes: string[] = [];
@@ -218,7 +229,13 @@ export function planCheck(project: FrontendProject | BackendProject | FullstackP
     }
 }
 
-/** Deployable artifacts in dependency order; a native backend deliberately has none. */
+/**
+ * Deployable artifacts in dependency order (server before client). A NATIVE backend
+ * deliberately produces zero steps - Node >= 24 runs the TypeScript source, and the
+ * plan's note says so rather than inventing a build to look busy.
+ *
+ * @throws PlanError when a required tool is not installed in the project.
+ */
 export function planBuild(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
     switch (project.kind)

@@ -19,12 +19,14 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+/** A vite app in `.azeroth` components: a vite config plus the compiler or umbrella package. */
 export interface FrontendProject
 {
     kind: 'frontend';
     dir: string;
 }
 
+/** An @azerothjs server project (http/ws/api/cron dependency, no vite config). */
 export interface BackendProject
 {
     kind: 'backend';
@@ -40,12 +42,14 @@ export interface BackendProject
     builtEntry: string | null;
 }
 
+/** A package with azeroth dependencies behind an exports/main field - built, not served. */
 export interface LibraryProject
 {
     kind: 'library';
     dir: string;
 }
 
+/** A root whose children are exactly one frontend and one backend - one conductor, two halves. */
 export interface FullstackProject
 {
     kind: 'fullstack';
@@ -54,6 +58,7 @@ export interface FullstackProject
     server: BackendProject;
 }
 
+/** Not an azeroth project; `reason` says exactly what was looked for and found instead. */
 export interface NoProject
 {
     kind: 'none';
@@ -63,6 +68,7 @@ export interface NoProject
     reason: string;
 }
 
+/** Every shape detection can answer with - discriminate on `kind`. */
 export type Project = FrontendProject | BackendProject | LibraryProject | FullstackProject | NoProject;
 
 /** Explicit halves for a fullstack root the probe cannot resolve alone. */
@@ -90,7 +96,11 @@ interface PackageJson
     scripts?: Record<string, string>;
 }
 
-/** Parses dir/package.json, or null when absent or unparseable. */
+/**
+ * Parses `dir/package.json`. Returns null for BOTH a missing and an unparseable file -
+ * callers that must tell those apart (detectProject does, to fail loud on broken JSON)
+ * pair this with an existsSync check.
+ */
 export function readPackage(dir: string): PackageJson | null
 {
     try
@@ -103,7 +113,7 @@ export function readPackage(dir: string): PackageJson | null
     }
 }
 
-/** dependencies + devDependencies as one lookup. */
+/** dependencies + devDependencies as one lookup - detection never cares which side a dep is on. */
 export function allDeps(pkg: PackageJson): Record<string, string>
 {
     return { ...pkg.dependencies, ...pkg.devDependencies };
@@ -278,6 +288,13 @@ export function detectProject(dir: string, overrides: DetectOverrides = { app: n
             return { kind: 'none', dir: root, reason: `--server ${ overrides.server } is not an azeroth backend (${ server.kind === 'none' ? server.reason : `classified as ${ server.kind }` })` };
         }
         return { kind: 'fullstack', dir: root, app, server };
+    }
+
+    // A package.json that EXISTS but does not parse is a broken project, not a fullstack
+    // root - probing children here would mask the real problem behind a wrong answer.
+    if (existsSync(join(root, 'package.json')) && readPackage(root) === null)
+    {
+        return { kind: 'none', dir: root, reason: 'package.json exists but is not valid JSON - fix it before anything can be detected' };
     }
 
     const leaf = classifyLeaf(root);

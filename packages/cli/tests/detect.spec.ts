@@ -93,6 +93,19 @@ describe('leaf classification', () =>
         write(dir, 'package.json', packageJson({ express: '^4.0.0' }));
         expect(classifyLeaf(dir).kind).toBe('none');
     });
+
+    it('a MALFORMED package.json fails loud with the truth - never "no package.json", never a silent fullstack probe', () =>
+    {
+        const dir = root();
+        write(dir, 'package.json', '{ "name": "broken", invalid json here');
+        write(dir, 'application/package.json', packageJson({ azerothjs: '^0.9.0' }));
+        write(dir, 'application/vite.config.ts', 'export default {}');
+        write(dir, 'server/package.json', packageJson({ '@azerothjs/http': '^0.9.0' }));
+        write(dir, 'server/src/main.ts', '');
+        const project = detectProject(dir);
+        expect(project.kind).toBe('none');
+        expect(project.kind === 'none' ? project.reason : '').toContain('not valid JSON');
+    });
 });
 
 describe('the fullstack root probe', () =>

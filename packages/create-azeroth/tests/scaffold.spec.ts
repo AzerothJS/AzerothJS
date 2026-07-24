@@ -6,6 +6,7 @@
 // claims to be. The scaffolder and the detector can never drift apart unnoticed.
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ afterEach(() =>
 
 describe('the copy engine', () =>
 {
-    it('substitutes {{name}} and {{version}} and renames _gitignore', () =>
+    it('substitutes {{name}} and {{version}} and restores underscore-aliased names', () =>
     {
         const dir = target();
         scaffold(TEMPLATES_ROOT, 'frontend', dir, 'my-app', '^1.2.3');
@@ -41,6 +42,8 @@ describe('the copy engine', () =>
         expect(pkg.dependencies['azerothjs']).toBe('^1.2.3');
         expect(existsSync(join(dir, '.gitignore'))).toBe(true);
         expect(existsSync(join(dir, '_gitignore'))).toBe(false);
+        expect(existsSync(join(dir, 'eslint.config.js'))).toBe(true);
+        expect(existsSync(join(dir, '_eslint.config.js'))).toBe(false);
         expect(readFileSync(join(dir, 'index.html'), 'utf8')).toContain('<title>my-app</title>');
     });
 
@@ -93,6 +96,59 @@ describe('closed loop: each template detects as the shape it claims', () =>
             scaffold(TEMPLATES_ROOT, template, dir, 'scripts-check', '^1.0.0');
             const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
             expect(pkg.scripts['dev'], template).toBe('azeroth dev');
+        }
+    });
+});
+
+describe('production shape: the hour-three files are already waiting', () =>
+{
+    it('backend ships env, tests, Docker, and its own README', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'backend', dir, 'prod', '^1.0.0');
+        for (const file of ['src/config.ts', 'src/app.ts', 'src/main.ts', 'tests/app.spec.ts', 'Dockerfile', '.dockerignore', '.env.example', 'README.md'])
+        {
+            expect(existsSync(join(dir, file)), file).toBe(true);
+        }
+        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { scripts: Record<string, string>; engines: Record<string, string> };
+        expect(pkg.scripts['test']).toBe('vitest run');
+        expect(pkg.engines['node']).toBe('>=24');
+    });
+
+    it('frontend ships a component test, a favicon slot, and its own README', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'frontend', dir, 'prod', '^1.0.0');
+        for (const file of ['tests/app.spec.ts', 'public/favicon.svg', 'README.md', 'vite.config.ts'])
+        {
+            expect(existsSync(join(dir, file)), file).toBe(true);
+        }
+    });
+
+    it('fullstack ships CI, the one-origin deploy story, and both suites', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'prod', '^1.0.0');
+        for (const file of ['.github/workflows/ci.yml', 'README.md', 'server/Dockerfile', 'server/.env.example', 'server/tests/app.spec.ts', 'application/tests/app.spec.ts', 'application/public/favicon.svg'])
+        {
+            expect(existsSync(join(dir, file)), file).toBe(true);
+        }
+        expect(readFileSync(join(dir, 'server/src/app.ts'), 'utf8')).toContain('staticFiles');
+    });
+
+    it('npm pack ships every template file - dotfiles and dot-directories included', () =>
+    {
+        // npm's human listing goes to stderr; --json puts the file list on stdout.
+        const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+            cwd: join(TEMPLATES_ROOT, '..'),
+            encoding: 'utf8',
+            shell: process.platform === 'win32'
+        });
+        const [report] = JSON.parse(raw) as Array<{ files: Array<{ path: string }> }>;
+        const shipped = new Set(report?.files.map((file) => file.path.replaceAll('\\', '/')));
+        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/frontend/public/favicon.svg'])
+        {
+            expect(shipped.has(mustShip), mustShip).toBe(true);
         }
     });
 });

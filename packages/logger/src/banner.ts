@@ -18,6 +18,7 @@ import type { TtyLike } from './color.ts';
 import { colorTier, palette, supportsUnicode } from './color.ts';
 import type { WritableLike } from './sinks.ts';
 
+/** Everything the banner renders; every field optional - the empty banner is just the mark. */
 export interface BannerOptions
 {
     /** Product name; default 'AzerothJS'. */

@@ -20,7 +20,7 @@ import { PlanError, formatStep, isRunnable, planBuild, planCheck, planDev, type 
 import { printNotes, runDev, runToCompletion } from './run.ts';
 import { runDoctor } from './doctor.ts';
 import { renderInfo } from './info.ts';
-import { print, printError, statusMark } from './terminal.ts';
+import { bold, brand, dim, fail, mark, print, statusMark, verdictGlyph } from './terminal.ts';
 
 const VERSION = ((): string =>
 {
@@ -34,36 +34,46 @@ const VERSION = ((): string =>
     }
 })();
 
-const USAGE = `azeroth ${ VERSION } - the AzerothJS command line
-
-Usage: azeroth <command> [flags]
-
-Commands:
-  dev      Run the app in watch mode - the fullstack conductor; a single-tool
-           shape is the underlying tool, verbatim (the banner says which)
-  check    Run every quality gate the project's shape demands (typecheck + lint,
-           both halves of a fullstack app, server first)
-  build    Produce deployable artifacts in dependency order (a native backend
-           has none - by design)
-  doctor   Diagnose the environment against the known failure catalog
-  info     Print a paste-able environment block for bug reports
-
-Flags:
-  --print            Print the exact child invocations and exit (dev/check/build)
-  --app <dir>        Explicit frontend half of a fullstack root
-  --server <dir>     Explicit backend half of a fullstack root
-  -v, --version      Print the CLI version
-  -h, --help         This text
-
-The CLI detects your project's shape from what already exists (package.json
-dependencies, a vite config) - there is no config file to maintain.`;
+/** The help screen in the house language: brand header, brand command names, dim flags. */
+function usage(): string
+{
+    const commands: ReadonlyArray<readonly [string, string]> = [
+        ['dev', 'Run the app in watch mode - the fullstack conductor'],
+        ['check', "Every quality gate the project's shape demands (both halves, server first)"],
+        ['build', 'Deployable artifacts in dependency order (a native backend has none - by design)'],
+        ['doctor', 'Diagnose the environment against the known failure catalog'],
+        ['info', 'A paste-able environment block for bug reports']
+    ];
+    const flags: ReadonlyArray<readonly [string, string]> = [
+        ['--print', 'Print the exact child invocations and exit (dev/check/build)'],
+        ['--app <dir>', 'Explicit frontend half of a fullstack root'],
+        ['--server <dir>', 'Explicit backend half of a fullstack root'],
+        ['-v, --version', 'Print the CLI version'],
+        ['-h, --help', 'This text']
+    ];
+    let out = `\n${ brand(`${ mark() } ${ bold('azeroth') }`) } ${ dim(`v${ VERSION }`) }  ${ dim('the AzerothJS command line') }\n`;
+    out += `\n  ${ dim('Usage:') } azeroth ${ brand('<command>') } ${ dim('[flags]') }\n`;
+    out += `\n  ${ bold('Commands') }\n`;
+    for (const [name, description] of commands)
+    {
+        out += `    ${ brand(name.padEnd(8)) } ${ description }\n`;
+    }
+    out += `\n  ${ bold('Flags') }\n`;
+    for (const [flag, description] of flags)
+    {
+        out += `    ${ flag.padEnd(16) } ${ dim(description) }\n`;
+    }
+    out += `\n  ${ dim('Shape is detected from what already exists (package.json, a vite config) -') }\n`;
+    out += `  ${ dim('there is no config file to maintain.') }\n`;
+    return out;
+}
 
 function detectOrExit(cwd: string, app: string | null, server: string | null): Project
 {
     const project = detectProject(cwd, { app, server });
     if (project.kind === 'none')
     {
-        printError(`azeroth: ${ project.reason }`);
+        fail(project.reason);
         process.exit(2);
     }
     return project;
@@ -73,9 +83,9 @@ function planOrExit(project: Project, make: (runnable: Parameters<typeof planDev
 {
     if (!isRunnable(project))
     {
-        printError(project.kind === 'library'
-            ? 'azeroth: nothing to run - this is a library package; its own npm scripts are the interface'
-            : 'azeroth: not a runnable project');
+        fail(project.kind === 'library'
+            ? 'nothing to run - this is a library package; its own npm scripts are the interface'
+            : 'not a runnable project');
         process.exit(2);
     }
     try
@@ -86,7 +96,7 @@ function planOrExit(project: Project, make: (runnable: Parameters<typeof planDev
     {
         if (error instanceof PlanError)
         {
-            printError(`azeroth: ${ error.message }`);
+            fail(error.message);
             process.exit(1);
         }
         throw error;
@@ -138,8 +148,8 @@ async function main(): Promise<number>
     }
     catch (error)
     {
-        printError(`azeroth: ${ error instanceof Error ? error.message : String(error) }\n`);
-        print(USAGE);
+        fail(error instanceof Error ? error.message : String(error));
+        print(usage());
         return 2;
     }
     const { values, positionals } = parsed;
@@ -152,7 +162,7 @@ async function main(): Promise<number>
     const command = positionals[0];
     if (values.help || command === undefined || command === 'help')
     {
-        print(USAGE);
+        print(usage());
         return command === undefined && !values.help ? 2 : 0;
     }
 
@@ -194,6 +204,9 @@ async function main(): Promise<number>
             {
                 print(`${ statusMark(result.status) } ${ result.name.padEnd(22) } ${ result.detail }`);
             }
+            const count = (status: string): number => results.filter((result) => result.status === status).length;
+            const plural = (n: number, word: string): string => `${ n } ${ word }${ n === 1 ? '' : 's' }`;
+            print(`${ verdictGlyph() } ${ count('ok') } ok · ${ plural(count('warn'), 'warning') } · ${ plural(count('fail'), 'failure') }`);
             return results.some((result) => result.status === 'fail') ? 1 : 0;
         }
         case 'info':
@@ -203,8 +216,8 @@ async function main(): Promise<number>
         }
         default:
         {
-            printError(`azeroth: unknown command '${ command }'\n`);
-            print(USAGE);
+            fail(`unknown command '${ command }'`);
+            print(usage());
             return 2;
         }
     }

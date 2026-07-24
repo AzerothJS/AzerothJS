@@ -168,7 +168,10 @@ function isErrorShape(value: object): value is ErrorShape
     return 'name' in value && 'message' in value && ('stack' in value || 'cause' in value);
 }
 
-/** The production face: byte-clean NDJSON lines, one write per record. */
+/**
+ * The production face: one byte-clean NDJSON line per record (no ANSI ever, stable key
+ * order) to the given stream or stdout - the format every log collector ingests.
+ */
 export function ndjsonSink(options: { stream?: WritableLike | undefined } = {}): LogSink
 {
     const out = options.stream ?? stdStream('stdout');
@@ -178,7 +181,11 @@ export function ndjsonSink(options: { stream?: WritableLike | undefined } = {}):
     };
 }
 
-/** The browser face: levels map onto console methods, badge styled via %c. */
+/**
+ * The browser face: each level maps onto the matching console method (so DevTools
+ * filtering works) with the badge styled via %c to carry the same identity the
+ * terminal faces have.
+ */
 export function consoleSink(): LogSink
 {
     const METHOD: Record<LogLevel, 'debug' | 'info' | 'warn' | 'error'> =

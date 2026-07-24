@@ -1,12 +1,12 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/logo-transparent.png" alt="AzerothJS" width="120" />
+    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
 # @azerothjs/language-service
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Flanguage-service?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/language-service)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained reactive framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
 ## Overview
 
@@ -212,32 +212,13 @@ inside mapped (user-authored) spans, tidying the script and expressions without
 disturbing the markup. This module also provides folding ranges, on-type
 formatting, and selection ranges.
 
-## Development
-
-The source is TypeScript with ESM `.ts`-extension imports, 4-space indentation,
-and Allman braces, matching the rest of the monorepo. Each module carries a
-header comment describing its responsibility, and exported symbols carry JSDoc.
-
-A good reading order follows the runtime pipeline: `virtual-code.ts` and
-`mapping.ts`, then `ts-project.ts`, then `markup-model.ts`, then the providers,
-then `service.ts`.
-
-
 ## Testing
 
-Tests live under `test/language-service/` at the repository root and run with
-Vitest:
-
-```sh
-npm test                       # whole repository
-npx vitest run test/language-service
-```
-
-`language-service.test.ts` exercises the public facade end to end (completion,
-hover, diagnostics, navigation) and `virtual-code.test.ts` checks the
-compilation and offset mapping directly. Because the package needs no editor, the
-tests construct an `AzerothLanguageService` over a temporary workspace and assert
-on its results.
+The package needs no editor to test: the suite constructs an
+`AzerothLanguageService` over a temporary workspace and asserts on its results
+directly - completion, hover, diagnostics, navigation, and the offset mapping.
+See the [repository](https://github.com/AzerothJS/AzerothJS) for the full suite
+and contribution workflow.
 
 ## Configuration
 
@@ -268,12 +249,6 @@ diagnostics mapped to original positions, exiting non-zero on error:
 npx azeroth-tsc            # check every .azeroth file under the cwd
 npx azeroth-tsc -p tsconfig.json
 ```
-
-## Examples
-
-`packages/compiler/examples/Showcase.azeroth` is a single comprehensive file
-(both a function component and a class component) used to exercise the features
-by hand in an editor.
 
 ## License
 

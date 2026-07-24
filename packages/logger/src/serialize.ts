@@ -39,7 +39,11 @@ export interface ErrorShape
     cause?: ErrorShape | string;
 }
 
-/** Serializes an Error with its `cause` chain (depth-capped against cycles). */
+/**
+ * Serializes an Error into the `{ name, message, stack, cause }` shape sinks render -
+ * JSON.stringify alone turns an Error into `{}`. The cause chain is walked to a fixed
+ * depth so a cyclic cause can never hang a log call.
+ */
 export function errorShape(error: Error, depth = 0): ErrorShape
 {
     const shape: ErrorShape = { name: error.name, message: error.message };

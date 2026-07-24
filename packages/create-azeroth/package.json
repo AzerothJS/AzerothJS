@@ -13,6 +13,9 @@
         "dist",
         "templates"
     ],
+    "dependencies": {
+        "@azerothjs/logger": "0.9.0-beta.4"
+    },
     "sideEffects": false,
     "scripts": {
         "clean": "node ../../scripts/clean.mjs dist",
