@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/language-server",
-    "version": "0.9.0-beta.4",
+    "version": "1.0.0-beta.1",
     "description": "AzerothJS language server - a Language Server Protocol front-end for .azeroth files",
     "type": "module",
     "main": "./dist/index.js",
@@ -26,7 +26,7 @@
     ],
     "sideEffects": false,
     "dependencies": {
-        "@azerothjs/language-service": "0.9.0-beta.4",
+        "@azerothjs/language-service": "1.0.0-beta.1",
         "typescript": ">=6 <7",
         "vscode-languageserver": "^10",
         "vscode-languageserver-textdocument": "^1"

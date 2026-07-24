@@ -2,7 +2,7 @@
     "name": "azerothjs-vscode",
     "displayName": "AzerothJS",
     "description": "Official AzerothJS language support - completion, hover docs, diagnostics, cross-file rename across the .ts/.azeroth boundary, semantic highlighting. Compiler-powered.",
-    "version": "0.9.0-beta.4",
+    "version": "1.0.0-beta.1",
     "icon": "icon.png",
     "publisher": "azerothjs",
     "author": {
@@ -314,11 +314,11 @@
         ]
     },
     "dependencies": {
-        "@azerothjs/typescript-plugin": "0.9.0-beta.4",
+        "@azerothjs/typescript-plugin": "1.0.0-beta.1",
         "typescript": ">=6 <7"
     },
     "devDependencies": {
-        "@azerothjs/language-server": "0.9.0-beta.4",
+        "@azerothjs/language-server": "1.0.0-beta.1",
         "@types/node": "^26.1.1",
         "@types/vscode": "^1.125.0",
         "vscode-languageclient": "^10"
