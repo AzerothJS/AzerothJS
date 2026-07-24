@@ -111,7 +111,7 @@ describe('planDev', () =>
         const dir = root();
         const plan = planDev(nativeBackend(dir));
         expect(plan.steps).toHaveLength(1);
-        expect(plan.steps[0]).toMatchObject({ script: null, args: ['--watch', 'src/main.ts'] });
+        expect(plan.steps[0]).toMatchObject({ script: null, args: ['--watch', '--watch-preserve-output', 'src/main.ts'] });
     });
 
     it('built backend: tsc -w first, then node --watch gated on the first emit', () =>
@@ -120,10 +120,10 @@ describe('planDev', () =>
         installTools(dir);
         const plan = planDev(builtBackend(dir));
         expect(plan.steps).toHaveLength(2);
-        expect(plan.steps[0]?.args).toEqual(['-w', '--preserveWatchOutput', '-p', 'tsconfig.json']);
+        expect(plan.steps[0]?.args).toEqual(['-w', '--pretty', '--preserveWatchOutput', '-p', 'tsconfig.json']);
         expect(plan.steps[1]).toMatchObject({
             script: null,
-            args: ['--watch', 'dist/main.js'],
+            args: ['--watch', '--watch-preserve-output', 'dist/main.js'],
             waitForFile: join(dir, 'dist', 'main.js')
         });
     });
@@ -221,7 +221,7 @@ describe('formatStep - what --print shows', () =>
         {
             const line = formatStep(nodeStep);
             expect(line).toContain(`cd ${ dir }`);
-            expect(line).toContain('node --watch dist/main.js');
+            expect(line).toContain('node --watch --watch-preserve-output dist/main.js');
             expect(line).toContain('starts after');
         }
     });

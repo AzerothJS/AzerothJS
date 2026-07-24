@@ -46,6 +46,7 @@ function usage(): string
     ];
     const flags: ReadonlyArray<readonly [string, string]> = [
         ['--print', 'Print the exact child invocations and exit (dev/check/build)'],
+        ['--raw', 'Verbatim child output in dev - no rewriting, no color propagation (NO_COLOR/FORCE_COLOR/AZEROTH_LOG are honored either way)'],
         ['--app <dir>', 'Explicit frontend half of a fullstack root'],
         ['--server <dir>', 'Explicit backend half of a fullstack root'],
         ['-v, --version', 'Print the CLI version'],
@@ -138,6 +139,7 @@ async function main(): Promise<number>
             args: process.argv.slice(2),
             options: {
                 print: { type: 'boolean', default: false },
+                raw: { type: 'boolean', default: false },
                 app: { type: 'string' },
                 server: { type: 'string' },
                 version: { type: 'boolean', short: 'v', default: false },
@@ -182,7 +184,7 @@ async function main(): Promise<number>
                 return 0;
             }
             printBanner({ name: 'AzerothJS', subtitle: 'dev', version: VERSION, entries: shapeEntries(project) });
-            return runDev(plan);
+            return runDev(plan, { raw: values.raw });
         }
         case 'check':
         case 'build':

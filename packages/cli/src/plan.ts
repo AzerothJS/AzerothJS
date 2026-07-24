@@ -109,17 +109,21 @@ function devServerSteps(server: BackendProject, label: string): Step[]
 {
     if (server.build === 'native')
     {
-        return [step({ label, cwd: server.dir, script: null, args: ['--watch', server.entry], longRunning: true })];
+        return [step({ label, cwd: server.dir, script: null, args: ['--watch', '--watch-preserve-output', server.entry], longRunning: true })];
     }
     const tsc = need(server.dir, TSC, 'typescript (the server uses decorators, so tsc must emit before node can run it)');
     const builtEntry = server.builtEntry ?? 'dist/main.js';
     return [
-        step({ label: `${ label } build`, cwd: server.dir, script: tsc, args: ['-w', '--preserveWatchOutput', '-p', 'tsconfig.json'], longRunning: true }),
+        // --pretty holds tsc's colored diagnostics under the conductor's pipe (tsc
+        // checks isTTY itself and would degrade to plain; FORCE_COLOR means nothing to it).
+        step({ label: `${ label } build`, cwd: server.dir, script: tsc, args: ['-w', '--pretty', '--preserveWatchOutput', '-p', 'tsconfig.json'], longRunning: true }),
         step({
             label,
             cwd: server.dir,
             script: null,
-            args: ['--watch', builtEntry],
+            // --watch-preserve-output: the conductor owns the frame; a child must not
+            // reset the terminal (node emits ESC c before each restart otherwise).
+            args: ['--watch', '--watch-preserve-output', builtEntry],
             longRunning: true,
             waitForFile: join(server.dir, builtEntry)
         })

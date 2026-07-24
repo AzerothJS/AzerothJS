@@ -30,8 +30,54 @@ the existing `inverseRed` fatal badge, no emoji.
 | `○` | ` ` | an unselected option |
 | `│` | `\|` | flow column connecting a multi-step interaction |
 | `└` | `+` | flow end / summary verdict |
-| `✓` | `ok` | success (existing banner ready line) |
-| `x` | `x` | failure (ASCII on purpose - reads in every log) |
+| `✓` | `+` | success (banner ready line, compile-clean, verdict moments) |
+| `✖` | `x` | stream failure (crashed child, compile errors) |
+| `↻` | `~` | a restart in a watch stream |
+| `▸` | `>` | a step heading (check/build) |
+| `x` | `x` | failure prefix in error VOICE lines (ASCII on purpose - reads in every log) |
+
+Unicode detection doctrine: on Windows, every console a supported Node can run in
+(Win10+ conhost, Windows Terminal, VS Code, JetBrains, ConEmu) renders this set with
+its default fonts - `supportsUnicode()` is true there without env markers. Elsewhere
+only `TERM=linux` consoles fall back to ASCII.
+
+## The pretty face's calm rules
+
+- `info` is the ambient level: its icon and color carry it, the word stays home.
+  Every other level keeps its word - warn/error lines SHOULD read louder than the
+  stream around them, and the misalignment against info lines is that emphasis.
+- The clock is seconds-only and dim (user-ratified reversal of the earlier keep-ms
+  call): it answers "when", and sub-second precision lives in measured fields like
+  durationMs. The full epoch stays in every record for NDJSON faces and files.
+- The message is BOLD - the event name is what the line is about, which is exactly
+  what bold is reserved for.
+- A request-shaped record (string method/path + numeric status/durationMs) renders
+  as a SENTENCE: `GET /healthz → 200 · 0.48ms` - the field order is the grammar, so
+  the scaffolding keys and the redundant message word retire from display. Extra
+  fields trail as ordinary pairs; an incomplete shape falls back to pairs entirely.
+- `url=` before an http(s) value is a tautology - the value names itself, only that
+  key drops; `docs=` keeps its key because it says WHICH url. Display only: files
+  and NDJSON always carry every key.
+- A field bound on every line (`service` in a single-service dev terminal) is noise
+  to a human and signal to a collector: `prettySink({ hide: [...] })` drops it from
+  the human face only; NDJSON faces and files always keep every field.
+- Field pairs hang off a dim interpunct (` · `) - the house separator the doctor
+  verdict line established. It marks the message/fields boundary and each pair's
+  start without adding ink the eye must read. ASCII terminals keep the double space.
+
+## Semantic values (pretty face only; bytes never altered)
+
+| Fact | Style | Why |
+|---|---|---|
+| `url` key, or any `http(s)://` string value | brand | a destination - the same fact the ready frame paints brand |
+| `status` key with an integer 100-599 | 2xx `green` · 3xx `cyan` · 4xx `yellow` · 5xx `red` | a status code is a verdict |
+| warn message | `yellow` | the message IS the alarm |
+| error / fatal message | `red` | same, louder |
+| everything else | plain | restraint keeps the styled facts readable |
+
+Declined on purpose: durationMs thresholds (an opinion the framework should not
+hold), `method` bold (no information gained), type-based number/boolean tints
+(rainbow soup), requestId truncation (alters bytes - that is what `hide` is for).
 
 ## The interaction column
 

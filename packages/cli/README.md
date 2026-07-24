@@ -37,13 +37,34 @@ There is no config file. The CLI detects your project's shape from what already 
 
 ## `azeroth dev` - the conductor
 
-For a fullstack app, one command replaces the hand-written dev script and the second
-terminal: the server's compiler watch (only when decorators demand one), `node --watch`
-on the emitted output - gated on the first successful emit - and vite, all under one
-banner with `[api]`/`[web]`-prefixed output. Ctrl+C tears the whole session down.
+One command replaces the hand-written dev script and the second terminal: the server's
+compiler watch (only when decorators demand one), `node --watch` on the emitted output -
+gated on the first COMPILE REPORT, so the server starts exactly once - and vite, all
+inside one designed frame:
 
-For a single-tool shape the honest thing happens: a frontend `azeroth dev` IS vite,
-verbatim; a native backend IS `node --watch src/main.ts`. The banner says so.
+```
+  api build │ compiling...
+  api build │ ✓ compiled clean
+  api       │ 12:27:06 ● listening · http://localhost:5200 · env=development
+  api       │ 12:27:09 ● GET /healthz → 200 · 0.48ms
+
+  ✓ Ready in 4.2 s
+    api  http://localhost:5200
+    web  http://localhost:1420/
+```
+
+Fixed-width stream badges (one hue per app half), each tool's session chatter rewritten
+to house style with the information intact - tsc's watch banners become `compiling...`
+and `✓ compiled clean` / `✖ 3 errors`, node's restarts become `↻ restarting`, vite's
+identity block folds into the composed ready frame. Everything real - diagnostics, HMR,
+your app's log lines - passes through byte-intact. Colors survive the pipe: the
+conductor forwards its terminal's capabilities to children (your own `NO_COLOR`,
+`FORCE_COLOR`, and `AZEROTH_LOG` always win), and when the conductor itself is piped
+(CI), output is plain and escape-free end to end. Ctrl+C tears the whole session down
+with a one-line farewell.
+
+`--raw` turns the discipline off - verbatim child output, no environment additions -
+for when you are debugging the tools themselves.
 
 ## Transparency
 

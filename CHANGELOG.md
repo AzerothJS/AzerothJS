@@ -9,6 +9,64 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+The terminal-experience release: `azeroth dev` becomes a designed frame instead of a
+pipe multiplexer, and the logger's developer face renders meaning instead of strings.
+
+### Added
+
+- **cli**: the dev conductor's line discipline - fixed-width colored stream badges
+  (one hue per app half, dim `│` gutter), blank lines swallowed, each tool's session
+  chatter rewritten to house style with its information intact (tsc watch banners →
+  `compiling...` / `✓ compiled clean` / `✖ N errors`; node --watch lifecycle →
+  `↻ restarting` / `crashed`), vite's identity block folded into one composed
+  `✓ Ready in ...` frame listing every half's URL, and a one-line farewell on Ctrl+C.
+- **cli**: `azeroth dev --raw` - verbatim child output, no environment additions,
+  for debugging the tools themselves.
+- **cli**: capability propagation - children keep their colors and pretty log faces
+  under the conductor's pipe (`FORCE_COLOR` tier + `AZEROTH_LOG=pretty`, forwarded
+  only when the conductor itself is on a TTY and never overriding the user's own
+  environment); a piped/CI conductor stays byte-clean end to end.
+- **cli**: `check`/`build` gained dim step headings and a closing verdict line
+  (`✓ all checks passed` / `✓ build complete`).
+- **logger**: `prettySink({ hide })` - context fields a human should not re-read on
+  every line (a constant `service`, a `requestId`) can be hidden from the pretty
+  face only; NDJSON faces and files always keep every field.
+- **logger**: semantic values on the pretty face - `http(s)://` URLs render in the
+  brand ice-blue, `status` codes as verdicts (2xx green / 3xx cyan / 4xx yellow /
+  5xx red), request methods in their REST colors.
+- **logger**: request sentences - a record shaped like `logRequests` output renders
+  as `GET /healthz → 200 · 0.48ms` instead of `key=value` scaffolding; incomplete
+  shapes (or hiding any ingredient) fall back to ordinary pairs.
+
+### Changed
+
+- **cli**: the server half of a dev session now starts on tsc's first compile
+  report instead of a file-existence heuristic - one compile, one boot, no doubled
+  `listening` line; tsc watch runs `--pretty` (colored diagnostics under the pipe)
+  and node runs `--watch-preserve-output` (a child must not reset the terminal).
+- **cli**: the live dev view no longer echoes full child command lines - `--print`
+  remains the transparency surface, `--raw` still echoes them.
+- **cli**: `doctor` verdict marks joined the glyph vocabulary (`✓`/`✖`/`−` with
+  ASCII fallbacks).
+- **logger**: the pretty face's calm rules - seconds-only dim clock (sub-second
+  precision lives in measured fields), bold messages, `info` drops its level word
+  (the icon carries it) while warn/error keep theirs with level-tinted messages,
+  field pairs hang off dim interpuncts, and the tautological `url=` label drops
+  before a URL value. Display only: values are never altered.
+- **logger**: quiet text renders as a real gray at 256/truecolor tiers instead of
+  ANSI faint, which several Windows console hosts draw as plain - the dim/bold
+  hierarchy now survives every terminal.
+- **logger**: `supportsUnicode()` is true on every Windows console a supported Node
+  can run in (the env-marker allowlist was obsolete), and `colorTier()` recognizes
+  the JetBrains terminal and defaults a bare Windows TTY to truecolor.
+
+### Fixed
+
+- **cli**: the dev supervisor no longer loses child colors, prints doubled boot
+  lines, or lets `node --watch` clear the terminal on restart.
+- **logger**: `logRequests` documentation taught a silent-terminal configuration
+  (`stream: fileStream(...)` with no tee); the README now shows the tee recipe.
+
 ## [1.0.0-beta.1] - 2026-07-24
 
 The first 1.0 beta. The framework becomes a full stack with one entry point: a

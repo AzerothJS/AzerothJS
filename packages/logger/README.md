@@ -31,14 +31,14 @@ requestLog.debug('cache miss', { key: 'user:7' });
 
 The SAME calls render for whoever is watching:
 
-**A developer's terminal** (TTY, not production) - one aligned line per event, compact
-timestamp, a level icon in its color, dim `key=value` fields, errors as indented blocks
-with the `cause` chain walked:
+**A developer's terminal** (TTY, not production) - one designed line per event: a dim
+seconds clock, the level icon in its color, the message bold, fields hanging off dim
+interpuncts, errors as indented blocks with the `cause` chain walked:
 
 ```
-14:32:07.412 ● info  server listening  port=3000
-14:32:09.833 ▲ warn  slow handler  route=/api/search durationMs=1203
-14:32:11.020 ✖ error request failed
+14:32:07 ● server listening · port=3000
+14:32:09 ▲ warn  slow handler · route=/api/search · durationMs=1203
+14:32:11 ✖ error request failed
     at handler (src/routes.ts:42:11)
     caused by: Error: upstream timeout
 ```
@@ -71,6 +71,38 @@ map onto styled `console` methods.
 - **The color social contract is honored.** `NO_COLOR` always wins; `FORCE_COLOR` colors a
   pipe for CI viewers; a non-TTY stream is byte-clean; icons degrade to ASCII on terminals
   that cannot render them.
+
+## The pretty face's design
+
+The developer face renders MEANING, not just strings, and its rules are deliberate
+(the full canon lives in this package's DESIGN.md):
+
+- `info` lines drop the level word - the icon carries it; warn/error keep theirs and
+  read louder by contrast, with their message tinted in the level's color.
+- **Semantic values**: an `http(s)://` URL renders in the brand ice-blue; a `status`
+  field that is a real status code renders as a verdict (2xx green, 3xx cyan,
+  4xx yellow, 5xx red); everything else stays plain on purpose.
+- **Request sentences**: a record carrying `method`, `path`, `status`, and
+  `durationMs` - the shape `@azerothjs/http`'s `logRequests` emits - reads as prose,
+  with the method in its REST color:
+
+  ```
+  14:32:12 ● GET /healthz → 200 · 0.48ms
+  14:32:15 ✖ error POST /orders → 500 · 3.1ms
+  ```
+
+- **`hide`**: a context field bound on every line (`service` in a single-service dev
+  terminal) is noise to a human and signal to a collector - hide it from THIS face
+  only, every other face and file keeps it:
+
+  ```ts
+  import { createLogger, prettySink } from '@azerothjs/logger';
+
+  const log = createLogger({ sink: prettySink({ hide: ['service', 'requestId'] }), fields: { service: 'api' } });
+  ```
+
+Display only, always: values are styled, never altered, and the NDJSON faces carry
+every field with full epoch timestamps.
 
 ## The banner
 
@@ -142,12 +174,16 @@ const log = createLogger({ sink: teeSink(prettySink(), file) });
 // on shutdown: file.close()  (flushes; process exit also flushes automatically)
 ```
 
-And with `@azerothjs/http`, one line per request into the folder:
+And with `@azerothjs/http`, one line per request - pretty on your terminal, NDJSON in
+the folder. Compose the tee: a bare `stream: fileStream(...)` would send EVERYTHING to
+the file and leave your terminal silent (a file is not a TTY, so the logger picks its
+NDJSON face for it):
 
 ```ts
-import { createLogger, fileStream } from '@azerothjs/logger';
+import { createLogger, prettySink, fileSink, teeSink } from '@azerothjs/logger';
 
-new App({ observe: logRequests(createLogger({ stream: fileStream('logs/') })) });
+const log = createLogger({ sink: teeSink(prettySink(), fileSink('logs/')) });
+new App({ observe: logRequests(log) });
 ```
 
 ## Custom sinks

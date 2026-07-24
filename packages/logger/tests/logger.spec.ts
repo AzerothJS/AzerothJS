@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     createLogger, ndjsonSink, prettySink, consoleSink,
     renderBanner, printBanner, formatReady,
-    ndjsonLine, errorShape, colorTier
+    ndjsonLine, errorShape, colorTier, supportsUnicode, palette
 } from '@azerothjs/logger';
 import type { LogRecord, WritableLike } from '@azerothjs/logger';
 
@@ -208,16 +208,155 @@ describe('NDJSON face', () =>
 
 describe('pretty face', () =>
 {
-    it('renders time, icon, level, message, and dim key=value fields on one line', () =>
+    it('renders time, icon, message, and dim key=value fields on one line', () =>
     {
         const out = capture(true);
         const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
         sink({ level: 'info', message: 'server up', time: Date.UTC(2026, 0, 1, 12, 30, 5, 42), fields: { port: 3000 } });
         const line = out.lines()[0] ?? '';
-        expect(line).toContain('● info ');
-        expect(line).toContain('server up');
+        // info is the ambient level: the icon carries it, the word stays home.
+        expect(line).toContain('● server up');
+        expect(line).not.toContain('info');
         expect(line).toContain('port=3000');
-        expect(line).toMatch(/\d\d:\d\d:\d\d\.\d\d\d/);
+        // Seconds-only clock: sub-second precision lives in measured fields.
+        expect(line).toMatch(/\d\d:\d\d:\d\d /);
+        expect(line).not.toMatch(/\d\d:\d\d:\d\d\.\d/);
+    });
+
+    it('keeps the level word for every non-info level', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        sink({ level: 'error', message: 'boom', time: 0, fields: {} });
+        sink({ level: 'debug', message: 'poke', time: 0, fields: {} });
+        expect(out.lines()[0]).toContain('✖ error');
+        expect(out.lines()[1]).toContain('✦ debug');
+    });
+
+    it('hide: named fields never render on this sink (files keep them)', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true, hide: ['service'] });
+        sink({ level: 'info', message: 'listening', time: 0, fields: { service: 'api', url: 'http://x' } });
+        const line = out.lines()[0] ?? '';
+        expect(line).toContain('http://x');
+        expect(line).not.toContain('service=');
+    });
+
+    it('field pairs hang off the dim interpunct; ASCII keeps the double space', () =>
+    {
+        const out = capture(true);
+        prettySink({ stream: out.stream, tier: 'none', unicode: true })(
+            { level: 'info', message: 'listening', time: 0, fields: { url: 'http://x', env: 'dev' } });
+        // url= is a tautology - the value names itself, so only the key drops.
+        expect(out.lines()[0]).toContain('listening · http://x · env=dev');
+
+        const ascii = capture(true);
+        prettySink({ stream: ascii.stream, tier: 'none', unicode: false })(
+            { level: 'info', message: 'listening', time: 0, fields: { env: 'dev' } });
+        expect(ascii.lines()[0]).toContain('listening  env=dev');
+    });
+
+    it('a request-shaped record reads as a sentence; extra fields trail as pairs', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'GET', path: '/healthz', status: 200, durationMs: 0.48, requestId: 'abc123' } });
+        const line = out.lines()[0] ?? '';
+        expect(line).toContain('GET /healthz → 200 · 0.48ms');
+        expect(line).toContain('requestId=abc123');
+        // The sentence consumed its scaffolding: no key=value re-render, no message word.
+        expect(line).not.toContain('method=');
+        expect(line).not.toContain('status=');
+        expect(line).not.toContain('request ·');
+    });
+
+    it('method verbs wear their REST colors in the sentence', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'basic', unicode: true });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'GET', path: '/a', status: 200, durationMs: 1 } });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'POST', path: '/a', status: 201, durationMs: 1 } });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'DELETE', path: '/a', status: 204, durationMs: 1 } });
+        const lines = out.lines();
+        expect(lines[0]).toContain('[36mGET[39m');
+        expect(lines[1]).toContain('[32mPOST[39m');
+        expect(lines[2]).toContain('[31mDELETE[39m');
+    });
+
+    it('a 5xx request sentence keeps its error level word', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        sink({ level: 'error', message: 'request failed', time: 0, fields: { method: 'GET', path: '/boom', status: 500, durationMs: 3.1 } });
+        const line = out.lines()[0] ?? '';
+        expect(line).toContain('✖ error');
+        expect(line).toContain('GET /boom → 500 · 3.1ms');
+    });
+
+    it('hiding any sentence ingredient disarms the sentence - hide always wins', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true, hide: ['status'] });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'GET', path: '/x', status: 200, durationMs: 1 } });
+        const line = out.lines()[0] ?? '';
+        // No sentence (it would have to show the hidden status) - pairs, minus status.
+        expect(line).not.toContain('GET /x →');
+        expect(line).toContain('method=GET');
+        expect(line).not.toContain('status');
+    });
+
+    it('an incomplete request shape falls back to ordinary pairs', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'none', unicode: true });
+        sink({ level: 'info', message: 'request', time: 0, fields: { method: 'GET', path: '/x' } });
+        const line = out.lines()[0] ?? '';
+        expect(line).toContain('request · method=GET · path=/x');
+    });
+
+    it('semantic values: urls wear the brand, wherever they appear', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'basic', unicode: true });
+        sink({ level: 'info', message: 'up', time: 0, fields: { url: 'http://localhost:5200', docs: 'https://azerothjs.dev' } });
+        const raw = out.raw();
+        // basic-tier brand is cyan (36); both the url key and the url-shaped value get it.
+        expect(raw).toContain('[36mhttp://localhost:5200[39m');
+        expect(raw).toContain('[36mhttps://azerothjs.dev[39m');
+        expect(strip(raw)).toContain('· http://localhost:5200');
+        expect(strip(raw)).toContain('docs=https://azerothjs.dev');
+    });
+
+    it('semantic values: status codes render as verdicts, out-of-range stays plain', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'basic', unicode: true });
+        sink({ level: 'info', message: 'r', time: 0, fields: { status: 200 } });
+        sink({ level: 'info', message: 'r', time: 0, fields: { status: 302 } });
+        sink({ level: 'info', message: 'r', time: 0, fields: { status: 404 } });
+        sink({ level: 'info', message: 'r', time: 0, fields: { status: 500 } });
+        sink({ level: 'info', message: 'r', time: 0, fields: { status: 999, state: 'active' } });
+        const lines = out.lines();
+        expect(lines[0]).toContain('[32m200[39m'); // green
+        expect(lines[1]).toContain('[36m302[39m'); // cyan
+        expect(lines[2]).toContain('[33m404[39m'); // yellow
+        expect(lines[3]).toContain('[31m500[39m'); // red
+        expect(lines[4]).toContain('status=[22m999'); // plain after the dim key closes
+    });
+
+    it('warn and error messages wear their level color; info stays plain', () =>
+    {
+        const out = capture(true);
+        const sink = prettySink({ stream: out.stream, tier: 'basic', unicode: true });
+        sink({ level: 'warn', message: 'careful', time: 0, fields: {} });
+        sink({ level: 'error', message: 'broken', time: 0, fields: {} });
+        sink({ level: 'info', message: 'calm', time: 0, fields: {} });
+        const lines = out.lines();
+        expect(lines[0]).toContain('[33mcareful[39m');
+        expect(lines[1]).toContain('[31mbroken[39m');
+        expect(lines[2]).not.toContain('[33mcalm');
+        expect(strip(lines[2] ?? '')).toContain('calm');
     });
 
     it('falls back to ASCII badges when unicode is off', () =>
@@ -355,5 +494,40 @@ describe('color capability', () =>
 
         Reflect.deleteProperty(process.env, 'FORCE_COLOR');
         expect(colorTier({ isTTY: false })).toBe('none');
+    });
+
+    it('quiet text is a real gray at capable tiers (faint is unreliable on Windows hosts)', () =>
+    {
+        expect(palette('truecolor').dim('x')).toContain('38;2;138;148;158');
+        expect(palette('256').dim('x')).toContain('38;5;245');
+        // Basic terminals keep SGR-2 faint - no 256 palette to draw a gray from.
+        expect(palette('basic').dim('x')).toContain('[2m');
+    });
+
+    it('recognizes the JetBrains terminal as truecolor', () =>
+    {
+        process.env.TERMINAL_EMULATOR = 'JetBrains-JediTerm';
+        try
+        {
+            expect(colorTier({ isTTY: true })).toBe('truecolor');
+        }
+        finally
+        {
+            Reflect.deleteProperty(process.env, 'TERMINAL_EMULATOR');
+        }
+    });
+
+    it('treats every supported Windows console as unicode-capable', () =>
+    {
+        if (process.platform === 'win32')
+        {
+            // No env marker needed: Node's Windows floor is Win10+, whose console
+            // fonts carry the glyph set - this machine IS the test environment.
+            expect(supportsUnicode()).toBe(true);
+        }
+        else
+        {
+            expect(typeof supportsUnicode()).toBe('boolean');
+        }
     });
 });

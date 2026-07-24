@@ -55,7 +55,10 @@ export function colorTier(stream: TtyLike | undefined): ColorTier
         return 'none';
     }
     const colorterm = env('COLORTERM') ?? '';
-    if (colorterm.includes('truecolor') || colorterm.includes('24bit') || env('WT_SESSION') !== undefined || env('TERM_PROGRAM') === 'vscode')
+    if (colorterm.includes('truecolor') || colorterm.includes('24bit')
+        || env('WT_SESSION') !== undefined
+        || env('TERM_PROGRAM') === 'vscode'
+        || env('TERMINAL_EMULATOR') === 'JetBrains-JediTerm')
     {
         return 'truecolor';
     }
@@ -63,12 +66,21 @@ export function colorTier(stream: TtyLike | undefined): ColorTier
     {
         return '256';
     }
+    if (typeof process !== 'undefined' && process.platform === 'win32')
+    {
+        // A Windows TTY that reached here is Win10+ conhost or a modern terminal
+        // (Node's supported Windows floor): the console host does 24-bit VT and
+        // Node enables VT processing - no env marker required.
+        return 'truecolor';
+    }
     return 'basic';
 }
 
 /**
- * Whether the terminal renders non-ASCII glyphs reliably. Windows Terminal, VS Code, and
- * ConEmu do; legacy conhost and TERM=linux consoles do not.
+ * Whether the terminal renders non-ASCII glyphs reliably. On Windows this is every
+ * console a supported Node can run in - Win10+ conhost, Windows Terminal, VS Code,
+ * JetBrains, ConEmu all ship fonts carrying the glyph set (legacy conhost predates
+ * Node's own Windows floor). Elsewhere only TERM=linux consoles cannot.
  */
 export function supportsUnicode(): boolean
 {
@@ -76,10 +88,7 @@ export function supportsUnicode(): boolean
     {
         return env('TERM') !== 'linux';
     }
-    return env('WT_SESSION') !== undefined
-        || env('TERM_PROGRAM') === 'vscode'
-        || env('ConEmuTask') !== undefined
-        || env('TERM') !== undefined;
+    return true;
 }
 
 /** A styling function; identity when the tier renders nothing. */
@@ -126,10 +135,16 @@ export function palette(tier: ColorTier): Palette
     const brand = tier === 'truecolor'
         ? wrap('38;2;95;179;232', '39')
         : tier === '256' ? wrap('38;5;74', '39') : wrap('36', '39');
+    // Quiet text is a real gray at capable tiers, not SGR-2 faint: several Windows
+    // console hosts render faint as plain, which flattens the whole hierarchy into
+    // white-on-black. A color renders everywhere; basic terminals keep faint.
+    const dim = tier === 'truecolor'
+        ? wrap('38;2;138;148;158', '39')
+        : tier === '256' ? wrap('38;5;245', '39') : wrap('2', '22');
     return {
         brand,
         bold: wrap('1', '22'),
-        dim: wrap('2', '22'),
+        dim,
         red: wrap('31', '39'),
         yellow: wrap('33', '39'),
         green: wrap('32', '39'),
