@@ -449,23 +449,41 @@ function appendChild(parent: HTMLElement | DocumentFragment, child: Child): void
 }
 
 /**
- * Renders an array-valued reactive child as DIRECT siblings in front of `anchor` - never inside a
- * wrapper element. A `display:contents` wrapper would be ignored by `<select>`'s option model and break
- * `<table>` row parsing, so a reactive list (`{ items().map(...) }`) must be direct children of the real
- * parent. The items are built into the live parent first (so any reactive binding inside an item anchors
- * to that real parent, not a throwaway fragment), then moved into place. Returns the inserted nodes in
- * order. The single implementation shared by both reactive-child drivers.
+ * Materialises a MULTI-NODE reactive value - an array (`{ items().map(...) }`) or a DocumentFragment
+ * (a `<For>`, or a branch's node group) - as DIRECT siblings in front of `anchor`, never inside a
+ * wrapper element. A `display:contents` wrapper would be ignored by `<select>`'s option model, break
+ * `<table>` row parsing, and be invalid inside `<ul>`/`<svg>`, so the value's nodes must be direct
+ * children of the real parent. The items are built into the live parent first (so any reactive binding
+ * inside an item anchors to that real parent, not a throwaway fragment), then moved into place. A `null`
+ * anchor appends (the anchor-free only-child case, where the element itself bounds the range). Returns
+ * the inserted nodes in order - the ONE multi-node materialiser every reactive-hole driver shares.
  *
  * @internal
  */
-function insertArrayChildren(parent: Node, value: unknown, anchor: ChildNode): ChildNode[]
+function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null): ChildNode[]
 {
     const start = parent.childNodes.length;
-    appendChildren(parent as HTMLElement, value as Child[]);
-    const nodes = Array.prototype.slice.call(parent.childNodes, start) as ChildNode[];
-    for (const node of nodes)
+    if (value instanceof DocumentFragment)
     {
-        parent.insertBefore(node, anchor);
+        // A fragment empties into the parent on append, so its children become direct children with
+        // no wrapper - the same guarantee the array branch gives, for a `<For>`/branch node group.
+        parent.appendChild(value);
+    }
+    else
+    {
+        appendChildren(parent as HTMLElement, value as Child[]);
+    }
+    const nodes = Array.prototype.slice.call(parent.childNodes, start) as ChildNode[];
+    // Anchor-free (append) case: appendChildren already left the nodes in order at the parent's tail,
+    // which IS where an anchor-free hole wants them - so skip the reposition loop, which would otherwise
+    // re-append each node (N redundant insertBefore calls) for no change in order. A real anchor needs
+    // the nodes moved into the range before it.
+    if (anchor !== null)
+    {
+        for (const node of nodes)
+        {
+            parent.insertBefore(node, anchor);
+        }
     }
     return nodes;
 }
@@ -539,14 +557,15 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
         }
         extras = [];
 
-        // Array value: render items as DIRECT siblings of currentNode (no `display:contents` wrapper),
-        // so a reactive list is valid inside `<select>`/`<table>`/`<ul>`. An empty array still holds the
-        // slot with an empty text node so `currentNode` stays a real node.
-        if (Array.isArray(value))
+        // Multi-node value (array OR fragment): render its nodes as DIRECT siblings of currentNode (no
+        // `display:contents` wrapper), so a reactive list or a reactively-returned `<For>` is valid
+        // inside `<select>`/`<table>`/`<ul>`/`<svg>`. An empty value still holds the slot with an empty
+        // text node so `currentNode` stays a real node.
+        if (Array.isArray(value) || value instanceof DocumentFragment)
         {
-            // Render the items as direct siblings in this binding's slot. An empty array keeps the slot
+            // Render the nodes as direct siblings in this binding's slot. An empty value keeps the slot
             // with an empty text node so `currentNode` stays a real node (this binding's invariant).
-            let nodes = insertArrayChildren(parent, value, currentNode);
+            let nodes = spliceMultiNode(parent, value, currentNode);
             let head = nodes[0];
             if (head === undefined)
             {
@@ -625,9 +644,12 @@ function primitiveToText(value: string | number | null | undefined | false): str
 }
 
 /**
- * Builds a single ChildNode from a reactive value. Used by the
- * reactive-child path to materialise the new node inside a
- * createRoot before swapping it in.
+ * Coerces a SINGLE-node reactive value (a scalar, an element, or any other DOM node) into one
+ * ChildNode, for the reactive-child path to swap in place. MULTI-node values - arrays and
+ * DocumentFragments - are NOT this function's job: every caller special-cases them through
+ * {@link spliceMultiNode} first (direct children, no wrapper), so an array/fragment never reaches
+ * here. This keeps a single honest contract - one value in, one node out - with no `display:contents`
+ * wrapper smuggling N nodes past a single-node interface.
  *
  * @internal
  */
@@ -641,35 +663,6 @@ function buildNode(value: unknown): ChildNode
     if (value instanceof HTMLElement)
     {
         return value;
-    }
-
-    // A reactive child that returns a <For> (e.g. `() => For({...})`) yields a
-    // DocumentFragment. The reactive-child path swaps a SINGLE node in place,
-    // which a multi-node range can't satisfy, so wrap the fragment's nodes in a
-    // contents span here. (Used <For> directly as an element child needs no
-    // wrapper - see appendChild's DocumentFragment branch.)
-    if (value instanceof DocumentFragment)
-    {
-        const container = document.createElement('span');
-        container.style.display = 'contents';
-        container.appendChild(value);
-        return container;
-    }
-
-    if (Array.isArray(value))
-    {
-        const container = document.createElement('span');
-        container.style.display = 'contents';
-        // Route each item through the full child pipeline, not a flat
-        // instanceof/String check: an array element can itself be a getter
-        // (`[() => icon, () => t('x')]`, exactly what tag-style multi-child
-        // markup compiles to), a nested array, or a non-HTML node. appendChild
-        // resolves getters into reactive bindings and recurses; a bare
-        // `String(item)` here would render a getter as its literal source text.
-        // We are already inside buildNode's caller createRoot, so the reactive
-        // bindings these items create are owned and torn down with this subtree.
-        appendChildren(container, value as Child[]);
-        return container;
     }
 
     // Any other DOM node (SVG/MathML element, Text, Comment) is inserted as-is -
@@ -780,18 +773,29 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
         return;
     }
 
-    parent.insertBefore(buildNode(child), closeAnchor);
+    // Static (non-function) child, placed once. A MULTI-node value (array or fragment) must go in as
+    // DIRECT children before the close anchor - the same treatment the reactive path gives - because
+    // buildNode coerces a SINGLE node only; passing it an array would stringify it (`[object ...]`).
+    if (Array.isArray(child) || child instanceof DocumentFragment)
+    {
+        spliceMultiNode(parent, child, closeAnchor);
+    }
+    else
+    {
+        parent.insertBefore(buildNode(child), closeAnchor);
+    }
     parent.removeChild(openAnchor);
     parent.removeChild(closeAnchor);
 }
 
 /**
- * Drives a hole that is its element's ONLY child (`<td>{ expr }</td>`): the
- * element itself bounds the content, so no anchor pair exists in the clone.
- * The dominant case - a scalar value - keeps ONE text node and updates its
- * `data` in place; a non-scalar (element/fragment/array) value replaces the
- * element's content through the ordinary child pipeline. A static (non-function)
- * child is placed once with no effect at all.
+ * Drives a hole that is its element's ONLY child (`<td>{ expr }</td>`): the element itself bounds the
+ * content, so no anchor pair exists in the clone. A reactive child is driven by the shared
+ * {@link driveHoleRange} with a `null` close anchor - the element IS the range (insert = append, clear =
+ * the whole element) - so an only-child hole gets the exact same scalar fast-path, multi-node
+ * direct-children rendering (arrays and `<For>` fragments, NO `display:contents` wrapper), swap
+ * teardown, and component-destroy hooks as an anchored hole. A static (non-function) child is placed
+ * once with no effect at all.
  *
  * @param el - The element whose entire content the hole owns
  * @param child - The hole's value: a getter for a reactive hole, or the value itself
@@ -800,76 +804,30 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
  */
 export function bindContent(el: HTMLElement, child: Child): void
 {
-    if (typeof child !== 'function')
+    if (typeof child === 'function')
     {
-        placeContent(el, null, child);
+        driveHoleRange(el, null, [], child);
         return;
     }
 
-    // The current scalar text node, reused across runs; null after a non-scalar
-    // value (or an empty string, which leaves no node behind).
-    let text: Text | null = null;
-
-    // The previous run's ROOT when it built a non-scalar subtree - disposed
-    // before the replacement lands, so a swapped-out subtree's effects die with
-    // its DOM (the same ownership contract driveHoleRange keeps).
-    let subtreeDispose: DisposeFn | null = null;
-
-    createEffect(() =>
-    {
-        let localDispose: DisposeFn | undefined;
-        // resolveReactive, not a bare call: a hole can carry a THUNK CHAIN - the
-        // compiler wraps component children as `() => element` factories, so
-        // `{ props.children }` arrives as a function returning a function. A bare
-        // call would leave the inner thunk unresolved and print its SOURCE TEXT.
-        const value = createRoot((d) =>
-        {
-            localDispose = d;
-            return resolveReactive(child);
-        });
-
-        if (value === null || value === undefined || typeof value !== 'object')
-        {
-            // Scalars build nothing - drop this run's root, and tear down any
-            // subtree a previous run left behind.
-            localDispose?.();
-            subtreeDispose?.();
-            subtreeDispose = null;
-            text = placeContent(el, text, value);
-            return;
-        }
-
-        subtreeDispose?.();
-        subtreeDispose = localDispose ?? null;
-        text = placeContent(el, null, value);
-    });
+    placeStatic(el, child);
 }
 
 /**
- * Writes one bindContent value into `el`. Returns the scalar text node to reuse
- * on the next run, or null when the value was non-scalar or rendered empty.
+ * Places a STATIC only-child value into `el` once, with no effect: a multi-node value (array or
+ * fragment) as direct children (no wrapper), anything else as one coerced node.
  *
  * @internal
  */
-function placeContent(el: HTMLElement, text: Text | null, value: unknown): Text | null
+function placeStatic(el: HTMLElement, value: unknown): void
 {
-    if (value === null || value === undefined || typeof value !== 'object')
+    if (Array.isArray(value) || value instanceof DocumentFragment)
     {
-        // Scalar path - matches buildNode's text coercion (null/undefined/false
-        // render as nothing).
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- scalar by the guard above
-        const s = value === null || value === undefined || value === false ? '' : String(value);
-        if (text !== null)
-        {
-            text.data = s;
-            return text;
-        }
-        el.textContent = s;
-        return el.firstChild as Text | null;
+        spliceMultiNode(el, value, null);
+        return;
     }
-    el.textContent = '';
+
     el.appendChild(buildNode(value));
-    return null;
 }
 
 /**
@@ -920,17 +878,18 @@ export function bindSlot(marker: ChildNode, result: Node | null | undefined): vo
 }
 
 /**
- * Drives a reactive hole bounded by a `<!--[-->...<!--]-->` anchor range: runs
- * `child` as an effect and patches the nodes between the (already-consumed) open
- * anchor and `closeAnchor` in place. Shared by {@link bindHole} (fresh template
- * clone - the range starts empty) and {@link adoptReactiveHole} (hydration - the
- * range starts filled with server content). On the first run it keeps matching
- * server text (no flash, node identity preserved); later runs swap or patch in
- * place exactly like the DOM reactive-child path.
+ * Drives a reactive hole and patches its content in place as `child` re-runs. The range is bounded
+ * by `closeAnchor`: a `<!--]-->` comment for an anchored hole, or `null` for the anchor-free only-child
+ * case, where the ELEMENT itself bounds the content (insert = append, so the whole element is the
+ * range). This is the ONE reactive-hole driver, shared by {@link bindHole} (fresh template clone -
+ * range starts empty), {@link bindContent} (anchor-free, `closeAnchor` null), and
+ * {@link adoptReactiveHole} (hydration - range starts filled with server content). Scalars patch the
+ * existing text node in place (no flash, node identity preserved); multi-node values (arrays and
+ * fragments) render as direct children via {@link spliceMultiNode}; single element/node values swap.
  *
  * @internal
  */
-function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode[], child: () => unknown): void
+function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown): void
 {
     // The hole's live anchor node: the single primitive text node in the common
     // case. Extra nodes (an array-valued hole) are removed the first time the
@@ -976,12 +935,13 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
             }
             extras = [];
 
-            // An array value renders its items as DIRECT children before the close anchor (see
-            // insertArrayChildren) - the range can hold any number of nodes, so unlike the single-node
-            // binding above no placeholder is needed for an empty array.
-            if (Array.isArray(value))
+            // A multi-node value (array OR fragment) renders its nodes as DIRECT children before the
+            // close anchor (or appended, when closeAnchor is null - see spliceMultiNode) - the range
+            // holds any number of nodes, so unlike the single-node binding above no placeholder is
+            // needed for an empty value.
+            if (Array.isArray(value) || value instanceof DocumentFragment)
             {
-                const nodes = insertArrayChildren(parent, value, currentNode ?? closeAnchor);
+                const nodes = spliceMultiNode(parent, value, currentNode ?? closeAnchor);
                 if (currentNode !== null)
                 {
                     if (currentNode instanceof HTMLElement)
@@ -997,6 +957,27 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode, content: ChildNode
                     localDispose?.();
                     destroyNodes(nodes);
                 };
+            }
+
+            // A nullish value (null/undefined/false) renders NOTHING. Keep the range genuinely empty
+            // rather than inserting a stray empty text node: the element then matches its SSR/hydrated
+            // form (an empty marker range) and an anchor-free only-child stays `:empty`. Drop any current
+            // node; the next real value re-inserts. (The primitive fast-path above already handles the
+            // string->nullish case by reusing the existing text node, so this only fires when the current
+            // slot is empty or holds a non-text node.)
+            if (value === null || value === undefined || value === false)
+            {
+                if (currentNode !== null)
+                {
+                    if (currentNode instanceof HTMLElement)
+                    {
+                        destroyComponent(currentNode);
+                    }
+                    parent.removeChild(currentNode);
+                    currentNode = null;
+                }
+                localDispose?.();
+                return;
             }
 
             const nextNode = buildNode(value);
