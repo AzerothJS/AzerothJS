@@ -294,3 +294,80 @@ describe('refine: the browser form rules run at the server boundary', () =>
         expect(calls).toEqual(['first', 'first', 'second']);
     });
 });
+
+describe('self-description: meta carries the whole declaration', () =>
+{
+    it('constraints are the SAME object the validator reads - one source of truth', () =>
+    {
+        const options = { format: 'email' as const, nonempty: true, min: 3 };
+        const schema = string(options);
+        expect(schema.meta?.kind).toBe('string');
+        expect(schema.meta?.constraints).toBe(options);
+    });
+
+    it('number, boolean, and array record their options', () =>
+    {
+        expect(number({ min: 1, max: 10, int: true }).meta?.constraints).toEqual({ min: 1, max: 10, int: true });
+        expect(boolean({ coerce: true }).meta?.constraints).toEqual({ coerce: true });
+        const items = array(string(), { min: 1 });
+        expect(items.meta?.kind).toBe('array');
+        expect(items.meta?.constraints).toEqual({ min: 1 });
+        expect(items.meta?.item?.meta?.kind).toBe('string');
+    });
+
+    it('literal and enum report their true kind and payload', () =>
+    {
+        expect(literal('active').meta).toMatchObject({ kind: 'literal', value: 'active' });
+        expect(literal(42).meta).toMatchObject({ kind: 'literal', value: 42 });
+        expect(enumOf(['a', 'b']).meta).toMatchObject({ kind: 'enum', values: ['a', 'b'] });
+    });
+
+    it('record and union expose their structure', () =>
+    {
+        const value = number();
+        expect(record(value).meta).toMatchObject({ kind: 'record' });
+        expect(record(value).meta?.item).toBe(value);
+        const variants = [string(), number()] as const;
+        const u = union(variants);
+        expect(u.meta?.kind).toBe('union');
+        expect(u.meta?.options).toBe(variants);
+    });
+
+    it('.optional() preserves the description and flags it', () =>
+    {
+        const schema = string({ format: 'uuid' }).optional();
+        expect(schema.meta).toMatchObject({ kind: 'string', optional: true });
+        expect(schema.meta?.constraints).toEqual({ format: 'uuid' });
+    });
+
+    it('.refine() appends its declared identity; predicates stay opaque', () =>
+    {
+        const schema = string()
+            .refine(() => null, { code: 'strong', message: 'Too weak' })
+            .refine(() => null);
+        expect(schema.meta?.kind).toBe('string');
+        expect(schema.meta?.refinements).toEqual([
+            { code: 'strong', message: 'Too weak' },
+            { code: undefined, message: undefined }
+        ]);
+    });
+});
+
+describe('nullable', () =>
+{
+    it('accepts null as a value; everything else validates normally', () =>
+    {
+        const schema = object({ name: string().nullable(), age: number() });
+        expect(schema.parse({ name: null, age: 3 })).toEqual({ name: null, age: 3 });
+        expect(schema.parse({ name: 'x', age: 3 })).toEqual({ name: 'x', age: 3 });
+        expect(schema.safeParse({ name: 5, age: 3 }).ok).toBe(false);
+        expect(schema.safeParse({ age: 3 }).ok).toBe(false); // missing is NOT null
+    });
+
+    it('records itself in meta and composes with constraints', () =>
+    {
+        const schema = string({ format: 'email' }).nullable();
+        expect(schema.meta).toMatchObject({ kind: 'string', nullable: true });
+        expect(schema.meta?.constraints).toEqual({ format: 'email' });
+    });
+});

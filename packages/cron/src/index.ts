@@ -10,7 +10,7 @@
  */
 
 export { createScheduler } from './scheduler.ts';
-export type { Scheduler, SchedulerOptions, JobOptions, JobInfo } from './scheduler.ts';
+export type { Scheduler, SchedulerOptions, SchedulerLogger, JobOptions, JobInfo } from './scheduler.ts';
 
 export { parseExpression, nextOccurrence, localKeyOf, assertTimeZone } from './expression.ts';
 export type { CronFields } from './expression.ts';

@@ -39,9 +39,9 @@ describe('server side: matchAndLoad + document embedding through the real HTTP k
         const routes = buildRoutes(loader);
 
         const app = new App();
-        app.get('/users/:id', async (request, ctx) =>
+        app.get('/users/:id', async (context) =>
         {
-            const handoff = await matchAndLoad(routes, ctx.url, { signal: request.signal });
+            const handoff = await matchAndLoad(routes, context.url, { signal: context.request.signal });
             const doc = renderToDocument(() =>
             {
                 // The page component would render the routed tree here; the handoff flow

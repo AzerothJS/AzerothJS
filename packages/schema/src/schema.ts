@@ -115,18 +115,34 @@ interface Collector
 /**
  * @internal Structural metadata a combinator attaches to its schema, so a consumer can
  * COMPILE from the declaration - `@azerothjs/http`'s jsonEncoder walks it to build a
- * serializer the way the validator itself was built from the same declaration. Nodes
- * without metadata (custom/unknown combinators) simply fall back at the consumer.
+ * serializer, and `@azerothjs/api`'s OpenAPI exporter walks it to describe the wire
+ * type - each built from the same declaration the validator itself was built from.
+ * The schema is fully self-describing: `constraints` IS the options object the run
+ * closure reads (one reference, one source of truth), never a copy. Nodes without
+ * metadata (custom/unknown combinators) simply fall back at the consumer.
  */
 export interface SchemaMeta
 {
-    kind: 'string' | 'number' | 'boolean' | 'array' | 'object';
+    kind: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'literal' | 'enum' | 'record' | 'union';
     /** object: the declared field schemas, in declaration order. */
     shape?: Record<string, Schema<unknown>>;
-    /** array: the item schema. */
+    /** array: the item schema; record: the value schema. */
     item?: Schema<unknown>;
     /** Set by .optional(): undefined (and omitted keys) are accepted. */
     optional?: boolean;
+
+    /** Set by .nullable(): null is accepted and passes through. */
+    nullable?: boolean;
+    /** The combinator's options object - the same reference the validator reads. */
+    constraints?: StringOptions | NumberOptions | BooleanOptions | ArrayOptions;
+    /** literal: the expected value. */
+    value?: string | number | boolean;
+    /** enum: the allowed values, in declaration order. */
+    values?: readonly string[];
+    /** union: the variant schemas, in declaration order. */
+    options?: ReadonlyArray<Schema<unknown>>;
+    /** Declared identity of each .refine() layer, outermost last (predicates stay opaque). */
+    refinements?: ReadonlyArray<{ code?: string | undefined; message?: string | undefined }>;
 }
 
 /** A schema for T: runtime validation whose static type IS T. */
@@ -143,6 +159,9 @@ export interface Schema<T>
 
     /** This schema, but accepting undefined (and omitted object keys). */
     optional(): Schema<T | undefined>;
+
+    /** This schema, but accepting null (which passes through) - JSON's explicit absence. */
+    nullable(): Schema<T | null>;
 
     /**
      * Adds a refinement - the SAME single-argument validator shape @azerothjs/form uses,
@@ -207,9 +226,24 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
             (optionalSchema as { [IS_OPTIONAL]?: boolean })[IS_OPTIONAL] = true;
             return optionalSchema;
         },
+        nullable(): Schema<T | null>
+        {
+            // null flows through as a VALUE (unlike optional's undefined, which object()
+            // treats as absence) - it is JSON's explicit "no value here".
+            return base<T | null>(
+                (value, path, collector) => (value === null ? null : run(value, path, collector)),
+                meta === undefined ? undefined : { ...meta, nullable: true }
+            );
+        },
         refine(check: Refinement<T>, options: RefineOptions = {}): Schema<T>
         {
-            // A refinement narrows VALIDATION, not the value's shape - metadata carries over.
+            // A refinement narrows VALIDATION, not the value's shape - metadata carries
+            // over, with the refinement's declared identity appended so a describing
+            // consumer knows a further check exists (the predicate itself stays opaque).
+            const refinedMeta = meta === undefined ? undefined : {
+                ...meta,
+                refinements: [...meta.refinements ?? [], { code: options.code, message: options.message }]
+            };
             return base<T>((value, path, collector) =>
             {
                 const before = collector.issues.length;
@@ -224,7 +258,7 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
                     return fail(collector, path, options.code ?? 'refine', options.message ?? message);
                 }
                 return parsed;
-            }, meta);
+            }, refinedMeta);
         }
     };
     if (meta !== undefined)
@@ -372,7 +406,7 @@ export function string(options: StringOptions = {}): Schema<string>
             }
         }
         return out;
-    }, { kind: 'string' });
+    }, { kind: 'string', constraints: options });
 }
 
 export interface NumberOptions extends RuleOverrides
@@ -421,11 +455,17 @@ export function number(options: NumberOptions = {}): Schema<number>
             return reject(collector, path, options, 'max', `Must be at most ${ options.max }`);
         }
         return candidate;
-    }, { kind: 'number' });
+    }, { kind: 'number', constraints: options });
+}
+
+export interface BooleanOptions extends RuleOverrides
+{
+    /** Accept 'true'/'false'/'1'/'0' strings (query/form transports ONLY - never default). */
+    coerce?: boolean;
 }
 
 /** A boolean; `coerce` accepts 'true'/'false'/'1'/'0' strings (query/form transports). */
-export function boolean(options: { coerce?: boolean } & RuleOverrides = {}): Schema<boolean>
+export function boolean(options: BooleanOptions = {}): Schema<boolean>
 {
     return base((value, path, collector) =>
     {
@@ -450,7 +490,7 @@ export function boolean(options: { coerce?: boolean } & RuleOverrides = {}): Sch
             return reject(collector, path, options, 'type', 'Expected a boolean');
         }
         return value;
-    }, { kind: 'boolean' });
+    }, { kind: 'boolean', constraints: options });
 }
 
 /** Exactly `expected` (a literal type). */
@@ -465,7 +505,7 @@ export function literal<const V extends string | number | boolean>(expected: V, 
         return value === expected
             ? expected
             : reject(collector, path, overrides, 'literal', `Expected ${ JSON.stringify(expected) }`);
-    }, { kind: (typeof expected) as 'string' | 'number' | 'boolean' });
+    }, { kind: 'literal', value: expected });
 }
 
 /** One of `values`; the schema's type is their union. */
@@ -480,11 +520,20 @@ export function enumOf<const V extends readonly string[]>(values: V, overrides?:
         return typeof value === 'string' && values.includes(value)
             ? value
             : reject(collector, path, overrides, 'enum', `Expected one of: ${ values.join(', ') }`);
-    }, { kind: 'string' });
+    }, { kind: 'enum', values: values });
+}
+
+export interface ArrayOptions extends RuleOverrides
+{
+    /** Minimum length. */
+    min?: number;
+
+    /** Maximum length. */
+    max?: number;
 }
 
 /** An array of `item`; `min`/`max` bound the length. Every element error is collected. */
-export function array<T>(item: Schema<T>, options: { min?: number; max?: number } & RuleOverrides = {}): Schema<T[]>
+export function array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[]>
 {
     return base((value, path, collector) =>
     {
@@ -515,7 +564,7 @@ export function array<T>(item: Schema<T>, options: { min?: number; max?: number 
             }
         }
         return collector.issues.length > before ? undefined : out as T[];
-    }, { kind: 'array', item: item });
+    }, { kind: 'array', item: item, constraints: options });
 }
 
 /** The object type of a shape of schemas. */
@@ -593,7 +642,7 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
             }
         }
         return collector.issues.length > before ? undefined : out;
-    });
+    }, { kind: 'record', item: value });
 }
 
 /** Any of `options`, tried in order; the first structural match wins. */
@@ -629,5 +678,5 @@ export function union<Schemas extends ReadonlyArray<Schema<unknown>>>(
             }
         }
         return reject(collector, path, overrides, 'union', 'No union variant matched');
-    });
+    }, { kind: 'union', options: options });
 }

@@ -69,7 +69,7 @@ describe('one schema, three boundaries', () =>
     it('(c) the server boundary rejects a forged request with the identical issues', async () =>
     {
         const app = new App();
-        app.post('/sign-up', async (request) => json({ ok: await readValidated(request, signUp) }));
+        app.post('/sign-up', async ({ request }) => json({ ok: await readValidated(request, signUp) }));
 
         const response = await app.handle(new Request('http://local/sign-up', {
             method: 'POST',

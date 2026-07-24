@@ -4,7 +4,7 @@
  * Every character the CLI shows a human goes through here - and every color comes
  * from @azerothjs/logger's palette, the framework's ONE source of ANSI codes and
  * capability detection (NO_COLOR/FORCE_COLOR/TTY/dumb-terminal rules live there,
- * see the logger's DESIGN.md). This module owns only the CLI's vocabulary: dim
+ * the framework's ONE source of ANSI codes). This module owns only the CLI's vocabulary: dim
  * machinery text, rotating child labels, verdict marks, the brand accents.
  *
  * The division of labor: terminal owns HOW text looks, commands own WHAT is said.
@@ -174,7 +174,7 @@ export function printError(line: string): void
 /**
  * An error in the house voice: a red mark, the tool's name, then what happened.
  * Usage mistakes and environment failures both come through here; the MESSAGE
- * carries the what-was-expected and what-to-do-next (DESIGN.md voice rules).
+ * carries the what-was-expected and what-to-do-next.
  */
 export function fail(message: string): void
 {

@@ -13,8 +13,8 @@
  *     (the router distinguishes them by construction).
  *   - HEAD is served from the GET handler with the body stripped and the entity headers kept,
  *     per RFC 9110 - and a streaming body is cancelled, not leaked.
- *   - Handler context is TYPED from the route pattern: `app.get('/users/:id', ...)` receives
- *     `ctx.params: { id: string }` with no annotation, no codegen, no cast.
+ *   - The handler context is TYPED from the route pattern: `app.get('/users/:id', ...)`
+ *     receives `context.params: { id: string }` with no annotation, no codegen, no cast.
  *
  * `app.handle(new Request('http://local/x'))` is the entire integration-testing story - no
  * sockets, no listen(), no inject shim. Middleware compose ABOVE this dispatcher via typed
@@ -27,19 +27,27 @@ import { RadixRouter } from './router.ts';
 import { HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { runInRequestRoot } from './request-root.ts';
 
-/** What every handler receives beside the request. */
+/**
+ * THE context - the single argument every handler receives, carrying this one
+ * request's whole world: the raw web-standard Request, the typed path params, the
+ * parsed URL, and (flat on the object) whatever middleware added. The documented
+ * parameter name is `context`; the framework only defines the shape.
+ */
 export interface RequestContext<Params extends Record<string, string> = Record<string, string>>
 {
+    /** The raw web-standard Request: headers, cookies, body, signal. */
+    request: Request;
+
     /** Decoded path parameters, typed from the route pattern. */
     params: Params;
 
-    /** The parsed request URL (parsed once by the dispatcher, shared by everyone). */
+    /** The parsed request URL (parsed lazily, once, shared by everyone). */
     url: URL;
 }
 
-/** A route handler: one Request in, exactly one Response out. Ctx is what middleware added. */
+/** A route handler: one context in, exactly one Response out. Ctx is what middleware added. */
 export type Handler<Params extends Record<string, string> = Record<string, string>, Ctx extends object = object> =
-    (request: Request, ctx: RequestContext<Params> & Ctx) => Response | Promise<Response>;
+    (context: RequestContext<Params> & Ctx) => Response | Promise<Response>;
 
 /**
  * The observability seam: called once per request with the outcome and wall time. This is
@@ -131,33 +139,34 @@ function finishDispatch(request: Request, response: Response): Response | Promis
  */
 class DispatchContext implements RequestContext
 {
-    public readonly params: Record<string, string>;
+    public readonly request: Request;
 
-    readonly #urlString: string;
+    public readonly params: Record<string, string>;
 
     #url: URL | null = null;
 
-    constructor(params: Record<string, string>, urlString: string)
+    constructor(params: Record<string, string>, request: Request)
     {
+        this.request = request;
         this.params = params;
-        this.#urlString = urlString;
     }
 
     public get url(): URL
     {
-        this.#url ??= new URL(this.#urlString);
+        this.#url ??= new URL(this.request.url);
         return this.#url;
     }
 }
 
 /**
- * A middleware: reads the request and the context accumulated SO FAR, and returns either
- * the context it ADDS (an object, merged for everything downstream), a Response (short
- * circuit: guards deny, caches answer early), or nothing. There is no `next()` - control
- * flow is the return value, and the chain is composed once per route at registration.
+ * A middleware: reads the context accumulated SO FAR (the request rides on it), and
+ * returns either the context it ADDS (an object, merged flat onto the context for
+ * everything downstream), a Response (short circuit: guards deny, caches answer
+ * early), or nothing. There is no `next()` - control flow is the return value, and
+ * the chain is composed once per route at registration.
  */
 export type Middleware<Ctx extends object, Added extends Record<string, unknown>> =
-    (request: Request, ctx: RequestContext & Ctx) =>
+    (context: RequestContext & Ctx) =>
     // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void keeps bare-return/no-return observers assignable; null is accepted as "adds nothing" for JS callers
     Added | Response | null | undefined | void | Promise<Added | Response | null | undefined | void>;
 
@@ -255,7 +264,7 @@ export class App<Ctx extends object = object>
      * @example
      * ```ts
      * const authed = app.with(requireAuth); // Middleware<Ctx, { accountId: number }>
-     * authed.get('/account/me', (request, ctx) => json({ id: ctx.accountId })); // ctx.accountId typed
+     * authed.get('/account/me', (context) => json({ id: context.accountId })); // typed
      * authed.patch('/account', updateHandler);
      * app.get('/health', () => text('ok')); // no auth - the fork did not touch app
      * ```
@@ -299,7 +308,7 @@ export class App<Ctx extends object = object>
             }
             return null;
         };
-        const composed: Handler = (request, ctx) =>
+        const composed: Handler = (context) =>
         {
             const step = (index: number): ReturnType<Handler> =>
             {
@@ -310,19 +319,19 @@ export class App<Ctx extends object = object>
                     {
                         continue;
                     }
-                    const result = middleware(request, ctx);
+                    const result = middleware(context);
                     if (result instanceof Promise)
                     {
                         const after = i + 1;
-                        return result.then((resolved) => applyResult(ctx, resolved) ?? step(after));
+                        return result.then((resolved) => applyResult(context, resolved) ?? step(after));
                     }
-                    const short = applyResult(ctx, result);
+                    const short = applyResult(context, result);
                     if (short !== null)
                     {
                         return short;
                     }
                 }
-                return (handler as Handler)(request, ctx);
+                return (handler as Handler)(context);
             };
             return step(0);
         };
@@ -506,7 +515,7 @@ export class App<Ctx extends object = object>
             throw new MethodNotAllowedError(result.allowed);
         }
 
-        const out = result.value(request, new DispatchContext(result.params, request.url));
+        const out = result.value(new DispatchContext(result.params, request));
         if (out instanceof Promise)
         {
             return out.then((response) => finishDispatch(request, response));

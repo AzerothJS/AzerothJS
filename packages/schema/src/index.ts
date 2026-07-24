@@ -18,7 +18,8 @@ export {
 } from './schema.ts';
 export type {
     Schema, Infer, ShapeType, Refinement, FieldValidator, FieldErrors, ParseResult,
-    Issue, ParseOptions, RuleOverrides, RefineOptions, StringOptions, NumberOptions
+    Issue, ParseOptions, RuleOverrides, RefineOptions, StringOptions, NumberOptions,
+    BooleanOptions, ArrayOptions, SchemaMeta
 } from './schema.ts';
 
 export {

@@ -26,7 +26,7 @@ describe('requestId', () =>
     {
         let seen: string | undefined;
         const app = new App();
-        app.get('/', (request) =>
+        app.get('/', ({ request }) =>
         {
             seen = requestIdOf(request);
             return text('ok');

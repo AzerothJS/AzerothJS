@@ -12,8 +12,64 @@ follow [Semantic Versioning](https://semver.org).
 The terminal-experience release: `azeroth dev` becomes a designed frame instead of a
 pipe multiplexer, and the logger's developer face renders meaning instead of strings.
 
+### Changed (BREAKING - beta, no back-compat shim by design)
+
+- **api**: the unified typed mount. `mountApi(app, contract, { guards, handlers })` now
+  types guard additions INTO each handler's context and CHECKS the guards-map keys
+  against the contract tree. A guard built with the new `guard()` helper carries its
+  additions (`guard((context) => ({ accountId }))`), and every handler it protects reads
+  `context.accountId` with NO cast; a mis-typed guard key (`'accont.*'`) is a compile
+  error, not a silently-unguarded route. The legacy
+  `mountApi(app, implementContract(contract, handlers), { guards })` form is retained for
+  separate construction (its handlers type without additions - guarded routes there use a
+  knowing cast). `HandlerArgs` was already renamed `HandlerContext`; new exports:
+  `guard`, `Guard`, `GuardKey`, `GuardMap`, `HandlersWithGuards`, `TypedMountOptions`.
+- **api**: **bring your own validator**. `route({ input, query, output })` accepts any
+  [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType via the
+  `~standard` property) in addition to native `@azerothjs/schema`. A foreign schema
+  validates the boundary (422 with the same field-path errors); its OpenAPI entry
+  degrades to the honest permissive shape (native schemas keep full self-description).
+- **http/api**: every handler now takes ONE argument, the `context`, and returns the
+  response - `(context) => Response`, replacing http's `(request, ctx)` and the
+  contract handler's `({ params, input, query, request, context })` five-name
+  destructure. The context carries `request` (the raw web-standard Request), `params`,
+  `url`, and - on contract routes - the validated `input`/`query`; whatever middleware
+  or a mount guard adds lands FLAT on the same object. This unifies the two handler
+  shapes into one, matching the single-context model the current framework generation
+  proved developers want, while keeping what nobody else has: responses enforced
+  against their declared schema, and the typed client + OpenAPI derived from the same
+  contract. Migration is mechanical: `(request, ctx)` → `(context)` with `request` →
+  `context.request`; `({ input, context })` → `(context)` reading `context.input` and
+  `(context as typeof context & Guarded)` for guard additions. `Middleware` and
+  `ApiGuard` take the context too (`(context) => additions | Response | void`). The
+  `HandlerArgs` type is renamed `HandlerContext`.
+
 ### Added
 
+- **api**: OpenAPI 3.1 export - the contract's third exporter after the server mount
+  and the typed client. `toOpenApi(contract, { info })` derives the complete document
+  from the declaration (paths, params, bodies, response shapes, operation ids and tags
+  from the contract tree, the framework's 422/415/500 envelope responses);
+  `openapiPlugin` serves it - plus a docs page at `/docs` with two viewers:
+  **Scalar via CDN shell (default)** for the best-in-class UI, and
+  **`viewer: 'azeroth'`** - the house explorer, a fully self-contained page (inline
+  styles/script, zero external requests, works offline) in the AzerothJS design
+  language with REST-colored methods, verdict-colored statuses, schema trees, and a
+  same-origin try-it panel (`docs: false` for spec-only);
+  `uncontracted(app, contract)` reports coverage for
+  partial adoption. Deterministic output (byte-identical builds - specs diff cleanly
+  in CI), shared schema instances dedupe into named components, and every mapping rule
+  is tested with honest degradations - a `.refine()` becomes a
+  description note, never an invented constraint. Routes gain an optional display-only
+  `docs` field (summary/tags/deprecated/errors/security) for what a machine cannot know.
+- **schema**: schemas are now fully self-describing - `meta` carries the constraints
+  the validator enforces (the same options object, one source of truth), true kinds
+  and payloads for `literal`/`enumOf`/`record`/`union`, and each `.refine()`'s declared
+  code. `boolean`/`array` options gained named types (`BooleanOptions`, `ArrayOptions`);
+  `SchemaMeta` is exported for compile-from-declaration consumers.
+- **http**: `jsonEncoder` reads the richer self-description - `record` gains a real
+  fast path, `literal` compiles to a constant, `enum` encodes as a string; `union`
+  stays on the byte-exact fallback.
 - **cli**: the dev conductor's line discipline - fixed-width colored stream badges
   (one hue per app half, dim `│` gutter), blank lines swallowed, each tool's session
   chatter rewritten to house style with its information intact (tsc watch banners →

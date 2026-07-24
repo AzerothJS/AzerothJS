@@ -31,10 +31,10 @@ describe('request/response translation over a real socket', () =>
     it('round-trips a JSON POST end to end', async () =>
     {
         const app = new App();
-        app.post('/echo/:tag', async (request, ctx) =>
+        app.post('/echo/:tag', async (context) =>
         {
-            const body = await readJson<{ n: number }>(request);
-            return json({ tag: ctx.params.tag, doubled: body.n * 2, query: ctx.url.searchParams.get('q') });
+            const body = await readJson<{ n: number }>(context.request);
+            return json({ tag: context.params.tag, doubled: body.n * 2, query: context.url.searchParams.get('q') });
         });
         await withServer(app, async (base) =>
         {
@@ -119,7 +119,7 @@ describe('the disconnect AbortSignal', () =>
         });
 
         const app = new App();
-        app.get('/slow', async (request) =>
+        app.get('/slow', async ({ request }) =>
         {
             request.signal.addEventListener('abort', () =>
             {
@@ -191,7 +191,7 @@ describe('the same app over cleartext HTTP/2', () =>
     it('serves an h2c request through the identical listener', async () =>
     {
         const app = new App();
-        app.get('/h2', (_request, ctx) => json({ proto: 'h2c', path: ctx.url.pathname }));
+        app.get('/h2', (context) => json({ proto: 'h2c', path: context.url.pathname }));
         const served = await serveH2c(app);
 
         const session = h2connect(`http://127.0.0.1:${ served.port }`);

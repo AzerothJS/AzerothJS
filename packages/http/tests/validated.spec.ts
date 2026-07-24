@@ -20,7 +20,7 @@ const schema = object({
 function app(mode?: 'first'): App
 {
     const instance = new App();
-    instance.post('/users', async (request) =>
+    instance.post('/users', async ({ request }) =>
     {
         const input = await readValidated(request, schema, mode !== undefined ? { mode } : {});
         return json({ input });

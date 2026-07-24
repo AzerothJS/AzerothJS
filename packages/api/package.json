@@ -19,6 +19,11 @@
             "types": "./dist/client-entry.d.ts",
             "import": "./dist/client-entry.js",
             "default": "./dist/client-entry.js"
+        },
+        "./openapi": {
+            "types": "./dist/openapi.d.ts",
+            "import": "./dist/openapi.js",
+            "default": "./dist/openapi.js"
         }
     },
     "files": [
@@ -32,8 +37,8 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/schema": "1.0.0-beta.1",
-        "@azerothjs/http": "1.0.0-beta.1"
+        "@azerothjs/http": "1.0.0-beta.1",
+        "@azerothjs/schema": "1.0.0-beta.1"
     },
     "publishConfig": {
         "access": "public"
@@ -52,5 +57,8 @@
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/api",
     "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    },
+    "devDependencies": {
+        "@seriousme/openapi-schema-validator": "^2.9.0"
     }
 }

@@ -55,6 +55,19 @@ export interface JobInfo
     running: number;
 }
 
+/**
+ * The lifecycle-visibility logger the scheduler writes to: runs at debug, overlap skips
+ * at warn, failures at error. STRUCTURAL on purpose - `@azerothjs/logger` (or anything
+ * with these three methods) plugs in without this package depending on it. Exported so
+ * an application can name the exact contract it passes.
+ */
+export interface SchedulerLogger
+{
+    debug(message: string, fields?: Record<string, unknown>): void;
+    warn(message: string, fields?: Record<string, unknown>): void;
+    error(message: string, fields?: Record<string, unknown>): void;
+}
+
 export interface SchedulerOptions
 {
     /** Called with every job failure. Its own throws are swallowed - watching must not break. */
@@ -63,14 +76,8 @@ export interface SchedulerOptions
     /**
      * Lifecycle visibility: runs at debug, overlap skips at warn, failures at error
      * (in addition to onError - the observer is programmatic, this is for humans).
-     * STRUCTURAL on purpose - `@azerothjs/logger` (or anything with these methods)
-     * plugs in without this package taking a dependency on it.
      */
-    logger?: {
-        debug(message: string, fields?: Record<string, unknown>): void;
-        warn(message: string, fields?: Record<string, unknown>): void;
-        error(message: string, fields?: Record<string, unknown>): void;
-    };
+    logger?: SchedulerLogger;
 
     /**
      * Keep the process alive for armed timers (default false: timers are unref'd, so a

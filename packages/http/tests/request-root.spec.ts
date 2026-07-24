@@ -25,14 +25,14 @@ describe('store isolation across awaits', () =>
         });
 
         const app = new App();
-        app.get('/slow/:label', async (_request, ctx) =>
+        app.get('/slow/:label', async (context) =>
         {
             const counter = useCounter();
             counter.increment();
             await pause(20); // the other request runs here, in ITS scope
             counter.increment();
             await pause(20);
-            return json({ label: ctx.params.label, count: counter.count() });
+            return json({ label: context.params.label, count: counter.count() });
         });
 
         const [first, second] = await Promise.all([

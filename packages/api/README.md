@@ -73,6 +73,35 @@ The `@azerothjs/api/client` subpath contains only the contract declaration, the 
 For tests, pass an app's `handle` as the client's `fetch`: the whole client/server round
 trip runs in process with zero sockets and full types.
 
+## Typed guards - additions flow into the handler, no cast
+
+Mount the contract with a `guards` map. A guard built with `guard()` carries its context
+additions into the TYPE of every handler it protects, and the map's keys are checked
+against the contract tree - a typo is a compile error, not a silently-unguarded route:
+
+```ts
+const requireAuth = guard((context) => ({ accountId: verify(context.request) }));
+
+mountApi(app, contract, {
+    guards: { 'account.*': [requireAuth] },   // 'accont.*' -> compile error
+    handlers: {
+        account: {
+            me: (context) => ({ id: context.accountId })   // accountId: number, no cast
+        }
+    }
+});
+```
+
+Handlers organized in separate factory files stay cast-free by sharing the guards map:
+a factory returns `HandlersWithGuards<typeof contract, typeof guards>['branch']`.
+
+## Bring your own validator
+
+`route({ input })` accepts any [Standard Schema](https://standardschema.dev) validator
+(Zod, Valibot, ArkType) alongside native `@azerothjs/schema` - so a team keeps its
+existing schemas. A foreign schema validates the boundary; its OpenAPI entry degrades to
+the permissive shape (native schemas keep full self-description).
+
 ## The QUERY method
 
 A route may use `method: 'QUERY'` (RFC 10008) - a safe, idempotent read that carries a body,
@@ -83,6 +112,52 @@ mutate state (that contract is what lets responses be cached and requests retrie
 ```ts
 search: route({ method: 'QUERY', path: '/products/search', input: FilterSchema, output: ResultsSchema })
 ```
+
+## OpenAPI: the contract's third exporter
+
+The same declaration that produces the server mount and the typed client produces the
+OpenAPI 3.1 document - three consumers, one truth, drift structurally impossible for
+everything derived. No decorators, no YAML, no annotations on schemas: paths, params,
+request bodies, response shapes, operation ids and tags (from the contract tree), and
+the framework's 422/415/500 envelope responses are all read from what already exists.
+
+```ts
+import { toOpenApi, openapiPlugin } from '@azerothjs/api';
+
+// Serve it (any external viewer - Scalar, Redoc, Swagger UI - reads the endpoint):
+app.register(openapiPlugin({ contract, info: { title: 'Shop API', version: '1.0.0' } }));
+
+// Or emit it for CI / SDK pipelines (deterministic: same contract, byte-identical spec):
+await writeFile('openapi.json', JSON.stringify(toOpenApi(contract, { info }), null, 2));
+```
+
+A route's `docs` field adds only what a machine cannot know - summary, tags,
+deprecation, extra error statuses, security requirements - and never affects runtime:
+
+```ts
+create: route({
+    method: 'POST', path: '/users', input: CreateUser, output: User,
+    docs: { summary: 'Create a user', errors: [{ status: 409, code: 'exists' }] }
+})
+```
+
+The plugin also serves a docs page at `/docs` (disable with `docs: false`). Two
+viewers, one option:
+
+- **`viewer: 'scalar'` (default)** - a ~10-line shell; the browser loads the Scalar
+  reference from a CDN. Best-in-class UI for free; needs internet while viewing.
+- **`viewer: 'azeroth'`** - the house explorer: one fully self-contained page (inline
+  styles and script, zero external requests, works offline) in the AzerothJS design
+  language - REST-colored methods, verdict-colored statuses, schema trees, and a
+  same-origin try-it panel. For locked-down networks and air-gapped environments.
+
+External viewers can always read `/openapi.json` directly instead.
+
+The schema-to-JSON-Schema rules degrade honestly - a `.refine()` becomes a description
+note, never an invented constraint; a foreign validator maps to the permissive shape.
+Known limits, stated up front: multipart uploads, WebSocket/SSE, and outbound webhooks
+are not expressible; QUERY routes have no OpenAPI method and are listed under the
+`x-azerothjs-query` extension instead of `paths`.
 
 ## License
 

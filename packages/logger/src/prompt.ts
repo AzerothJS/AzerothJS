@@ -3,7 +3,7 @@
  *
  * The framework's face when it asks a question: a clack-class select and text input,
  * plus the intro/outro pieces that connect a multi-step flow into one visual column
- * (see DESIGN.md - the glyph set, color roles, and the column are specified there).
+ * (the glyph set, color roles, and the column are the framework terminal vocabulary).
  * Zero dependencies: raw readline keypress events over the palette this package
  * already owns.
  *
@@ -49,7 +49,7 @@ export interface PromptIo
     output?: WritableLike | undefined;
 }
 
-/** @internal The glyph set with its ASCII fallbacks (DESIGN.md table). */
+/** @internal The glyph set with its ASCII fallbacks. */
 function glyphs(): { ask: string; done: string; on: string; off: string; bar: string; end: string }
 {
     return supportsUnicode()

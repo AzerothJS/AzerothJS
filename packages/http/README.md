@@ -16,7 +16,7 @@ npm install @azerothjs/http
 
 ## Overview
 
-Handlers are `(request: Request, ctx) => Response` on WHATWG types. Node's `http`/`http2`
+Handlers are `(context) => Response` on WHATWG types - one context carries the request, params, URL, and middleware additions. Node's `http`/`http2`
 appear only in edge adapters, which buys three things at once: the same app runs on any
 fetch-shaped runtime, `app.handle(new Request(...))` is the entire integration-testing story
 (no sockets, no inject shim), and "headers already sent" or double-send are unrepresentable -
@@ -27,9 +27,11 @@ import { App, json, readJson, serve } from '@azerothjs/http';
 
 const app = new App();
 
-app.get('/users/:id', (request, ctx) => json({ id: ctx.params.id })); // ctx.params typed from the pattern
+// One `context` per handler: the request, the params (typed from the pattern), the
+// URL, and whatever middleware added. Return a Response - never mutate an argument.
+app.get('/users/:id', (context) => json({ id: context.params.id }));
 
-app.post('/users', async (request) =>
+app.post('/users', async ({ request }) =>
 {
     const body = await readJson<{ name: string }>(request); // limits ON; bad input -> 400/413/415
     return json({ created: body.name }, { status: 201 });
@@ -117,10 +119,12 @@ metadata that strip-only execution does not emit. Then compile with `tsc` and ru
   `await` (the same isolation SSR renders have), and `onRequestCleanup` teardown ALWAYS
   runs: success, throw, or client disconnect. The disconnect `AbortSignal` rides on
   `request.signal`.
-- **Typed middleware** - `app.use()` accumulates context in the type system; a `Response`
-  return short-circuits (guards); ordering is lexical; no `next()`. `app.with(mw)` scopes a
-  middleware to just the routes registered through it - `app.with(requireAuth).get(...)` - so
-  auth/throttle live at registration, not as a repeated guard call inside every handler.
+- **Typed middleware** - a middleware takes the same `context` and RETURNS its additions
+  (an object merged flat onto the context downstream), a `Response` to short-circuit
+  (guards), or nothing; ordering is lexical; no `next()`. `app.use()` accumulates the
+  additions in the type system; `app.with(mw)` scopes a middleware to just the routes
+  registered through it - `app.with(requireAuth).get(...)` - so auth/throttle live at
+  registration, not as a repeated guard call inside every handler.
 - **Server-Sent Events** - `sse()` produces exactly what the frontend `stream` keyword
   (`createStream({ parse: 'sse' })`) consumes: framed events, comment heartbeats, `[DONE]`.
 - **The rest of a real server** - cookies (loud `__Host-`/SameSite validation), static
@@ -179,7 +183,7 @@ so responses can be cached and requests retried.
 ```ts
 import { readJson, queryResult } from '@azerothjs/http';
 
-app.query('/products/search', async (request) =>
+app.query('/products/search', async ({ request }) =>
 {
     const filter = await readJson(request); // Content-Type is enforced; a missing one is a 415
     const results = await search(filter);    // MUST NOT mutate state - that is what makes QUERY safe

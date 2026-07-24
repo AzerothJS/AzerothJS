@@ -2,7 +2,7 @@
  * MODULE: http - the AzerothJS server kernel
  *
  * A zero-dependency HTTP stack for Node >= 24 built on web-standard Request/Response:
- * handlers are `(request, ctx) => Response`, the Node adapters (node:http/https/http2) live
+ * handlers are `(context) => Response`, the Node adapters (node:http/https/http2) live
  * at the edge, and `app.handle(new Request(...))` is the entire testing story. Every request
  * runs inside a reactive root (`createRoot` + `runInStoreScope`), so `onCleanup` is request
  * teardown, stores are request-isolated exactly as they are under SSR, and the client

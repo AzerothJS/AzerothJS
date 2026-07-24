@@ -432,6 +432,14 @@ export interface ShutdownSignalOptions
     /** Called if the drain itself throws; the process still exits. */
     onError?: (error: unknown) => void;
 
+    /**
+     * Runs AFTER the server has drained, BEFORE the process exits - the seam for
+     * everything else that needs a graceful stop beside the HTTP server: a cron
+     * scheduler's `stop({ drain: true })`, a log sink's `close()`, a DB pool's end.
+     * Its throw goes to `onError`; the process still exits.
+     */
+    beforeExit?: () => void | Promise<void>;
+
     /** Process-exit hook, injectable for tests (default `process.exit`). */
     exit?: (code: number) => void;
 }
@@ -460,6 +468,7 @@ export function handleShutdownSignals(served: Served, options: ShutdownSignalOpt
         }
         draining = true;
         void served.shutdown({ gracePeriodMs: options.gracePeriodMs })
+            .then(async () => options.beforeExit?.())
             .catch((error: unknown) => options.onError?.(error))
             .finally(() => exit(0));
     };

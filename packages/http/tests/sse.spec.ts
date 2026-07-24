@@ -102,7 +102,7 @@ describe('the fullstack loop: the stream keyword runtime consumes sse()', () =>
     it('createStream({ parse: "sse" }) accumulates this server\'s events and terminates on [DONE]', async () =>
     {
         const app = new App();
-        app.get('/live', (req) => sse(req, async (connection) =>
+        app.get('/live', ({ request }) => sse(request, async (connection) =>
         {
             connection.send('alpha');
             connection.comment('keepalive between events');
@@ -138,7 +138,7 @@ describe('disconnect over a real socket', () =>
         let sending: ReturnType<typeof setInterval>;
 
         const app = new App();
-        app.get('/live', (req) => sse(req, (connection) =>
+        app.get('/live', ({ request }) => sse(request, (connection) =>
         {
             sending = setInterval(() => connection.send('tick'), 10);
             connection.signal.addEventListener('abort', () =>

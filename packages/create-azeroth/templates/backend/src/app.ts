@@ -32,12 +32,13 @@ export function buildApp(options: { dev: boolean; observe?: RequestObserver }): 
     // The orchestrator probe: cheap, dependency-free, always 200 when the process lives.
     app.get('/healthz', () => json({ ok: true }));
 
-    // `ctx.params` is typed from the pattern string - no annotation, no codegen.
-    app.get('/hello/:name', (_request, ctx) => json({ hello: ctx.params.name }));
+    // One `context` per handler holds the request, the params (typed from the pattern
+    // string - no annotation, no codegen), the URL, and anything middleware added.
+    app.get('/hello/:name', (context) => json({ hello: context.params.name }));
 
     // readJson enforces size limits and Content-Type (a bad body is a 400); a
     // ValidationError's field map lands in the envelope above as `error.fields`.
-    app.post('/echo', async (request) =>
+    app.post('/echo', async ({ request }) =>
     {
         const body = await readJson<{ message?: unknown }>(request);
         if (typeof body.message !== 'string' || body.message.trim() === '')

@@ -10,12 +10,17 @@
  * server code); this root entry adds the server half (implementContract + mountApi).
  */
 
-export { defineContract, route, implementContract } from './define.ts';
+export { defineContract, route, get, post, put, patch, del, query, implementContract, guard } from './define.ts';
 export type {
-    Contract, AnyRoute, Route, ApiMethod, PathParams, HandlerArgs, HandlerFor, HandlersOf, Implementation
+    Contract, AnyRoute, Route, RouteDocs, ApiMethod, PathParams, HandlerContext, HandlerFor, HandlersOf, Implementation,
+    Guard, GuardContext, GuardKey, GuardMap, HandlersWithGuards
 } from './define.ts';
 
 export { mountApi } from './mount.ts';
+export type { MountOptions, TypedMountOptions, ApiGuard } from './mount.ts';
+
+export { toOpenApi, openapiPlugin, uncontracted } from './openapi.ts';
+export type { OpenApiDocument, ToOpenApiOptions, OpenApiPluginOptions } from './openapi.ts';
 
 export { createClient, ApiError } from './client.ts';
 export type { ClientOf, ClientOptions, Call, CallArgs } from './client.ts';

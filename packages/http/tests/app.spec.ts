@@ -20,10 +20,10 @@ describe('dispatch', () =>
     it('routes to the handler with typed params', async () =>
     {
         const app = new App();
-        app.get('/users/:id', (_request, ctx) =>
+        app.get('/users/:id', (context) =>
         {
-            expectTypeOf(ctx.params.id).toEqualTypeOf<string>();
-            return json({ id: ctx.params.id });
+            expectTypeOf(context.params.id).toEqualTypeOf<string>();
+            return json({ id: context.params.id });
         });
         const response = await get(app, '/users/42');
         expect(response.status).toBe(200);
@@ -33,7 +33,7 @@ describe('dispatch', () =>
     it('hands every handler the parsed URL (query included)', async () =>
     {
         const app = new App();
-        app.get('/search', (_request, ctx: RequestContext) => text(ctx.url.searchParams.get('q') ?? ''));
+        app.get('/search', (context: RequestContext) => text(context.url.searchParams.get('q') ?? ''));
         expect(await (await get(app, '/search?q=azeroth')).text()).toBe('azeroth');
     });
 
@@ -79,7 +79,7 @@ describe('dispatch', () =>
     it('a full round trip: POST body in, created() out', async () =>
     {
         const app = new App();
-        app.post('/users', async (request) =>
+        app.post('/users', async ({ request }) =>
         {
             const body = await readJson<{ name: string }>(request);
             return created('/users/7', { id: 7, name: body.name });
@@ -133,7 +133,7 @@ describe('the never-throws guarantee', () =>
     it('a body-reader failure inside a handler maps through the same path (413)', async () =>
     {
         const app = new App();
-        app.post('/upload', async (request) =>
+        app.post('/upload', async ({ request }) =>
         {
             await readJson(request, { limit: 8 });
             return noContent();

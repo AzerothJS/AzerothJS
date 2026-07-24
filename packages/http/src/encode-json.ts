@@ -21,10 +21,15 @@ import { payloadResponse } from './respond.ts';
 /** The structural metadata shape this module compiles from (@azerothjs/schema's SchemaMeta). */
 export interface EncoderMeta
 {
-    kind: 'string' | 'number' | 'boolean' | 'array' | 'object';
+    kind: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'literal' | 'enum' | 'record' | 'union';
     shape?: Record<string, EncodableSchema<unknown>>;
+    /** array: the item schema; record: the value schema. */
     item?: EncodableSchema<unknown>;
     optional?: boolean;
+    /** Set by .nullable(): null is a valid value and encodes as JSON null. */
+    nullable?: boolean;
+    /** literal: the expected value - a compile-time constant for the encoder. */
+    value?: string | number | boolean;
 }
 
 /**
@@ -73,8 +78,8 @@ interface Field
     encode: Encode;
 }
 
-/** @internal The primitive kinds the object loop inlines. */
-const PRIMITIVE_KINDS = new Set(['string', 'number', 'boolean']);
+/** @internal The primitive kinds the object loop inlines (enum values ARE strings). */
+const PRIMITIVE_KINDS = new Set(['string', 'number', 'boolean', 'enum']);
 
 /** @internal Compiles one schema node; unknown/missing metadata compiles to the fallback. */
 function compile(schema: EncodableSchema<unknown> | undefined): Encode
@@ -84,11 +89,54 @@ function compile(schema: EncodableSchema<unknown> | undefined): Encode
     {
         return fallback;
     }
+    if (meta.nullable === true)
+    {
+        const inner = compileKind(meta);
+        return (value): string => (value === null ? 'null' : inner(value));
+    }
+    return compileKind(meta);
+}
+
+/** @internal The kind switch (nullable handled by the caller). */
+function compileKind(meta: EncoderMeta): Encode
+{
     switch (meta.kind)
     {
         case 'string':
+        case 'enum':
             return (value): string =>
                 (typeof value === 'string' && !NEEDS_ESCAPE.test(value) ? '"' + value + '"' : fallback(value));
+        case 'literal': {
+            // The declaration names ONE valid value - its JSON is a compile-time constant.
+            const text = fallback(meta.value);
+            return (value): string => (value === meta.value ? text : fallback(value));
+        }
+        case 'union':
+            // The matching variant is only knowable per value; stay byte-exact via stringify.
+            return fallback;
+        case 'record': {
+            const item = compile(meta.item);
+            return (value): string =>
+            {
+                if (value === null || typeof value !== 'object' || Array.isArray(value))
+                {
+                    return fallback(value);
+                }
+                let out = '{';
+                let empty = true;
+                for (const [key, element] of Object.entries(value as Record<string, unknown>))
+                {
+                    // JSON.stringify omits undefined properties; so do we.
+                    if (element === undefined)
+                    {
+                        continue;
+                    }
+                    out += (empty ? '' : ',') + JSON.stringify(key) + ':' + item(element);
+                    empty = false;
+                }
+                return out + '}';
+            };
+        }
         case 'number':
             return (value): string => (typeof value === 'number' && Number.isFinite(value) ? String(value) : fallback(value));
         case 'boolean':
@@ -116,7 +164,7 @@ function compile(schema: EncodableSchema<unknown> | undefined): Encode
                 first: JSON.stringify(key) + ':',
                 rest: ',' + JSON.stringify(key) + ':',
                 kind: (node.meta !== undefined && PRIMITIVE_KINDS.has(node.meta.kind)
-                    ? node.meta.kind
+                    ? (node.meta.kind === 'enum' ? 'string' : node.meta.kind)
                     : 'complex') as Field['kind'],
                 encode: compile(node)
             }));
@@ -180,7 +228,7 @@ function compile(schema: EncodableSchema<unknown> | undefined): Encode
  * import { jsonEncoder } from '@azerothjs/http';
  *
  * const userJson = jsonEncoder(object({ id: string(), name: string() }));
- * app.get('/users/:id', async (request, ctx) => userJson(await loadUser(ctx.params.id)));
+ * app.get('/users/:id', async (context) => userJson(await loadUser(context.params.id)));
  * ```
  *
  * Output is byte-identical to `json(data)` for values matching the declaration; a field the

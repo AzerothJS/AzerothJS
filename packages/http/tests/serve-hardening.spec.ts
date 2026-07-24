@@ -101,6 +101,31 @@ describe('handleShutdownSignals', () =>
         dispose();
     });
 
+    it('beforeExit runs after the drain and before the exit', async () =>
+    {
+        const served = await serve(new App());
+        const order: string[] = [];
+        let exited = false;
+        const dispose = handleShutdownSignals(served, {
+            signals: ['SIGTERM'],
+            gracePeriodMs: 200,
+            beforeExit: async () =>
+            {
+                order.push(served.server.listening ? 'server-still-up' : 'after-drain');
+            },
+            exit: () =>
+            {
+                order.push('exit');
+                exited = true;
+            }
+        });
+        const listeners = process.listeners('SIGTERM');
+        (listeners[listeners.length - 1] as () => void)();
+        await vi.waitFor(() => expect(exited).toBe(true));
+        expect(order).toEqual(['after-drain', 'exit']);
+        dispose();
+    });
+
     it('the disposer removes the listener it added', async () =>
     {
         const served = await serve(new App());

@@ -145,10 +145,10 @@ describe('the plugin story: function application over the typed builder', () =>
         };
 
         const app = new App().plugin(withUser).plugin(withHealth);
-        app.get('/me', (_request, ctx) =>
+        app.get('/me', (context) =>
         {
-            expectTypeOf(ctx.user).toEqualTypeOf<string>();
-            return json({ user: ctx.user });
+            expectTypeOf(context.user).toEqualTypeOf<string>();
+            return json({ user: context.user });
         });
 
         expect((await app.handle(new Request('http://local/health'))).status).toBe(204);

@@ -36,10 +36,10 @@ describe('named plugins', () =>
         };
         const app = new App()
             .register(clock)
-            .get('/time', (_request, ctx) =>
+            .get('/time', (context) =>
             {
-                expectTypeOf(ctx).toExtend<RequestContext & { now: number }>();
-                return json({ now: ctx.now });
+                expectTypeOf(context).toExtend<RequestContext & { now: number }>();
+                return json({ now: context.now });
             });
         expect(await (await get(app, '/time')).json()).toEqual({ now: 1234 });
     });
@@ -68,7 +68,7 @@ describe('named plugins', () =>
         };
         const app = new App()
             .register(named)
-            .plugin((a) => a.get('/tag', (_request, ctx) => text(ctx.tag)));
+            .plugin((a) => a.get('/tag', (context) => text(context.tag)));
         expect(await (await get(app, '/tag')).text()).toBe('X');
     });
 });

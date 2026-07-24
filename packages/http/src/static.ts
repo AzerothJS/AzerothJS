@@ -99,9 +99,9 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
     const index = options.index ?? 'index.html';
     const param = options.param ?? 'path';
 
-    return async (request, ctx) =>
+    return async (context) =>
     {
-        const relative = ctx.params[param] ?? '';
+        const relative = context.params[param] ?? '';
         if (relative.includes('\0'))
         {
             throw new NotFoundError();
@@ -136,7 +136,7 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             etag
         });
 
-        if (request.headers.get('if-none-match') === etag)
+        if (context.request.headers.get('if-none-match') === etag)
         {
             return new Response(null, { status: 304, headers });
         }

@@ -75,6 +75,7 @@ export type ClientOf<Shape extends Contract> =
             : Shape[K] extends Contract ? ClientOf<Shape[K]> : never;
     };
 
+/** How {@link createClient} reaches the server: the base URL, an optional transport, headers. */
 export interface ClientOptions
 {
     /** Where the API is mounted, e.g. '/api' or 'https://host/api'. */
@@ -116,10 +117,13 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
     const call = async (routeDef: AnyRoute, args: RawArgs): Promise<unknown> =>
     {
         // Pre-validate locally: same rules as the server, but the failure costs no network.
+        // A native schema uses its one-pass safeParse; a Standard Schema validator
+        // (Zod/Valibot) is validated on the server, so here it simply passes through.
         let body = args.input;
-        if (routeDef.input !== undefined)
+        const nativeInput = routeDef.input as { safeParse?: (v: unknown) => { ok: true; value: unknown } | { ok: false; errors: Record<string, string>; issues?: Array<{ path: string; code: string; message: string }> } } | undefined;
+        if (nativeInput !== undefined && typeof nativeInput.safeParse === 'function')
         {
-            const parsed = routeDef.input.safeParse(body);
+            const parsed = nativeInput.safeParse(body);
             if (!parsed.ok)
             {
                 throw new SchemaError(parsed.errors, parsed.issues);

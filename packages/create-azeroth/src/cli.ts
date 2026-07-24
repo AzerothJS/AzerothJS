@@ -4,7 +4,7 @@
  *
  * The day-one path, interrogation-free: at most two questions (a name if none was
  * given, a shape if --template was not passed), asked in the framework's interaction
- * column (@azerothjs/logger's prompt primitives - see its DESIGN.md), then a scaffold
+ * column (@azerothjs/logger's prompt primitives), then a scaffold
  * and an outro with the three next steps. Opinions live in the templates - eslint
  * with the azeroth rules, the typecheck gate, the azeroth CLI verbs - not in
  * questions.

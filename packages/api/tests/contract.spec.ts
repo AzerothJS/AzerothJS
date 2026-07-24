@@ -11,7 +11,7 @@
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { email, required } from '@azerothjs/form';
 import { object, string, number, boolean, type Infer } from '@azerothjs/schema';
-import { App, noContent } from '@azerothjs/http';
+import { App, HttpError, noContent } from '@azerothjs/http';
 import { defineContract, route, implementContract, mountApi, createClient, ApiError } from '@azerothjs/api';
 
 // ---- the shared contract (in a real app: one file, imported by browser and server) ----
@@ -221,5 +221,85 @@ describe('compile-time contract enforcement', () =>
         // @ts-expect-error - create input must match the schema type.
         client.users.create({ input: { name: 'x', email: 42 } }).catch(() => undefined);
         expect(true).toBe(true);
+    });
+});
+
+describe('handler context passthrough', () =>
+{
+    it('a handler behind scoped middleware reads what the middleware attached', async () =>
+    {
+        const contract = defineContract({
+            me: route({ method: 'GET', path: '/me', output: object({ user: string() }) })
+        });
+        const app = new App();
+        const authed = app.with(() => ({ user: 'thrall' }));
+        mountApi(authed, implementContract(contract, {
+            me: (context) => ({ user: (context as typeof context & { user: string }).user })
+        }), { prefix: '' });
+        const response = await app.handle(new Request('http://local/me'));
+        expect(await response.json()).toEqual({ user: 'thrall' });
+    });
+});
+
+describe('mount guards', () =>
+{
+    const contract = defineContract({
+        open: route({ method: 'GET', path: '/open', output: object({ who: string() }) }),
+        account: {
+            me: route({ method: 'GET', path: '/me', output: object({ who: string() }) }),
+            admin: route({ method: 'GET', path: '/admin', output: object({ who: string() }) })
+        }
+    });
+    const who = (context: unknown): { who: string } => ({ who: (context as { user?: string }).user ?? 'anon' });
+    const handlers = {
+        open: who,
+        account: {
+            me: who,
+            admin: () => ({ who: 'admin' })
+        }
+    };
+
+    it('applies global, group-wildcard, and exact guards outermost-first', async () =>
+    {
+        const order: string[] = [];
+        const app = new App();
+        mountApi(app, implementContract(contract, handlers), {
+            prefix: '',
+            guards: {
+                '*': [() =>
+                {
+                    order.push('global');
+                }],
+                'account.*': [() =>
+                {
+                    order.push('group'); return { user: 'thrall' };
+                }],
+                'account.me': [() =>
+                {
+                    order.push('exact');
+                }]
+            }
+        });
+        const response = await app.handle(new Request('http://local/me'));
+        expect(await response.json()).toEqual({ who: 'thrall' });
+        expect(order).toEqual(['global', 'group', 'exact']);
+    });
+
+    it('a guard returning a Response short-circuits; a throwing guard rejects', async () =>
+    {
+        const app = new App();
+        mountApi(app, implementContract(contract, handlers), {
+            prefix: '',
+            guards: {
+                'account.admin': [() => new Response('blocked', { status: 403 })],
+                'open': [() =>
+                {
+                    throw new HttpError(429, 'slow down');
+                }]
+            }
+        });
+        expect((await app.handle(new Request('http://local/admin'))).status).toBe(403);
+        expect((await app.handle(new Request('http://local/open'))).status).toBe(429);
+        expect((await app.handle(new Request('http://local/me'))).status).toBe(200);
     });
 });

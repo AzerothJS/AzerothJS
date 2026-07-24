@@ -21,17 +21,17 @@ describe('typed context accumulation', () =>
     {
         const app = new App()
             .use(() => ({ requestId: 'r-1' }))
-            .use((_request, ctx) =>
+            .use((context) =>
             {
-                expectTypeOf(ctx.requestId).toEqualTypeOf<string>();
+                expectTypeOf(context.requestId).toEqualTypeOf<string>();
                 return { user: { name: 'jaina', admin: true } };
             });
 
-        app.get('/me', (_request, ctx) =>
+        app.get('/me', (context) =>
         {
-            expectTypeOf(ctx.requestId).toEqualTypeOf<string>();
-            expectTypeOf(ctx.user.admin).toEqualTypeOf<boolean>();
-            return json({ id: ctx.requestId, user: ctx.user.name, params: ctx.params });
+            expectTypeOf(context.requestId).toEqualTypeOf<string>();
+            expectTypeOf(context.user.admin).toEqualTypeOf<boolean>();
+            return json({ id: context.requestId, user: context.user.name, params: context.params });
         });
 
         expect(await (await get(app, '/me')).json()).toEqual({ id: 'r-1', user: 'jaina', params: {} });
@@ -64,12 +64,12 @@ describe('typed context accumulation', () =>
                 seen.push('first');
                 return { a: 1 };
             })
-            .use((_request, ctx) =>
+            .use((context) =>
             {
-                seen.push(`second-sees-a=${ ctx.a }`);
+                seen.push(`second-sees-a=${ context.a }`);
                 return { b: 2 };
             });
-        app.get('/x', (_request, ctx) => json({ sum: ctx.a + ctx.b }));
+        app.get('/x', (context) => json({ sum: context.a + context.b }));
 
         expect(await (await get(app, '/x')).json()).toEqual({ sum: 3 });
         expect(seen).toEqual(['first', 'second-sees-a=1']);
@@ -82,7 +82,7 @@ describe('typed context accumulation', () =>
             await Promise.resolve();
             return { fetched: 'yes' };
         });
-        app.get('/x', (_request, ctx) => json({ fetched: ctx.fetched }));
+        app.get('/x', (context) => json({ fetched: context.fetched }));
         expect(await (await get(app, '/x')).json()).toEqual({ fetched: 'yes' });
     });
 
@@ -104,7 +104,7 @@ describe('guards: a Response short-circuits', () =>
     it('the handler never runs when a guard denies', async () =>
     {
         const handler = vi.fn(() => noContent());
-        const app = new App().use((request) =>
+        const app = new App().use(({ request }) =>
         {
             if (request.headers.get('authorization') === null)
             {
@@ -124,7 +124,7 @@ describe('guards: a Response short-circuits', () =>
 
     it('a middleware can answer directly with a Response (cache hit)', async () =>
     {
-        const app = new App().use((request) =>
+        const app = new App().use(({ request }) =>
             (request.headers.get('if-cached') !== null ? json({ cached: true }) : undefined));
         app.get('/data', () => json({ cached: false }));
 
@@ -151,10 +151,10 @@ describe('with(): scoped middleware', () =>
     {
         const app = new App();
         const authed = app.with(() => ({ accountId: 7 }));
-        authed.get('/me', (_request, ctx) =>
+        authed.get('/me', (context) =>
         {
-            expectTypeOf(ctx.accountId).toEqualTypeOf<number>();
-            return json({ id: ctx.accountId });
+            expectTypeOf(context.accountId).toEqualTypeOf<number>();
+            return json({ id: context.accountId });
         });
         // The fork shares the parent's router, so the parent dispatches the scoped route.
         expect(await (await get(app, '/me')).json()).toEqual({ id: 7 });
@@ -167,7 +167,7 @@ describe('with(): scoped middleware', () =>
         app.with(() =>
         {
             ran(); return { scoped: 1 };
-        }).get('/scoped', (_r, ctx) => json({ v: ctx.scoped }));
+        }).get('/scoped', (context) => json({ v: context.scoped }));
         app.get('/open', () => noContent());
 
         await get(app, '/open');
@@ -184,15 +184,15 @@ describe('with(): scoped middleware', () =>
         {
             seen.push('a'); return { a: 1 };
         })
-            .with((_r, ctx) =>
+            .with((context) =>
             {
-                seen.push(`b-sees-a=${ ctx.a }`); return { b: 2 };
+                seen.push(`b-sees-a=${ context.a }`); return { b: 2 };
             })
-            .get('/x', (_r, ctx) =>
+            .get('/x', (context) =>
             {
-                expectTypeOf(ctx.a).toEqualTypeOf<number>();
-                expectTypeOf(ctx.b).toEqualTypeOf<number>();
-                return json({ sum: ctx.a + ctx.b });
+                expectTypeOf(context.a).toEqualTypeOf<number>();
+                expectTypeOf(context.b).toEqualTypeOf<number>();
+                return json({ sum: context.a + context.b });
             });
 
         expect(await (await get(app, '/x')).json()).toEqual({ sum: 3 });
@@ -206,12 +206,12 @@ describe('with(): scoped middleware', () =>
         {
             order.push('global'); return { g: 'G' };
         });
-        app.with((_r, ctx) =>
+        app.with((context) =>
         {
-            expectTypeOf(ctx.g).toEqualTypeOf<string>(); // the fork sees the global addition's type
+            expectTypeOf(context.g).toEqualTypeOf<string>(); // the fork sees the global addition's type
             order.push('scoped');
             return { s: 'S' };
-        }).get('/x', (_r, ctx) => json({ g: ctx.g, s: ctx.s }));
+        }).get('/x', (context) => json({ g: context.g, s: context.s }));
 
         expect(await (await get(app, '/x')).json()).toEqual({ g: 'G', s: 'S' });
         expect(order).toEqual(['global', 'scoped']);
@@ -226,7 +226,7 @@ describe('with(): scoped middleware', () =>
         {
             late(); return { b: 2 };
         }); // added AFTER the fork was opened
-        fork.get('/x', (_r, ctx) => json({ a: ctx.a }));
+        fork.get('/x', (context) => json({ a: context.a }));
 
         expect(await (await get(app, '/x')).json()).toEqual({ a: 1 });
         expect(late).not.toHaveBeenCalled();
@@ -236,7 +236,7 @@ describe('with(): scoped middleware', () =>
     {
         const handler = vi.fn(() => noContent());
         const app = new App();
-        app.with((request) =>
+        app.with(({ request }) =>
         {
             if (request.headers.get('authorization') === null)
             {
