@@ -1,0 +1,35 @@
+// The SSR'd + hydrated route: this page is prerendered at BUILD time
+// (scripts/prerender.mjs renders it through the same compiled component) and the
+// browser ADOPTS that markup instead of rebuilding it - view-source on / shows
+// real content. Everything below stays fully reactive after hydration.
+export default component Home()
+{
+    state count = 0;
+    derived parity = count % 2 === 0 ? 'even' : 'odd';
+    state health = '';
+
+    const ping = async (): Promise<void> =>
+    {
+        const response = await fetch('/api/healthz'); // proxied to server/ - see vite.config.ts
+        health = JSON.stringify(await response.json());
+    };
+
+    <section class="page">
+        <h1>{{name}}</h1>
+        <p>
+            application/ (vite) + server/ (@azerothjs/http) - one <code>npm run dev</code>
+            runs both. This page is server-rendered at build and hydrated in the browser;
+            the <a href="/guestbook">guest book</a> shows the typed API contract and the
+            <code>form</code> keyword.
+        </p>
+        <div class="row">
+            <button onClick={ () => count += 1 }>
+                count is { count } ({ parity })
+            </button>
+            <button onClick={ () => void ping() }>
+                ping the api
+            </button>
+        </div>
+        <p class="health">{ health }</p>
+    </section>
+}

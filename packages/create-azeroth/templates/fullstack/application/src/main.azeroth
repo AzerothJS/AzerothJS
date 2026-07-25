@@ -1,5 +1,16 @@
-import { render } from 'azerothjs';
+import { hydrate, render } from 'azerothjs';
 
 import App from './App.azeroth';
 
-render(() => App(), document.getElementById('root')!);
+// The prerendered home page (dist/index.html) arrives WITH markup: adopt it in
+// place instead of rebuilding - that is hydration. The dev server and the SPA
+// shell (spa.html) arrive with an empty root: render normally.
+const root = document.getElementById('root')!;
+if (root.childNodes.length > 0)
+{
+    hydrate(() => App(), root);
+}
+else
+{
+    render(() => App(), root);
+}

@@ -1,5 +1,6 @@
 // Component tests run against real DOM (happy-dom) through the compiler - the same
 // pipeline that serves the app. renderTest mounts, cleanup unmounts between tests.
+// App takes a `url` so tests (like the prerender script) pin the route.
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderTest, cleanup, fire } from '@azerothjs/testing';
 
@@ -9,9 +10,9 @@ afterEach(cleanup);
 
 describe('App', () =>
 {
-    it('renders and counts fine-grained - only the text node updates', () =>
+    it('renders the home route and counts fine-grained - only the text node updates', () =>
     {
-        const { container } = renderTest(() => App());
+        const { container } = renderTest(() => App({ url: '/' }));
         const button = container.querySelector('button');
         expect(button?.textContent).toContain('count is 0');
         if (button)
@@ -19,5 +20,12 @@ describe('App', () =>
             fire(button, 'click');
         }
         expect(button?.textContent).toContain('count is 1');
+    });
+
+    it('the guest book route renders the schema-validated form', () =>
+    {
+        const { container } = renderTest(() => App({ url: '/guestbook' }));
+        expect(container.querySelector('form')).not.toBeNull();
+        expect(container.querySelectorAll('input').length).toBe(2);
     });
 });

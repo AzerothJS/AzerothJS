@@ -11,6 +11,19 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **create-azeroth**: the fullstack template is now the CANON TOUR. Two client
+  routes through the router in `.azeroth` (`<RouterProvider>`/`<Routes>`/`<Link
+  activeClass end>`), ONE shared contract file both halves import
+  (`server/src/contract.ts`, client-safe by construction), the API consumed through
+  the fully inferred typed client, a guest-book form whose `form` keyword uses the
+  SAME schema the server boundary enforces (one declaration, three enforcement
+  points - the 422 field map lands in the form), the `mount { }` keyword, and an
+  SSR'd + HYDRATED home route (prerendered at build via `vite build --ssr` + a
+  splice script; `main.azeroth` adopts the markup; client-routed pages get the SPA
+  shell so direct loads never mismatch). Dockerfile and CI carry over unchanged;
+  the frontend/backend templates are demoted to minimal starters pointing at the
+  canon. The scaffold guard now checks API paths across every application source.
+
 - **compiler**: the TextMate grammar ships with the package -
   `@azerothjs/compiler/azeroth.tmLanguage.json` - one canonical copy any
   TextMate-compatible consumer (Shiki, docs generators) loads directly; welded by

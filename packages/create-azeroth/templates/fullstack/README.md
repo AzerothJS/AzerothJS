@@ -4,6 +4,18 @@ An [AzerothJS](https://github.com/AzerothJS/AzerothJS) fullstack app:
 `application/` (compiled `.azeroth` components on vite) + `server/`
 (`@azerothjs/http`, no build step) - one command runs both.
 
+## The canon tour (what this template teaches)
+
+| Piece | Where | The idea |
+| --- | --- | --- |
+| Client routing | `application/src/App.azeroth` | Two routes, `<RouterProvider>` + `<Routes>` + `<Link activeClass>`; composables need no router argument |
+| ONE shared contract | `server/src/contract.ts` | Routes + schemas declared once; imported by BOTH halves; client-safe by construction |
+| Typed API client | `application/src/api.ts` | `createClient(contract)` - calls fully inferred, inputs validated BEFORE the wire |
+| Schema-validated form | `application/src/pages/guest-book.azeroth` | The `form` keyword with the SAME schema the server enforces - one declaration, three enforcement points |
+| Boundary validation | `server/src/app.ts` | `mountApi` - a forged request gets the 422 whose field map the form displays |
+| SSR + hydration | `application/src/entry-server.ts` + `scripts/prerender.mjs` | The home route is prerendered at build and hydrated in the browser (`main.azeroth`) |
+| One-origin deploy | `server/Dockerfile` + `.github/workflows/ci.yml` | One container, orchestrator probe, CI running the same gates as local |
+
 ## Scripts (from this root)
 
 | Command | Does |

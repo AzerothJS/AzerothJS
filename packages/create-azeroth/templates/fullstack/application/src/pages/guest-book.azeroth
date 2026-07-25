@@ -1,0 +1,66 @@
+// The contract page: the SAME schema (server/src/contract.ts) validates the form
+// in the browser, the typed client call before the wire, and the server boundary -
+// one declaration, three enforcement points. `mount { }` loads the list once the
+// page is connected; the `form` keyword owns fields, errors, and the submit
+// lifecycle.
+import { client } from '../api.ts';
+import { entryInput, type Entry } from '../../../server/src/contract.ts';
+
+export default component GuestBook()
+{
+    state entries: Entry[] = [];
+    state loaded = false;
+
+    mount
+    {
+        void client.guestbook.list().then((list) =>
+        {
+            entries = list;
+            loaded = true;
+        });
+    }
+
+    form sign = { name: '', message: '' } with {
+        schema: entryInput,
+        onSubmit: async (values) =>
+        {
+            const created = await client.guestbook.sign({ input: values });
+            entries = [created, ...entries];
+            sign.reset();
+        }
+    };
+
+    <section class="page">
+        <h1>Guest book</h1>
+        <form onSubmit={ sign.handleSubmit }>
+            <label>
+                Name
+                <input bind:value={ sign.name } placeholder="Jaina" />
+                <Show when={ sign.errors().name }>
+                    <small class="error">{ sign.errors().name }</small>
+                </Show>
+            </label>
+            <label>
+                Message
+                <input bind:value={ sign.message } placeholder="Well met!" />
+                <Show when={ sign.errors().message }>
+                    <small class="error">{ sign.errors().message }</small>
+                </Show>
+            </label>
+            <button type="submit" disabled={ sign.submitting() }>Sign</button>
+        </form>
+        <ul class="entries">
+            <For each={ entries } key={ (item) => item.id }>
+                { (item) =>
+                    <li>
+                        <strong>{ item.name }</strong>
+                        <span>{ item.message }</span>
+                    </li>
+                }
+            </For>
+        </ul>
+        <Show when={ loaded && entries.length === 0 }>
+            <p class="muted">No entries yet - be the first.</p>
+        </Show>
+    </section>
+}

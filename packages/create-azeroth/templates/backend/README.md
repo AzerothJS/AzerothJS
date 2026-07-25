@@ -1,5 +1,9 @@
 # {{name}}
 
+> The MINIMAL starter for this half. The `fullstack` template is the canon tour -
+> routing, the shared typed contract, the schema-validated form, and an SSR'd +
+> hydrated route - scaffold it with `npm create azeroth@latest` and pick fullstack.
+
 An [AzerothJS](https://github.com/AzerothJS/AzerothJS) backend. No build step:
 Node >= 24 runs the TypeScript source directly.
 

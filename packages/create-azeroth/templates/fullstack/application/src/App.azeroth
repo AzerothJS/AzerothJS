@@ -1,25 +1,29 @@
-export default component App()
+// The shell: one router, two routes, client-side navigation. The optional `url`
+// prop is the SSR seam - the prerender script renders App at a fixed URL through a
+// memory history; the browser omits it and the router reads the address bar.
+import { RouterProvider, Routes, Link, createRouter, createMemoryHistory } from 'azerothjs';
+import Home from './pages/home.azeroth';
+import GuestBook from './pages/guest-book.azeroth';
+
+export default component App(props: { url?: string })
 {
-    state count = 0;
-    state health = '';
+    const router = createRouter({
+        routes: [
+            { path: '/', component: Home },
+            { path: '/guestbook', component: GuestBook }
+        ],
+        history: props.url !== undefined ? createMemoryHistory(props.url) : undefined
+    });
 
-    const ping = async (): Promise<void> =>
-    {
-        const response = await fetch('/api/healthz'); // proxied to server/ - see vite.config.ts
-        health = JSON.stringify(await response.json());
-    };
-
-    <main class="app">
-        <h1>{{name}}</h1>
-        <p>
-            application/ (vite) + server/ (@azerothjs/http) - one <code>npm run dev</code> runs both.
-        </p>
-        <button onClick={ () => count += 1 }>
-            count is { count }
-        </button>
-        <button onClick={ () => void ping() }>
-            ping the api
-        </button>
-        <p class="health">{ health }</p>
-    </main>
+    <RouterProvider router={ router }>
+        <div class="app">
+            <nav>
+                <Link to="/" activeClass="active" end>Home</Link>
+                <Link to="/guestbook" activeClass="active">Guest book</Link>
+            </nav>
+            <main>
+                <Routes fallback={ () => <h1>Not found</h1> } />
+            </main>
+        </div>
+    </RouterProvider>
 }

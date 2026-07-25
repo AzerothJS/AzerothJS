@@ -141,9 +141,11 @@ describe('production shape: the hour-three files are already waiting', () =>
         // The app's very first cross-half interaction must hit a route the server
         // actually defines - a drifted path ships a 404 as the newcomer's first
         // impression (the /api/health vs /api/healthz regression this guards).
-        const app = readFileSync(join(TEMPLATES_ROOT, 'fullstack/application/src/App.azeroth'), 'utf8');
+        const sources = ['App.azeroth', 'pages/home.azeroth', 'pages/guest-book.azeroth']
+            .map((f) => readFileSync(join(TEMPLATES_ROOT, 'fullstack/application/src', f), 'utf8'))
+            .join('\n');
         const server = readFileSync(join(TEMPLATES_ROOT, 'fullstack/server/src/app.ts'), 'utf8');
-        const fetched = [...app.matchAll(/fetch\('(\/api\/[^']+)'/g)].map((m) => m[1]);
+        const fetched = [...sources.matchAll(/fetch\('(\/api\/[^']+)'/g)].map((m) => m[1]);
         expect(fetched.length).toBeGreaterThan(0);
         for (const path of fetched)
         {
