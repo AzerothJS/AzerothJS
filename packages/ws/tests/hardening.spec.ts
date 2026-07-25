@@ -6,7 +6,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { connect } from 'node:net';
 import { once, EventEmitter } from 'node:events';
-import { App, serve } from '@azerothjs/http';
+import { App } from '@azerothjs/http';
+import { serve } from '@azerothjs/http/node';
 import { attachWebSockets, ServerSocket } from '@azerothjs/ws';
 
 /** The bytes of a valid RFC 6455 opening handshake, with an optional Origin. */

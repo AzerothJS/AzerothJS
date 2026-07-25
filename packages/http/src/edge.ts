@@ -15,7 +15,11 @@
  * on the result, so the whole stack is exercised without a socket.
  */
 
-import type { WebHandler } from './adapter-node.ts';
+/** What composition and adapters need from the app - exactly the kernel dispatcher's shape. */
+export interface WebHandler
+{
+    handle(request: Request): Promise<Response>;
+}
 import { PayloadResponse } from './payload.ts';
 
 /**

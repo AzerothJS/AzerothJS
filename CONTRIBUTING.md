@@ -30,11 +30,11 @@ or `test/` directory - each package owns its own `src/` and `tests/`.
 
 | Path | What it is |
 | --- | --- |
-| `packages/reactivity` | Signals, memos, effects, roots, render-mode primitives. The base layer. |
-| `packages/renderer` `packages/component` | DOM rendering, control flow, component teardown. |
-| `packages/store` `packages/form` `packages/router` `packages/server` | App-level building blocks. |
+| `packages/azerothjs` | THE frontend framework, one real package (`npm i azerothjs`): `src/reactivity` (signals/memos/effects/owner), `src/component` (teardown, ErrorBoundary), `src/renderer` (DOM + control flow), `src/ssr`, `src/router`, `src/form`. |
+| `packages/schema` | Validation shared by both halves (forms client-side, request boundaries server-side). |
+| `packages/http` `packages/api` `packages/ws` `packages/cron` `packages/logger` | The backend stack: HTTP kernel, typed contracts + OpenAPI, WebSockets, scheduling, logging. |
 | `packages/compiler` | The `.azeroth` single-file-component compiler and the Vite plugin. |
-| `packages/azerothjs` | The framework's entry package (`npm i azerothjs`), re-exporting the runtime. |
+| `packages/cli` `packages/create-azeroth` | The `azeroth` command and the `npm create azeroth` scaffolder. |
 | `packages/testing` | Test helpers (`renderTest`, `cleanup`, `leakGuard`, `fire`). |
 | `packages/language-service` `packages/language-server` `packages/typescript-plugin` `packages/eslint-plugin` | Editor tooling. |
 | `packages/devtools` | Browser devtools panel/agent. |

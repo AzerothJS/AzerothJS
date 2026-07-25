@@ -6,7 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fcompiler?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/compiler)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the build-time half: applications install [`azerothjs`](https://www.npmjs.com/package/azerothjs) as a dependency and this compiler (with its Vite plugin) as a dev dependency.
 
 ## Overview
 

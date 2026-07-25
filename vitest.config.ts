@@ -20,9 +20,12 @@ const alias = readdirSync(packagesDir)
         const entries = [];
         // Subpath aliases FIRST: a bare string `find` prefix-matches, so `pkg/internal`
         // must resolve before the bare package name grabs it.
-        if (existsSync(path.join(dir, 'src', 'internal.ts')))
+        for (const sub of ['internal', 'node'])
         {
-            entries.push({ find: `${ pkg.name }/internal`, replacement: path.join(dir, 'src', 'internal.ts') });
+            if (existsSync(path.join(dir, 'src', `${ sub }.ts`)))
+            {
+                entries.push({ find: `${ pkg.name }/${ sub }`, replacement: path.join(dir, 'src', `${ sub }.ts`) });
+            }
         }
         entries.push({ find: pkg.name, replacement: path.join(dir, 'src', 'index.ts') });
         return entries;

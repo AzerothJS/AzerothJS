@@ -6,7 +6,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { connect } from 'node:net';
 import { once } from 'node:events';
-import { App, serve, text, handleShutdownSignals } from '@azerothjs/http';
+import { App, text } from '@azerothjs/http';
+import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 
 interface TimedServer { headersTimeout: number; requestTimeout: number; keepAliveTimeout: number; maxRequestsPerSocket: number }
 

@@ -59,6 +59,17 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **http**: the package split into a pure fetch-standard kernel and a Node half.
+  `serve`/`serveH2c`/`handleShutdownSignals`/`toWebRequest`/`writeResponse`/
+  `staticFiles`/`compressResponse` (and their types) moved to the new
+  `@azerothjs/http/node` subpath; the `.` entry now carries ZERO `node:*` imports in
+  its module graph (one sanctioned exception: the AsyncLocalStorage request-root seam,
+  implemented by Bun, Deno, and workerd) - enforced by a static purity test. New
+  `toFetchHandler(app)` bridges an App to any WinterCG fetch runtime (Cloudflare
+  Workers, Deno Deploy, Bun.serve, Vercel Edge):
+  `export default { fetch: toFetchHandler(app) }`. `WebHandler` now lives on the
+  kernel side.
+
 - **THE CONSOLIDATION**: `azerothjs` is now ONE REAL PACKAGE. The six frontend packages -
   `@azerothjs/reactivity`, `@azerothjs/component`, `@azerothjs/renderer`,
   `@azerothjs/server` (SSR), `@azerothjs/router`, `@azerothjs/form` - are DISCONTINUED

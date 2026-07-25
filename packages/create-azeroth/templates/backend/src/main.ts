@@ -3,9 +3,9 @@
 // save and `azeroth build` will tell you there is nothing to build.
 import
 {
-    serve, pipeline, handleShutdownSignals,
-    requestId, securityHeaders, cors, rateLimit, logRequests
+    pipeline, requestId, securityHeaders, cors, rateLimit, logRequests
 } from '@azerothjs/http';
+import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import { createLogger, fileStream } from '@azerothjs/logger';
 
 import { buildApp } from './app.ts';

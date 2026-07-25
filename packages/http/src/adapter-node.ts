@@ -28,12 +28,7 @@ import { networkInterfaces } from 'node:os';
 import { printBanner } from '@azerothjs/logger';
 import { createAdapterRequest, type AnyIncoming } from './adapter-request.ts';
 import { PayloadResponse } from './payload.ts';
-
-/** What the adapter needs from the app - exactly the kernel dispatcher's shape. */
-export interface WebHandler
-{
-    handle(request: Request): Promise<Response>;
-}
+import type { WebHandler } from './edge.ts';
 
 type AnyOutgoing = ServerResponse | Http2ServerResponse;
 

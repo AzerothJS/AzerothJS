@@ -59,6 +59,10 @@
             [
                 "./packages/http/src/index.ts"
             ],
+            "@azerothjs/http/node":
+            [
+                "./packages/http/src/node.ts"
+            ],
             "@azerothjs/ws":
             [
                 "./packages/ws/src/index.ts"

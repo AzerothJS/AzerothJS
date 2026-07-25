@@ -6,7 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Feslint-plugin?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/eslint-plugin)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A development-time companion to [`azerothjs`](https://www.npmjs.com/package/azerothjs) - install it as a dev dependency alongside the framework.
 
 ESLint rules for AzerothJS reactivity foot-guns in plain `.ts` files, plus a processor that makes
 `.azeroth` a **first-class lint target**: your normal core + `@typescript-eslint` rules run on `.azeroth`

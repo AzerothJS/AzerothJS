@@ -50,11 +50,10 @@ export type { EncodableSchema, EncoderMeta } from './encode-json.ts';
 export { readRaw, readText, readJson, readForm, readValidated, mediaTypeOf, DEFAULT_BODY_LIMIT } from './body.ts';
 export type { ReadOptions, SchemaLike, ValidationIssue } from './body.ts';
 
-export { serve, serveH2c, toWebRequest, writeResponse, handleShutdownSignals } from './adapter-node.ts';
-export type { Served, WebHandler, ConnectMiddleware, SocketTimeouts, ShutdownSignalOptions } from './adapter-node.ts';
-
 export { pipeline, withResponseHeaders, requestId, requestIdOf } from './edge.ts';
-export type { HandlerWrapper, RequestIdOptions } from './edge.ts';
+export type { HandlerWrapper, RequestIdOptions, WebHandler } from './edge.ts';
+
+export { toFetchHandler } from './fetch-handler.ts';
 
 export { securityHeaders } from './security.ts';
 export type { SecurityHeadersOptions, HstsOptions } from './security.ts';
@@ -73,12 +72,6 @@ export type { MultipartBody, MultipartOptions, UploadedFile } from './multipart.
 
 export { parseCookies, serializeCookie, expireCookie } from './cookies.ts';
 export type { CookieOptions } from './cookies.ts';
-
-export { staticFiles, contentTypeFor } from './static.ts';
-export type { StaticOptions } from './static.ts';
-
-export { compressResponse } from './compress.ts';
-export type { CompressOptions } from './compress.ts';
 
 export { sse } from './sse.ts';
 export type { SseConnection, SseOptions, SseSendOptions } from './sse.ts';

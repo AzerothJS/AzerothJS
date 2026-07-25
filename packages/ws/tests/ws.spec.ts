@@ -12,7 +12,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { connect } from 'node:net';
 import { once } from 'node:events';
-import { App, serve, text as textResponse, type Served } from '@azerothjs/http';
+import { App, text as textResponse } from '@azerothjs/http';
+import { serve, type Served } from '@azerothjs/http/node';
 import { attachWebSockets, serializeFrame, FrameParser, OPCODE, closePayload, type ServerSocket } from '@azerothjs/ws';
 
 const encode = (value: string): Uint8Array => new TextEncoder().encode(value);

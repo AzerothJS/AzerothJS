@@ -2,7 +2,8 @@
 // prefix the application's dev proxy forwards - and in production the server also
 // serves the built client, so the deployed app is ONE origin (no CORS to configure
 // between your own halves).
-import { App, json, staticFiles, type RequestObserver } from '@azerothjs/http';
+import { App, json, type RequestObserver } from '@azerothjs/http';
+import { staticFiles } from '@azerothjs/http/node';
 
 export interface AppOptions
 {

@@ -23,7 +23,8 @@ fetch-shaped runtime, `app.handle(new Request(...))` is the entire integration-t
 a handler returns exactly one `Response`.
 
 ```ts
-import { App, json, readJson, serve } from '@azerothjs/http';
+import { App, json, readJson } from '@azerothjs/http';
+import { serve } from '@azerothjs/http/node';
 
 const app = new App();
 

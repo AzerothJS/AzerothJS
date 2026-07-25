@@ -158,14 +158,23 @@ consumes, and a server validation failure's field map drops straight into a brow
 - **CI** - `azeroth-tsc` (from `@azerothjs/language-server`) type-checks `.ts` + `.azeroth` in one
   program, the `vue-tsc` equivalent.
 
-## Fine-grained packages
+## Which package do I import from?
 
-`azerothjs` re-exports the full client framework plus SSR. Every layer is also published
-individually under the `@azerothjs/*` scope - depend on one directly when you want a narrower
-surface (a library that only needs the reactive core, a service that only needs
-`@azerothjs/http`). Tree-shaking drops unused exports either way. The scope also carries the
-tooling: `@azerothjs/testing` (leak-guarded component tests), `@azerothjs/devtools` (in-page
-reactive-graph panel), and `@azerothjs/eslint-plugin` (`.azeroth` as a first-class lint target).
+The canon is one rule per side of the wire:
+
+| You are writing... | Import from |
+| --- | --- |
+| Anything client-side or SSR - components, signals, control flow, the router, forms, `renderToString` | `azerothjs` (this package - the whole frontend is ONE real package) |
+| Schemas / validation shared by both halves | `@azerothjs/schema` |
+| The server - routes, middleware, contracts | `@azerothjs/http`, `@azerothjs/api` (+ `@azerothjs/ws`, `@azerothjs/cron`, `@azerothjs/logger`) |
+| The browser half of a typed API contract | `@azerothjs/api/client` (client-safe; never drags server code into a bundle) |
+| Tests / dev tooling | `@azerothjs/testing`, `@azerothjs/devtools`; dev-deps: `@azerothjs/compiler`, `@azerothjs/cli`, the editor tooling |
+
+Two things are deliberately NOT application API: `azerothjs/internal` (the compiled-output
+runtime contract - generated `.azeroth` code imports it, you never do), and anything a
+package documents as internal. Tree-shaking drops unused exports, so importing from the
+one `azerothjs` package costs a bundle nothing over the old per-layer packages - which is
+why the frontend layers are no longer published separately.
 
 ## Documentation
 

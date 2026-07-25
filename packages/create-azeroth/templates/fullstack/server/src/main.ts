@@ -3,9 +3,9 @@
 // watches it alongside the vite app.
 import
 {
-    serve, pipeline, handleShutdownSignals,
-    requestId, securityHeaders, rateLimit, logRequests
+    pipeline, requestId, securityHeaders, rateLimit, logRequests
 } from '@azerothjs/http';
+import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import { createLogger, fileStream } from '@azerothjs/logger';
 
 import { buildApp } from './app.ts';

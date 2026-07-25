@@ -6,7 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fdevtools?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/devtools)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A development-time companion to [`azerothjs`](https://www.npmjs.com/package/azerothjs) - install it as a dev dependency alongside the framework.
 
 In-page devtools for AzerothJS apps - a tabbed panel that shows your live
 reactive graph the way the React, Vue, and Angular devtools show theirs, but
