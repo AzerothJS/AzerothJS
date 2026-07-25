@@ -11,6 +11,12 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **reactivity**: `onMount(fn)` - the sanctioned post-connection hook. Runs once, one
+  microtask after the synchronous render (every insertion path is synchronous, so the
+  DOM is connected by then), under the registering owner: effects it creates are owned,
+  a returned cleanup runs on unmount, a scope disposed before the microtask never fires
+  its callback, and SSR skips it entirely. Refs still fire at construction (documented) -
+  capture the element there, do connected-time work in onMount.
 - **reactivity**: the ownership tree is now first-class. `createRoot` builds an `Owner`
   node (disposers, parent link, context storage, captured error routing);
   `getOwner()`/`runWithOwner(owner, fn)` let async continuations create effects that

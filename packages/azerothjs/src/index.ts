@@ -44,6 +44,7 @@ export {
     untrack,
     on,
     onCleanup,
+    onMount,
     onRootDispose,
     createRoot,
     getOwner,

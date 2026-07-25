@@ -304,6 +304,11 @@ export function resolveReactive(value: unknown): unknown
  *
  * Anything else is ignored; a ref is never rendered as an attribute.
  *
+ * TIMING: the ref fires at CONSTRUCTION, before the element is inserted into the
+ * document - layout reads here return zeros and connection-dependent widgets fail.
+ * Capture the element in the ref, do connected-time work in `onMount` (reactivity),
+ * which runs once the synchronous render has finished inserting.
+ *
  * @param el - The freshly-created DOM element
  * @param ref - The value passed as the `ref` prop
  *

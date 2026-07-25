@@ -40,6 +40,9 @@ export interface Owner
 
     /** @internal The error handler ambient at creation; restored by runWithOwner. */
     errorHandler: ((error: unknown) => void) | null;
+
+    /** @internal True once dispose() ran; deferred work (onMount) checks it and stands down. */
+    disposed: boolean;
 }
 
 /**
@@ -189,7 +192,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     // The scope's node in the ownership tree: parent is whatever owner is active at
     // creation, and the ambient error handler is captured so runWithOwner can restore
     // the same error routing for async continuations.
-    const owner: Owner = { disposers: [], parent: currentOwner, context: null, errorHandler: currentErrorHandler };
+    const owner: Owner = { disposers: [], parent: currentOwner, context: null, errorHandler: currentErrorHandler, disposed: false };
     const disposers = owner.disposers;
 
     const previousRoot = currentOwner;
@@ -229,6 +232,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
             }
         }
         disposers.length = 0;
+        owner.disposed = true;
         // Free provided context values with the scope (the owner object itself may be
         // retained by a captured getOwner() handle; its payload must not be).
         owner.context = null;
