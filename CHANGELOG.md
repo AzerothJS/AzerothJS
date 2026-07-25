@@ -9,6 +9,38 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed (BREAKING - beta)
+
+- **server**: `island()` no longer wraps the island in a `<span style="display:contents">` -
+  the anchor attributes now ride on the island component's OWN root element, so an island
+  is valid anywhere its root is (a `<tr>` island sits directly in a `<tbody>`) and
+  direct-child selectors keep working. An island component must render a single element
+  root (now enforced with a descriptive error). `hydrateIslands()` adopts the new form;
+  pages server-rendered by an older version must be re-rendered.
+- **reactivity**: `catchError` returns `T | undefined` instead of a silently-undefined `T` -
+  the caught case is now visible to the type checker.
+
+### Fixed
+
+- **api**: the client substitutes path parameters at identifier boundaries - `:id` no
+  longer corrupts a sibling parameter named `:ida`.
+- **ws**: two `attachWebSockets` endpoints coexist on one server - a path-mismatched
+  endpoint no longer destroys a sibling endpoint's handshake; an upgrade nobody claims
+  still gets exactly one clean 404.
+- **http**: SSE connections drop a client that falls `maxBufferedBytes` (default 1 MiB)
+  behind instead of buffering unbounded - EventSource reconnects and resumes via
+  `Last-Event-ID`; the cap is configurable per stream.
+- **create-azeroth**: the fullstack template's demo now calls the `/api/healthz` route the
+  server actually defines, and its Dockerfile installs from the root workspace context so
+  `docker build` succeeds (a workspace member has no lockfile of its own). Both are now
+  guarded by scaffold tests.
+- **eslint-plugin**: the plugin/processor `meta.version` is read from the package manifest
+  instead of a hard-coded string that had gone stale.
+- Release engineering: version bumps are structured per file kind (anchored manifest
+  edits with parse validation, anchored gradle edit, exact-string docs) with a post-bump
+  guard that fails on any drifted version example - the corruption class that once
+  rewrote a CONTRIBUTING example into nonsense.
+
 ## [1.0.0-beta.2] - 2026-07-24
 
 The terminal-experience release: `azeroth dev` becomes a designed frame instead of a

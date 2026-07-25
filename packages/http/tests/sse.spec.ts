@@ -177,3 +177,45 @@ describe('compression stays away from event streams', () =>
         expect(compressResponse(gzipCapable, text('x'.repeat(4096))).headers.get('content-encoding')).toBe('br');
     });
 });
+
+describe('slow-client backpressure', () =>
+{
+    it('drops a client that falls maxBufferedBytes behind instead of buffering unbounded', async () =>
+    {
+        // Nobody reads the body - the queue only grows. The send that finds the queue at
+        // the cap must tear the connection down (signal fires = producer cleanup runs).
+        let connection!: import('../src/sse.ts').SseConnection;
+        const response = sse(new Request('http://local/events'), (c) =>
+        {
+            connection = c;
+        }, {
+            heartbeatMs: 0,
+            maxBufferedBytes: 1024
+        });
+        expect(response.status).toBe(200);
+        await Promise.resolve(); // the producer runs on a deferred microtask
+        expect(connection).toBeDefined();
+
+        const chunk = 'x'.repeat(512);
+        for (let i = 0; i < 8; i++)
+        {
+            connection.send(chunk); // 512B frames against a 1KiB cap - the 3rd send trips it
+        }
+        expect(connection.signal.aborted).toBe(true);   // torn down, not buffering forever
+        connection.send('after-drop');                   // and sends stay safe no-ops
+    });
+
+    it('a normally-drained stream is untouched by the cap', async () =>
+    {
+        const response = sse(new Request('http://local/events'), (c) =>
+        {
+            c.send('one');
+            c.send('two');
+            c.close();
+        }, { heartbeatMs: 0, maxBufferedBytes: 1024 });
+        const body = await new Response(response.body).text();
+        expect(body).toContain('data: one');
+        expect(body).toContain('data: two');
+        expect(body).toContain('data: [DONE]');
+    });
+});

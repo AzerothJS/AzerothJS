@@ -135,7 +135,13 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
         let path: string = routeDef.path as string;
         for (const [name, value] of Object.entries((args.params ?? {})))
         {
-            path = path.replace(`:${ name }`, encodeURIComponent(value)).replace(`*${ name }`, value);
+            // Boundary-anchored: a plain substring replace of `:id` would corrupt a sibling
+            // param named `:ida` (first-match prefix hit), so the name must end at a
+            // non-identifier character.
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            path = path
+                .replace(new RegExp(`:${ escaped }(?![A-Za-z0-9_])`), encodeURIComponent(value))
+                .replace(new RegExp(`\\*${ escaped }(?![A-Za-z0-9_])`), value);
         }
 
         let queryString = '';

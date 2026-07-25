@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-AzerothJS is pre-1.0 and versioned in lockstep across every package. Only the **latest
-published release line** receives security fixes:
+AzerothJS is versioned in lockstep across every package. Only the **latest published
+release line** receives security fixes:
 
 | Version | Supported |
 | --- | --- |
-| latest `0.x` release (currently `0.7.x`) | yes |
+| the latest published release | yes |
 | older releases | no - upgrade to the latest release |
 
 ## Reporting a vulnerability

@@ -10,7 +10,8 @@
  * registry shape this accepts, so each island becomes its own chunk and the call site is one line.
  */
 
-import { hydrate } from './hydrate.ts';
+import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
+import { containerDisposers } from './container-disposers.ts';
 
 /** What an island loader resolves to: the component, or a module whose default is the component. */
 export type IslandComponent = (props: Record<string, unknown>) => HTMLElement;
@@ -104,9 +105,84 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
         const component = typeof loaded === 'function' ? loaded : loaded.default;
         const props = JSON.parse(anchor.getAttribute('data-azeroth-props') ?? '{}') as Record<string, unknown>;
 
-        hydrate(() => component(props), anchor as HTMLElement);
+        hydrateIslandRoot(() => component(props), anchor as HTMLElement);
         revived++;
     }));
 
     return revived;
+}
+
+/**
+ * Adopts ONE island in place. The anchor IS the island's root element (the server rides
+ * the island attributes on the component's own root - no wrapper node), so this walks a
+ * single-node cursor over the anchor itself rather than a container's children. On a
+ * structural mismatch, the anchor is replaced in place with a fresh client render - the
+ * shell around it is never touched.
+ *
+ * @internal
+ */
+function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): void
+{
+    // Tear down any previous mount on this island first (parity with hydrate()/render()).
+    const previousDispose = containerDisposers.get(anchor);
+    if (previousDispose)
+    {
+        previousDispose();
+        containerDisposers.delete(anchor);
+    }
+
+    const parent = anchor.parentNode as Node;
+
+    try
+    {
+        runInMode('hydrate', () =>
+        {
+            createRoot((dispose) =>
+            {
+                containerDisposers.set(anchor, dispose);
+
+                const root = component() as unknown;
+                if (!isHydrationNode(root))
+                {
+                    throw new HydrationMismatchError('island component did not produce a hydratable node');
+                }
+
+                // A cursor over exactly the anchor: the descriptor claims the island's
+                // root element itself, then recurses into its children as usual.
+                const cursor = new HydrationCursor(parent, [anchor]);
+                root.hydrate(cursor);
+                cursor.assertExhausted('island root');
+            });
+        });
+    }
+    catch (error)
+    {
+        if (!(error instanceof HydrationMismatchError))
+        {
+            throw error;
+        }
+
+        const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
+        if (!proc || proc.env?.NODE_ENV !== 'production')
+        {
+            console.warn(`${ error.message } - island replaced with a fresh client render.`);
+        }
+
+        const partialDispose = containerDisposers.get(anchor);
+        if (partialDispose)
+        {
+            partialDispose();
+            containerDisposers.delete(anchor);
+        }
+
+        // Replace-in-place: build the island fresh (plain dom mode) inside its own root so
+        // its effects are owned and disposable, then swap it for the server markup.
+        const fresh = createRoot((dispose) =>
+        {
+            const el = component();
+            containerDisposers.set(el, dispose);
+            return el;
+        });
+        anchor.replaceWith(fresh);
+    }
 }

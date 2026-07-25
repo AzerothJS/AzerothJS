@@ -486,9 +486,20 @@ function baseVersion(version)
 }
 
 /**
- * Replaces the current version string with the next one in every release file.
- * Inter-package pins equal the package version, so a literal replace updates
- * both `version` and the pins while leaving the file's formatting untouched.
+ * Bumps the version in every release file, STRUCTURED per file kind - the blind
+ * literal string replace this replaces once rewrote an unrelated version inside a
+ * CONTRIBUTING example into nonsense, and a plain `1.0.0` would collide with
+ * third-party pins and prose far more often than a prerelease string does.
+ *
+ *   - package.json manifests: anchored edits of the `"version"` field and of
+ *     internal `azerothjs`/`@azerothjs/*` dependency pins whose value matches the
+ *     current version (with or without a range prefix). The result is re-parsed and
+ *     the version field verified - a failed anchor is a hard error, never a silent
+ *     no-op.
+ *   - build.gradle.kts: the anchored `version = "..."` assignment only.
+ *   - docs (markdown/yml): occurrences of the EXACT current version only, then
+ *     guarded - any OTHER azeroth-shaped version token left in a bumped doc is
+ *     flagged, so a drifted example fails the release instead of shipping.
  */
 function bumpFiles(current, next)
 {
@@ -497,14 +508,54 @@ function bumpFiles(current, next)
     {
         const full = path.join(ROOT, file);
         const before = readFileSync(full, 'utf8');
-        const occurrences = before.split(current).length - 1;
+        let after;
+        let occurrences = 0;
+
+        if (file.endsWith('package.json'))
+        {
+            const escaped = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const versionField = new RegExp(`("version"\\s*:\\s*")${ escaped }(")`);
+            const internalPin = new RegExp(`("(?:@azerothjs\\/[a-z0-9-]+|azerothjs)"\\s*:\\s*"[~^]?)${ escaped }(")`, 'g');
+            after = before.replace(versionField, (_m, head, tail) => `${ head }${ next }${ tail }`);
+            occurrences = after === before ? 0 : 1;
+            after = after.replace(internalPin, (_m, head, tail) =>
+            {
+                occurrences++;
+                return `${ head }${ next }${ tail }`;
+            });
+            if (occurrences > 0)
+            {
+                const parsed = JSON.parse(after);
+                if (parsed.version !== undefined && parsed.version !== next)
+                {
+                    fail(`${ file }: version field is ${ parsed.version } after bump, expected ${ next }`);
+                }
+            }
+        }
+        else if (file.endsWith('.kts'))
+        {
+            const anchored = new RegExp(`(version\\s*=\\s*")${ current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }(")`);
+            after = before.replace(anchored, (_m, head, tail) =>
+            {
+                occurrences++;
+                return `${ head }${ next }${ tail }`;
+            });
+        }
+        else
+        {
+            // Docs: the exact current version is always safe to update; anything else is
+            // left alone and caught by the guard below.
+            occurrences = before.split(current).length - 1;
+            after = occurrences > 0 ? before.split(current).join(next) : before;
+        }
+
         if (occurrences === 0)
         {
             continue;
         }
         if (!dryRun)
         {
-            writeFileSync(full, before.split(current).join(next));
+            writeFileSync(full, after);
         }
         total += occurrences;
         log(`  ${ file }: ${ occurrences } occurrence(s)`);
@@ -512,6 +563,37 @@ function bumpFiles(current, next)
     if (total === 0)
     {
         fail(`current version ${ current } not found in any release file`);
+    }
+    guardDocVersions(current, next);
+}
+
+/**
+ * Post-bump doc guard: a bumped doc must contain NO azeroth-shaped version token
+ * other than the release version - a leftover means an example has drifted (the
+ * failure mode that once shipped "-> 0.7.0-beta.2" in CONTRIBUTING). Allowed:
+ * the release version; the CURRENT version under --dry-run (nothing was written,
+ * so the file legitimately still says it); and `0.0.0-*` tokens, the designated
+ * base for permanent semver-pedagogy examples that must never track a release.
+ * Scoped to the bumped doc files; CHANGELOG legitimately holds history and
+ * manifests are parse-validated above.
+ */
+function guardDocVersions(current, next)
+{
+    const versionToken = /\b\d+\.\d+\.\d+-(?:alpha|beta|rc)\.\d+\b/g;
+    for (const file of releaseFiles())
+    {
+        if (file.endsWith('package.json') || file.endsWith('.kts'))
+        {
+            continue;
+        }
+        const text = readFileSync(path.join(ROOT, file), 'utf8');
+        const strays = [...text.matchAll(versionToken)]
+            .map((m) => m[0])
+            .filter((v) => v !== next && !v.startsWith('0.0.0-') && !(dryRun && v === current));
+        if (strays.length > 0)
+        {
+            fail(`${ file }: stray version token(s) after bump: ${ [...new Set(strays)].join(', ') } - fix the drifted example (expected only ${ next })`);
+        }
     }
 }
 

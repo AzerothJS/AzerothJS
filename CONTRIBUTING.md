@@ -164,7 +164,7 @@ shares one version, and inter-package dependencies are pinned to that exact
 version. Releases are cut with `scripts/release.mjs`:
 
 ```bash
-npm run release -- beta                    # next beta iteration (1.0.0-beta.2 -> 0.7.0-beta.2)
+npm run release -- beta                    # next beta iteration (X.Y.0-beta.N -> X.Y.0-beta.N+1)
 npm run release -- rc                      # promote the line to rc.1
 npm run release -- stable                  # cut the stable release (drop the suffix)
 npm run release -- minor                   # next minor, staying on the current channel
@@ -215,7 +215,7 @@ stabilizing, so **any** release - even a MINOR bump - may break. Reaching
 a MAJOR bump.
 
 A `-channel.n` suffix marks a **pre-release**: a version that ranks *below* the
-stable release of the same number (`1.0.0-beta.2` is older than `1.0.0`). The
+stable release of the same number (`0.0.0-beta.1` is older than `0.0.0`). The
 channel names a maturity stage; `.n` is the iteration within it:
 
 | Channel | Meaning |
@@ -229,7 +229,7 @@ Pre-releases only ever move forwards through that order, which is also their
 precedence (a pre-release always ranks below its stable):
 
 ```
-1.0.0-alpha.1  <  1.0.0-beta.2  <  1.0.0-rc.1  <  1.0.0  <  1.0.1
+0.0.0-alpha.1  <  0.0.0-beta.1  <  0.0.0-rc.1  <  0.0.0  <  0.0.1
 ```
 
 The channel becomes the npm dist-tag - a stable version publishes under `latest`,

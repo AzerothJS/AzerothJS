@@ -14,6 +14,7 @@
 //   - the compiler's own reactivity diagnostics (self-write-in-effect, constant-derived, inert-effect,
 //     handler-not-function, ...) are merged into the SAME list, so the developer sees one unified report.
 
+import { packageVersion } from './version.ts';
 import type { Linter, Rule } from 'eslint';
 import { generateVirtualCode, diagnoseModule, lintSource, parseModule, type CodeMapping } from '@azerothjs/compiler';
 import { registerDocument } from './project-pool.ts';
@@ -321,7 +322,7 @@ function markupLint(projection: Projection): Linter.LintMessage[]
 
 export const azerothProcessor: Linter.Processor =
 {
-    meta: { name: '@azerothjs/eslint-plugin/azeroth', version: '0.6.0-beta.1' },
+    meta: { name: '@azerothjs/eslint-plugin/azeroth', version: packageVersion },
     supportsAutofix: true,
 
     preprocess(text: string, filename: string): Linter.ProcessorFile[]

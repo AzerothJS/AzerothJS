@@ -14,8 +14,13 @@ FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production
 ENV CLIENT_DIR=./client
-COPY server/package*.json ./
-RUN npm ci --omit=dev
+# Workspace install, root context: the lockfile lives at the repo root (a workspace
+# member never has its own), so stage 2 installs exactly like stage 1 does - all
+# manifests + the root lockfile, scoped to the server workspace, dev deps omitted.
+COPY package*.json ./
+COPY application/package.json application/
+COPY server/package.json server/
+RUN npm ci --omit=dev --workspace server
 COPY server/src ./src
 COPY --from=client /build/application/dist ./client
 EXPOSE 3000

@@ -18,17 +18,35 @@ interface CounterProps extends Record<string, unknown>
 
 const Counter = (props: CounterProps): HTMLElement => h('button', {}, `count:${ props.start }`);
 
-describe('island - SSR (string mode) anchor wrapper', () =>
+describe('island - SSR (string mode) anchor attributes', () =>
 {
-    it('wraps the component markup in an island anchor carrying src and JSON props', () =>
+    it('rides the anchor attributes on the component\'s OWN root - no wrapper element', () =>
     {
         const html = renderToString(() =>
             island('/islands/counter.azeroth', Counter, { start: 5 }));
 
         expect(html).toBe(
-            '<span style="display:contents" data-azeroth-island="/islands/counter.azeroth"' +
-            ' data-azeroth-props="{&quot;start&quot;:5}"><button>count:5</button></span>'
+            '<button data-azeroth-island="/islands/counter.azeroth"' +
+            ' data-azeroth-props="{&quot;start&quot;:5}">count:5</button>'
         );
+    });
+
+    it('an island rendering a <tr> is a DIRECT, valid child of <tbody> (no-wrapper doctrine)', () =>
+    {
+        // The old span wrapper was invalid table content and got hoisted by the parser;
+        // with root-riding attributes the island root IS the row.
+        const Row = (props: CounterProps): HTMLElement => h('tr', {}, h('td', {}, `r${ props.start }`));
+        const html = renderToString(() => h('table', {}, h('tbody', {},
+            island('/islands/row', Row, { start: 1 }))));
+        expect(html).toContain('<tbody><tr data-azeroth-island="/islands/row"');
+        expect(html).not.toContain('<span');
+    });
+
+    it('throws a descriptive error when the island component does not render an element root', () =>
+    {
+        const Texty = (() => 'just text') as unknown as (props: CounterProps) => HTMLElement;
+        expect(() => renderToString(() => island('/islands/texty', Texty, { start: 0 })))
+            .toThrow(/single ELEMENT root/);
     });
 
     it('escapes the src and the serialized props into their attributes (no breakout)', () =>
@@ -50,7 +68,8 @@ describe('island - SSR (string mode) anchor wrapper', () =>
     {
         const Live = (props: CounterProps): HTMLElement => h('span', {}, () => `n=${ props.start }`);
         const html = renderToString(() => island('/live', Live, { start: 1 }));
-        expect(html).toContain('<span><!--[-->n=1<!--]--></span>');
+        // The root span carries the island attributes; the hole anchors serialize inside it.
+        expect(html).toMatch(/<span data-azeroth-island="\/live"[^>]*><!--\[-->n=1<!--\]--><\/span>/);
     });
 
     it('renderToStaticMarkup still emits the island anchor (the boundary, not hydration markers)', () =>
@@ -61,7 +80,7 @@ describe('island - SSR (string mode) anchor wrapper', () =>
         const Live = (props: CounterProps): HTMLElement => h('span', {}, () => `n=${ props.start }`);
         const html = renderToStaticMarkup(() => island('/live', Live, { start: 2 }));
         expect(html).toContain('data-azeroth-island="/live"');
-        expect(html).toContain('<span>n=2</span>');
+        expect(html).toMatch(/<span data-azeroth-island="\/live"[^>]*>n=2<\/span>/);
         expect(html).not.toContain('<!--[-->');
     });
 });

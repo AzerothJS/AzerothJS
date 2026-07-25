@@ -3,8 +3,9 @@
  *
  * island() marks a component as an interactivity boundary in an otherwise static
  * server-rendered page. The page shell ships as plain HTML and is never hydrated; each island's
- * markup is wrapped in an anchor carrying its module specifier and JSON props, and the client
- * bootstrap (hydrateIslands from @azerothjs/renderer) revives exactly those subtrees.
+ * ROOT ELEMENT carries the anchor attributes (module specifier + JSON props) - no wrapper node,
+ * so an island is valid anywhere its own root is (a `<tr>` island sits directly in a `<tbody>`) -
+ * and the client bootstrap (hydrateIslands from @azerothjs/renderer) revives exactly those subtrees.
  *
  * Props cross the network as JSON - that is the boundary contract, enforced here with a real
  * error rather than a silent stringify drop. Pass ids and data, not signals or callbacks; the
@@ -43,8 +44,9 @@ import { isStringMode, isHydrating, serializeChild, escapeAttr, ssr } from '@aze
  * - props: JSON-serializable props, embedded in the markup; a non-JSON value throws.
  *
  * OUTPUT CONTRACT:
- * - string mode: an SSRNode wrapping the anchor + serialized markup. dom mode: the component
- *   rendered inline. hydrate mode: throws with guidance to use hydrateIslands().
+ * - string mode: an SSRNode of the component's markup with the anchor attributes riding on
+ *   its root element (no wrapper node). dom mode: the component rendered inline. hydrate
+ *   mode: throws with guidance to use hydrateIslands().
  *
  * WHY THIS DESIGN:
  * Props travel as JSON because they cross the server->client boundary in a data attribute; the
@@ -95,9 +97,23 @@ export function island<P extends Record<string, unknown>>(
     {
         const json = serializeProps(src, props);
         const inner = serializeChild(component(props));
+
+        // The anchor attributes ride on the island's OWN root element - no wrapper node
+        // of any kind. A wrapper (even `display:contents`) is invalid inside
+        // `<table>`/`<tbody>`/`<select>` and defeats direct-child selectors, the same
+        // doctrine the co-range model enforces everywhere else; here the component's
+        // single-element root IS the boundary, so the island of a `<tr>` is a valid row.
+        const rootTag = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(inner);
+        if (rootTag === null)
+        {
+            throw new Error(
+                `island("${ src }"): the component must render a single ELEMENT root - its serialized ` +
+                'output starts with something else. Wrap the island content in one host element.'
+            );
+        }
+        const attrs = ` data-azeroth-island="${ escapeAttr(src) }" data-azeroth-props="${ escapeAttr(json) }"`;
         return ssr(
-            `<span style="display:contents" data-azeroth-island="${ escapeAttr(src) }"` +
-            ` data-azeroth-props="${ escapeAttr(json) }">${ inner }</span>`
+            `${ inner.slice(0, rootTag[0].length) }${ attrs }${ inner.slice(rootTag[0].length) }`
         ) as unknown as HTMLElement;
     }
 

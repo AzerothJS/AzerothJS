@@ -51,6 +51,20 @@ function refuse(socket: Socket, status: number, reason: string): void
 }
 
 /**
+ * @internal Brands a socket THIS package accepted. Every 'upgrade' listener on a Node
+ * server fires for every upgrade request, so a path-mismatched endpoint must not touch
+ * the socket while a sibling endpoint may still claim it - the brand (plus
+ * bytesWritten, which covers foreign WebSocket libraries writing their handshake) is
+ * how the deferred 404 below tells "claimed elsewhere" from "nobody wants it".
+ */
+const kClaimed = Symbol('azerothjs.ws.claimed');
+
+interface ClaimableSocket extends Socket
+{
+    [kClaimed]?: boolean;
+}
+
+/**
  * Attaches a WebSocket endpoint to `server`. Returns a detach function that removes the
  * upgrade listener AND destroys every live connection - so a graceful server shutdown is
  * not held open by upgraded sockets (an upgraded socket is detached from the HTTP server's
@@ -65,7 +79,25 @@ export function attachWebSockets(server: Server, options: AttachOptions): () => 
         const pathname = (request.url ?? '/').split('?')[0];
         if (options.path !== undefined && pathname !== options.path)
         {
-            refuse(socket, 404, 'Not Found');
+            // Another endpoint (a second attachWebSockets, or a foreign WebSocket
+            // library) may claim this upgrade - refusing here would destroy ITS
+            // handshake, since every 'upgrade' listener fires. Refuse immediately only
+            // when this listener is alone; otherwise defer one tick and refuse only if
+            // NOBODY claimed the socket (first refuser destroys it, so siblings' checks
+            // see `destroyed` and stand down - exactly one 404 per orphan upgrade).
+            if (server.listenerCount('upgrade') <= 1)
+            {
+                refuse(socket, 404, 'Not Found');
+                return;
+            }
+            setImmediate(() =>
+            {
+                const claimable = socket as ClaimableSocket;
+                if (!socket.destroyed && claimable[kClaimed] !== true && socket.bytesWritten === 0)
+                {
+                    refuse(socket, 404, 'Not Found');
+                }
+            });
             return;
         }
 
@@ -86,6 +118,7 @@ export function attachWebSockets(server: Server, options: AttachOptions): () => 
             return;
         }
 
+        (socket as ClaimableSocket)[kClaimed] = true;
         live.add(socket);
         options.logger?.debug('ws open', { path: request.url ?? '/', clients: live.size });
         socket.once('close', () =>

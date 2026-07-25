@@ -5,7 +5,7 @@ export default component App()
 
     const ping = async (): Promise<void> =>
     {
-        const response = await fetch('/api/health'); // proxied to server/ - see vite.config.ts
+        const response = await fetch('/api/healthz'); // proxied to server/ - see vite.config.ts
         health = JSON.stringify(await response.json());
     };
 

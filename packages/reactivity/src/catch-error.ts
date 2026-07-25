@@ -156,9 +156,10 @@ export function onUncaughtError(
  * - handler: receives any caught error.
  *
  * OUTPUT CONTRACT:
- * - Returns fn's value on success, or undefined (cast to T) when a synchronous error
- *   was caught - the handler ran, so there is no meaningful value. The previous handler
- *   is restored in a finally.
+ * - Returns fn's value on success, or undefined when a synchronous error was caught -
+ *   the handler ran, so there is no value, and the type says so (`T | undefined`), so
+ *   a caller consuming the result must handle the caught case. The previous handler is
+ *   restored in a finally.
  *
  * WHY THIS DESIGN:
  * Install-around-fn with restore-in-finally makes handlers nest (inner catches first,
@@ -174,8 +175,8 @@ export function onUncaughtError(
  * async-rejection errors.
  *
  * EDGE CASES:
- * - On a caught synchronous error the return is undefined-as-T; learn that the handler
- *   fired from the handler, not the return value.
+ * - On a caught synchronous error the return is undefined; the handler has already
+ *   fired by the time the call returns.
  * - Errors the inner handler re-throws propagate to the next enclosing catchError.
  *
  * PERFORMANCE NOTES:
@@ -200,7 +201,7 @@ export function onUncaughtError(
 export function catchError<T>(
     fn: () => T,
     handler: (error: unknown) => void
-): T
+): T | undefined
 {
     const previous = currentErrorHandler;
     setCurrentErrorHandler(handler);
@@ -215,9 +216,8 @@ export function catchError<T>(
         // contract is "errors don't escape this call", which includes fn's own throws.
         handler(err);
 
-        // fn failed, so there is no value; cast undefined to T to keep the signature
-        // clean. Callers learn the handler fired from the handler, not the return.
-        return undefined as unknown as T;
+        // fn failed, so there is no value - and the signature says so.
+        return undefined;
     }
     finally
     {

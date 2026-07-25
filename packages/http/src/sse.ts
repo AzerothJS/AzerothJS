@@ -63,6 +63,16 @@ export interface SseOptions
 
     /** Emit `data: [DONE]` when close() ends the stream (default true - the frontend parser's terminator). */
     doneMarker?: boolean;
+
+    /**
+     * Slow-client cutoff: when this many bytes sit unread in the stream's queue, the next
+     * send DROPS the connection (default 1 MiB). Without a cap, a producer outpacing a
+     * stalled client buffers unbounded - the transport's socket backpressure protects the
+     * socket, not this queue. Dropping is the correct SSE semantic: EventSource reconnects
+     * automatically and resumes via Last-Event-ID, and erroring the stream frees the
+     * backlog immediately instead of holding it for a client that may never drain.
+     */
+    maxBufferedBytes?: number;
 }
 
 const ENCODER = new TextEncoder();
@@ -100,6 +110,7 @@ export function sse(
 {
     const heartbeatMs = options.heartbeatMs ?? 15_000;
     const doneMarker = options.doneMarker ?? true;
+    const maxBufferedBytes = options.maxBufferedBytes ?? 1_048_576;
     const controller = new AbortController();
     const lastEventId = request.headers.get('last-event-id');
 
@@ -159,6 +170,24 @@ export function sse(
         {
             enqueue = (chunk) =>
             {
+                // Backpressure floor: desiredSize is maxBufferedBytes minus the unread
+                // queue (the byte-length strategy below). At or under zero, the client is
+                // maxBufferedBytes behind - drop it (see SseOptions.maxBufferedBytes).
+                if (streamController.desiredSize !== null && streamController.desiredSize <= 0)
+                {
+                    enqueue = null;
+                    finish = null;
+                    stop();
+                    try
+                    {
+                        streamController.error(new Error(`SSE client fell ${ maxBufferedBytes } bytes behind and was dropped`));
+                    }
+                    catch
+                    {
+                        // Already errored/cancelled - dropped is dropped.
+                    }
+                    return;
+                }
                 try
                 {
                     streamController.enqueue(chunk);
@@ -215,7 +244,7 @@ export function sse(
             finish = null;
             stop();
         }
-    });
+    }, new ByteLengthQueuingStrategy({ highWaterMark: maxBufferedBytes }));
 
     return new Response(body, {
         status: 200,

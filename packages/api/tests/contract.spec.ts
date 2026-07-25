@@ -303,3 +303,44 @@ describe('mount guards', () =>
         expect((await app.handle(new Request('http://local/me'))).status).toBe(200);
     });
 });
+
+describe('client path-parameter substitution', () =>
+{
+    it('a param that PREFIXES a sibling name substitutes both correctly (:id beside :ida)', async () =>
+    {
+        // The regression: a substring replace of `:id` used to hit the `:ida` prefix first,
+        // producing `/pairs/7a/...` - substitution must stop at identifier boundaries.
+        const pairs = defineContract({
+            pair: route({ method: 'GET', path: '/pairs/:ida/:id', output: object({ ok: boolean() }) })
+        });
+        const seen: string[] = [];
+        const client = createClient(pairs, {
+            baseUrl: '/api',
+            fetch: (request) =>
+            {
+                seen.push(new URL(request.url, 'http://local').pathname);
+                return Promise.resolve(Response.json({ ok: true }));
+            }
+        });
+        await client.pair({ params: { ida: 'alpha', id: '7' } });
+        expect(seen).toEqual(['/api/pairs/alpha/7']);
+    });
+
+    it('param values are URI-encoded; wildcard values pass through', async () =>
+    {
+        const wild = defineContract({
+            file: route({ method: 'GET', path: '/f/:name/*rest', output: object({ ok: boolean() }) })
+        });
+        const seen: string[] = [];
+        const client = createClient(wild, {
+            baseUrl: '',
+            fetch: (request) =>
+            {
+                seen.push(new URL(request.url, 'http://local').pathname);
+                return Promise.resolve(Response.json({ ok: true }));
+            }
+        });
+        await client.file({ params: { name: 'a b', rest: 'x/y.txt' } });
+        expect(seen).toEqual(['/f/a%20b/x/y.txt']);
+    });
+});

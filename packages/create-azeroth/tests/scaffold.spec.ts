@@ -136,6 +136,36 @@ describe('production shape: the hour-three files are already waiting', () =>
         expect(readFileSync(join(dir, 'server/src/app.ts'), 'utf8')).toContain('staticFiles');
     });
 
+    it('the fullstack halves agree on the API path the demo calls (no first-click 404)', () =>
+    {
+        // The app's very first cross-half interaction must hit a route the server
+        // actually defines - a drifted path ships a 404 as the newcomer's first
+        // impression (the /api/health vs /api/healthz regression this guards).
+        const app = readFileSync(join(TEMPLATES_ROOT, 'fullstack/application/src/App.azeroth'), 'utf8');
+        const server = readFileSync(join(TEMPLATES_ROOT, 'fullstack/server/src/app.ts'), 'utf8');
+        const fetched = [...app.matchAll(/fetch\('(\/api\/[^']+)'/g)].map((m) => m[1]);
+        expect(fetched.length).toBeGreaterThan(0);
+        for (const path of fetched)
+        {
+            expect(server, `server must define ${ path }`).toContain(`'${ path }'`);
+        }
+    });
+
+    it('the fullstack Dockerfile installs from the root workspace context (npm ci needs the root lockfile)', () =>
+    {
+        // A workspace member has no package-lock.json of its own, so any stage that
+        // copies only server/package*.json and runs `npm ci` can never succeed. Every
+        // `npm ci` in the Dockerfile must copy the ROOT manifests first.
+        const dockerfile = readFileSync(join(TEMPLATES_ROOT, 'fullstack/server/Dockerfile'), 'utf8');
+        expect(dockerfile).not.toMatch(/COPY server\/package\*\.json \.\/\s*\nRUN npm ci/);
+        const stages = dockerfile.split(/^FROM /m).filter((s) => s.includes('npm ci'));
+        expect(stages.length).toBeGreaterThan(0);
+        for (const stage of stages)
+        {
+            expect(stage, 'each npm ci stage copies the root manifests + lockfile').toContain('COPY package*.json ./');
+        }
+    });
+
     it('npm pack ships every template file - dotfiles and dot-directories included', () =>
     {
         // npm's human listing goes to stderr; --json puts the file list on stdout.

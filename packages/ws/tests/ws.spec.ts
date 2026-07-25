@@ -287,3 +287,66 @@ describe('the raw-socket protocol matrix', () =>
         });
     });
 });
+
+describe('multiple endpoints on one server', () =>
+{
+    it('two attaches coexist: each claims its own path, an unmatched path gets ONE clean 404', async () =>
+    {
+        // The regression: every 'upgrade' listener fires per request, and a path-mismatched
+        // endpoint used to refuse+destroy immediately - killing the sibling endpoint's
+        // handshake. Now a mismatch defers, and only an upgrade NOBODY claims is refused.
+        const app = new App();
+        const served = await serve(app);
+        const detachA = attachWebSockets(served.server, {
+            path: '/a',
+            onConnection: (socket) =>
+            {
+                socket.onMessage = (): void =>
+                {
+                    socket.send('from-a');
+                };
+            }
+        });
+        const detachB = attachWebSockets(served.server, {
+            path: '/b',
+            onConnection: (socket) =>
+            {
+                socket.onMessage = (): void =>
+                {
+                    socket.send('from-b');
+                };
+            }
+        });
+        try
+        {
+            const echoOn = (path: string): Promise<string> => new Promise((resolve, reject) =>
+            {
+                const client = new WebSocket(`ws://127.0.0.1:${ served.port }${ path }`);
+                client.addEventListener('open', () => client.send('ping'));
+                client.addEventListener('message', (event) =>
+                {
+                    resolve(String(event.data));
+                    client.close();
+                });
+                client.addEventListener('error', () => reject(new Error(`handshake failed on ${ path }`)));
+            });
+
+            expect(await echoOn('/a')).toBe('from-a');
+            expect(await echoOn('/b')).toBe('from-b');
+
+            // A path neither endpoint owns: the handshake must FAIL (deferred 404), not hang.
+            await expect(new Promise((resolve, reject) =>
+            {
+                const client = new WebSocket(`ws://127.0.0.1:${ served.port }/c`);
+                client.addEventListener('open', () => resolve('opened'));
+                client.addEventListener('error', () => reject(new Error('refused')));
+            })).rejects.toThrow('refused');
+        }
+        finally
+        {
+            detachA();
+            detachB();
+            await served.shutdown({ gracePeriodMs: 500 });
+        }
+    });
+});

@@ -14,6 +14,7 @@ import type { ESLint, Linter, Rule } from 'eslint';
 import { noSelfWriteInEffect } from './rules/no-self-write-in-effect.ts';
 import { requireEffectDisposal } from './rules/require-effect-disposal.ts';
 import { handlerCall } from './rules/handler-call.ts';
+import { packageVersion } from './version.ts';
 import { azerothProcessor } from './azeroth-processor.ts';
 import { azerothParser } from './azeroth-parser.ts';
 
@@ -59,7 +60,7 @@ const plugin: ESLint.Plugin & { configs: { recommended: Linter.Config[] } } = {
     meta:
     {
         name: '@azerothjs/eslint-plugin',
-        version: '0.6.0-beta.1'
+        version: packageVersion
     },
     rules,
     processors:
