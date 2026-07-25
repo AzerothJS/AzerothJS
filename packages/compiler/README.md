@@ -274,8 +274,11 @@ the real TypeScript `TypeChecker`, and fails the build on a genuine type error, 
 Component prop checks resolve across files: props on a component **imported from another `.azeroth`
 file** are checked through TypeScript's module resolver (the import may use the explicit `.azeroth`
 extension or omit it). `on*` props on a component are typed by the receiving component, not as DOM
-events. The check is **sound** - it never reports a false error. It is enabled by default; turn it off
-with `typeCheck: false` if you want to skip it. The (immutable) TypeScript lib files are parsed once
+events. The check is **sound** - it never reports a false error. The deliberate flip side: markup
+CHILDREN are not checked against a component's declared `children` type (a wrong-shaped child is a
+known false negative; render-callback children like `<For>`'s row function ARE typed) - modeling
+every runtime child shape exactly would risk the false positives this layer promises never to
+produce. It is enabled by default; turn it off with `typeCheck: false` if you want to skip it. The (immutable) TypeScript lib files are parsed once
 and reused across files, so a typical component checks in single-digit milliseconds; a fully shared
 incremental Program remains a possible future optimization.
 

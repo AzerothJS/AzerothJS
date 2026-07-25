@@ -50,9 +50,10 @@ export interface AzerothPluginOptions
      * non-function event handler (`onClick={count}`), a wrong-typed component prop, or a missing
      * required prop, including across `.azeroth` file boundaries. **Default: `true`.**
      *
-     * The check is sound (segment-scoped, so it never reports a false error). Set it to `false` to
-     * skip type checking - e.g. to shave build time on a large project, since each `.azeroth` file is
-     * checked with its own TypeScript Program (a shared incremental Program is a future optimization).
+     * The check is sound (segment-scoped, so it never reports a false error; markup children are a
+     * documented false negative - see the compiler README). All files share ONE incremental checker
+     * (lib and dependency files parse once per build), so a typical component adds single-digit
+     * milliseconds. Set it to `false` to skip type checking entirely.
      */
     typeCheck?: boolean;
 

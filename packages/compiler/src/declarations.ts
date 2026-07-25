@@ -32,14 +32,31 @@ const DECL_OPTIONS: ts.CompilerOptions =
     module: ts.ModuleKind.ESNext
 };
 
-// The lib `.d.ts` files are large and immutable; reusing one parsed SourceFile across every emit removes
-// the dominant per-file cost (mirrors what the type-check backend does).
+// THE SHARED EMIT HOST STATE. Everything immutable for the life of the process is
+// parsed once and reused by every emit:
+//   - the lib `.d.ts` files (large, immutable),
+//   - every file under node_modules (a package's types cannot change mid-process;
+//     the azerothjs surface every component imports is the dominant repeat cost),
+//   - one module-resolution cache (the same specifiers resolve identically per emit).
+// PROJECT files (the module being emitted, its relative `.ts` imports) are read
+// fresh every time - a watch session must see edits. This is what makes a
+// 100-component mirror emit scale: each file re-parses only itself and its
+// project-local imports, never the dependency universe.
 const LIB_DIR = ts.getDefaultLibFilePath(DECL_OPTIONS).replace(/[\\/][^\\/]*$/, '');
-const libSourceCache = new Map<string, ts.SourceFile>();
+const immutableSourceCache = new Map<string, ts.SourceFile>();
+const resolutionCache: ts.ModuleResolutionCache =
+    ts.createModuleResolutionCache(ts.sys.getCurrentDirectory(), (f) => f, DECL_OPTIONS);
 
 function normalizeSlashes(p: string): string
 {
     return p.replace(/\\/g, '/');
+}
+
+/** @internal Whether a path may be cached for the process lifetime. */
+function isImmutablePath(f: string): boolean
+{
+    const normal = normalizeSlashes(f);
+    return normal.startsWith(normalizeSlashes(LIB_DIR)) || normal.includes('/node_modules/');
 }
 
 /** A declaration file plus its source map, remapped so positions point into the `.azeroth` SOURCE. */
@@ -107,7 +124,7 @@ export function emitDeclarationsWithMap(source: string, fileName: string): Decla
             {
                 return ts.createSourceFile(f, projected, languageVersion, true);
             }
-            const cached = libSourceCache.get(f);
+            const cached = immutableSourceCache.get(f);
             if (cached !== undefined)
             {
                 return cached;
@@ -118,9 +135,9 @@ export function emitDeclarationsWithMap(source: string, fileName: string): Decla
                 return undefined;
             }
             const sourceFile = ts.createSourceFile(f, text, languageVersion, true);
-            if (normalizeSlashes(f).startsWith(normalizeSlashes(LIB_DIR)))
+            if (isImmutablePath(f))
             {
-                libSourceCache.set(f, sourceFile);
+                immutableSourceCache.set(f, sourceFile);
             }
             return sourceFile;
         },
@@ -144,7 +161,8 @@ export function emitDeclarationsWithMap(source: string, fileName: string): Decla
         fileExists: (f) => f === tsPath || sys.fileExists(f),
         readFile: (f) => (f === tsPath ? projected : sys.readFile(f)),
         directoryExists: (d) => sys.directoryExists(d),
-        getDirectories: (d) => sys.getDirectories(d)
+        getDirectories: (d) => sys.getDirectories(d),
+        getModuleResolutionCache: () => resolutionCache
     };
 
     const program = ts.createProgram([tsPath], DECL_OPTIONS, host);

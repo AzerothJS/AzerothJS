@@ -22,6 +22,17 @@
  * a diagnostic anywhere else (component body, an initializer, a child render) is dropped. Combined with an
  * enforced-code allowlist ({@link ENFORCED_CODES}), the checker stays free of false positives.
  *
+ * KNOWN FALSE NEGATIVE - children are NOT checked against a component's declared `children` type.
+ * Markup children reach a component through the `any`-typed `...__children` spread (project.ts,
+ * childrenSpread), so `<Card><p/></Card>` type-checks even when Card declares `children` as a render
+ * callback, a string, or nothing at all. This is a DELIBERATE trade, not an oversight: a real typed
+ * children value would have to model every runtime child shape (a node, text, an array, a thunk, a
+ * guarded hole) exactly, and any mismatch in that model becomes a FALSE POSITIVE - the one thing this
+ * checker promises never to produce. Render-CALLBACK children (`<For>`'s row function and friends) ARE
+ * typed - they pass as the real `children:` prop and their parameters infer from the component's
+ * signature. Pinned by "children are an accepted false negative" in typecheck-ts.spec.ts; revisiting
+ * the trade means deleting that test knowingly.
+ *
  * Cross-file: a relative import of another `.azeroth` file resolves, through the real module resolver, to
  * that file's projection, so component prop types cross file boundaries.
  *

@@ -756,3 +756,35 @@ component View {
         expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
     });
 });
+
+describe('children are an accepted FALSE NEGATIVE (the documented soundness trade)', () =>
+{
+    // typecheck-ts.ts "KNOWN FALSE NEGATIVE": markup children reach a component through the
+    // any-typed `...__children` spread, so a wrong-shaped child never errors - the price of
+    // the checker's no-false-positive guarantee. This test PINS the trade: if children
+    // checking is ever implemented, delete this test KNOWINGLY (and update the docs at
+    // typecheck-ts.ts, project.ts childrenSpread, and the README soundness paragraph).
+    it('a child that violates the declared children type is (deliberately) not reported', () =>
+    {
+        const source = `component Card(props: { children: (row: number) => string }) {
+    <div>{props.children(1)}</div>
+}
+component App {
+    <Card><p>static markup, not a render callback</p></Card>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+
+    it('while a WRONG PROP beside those children still errors (the sound half stays sound)', () =>
+    {
+        const source = `component Card(props: { title: string; children?: unknown }) {
+    <div>{props.title}</div>
+}
+component App {
+    <Card title={42}><p>hi</p></Card>
+}`;
+        const diagnostics = typeCheckModuleTS(source);
+        expect(diagnostics).toHaveLength(1);
+        expect(diagnostics[0]!.code).toBe('azeroth/prop-type');
+    });
+});

@@ -11,6 +11,13 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **compiler**: declaration emit shares one host across files. The `.d.ts` emitter
+  (the vite `emitDeclarations` mirror, the WebStorm `.azeroth-types` bridge) now
+  parses lib files AND every node_modules dependency once per process and shares a
+  module-resolution cache, instead of rebuilding the dependency universe per file.
+  Measured on a 120-component corpus with chained imports: 43.3 -> 20.0 ms/file cold,
+  37.9 -> 17.1 ms/file warm (2.2x), byte-identical output. Project-local files are
+  still read fresh every emit, so watch sessions see edits.
 - **compiler**: the vanished-component diagnostic. The parser is total, so a
   `component` header that fails its shape check (missing name, unbalanced type
   parameters, missing body brace) used to silently become plain TypeScript - the

@@ -382,6 +382,11 @@ export function generateVirtualCode(source: string): VirtualCode
     // literal `children:` key) never trips excess-property checks on a component that doesn't declare
     // `children`, and `any` satisfies a specific `children` type without a mismatch - matching the runtime,
     // where children are always supplied and ignored if unused.
+    //
+    // THE TRADE (documented, deliberate): this makes markup children a KNOWN FALSE NEGATIVE of the
+    // type-checking layer - a wrong-shaped child never errors - in exchange for the checker's
+    // no-false-positive guarantee (see typecheck-ts.ts "KNOWN FALSE NEGATIVE"). Render-callback
+    // children do NOT take this path; emitNode passes them as the real typed `children:` prop.
     const childrenSpread = (): void =>
     {
         usedChildren = true;
