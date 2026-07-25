@@ -25,8 +25,49 @@
  */
 export type RenderMode = 'dom' | 'string' | 'hydrate';
 
-/** Mode stack; the bottom is always 'dom', so reading the top outside runInMode is 'dom'. @internal */
-const modeStack: RenderMode[] = ['dom'];
+/**
+ * One entry of the render-context stack: the mode plus the render-scoped flags that
+ * ride with it. Markers are PART of the mode entry (renderToString = 'string' with
+ * markers, renderToStaticMarkup = 'string' without) - not a separate mutable global,
+ * so a thrown render can never leak marker state into the next request, and backing
+ * this stack with per-async-context storage later (streaming SSR) is a change to ONE
+ * accessor, not a hunt for scattered globals.
+ *
+ * @internal
+ */
+interface ModeFrame
+{
+    mode: RenderMode;
+    markers: boolean;
+}
+
+/** The render-context stack; empty means 'dom', no markers. @internal */
+const frames: ModeFrame[] = [];
+
+/**
+ * Whether hydration markers are active for the current render - true only inside a
+ * `runInMode('string', fn, { markers: true })` window. Read by the SSR serializers
+ * when emitting hole/control-flow comment anchors.
+ *
+ * @internal
+ * @returns true when the active frame carries markers.
+ */
+export function ssrMarkersActive(): boolean
+{
+    return frames[frames.length - 1]?.markers ?? false;
+}
+
+/** Options for {@link runInMode}. */
+export interface RunInModeOptions
+{
+    /**
+     * Emit hydration markers (hole anchors, control-flow ranges) while serializing.
+     * Meaningful with mode 'string': renderToString passes true, renderToStaticMarkup
+     * false. Defaults to the ENCLOSING frame's setting (so nested mode switches inside
+     * one render keep the render's choice), false at the top level.
+     */
+    markers?: boolean;
+}
 
 /**
  * getRenderMode
@@ -78,9 +119,8 @@ const modeStack: RenderMode[] = ['dom'];
  */
 export function getRenderMode(): RenderMode
 {
-    // The stack bottom is permanent, but index math cannot prove it - the fallback IS
-    // the documented outside-any-runInMode semantic.
-    return modeStack[modeStack.length - 1] ?? 'dom';
+    // An empty stack IS the documented outside-any-runInMode semantic: plain 'dom'.
+    return frames[frames.length - 1]?.mode ?? 'dom';
 }
 
 /**
@@ -158,14 +198,15 @@ export function isHydrating(): boolean
  * @typeParam T - fn's return type.
  * @param mode - The mode to activate for the duration of fn.
  * @param fn - The work to run in that mode.
+ * @param options - Render-scoped flags for the window; see {@link RunInModeOptions}.
  * @returns Whatever `fn` returns.
  * @see {@link getRenderMode}
  * @example
- * const html = runInMode('string', () => (App({}) as unknown as SSRNode).html);
+ * const html = runInMode('string', () => (App({}) as unknown as SSRNode).html, { markers: true });
  */
-export function runInMode<T>(mode: RenderMode, fn: () => T): T
+export function runInMode<T>(mode: RenderMode, fn: () => T, options?: RunInModeOptions): T
 {
-    modeStack.push(mode);
+    frames.push({ mode, markers: options?.markers ?? ssrMarkersActive() });
 
     try
     {
@@ -173,6 +214,6 @@ export function runInMode<T>(mode: RenderMode, fn: () => T): T
     }
     finally
     {
-        modeStack.pop();
+        frames.pop();
     }
 }

@@ -2,25 +2,25 @@
 //
 // Full behavioral coverage for the SSR string-emission helpers (ssr.ts): escaping,
 // SSRNode branding, child serialization (incl. reactive-hole resolution and the
-// getter-chain collapse), marker toggling, and co-range anchoring.
-import { describe, it, expect, afterEach } from 'vitest';
+// getter-chain collapse), and co-range anchoring. Hydration markers are RENDER-SCOPED
+// state riding the runInMode window (`runInMode('string', fn, { markers: true })`) -
+// there is no marker global to set, leak, or restore.
+import { describe, it, expect } from 'vitest';
 import {
     ssr,
     isSSRNode,
     escapeText,
     escapeAttr,
     serializeChild,
-    setSSRMarkers,
-    getSSRMarkers,
+    runInMode,
     wrapContentsAnchored
 } from '@azerothjs/reactivity';
 
-// Marker state is module-global; restore it after each test for isolation.
-const initialMarkers = getSSRMarkers();
-afterEach(() =>
+/** Runs `fn` in a string-mode window with markers on - the renderToString shape. */
+function withMarkers<T>(fn: () => T): T
 {
-    setSSRMarkers(initialMarkers);
-});
+    return runInMode('string', fn, { markers: true });
+}
 
 describe('escapeText', () =>
 {
@@ -86,56 +86,67 @@ describe('serializeChild', () =>
         expect(serializeChild(['a', ssr('<i>b</i>'), 1])).toBe('a<i>b</i>1');
     });
 
-    it('resolves a function hole without subscribing (markers off => no anchors)', () =>
+    it('resolves a function hole without subscribing (no marker window => no anchors)', () =>
     {
-        setSSRMarkers(false);
         expect(serializeChild(() => 'live')).toBe('live');
     });
 
     it('collapses a getter-returning-a-getter to its concrete value', () =>
     {
-        setSSRMarkers(false);
         const inner = (): string => 'deep';
         expect(serializeChild(() => inner)).toBe('deep');
     });
 
-    it('wraps a function hole in a single reactive-hole anchor pair when markers are on', () =>
+    it('wraps a function hole in a single reactive-hole anchor pair inside a markers window', () =>
     {
-        setSSRMarkers(true);
-        expect(serializeChild(() => 'v')).toBe('<!--[-->v<!--]-->');
+        expect(withMarkers(() => serializeChild(() => 'v'))).toBe('<!--[-->v<!--]-->');
     });
 
     it('escapes the resolved hole value as text', () =>
     {
-        setSSRMarkers(false);
         expect(serializeChild(() => '<script>')).toBe('&lt;script&gt;');
     });
 });
 
-describe('setSSRMarkers / getSSRMarkers', () =>
+describe('markers ride the runInMode window', () =>
 {
-    it('toggles the global marker flag', () =>
+    it('markers are scoped: on inside the window, off outside - even after a throw', () =>
     {
-        setSSRMarkers(true);
-        expect(getSSRMarkers()).toBe(true);
-        setSSRMarkers(false);
-        expect(getSSRMarkers()).toBe(false);
+        expect(withMarkers(() => serializeChild(() => 'x'))).toBe('<!--[-->x<!--]-->');
+        expect(serializeChild(() => 'x')).toBe('x'); // the window closed with its state
+
+        expect(() => withMarkers(() =>
+        {
+            throw new Error('render exploded');
+        })).toThrow('render exploded');
+        expect(serializeChild(() => 'x')).toBe('x'); // a throw cannot leak marker state
+    });
+
+    it('a nested mode switch inherits the render\'s marker choice', () =>
+    {
+        const html = withMarkers(() => runInMode('string', () => serializeChild(() => 'n')));
+        expect(html).toBe('<!--[-->n<!--]-->'); // inner window inherited markers: true
+    });
+
+    it('a nested window can opt out explicitly (the renderToStaticMarkup shape)', () =>
+    {
+        const html = withMarkers(() =>
+            runInMode('string', () => serializeChild(() => 'n'), { markers: false }));
+        expect(html).toBe('n');
     });
 });
 
 describe('wrapContentsAnchored', () =>
 {
-    it('wraps inner in balanced co-range comment anchors when markers are on', () =>
+    it('wraps inner in balanced co-range comment anchors inside a markers window', () =>
     {
-        setSSRMarkers(true);
-        const node = wrapContentsAnchored('for', '<li>a</li>');
+        const node = withMarkers(() => wrapContentsAnchored('for', '<li>a</li>'));
         expect(isSSRNode(node)).toBe(true);
         expect(node.html).toBe('<!--azc:for--><li>a</li><!--/azc-->');
     });
 
-    it('returns the inner verbatim (as an SSRNode) when markers are off', () =>
+    it('returns the inner verbatim (as an SSRNode) outside any markers window', () =>
     {
-        setSSRMarkers(false);
         const node = wrapContentsAnchored('for', '<li>a</li>');
         expect(isSSRNode(node)).toBe(true);
         expect(node.html).toBe('<li>a</li>');

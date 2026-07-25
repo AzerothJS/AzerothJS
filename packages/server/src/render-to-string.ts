@@ -15,12 +15,12 @@
  * renderToString(() => new MyComponent(props).element).
  */
 
-import { runInMode, runInStoreScope, setSSRMarkers, getSSRMarkers, isSSRNode } from '@azerothjs/reactivity';
+import { runInMode, runInStoreScope, isSSRNode } from '@azerothjs/reactivity';
 
 /**
  * Renders `component` to an HTML string in 'string' mode with hydration markers toggled per
- * `markers`, restoring the previous marker setting afterwards (so nested/sequential renders do
- * not interfere). Runs inside a fresh store scope per render for per-request isolation.
+ * `markers` (scoped to the render window). Runs inside a fresh store scope per render for
+ * per-request isolation.
  *
  * @internal
  * @param component - A thunk building the root element.
@@ -29,27 +29,19 @@ import { runInMode, runInStoreScope, setSSRMarkers, getSSRMarkers, isSSRNode } f
  */
 function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean): string
 {
-    const previousMarkers = getSSRMarkers();
-    setSSRMarkers(markers);
-
-    try
-    {
-        return runInMode('string', (): string =>
-            // A fresh store scope per render isolates createStore() state between concurrent
-            // requests. Renders are synchronous, so one render's scope is set and restored before
-            // another can start (see store-scope in @azerothjs/reactivity).
-            runInStoreScope((): string =>
-            {
-                // In string mode, h()/components return an SSRNode cast to HTMLElement. Read its
-                // serialized html back out.
-                const node = component() as unknown;
-                return isSSRNode(node) ? node.html : String(node);
-            }));
-    }
-    finally
-    {
-        setSSRMarkers(previousMarkers);
-    }
+    // Markers ride the mode window itself (exception-safe, render-scoped) - there is no
+    // separate marker global to set and restore.
+    return runInMode('string', (): string =>
+        // A fresh store scope per render isolates createStore() state between concurrent
+        // requests. Renders are synchronous, so one render's scope is set and restored before
+        // another can start (see store-scope in @azerothjs/reactivity).
+        runInStoreScope((): string =>
+        {
+            // In string mode, h()/components return an SSRNode cast to HTMLElement. Read its
+            // serialized html back out.
+            const node = component() as unknown;
+            return isSSRNode(node) ? node.html : String(node);
+        }), { markers });
 }
 
 /**
@@ -60,9 +52,9 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
  * relies on to adopt the markup on the client.
  *
  * WHY IT EXISTS:
- * SSR must emit HTML the client can revive without rebuilding. Doing it by hand (setSSRMarkers +
- * runInMode + digging the html off the returned SSRNode + resetting markers) is verbose and a
- * frequent source of leaked-marker state across renders. This is the one safe entry point.
+ * SSR must emit HTML the client can revive without rebuilding. Doing it by hand (runInMode with
+ * the markers option + digging the html off the returned SSRNode) is verbose; this is the one
+ * canonical entry point.
  *
  * COMPILER / RUNTIME ROLE:
  * Runtime, server; the SSR render entry. Runs the tree in runInMode('string') (no DOM, getters
@@ -77,7 +69,7 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
  *   document shell. The marker setting is restored afterwards (even on throw).
  *
  * WHY THIS DESIGN:
- * Save/restore of the marker flag keeps nested and sequential renders from interfering; the
+ * Markers ride the runInMode window (render-scoped, exception-safe by construction); the
  * per-render store scope makes concurrent requests' createStore() state independent, which is sound
  * because an SSR render is synchronous (one scope is set and restored before another can start).
  *
@@ -89,7 +81,7 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
  *
  * EDGE CASES:
  * - Returns body HTML only - no <html>/<head> shell (that is renderToDocument's job).
- * - Markers are restored in a finally, so a throwing render does not leak the marker setting.
+ * - Marker state is scoped to the render window, so a throwing render cannot leak it.
  *
  * PERFORMANCE NOTES:
  * A synchronous string build, no DOM allocation. Cost is proportional to the serialized output.

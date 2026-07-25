@@ -47,15 +47,13 @@ export type { UncaughtErrorContext } from './catch-error.ts';
 
 // Render-mode dispatch (dom / string / hydrate) and per-render store scope.
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
-export type { RenderMode } from './render-mode.ts';
+export type { RenderMode, RunInModeOptions } from './render-mode.ts';
 export { getStoreScope, runInStoreScope, setStoreScopeResolver } from './store-scope.ts';
 
 // SSR string-emission helpers.
 export {
     isSSRNode,
     ssr,
-    setSSRMarkers,
-    getSSRMarkers,
     escapeText,
     escapeAttr,
     serializeChild,

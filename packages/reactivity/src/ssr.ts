@@ -23,6 +23,7 @@
  */
 
 import { untrack } from './untrack.ts';
+import { ssrMarkersActive } from './render-mode.ts';
 
 /**
  * A serialized node produced in 'string' render mode. `html` is fully serialized and
@@ -56,32 +57,6 @@ export function isSSRNode(x: unknown): x is SSRNode
 export function ssr(html: string): SSRNode
 {
     return { __ssr: true, html };
-}
-
-/** Whether hydration markers are currently emitted; defaults OFF so stray serialization is clean. @internal */
-let markersOn = false;
-
-/**
- * Enables/disables hydration markers for subsequent serialization. renderToString turns
- * them on; renderToStaticMarkup leaves them off.
- *
- * @internal
- * @param on - Whether to emit hole/control-flow comment anchors.
- */
-export function setSSRMarkers(on: boolean): void
-{
-    markersOn = on;
-}
-
-/**
- * Whether hydration markers are currently emitted.
- *
- * @internal
- * @returns true when markers are on.
- */
-export function getSSRMarkers(): boolean
-{
-    return markersOn;
 }
 
 /**
@@ -198,7 +173,7 @@ export function serializeChild(child: unknown): string
             depth++;
         }
         const inner = serializeChild(value);
-        return markersOn ? `<!--[-->${ inner }<!--]-->` : inner;
+        return ssrMarkersActive() ? `<!--[-->${ inner }<!--]-->` : inner;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort fallback: primitives stringify correctly, and a plain object landing here is caller error surfaced as visible "[object Object]" rather than a throw mid-render
@@ -250,7 +225,7 @@ export function serializeChild(child: unknown): string
  */
 export function wrapContentsAnchored(coType: string, inner: string): SSRNode
 {
-    if (!markersOn)
+    if (!ssrMarkersActive())
     {
         return ssr(inner);
     }

@@ -35,6 +35,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **reactivity**: `setSSRMarkers`/`getSSRMarkers` are REMOVED. Hydration markers are no
+  longer a mutable global - they ride the render window itself:
+  `runInMode('string', fn, { markers: true })` (what `renderToString` does) vs
+  `{ markers: false }` (`renderToStaticMarkup`). Marker state is now render-scoped and
+  exception-safe by construction - a throwing render cannot leak marker state into the
+  next request - and backing the render context with per-async-context storage later
+  (streaming SSR) becomes a one-accessor change.
+
 - **server**: `island()` no longer wraps the island in a `<span style="display:contents">` -
   the anchor attributes now ride on the island component's OWN root element, so an island
   is valid anywhere its root is (a `<tr>` island sits directly in a `<tbody>`) and
