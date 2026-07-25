@@ -162,7 +162,7 @@ consumes, and a server validation failure's field map drops straight into a brow
 
 `azerothjs` re-exports the full client framework plus SSR. Every layer is also published
 individually under the `@azerothjs/*` scope - depend on one directly when you want a narrower
-surface (a library that only needs `@azerothjs/reactivity`, a service that only needs
+surface (a library that only needs the reactive core, a service that only needs
 `@azerothjs/http`). Tree-shaking drops unused exports either way. The scope also carries the
 tooling: `@azerothjs/testing` (leak-guarded component tests), `@azerothjs/devtools` (in-page
 reactive-graph panel), and `@azerothjs/eslint-plugin` (`.azeroth` as a first-class lint target).

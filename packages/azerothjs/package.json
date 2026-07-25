@@ -4,7 +4,7 @@
     "engines": {
         "node": ">=24"
     },
-    "description": "AzerothJS - fine-grained fullstack framework with compiled .azeroth components: signals, zero Virtual DOM, direct DOM updates",
+    "description": "The AzerothJS frontend framework: fine-grained reactivity, compiled .azeroth components, control flow, SSR + islands, router, and forms - one package.",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -32,12 +32,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/reactivity": "1.0.0-beta.2",
-        "@azerothjs/renderer": "1.0.0-beta.2",
-        "@azerothjs/component": "1.0.0-beta.2",
-        "@azerothjs/server": "1.0.0-beta.2",
-        "@azerothjs/form": "1.0.0-beta.2",
-        "@azerothjs/router": "1.0.0-beta.2"
+        "@azerothjs/schema": "1.0.0-beta.2"
     },
     "keywords": [
         "framework",

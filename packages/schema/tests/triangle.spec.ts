@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { object, string, number, SchemaError, type Infer } from '@azerothjs/schema';
-import { createForm } from '@azerothjs/form';
+import { createForm } from 'azerothjs';
 import { App, readValidated, json } from '@azerothjs/http';
 import { defineContract, route, mountApi, createClient } from '@azerothjs/api';
 

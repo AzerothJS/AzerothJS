@@ -28,7 +28,7 @@
     },
     "dependencies": {
         "@azerothjs/logger": "1.0.0-beta.2",
-        "@azerothjs/reactivity": "1.0.0-beta.2"
+        "azerothjs": "1.0.0-beta.2"
     },
     "publishConfig": {
         "access": "public"

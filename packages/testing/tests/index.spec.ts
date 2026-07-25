@@ -13,9 +13,8 @@
 //   - cleanup: unmounts trees renderTest left mounted; idempotent.
 import { describe, it, expect } from 'vitest';
 import { renderTest, cleanup, leakGuard, fire } from '@azerothjs/testing';
-import { createSignal, createRoot, createEffect } from '@azerothjs/reactivity';
-import { subscriberCount } from '@azerothjs/reactivity/internal';
-import { h, bindProps } from '@azerothjs/renderer';
+import { createSignal, createRoot, createEffect, h } from 'azerothjs';
+import { subscriberCount, bindProps } from 'azerothjs/internal';
 
 describe('renderTest', () =>
 {

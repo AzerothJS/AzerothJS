@@ -5,7 +5,7 @@
 // Churns createRoot -> build a small reactive tree -> dispose, many times, and asserts the heap does NOT
 // grow beyond a threshold once GC settles. It is deterministic and EXITS NON-ZERO on a leak, so it is
 // safe to gate a PR on.
-import { createSignal, createMemo, createEffect, createRoot } from '@azerothjs/reactivity';
+import { createSignal, createMemo, createEffect, createRoot } from 'azerothjs';
 
 const gc = globalThis.gc;
 if (typeof gc !== 'function')

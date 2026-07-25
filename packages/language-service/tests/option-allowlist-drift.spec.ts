@@ -15,10 +15,7 @@
 // fetcher, not option keys), so their expected sets are documented explicitly.
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import { KEYWORD_OPTIONS } from '../src/language-data.ts';
-import type { SignalOptions, EffectOptions, SelectorOptions } from '@azerothjs/reactivity';
-import type { DeferredOptions } from '@azerothjs/reactivity';
-import type { OnOptions } from '@azerothjs/reactivity';
-import type { FormConfig, FieldArrayConfig } from '@azerothjs/form';
+import type { SignalOptions, EffectOptions, SelectorOptions, DeferredOptions, OnOptions, FormConfig, FieldArrayConfig } from 'azerothjs';
 
 /** The option names the allowlist offers for a keyword. */
 function allowed(keyword: string): Set<string>

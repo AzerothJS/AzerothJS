@@ -3,7 +3,7 @@
 // events) and the framework's built-in components.
 //
 // The built-in component data here is transcribed directly from the runtime's
-// own prop interfaces (@azerothjs/renderer, @azerothjs/component, the compiler's
+// own prop interfaces (azerothjs, azerothjs, the compiler's
 // auto-import set) - it is not invented. Deep type detail (exact prop types,
 // generics) still flows from TypeScript at hover/signature time; this table
 // exists so completion can *offer* the components and their props with a useful

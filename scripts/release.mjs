@@ -123,43 +123,25 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // hardcoded `@azerothjs/` prefix would misname it.
 const PUBLISH_ORDER =
 [
-    '@azerothjs/reactivity',
-    '@azerothjs/component',
+    // schema first: azerothjs (its form half) and the backend both depend on it.
+    '@azerothjs/schema',
+    // The frontend framework - ONE real package (reactivity/component/renderer/ssr/router/form).
+    'azerothjs',
     '@azerothjs/testing',
-    '@azerothjs/renderer',
-    '@azerothjs/server',
-    '@azerothjs/router',
+    '@azerothjs/devtools',
     // Logger before the backend packages: @azerothjs/http prints the startup banner
     // through it, so it must be resolvable on npm before http publishes.
     '@azerothjs/logger',
-    // schema before form: @azerothjs/form depends on @azerothjs/schema (form re-exports
-    // its validators), so schema must be resolvable on npm before form publishes.
-    '@azerothjs/schema',
-    // Backend stack, deps-first (all now public): cron/ws are standalone; http needs
-    // logger + reactivity (both above); api needs schema (above) + http.
     '@azerothjs/cron',
     '@azerothjs/http',
     '@azerothjs/ws',
     '@azerothjs/api',
-    '@azerothjs/form',
     '@azerothjs/compiler',
-    'azerothjs',
-    // DevTools: a thin consumer of `@azerothjs/reactivity`'s stable, versioned devtools hook. Builds
-    // and ships now that the hook protocol is in place; ordered after reactivity (its only framework dep).
-    '@azerothjs/devtools',
-    // Editor tooling. Published too: the VS Code extension declares
-    // `@azerothjs/language-server` + `@azerothjs/typescript-plugin` as runtime deps,
-    // so a clean Marketplace install resolves them from npm. Ordered after their
-    // deps (language-service before language-server / typescript-plugin).
-    '@azerothjs/eslint-plugin',
     '@azerothjs/language-service',
     '@azerothjs/language-server',
     '@azerothjs/typescript-plugin',
-    // The CLI last among the framework packages: its templates and `check` reference the
-    // language-server's bins, and it depends on logger (far above).
+    '@azerothjs/eslint-plugin',
     '@azerothjs/cli',
-    // The scaffolder very last: its templates pin the version this release just published,
-    // so everything they reference must already be resolvable on npm.
     'create-azeroth'
 ];
 

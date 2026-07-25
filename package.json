@@ -1,72 +1,72 @@
 {
-    "name": "azerothjs-monorepo",
-    "version": "1.0.0-beta.2",
-    "engines": {
-        "node": ">=24"
-    },
-    "packageManager": "npm@11.18.0",
-    "private": true,
-    "description": "AzerothJS framework monorepo - fine-grained reactivity, zero Virtual DOM, direct DOM updates",
-    "type": "module",
-    "workspaces": [
-        "packages/*"
-    ],
-    "scripts": {
-        "build": "npm run build -w @azerothjs/reactivity && npm run build -w @azerothjs/component && npm run build -w @azerothjs/testing && npm run build -w @azerothjs/renderer && npm run build -w @azerothjs/server && npm run build -w @azerothjs/router && npm run build -w @azerothjs/schema && npm run build -w @azerothjs/logger && npm run build -w @azerothjs/cron && npm run build -w @azerothjs/form && npm run build -w @azerothjs/http && npm run build -w @azerothjs/ws && npm run build -w @azerothjs/api && npm run build -w @azerothjs/compiler && npm run build -w azerothjs && npm run build -w @azerothjs/devtools && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/eslint-plugin && npm run build -w @azerothjs/language-server && npm run build -w @azerothjs/typescript-plugin && npm run build -w @azerothjs/cli && npm run build -w create-azeroth",
-        "clean": "npm run clean --workspaces --if-present",
-        "dev": "node scripts/tsc7.mjs --watch",
-        "typecheck": "node scripts/tsc7.mjs -p tsconfig.json && node scripts/tsc7.mjs -p packages/typescript-plugin/tsconfig.build.json",
-        "test": "vitest run",
-        "test:watch": "vitest",
-        "test:coverage": "vitest run --coverage",
-        "lint": "eslint .",
-        "lint:fix": "eslint . --fix",
-        "lint:publish": "node scripts/publint-all.mjs",
-        "leak": "node --expose-gc scripts/leak-check.mjs",
-        "smoke": "node scripts/smoke-publish.mjs",
-        "verify": "npm run lint && npm run typecheck && npm run build && npm run lint:publish && npm test && npm run leak",
-        "release": "node scripts/release.mjs",
-        "prepare": "husky",
-        "prepublishOnly": "npm run build"
-    },
-    "lint-staged": {
-        "*.{ts,mts,cts,js,mjs,cjs,azeroth}": "eslint --fix --no-warn-ignored"
-    },
-    "keywords": [
-        "framework",
-        "reactive",
-        "signals",
-        "fine-grained",
-        "no-vdom",
-        "dom",
-        "typescript",
-        "frontend"
-    ],
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/AzerothJS/AzerothJS.git"
-    },
-    "author": {
-        "name": "IntelligentQuantum",
-        "email": "IntelligentQuantum@Gmail.Com",
-        "url": "https://IntelligentQuantum.Dev/"
-    },
-    "license": "MIT",
-    "devDependencies": {
-        "@eslint/js": "^10.0.1",
-        "@types/node": "^26.1.0",
-        "@vitest/coverage-v8": "^4.1.9",
-        "eslint": "^10.7.0",
-        "globals": "^17.7.0",
-        "happy-dom": "^20.10.6",
-        "husky": "^9.1.7",
-        "jiti": "^2.7.0",
-        "lint-staged": "^17.0.8",
-        "publint": "^0.3.21",
-        "tsc7": "npm:typescript@7.0.2",
-        "typescript": "^6.0.3",
-        "typescript-eslint": "^8.64.0",
-        "vite": "^8.1.5",
-        "vitest": "^4.1.9"
-    }
+ "name": "azerothjs-monorepo",
+ "version": "1.0.0-beta.2",
+ "engines": {
+  "node": ">=24"
+ },
+ "packageManager": "npm@11.18.0",
+ "private": true,
+ "description": "AzerothJS framework monorepo - fine-grained reactivity, zero Virtual DOM, direct DOM updates",
+ "type": "module",
+ "workspaces": [
+  "packages/*"
+ ],
+ "scripts": {
+  "build": "npm run build -w @azerothjs/schema && npm run build -w azerothjs && npm run build -w @azerothjs/testing && npm run build -w @azerothjs/logger && npm run build -w @azerothjs/cron && npm run build -w @azerothjs/http && npm run build -w @azerothjs/ws && npm run build -w @azerothjs/api && npm run build -w @azerothjs/compiler && npm run build -w @azerothjs/devtools && npm run build -w @azerothjs/language-service && npm run build -w @azerothjs/eslint-plugin && npm run build -w @azerothjs/language-server && npm run build -w @azerothjs/typescript-plugin && npm run build -w @azerothjs/cli && npm run build -w create-azeroth",
+  "clean": "npm run clean --workspaces --if-present",
+  "dev": "node scripts/tsc7.mjs --watch",
+  "typecheck": "node scripts/tsc7.mjs -p tsconfig.json && node scripts/tsc7.mjs -p packages/typescript-plugin/tsconfig.build.json",
+  "test": "vitest run",
+  "test:watch": "vitest",
+  "test:coverage": "vitest run --coverage",
+  "lint": "eslint .",
+  "lint:fix": "eslint . --fix",
+  "lint:publish": "node scripts/publint-all.mjs",
+  "leak": "node --expose-gc scripts/leak-check.mjs",
+  "smoke": "node scripts/smoke-publish.mjs",
+  "verify": "npm run lint && npm run typecheck && npm run build && npm run lint:publish && npm test && npm run leak",
+  "release": "node scripts/release.mjs",
+  "prepare": "husky",
+  "prepublishOnly": "npm run build"
+ },
+ "lint-staged": {
+  "*.{ts,mts,cts,js,mjs,cjs,azeroth}": "eslint --fix --no-warn-ignored"
+ },
+ "keywords": [
+  "framework",
+  "reactive",
+  "signals",
+  "fine-grained",
+  "no-vdom",
+  "dom",
+  "typescript",
+  "frontend"
+ ],
+ "repository": {
+  "type": "git",
+  "url": "git+https://github.com/AzerothJS/AzerothJS.git"
+ },
+ "author": {
+  "name": "IntelligentQuantum",
+  "email": "IntelligentQuantum@Gmail.Com",
+  "url": "https://IntelligentQuantum.Dev/"
+ },
+ "license": "MIT",
+ "devDependencies": {
+  "@eslint/js": "^10.0.1",
+  "@types/node": "^26.1.0",
+  "@vitest/coverage-v8": "^4.1.9",
+  "eslint": "^10.7.0",
+  "globals": "^17.7.0",
+  "happy-dom": "^20.10.6",
+  "husky": "^9.1.7",
+  "jiti": "^2.7.0",
+  "lint-staged": "^17.0.8",
+  "publint": "^0.3.21",
+  "tsc7": "npm:typescript@7.0.2",
+  "typescript": "^6.0.3",
+  "typescript-eslint": "^8.64.0",
+  "vite": "^8.1.5",
+  "vitest": "^4.1.9"
+ }
 }

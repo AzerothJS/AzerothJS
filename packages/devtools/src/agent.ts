@@ -19,7 +19,7 @@ import {
     pokeNode,
     type DevtoolsNode,
     type GraphSnapshot
-} from '@azerothjs/reactivity';
+} from 'azerothjs';
 
 /** A live node in the agent's model. */
 export interface AgentNode

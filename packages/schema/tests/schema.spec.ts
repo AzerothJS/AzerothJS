@@ -2,11 +2,11 @@
 //
 // The schema core: every combinator's accept/reject behavior, the ALL-errors-in-one-pass
 // property, dot-path error naming, and the two headline contracts - types inferred FROM the
-// declaration (expectTypeOf), and `refine` running @azerothjs/form's REAL validators so the
+// declaration (expectTypeOf), and `refine` running azerothjs's REAL validators so the
 // browser's rules and the server boundary share one source of truth.
 
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import { email, required, minLength } from '@azerothjs/form';
+import { email, required, minLength } from 'azerothjs';
 import {
     string, number, boolean, literal, enumOf, array, object, record, union,
     SchemaError, type Infer, type Issue
@@ -253,7 +253,7 @@ describe('codes, issues, and modes', () =>
 
 describe('refine: the browser form rules run at the server boundary', () =>
 {
-    it('accepts @azerothjs/form validators verbatim', () =>
+    it('accepts azerothjs validators verbatim', () =>
     {
         const signup = object({
             email: string().refine(required('Email is required')).refine(email('Enter a valid email')),

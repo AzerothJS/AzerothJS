@@ -35,37 +35,13 @@
         "noEmit": true,
         "paths":
         {
-            "@azerothjs/reactivity":
+            "azerothjs":
             [
-                "./packages/reactivity/src/index.ts"
-            ],
-            "@azerothjs/reactivity/internal":
-            [
-                "./packages/reactivity/src/internal.ts"
+                "./packages/azerothjs/src/index.ts"
             ],
             "azerothjs/internal":
             [
                 "./packages/azerothjs/src/internal.ts"
-            ],
-            "@azerothjs/renderer":
-            [
-                "./packages/renderer/src/index.ts"
-            ],
-            "@azerothjs/component":
-            [
-                "./packages/component/src/index.ts"
-            ],
-            "@azerothjs/server":
-            [
-                "./packages/server/src/index.ts"
-            ],
-            "@azerothjs/router":
-            [
-                "./packages/router/src/index.ts"
-            ],
-            "@azerothjs/form":
-            [
-                "./packages/form/src/index.ts"
             ],
             "@azerothjs/schema":
             [

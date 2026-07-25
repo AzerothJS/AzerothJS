@@ -59,6 +59,15 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **THE CONSOLIDATION**: `azerothjs` is now ONE REAL PACKAGE. The six frontend packages -
+  `@azerothjs/reactivity`, `@azerothjs/component`, `@azerothjs/renderer`,
+  `@azerothjs/server` (SSR), `@azerothjs/router`, `@azerothjs/form` - are DISCONTINUED
+  and live inside `azerothjs` (they were exact-pin lockstep and compiled output always
+  imported `azerothjs`, so the split was never real). Migration: `import { ... } from
+  'azerothjs'` everywhere the scoped names were used - every public symbol is unchanged.
+  The publish train shrinks to 16 packages; `@azerothjs/schema`, the backend stack, the
+  compiler, and the tooling packages are untouched.
+
 - **store**: the `@azerothjs/store` package is DISCONTINUED - `createStore` now lives in
   `@azerothjs/reactivity`, whose store-scope machinery it always built on (134 LOC split
   across two packages was a boundary, not a module). `import { createStore } from

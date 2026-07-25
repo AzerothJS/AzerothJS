@@ -9,14 +9,14 @@
  * Four deliberate shapes:
  *
  *   - ERRORS ARE A FLAT FIELD-PATH MAP: `{ 'items.0.email': 'Enter a valid email' }`. This
- *     is the exact shape `@azerothjs/form`'s setError consumes and the HTTP layer's
+ *     is the exact shape `azerothjs`'s setError consumes and the HTTP layer's
  *     ValidationError carries - a server-side failure lands in the browser form untouched.
  *   - EVERY FAILURE ALSO CARRIES A STABLE CODE. Failures are collected as ordered ISSUES
  *     (`{ path, code, message }`); the flat map is derived from them. Codes default to the
  *     rule that failed ('required', 'min', 'format', ...) and every node accepts `codes` /
  *     `messages` override maps, so an application can speak its own error enum without a
  *     second validation layer. Messages are for humans; clients switch on codes.
- *   - `refine` TAKES A FORM VALIDATOR. `@azerothjs/form`'s FieldValidator is
+ *   - `refine` TAKES A FORM VALIDATOR. `azerothjs`'s FieldValidator is
  *     `(value) => string | null`; refine accepts exactly that shape structurally, so
  *     `string().refine(email())` reuses the SAME rule the browser form runs - one source of
  *     validation truth, zero import coupling between the packages.
@@ -187,7 +187,7 @@ export interface Schema<T> extends StandardSchemaV1<T>
     nullable(): Schema<T | null>;
 
     /**
-     * Adds a refinement - the SAME single-argument validator shape @azerothjs/form uses,
+     * Adds a refinement - the SAME single-argument validator shape azerothjs uses,
      * so browser-form rules run verbatim at the server boundary. Refinements run after the
      * structural check, in order, first failure wins for the field. `options` sets the
      * issue's stable code (default 'refine') and overrides the message.
@@ -388,7 +388,7 @@ export interface StringOptions extends RuleOverrides
     /** A pattern the (normalized) value must match. */
     pattern?: RegExp;
 
-    /** A named format; email matches @azerothjs/form's email() rule exactly. */
+    /** A named format; email matches azerothjs's email() rule exactly. */
     format?: 'email' | 'url' | 'uuid' | 'datetime';
 }
 

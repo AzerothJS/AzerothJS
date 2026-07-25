@@ -7,7 +7,7 @@
 // sides, zero sockets. Disconnect semantics then run over a real socket via serve().
 
 import { describe, it, expect, vi } from 'vitest';
-import { createRoot, createStream } from '@azerothjs/reactivity';
+import { createRoot, createStream } from 'azerothjs';
 import { App } from '../src/app.ts';
 import { sse } from '../src/sse.ts';
 import { text } from '../src/respond.ts';

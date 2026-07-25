@@ -13,8 +13,7 @@
 // Reuses the compiler's scanner (findMarkupStart) and parser (parseMarkup); a
 // half-typed tail is copied verbatim so completion keeps working mid-edit.
 
-import { findMarkupStart } from '@azerothjs/compiler';
-import { parseMarkup } from '@azerothjs/compiler';
+import { findMarkupStart, parseMarkup } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment } from '@azerothjs/compiler';
 
 /**

@@ -235,12 +235,10 @@ export interface HandlerContext<Path extends string, In, Query>
     query: Query;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 // Typed guards: a guard's context additions flow into the handler's context TYPE,
 // and the `guards` map's keys are CHECKED against the contract tree. Both fall out
 // of one fact - the unified mount is the single place where the contract, the
 // guards, and the handlers meet, so it is the only place the types can compose.
-// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * A guard for the unified mount, built by {@link guard}. It reads the context and

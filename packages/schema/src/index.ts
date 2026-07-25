@@ -5,7 +5,7 @@
  * the declaration (schema.ts), the single-argument field validators the browser form's
  * `validate` option consumes (validators.ts), and the phone/countries dataset (phone.ts,
  * countries.ts). One schema drives runtime validation at the server boundary, the static
- * types on both sides of the wire, and the rules the browser form runs - `@azerothjs/form`
+ * types on both sides of the wire, and the rules the browser form runs - `azerothjs`
  * keeps the form STATE machinery and imports its rules from here. Failures collect into the
  * flat field-path map the form's setError and the HTTP layer's ValidationError already speak.
  *

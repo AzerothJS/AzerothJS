@@ -4,12 +4,12 @@
 // implementing it (mounted on a real App), and a client whose transport is `app.handle` -
 // the whole client/server round trip in process, no sockets, full inference end to end.
 // The validation-parity property is the headline: the SAME schema (carrying REAL
-// @azerothjs/form validators) rejects bad input in the client before the wire, rejects a
+// azerothjs validators) rejects bad input in the client before the wire, rejects a
 // forged request server-side, and the server's 422 lands as the exact field map setError
 // consumes.
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
-import { email, required } from '@azerothjs/form';
+import { email, required } from 'azerothjs';
 import { object, string, number, boolean, type Infer, type StandardSchemaV1 } from '@azerothjs/schema';
 import { App, HttpError, noContent } from '@azerothjs/http';
 import { defineContract, route, mountApi, createClient, ApiError, type HandlersWithGuards } from '@azerothjs/api';

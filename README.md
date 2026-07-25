@@ -148,10 +148,10 @@ import { App, serve, json, readValidated } from '@azerothjs/http';
 import { createAccount } from './schema';   // an @azerothjs/schema declaration
 
 const app = new App();
-app.get('/accounts/:id', (request, ctx) => json({ id: ctx.params.id })); // params typed from the pattern
-app.post('/accounts', async (request) =>
+app.get('/accounts/:id', (context) => json({ id: context.params.id })); // params typed from the pattern
+app.post('/accounts', async (context) =>
 {
-    const input = await readValidated(request, createAccount); // 422s carry the form-compatible field map
+    const input = await readValidated(context.request, createAccount); // 422s carry the form-compatible field map
     return json({ created: input }, { status: 201 });
 });
 
@@ -184,20 +184,13 @@ nothing to eject.
 
 ## Packages
 
-Everything is versioned in lockstep. `azerothjs` is the one package an application installs; the
-`@azerothjs/*` scope holds the individual layers and tooling.
+Everything is versioned in lockstep. `azerothjs` is the one package a frontend installs; the
+`@azerothjs/*` scope holds the backend stack, the compiler, and the tooling.
 
 | Package | Purpose |
 | --- | --- |
-| [`azerothjs`](packages/azerothjs) | **The framework.** One install, every runtime API. |
+| [`azerothjs`](packages/azerothjs) | **The frontend framework - one real package.** Signals/memos/effects + owner tree, `h()` and the control-flow components, stores, forms, the router, and SSR (`renderToString`/islands) live inside as one surface. |
 | [`@azerothjs/compiler`](packages/compiler) | The `.azeroth` compiler + the `azeroth()` Vite plugin (dev dependency). |
-| [`@azerothjs/reactivity`](packages/reactivity) | Signals, memos, effects, roots, resources, SSR/hydration primitives. |
-| [`@azerothjs/renderer`](packages/renderer) | `h()`, `render`/`hydrate`, control-flow components, bindings. |
-| [`@azerothjs/component`](packages/component) | Subtree teardown, `ErrorBoundary`, control-flow range infrastructure. |
-| [`@azerothjs/store`](packages/store) | Lazy-singleton reactive stores; per-request isolation under SSR. |
-| [`@azerothjs/form`](packages/form) | Forms: sync/cross-field/async validation, field arrays, submit lifecycle. |
-| [`@azerothjs/router`](packages/router) | Reactive client-side routing with nested layouts and loaders. |
-| [`@azerothjs/server`](packages/server) | `renderToString` / `renderToStaticMarkup` / `renderToDocument`. |
 | [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. |
 | [`@azerothjs/schema`](packages/schema) | Validation combinators whose TypeScript types are inferred from the declaration. |
 | [`@azerothjs/api`](packages/api) | One API contract: the server mount and a fully inferred client, no codegen. |

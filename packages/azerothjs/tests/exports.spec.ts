@@ -9,12 +9,12 @@
 import { describe, it, expect } from 'vitest';
 
 import * as core from 'azerothjs';
-import * as reactivity from '@azerothjs/reactivity';
-import * as renderer from '@azerothjs/renderer';
-import * as component from '@azerothjs/component';
-import * as form from '@azerothjs/form';
-import * as router from '@azerothjs/router';
-import * as server from '@azerothjs/server';
+import * as reactivity from '../src/reactivity/index.ts';
+import * as renderer from '../src/renderer/index.ts';
+import * as component from '../src/component/index.ts';
+import * as form from '../src/form/index.ts';
+import * as router from '../src/router/index.ts';
+import * as server from '../src/ssr/index.ts';
 
 // Each tuple is [exported-name, source-namespace]. Driven off the ACTUAL list in
 // packages/core/src/index.ts - value exports only (types erase at runtime and cannot be

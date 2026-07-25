@@ -17,9 +17,8 @@
  * @see {@link leakGuard}
  */
 
-import { createRoot, type Getter } from '@azerothjs/reactivity';
-import { subscriberCount } from '@azerothjs/reactivity/internal';
-import { destroyComponent } from '@azerothjs/component';
+import { createRoot, type Getter, destroyComponent } from 'azerothjs';
+import { subscriberCount } from 'azerothjs/internal';
 
 /** A mounted test tree. */
 export interface RenderResult

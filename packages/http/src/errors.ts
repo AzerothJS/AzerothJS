@@ -13,7 +13,7 @@
  *
  * `code` is a kebab-case identifier clients can switch on (statuses are too coarse; messages
  * are for humans). `details` carries structured payloads - most importantly the field-error
- * map `{ field: message }` that `@azerothjs/form`'s setError consumes, so a server-side
+ * map `{ field: message }` that `azerothjs`'s setError consumes, so a server-side
  * validation failure lands in the SAME shape the browser form already understands.
  *
  * EXPOSURE: a 4xx describes the client's mistake, so its message crosses the wire. A 5xx

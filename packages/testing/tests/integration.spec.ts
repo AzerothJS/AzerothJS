@@ -6,9 +6,8 @@
 // every reactive subscription. Real reactive core + real happy-dom; no mocks.
 import { describe, it, expect } from 'vitest';
 import { renderTest, fire, leakGuard } from '@azerothjs/testing';
-import { createSignal, createMemo } from '@azerothjs/reactivity';
-import { subscriberCount } from '@azerothjs/reactivity/internal';
-import { h, Show } from '@azerothjs/renderer';
+import { createSignal, createMemo, h, Show } from 'azerothjs';
+import { subscriberCount } from 'azerothjs/internal';
 
 // A small but realistic component: a counter with increment/reset buttons, a derived
 // parity label (memo), and a Show that toggles a message once the count crosses a

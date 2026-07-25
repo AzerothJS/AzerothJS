@@ -5,8 +5,7 @@
 // the rules' near-zero false-positive design (unknown on* names, components,
 // unparseable regions).
 import { describe, it, expect } from 'vitest';
-import { lintMarkup, lintSource } from '@azerothjs/compiler';
-import { parseMarkup } from '@azerothjs/compiler';
+import { lintMarkup, lintSource, parseMarkup } from '@azerothjs/compiler';
 import type { MarkupElement, LintWarning } from '@azerothjs/compiler';
 
 function lint(src: string): LintWarning[]

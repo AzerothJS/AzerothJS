@@ -10,8 +10,7 @@
 // parser (to understand structure), so a `<` inside an attribute expression
 // like `title={a < b}` is never mistaken for a tag.
 
-import { findMarkupStart, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace } from '@azerothjs/compiler';
-import { parseMarkup } from '@azerothjs/compiler';
+import { findMarkupStart, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace, parseMarkup } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import { collectMarkupNodes } from '../markup-model.ts';
 import type { Range } from '../protocol.ts';

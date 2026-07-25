@@ -7,7 +7,7 @@
 // notifications on a macrotask, so every reactive burst is followed by flush().
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { installDevtools } from '@azerothjs/devtools';
-import { createSignal, createEffect, createRoot, type DisposeFn } from '@azerothjs/reactivity';
+import { createSignal, createEffect, createRoot, type DisposeFn } from 'azerothjs';
 
 let uninstall: (() => void) | null = null;
 

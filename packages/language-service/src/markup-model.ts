@@ -11,8 +11,7 @@
 // (`<div clas`); when the region under the caret doesn't parse yet, a resilient
 // local scan still classifies it so completion keeps working as you type.
 
-import { findMarkupStart, skipBalanced, skipString, skipTemplate, isIdentPart, isWhitespace, parseModule } from '@azerothjs/compiler';
-import { parseMarkup, CompileError } from '@azerothjs/compiler';
+import { findMarkupStart, skipBalanced, skipString, skipTemplate, isIdentPart, isWhitespace, parseModule, parseMarkup, CompileError } from '@azerothjs/compiler';
 import type { MarkupElement, MarkupFragment, MarkupChild } from '@azerothjs/compiler';
 
 /** The syntactic role of a caret position, used to pick a completion strategy. */

@@ -13,8 +13,7 @@
 //      markup so the editor flags exactly what the azeroth-tsc gate flags.
 
 import ts from 'typescript';
-import { findMarkupStart, parseModule } from '@azerothjs/compiler';
-import { parseMarkup, CompileError, lintMarkup } from '@azerothjs/compiler';
+import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
     type Diagnostic,

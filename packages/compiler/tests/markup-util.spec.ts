@@ -3,9 +3,8 @@
 // Real-execution coverage for markup-util: the wrapDynamic reactivity-shape
 // heuristic, quoteString/objectKey escaping, isEventName, and walkComponentTags.
 import { describe, it, expect } from 'vitest';
-import { walkComponentTags } from '@azerothjs/compiler';
+import { walkComponentTags, parseMarkup } from '@azerothjs/compiler';
 import { wrapDynamic, quoteString, objectKey, isEventName } from '../src/markup-util.ts';
-import { parseMarkup } from '@azerothjs/compiler';
 
 describe('wrapDynamic', () =>
 {
