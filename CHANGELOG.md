@@ -11,6 +11,15 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **http**: trusted-proxy URL truth. `serve(app, { trustProxy: true })` (granularly
+  `{ proto: true }` / `{ host: true }`, also on `serveH2c` and `toWebRequest`) believes
+  `X-Forwarded-Proto`/`X-Forwarded-Host` from a declared terminating proxy, so
+  `context.url` carries the client's real scheme and host behind nginx/ALB/Cloudflare
+  instead of the internal hop's `http://`. Off by default - the headers are
+  caller-forgeable without a proxy (the same explicit trust boundary `clientIp` draws).
+  The first entry of a comma-joined chain wins; a forwarded host is validated as
+  host[:port] (no path or credential smuggling into the URL) and a forwarded proto
+  only counts as `http`/`https`.
 - **http**: `streamMultipart(request)` - the pull-based multipart iterator for uploads
   beyond memory. Parts arrive in posted order as they come off the socket; each payload
   is a `ReadableStream` piped straight to its sink (disk, object storage), with

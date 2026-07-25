@@ -11,7 +11,7 @@ import { connect as h2connect } from 'node:http2';
 import { App } from '../src/app.ts';
 import { json, text, noContent } from '../src/respond.ts';
 import { readJson } from '../src/body.ts';
-import { serve, serveH2c, type Served } from '../src/adapter-node.ts';
+import { serve, serveH2c, toWebRequest, type Served } from '../src/adapter-node.ts';
 
 async function withServer(app: App, run: (base: string, served: Served) => Promise<void>): Promise<void>
 {
@@ -272,5 +272,118 @@ describe('the connect `before` seam (dev tooling ahead of the app)', () =>
         {
             await served.shutdown({ gracePeriodMs: 500 });
         }
+    });
+});
+
+describe('trusted-proxy scheme and host (X-Forwarded-Proto / X-Forwarded-Host)', () =>
+{
+    function echoUrlApp(): App
+    {
+        const app = new App();
+        app.get('/where', (context) => json({ href: context.url.href, protocol: context.url.protocol, host: context.url.host }));
+        return app;
+    }
+
+    async function askWhere(base: string, headers: Record<string, string>): Promise<{ href: string; protocol: string; host: string }>
+    {
+        const response = await fetch(`${ base }/where`, { headers });
+        return await response.json() as { href: string; protocol: string; host: string };
+    }
+
+    it('by DEFAULT the forwarded headers are ignored - a direct caller cannot forge its scheme or host', async () =>
+    {
+        await withServer(echoUrlApp(), async (base) =>
+        {
+            const seen = await askWhere(base, { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' });
+            expect(seen.protocol).toBe('http:');
+            expect(seen.host).toMatch(/^127\.0\.0\.1:\d+$/);
+        });
+    });
+
+    it('trustProxy: true believes both headers - context.url tells the client truth behind a TLS terminator', async () =>
+    {
+        const served = await serve(echoUrlApp(), { trustProxy: true, banner: false });
+        try
+        {
+            const seen = await askWhere(`http://127.0.0.1:${ served.port }`, {
+                'x-forwarded-proto': 'https',
+                'x-forwarded-host': 'app.example.com'
+            });
+            expect(seen.protocol).toBe('https:');
+            expect(seen.host).toBe('app.example.com');
+            expect(seen.href).toBe('https://app.example.com/where');
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 1000 });
+        }
+    });
+
+    it('the FIRST entry of a comma-joined chain wins (each proxy appends); ports survive', async () =>
+    {
+        const served = await serve(echoUrlApp(), { trustProxy: true, banner: false });
+        try
+        {
+            const seen = await askWhere(`http://127.0.0.1:${ served.port }`, {
+                'x-forwarded-proto': 'https, http',
+                'x-forwarded-host': 'app.example.com:8443, internal:3000'
+            });
+            expect(seen.protocol).toBe('https:');
+            expect(seen.host).toBe('app.example.com:8443');
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 1000 });
+        }
+    });
+
+    it('a forged host that is not host[:port] is REJECTED (no path smuggling into the URL)', async () =>
+    {
+        const served = await serve(echoUrlApp(), { trustProxy: true, banner: false });
+        try
+        {
+            for (const forged of ['evil.com/phish', 'evil.com\\x', 'a b', 'x@evil.com', 'javascript:alert(1)'])
+            {
+                const seen = await askWhere(`http://127.0.0.1:${ served.port }`, { 'x-forwarded-host': forged });
+                expect(seen.host).toMatch(/^127\.0\.0\.1:\d+$/);
+            }
+            const bogusProto = await askWhere(`http://127.0.0.1:${ served.port }`, { 'x-forwarded-proto': 'gopher' });
+            expect(bogusProto.protocol).toBe('http:');
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 1000 });
+        }
+    });
+
+    it('granular trust: { proto: true } upgrades the scheme but keeps the socket host', async () =>
+    {
+        const served = await serve(echoUrlApp(), { trustProxy: { proto: true }, banner: false });
+        try
+        {
+            const seen = await askWhere(`http://127.0.0.1:${ served.port }`, {
+                'x-forwarded-proto': 'https',
+                'x-forwarded-host': 'app.example.com'
+            });
+            expect(seen.protocol).toBe('https:');
+            expect(seen.host).toMatch(/^127\.0\.0\.1:\d+$/);
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 1000 });
+        }
+    });
+
+    it('toWebRequest exposes the same option for hand-wired servers', () =>
+    {
+        const incoming = {
+            method: 'GET',
+            url: '/x',
+            headers: { host: 'internal:3000', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'app.example.com' }
+        } as unknown as Parameters<typeof toWebRequest>[0];
+
+        expect(new URL(toWebRequest(incoming).url).href).toBe('http://internal:3000/x');
+        expect(new URL(toWebRequest(incoming, { trustProxy: true }).url).href).toBe('https://app.example.com/x');
+        expect(new URL(toWebRequest(incoming, { trustProxy: { host: true } }).url).href).toBe('http://app.example.com/x');
     });
 });

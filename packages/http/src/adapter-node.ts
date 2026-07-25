@@ -26,21 +26,40 @@ import { createServer as createH2cServer, type Http2Server, type Http2ServerResp
 import { readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { printBanner } from '@azerothjs/logger';
-import { createAdapterRequest, type AnyIncoming } from './adapter-request.ts';
+import { createAdapterRequest, type AnyIncoming, type ForwardedTrust } from './adapter-request.ts';
 import { PayloadResponse } from './payload.ts';
 import type { WebHandler } from './edge.ts';
 
 type AnyOutgoing = ServerResponse | Http2ServerResponse;
 
 /**
+ * Declares the proxy in front of this server, `true` meaning both headers. OFF by default:
+ * `X-Forwarded-*` is client-controlled, and believing it without a proxy lets any direct
+ * caller forge its scheme and host - the same explicit trust boundary `clientIp` draws.
+ */
+export type TrustProxyOptions = boolean | ForwardedTrust;
+
+/** @internal Normalizes the trust shorthand: `true` believes both headers. */
+function forwardedTrust(trust: TrustProxyOptions | undefined): ForwardedTrust
+{
+    if (trust === true)
+    {
+        return { proto: true, host: true };
+    }
+    return trust === undefined || trust === false ? {} : trust;
+}
+
+/**
  * Converts a Node request into a web-standard Request - a LAZY one (see adapter-request.ts):
  * headers, disconnect signal, and body each materialize on first access, so the hot path
  * pays for nothing a handler does not touch. The scheme is the caller's statement about
  * what this socket actually speaks - the adapter cannot guess a TLS terminator's presence.
+ * Behind a DECLARED terminating proxy, `trustProxy` lets `X-Forwarded-Proto`/`-Host`
+ * override scheme and authority, so `context.url` tells the client's truth.
  */
-export function toWebRequest(req: AnyIncoming, options: { scheme?: 'http' | 'https' } = {}): Request
+export function toWebRequest(req: AnyIncoming, options: { scheme?: 'http' | 'https'; trustProxy?: TrustProxyOptions } = {}): Request
 {
-    return createAdapterRequest(req, options.scheme ?? 'http');
+    return createAdapterRequest(req, options.scheme ?? 'http', forwardedTrust(options.trustProxy));
 }
 
 /**
@@ -183,7 +202,8 @@ function manage<S extends Server | Http2Server>(
     app: WebHandler,
     port: number,
     hostname: string | undefined,
-    before?: ConnectMiddleware
+    before?: ConnectMiddleware,
+    trust: ForwardedTrust = {}
 ): Promise<Served<S>>
 {
     const inFlight = new Set<AnyOutgoing>();
@@ -193,7 +213,7 @@ function manage<S extends Server | Http2Server>(
         res.once('close', () => inFlight.delete(res));
         const dispatch = (): void =>
         {
-            void app.handle(toWebRequest(req)).then((response) => writeResponse(res, response));
+            void app.handle(createAdapterRequest(req, 'http', trust)).then((response) => writeResponse(res, response));
         };
         if (before !== undefined)
         {
@@ -389,7 +409,7 @@ function announce(served: Served, subtitle: string, readyMs: number): void
  */
 export async function serve(
     app: WebHandler,
-    options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts; banner?: boolean } = {}
+    options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts; banner?: boolean; trustProxy?: TrustProxyOptions } = {}
 ): Promise<Served<Server>>
 {
     const startedAt = performance.now();
@@ -398,7 +418,7 @@ export async function serve(
         ? createServer({ connectionsCheckingInterval: timeouts.checkIntervalMs })
         : createServer();
     applyTimeouts(server, timeouts);
-    const served = await manage(server, app, options.port ?? 0, options.hostname, options.before);
+    const served = await manage(server, app, options.port ?? 0, options.hostname, options.before, forwardedTrust(options.trustProxy));
     if (options.banner !== false)
     {
         announce(served, 'http', performance.now() - startedAt);
@@ -410,9 +430,9 @@ export async function serve(
  * Serves an app over cleartext HTTP/2 (h2c) - the same listener, the http2 compat surface.
  * Browsers only speak h2 over TLS; h2c is for internal hops, proxies, and gRPC-style peers.
  */
-export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string } = {}): Promise<Served<Http2Server>>
+export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
 {
-    return manage(createH2cServer(), app, options.port ?? 0, options.hostname);
+    return manage(createH2cServer(), app, options.port ?? 0, options.hostname, undefined, forwardedTrust(options.trustProxy));
 }
 
 /** Options for {@link handleShutdownSignals}. */

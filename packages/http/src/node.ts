@@ -12,7 +12,8 @@
  */
 
 export { serve, serveH2c, toWebRequest, writeResponse, handleShutdownSignals } from './adapter-node.ts';
-export type { Served, ConnectMiddleware, SocketTimeouts, ShutdownSignalOptions } from './adapter-node.ts';
+export type { Served, ConnectMiddleware, SocketTimeouts, ShutdownSignalOptions, TrustProxyOptions } from './adapter-node.ts';
+export type { ForwardedTrust } from './adapter-request.ts';
 
 export { staticFiles, contentTypeFor } from './static.ts';
 export type { StaticOptions } from './static.ts';

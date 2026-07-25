@@ -168,7 +168,11 @@ handleShutdownSignals(served);                            // SIGTERM/SIGINT -> d
 Every piece is opt-in and tested through `app.handle(new Request(...))` - no socket required.
 `clientIp(request, { trustProxy })` resolves the real address through an explicit trusted-proxy
 boundary (the `X-Forwarded-For` spoofing footgun, closed), and `rateLimit`'s `RateStore` interface
-is the seam for a Redis-backed limiter across a fleet.
+is the seam for a Redis-backed limiter across a fleet. The same boundary covers the URL:
+`serve(app, { trustProxy: true })` (or `{ proto: true }` / `{ host: true }` granularly) believes
+`X-Forwarded-Proto`/`-Host` from a declared terminating proxy, so `context.url` carries the
+client's real scheme and host - redirects, absolute links, and secure-cookie decisions stop
+seeing the internal hop. Off by default: without a proxy those headers are caller-forgeable.
 
 For a full deployment: `timeouts` also takes `requestMs` (whole-request bound for slow bodies)
 and `checkIntervalMs` (how promptly a slow connection is reclaimed); `new App({ observe:

@@ -32,13 +32,44 @@ import { fastHeaderLookup, fastRawBody, socketAddress, type FastCapabilities } f
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
 export type AnyIncoming = (IncomingMessage | Http2ServerRequest) & { headers: Record<string, string | string[] | undefined> };
 
+/**
+ * Which forwarded headers to believe when building the request URL. OFF by default -
+ * `X-Forwarded-*` is client-controlled, so believing it without a proxy in front lets any
+ * caller forge its scheme and host (the same trust boundary clientIp draws for addresses).
+ */
+export interface ForwardedTrust
+{
+    /** Believe `X-Forwarded-Proto` for the URL scheme (only `http`/`https` values count). */
+    proto?: boolean;
+
+    /** Believe `X-Forwarded-Host` for the URL authority (validated as host[:port]). */
+    host?: boolean;
+}
+
 const NO_BODY_METHODS = new Set(['GET', 'HEAD']);
+
+/** @internal hostname[:port] or bracketed IPv6[:port] - anything else in X-Forwarded-Host is ignored. */
+const FORWARDED_HOST = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
+
+/** @internal The first entry of a comma-joined forwarded header (each proxy appends). */
+function firstForwarded(value: string | string[] | undefined): string | undefined
+{
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (raw === undefined)
+    {
+        return undefined;
+    }
+    const comma = raw.indexOf(',');
+    return (comma === -1 ? raw : raw.slice(0, comma)).trim();
+}
 
 class AdapterRequest implements Request
 {
     readonly #incoming: AnyIncoming;
 
     readonly #scheme: 'http' | 'https';
+
+    readonly #trust: ForwardedTrust;
 
     #url: string | null = null;
 
@@ -50,10 +81,11 @@ class AdapterRequest implements Request
 
     #real: Request | null = null;
 
-    constructor(incoming: AnyIncoming, scheme: 'http' | 'https')
+    constructor(incoming: AnyIncoming, scheme: 'http' | 'https', trust: ForwardedTrust = {})
     {
         this.#incoming = incoming;
         this.#scheme = scheme;
+        this.#trust = trust;
     }
 
     public get method(): string
@@ -66,8 +98,25 @@ class AdapterRequest implements Request
         if (this.#url === null)
         {
             const headers = this.#incoming.headers;
-            const authority = (headers[':authority'] as string | undefined) ?? (headers.host) ?? 'localhost';
-            this.#url = `${ this.#scheme }://${ authority }${ this.#incoming.url ?? '/' }`;
+            let scheme: string = this.#scheme;
+            let authority = (headers[':authority'] as string | undefined) ?? (headers.host) ?? 'localhost';
+            if (this.#trust.proto === true)
+            {
+                const forwarded = firstForwarded(headers['x-forwarded-proto'])?.toLowerCase();
+                if (forwarded === 'https' || forwarded === 'http')
+                {
+                    scheme = forwarded;
+                }
+            }
+            if (this.#trust.host === true)
+            {
+                const forwarded = firstForwarded(headers['x-forwarded-host']);
+                if (forwarded !== undefined && FORWARDED_HOST.test(forwarded))
+                {
+                    authority = forwarded;
+                }
+            }
+            this.#url = `${ scheme }://${ authority }${ this.#incoming.url ?? '/' }`;
         }
         return this.#url;
     }
@@ -313,7 +362,7 @@ Object.setPrototypeOf(AdapterRequest.prototype, Request.prototype);
  * isolatedDeclarations (computed symbol-keyed class methods cannot be emitted), and the
  * class stays module-internal - its whole public shape IS `Request & FastCapabilities`.
  */
-export function createAdapterRequest(incoming: AnyIncoming, scheme: 'http' | 'https'): Request & FastCapabilities
+export function createAdapterRequest(incoming: AnyIncoming, scheme: 'http' | 'https', trust: ForwardedTrust = {}): Request & FastCapabilities
 {
-    return new AdapterRequest(incoming, scheme);
+    return new AdapterRequest(incoming, scheme, trust);
 }
