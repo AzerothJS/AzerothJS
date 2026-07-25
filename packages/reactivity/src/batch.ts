@@ -1,14 +1,24 @@
 /**
  * MODULE: reactivity/batch
  *
- * Batching defers effect execution until a group of signal writes is complete. By
- * default each setter notifies its subscribers synchronously, so writing two signals
- * an effect depends on runs that effect twice - once on intermediate, inconsistent
- * state. Inside batch() affected effects are collected in a dedup set and run once,
- * after the batch, with all writes applied.
+ * The write-flush scheduler: the machinery that makes every write GLITCH-FREE, and the
+ * public batch() that extends the same guarantee across a group of writes.
+ *
+ * EVERY top-level write runs inside an implicit flush ({@link notifyWrite}): the
+ * notification wave only MARKS memos and QUEUES affected effects; when the wave has
+ * fully propagated, the queued effects run exactly once, validating their dependencies
+ * against settled memos. Without this, a diamond (one signal feeding two memos read by
+ * one effect) fired the effect once per branch - the first time on mixed-generation
+ * state (one memo fresh, the other stale). The flush is fully SYNCHRONOUS: by the time
+ * a setter returns, every affected effect has run.
+ *
+ * batch() extends the same window across MULTIPLE writes: two setters that share a
+ * downstream effect run it once per setter when unbatched (each on consistent state),
+ * and once in total inside batch().
  */
 
-import type { Subscriber } from './types.ts';
+import type { Producer, Subscriber } from './types.ts';
+import { notify } from './graph.ts';
 import { assertFunction } from './validate.ts';
 
 /** True while inside batch(); effects queue instead of running. @internal */
@@ -16,6 +26,14 @@ let batching = false;
 
 /** Effects pending after the batch; a Set so a repeatedly-triggered effect runs once. @internal */
 const queue = new Set<Subscriber>();
+
+/**
+ * The queue's single-occupant fast lane. A top-level write to a signal with ONE
+ * downstream effect - the dominant fine-grained binding shape - must not pay Set
+ * insert/iterate/clear per write, so the first queued effect parks here and only a
+ * SECOND distinct effect spills both into the Set. @internal
+ */
+let solo: Subscriber | null = null;
 
 /**
  * Upper bound on flush rounds before we declare a feedback loop. A healthy batch
@@ -44,7 +62,111 @@ export function isBatching(): boolean
  */
 export function queueEffect(subscriber: Subscriber): void
 {
+    if (solo === null && queue.size === 0)
+    {
+        solo = subscriber;
+        return;
+    }
+    if (solo !== null)
+    {
+        if (solo === subscriber)
+        {
+            return; // already queued (dedup, same as the Set's)
+        }
+        queue.add(solo);
+        solo = null;
+    }
     queue.add(subscriber);
+}
+
+/**
+ * A top-level write's notification entry: opens an implicit flush window, propagates
+ * the wave (memos mark, effects queue), then drains - so every affected effect runs
+ * exactly once, AFTER the whole wave, on settled state. This is what makes a plain
+ * unbatched write glitch-free. A write landing inside an open window (a batch(), a
+ * flushing effect's own write, or another write's wave) just emits into it.
+ *
+ * @internal
+ * @param producer - The producer whose value changed.
+ */
+export function notifyWrite(producer: Producer): void
+{
+    if (batching)
+    {
+        notify(producer);
+        return;
+    }
+
+    batching = true;
+    try
+    {
+        notify(producer);
+        drainQueue();
+    }
+    finally
+    {
+        batching = false;
+    }
+}
+
+/**
+ * Runs the queued effects in rounds until the queue settles (a flushed effect's own
+ * writes queue into the next round). The single-effect round - the dominant
+ * fine-grained shape, one binding per write - skips the snapshot copy.
+ *
+ * @internal
+ */
+function drainQueue(): void
+{
+    let guard = 0;
+    while (solo !== null || queue.size > 0)
+    {
+        if (solo !== null && queue.size === 0)
+        {
+            // Fast lane: the round's one effect, no Set traffic at all.
+            const only = solo;
+            solo = null;
+            if (!only.isDisposed)
+            {
+                (only.runScheduled ?? only.execute)();
+            }
+        }
+        else
+        {
+            if (solo !== null)
+            {
+                queue.add(solo);
+                solo = null;
+            }
+            // Copy before running because a queued effect may queue more.
+            const effects = Array.from(queue);
+            queue.clear();
+
+            for (const subscriber of effects)
+            {
+                if (!subscriber.isDisposed)
+                {
+                    // Run the body directly (not execute(), which would just re-queue while
+                    // batching is still true). Writes this run makes notify through execute()
+                    // and so defer to the next round.
+                    (subscriber.runScheduled ?? subscriber.execute)();
+                }
+            }
+        }
+
+        // A flush that never settles means an effect keeps writing a signal it (transitively)
+        // depends on. Bound it and surface the cause instead of hanging the tab forever.
+        if (++guard > MAX_FLUSH_ROUNDS)
+        {
+            queue.clear();
+            solo = null;
+            throw new Error(
+                `Reactive flush did not settle after ${ MAX_FLUSH_ROUNDS } rounds: an effect ` +
+                'keeps writing a signal it depends on, forming a feedback loop. Break the ' +
+                'cycle (derive with createMemo, guard the write, or read with untrack).'
+            );
+        }
+    }
 }
 
 /**
@@ -55,10 +177,11 @@ export function queueEffect(subscriber: Subscriber): void
  * eagerly but dependent effects run once afterwards instead of once per write.
  *
  * WHY IT EXISTS:
- * Every setter notifies synchronously, so a sequence of related writes runs a shared
- * dependent effect once per write - each time on partially-updated, inconsistent
- * state. batch collapses that to a single run over the final values, which both
- * avoids wasted work and prevents observers from ever seeing a half-applied update.
+ * Each individual write is already glitch-free (its own implicit flush; effects see
+ * settled state), but a SEQUENCE of related writes still runs a shared dependent
+ * effect once per write. batch collapses that to a single run over the final values,
+ * which avoids the wasted intermediate runs and keeps multi-field transitions atomic
+ * from the observer's point of view.
  *
  * COMPILER / RUNTIME ROLE:
  * Runtime, reactivity scheduling. Used around multi-field state transitions (form
@@ -71,8 +194,8 @@ export function queueEffect(subscriber: Subscriber): void
  *   outermost batch flushes.
  *
  * OUTPUT CONTRACT:
- * - Returns void. After the outermost fn returns, each affected (non-disposed)
- *   effect executes exactly once.
+ * - Returns fn's return value. After the outermost fn returns, each affected
+ *   (non-disposed) effect executes exactly once.
  *
  * WHY THIS DESIGN:
  * A Set dedupes effects triggered by several writes. The queue is copied and cleared
@@ -110,15 +233,14 @@ export function queueEffect(subscriber: Subscriber): void
  * createEffect(() => console.log(`${ first() } ${ last() }`));
  * batch(() => { setFirst('John'); setLast('Doe'); }); // logs "John Doe" once
  */
-export function batch(fn: () => void): void
+export function batch<T>(fn: () => T): T
 {
     assertFunction(fn, 'batch', 'Pass the writes as a function: batch(() => { setA(1); setB(2); }).');
 
     // Nested call: the outer batch owns the flush, so just run the body.
     if (batching)
     {
-        fn();
-        return;
+        return fn();
     }
 
     batching = true;
@@ -129,9 +251,10 @@ export function batch(fn: () => void): void
     // inside the finally) keeps it out of a finally block, where it could mask fn's error.
     let fnError: unknown;
     let fnThrew = false;
+    let result!: T;
     try
     {
-        fn();
+        result = fn();
     }
     catch (error)
     {
@@ -141,38 +264,10 @@ export function batch(fn: () => void): void
 
     // Stay in batching mode THROUGH the flush: a write performed by a flushed effect must re-queue the
     // affected effects (and run once, after) rather than notify synchronously and re-enter the flush
-    // mid-iteration on inconsistent, half-applied state. Drain in rounds until the queue settles.
+    // mid-iteration on inconsistent, half-applied state.
     try
     {
-        let guard = 0;
-        while (queue.size > 0)
-        {
-            // Copy before running because a queued effect may queue more.
-            const effects = Array.from(queue);
-            queue.clear();
-
-            for (const subscriber of effects)
-            {
-                if (!subscriber.isDisposed)
-                {
-                    // Run the body directly (not execute(), which would just re-queue while batching is
-                    // still true). Writes this run makes notify through execute() and so defer to the next round.
-                    (subscriber.runScheduled ?? subscriber.execute)();
-                }
-            }
-
-            // A flush that never settles means an effect keeps writing a signal it (transitively) depends
-            // on. Bound it and surface the cause instead of hanging the tab forever.
-            if (++guard > MAX_FLUSH_ROUNDS)
-            {
-                queue.clear();
-                throw new Error(
-                    `batch() flush did not settle after ${ MAX_FLUSH_ROUNDS } rounds: an effect ` +
-                    'keeps writing a signal it depends on, forming a feedback loop. Break the ' +
-                    'cycle (derive with createMemo, guard the write, or read with untrack).'
-                );
-            }
-        }
+        drainQueue();
     }
     finally
     {
@@ -183,4 +278,5 @@ export function batch(fn: () => void): void
     {
         throw fnError;
     }
+    return result;
 }

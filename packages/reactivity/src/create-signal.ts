@@ -22,7 +22,8 @@
  */
 
 import type { Getter, Setter, Signal, SignalOptions, EqualsFn } from './types.ts';
-import { createProducer, track, notify } from './graph.ts';
+import { createProducer, track } from './graph.ts';
+import { notifyWrite } from './batch.ts';
 import { dtRegister, dtWrite, dtEnabled } from './devtools.ts';
 
 /**
@@ -185,7 +186,7 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
         }
         if (producer.subs.length !== 0)
         {
-            notify(producer);
+            notifyWrite(producer);
         }
     };
 

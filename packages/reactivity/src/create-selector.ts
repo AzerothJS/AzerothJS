@@ -12,7 +12,8 @@
  */
 
 import type { Getter, Producer, SelectorOptions } from './types.ts';
-import { currentSubscriber, createProducer, track, notify } from './graph.ts';
+import { currentSubscriber, createProducer, track } from './graph.ts';
+import { notifyWrite } from './batch.ts';
 import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 
@@ -108,7 +109,7 @@ export function createSelector<T>(
         if (producer)
         {
             producer.version++;
-            notify(producer);
+            notifyWrite(producer);
         }
     }
 

@@ -9,6 +9,18 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed
+
+- **reactivity**: every write is now GLITCH-FREE. A top-level setter runs inside an
+  implicit flush: the change wave marks memos and queues affected effects first, then
+  each affected effect runs exactly once on fully-settled state - still synchronously,
+  before the setter returns. Previously a diamond (one signal feeding two memos read by
+  one effect) fired the effect once per branch, the first time on mixed-generation
+  state (one memo fresh, one stale). Diamond-shaped updates got ~40% faster (one effect
+  run per write instead of two); the single-binding write path pays ~11% for the
+  guarantee. `batch()` remains the tool for coalescing MULTIPLE writes into one run,
+  and now returns its body's value.
+
 ### Changed (BREAKING - beta)
 
 - **server**: `island()` no longer wraps the island in a `<span style="display:contents">` -
