@@ -11,6 +11,28 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **compiler**: the vanished-component diagnostic. The parser is total, so a
+  `component` header that fails its shape check (missing name, unbalanced type
+  parameters, missing body brace) used to silently become plain TypeScript - the
+  component just did not exist. `diagnoseModule` now emits
+  `azeroth/malformed-component` naming exactly what is wrong, surfaced as a dev
+  warning by the Vite plugin. Only clear declaration intent triggers: ordinary
+  identifiers named `component` (member access, annotations, assignments, strings,
+  comments) stay silent.
+- **compiler / language**: the `mount { ... }` wrapper keyword - the post-connection
+  lifecycle block, lowering to `onMount(() => { ... })`. It completes the lifecycle
+  triad with `cleanup { }` and `dispose { }` (mount was the one moment still written
+  as a function call). Shape-gated like every keyword: `mount(fn)` and a local named
+  `mount` stay plain code, and a new `azeroth/keyword-shadow` diagnostic warns when a
+  body-local binding shadows a capture-guarded keyword. Editor tooling (hover docs,
+  completion snippet, VS Code + JetBrains highlighting) ships in the same change.
+- **compiler / docs**: `GRAMMAR.md` - the normative `.azeroth` grammar (lexical
+  rules, every disambiguation, the contextual-keyword table, explicit non-goals) -
+  and `STABILITY.md` - the ratified 1.x syntax-stability policy: the keyword-set
+  freeze, the five-point rubric any future keyword must pass, and semver-for-syntax
+  (PATCH: never; MINOR: rubric-passing additions only; MAJOR: everything else, with
+  codemods).
+
 - **router**: the navigation-UX layer. (1) GUARDS - `guard` on a route runs
   root-to-leaf BEFORE anything renders or loads: return `false` to veto (the previous
   location is restored, the guarded route never matches, its loaders never start), a

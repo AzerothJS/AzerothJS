@@ -213,7 +213,8 @@ export function step(source: string, i: number, prevChar: string, prevWord: stri
  * DEVELOPER WARNING:
  * Because it never throws, a parse problem surfaces as an OPAQUE region rather than an error - don't
  * treat "no component found" as proof the source is component-free; it can mean the shape wasn't
- * recognized (see Known Limitations in the module header).
+ * recognized (see Known Limitations in the module header). diagnoseModule's
+ * `azeroth/malformed-component` names those cases for authors - run it wherever silence would hurt.
  *
  * @param source - The `.azeroth` module source
  * @returns The {@link Module}; module-level items tile the whole source.
@@ -634,7 +635,8 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
         : word === 'untrack' ? 'untrack'
             : word === 'cleanup' ? 'onCleanup'
                 : word === 'dispose' ? 'onRootDispose'
-                    : null;
+                    : word === 'mount' ? 'onMount'
+                        : null;
     if (wrapperFn !== null)
     {
         const brace = skipTrivia(source, j);

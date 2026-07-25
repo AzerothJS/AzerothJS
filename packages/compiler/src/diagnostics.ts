@@ -14,7 +14,12 @@
  *                                    (onClick={save()}). A call WITH arguments
  *                                    (onClick={makeHandler(id)}) is the handler-factory idiom and is
  *                                    left alone (this subsumes the old markup-level handler-call rule,
- *                                    so the two never both fire on one handler).
+ *                                    so the two never both fire on one handler);
+ *   - azeroth/malformed-component  - a `component` header that fails its shape check (missing name,
+ *                                    unbalanced generics, missing body brace) would otherwise VANISH
+ *                                    into opaque TS; this names exactly what is wrong;
+ *   - azeroth/keyword-shadow       - a body-local binding named like a capture-guarded keyword
+ *                                    (the STABILITY.md capture clause).
  *
  * (assign-derived and use-before-declaration are out of scope here - left to TypeScript; the harder
  * data-flow rules are future work.)
@@ -29,11 +34,11 @@ import type { ComponentDecl } from './ast.ts';
 import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
-import { parseModule } from './parser.ts';
+import { parseModule, step, skipTrivia } from './parser.ts';
 import { isEventName } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice } from './ts-slice.ts';
-import { findMarkupStart } from './scanner.ts';
+import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
 import { traverseReactive } from './walk.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { assignToDerivedMessage } from './rewrite.ts';
@@ -113,8 +118,107 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
         {
             diagnoseComponent(source, item, diagnostics);
         }
+        else
+        {
+            diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
+        }
     }
     return diagnostics;
+}
+
+/**
+ * The parser is TOTAL: a `component` header that fails its shape check (no name, an
+ * unbalanced type-parameter list, a missing body brace) silently becomes opaque
+ * TypeScript - "my component vanished" with no error anywhere. This pass walks the
+ * OPAQUE module regions with the same step machinery the parser uses (so `component`
+ * inside strings, comments, or markup never triggers) and names exactly what went
+ * wrong. Only clear declaration INTENT is flagged: the keyword followed by an
+ * identifier or `{`; `obj.component`, `component: T`, `component = x` stay silent.
+ *
+ * @internal `azeroth/malformed-component`
+ */
+function diagnoseMalformedComponents(source: string, start: number, end: number, out: AzerothDiagnostic[]): void
+{
+    let i = start;
+    let prevChar = '';
+    let prevWord = '';
+    while (i < end)
+    {
+        const s = step(source, i, prevChar, prevWord);
+        if (s.kind === 'identifier' && s.text === 'component' && prevChar !== '.')
+        {
+            const reason = malformedComponentReason(source, s.next);
+            if (reason !== null)
+            {
+                out.push({
+                    code: 'azeroth/malformed-component',
+                    severity: 'error',
+                    message: `This looks like a \`component\` declaration, but ${ reason } - so it is `
+                        + 'treated as plain TypeScript and the component does not exist.',
+                    start: i,
+                    end: i + 'component'.length
+                });
+            }
+        }
+        i = s.next;
+        prevChar = s.prevChar;
+        prevWord = s.prevWord;
+    }
+}
+
+/**
+ * @internal Why a `component` keyword ending at `keywordEnd` failed to parse
+ * as a declaration, or null when it does not look like one (or would in fact parse -
+ * e.g. the keyword sits inside a component body's opaque run, not at module level).
+ */
+function malformedComponentReason(source: string, keywordEnd: number): string | null
+{
+    let cursor = skipTrivia(source, keywordEnd);
+    const next = source[cursor];
+
+    // Anonymous header: `component {` shows intent with no name.
+    if (next === '{')
+    {
+        return 'the component name is missing (write `component Name { ... }`)';
+    }
+    if (next === undefined || !isIdentStart(next))
+    {
+        return null; // `component = x`, `component: T`, `component,` ... - an ordinary identifier
+    }
+
+    // `component Name` - two identifiers in a row is not valid TypeScript, so the
+    // declaration intent is unambiguous. Find which shape check fails.
+    while (cursor < source.length && isIdentPart(source[cursor]))
+    {
+        cursor++;
+    }
+    cursor = skipTrivia(source, cursor);
+
+    if (source[cursor] === '<')
+    {
+        const closed = scanTypeParams(source, cursor);
+        if (closed === -1)
+        {
+            return 'its type-parameter list never closes (unbalanced `<...>`)';
+        }
+        cursor = skipTrivia(source, closed);
+    }
+
+    if (source[cursor] === '(')
+    {
+        const closed = skipBalanced(source, cursor);
+        if (closed >= source.length && source[source.length - 1] !== ')')
+        {
+            return 'its parameter list never closes (unbalanced `(...)`)';
+        }
+        cursor = skipTrivia(source, closed);
+    }
+
+    if (source[cursor] !== '{')
+    {
+        return 'the body `{` is missing after the signature';
+    }
+    return null; // shape is fine here - the keyword was simply not at a recognized position
 }
 
 /** One imported binding: the local name, its source offset, and the span of its whole import statement. */
@@ -314,8 +418,49 @@ export function diagnoseUnusedImports(source: string, compiledJs: string): Azero
 }
 
 /** @internal */
+/**
+ * Keywords added AFTER 1.0 shipped its grammar, per the STABILITY.md capture clause:
+ * a contextual keyword claims the shape `<word> { ... }`, so a local binding with the
+ * same name invites a silent re-interpretation. Each addition lists itself here and
+ * the shadow diagnostic covers it; the ORIGINAL keyword set is deliberately absent
+ * (flagging pre-existing code would be noise, not protection).
+ */
+const CAPTURE_GUARDED_KEYWORDS = ['mount'] as const;
+
+/** @internal `azeroth/keyword-shadow`: a body-local binding named like a guarded keyword. */
+function diagnoseKeywordShadows(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
+{
+    for (const item of component.body)
+    {
+        if (item.kind !== 'opaque-statements')
+        {
+            continue;
+        }
+        const region = source.slice(item.start, item.end);
+        for (const keyword of CAPTURE_GUARDED_KEYWORDS)
+        {
+            const pattern = new RegExp(`\\b(?:let|const|var|function)\\s+(${ keyword })\\b`, 'g');
+            let match: RegExpExecArray | null;
+            while ((match = pattern.exec(region)) !== null)
+            {
+                const at = item.start + match.index + match[0].length - keyword.length;
+                out.push({
+                    code: 'azeroth/keyword-shadow',
+                    severity: 'warning',
+                    message: `\`${ keyword }\` is a reactive keyword: \`${ keyword } { ... }\` at a statement start `
+                        + 'parses as the keyword block, not this binding. Rename the local.',
+                    start: at,
+                    end: at + keyword.length
+                });
+            }
+        }
+    }
+}
+
 function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
 {
+    diagnoseKeywordShadows(source, component, out);
+
     // azeroth/constant-derived and azeroth/inert-effect
     const analysis = analyzeComponent(source, component);
     for (const scope of analysis.scopes)

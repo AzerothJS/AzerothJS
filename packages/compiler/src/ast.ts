@@ -249,7 +249,7 @@ export interface WatchBlock extends Span
 
 /**
  * A `<keyword> { body }` block-wrapper that lowers to `<fn>(() => { body })` - the family covering
- * `batch`/`untrack`/`cleanup`/`dispose`. The body is reactively rewritten like any effect/opaque run.
+ * `batch`/`untrack`/`cleanup`/`dispose`/`mount`. The body is reactively rewritten like any effect/opaque run.
  */
 export interface WrapperBlock extends Span
 {

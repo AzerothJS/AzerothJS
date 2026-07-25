@@ -220,6 +220,10 @@ indistinguishable from the `save()` mistake and is therefore rejected - bind it 
 
 ### TypeScript syntax (the TSX rules)
 
+The full normative grammar - lexical rules, every disambiguation, the contextual
+keyword table, the `with { }` clause, and the explicit non-goals - lives in
+[GRAMMAR.md](./GRAMMAR.md).
+
 Because `.azeroth` mixes markup with TypeScript, it follows the same disambiguation rules as `.tsx`:
 
 - **No angle-bracket type assertions.** Write `value as Foo`, not `<Foo>value` - a `<Foo>...` is read

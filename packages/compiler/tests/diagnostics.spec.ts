@@ -217,3 +217,65 @@ describe('diagnoseModule - module-level', () =>
         }
     });
 });
+
+describe('diagnoseModule - keyword-shadow (the STABILITY.md capture clause)', () =>
+{
+    it('a body-local named like a capture-guarded keyword warns with a span on the name', () =>
+    {
+        const src = 'component C { const mount = makeMount(); <p>x</p> }';
+        const diags = diagnoseModule(src).filter((d) => d.code === 'azeroth/keyword-shadow');
+        expect(diags).toHaveLength(1);
+        expect(diags[0]!.severity).toBe('warning');
+        expect(src.slice(diags[0]!.start, diags[0]!.end)).toBe('mount');
+    });
+
+    it('function declarations count; other names and the ORIGINAL keyword set do not', () =>
+    {
+        expect(diagnoseModule('component C { function mount() { return 1; } <p>x</p> }')
+            .filter((d) => d.code === 'azeroth/keyword-shadow')).toHaveLength(1);
+
+        // `mounted`, member access, and pre-1.0 keyword names stay quiet.
+        const quiet = 'component C { const mounted = 1; const batch = 2; app.mount(); <p>{mounted + batch}</p> }';
+        expect(diagnoseModule(quiet).filter((d) => d.code === 'azeroth/keyword-shadow')).toEqual([]);
+    });
+});
+
+describe('diagnoseModule - malformed-component (the vanished-component diagnostic)', () =>
+{
+    const codesOf = (src: string): string[] =>
+        diagnoseModule(src).filter((d) => d.code === 'azeroth/malformed-component').map((d) => d.message);
+
+    it('a missing name, unbalanced generics, and a missing body brace each name their failure', () =>
+    {
+        expect(codesOf('component { <p>x</p> }')[0]).toContain('name is missing');
+        expect(codesOf('component Foo<T { <p>x</p> }')[0]).toContain('type-parameter list never closes');
+        expect(codesOf('component Foo(props: P) <p>x</p>')[0]).toContain('body `{` is missing');
+    });
+
+    it('the diagnostic spans the `component` keyword itself', () =>
+    {
+        const src = 'const a = 1;\ncomponent Broken(props: P) nope';
+        const diag = diagnoseModule(src).find((d) => d.code === 'azeroth/malformed-component')!;
+        expect(src.slice(diag.start, diag.end)).toBe('component');
+    });
+
+    it('ordinary identifiers named component never trigger: member access, annotation, assignment, strings, comments', () =>
+    {
+        const quiet = [
+            'const component = 5; use(component);',
+            'obj.component.render();',
+            'interface X { component: string }',
+            'const s = "component Foo {"; // component Bar {',
+            '/* component Baz { */ const t = 1;'
+        ];
+        for (const src of quiet)
+        {
+            expect(codesOf(src)).toEqual([]);
+        }
+    });
+
+    it('a VALID component is not flagged (and neither is code around it)', () =>
+    {
+        expect(codesOf('const x = 1;\ncomponent Fine { <p>{x}</p> }\nconst y = 2;')).toEqual([]);
+    });
+});

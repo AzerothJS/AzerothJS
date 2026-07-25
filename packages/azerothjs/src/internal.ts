@@ -60,6 +60,7 @@ export {
     untrack,
     onCleanup,
     onRootDispose,
+    onMount,
     isStringMode,
     isHydrating
 } from './reactivity/index.ts';

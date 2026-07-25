@@ -266,7 +266,7 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('() => (format(external()))');
     });
 
-    it('desugars the block-wrapper keywords (batch/untrack/cleanup/dispose) to their runtime calls', () =>
+    it('desugars the block-wrapper keywords (batch/untrack/cleanup/dispose/mount) to their runtime calls', () =>
     {
         expect(gen('component C { state a = 0; state b = 0; effect { batch { a = 1; b = 2; } } <p>{a}</p> }'))
             .toContain('batch(() => { setA(1); setB(2); });');
@@ -276,6 +276,20 @@ describe('generateModule - reactive desugaring', () =>
             .toContain('onRootDispose(() => { teardown(); });');
         expect(gen('component C { state n = 0; effect { untrack { log(n); } } <p>{n}</p> }'))
             .toContain('untrack(() => { log(n()); });');
+        expect(gen('component C { mount { chart.render(); } <p>x</p> }'))
+            .toContain('onMount(() => { chart.render(); });');
+    });
+
+    it('mount is shape-gated: a call form and a shadowing local stay plain code', () =>
+    {
+        // `mount(fn);` is a plain call, not the keyword.
+        const call = gen('component C { mount(fn); <p>x</p> }');
+        expect(call).toContain('mount(fn);');
+        expect(call).not.toContain('onMount');
+
+        // The keyword reads the reactive scope like every wrapper: state reads rewrite.
+        const reactive = gen('component C { state n = 0; mount { boot(n); } <p>{n}</p> }');
+        expect(reactive).toContain('onMount(() => { boot(n()); });');
     });
 
     it('carries a state type annotation into the createSignal type argument', () =>

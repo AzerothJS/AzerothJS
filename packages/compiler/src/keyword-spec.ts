@@ -39,7 +39,7 @@ export type ConstructKind =
 
 /**
  * Keyword kind -> the runtime helper it lowers to. `wrapper` is excluded: a wrapper block
- * (`batch`/`untrack`/`cleanup`/`dispose`) carries its own target function on its `fn` field, since the
+ * (`batch`/`untrack`/`cleanup`/`dispose`/`mount`) carries its own target function on its `fn` field, since the
  * keyword-to-helper choice is made by the parser there, not fixed per kind.
  */
 export const RUNTIME_FN: Record<Exclude<ConstructKind, 'wrapper'>, string> =
