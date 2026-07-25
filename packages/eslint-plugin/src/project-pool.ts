@@ -9,7 +9,7 @@
 
 import ts from 'typescript';
 import { posix, resolve } from 'node:path';
-import { AzerothProject } from '@azerothjs/language-service';
+import { AzerothProject } from '@azerothjs/language-server/language-service';
 
 const pool = new Map<string, AzerothProject>();
 

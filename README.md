@@ -162,7 +162,7 @@ There is no build step - Node >= 24 runs the TypeScript source directly, and
 `app.handle(new Request(...))` is the entire integration-testing story. One error path
 (shape it with `serializeError`), scoped middleware (`app.with(requireAuth)`), typed env
 config, static files, SSE, graceful shutdown - and beside http: [`@azerothjs/schema`](packages/schema)
-validation, [`@azerothjs/api`](packages/api) typed contracts with a fully inferred client,
+validation, typed API contracts with a fully inferred client (`@azerothjs/http/api`),
 [`@azerothjs/ws`](packages/ws) WebSockets, [`@azerothjs/cron`](packages/cron) scheduling, and
 [`@azerothjs/logger`](packages/logger) with file rotation. The same fine-grained discipline,
 the whole way down.

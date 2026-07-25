@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { object, string, number, SchemaError, type Infer } from '@azerothjs/schema';
 import { createForm } from 'azerothjs';
 import { App, readValidated, json } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient } from '@azerothjs/http/api';
 
 const CODES = { required: 'NOT_EMPTY', nonempty: 'NOT_EMPTY', min: 'MIN_LENGTH', format: 'INVALID_EMAIL' };
 

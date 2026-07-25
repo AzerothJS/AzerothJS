@@ -1,6 +1,6 @@
 // The Language Server Protocol front-end. It owns an LSP connection and a
 // document manager, and delegates every request to an AzerothLanguageService
-// (from @azerothjs/language-service). Because the service's result types
+// (from ./language-service). Because the service's result types
 // already mirror the LSP shapes, this layer is mostly a thin translation: sync
 // document text into the service, forward positions, and hand results back.
 //
@@ -38,7 +38,7 @@ import {
     type CodeLens as ServiceCodeLens,
     type CompletionOptions,
     type InlayHintOptions
-} from '@azerothjs/language-service';
+} from './language-service/index.ts';
 
 /** All `azeroth.*` settings, resolved with defaults. */
 export interface AzerothSettings

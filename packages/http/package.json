@@ -19,6 +19,16 @@
             "types": "./dist/node.d.ts",
             "import": "./dist/node.js",
             "default": "./dist/node.js"
+        },
+        "./api": {
+            "types": "./dist/api/index.d.ts",
+            "import": "./dist/api/index.js",
+            "default": "./dist/api/index.js"
+        },
+        "./api/client": {
+            "types": "./dist/api/client-entry.d.ts",
+            "import": "./dist/api/client-entry.js",
+            "default": "./dist/api/client-entry.js"
         }
     },
     "files": [
@@ -33,7 +43,8 @@
     },
     "dependencies": {
         "@azerothjs/logger": "1.0.0-beta.2",
-        "azerothjs": "1.0.0-beta.2"
+        "azerothjs": "1.0.0-beta.2",
+        "@azerothjs/schema": "1.0.0-beta.2"
     },
     "publishConfig": {
         "access": "public"

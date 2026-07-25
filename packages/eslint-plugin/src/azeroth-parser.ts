@@ -13,7 +13,7 @@
 
 import tsParser from '@typescript-eslint/parser';
 import { posix } from 'node:path';
-import { toVirtualFile } from '@azerothjs/language-service';
+import { toVirtualFile } from '@azerothjs/language-server/language-service';
 import { projectFor, normalize } from './project-pool.ts';
 
 interface ParserOptions

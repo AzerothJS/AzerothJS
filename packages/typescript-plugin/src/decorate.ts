@@ -30,7 +30,7 @@ import path from 'node:path';
 // The compiler is reused from the language service - the single source of truth -
 // so the plugin and the editor language server can never disagree on how a
 // `.azeroth` file becomes TypeScript.
-import { generateVirtualCode, type CodeMapping } from '@azerothjs/language-service';
+import { generateVirtualCode, type CodeMapping } from '@azerothjs/language-server/language-service';
 
 /**
  * Read access to the compiled view of `.azeroth` files, shared between the host decoration (which

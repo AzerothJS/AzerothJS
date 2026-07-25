@@ -115,7 +115,7 @@ interface Collector
 /**
  * @internal Structural metadata a combinator attaches to its schema, so a consumer can
  * COMPILE from the declaration - `@azerothjs/http`'s jsonEncoder walks it to build a
- * serializer, and `@azerothjs/api`'s OpenAPI exporter walks it to describe the wire
+ * serializer, and `@azerothjs/http/api`'s OpenAPI exporter walks it to describe the wire
  * type - each built from the same declaration the validator itself was built from.
  * The schema is fully self-describing: `constraints` IS the options object the run
  * closure reads (one reference, one source of truth), never a copy. Nodes without

@@ -78,7 +78,7 @@ export interface DetectOverrides
     server: string | null;
 }
 
-const BACKEND_PACKAGES = ['@azerothjs/http', '@azerothjs/ws', '@azerothjs/api', '@azerothjs/cron'];
+const BACKEND_PACKAGES = ['@azerothjs/http', '@azerothjs/ws', '@azerothjs/cron'];
 const FRONTEND_PACKAGES = ['@azerothjs/compiler', 'azerothjs'];
 const DECORATOR_PACKAGES = ['typeorm', '@mikro-orm/core'];
 const VITE_CONFIGS = ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs'];

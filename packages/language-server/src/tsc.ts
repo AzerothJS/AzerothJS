@@ -16,7 +16,7 @@ import { watch as fsWatch, type FSWatcher } from 'node:fs';
 
 import ts from 'typescript';
 
-import { AzerothLanguageService, pathToUri, DiagnosticSeverity } from '@azerothjs/language-service';
+import { AzerothLanguageService, pathToUri, DiagnosticSeverity } from './language-service/index.ts';
 
 /** Options controlling a single check run. */
 export interface TscOptions

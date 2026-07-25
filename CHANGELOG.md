@@ -88,6 +88,24 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed
 
+- **tooling** (BREAKING for direct importers only): `@azerothjs/language-service`
+  folded INTO `@azerothjs/language-server` as the `./language-service` subpath - the
+  safe half of the ruled tooling consolidation. It was the one tooling package nothing
+  user-facing referenced by name (verified: templates and editors reference
+  `@azerothjs/typescript-plugin` in tsconfigs, `@azerothjs/eslint-plugin` in eslint
+  configs, and the `azeroth`/`azeroth-tsc` binaries - those four keep their names
+  precisely because they ARE user-facing contracts). The typescript-plugin now
+  declares its real dependency instead of relying on hoisting. Train: 14 packages.
+
+- **http / api** (BREAKING): `@azerothjs/api` folded INTO `@azerothjs/http` as the
+  `./api` subpath - the ruled backend consolidation. `import { defineContract, route,
+  mountApi } from '@azerothjs/http/api'`; the browser half at
+  `@azerothjs/http/api/client` (unchanged surface, new specifier). One package fewer
+  in the train; the standalone `@azerothjs/api` will be deprecated on npm at the next
+  publish. The purity welds extend to the new subpaths: `./api` is kernel-pure
+  (contracts mount on edge runtimes) and `./api/client` provably never reaches
+  server code.
+
 - **router** (BREAKING, per the ratified router-v2 design): `Router.loader` (the single
   leaf resource) is replaced by per-level `Router.loaders` - `useLoader(router)` keeps
   the old "deepest loading level" meaning; `LoaderHandoff` is now

@@ -13,7 +13,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 A [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 frontend for `.azeroth` files. It is a thin adapter: it owns the LSP connection
 and the document lifecycle and forwards every request to
-[`@azerothjs/language-service`](https://www.npmjs.com/package/@azerothjs/language-service), which contains all the
+the `./language-service` subpath of this package ([guide](./docs/language-service.md)), which contains all the
 intelligence (the TypeScript bridge, the markup model, and the providers).
 
 Editors that speak LSP (the VS Code extension and the JetBrains plugin in this

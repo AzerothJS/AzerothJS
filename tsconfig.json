@@ -67,17 +67,14 @@
             [
                 "./packages/ws/src/index.ts"
             ],
-            "@azerothjs/api":
-            [
-                "./packages/api/src/index.ts"
-            ],
+            "@azerothjs/http/api": ["./packages/http/src/api/index.ts"],
+            "@azerothjs/http/api/client": ["./packages/http/src/api/client-entry.ts"],
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"
             ],
-            "@azerothjs/language-service":
-            [
-                "./packages/language-service/src/index.ts"
+            "@azerothjs/language-server/language-service": [
+                "./packages/language-server/src/language-service/index.ts"
             ],
             "@azerothjs/language-server":
             [

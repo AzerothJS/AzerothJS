@@ -139,7 +139,7 @@ const served = await serve(app, { port: 3000 });
 | --- | --- |
 | [`@azerothjs/http`](https://www.npmjs.com/package/@azerothjs/http) | Web-standard `Request`/`Response` HTTP kernel: radix router, typed middleware, body limits on by default, SSE, cookies, static files, graceful shutdown. |
 | [`@azerothjs/schema`](https://www.npmjs.com/package/@azerothjs/schema) | Validation whose TypeScript types are inferred from the declaration - one source of rules for browser forms and server DTOs. |
-| [`@azerothjs/api`](https://www.npmjs.com/package/@azerothjs/api) | Declare an API contract once: the server mount, the handler signatures, and a fully inferred client - no codegen, no drift. |
+| `@azerothjs/http/api` (part of [`@azerothjs/http`](https://www.npmjs.com/package/@azerothjs/http)) | Declare an API contract once: the server mount, the handler signatures, and a fully inferred client - no codegen, no drift. |
 | [`@azerothjs/ws`](https://www.npmjs.com/package/@azerothjs/ws) | WebSocket server implementing RFC 6455 from scratch, attached to the same `serve()`. |
 | [`@azerothjs/cron`](https://www.npmjs.com/package/@azerothjs/cron) | Job scheduler: real cron expressions with honest timezone/DST semantics and overlap policies. |
 
@@ -166,8 +166,8 @@ The canon is one rule per side of the wire:
 | --- | --- |
 | Anything client-side or SSR - components, signals, control flow, the router, forms, `renderToString` | `azerothjs` (this package - the whole frontend is ONE real package) |
 | Schemas / validation shared by both halves | `@azerothjs/schema` |
-| The server - routes, middleware, contracts | `@azerothjs/http`, `@azerothjs/api` (+ `@azerothjs/ws`, `@azerothjs/cron`, `@azerothjs/logger`) |
-| The browser half of a typed API contract | `@azerothjs/api/client` (client-safe; never drags server code into a bundle) |
+| The server - routes, middleware, contracts | `@azerothjs/http` (contracts at `@azerothjs/http/api`) (+ `@azerothjs/ws`, `@azerothjs/cron`, `@azerothjs/logger`) |
+| The browser half of a typed API contract | `@azerothjs/http/api/client` (client-safe; never drags server code into a bundle) |
 | Tests / dev tooling | `@azerothjs/testing`, `@azerothjs/devtools`; dev-deps: `@azerothjs/compiler`, `@azerothjs/cli`, the editor tooling |
 
 Two things are deliberately NOT application API: `azerothjs/internal` (the compiled-output

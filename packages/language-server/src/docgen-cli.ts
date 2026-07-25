@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 import ts from 'typescript';
 
-import { AzerothLanguageService, generateComponentDocs, pathToUri } from '@azerothjs/language-service';
+import { AzerothLanguageService, generateComponentDocs, pathToUri } from './language-service/index.ts';
 
 /** Options controlling a single docgen run. */
 export interface DocgenOptions

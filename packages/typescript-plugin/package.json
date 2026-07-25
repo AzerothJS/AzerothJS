@@ -19,7 +19,6 @@
         "language-service"
     ],
     "devDependencies": {
-        "@azerothjs/language-service": "1.0.0-beta.2",
         "esbuild": "^0.28.1"
     },
     "peerDependencies": {
@@ -45,5 +44,8 @@
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/typescript-plugin",
     "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    },
+    "dependencies": {
+        "@azerothjs/language-server": "1.0.0-beta.2"
     }
 }

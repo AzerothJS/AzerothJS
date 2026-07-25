@@ -19,17 +19,24 @@
         },
         "./cli": "./dist/cli.js",
         "./tsc": "./dist/tsc.js",
-        "./docgen": "./dist/docgen-cli.js"
+        "./docgen": "./dist/docgen-cli.js",
+        "./language-service": {
+            "types": "./dist/language-service/index.d.ts",
+            "import": "./dist/language-service/index.js",
+            "default": "./dist/language-service/index.js"
+        }
     },
     "files": [
         "dist"
     ],
     "sideEffects": false,
     "dependencies": {
-        "@azerothjs/language-service": "1.0.0-beta.2",
         "typescript": ">=6 <7",
         "vscode-languageserver": "^10",
-        "vscode-languageserver-textdocument": "^1"
+        "vscode-languageserver-textdocument": "^1",
+        "@azerothjs/compiler": "1.0.0-beta.2",
+        "vscode-css-languageservice": "^6",
+        "vscode-html-languageservice": "^5"
     },
     "scripts": {
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",

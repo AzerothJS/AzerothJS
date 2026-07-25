@@ -26,45 +26,88 @@ function importsOf(file: string): string[]
     return [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1] ?? '');
 }
 
+/** Resolves a relative specifier against the importing file's directory (SRC-relative paths). */
+function resolveSpecifier(fromFile: string, specifier: string): string
+{
+    const parts = fromFile.split('/').slice(0, -1);
+    for (const segment of specifier.split('/'))
+    {
+        if (segment === '.')
+        {
+            continue;
+        }
+        if (segment === '..')
+        {
+            parts.pop();
+        }
+        else
+        {
+            parts.push(segment);
+        }
+    }
+    return parts.join('/');
+}
+
+/** Walks the SRC-relative module graph from `entry`; returns files seen + node: violations. */
+function walkGraph(entry: string): { seen: Set<string>; violations: string[] }
+{
+    const seen = new Set<string>();
+    const queue = [entry];
+    const violations: string[] = [];
+    while (queue.length > 0)
+    {
+        const file = queue.pop() as string;
+        if (seen.has(file))
+        {
+            continue;
+        }
+        seen.add(file);
+        for (const specifier of importsOf(file))
+        {
+            if (specifier.startsWith('node:'))
+            {
+                const sanctioned = ALLOWED.some((a) => a.file === file && a.specifier === specifier);
+                if (!sanctioned)
+                {
+                    violations.push(`${ file } imports ${ specifier }`);
+                }
+            }
+            else if (specifier.startsWith('.'))
+            {
+                queue.push(resolveSpecifier(file, specifier));
+            }
+        }
+    }
+    return { seen, violations };
+}
+
 describe('the fetch-standard kernel', () =>
 {
     it('the "." module graph carries no node:* import beyond the AsyncLocalStorage seam', () =>
     {
-        const seen = new Set<string>();
-        const queue = ['index.ts'];
-        const violations: string[] = [];
-
-        while (queue.length > 0)
-        {
-            const file = queue.pop() as string;
-            if (seen.has(file))
-            {
-                continue;
-            }
-            seen.add(file);
-            for (const specifier of importsOf(file))
-            {
-                if (specifier.startsWith('node:'))
-                {
-                    const sanctioned = ALLOWED.some((a) => a.file === file && a.specifier === specifier);
-                    if (!sanctioned)
-                    {
-                        violations.push(`${ file } imports ${ specifier }`);
-                    }
-                }
-                else if (specifier.startsWith('./'))
-                {
-                    queue.push(specifier.slice(2));
-                }
-            }
-        }
-
+        const { seen, violations } = walkGraph('index.ts');
         expect(violations).toEqual([]);
         expect(seen.size).toBeGreaterThan(10); // the walk genuinely covered the kernel
         // The node-only modules must NOT be reachable from the kernel entry at all.
         for (const nodeOnly of ['adapter-node.ts', 'static.ts', 'compress.ts'])
         {
             expect(seen.has(nodeOnly), `${ nodeOnly } must stay behind ./node`).toBe(false);
+        }
+    });
+
+    it('the ./api contract layer is kernel-pure too (contracts mount on edge runtimes)', () =>
+    {
+        const { violations } = walkGraph('api/index.ts');
+        expect(violations).toEqual([]);
+    });
+
+    it('the ./api/client browser entry never reaches server code', () =>
+    {
+        const { seen, violations } = walkGraph('api/client-entry.ts');
+        expect(violations).toEqual([]);
+        for (const serverOnly of ['api/mount.ts', 'api/openapi.ts', 'api/explorer.ts'])
+        {
+            expect(seen.has(serverOnly), `${ serverOnly } must never enter a browser bundle`).toBe(false);
         }
     });
 

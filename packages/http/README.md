@@ -105,6 +105,15 @@ is what Node resolves at runtime, and the tsconfig above lets `tsc` accept it to
 metadata that strip-only execution does not emit. Then compile with `tsc` and run
 `node --watch dist/main.js`. A plain `@azerothjs/http` app needs none of that.
 
+## The typed contract layer - `@azerothjs/http/api`
+
+The API-contract system lives in this package as the `./api` subpath: declare a
+contract once (routes + schemas, no handlers), mount it with `mountApi` (typed
+guards, boundary validation, the typed reply channel, contract-level file routes),
+export OpenAPI from the same declaration, and consume it in the browser through the
+fully inferred client at `@azerothjs/http/api/client` (client-safe: it never drags
+server code into a bundle). The full guide: [docs/api.md](./docs/api.md).
+
 ## What is in the box
 
 - **Radix router** - no regex, O(segments), route conflicts FAIL BOOT with a printable
