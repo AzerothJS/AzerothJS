@@ -115,7 +115,9 @@ metadata that strip-only execution does not emit. Then compile with `tsc` and ru
   consumes. Speak your own envelope with `new App({ serializeError })` - one place to reshape
   the body (route-miss 404s included), the same guarantees.
 - **Bodies with limits on by default** - JSON, urlencoded, raw, and a from-scratch
-  multipart/form-data parser (byte-exact, capped on three axes).
+  multipart/form-data parser (byte-exact, capped on three axes). Uploads beyond memory
+  use the pull-based twin: `streamMultipart(request)` iterates parts as they arrive,
+  each file payload a ReadableStream piped straight to its sink (disk, object storage).
 - **A request is a reactive root** - `createStore` state is request-isolated across
   `await` (the same isolation SSR renders have), and `onRequestCleanup` teardown ALWAYS
   runs: success, throw, or client disconnect. The disconnect `AbortSignal` rides on
@@ -129,8 +131,9 @@ metadata that strip-only execution does not emit. Then compile with `tsc` and ru
 - **Server-Sent Events** - `sse()` produces exactly what the frontend `stream` keyword
   (`createStream({ parse: 'sse' })`) consumes: framed events, comment heartbeats, `[DONE]`.
 - **The rest of a real server** - cookies (loud `__Host-`/SameSite validation), static
-  files (traversal-safe, etags, 304s), negotiated compression (br/gzip/deflate, event
-  streams exempt), typed env config that reports every problem in ONE boot error,
+  files (traversal-safe, etags, 304s, single-range `Range`/`If-Range` 206s for media
+  seeking and download resume), negotiated compression (br/gzip/deflate, event streams
+  and partial responses exempt), typed env config that reports every problem in ONE boot error,
   structured logging as an interface, graceful shutdown, HTTP/1.1 + h2c adapters.
 
 ## Production hardening

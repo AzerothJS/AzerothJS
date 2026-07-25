@@ -23,7 +23,7 @@
 import type { Schema, SchemaMeta, StringOptions, NumberOptions, ArrayOptions } from '@azerothjs/schema';
 import type { App, AzerothPlugin } from '@azerothjs/http';
 
-import { isRoute, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
+import { isRoute, isMultipartSpec, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
 import { renderExplorerHtml, renderScalarHtml } from './explorer.ts';
 
 /** @internal Reason phrases for the per-status response descriptions. */
@@ -363,10 +363,20 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
 
         if (route.input !== undefined)
         {
-            operation.requestBody = {
-                required: true,
-                content: { 'application/json': { schema: resolve(route.input as Schema<unknown>) } }
-            };
+            operation.requestBody = isMultipartSpec(route.input)
+                ? {
+                    required: true,
+                    description: 'multipart/form-data: the schema describes the TEXT fields; file parts ride beside them (binary).',
+                    content: { 'multipart/form-data': {
+                        schema: route.input.fields !== undefined
+                            ? resolve(route.input.fields as Schema<unknown>)
+                            : { type: 'object', description: 'Text fields (undeclared) plus file parts.' }
+                    } }
+                }
+                : {
+                    required: true,
+                    content: { 'application/json': { schema: resolve(route.input as Schema<unknown>) } }
+                };
         }
 
         // Responses: the declared success shape, every per-status schema from the

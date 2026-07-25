@@ -74,6 +74,7 @@ export function compressResponse(request: Request, response: Response, options: 
 
     if (response.body === null
         || response.status === 204
+        || response.status === 206 // a byte range refers to the UNENCODED representation; compressing it breaks resume math
         || response.status === 304
         || response.headers.has('content-encoding'))
     {

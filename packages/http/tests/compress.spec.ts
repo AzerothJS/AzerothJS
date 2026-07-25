@@ -107,4 +107,13 @@ describe('pass-through cases return the SAME response object', () =>
         const empty = new Response(null, { status: 304 });
         expect(compressResponse(requestAccepting('gzip'), empty)).toBe(empty);
     });
+
+    it('a 206 partial response is NEVER compressed - byte ranges refer to the unencoded file', () =>
+    {
+        const partial = new Response(LONG.slice(0, 512), {
+            status: 206,
+            headers: { 'content-type': 'text/plain', 'content-range': 'bytes 0-511/4096' }
+        });
+        expect(compressResponse(requestAccepting('br, gzip'), partial)).toBe(partial);
+    });
 });

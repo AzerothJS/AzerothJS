@@ -12,7 +12,7 @@ import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { email, required } from 'azerothjs';
 import { object, string, number, boolean, type Infer, type StandardSchemaV1 } from '@azerothjs/schema';
 import { App, HttpError, noContent } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient, reply, ApiError, type HandlersWithGuards, type StatusReply } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient, reply, multipart, ApiError, type HandlersWithGuards, type StatusReply } from '@azerothjs/api';
 
 // ---- the shared contract (in a real app: one file, imported by browser and server) ----
 
@@ -499,5 +499,112 @@ describe('the typed reply channel: status codes without losing validation', () =
         };
         void handlers;
         expect(true).toBe(true);
+    });
+});
+
+describe('contract-level file routes: multipart() input', () =>
+{
+    const uploads = defineContract({
+        files: {
+            upload: route({
+                method: 'POST', path: '/files',
+                input: multipart({ fields: object({ title: string({ min: 2 }) }), maxFileSize: 1024 }),
+                output: object({ title: string(), count: number(), bytes: number() })
+            }),
+            loose: route({ method: 'POST', path: '/loose', input: multipart() })
+        }
+    });
+
+    function buildUploadServer(): App
+    {
+        const app = new App();
+        mountApi(app, uploads, { handlers: {
+            files: {
+                upload: ({ input }) =>
+                {
+                    expectTypeOf(input.fields).toEqualTypeOf<{ title: string }>();
+                    expectTypeOf(input.files[0]!.data).toEqualTypeOf<Uint8Array>();
+                    return {
+                        title: input.fields.title,
+                        count: input.files.length,
+                        bytes: input.files.reduce((sum, file) => sum + file.data.byteLength, 0)
+                    };
+                },
+                loose: ({ input }) =>
+                {
+                    expectTypeOf(input.fields).toEqualTypeOf<Record<string, string>>();
+                    return { echo: input.fields };
+                }
+            }
+        } });
+        return app;
+    }
+
+    function formRequest(path: string, build: (form: FormData) => void): Request
+    {
+        const form = new FormData();
+        build(form);
+        return new Request(`http://local/api${ path }`, { method: 'POST', body: form });
+    }
+
+    it('the handler receives validated fields plus the files, fully typed', async () =>
+    {
+        const app = buildUploadServer();
+        const response = await app.handle(formRequest('/files', (form) =>
+        {
+            form.append('title', 'Vacation');
+            form.append('shot', new Blob([new Uint8Array([1, 2, 3])]), 'a.bin');
+            form.append('shot2', new Blob([new Uint8Array([4, 5])]), 'b.bin');
+        }));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ title: 'Vacation', count: 2, bytes: 5 });
+    });
+
+    it('field validation failures are the SAME 422 field map as JSON routes', async () =>
+    {
+        const app = buildUploadServer();
+        const response = await app.handle(formRequest('/files', (form) => form.append('title', 'x')));
+        expect(response.status).toBe(422);
+        const wire = (await response.json()) as { error: { details: { fields: Record<string, string> } } };
+        expect(Object.keys(wire.error.details.fields)).toContain('title');
+    });
+
+    it('a JSON body posted to a multipart route is a 415', async () =>
+    {
+        const app = buildUploadServer();
+        const response = await app.handle(new Request('http://local/api/files', {
+            method: 'POST', body: JSON.stringify({ title: 'Vacation' }), headers: { 'content-type': 'application/json' }
+        }));
+        expect(response.status).toBe(415);
+    });
+
+    it('the per-file cap holds at the boundary (413)', async () =>
+    {
+        const app = buildUploadServer();
+        const response = await app.handle(formRequest('/files', (form) =>
+        {
+            form.append('title', 'Big');
+            form.append('blob', new Blob([new Uint8Array(4096)]), 'big.bin');
+        }));
+        expect(response.status).toBe(413);
+    });
+
+    it('without a fields schema the handler gets the raw first-value map', async () =>
+    {
+        const app = buildUploadServer();
+        const response = await app.handle(formRequest('/loose', (form) =>
+        {
+            form.append('a', '1');
+            form.append('a', '2');
+            form.append('b', 'two');
+        }));
+        expect(await response.json()).toEqual({ echo: { a: '1', b: 'two' } });
+    });
+
+    it('the typed client refuses a multipart route LOUDLY (FormData is not JSON)', async () =>
+    {
+        const client = createClient(uploads, { baseUrl: '/api', fetch: (request) => buildUploadServer().handle(request) });
+        await expect(client.files.upload({ input: { fields: { title: 'x' }, files: [] } }))
+            .rejects.toThrow(/multipart\/form-data.*FormData/);
     });
 });

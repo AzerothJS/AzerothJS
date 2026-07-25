@@ -119,6 +119,28 @@ create: ({ input }) => exists(input.email)
 error. A raw `Response` return remains the escape hatch for non-JSON answers (files,
 redirects, streams) - the ONLY return shape that bypasses output validation.
 
+## File routes - `multipart()`
+
+A route declares a multipart/form-data input at the contract level; the handler receives
+validated text fields plus the files, fully typed:
+
+```ts
+upload: route({
+    method: 'POST', path: '/files',
+    input: multipart({ fields: object({ title: string() }), maxFileSize: 20 * 1024 * 1024 }),
+    output: FileRecord
+}),
+
+// in the handler:
+upload: ({ input }) => save(input.fields.title, input.files)   // files: buffered, capped
+```
+
+Field failures are the same 422 map as JSON routes; a non-multipart POST is a 415; the
+OpenAPI document declares the `multipart/form-data` body with the fields schema. The
+typed client does not speak multipart (a browser posts `FormData` directly - calling
+such a route through the client is a loud error), and beyond-memory uploads keep using
+`streamMultipart(context.request)` from `@azerothjs/http` in the handler.
+
 ## Bring your own validator
 
 `route({ input })` accepts any [Standard Schema](https://standardschema.dev) validator

@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { Validator } from '@seriousme/openapi-schema-validator';
 import { object, string, number, boolean, array, literal, enumOf, record, union } from '@azerothjs/schema';
 import { App } from '@azerothjs/http';
-import { defineContract, route, get, post, put, patch, del, query, toOpenApi, openapiPlugin, uncontracted, mountApi } from '@azerothjs/api';
+import { defineContract, route, get, post, put, patch, del, query, multipart, toOpenApi, openapiPlugin, uncontracted, mountApi } from '@azerothjs/api';
 
 const INFO = { title: 'Test API', version: '1.0.0' };
 
@@ -401,6 +401,36 @@ describe('per-status responses (the reply() channel) in the document', () =>
     });
 
     it('the document with per-status responses is valid OpenAPI 3.1', async () =>
+    {
+        expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
+    });
+});
+
+describe('multipart routes in the document', () =>
+{
+    const contract = defineContract({
+        upload: post('/files', { input: multipart({ fields: object({ title: string({ nonempty: true }) }) }), output: object({ ok: boolean() }) }),
+        loose: post('/loose', { input: multipart() })
+    });
+    const document = toOpenApi(contract, { info: INFO });
+    const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
+
+    it('the request body is multipart/form-data with the FIELDS schema, never fabricated file constraints', () =>
+    {
+        const body = paths['/api/files']!.post!.requestBody as { description: string; content: Record<string, { schema: Record<string, unknown> }> };
+        expect(Object.keys(body.content)).toEqual(['multipart/form-data']);
+        expect(body.description).toContain('file parts');
+        const schema = JSON.stringify(body.content['multipart/form-data']!.schema) + JSON.stringify(document.components ?? {});
+        expect(schema).toContain('"title"');
+    });
+
+    it('an undeclared-fields multipart body degrades to the honest permissive shape', () =>
+    {
+        const body = paths['/api/loose']!.post!.requestBody as { content: Record<string, { schema: { description?: string } }> };
+        expect(String(body.content['multipart/form-data']!.schema.description)).toContain('undeclared');
+    });
+
+    it('the document with multipart routes is valid OpenAPI 3.1', async () =>
     {
         expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
     });

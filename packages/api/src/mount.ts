@@ -16,9 +16,17 @@
  *     knowingly - the escape hatch is visible in the return type.
  */
 
-import type { App, RequestContext } from '@azerothjs/http';
-import { ValidationError, HttpError, json, readJson } from '@azerothjs/http';
-import { isRoute, isStatusReply, type AnyRoute, type Contract, type GuardMap, type HandlersWithGuards } from './define.ts';
+import type { App, RequestContext, UploadedFile, MultipartOptions } from '@azerothjs/http';
+import { ValidationError, HttpError, json, readJson, readMultipart } from '@azerothjs/http';
+import { isRoute, isStatusReply, isMultipartSpec, type AnyRoute, type Contract, type ContractFile, type GuardMap, type HandlersWithGuards } from './define.ts';
+
+// The contract's ContractFile is a client-safe duplicate of http's UploadedFile (define.ts
+// must not import server packages). These welds break the build if the two ever drift.
+type AssertExtends<T extends B, B> = T;
+/** @internal Type-only drift weld; never referenced. */
+export type UploadedFileMatchesContractFile = AssertExtends<UploadedFile, ContractFile>;
+/** @internal Type-only drift weld; never referenced. */
+export type ContractFileMatchesUploadedFile = AssertExtends<ContractFile, UploadedFile>;
 
 /**
  * A guard the `guards` map attaches to contract routes: the same shape as the app's
@@ -191,12 +199,51 @@ function register(app: App, definition: AnyRoute, handler: (context: unknown) =>
 
         if (definition.input !== undefined)
         {
-            const parsed = await parseAny(definition.input, await readJson(context.request));
-            if (!parsed.ok)
+            if (isMultipartSpec(definition.input))
             {
-                throw new ValidationError(parsed.errors, 'Validation failed', parsed.issues);
+                // The contract-level file route: parse within the caps, validate the text
+                // fields exactly like a JSON body, hand the handler { fields, files }.
+                const spec = definition.input;
+                const caps: MultipartOptions = {};
+                if (spec.limit !== undefined)
+                {
+                    caps.limit = spec.limit;
+                }
+                if (spec.maxParts !== undefined)
+                {
+                    caps.maxParts = spec.maxParts;
+                }
+                if (spec.maxFileSize !== undefined)
+                {
+                    caps.maxFileSize = spec.maxFileSize;
+                }
+                const body = await readMultipart(context.request, caps);
+                const raw: Record<string, string> = {};
+                for (const [key, value] of body.fields)
+                {
+                    raw[key] = raw[key] ?? value; // first value wins, deterministically (same policy as query)
+                }
+                let fields: unknown = raw;
+                if (spec.fields !== undefined)
+                {
+                    const parsed = await parseAny(spec.fields, raw);
+                    if (!parsed.ok)
+                    {
+                        throw new ValidationError(parsed.errors, 'Validation failed', parsed.issues);
+                    }
+                    fields = parsed.value;
+                }
+                shaped.input = { fields, files: body.files };
             }
-            shaped.input = parsed.value;
+            else
+            {
+                const parsed = await parseAny(definition.input, await readJson(context.request));
+                if (!parsed.ok)
+                {
+                    throw new ValidationError(parsed.errors, 'Validation failed', parsed.issues);
+                }
+                shaped.input = parsed.value;
+            }
         }
 
         const result = await handler(context);

@@ -20,7 +20,7 @@
  */
 
 import { SchemaError } from '@azerothjs/schema';
-import { isRoute, type AnyRoute, type Contract, type PathParams, type Route } from './define.ts';
+import { isRoute, isMultipartSpec, type AnyRoute, type Contract, type PathParams, type Route } from './define.ts';
 
 /** The error a failed call throws: the wire shape, typed. */
 export class ApiError extends Error
@@ -120,6 +120,13 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
         // A native schema uses its one-pass safeParse; a FOREIGN Standard Schema validator
         // (Zod/Valibot/ArkType) runs `~standard.validate` - awaited, since the call is
         // already async - and its issues map to the same flat field-path SchemaError.
+        if (routeDef.input !== undefined && isMultipartSpec(routeDef.input))
+        {
+            // A multipart route's input is FormData, not JSON - the typed client would
+            // silently JSON-encode the files. Post FormData with fetch directly instead.
+            throw new Error(`The route ${ routeDef.method as string } ${ routeDef.path as string } takes multipart/form-data; `
+                + 'the typed client only speaks JSON. Post a FormData body with fetch directly.');
+        }
         let body = args.input;
         const nativeInput = routeDef.input as { safeParse?: (v: unknown) => { ok: true; value: unknown } | { ok: false; errors: Record<string, string>; issues?: Array<{ path: string; code: string; message: string }> } } | undefined;
         if (nativeInput !== undefined && typeof nativeInput.safeParse === 'function')

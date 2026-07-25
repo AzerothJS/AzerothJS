@@ -10,9 +10,9 @@
  * server code); this root entry adds the server half (the unified mountApi + guard).
  */
 
-export { defineContract, route, get, post, put, patch, del, query, guard, reply } from './define.ts';
+export { defineContract, route, get, post, put, patch, del, query, guard, reply, multipart } from './define.ts';
 export type {
-    Contract, AnyRoute, Route, RouteDocs, ApiMethod, PathParams, HandlerContext, StatusReply, ReplyOf,
+    Contract, AnyRoute, Route, RouteDocs, ApiMethod, PathParams, HandlerContext, StatusReply, ReplyOf, MultipartInput, MultipartConfig, ContractFile,
     Guard, GuardContext, GuardKey, GuardMap, HandlersWithGuards
 } from './define.ts';
 

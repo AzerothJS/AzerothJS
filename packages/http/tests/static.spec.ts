@@ -96,6 +96,91 @@ describe('conditional requests', () =>
     });
 });
 
+describe('range requests (single-range; styles.css is the 20-byte "body { color: teal }")', () =>
+{
+    it('every 200 advertises accept-ranges and last-modified', async () =>
+    {
+        const response = await get(appWith(), '/assets/styles.css');
+        expect(response.headers.get('accept-ranges')).toBe('bytes');
+        expect(response.headers.get('last-modified')).toMatch(/GMT$/);
+    });
+
+    it('bytes=0-3 gets a 206 with exactly that span and the total in content-range', async () =>
+    {
+        const response = await get(appWith(), '/assets/styles.css', { headers: { range: 'bytes=0-3' } });
+        expect(response.status).toBe(206);
+        expect(response.headers.get('content-range')).toBe('bytes 0-3/20');
+        expect(response.headers.get('content-length')).toBe('4');
+        expect(await response.text()).toBe('body');
+    });
+
+    it('an open-ended range streams to the end; a suffix range takes the tail', async () =>
+    {
+        const open = await get(appWith(), '/assets/styles.css', { headers: { range: 'bytes=7-' } });
+        expect(open.status).toBe(206);
+        expect(await open.text()).toBe('color: teal }');
+
+        const suffix = await get(appWith(), '/assets/styles.css', { headers: { range: 'bytes=-6' } });
+        expect(suffix.status).toBe(206);
+        expect(suffix.headers.get('content-range')).toBe('bytes 14-19/20');
+        expect(await suffix.text()).toBe('teal }');
+    });
+
+    it('range slices are BYTE ranges, exact on binary content', async () =>
+    {
+        const response = await get(appWith(), '/assets/data.bin', { headers: { range: 'bytes=2-4' } });
+        expect(response.status).toBe(206);
+        expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([1, 254, 13]);
+    });
+
+    it('an end past the file clamps; a start past the file is a 416 with the total size', async () =>
+    {
+        const clamped = await get(appWith(), '/assets/styles.css', { headers: { range: 'bytes=14-9999' } });
+        expect(clamped.status).toBe(206);
+        expect(clamped.headers.get('content-range')).toBe('bytes 14-19/20');
+
+        const past = await get(appWith(), '/assets/styles.css', { headers: { range: 'bytes=20-' } });
+        expect(past.status).toBe(416);
+        expect(past.headers.get('content-range')).toBe('bytes */20');
+    });
+
+    it('multi-range and malformed Range headers are IGNORED - the full 200 answers', async () =>
+    {
+        for (const header of ['bytes=0-3,5-9', 'bytes=abc', 'chars=0-3', 'bytes=5-2'])
+        {
+            const response = await get(appWith(), '/assets/styles.css', { headers: { range: header } });
+            expect(response.status).toBe(200);
+            expect(await response.text()).toBe('body { color: teal }');
+        }
+    });
+
+    it('If-Range with the current validator honors the range; a stale one gets the full file', async () =>
+    {
+        const app = appWith();
+        const probe = await get(app, '/assets/styles.css');
+        const etag = probe.headers.get('etag')!;
+        const lastModified = probe.headers.get('last-modified')!;
+
+        const fresh = await get(app, '/assets/styles.css', { headers: { range: 'bytes=0-3', 'if-range': etag } });
+        expect(fresh.status).toBe(206);
+
+        const freshByDate = await get(app, '/assets/styles.css', { headers: { range: 'bytes=0-3', 'if-range': lastModified } });
+        expect(freshByDate.status).toBe(206);
+
+        const stale = await get(app, '/assets/styles.css', { headers: { range: 'bytes=0-3', 'if-range': '"0-0"' } });
+        expect(stale.status).toBe(200);
+        expect(await stale.text()).toBe('body { color: teal }');
+    });
+
+    it('If-None-Match still wins over Range - a cache hit is a 304, not a 206', async () =>
+    {
+        const app = appWith();
+        const etag = (await get(app, '/assets/styles.css')).headers.get('etag')!;
+        const response = await get(app, '/assets/styles.css', { headers: { range: 'bytes=0-3', 'if-none-match': etag } });
+        expect(response.status).toBe(304);
+    });
+});
+
 describe('traversal safety: secret.txt sits one level ABOVE the root', () =>
 {
     it('percent-encoded dot segments cannot escape (the router decodes them per segment)', async () =>

@@ -22,9 +22,15 @@
  *   - STREAMING. Files stream to the response (no full-file buffering), riding the adapter's
  *     backpressure loop.
  *
- * Range requests are deliberately absent for now: correct Range support (multipart ranges,
- * If-Range interaction) is its own unit and arrives with the media-serving story. Directory
- * requests resolve to `index` (default index.html) when present.
+ *   - RANGE REQUESTS. Single-range `bytes=` requests get a 206 streaming exactly the span
+ *     (video seeking, download resume); an unsatisfiable range is a 416 with the total
+ *     size. Multi-range requests are answered with the FULL 200 - RFC 9110 permits
+ *     ignoring Range, and multipart/byteranges complexity buys real clients nothing
+ *     (browsers and download managers issue single ranges). If-Range holds: a stale
+ *     validator (ETag or Last-Modified date) downgrades to the full 200 so a resumed
+ *     download never splices two versions of a file.
+ *
+ * Directory requests resolve to `index` (default index.html) when present.
  */
 
 import { createReadStream } from 'node:fs';
@@ -130,9 +136,12 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         // A strong validator from (size, mtime): whole-file responses cannot differ without
         // one of the two changing on any sane filesystem.
         const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }"`;
+        const lastModified = new Date(info.mtimeMs).toUTCString();
         const headers = new Headers({
             'content-type': contentTypeFor(target),
             'cache-control': cacheControl,
+            'accept-ranges': 'bytes',
+            'last-modified': lastModified,
             etag
         });
 
@@ -141,8 +150,76 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             return new Response(null, { status: 304, headers });
         }
 
+        const range = rangeFor(context.request, info.size, etag, lastModified);
+        if (range === 'unsatisfiable')
+        {
+            headers.set('content-range', `bytes */${ info.size }`);
+            return new Response(null, { status: 416, headers });
+        }
+        if (range !== null)
+        {
+            headers.set('content-range', `bytes ${ range.start }-${ range.end }/${ info.size }`);
+            headers.set('content-length', String(range.end - range.start + 1));
+            const span = Readable.toWeb(createReadStream(target, { start: range.start, end: range.end })) as ReadableStream<Uint8Array>;
+            return new Response(span, { status: 206, headers });
+        }
+
         headers.set('content-length', String(info.size));
         const body = Readable.toWeb(createReadStream(target)) as ReadableStream<Uint8Array>;
         return new Response(body, { status: 200, headers });
     };
+}
+
+/**
+ * @internal The byte span to serve for this request, `null` for the full file, or
+ * `'unsatisfiable'` for a 416. Only the single-range form is honored (see the module doc);
+ * a syntactically invalid or multi-range header is IGNORED per RFC 9110, never an error.
+ */
+function rangeFor(
+    request: Request, size: number, etag: string, lastModified: string
+): { start: number; end: number } | 'unsatisfiable' | null
+{
+    const header = request.headers.get('range');
+    if (header === null)
+    {
+        return null;
+    }
+
+    // If-Range: serve the range only against the exact entity the client already holds -
+    // a changed file must arrive whole, or a resumed download splices two versions.
+    const ifRange = request.headers.get('if-range');
+    if (ifRange !== null && ifRange !== etag && ifRange !== lastModified)
+    {
+        return null;
+    }
+
+    const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+    if (match === null)
+    {
+        return null;
+    }
+    const [, first, last] = match;
+
+    if (first === '')
+    {
+        // Suffix form: the final N bytes.
+        if (last === '' || last === '0')
+        {
+            return last === '0' ? 'unsatisfiable' : null;
+        }
+        const span = Math.min(Number(last), size);
+        return size === 0 ? 'unsatisfiable' : { start: size - span, end: size - 1 };
+    }
+
+    const start = Number(first);
+    if (start >= size)
+    {
+        return 'unsatisfiable';
+    }
+    const end = last === '' ? size - 1 : Math.min(Number(last), size - 1);
+    if (end < start)
+    {
+        return null;
+    }
+    return { start, end };
 }

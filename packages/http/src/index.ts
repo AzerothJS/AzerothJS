@@ -67,7 +67,7 @@ export type { ClientIpOptions } from './client-ip.ts';
 export { rateLimit, MemoryRateStore } from './rate-limit.ts';
 export type { RateStore, RateLimitOptions, RateLimitDecision } from './rate-limit.ts';
 
-export { readMultipart, boundaryOf } from './multipart.ts';
+export { readMultipart, streamMultipart, boundaryOf } from './multipart.ts';
 export type { MultipartBody, MultipartOptions, UploadedFile } from './multipart.ts';
 
 export { parseCookies, serializeCookie, expireCookie } from './cookies.ts';

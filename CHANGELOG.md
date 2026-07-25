@@ -11,6 +11,29 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **http**: `streamMultipart(request)` - the pull-based multipart iterator for uploads
+  beyond memory. Parts arrive in posted order as they come off the socket; each payload
+  is a `ReadableStream` piped straight to its sink (disk, object storage), with
+  `bytes()`/`text()` per-part helpers (capped) for small parts. Same validation posture
+  as the buffered reader: wrong content type is a 415, framing violations are typed
+  400s, part-count and header caps hold, and parsing is chunk-edge safe (a boundary
+  split across transport chunks parses byte-identically). Single-pass discipline:
+  advancing the iterator discards the current part's unread remainder, and every exit -
+  terminal delimiter, error, or an early `break` - releases the request body reader.
+- **http**: static files answer single-range `Range` requests - a 206 streams exactly
+  the requested span (video seeking, download resume), an unsatisfiable range is a 416
+  with the total size, and multi-range or malformed headers are ignored with the full
+  200 (RFC 9110 permits this; multipart/byteranges buys real clients nothing).
+  `If-Range` holds by ETag or `Last-Modified` date, so a resumed download never splices
+  two versions of a file; `Accept-Ranges` and `Last-Modified` now ride every response.
+  `compressResponse` exempts 206s - a byte range refers to the UNENCODED representation.
+- **api**: contract-level file routes. `input: multipart({ fields, limit, maxParts,
+  maxFileSize })` declares a multipart/form-data route in the contract; the handler
+  receives `{ fields, files }` fully typed - fields validated against the schema (the
+  same 422 field map as JSON routes), files buffered within the caps. A non-multipart
+  POST is a 415; the OpenAPI document declares the `multipart/form-data` request body
+  with the fields schema. The typed client refuses multipart routes loudly (a browser
+  posts `FormData` directly); beyond-memory uploads use `streamMultipart` in the handler.
 - **api**: the typed reply channel. A route declares its non-default responses per
   status (`responses: { 201: User, 409: Problem }`) and a handler speaks them through
   `reply(status, body?, headers?)` - the body is validated against that status's

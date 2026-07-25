@@ -81,6 +81,103 @@ export interface RouteDocs
     security?: ReadonlyArray<string>;
 }
 
+/** @internal The brand distinguishing a multipart input spec from a validating schema. */
+export const MULTIPART: unique symbol = Symbol('azerothjs.api.multipart');
+
+/**
+ * One uploaded file as a contract-level multipart handler receives it. Structurally
+ * identical to @azerothjs/http's UploadedFile (mountApi passes those through verbatim);
+ * declared here so contract files - which browsers import - stay a pure schema+api affair.
+ */
+export interface ContractFile
+{
+    /** The form field name this file was posted under. */
+    name: string;
+
+    /** The client-supplied filename, verbatim. UNTRUSTED: sanitize before touching a filesystem. */
+    filename: string;
+
+    /** The part's declared Content-Type (application/octet-stream when the client omits it). */
+    contentType: string;
+
+    /** The raw file bytes. */
+    data: Uint8Array;
+}
+
+/** What a multipart route's handler receives as `input`: validated text fields plus the files. */
+export interface MultipartInput<Fields = Record<string, string>>
+{
+    /** The text fields - validated by the `fields` schema, or the raw first-value map without one. */
+    fields: Fields;
+
+    /** File parts in posted order. */
+    files: ContractFile[];
+}
+
+/** How {@link multipart} shapes the parse: field validation plus the byte/part caps. */
+export interface MultipartConfig<Fields>
+{
+    /**
+     * Validates the TEXT fields (first value wins for repeated names, like query).
+     * Failures are the same 422 field map every other boundary speaks.
+     */
+    fields?: RouteSchema<Fields>;
+
+    /** Total body cap in bytes (default 8 MiB). */
+    limit?: number;
+
+    /** Maximum number of parts (default 256). */
+    maxParts?: number;
+
+    /** Per-file cap in bytes (default: the total limit). */
+    maxFileSize?: number;
+}
+
+/** @internal The runtime shape behind a multipart input spec. */
+export interface MultipartSpecShape
+{
+    readonly [MULTIPART]: true;
+    fields?: RouteSchema<unknown>;
+    limit?: number;
+    maxParts?: number;
+    maxFileSize?: number;
+}
+
+/**
+ * Declares a route's input as multipart/form-data - the contract-level file route:
+ *
+ * ```ts
+ * upload: route({
+ *     method: 'POST', path: '/files',
+ *     input: multipart({ fields: object({ title: string() }), maxFileSize: 20 * 1024 * 1024 }),
+ *     output: FileRecord
+ * })
+ * ```
+ *
+ * The handler's `input` is `{ fields, files }`: fields validated against the schema (422 on
+ * failure, same field map as JSON routes), files buffered within the caps. A non-multipart
+ * POST to the route is a 415. Beyond-memory uploads keep using `streamMultipart` on
+ * `context.request` in a raw handler - the buffered contract form is for form-with-files
+ * scale, not media ingest. The typed CLIENT does not speak multipart (a browser posts
+ * FormData directly); calling such a route through it is a loud error.
+ *
+ * The return is TYPED as a route schema of the handler-facing input shape so `route()`
+ * infers `In` with no extra machinery; at runtime mountApi dispatches on the brand.
+ */
+export function multipart<Fields = Record<string, string>>(
+    config: MultipartConfig<Fields> = {}
+): RouteSchema<MultipartInput<Fields>>
+{
+    const spec: MultipartSpecShape = { [MULTIPART]: true, ...config };
+    return spec as unknown as RouteSchema<MultipartInput<Fields>>;
+}
+
+/** @internal Whether a route input is a multipart spec (vs a validating schema). */
+export function isMultipartSpec(value: unknown): value is MultipartSpecShape
+{
+    return typeof value === 'object' && value !== null && (value as { [MULTIPART]?: unknown })[MULTIPART] === true;
+}
+
 /** @internal The brand distinguishing a typed status reply from an arbitrary object body. */
 export const REPLY: unique symbol = Symbol('azerothjs.api.reply');
 
