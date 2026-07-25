@@ -32,7 +32,7 @@ export { onRequestCleanup, runInRequestRoot } from './request-root.ts';
 export { loadConfig, str, num, flag, oneOf } from './config.ts';
 export type { ConfigVar, ConfigOf } from './config.ts';
 
-export { createLogger, jsonSink, prettySink, logRequests } from './logger.ts';
+export { createMinimalLogger, jsonSink, prettySink, logRequests } from './logger.ts';
 export type { Logger, LogLevel, LogRecord, LogSink } from './logger.ts';
 
 export {
@@ -54,7 +54,7 @@ export { serve, serveH2c, toWebRequest, writeResponse, handleShutdownSignals } f
 export type { Served, WebHandler, ConnectMiddleware, SocketTimeouts, ShutdownSignalOptions } from './adapter-node.ts';
 
 export { pipeline, withResponseHeaders, requestId, requestIdOf } from './edge.ts';
-export type { EdgeMiddleware, RequestIdOptions } from './edge.ts';
+export type { HandlerWrapper, RequestIdOptions } from './edge.ts';
 
 export { securityHeaders } from './security.ts';
 export type { SecurityHeadersOptions, HstsOptions } from './security.ts';

@@ -210,7 +210,10 @@ export function del<Path extends string, Out = unknown, Query = undefined>(
     return { kind: 'route', method: 'DELETE', path, ...definition };
 }
 
-/** `query('/search', { input, output })` - a QUERY route; `input` is the query document. */
+/** `query('/search', { input, output })` - a QUERY route; `input` is the query document.  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * proxies, caches, and tooling may not recognize it. The surface is stable within the
+ * 1.x train but carries an experimental flag until the RFC is.
+ */
 export function query<Path extends string, In = undefined, Out = unknown>(
     path: Path, definition: { input?: RouteSchema<In>; output?: RouteSchema<Out>; docs?: RouteDocs } = {}
 ): Route<Path, In, Out>
@@ -247,27 +250,6 @@ export interface HandlerContext<Path extends string, In, Query>
 
     /** The validated query object (undefined when the route declares no query schema). */
     query: Query;
-}
-
-/** The handler an implementation must provide for one route - signature derived. */
-export type HandlerFor<R> =
-    R extends Route<infer Path, infer In, infer Out, infer Query>
-        ? (context: HandlerContext<Path, In, Query>) => Out | Response | Promise<Out | Response>
-        : never;
-
-/** The full handler tree a contract demands (no guard additions - see HandlersFor). */
-export type HandlersOf<Shape extends Contract> =
-    {
-        [K in keyof Shape]:
-        Shape[K] extends AnyRoute ? HandlerFor<Shape[K]>
-            : Shape[K] extends Contract ? HandlersOf<Shape[K]> : never;
-    };
-
-/** A contract paired with its handlers - what the server mounts. */
-export interface Implementation<Shape extends Contract = Contract>
-{
-    contract: Shape;
-    handlers: HandlersOf<Shape>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -365,16 +347,3 @@ export type HandlersWithGuards<Shape extends Contract, Guards, Prefix extends st
     Shape[K] extends AnyRoute ? GuardedHandlerFor<Shape[K], `${ Prefix }${ K }`, Guards>
         : Shape[K] extends Contract ? HandlersWithGuards<Shape[K], Guards, `${ Prefix }${ K }.`> : never;
 };
-
-/**
- * Attaches handlers to a contract, SERVER-SIDE ONLY. Every route must be implemented with
- * exactly the derived signature - a missing handler or a drifted return type fails to
- * compile here, at the earliest possible site.
- */
-export function implementContract<Shape extends Contract>(
-    contract: Shape,
-    handlers: HandlersOf<Shape>
-): Implementation<Shape>
-{
-    return { contract, handlers };
-}

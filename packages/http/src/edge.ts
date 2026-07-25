@@ -23,14 +23,14 @@ import { PayloadResponse } from './payload.ts';
  * request, answer directly, delegate, and transform the response. The one composition unit
  * for edge concerns (request id, security headers, CORS, rate limiting).
  */
-export type EdgeMiddleware = (next: WebHandler) => WebHandler;
+export type HandlerWrapper = (next: WebHandler) => WebHandler;
 
 /**
  * Composes edge middleware around an app, FIRST argument outermost: `pipeline(app, cors, rl)`
  * runs cors, then rate limiting, then the app, and unwinds responses back out through each.
  * The result is a `WebHandler` - hand it to `serve()`, or call `.handle()` in a test.
  */
-export function pipeline(app: WebHandler, ...middleware: EdgeMiddleware[]): WebHandler
+export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebHandler
 {
     let handler = app;
     for (let i = middleware.length - 1; i >= 0; i--)
@@ -97,7 +97,7 @@ const VALID_ID = /^[\x21-\x7e]{1,200}$/;
  * expose it on the request (see {@link requestIdOf}) for handlers and the logger, and echo it
  * on the response so a client and its logs share one id across the whole call.
  */
-export function requestId(options: RequestIdOptions = {}): EdgeMiddleware
+export function requestId(options: RequestIdOptions = {}): HandlerWrapper
 {
     const header = (options.header ?? 'x-request-id').toLowerCase();
     const generate = options.generate ?? ((): string => crypto.randomUUID());

@@ -13,7 +13,7 @@
  * Security header on http would pin clients to a scheme this connection cannot prove.
  */
 
-import type { EdgeMiddleware } from './edge.ts';
+import type { HandlerWrapper } from './edge.ts';
 import { withResponseHeaders } from './edge.ts';
 
 export interface HstsOptions
@@ -127,7 +127,7 @@ function hstsValue(hsts: HstsOptions): string
  * pass options to override a value, `false` to drop one, or enable the opt-in headers (HSTS,
  * Permissions-Policy, CSP). HSTS is emitted only over a proven-secure connection.
  */
-export function securityHeaders(options: SecurityHeadersOptions = {}): EdgeMiddleware
+export function securityHeaders(options: SecurityHeadersOptions = {}): HandlerWrapper
 {
     const base = staticHeaders(options);
     const hsts = options.hsts;

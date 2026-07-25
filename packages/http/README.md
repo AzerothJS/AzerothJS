@@ -168,12 +168,16 @@ is the seam for a Redis-backed limiter across a fleet.
 
 For a full deployment: `timeouts` also takes `requestMs` (whole-request bound for slow bodies)
 and `checkIntervalMs` (how promptly a slow connection is reclaimed); `new App({ observe:
-logRequests(createLogger()) })` emits one JSON log line per request with method, path, status,
+logRequests(createMinimalLogger()) })` emits one JSON log line per request with method, path, status,
 duration, and the request id; expose a cheap `GET /healthz` returning 200 for orchestrator
 probes; and enable HSTS via `securityHeaders({ hsts })` only when TLS terminates in front - it
 is emitted only over a connection proven secure.
 
 ## The QUERY method (RFC 10008)
+
+> **Experimental.** RFC 10008 is not yet deployed internet reality - proxies, caches,
+> and tooling may not recognize QUERY. The API is stable within 1.x but flagged until
+> the RFC lands broadly.
 
 For a read whose parameters are too large or too structured for a URL - a complex filter, a
 search document - a query string does not fit and a POST wrongly signals a state change. The

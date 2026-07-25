@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { object, string, number, SchemaError, type Infer } from '@azerothjs/schema';
 import { createForm } from '@azerothjs/form';
 import { App, readValidated, json } from '@azerothjs/http';
-import { defineContract, route, implementContract, mountApi, createClient } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient } from '@azerothjs/api';
 
 const CODES = { required: 'NOT_EMPTY', nonempty: 'NOT_EMPTY', min: 'MIN_LENGTH', format: 'INVALID_EMAIL' };
 
@@ -91,7 +91,7 @@ describe('one schema, three boundaries', () =>
             signUp: route({ method: 'POST', path: '/sign-up', input: signUp })
         });
         const app = new App();
-        mountApi(app, implementContract(contract, { signUp: ({ input }) => ({ created: input.name }) }));
+        mountApi(app, contract, { handlers: { signUp: ({ input }) => ({ created: input.name }) } });
 
         const response = await app.handle(new Request('http://local/api/sign-up', {
             method: 'POST',

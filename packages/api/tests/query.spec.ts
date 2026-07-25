@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { App } from '@azerothjs/http';
-import { defineContract, route, implementContract, mountApi, createClient } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient } from '@azerothjs/api';
 import { object, string, number, array } from '@azerothjs/schema';
 
 const contract = defineContract({
@@ -23,12 +23,11 @@ const contract = defineContract({
 function server(): App
 {
     const app = new App();
-    const implementation = implementContract(contract, {
+    mountApi(app, contract, { handlers: {
         products: {
             search: ({ input }) => ({ ids: input.term === 'sword' ? [1, 2] : [] })
         }
-    });
-    mountApi(app, implementation);
+    } });
     return app;
 }
 

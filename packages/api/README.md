@@ -31,15 +31,16 @@ export const contract = defineContract({
 
 ```ts
 // server
-import { implementContract, mountApi } from '@azerothjs/api';
+import { mountApi } from '@azerothjs/api';
 
-const api = implementContract(contract, {
-    users: {
-        get: ({ params }) => ({ id: Number(params.id), name: 'Jaina' }), // signature DERIVED - drift fails to compile
-        create: ({ input }) => ({ created: input.name })
+mountApi(app, contract, {
+    handlers: {
+        users: {
+            get: ({ params }) => ({ id: Number(params.id), name: 'Jaina' }), // signature DERIVED - drift fails to compile
+            create: ({ input }) => ({ created: input.name })
+        }
     }
-});
-mountApi(app, api); // validation at the boundary; 422s carry the form-compatible field map
+}); // validation at the boundary; 422s carry the form-compatible field map
 ```
 
 ```ts
@@ -103,6 +104,10 @@ existing schemas. A foreign schema validates the boundary; its OpenAPI entry deg
 the permissive shape (native schemas keep full self-description).
 
 ## The QUERY method
+
+> **Experimental.** RFC 10008 is not yet deployed internet reality - proxies, caches,
+> and tooling may not recognize QUERY. The API is stable within 1.x but flagged until
+> the RFC lands broadly.
 
 A route may use `method: 'QUERY'` (RFC 10008) - a safe, idempotent read that carries a body,
 for filters too large or structured for a URL. Its `input` schema is the query body, validated

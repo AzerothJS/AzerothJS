@@ -12,7 +12,7 @@ import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { email, required } from '@azerothjs/form';
 import { object, string, number, boolean, type Infer } from '@azerothjs/schema';
 import { App, HttpError, noContent } from '@azerothjs/http';
-import { defineContract, route, implementContract, mountApi, createClient, ApiError } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient, ApiError, type HandlersWithGuards } from '@azerothjs/api';
 
 // ---- the shared contract (in a real app: one file, imported by browser and server) ----
 
@@ -44,7 +44,7 @@ const contract = defineContract({
 function buildServer(overrides: Partial<{ create: (input: { name: string; email: string }) => unknown }> = {}): App
 {
     const app = new App();
-    const api = implementContract(contract, {
+    mountApi(app, contract, { handlers: {
         users: {
             get: ({ params }) =>
             {
@@ -69,8 +69,7 @@ function buildServer(overrides: Partial<{ create: (input: { name: string; email:
             remove: () => noContent()
         },
         health: () => ({ ok: true })
-    });
-    mountApi(app, api);
+    } });
     return app;
 }
 
@@ -192,12 +191,13 @@ describe('the output contract guards the server against itself', () =>
 
 describe('compile-time contract enforcement', () =>
 {
-    it('implementContract demands every route with the derived signature', () =>
+    it('the unified mount demands every route with the derived signature', () =>
     {
         // @ts-expect-error - the users.create handler is missing.
-        implementContract(contract, { users: { get: () => ({ id: 1, name: '', email: '' }), list: () => ({ total: 0, names: '' }), remove: () => noContent() }, health: () => ({ ok: true }) });
+        const missing: HandlersWithGuards<typeof contract, Record<never, never>> = { users: { get: () => ({ id: 1, name: '', email: '' }), list: () => ({ total: 0, names: '' }), remove: () => noContent() }, health: () => ({ ok: true }) };
+        void missing;
 
-        implementContract(contract, {
+        const drifted: HandlersWithGuards<typeof contract, Record<never, never>> = {
             users: {
                 // @ts-expect-error - the output type is wrong (id must be number).
                 get: () => ({ id: 'one', name: '', email: '' }),
@@ -206,7 +206,8 @@ describe('compile-time contract enforcement', () =>
                 remove: () => noContent()
             },
             health: () => ({ ok: true })
-        });
+        };
+        void drifted;
         expect(true).toBe(true);
     });
 
@@ -233,9 +234,9 @@ describe('handler context passthrough', () =>
         });
         const app = new App();
         const authed = app.with(() => ({ user: 'thrall' }));
-        mountApi(authed, implementContract(contract, {
+        mountApi(authed, contract, { prefix: '', handlers: {
             me: (context) => ({ user: (context as typeof context & { user: string }).user })
-        }), { prefix: '' });
+        } });
         const response = await app.handle(new Request('http://local/me'));
         expect(await response.json()).toEqual({ user: 'thrall' });
     });
@@ -263,8 +264,9 @@ describe('mount guards', () =>
     {
         const order: string[] = [];
         const app = new App();
-        mountApi(app, implementContract(contract, handlers), {
+        mountApi(app, contract, {
             prefix: '',
+            handlers,
             guards: {
                 '*': [() =>
                 {
@@ -288,8 +290,9 @@ describe('mount guards', () =>
     it('a guard returning a Response short-circuits; a throwing guard rejects', async () =>
     {
         const app = new App();
-        mountApi(app, implementContract(contract, handlers), {
+        mountApi(app, contract, {
             prefix: '',
+            handlers,
             guards: {
                 'account.admin': [() => new Response('blocked', { status: 403 })],
                 'open': [() =>

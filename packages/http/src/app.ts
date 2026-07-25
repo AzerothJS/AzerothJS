@@ -171,7 +171,7 @@ export type Middleware<Ctx extends object, Added extends Record<string, unknown>
     Added | Response | null | undefined | void | Promise<Added | Response | null | undefined | void>;
 
 /**
- * A named, versioned server plugin: the packaged form of the `app.plugin(fn)` functional seam.
+ * A named, versioned server plugin: the packaged form of the functional `app.register(fn)` seam.
  * `install` receives the app - with whatever context type it has accumulated so far - and
  * returns the (possibly more capable) app; the return TYPE flows the plugin's context additions
  * to everything registered after it, exactly as `use` and `plugin` do. `name` identifies the
@@ -242,6 +242,14 @@ export class App<Ctx extends object = object>
      * registered AFTER it - ordering is lexical: what you read top-to-bottom is what runs,
      * and a route above a `use` is untouched by it. The runtime merge happens in the
      * composed chain; middleware never mutate the context directly, they return additions.
+     *
+     * SOUNDNESS CAVEATS (the deliberate trade, same one Hono makes): `use` mutates the
+     * shared middleware list and returns `this` re-typed, so (1) an app reference ALIASED
+     * before the `use` registers routes whose handlers run the middleware but are typed
+     * WITHOUT its additions, and (2) a middleware that can SHORT-CIRCUIT (return a
+     * Response instead of additions) leaves the additions typed-as-present on paths it
+     * never decorated. When either matters, prefer {@link with}: its forked view makes
+     * both the scope and the typing exact.
      */
     public use<Added extends Record<string, unknown> = Record<never, never>>(
         middleware: Middleware<Ctx, Added>
@@ -371,33 +379,38 @@ export class App<Ctx extends object = object>
      * would wrongly signal a state change. The handler MUST NOT mutate state - that contract is
      * what lets responses be cached and requests retried. Read the body as you would a POST's
      * (readJson/readForm enforce the required Content-Type); reply with `queryResult`.
-     */
+      * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * proxies, caches, and tooling may not recognize it. The surface is stable within the
+ * 1.x train but carries an experimental flag until the RFC is.
+ */
     public query<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('QUERY', pattern, handler);
     }
 
     /**
-     * Applies a plugin - a plain function over this app returning the (possibly more
-     * capable) app. There is no registration graph, no encapsulation scopes, no deferred
-     * boot: `app.plugin(auth).plugin(metrics)` IS the composition, typed end to end, and
-     * what a plugin does is exactly what its body says.
+     * Registers a plugin - the ONE plugin verb, in either form:
+     *
+     *   - a NAMED plugin ({@link AzerothPlugin}): runs `install`, records name+version, and
+     *     REJECTS a second registration under the same name (a duplicate is almost always a
+     *     wiring mistake - two copies, or two versions - and applying it twice would double
+     *     its middleware/routes). The shipped-module form.
+     *   - a plain FUNCTION over the app returning the (possibly more capable) app: applied
+     *     directly, no registry entry - the one-off anonymous transform.
+     *     `app.register(auth).register(metrics)` IS the composition, typed end to end.
+     *
+     * Either way the plugin's context additions flow into the returned app's type, so
+     * routes registered afterwards see them.
      */
-    public plugin<Out extends object>(fn: (app: App<Ctx>) => App<Out>): App<Out>
+    public register<Out extends object>(plugin: AzerothPlugin<Ctx, Out>): App<Out>;
+    // eslint-disable-next-line @typescript-eslint/unified-signatures -- a union parameter defeats Out inference for the bare-function form; separate overloads keep both forms fully inferred
+    public register<Out extends object>(fn: (app: App<Ctx>) => App<Out>): App<Out>;
+    public register<Out extends object>(plugin: AzerothPlugin<Ctx, Out> | ((app: App<Ctx>) => App<Out>)): App<Out>
     {
-        return fn(this);
-    }
-
-    /**
-     * Registers a NAMED plugin ({@link AzerothPlugin}) - the packaged form of {@link plugin}.
-     * Beyond running `install`, it records the plugin and REJECTS a second registration under
-     * the same name (a duplicate is almost always a wiring mistake - two copies of a plugin, or
-     * two versions - and applying it twice would double its middleware/routes). The plugin's
-     * context additions flow into the returned app's type, so routes registered afterwards see
-     * them. Use {@link plugin} for a one-off anonymous transform; use this for a shipped module.
-     */
-    public register<Out extends object>(plugin: AzerothPlugin<Ctx, Out>): App<Out>
-    {
+        if (typeof plugin === 'function')
+        {
+            return plugin(this);
+        }
         if (this.#installed.some((entry) => entry.name === plugin.name))
         {
             throw new Error(`Plugin '${ plugin.name }' is already registered.`);

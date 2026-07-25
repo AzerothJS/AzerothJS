@@ -3,7 +3,7 @@
  *
  * Everything a client bundle needs and nothing it must not carry: contract declaration
  * (shared files import defineContract/route from here too), the typed client, and the
- * error type. The server half (implementContract, mountApi) lives only in the root entry,
+ * error type. The server half (mountApi, guard) lives only in the root entry,
  * so importing this path can never drag @azerothjs/http - or anything Node - into a bundle.
  */
 

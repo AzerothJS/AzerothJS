@@ -10,7 +10,7 @@
  * client can pace itself before it is ever refused.
  */
 
-import type { EdgeMiddleware } from './edge.ts';
+import type { HandlerWrapper } from './edge.ts';
 import { withResponseHeaders } from './edge.ts';
 import { errorResponse, TooManyRequestsError } from './errors.ts';
 import { clientIp } from './client-ip.ts';
@@ -111,7 +111,7 @@ export interface RateLimitOptions
  * `windowMs`, further requests are refused with 429 + Retry-After until the window resets.
  * Every response carries RateLimit-Limit / RateLimit-Remaining / RateLimit-Reset.
  */
-export function rateLimit(options: RateLimitOptions): EdgeMiddleware
+export function rateLimit(options: RateLimitOptions): HandlerWrapper
 {
     const store = options.store ?? new MemoryRateStore();
     const keyOf = options.key

@@ -41,6 +41,23 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **api**: ONE mount form. `implementContract` and the legacy
+  `mountApi(implementation, { guards })` overload are REMOVED (with the
+  `Implementation`/`HandlersOf`/`HandlerFor`/`ApiGuard`/`MountOptions` types) - the
+  unified `mountApi(app, contract, { guards, handlers })` is the only way, and the only
+  one whose guard additions type into handlers. Factories share the guards map via
+  `HandlersWithGuards`.
+- **http**: `App.plugin(fn)` folded into `register` - one plugin verb accepting both a
+  named `AzerothPlugin` and a bare function transform. `createLogger` renamed
+  `createMinimalLogger` (it collided with `@azerothjs/logger`'s `createLogger` with an
+  incompatible `Logger` type). `EdgeMiddleware` renamed `HandlerWrapper` (it decorates a
+  handler; it never was the context-middleware algebra). `use()`'s aliasing and
+  short-circuit typing caveats are now documented on the method - prefer `with()` where
+  exactness matters.
+- **http/api**: the QUERY method surface (`app.query`, the `query()` route factory,
+  `queryResult`, `acceptQuery`) is flagged `@experimental` - RFC 10008 is not yet
+  deployed internet reality; the API is stable within 1.x but marked until the RFC is.
+
 - **azerothjs / reactivity**: internal machinery left the public surface. Compiled
   `.azeroth` output now imports its runtime from the new `azerothjs/internal` subpath -
   the single compiled-output contract, welded to the compiler by a drift test - and the

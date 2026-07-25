@@ -18,10 +18,7 @@
 
 import type { App, RequestContext } from '@azerothjs/http';
 import { ValidationError, HttpError, json, readJson } from '@azerothjs/http';
-import {
-    isRoute, type AnyRoute, type Contract, type Implementation,
-    type GuardMap, type HandlersWithGuards, type Guard
-} from './define.ts';
+import { isRoute, type AnyRoute, type Contract, type GuardMap, type HandlersWithGuards } from './define.ts';
 
 /**
  * A guard the `guards` map attaches to contract routes: the same shape as the app's
@@ -29,30 +26,7 @@ import {
  * one context the handler receives), a Response to short-circuit, throw to reject, or
  * nothing to pass through.
  */
-export type ApiGuard = (context: RequestContext) => unknown;
-
-/** Options for {@link mountApi}. */
-export interface MountOptions
-{
-    /** The path prefix every route is served under. Default '/api'. */
-    prefix?: string;
-
-    /**
-     * Guards by contract tree path - the mount-site answer to "which routes need which
-     * middleware" that keeps the contract itself client-safe. Keys are dotted paths
-     * (`'auth.signIn'`), group wildcards (`'auth.*'`), or the global `'*'`; every
-     * matching level applies, outermost first (global, then group, then exact).
-     *
-     * ```ts
-     * mountApi(app, implementation, { guards: {
-     *     '*': [rateLimit],
-     *     'auth.signIn': [authThrottle],
-     *     'account.*': [requireAuth]
-     * } });
-     * ```
-     */
-    guards?: Record<string, ReadonlyArray<ApiGuard>>;
-}
+type AnyGuard = (context: RequestContext) => unknown;
 
 /** Options for the unified (typed-guard) mount: guards and handlers together. */
 export interface TypedMountOptions<Shape extends Contract, Guards extends GuardMap<Shape>>
@@ -85,33 +59,22 @@ export interface TypedMountOptions<Shape extends Contract, Guards extends GuardM
  * });
  * ```
  *
- * The legacy form - `mountApi(app, implementContract(contract, handlers), { guards })` -
- * is retained for separate construction; its handlers type WITHOUT guard additions, so
- * a guarded route there reads them via a knowing cast. Route conflicts surface at boot.
+ * Handlers organized in separate factory files stay cast-free by sharing the guards
+ * map: a factory returns `HandlersWithGuards<typeof contract, typeof guards>['branch']`.
+ * Route conflicts surface at boot.
  */
 export function mountApi<Shape extends Contract, Guards extends GuardMap<Shape>>(
     app: App<never> | App, contract: Shape, options: TypedMountOptions<Shape, Guards>
-): void;
-export function mountApi(app: App<never> | App, implementation: Implementation, options?: MountOptions): void;
-export function mountApi(
-    app: App<never> | App,
-    second: Contract | Implementation,
-    options: TypedMountOptions<Contract, GuardMap<Contract>> | MountOptions = {}
 ): void
 {
-    // Unified form: `handlers` in the options, `second` is the raw contract. Legacy form:
-    // `second` is a pre-built Implementation, handlers come off it.
-    const opts = options as { prefix?: string; guards?: Record<string, ReadonlyArray<Guard>>; handlers?: HandlerTree };
-    const unified = opts.handlers !== undefined;
-    const contract = unified ? (second as Contract) : (second as Implementation).contract;
-    const handlers = (unified ? opts.handlers : (second as Implementation).handlers) as unknown as HandlerTree;
-    walk(app, contract, handlers, opts.prefix ?? '/api', '', opts.guards ?? {});
+    const opts = options as { prefix?: string; guards?: Record<string, ReadonlyArray<AnyGuard>>; handlers: HandlerTree };
+    walk(app, contract, opts.handlers, opts.prefix ?? '/api', '', opts.guards ?? {});
 }
 
 /** @internal The guard chain for one tree path: global, then group levels, then exact. */
-function guardsFor(guards: Record<string, ReadonlyArray<ApiGuard>>, treePath: string): ApiGuard[]
+function guardsFor(guards: Record<string, ReadonlyArray<AnyGuard>>, treePath: string): AnyGuard[]
 {
-    const chain: ApiGuard[] = [...guards['*'] ?? []];
+    const chain: AnyGuard[] = [...guards['*'] ?? []];
     const parts = treePath.split('.');
     for (let depth = 1; depth < parts.length; depth++)
     {
@@ -128,7 +91,7 @@ interface HandlerTree
 }
 
 /** @internal */
-function walk(app: App, node: Contract, handlers: HandlerTree, prefix: string, treePath: string, guards: Record<string, ReadonlyArray<ApiGuard>>): void
+function walk(app: App, node: Contract, handlers: HandlerTree, prefix: string, treePath: string, guards: Record<string, ReadonlyArray<AnyGuard>>): void
 {
     for (const [key, child] of Object.entries(node))
     {
@@ -138,7 +101,7 @@ function walk(app: App, node: Contract, handlers: HandlerTree, prefix: string, t
         {
             if (typeof handler !== 'function')
             {
-                throw new Error(`The contract route "${ at }" has no handler. implementContract enforces this at `
+                throw new Error(`The contract route "${ at }" has no handler. the unified mount enforces this at `
                     + 'compile time; a runtime gap means the handlers object was built untyped.');
             }
             register(app, child, handler, prefix, guardsFor(guards, at));
@@ -190,7 +153,7 @@ async function parseAny(schema: unknown, value: unknown): Promise<ParseOk | Pars
 }
 
 /** @internal One route -> one endpoint with the guard + validation pipeline around the handler. */
-function register(app: App, definition: AnyRoute, handler: (context: unknown) => unknown, prefix: string, guards: ReadonlyArray<ApiGuard>): void
+function register(app: App, definition: AnyRoute, handler: (context: unknown) => unknown, prefix: string, guards: ReadonlyArray<AnyGuard>): void
 {
     app.route(definition.method, `${ prefix }${ definition.path }`, async (context) =>
     {

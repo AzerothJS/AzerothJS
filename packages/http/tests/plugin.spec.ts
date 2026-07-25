@@ -68,7 +68,7 @@ describe('named plugins', () =>
         };
         const app = new App()
             .register(named)
-            .plugin((a) => a.get('/tag', (context) => text(context.tag)));
+            .register((a) => a.get('/tag', (context) => text(context.tag)));
         expect(await (await get(app, '/tag')).text()).toBe('X');
     });
 });

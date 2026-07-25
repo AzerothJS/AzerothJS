@@ -81,10 +81,13 @@ export function prettySink(record: LogRecord): void
 }
 
 /**
- * Builds a logger over a sink. Records below `level` are dropped BEFORE any allocation -
- * a silenced debug call costs one comparison.
+ * Builds a MINIMAL logger over a sink - http's zero-dependency fallback, named so it can
+ * never be confused with `@azerothjs/logger`'s `createLogger` (the full two-face logger;
+ * both packages appear together in real apps, and two same-name factories with
+ * incompatible Logger types were an import-confusion footgun). Records below `level`
+ * are dropped BEFORE any allocation - a silenced debug call costs one comparison.
  */
-export function createLogger(options: { sink?: LogSink | undefined; level?: LogLevel | undefined; fields?: Record<string, unknown> | undefined } = {}): Logger
+export function createMinimalLogger(options: { sink?: LogSink | undefined; level?: LogLevel | undefined; fields?: Record<string, unknown> | undefined } = {}): Logger
 {
     const sink = options.sink ?? jsonSink;
     const threshold = LEVEL_RANK[options.level ?? 'info'];
@@ -104,7 +107,7 @@ export function createLogger(options: { sink?: LogSink | undefined; level?: LogL
         info: (message, fields) => emit('info', message, fields),
         warn: (message, fields) => emit('warn', message, fields),
         error: (message, fields) => emit('error', message, fields),
-        child: (fields) => createLogger({ sink, level: options.level, fields: { ...base, ...fields } })
+        child: (fields) => createMinimalLogger({ sink, level: options.level, fields: { ...base, ...fields } })
     };
 }
 

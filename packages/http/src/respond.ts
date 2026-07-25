@@ -119,6 +119,9 @@ export interface QueryResultOptions extends ResponseInit
  * QUERY-specific headers: `Content-Location` (a GET-able results resource), `Location` (the
  * replayable query), and an opt-in `Cache-Control`. Use it so a QUERY endpoint advertises the
  * result semantics the method promises instead of hand-assembling headers.
+  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * proxies, caches, and tooling may not recognize it. The surface is stable within the
+ * 1.x train but carries an experimental flag until the RFC is.
  */
 export function queryResult(data: unknown, options: QueryResultOptions = {}): Response
 {
@@ -142,6 +145,9 @@ export function queryResult(data: unknown, options: QueryResultOptions = {}): Re
 /**
  * The value for an `Accept-Query` response header - the query media types an endpoint accepts
  * (RFC 10008). Set it on OPTIONS or a 415 so a client discovers how to phrase its QUERY body.
+  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * proxies, caches, and tooling may not recognize it. The surface is stable within the
+ * 1.x train but carries an experimental flag until the RFC is.
  */
 export function acceptQuery(mediaTypes: string[]): Record<string, string>
 {

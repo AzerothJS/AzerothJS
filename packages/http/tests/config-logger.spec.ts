@@ -6,7 +6,7 @@
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { loadConfig, str, num, flag, oneOf } from '../src/config.ts';
-import { createLogger, logRequests, type LogRecord } from '../src/logger.ts';
+import { createMinimalLogger, logRequests, type LogRecord } from '../src/logger.ts';
 import { App } from '../src/app.ts';
 import { json, noContent } from '../src/respond.ts';
 
@@ -68,7 +68,7 @@ describe('loadConfig: typed, loud, all-at-once', () =>
     });
 });
 
-describe('createLogger: the record contract', () =>
+describe('createMinimalLogger: the record contract', () =>
 {
     function capture(): { records: LogRecord[]; sink: (record: LogRecord) => void }
     {
@@ -79,7 +79,7 @@ describe('createLogger: the record contract', () =>
     it('emits structured records with merged child fields', () =>
     {
         const { records, sink } = capture();
-        const logger = createLogger({ sink, level: 'debug', fields: { service: 'api' } });
+        const logger = createMinimalLogger({ sink, level: 'debug', fields: { service: 'api' } });
         logger.child({ requestId: 'r1' }).info('handled', { status: 200 });
 
         expect(records).toHaveLength(1);
@@ -91,7 +91,7 @@ describe('createLogger: the record contract', () =>
     it('drops records below the threshold before any work', () =>
     {
         const { records, sink } = capture();
-        const logger = createLogger({ sink, level: 'warn' });
+        const logger = createMinimalLogger({ sink, level: 'warn' });
         logger.debug('noise');
         logger.info('noise');
         logger.error('signal');
@@ -101,7 +101,7 @@ describe('createLogger: the record contract', () =>
     it('logRequests observes completions with method/path/status/duration', async () =>
     {
         const { records, sink } = capture();
-        const app = new App({ observe: logRequests(createLogger({ sink })) });
+        const app = new App({ observe: logRequests(createMinimalLogger({ sink })) });
         app.get('/ok', () => noContent());
         app.get('/boom', () =>
         {
@@ -144,7 +144,7 @@ describe('the plugin story: function application over the typed builder', () =>
             return app;
         };
 
-        const app = new App().plugin(withUser).plugin(withHealth);
+        const app = new App().register(withUser).register(withHealth);
         app.get('/me', (context) =>
         {
             expectTypeOf(context.user).toEqualTypeOf<string>();
@@ -162,7 +162,7 @@ describe('the plugin story: function application over the typed builder', () =>
             <Ctx extends object>(app: App<Ctx>): App<Ctx> =>
                 (enabled ? app.use(() => void metrics()) : app);
 
-        const app = new App().plugin(withMetrics(true));
+        const app = new App().register(withMetrics(true));
         app.get('/x', () => noContent());
         await app.handle(new Request('http://local/x'));
         expect(metrics).toHaveBeenCalledTimes(1);

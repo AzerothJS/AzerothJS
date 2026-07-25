@@ -13,7 +13,7 @@
  * alongside the compression layer's own `Vary`.
  */
 
-import type { EdgeMiddleware } from './edge.ts';
+import type { HandlerWrapper } from './edge.ts';
 import { withResponseHeaders } from './edge.ts';
 import { PayloadResponse } from './payload.ts';
 
@@ -75,7 +75,7 @@ function appendVary(existing: string | null, token: string): string
  * Cross-Origin Resource Sharing. Answers preflights directly and decorates real cross-origin
  * responses; same-origin requests (no Origin header) pass through unchanged.
  */
-export function cors(options: CorsOptions): EdgeMiddleware
+export function cors(options: CorsOptions): HandlerWrapper
 {
     const methods = (options.methods ?? DEFAULT_METHODS).join(', ');
     const maxAge = String(options.maxAgeSeconds ?? 600);
