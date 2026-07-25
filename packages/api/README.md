@@ -96,6 +96,29 @@ mountApi(app, contract, {
 Handlers organized in separate factory files stay cast-free by sharing the guards map:
 a factory returns `HandlersWithGuards<typeof contract, typeof guards>['branch']`.
 
+## Status codes without losing validation - `reply()`
+
+A route declares its non-default responses per status, and a handler speaks them through
+`reply()` - the body is validated against that status's schema exactly like `output`, and
+each status becomes its own entry in the OpenAPI document:
+
+```ts
+create: route({
+    method: 'POST', path: '/users',
+    input: CreateUser, output: User,
+    responses: { 201: User, 409: Problem }
+}),
+
+// in the handler:
+create: ({ input }) => exists(input.email)
+    ? reply(409, { code: 'exists', message: 'Email taken' })
+    : reply(201, save(input), { location: `/users/${ id }` })
+```
+
+`reply(204)` sends an empty response; an undeclared status with a body is a compile
+error. A raw `Response` return remains the escape hatch for non-JSON answers (files,
+redirects, streams) - the ONLY return shape that bypasses output validation.
+
 ## Bring your own validator
 
 `route({ input })` accepts any [Standard Schema](https://standardschema.dev) validator

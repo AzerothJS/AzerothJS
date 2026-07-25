@@ -354,3 +354,54 @@ describe('Standard Schema interop (bring your own validator)', () =>
         expect(String(body.description)).toContain('custom rule'); // permissive fallback, not fabricated
     });
 });
+
+describe('per-status responses (the reply() channel) in the document', () =>
+{
+    const user = object({ id: number({ int: true }), name: string() });
+    const problem = object({ code: string(), message: string() });
+    const contract = defineContract({
+        things: {
+            create: post('/things', { input: object({ name: string() }), output: user, responses: { 201: user, 409: problem } }),
+            find: get('/things/:id', { output: user, responses: { 404: problem } })
+        }
+    });
+    const document = toOpenApi(contract, { info: INFO });
+    const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
+
+    it('each declared status becomes its own response entry with its resolved schema', () =>
+    {
+        const responses = paths['/api/things']!.post!.responses as Record<string, { description: string; content?: Record<string, { schema: unknown }> }>;
+        expect(responses['200']).toBeDefined();                       // output stays the default
+        expect(responses['201']!.description).toBe('Created');
+        // The 201 body IS the output schema - the resolver dedupes it to the same component ref.
+        expect(responses['201']!.content!['application/json']!.schema)
+            .toEqual((responses['200']!.content!['application/json']!).schema);
+        expect(responses['409']!.description).toBe('Conflict');
+        const conflict = JSON.stringify(responses['409']!.content!['application/json']!.schema) + JSON.stringify(document.components ?? {});
+        expect(conflict).toContain('"code"');
+
+        const findResponses = paths['/api/things/{id}']!.get!.responses as Record<string, { description: string }>;
+        expect(findResponses['404']!.description).toBe('Not Found');
+    });
+
+    it('a docs.errors entry never downgrades a typed responses status to the generic envelope', () =>
+    {
+        const collided = defineContract({
+            find: get('/things/:id', {
+                output: user,
+                responses: { 404: problem },
+                docs: { errors: [{ status: 404, description: 'prose duplicate' }, { status: 410, description: 'Gone away' }] }
+            })
+        });
+        const collidedPaths = toOpenApi(collided, { info: INFO }).paths as Record<string, Record<string, Record<string, unknown>>>;
+        const entries = collidedPaths['/api/things/{id}']!.get!.responses as Record<string, { description: string; content?: Record<string, { schema: unknown }> }>;
+        expect(entries['404']!.description).toBe('Not Found');   // the typed schema entry won
+        expect(JSON.stringify(entries['404'])).not.toContain('ErrorResponse');
+        expect(entries['410']!.description).toBe('Gone away');   // prose-only statuses still document
+    });
+
+    it('the document with per-status responses is valid OpenAPI 3.1', async () =>
+    {
+        expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
+    });
+});

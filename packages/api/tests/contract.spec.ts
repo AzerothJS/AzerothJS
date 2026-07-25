@@ -12,7 +12,7 @@ import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { email, required } from 'azerothjs';
 import { object, string, number, boolean, type Infer, type StandardSchemaV1 } from '@azerothjs/schema';
 import { App, HttpError, noContent } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient, ApiError, type HandlersWithGuards } from '@azerothjs/api';
+import { defineContract, route, mountApi, createClient, reply, ApiError, type HandlersWithGuards, type StatusReply } from '@azerothjs/api';
 
 // ---- the shared contract (in a real app: one file, imported by browser and server) ----
 
@@ -386,5 +386,118 @@ describe('client pre-validation of FOREIGN (Standard Schema) inputs', () =>
 
         await client.create({ input: { name: 'Jaina' } });
         expect(transportCalls).toBe(1);              // valid input goes through
+    });
+});
+
+describe('the typed reply channel: status codes without losing validation', () =>
+{
+    const problem = object({ code: string(), message: string() });
+    const replies = defineContract({
+        things: {
+            create: route({
+                method: 'POST', path: '/things',
+                input: object({ name: string({ min: 2 }) }),
+                output: user,
+                responses: { 201: user, 409: problem }
+            }),
+            remove: route({ method: 'DELETE', path: '/things/:id' }),
+            find: route({ method: 'GET', path: '/things/:id', output: user, responses: { 404: problem } })
+        }
+    });
+
+    function buildReplyServer(overrides: Partial<{ create: (input: { name: string }) => unknown }> = {}): App
+    {
+        const app = new App();
+        mountApi(app, replies, { handlers: {
+            things: {
+                create: ({ input }) =>
+                {
+                    if (overrides.create !== undefined)
+                    {
+                        return overrides.create(input) as StatusReply<201, Infer<typeof user>>;
+                    }
+                    return reply(201, { id: 1, name: input.name, email: 'new@example.org' }, { location: '/things/1' });
+                },
+                remove: () => reply(204),
+                find: ({ params }) => params.id === '1'
+                    ? { id: 1, name: 'Jaina', email: 'jaina@theramore.org' }
+                    : reply(404, { code: 'not-found', message: `No thing ${ params.id }` })
+            }
+        } });
+        return app;
+    }
+
+    it('reply(201, body, headers) sends the status and headers WITH the body validated', async () =>
+    {
+        const app = buildReplyServer();
+        const response = await app.handle(new Request('http://local/api/things', {
+            method: 'POST', body: JSON.stringify({ name: 'Anduin' }), headers: { 'content-type': 'application/json' }
+        }));
+        expect(response.status).toBe(201);
+        expect(response.headers.get('location')).toBe('/things/1');
+        expect(await response.json()).toEqual({ id: 1, name: 'Anduin', email: 'new@example.org' });
+    });
+
+    it('reply(204) sends an empty response', async () =>
+    {
+        const app = buildReplyServer();
+        const response = await app.handle(new Request('http://local/api/things/9', { method: 'DELETE' }));
+        expect(response.status).toBe(204);
+        expect(await response.text()).toBe('');
+    });
+
+    it('a declared non-2xx reply carries its own validated body shape', async () =>
+    {
+        const app = buildReplyServer();
+        const response = await app.handle(new Request('http://local/api/things/7'));
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ code: 'not-found', message: 'No thing 7' });
+    });
+
+    it('a reply body violating its status schema is a hidden 500 (contract-violation)', async () =>
+    {
+        const app = buildReplyServer({ create: () => reply(201, { id: 'not-a-number', name: 5 }) });
+        const response = await app.handle(new Request('http://local/api/things', {
+            method: 'POST', body: JSON.stringify({ name: 'Valid' }), headers: { 'content-type': 'application/json' }
+        }));
+        expect(response.status).toBe(500);
+        const wire = (await response.json()) as { error: { code: string } };
+        expect(wire.error.code).toBe('contract-violation');
+        expect(JSON.stringify(wire)).not.toContain('not-a-number'); // internals stay home
+    });
+
+    it('reply(200, out) validates against output and STRIPS undeclared fields', async () =>
+    {
+        const app = buildReplyServer({ create: () => reply(200, { id: 1, name: 'x', email: 'x@y.z', passwordHash: 'hunter2' }) });
+        const response = await app.handle(new Request('http://local/api/things', {
+            method: 'POST', body: JSON.stringify({ name: 'Valid' }), headers: { 'content-type': 'application/json' }
+        }));
+        expect(response.status).toBe(200);
+        expect(JSON.stringify(await response.json())).not.toContain('hunter2');
+    });
+
+    it('the client still speaks the success body through a responses-declaring route', async () =>
+    {
+        const client = createClient(replies, { baseUrl: '/api', fetch: (request) => buildReplyServer().handle(request) });
+        const created = await client.things.create({ input: { name: 'Thrall' } });
+        expectTypeOf(created).toEqualTypeOf<{ id: number; name: string; email: string }>();
+        expect(created).toEqual({ id: 1, name: 'Thrall', email: 'new@example.org' });
+
+        await expect(client.things.find({ params: { id: '7' } })).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('an undeclared status with a body is a compile error; declared shapes are enforced', () =>
+    {
+        const handlers: HandlersWithGuards<typeof replies, Record<never, never>> = {
+            things: {
+                // @ts-expect-error - 403 is not in create's responses map, and it carries a body.
+                create: () => reply(403, { code: 'nope', message: 'forbidden' }),
+                remove: () => reply(204),
+                // @ts-expect-error - 404 is declared, but the body must match the problem schema.
+                find: () => reply(404, { wrong: true })
+            }
+        };
+        void handlers;
+        expect(true).toBe(true);
     });
 });

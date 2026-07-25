@@ -11,6 +11,16 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **api**: the typed reply channel. A route declares its non-default responses per
+  status (`responses: { 201: User, 409: Problem }`) and a handler speaks them through
+  `reply(status, body?, headers?)` - the body is validated against that status's
+  schema exactly like `output` (a violation is the same hidden 500
+  `contract-violation`), `reply(204)` sends an empty response, and an undeclared
+  status with a body is a compile error. Every declared status becomes its own entry
+  in the OpenAPI document with its real schema (a prose-only `docs.errors` entry can
+  no longer downgrade it to the generic envelope). A raw `Response` return remains
+  the only validation bypass - the non-JSON escape hatch (files, redirects, streams),
+  now by documented design. The client keeps its success-body behavior.
 - **compiler / azerothjs**: the compiled-output version handshake. Every compiled
   module now asserts the runtime-contract version it was built against
   (`assertRuntimeContract(N)`, once, at load) against the runtime's

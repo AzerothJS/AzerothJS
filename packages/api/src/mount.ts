@@ -18,7 +18,7 @@
 
 import type { App, RequestContext } from '@azerothjs/http';
 import { ValidationError, HttpError, json, readJson } from '@azerothjs/http';
-import { isRoute, type AnyRoute, type Contract, type GuardMap, type HandlersWithGuards } from './define.ts';
+import { isRoute, isStatusReply, type AnyRoute, type Contract, type GuardMap, type HandlersWithGuards } from './define.ts';
 
 /**
  * A guard the `guards` map attaches to contract routes: the same shape as the app's
@@ -203,7 +203,35 @@ function register(app: App, definition: AnyRoute, handler: (context: unknown) =>
 
         if (result instanceof Response)
         {
+            // The non-JSON escape hatch (files, redirects, streams) - the ONLY return shape
+            // that bypasses output validation. Status codes and headers on a JSON body
+            // belong to reply(), which stays validated.
             return result;
+        }
+
+        // A typed status reply: validate the body against that status's declared schema
+        // (responses[status]; output doubles as the 200 schema), then build the Response
+        // with the status and headers. A bodyless reply sends an empty response.
+        if (isStatusReply(result))
+        {
+            const schema = (definition.responses as Record<number, unknown> | undefined)?.[result.status]
+                ?? (result.status === 200 ? definition.output : undefined);
+            if (result.body === undefined)
+            {
+                return new Response(null, { status: result.status, headers: result.headers ?? {} });
+            }
+            if (schema !== undefined)
+            {
+                const parsed = await parseAny(schema, result.body);
+                if (!parsed.ok)
+                {
+                    throw new HttpError(500, `Endpoint ${ definition.method } ${ definition.path } returned a ${ result.status } body `
+                        + `violating its declared schema: ${ Object.keys(parsed.errors).join(', ') }`,
+                    { code: 'contract-violation' });
+                }
+                return json(parsed.value, { status: result.status, headers: result.headers ?? {} });
+            }
+            return json(result.body, { status: result.status, headers: result.headers ?? {} });
         }
 
         if (definition.output !== undefined)

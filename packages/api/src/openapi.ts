@@ -26,6 +26,14 @@ import type { App, AzerothPlugin } from '@azerothjs/http';
 import { isRoute, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
 import { renderExplorerHtml, renderScalarHtml } from './explorer.ts';
 
+/** @internal Reason phrases for the per-status response descriptions. */
+const DEFAULT_STATUS_TEXT: Record<string, string> = {
+    '200': 'OK', '201': 'Created', '202': 'Accepted', '204': 'No Content',
+    '301': 'Moved Permanently', '302': 'Found', '304': 'Not Modified',
+    '400': 'Bad Request', '401': 'Unauthorized', '403': 'Forbidden', '404': 'Not Found',
+    '409': 'Conflict', '410': 'Gone', '429': 'Too Many Requests'
+};
+
 /** The subset of an OpenAPI document this exporter emits (structurally 3.1-valid). */
 export type OpenApiDocument = Record<string, unknown>;
 
@@ -361,12 +369,20 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
             };
         }
 
-        // Responses: the declared success shape, then the framework-DERIVED error set -
+        // Responses: the declared success shape, every per-status schema from the
+        // `responses` map (the reply() channel), then the framework-DERIVED error set -
         // each emitted only when mountApi actually produces it for this route's shape.
         const responses: Record<string, unknown> = {};
         responses['200'] = route.output !== undefined
             ? { description: 'OK', content: { 'application/json': { schema: resolve(route.output as Schema<unknown>) } } }
             : { description: 'OK (response shape not declared by the contract)' };
+        for (const [status, statusSchema] of Object.entries((route.responses ?? {}) as Record<string, unknown>))
+        {
+            responses[status] = {
+                description: DEFAULT_STATUS_TEXT[status] ?? `Status ${ status }`,
+                content: { 'application/json': { schema: resolve(statusSchema as Schema<unknown>) } }
+            };
+        }
         if (route.input !== undefined || route.query !== undefined)
         {
             responses['422'] = { description: 'Validation failed', content: { 'application/json': { schema: ERROR_REF } } };
@@ -381,6 +397,12 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         }
         for (const declared of docs.errors ?? [])
         {
+            // A status carried by the typed `responses` map keeps its REAL schema - the
+            // prose-only docs.errors entry never downgrades it to the generic envelope.
+            if ((route.responses as Record<number, unknown> | undefined)?.[declared.status] !== undefined)
+            {
+                continue;
+            }
             responses[String(declared.status)] = {
                 description: declared.description ?? (declared.code !== undefined ? `Error: ${ declared.code }` : 'Error'),
                 content: { 'application/json': { schema: ERROR_REF } }

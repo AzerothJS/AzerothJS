@@ -81,16 +81,86 @@ export interface RouteDocs
     security?: ReadonlyArray<string>;
 }
 
+/** @internal The brand distinguishing a typed status reply from an arbitrary object body. */
+export const REPLY: unique symbol = Symbol('azerothjs.api.reply');
+
+/**
+ * A typed non-default reply: status + body + headers, built with {@link reply}. Unlike a
+ * raw `Response`, the body is STILL validated against the route's schema for that status
+ * (`responses[status]`, or `output` for 200) - status codes and headers no longer cost
+ * the contract its output guarantee.
+ */
+export interface StatusReply<S extends number = number, B = unknown>
+{
+    readonly [REPLY]: true;
+    status: S;
+    body: B;
+    headers?: Record<string, string>;
+}
+
+/**
+ * Builds a typed reply. `reply(201, user, { location })` sends 201 with a validated
+ * body; `reply(204)` sends an empty response. The status must be declared in the
+ * route's `responses` map (or be 200 with `output`, or carry no body) for the body
+ * type to check.
+ */
+export function reply<S extends number>(status: S): StatusReply<S, undefined>;
+export function reply<S extends number, B>(status: S, body: B, headers?: Record<string, string>): StatusReply<S, B>;
+export function reply<S extends number, B>(status: S, body?: B, headers?: Record<string, string>): StatusReply<S, B | undefined>
+{
+    const built: StatusReply<S, B | undefined> = { [REPLY]: true, status, body };
+    if (headers !== undefined)
+    {
+        built.headers = headers;
+    }
+    return built;
+}
+
+/** @internal Whether a handler return is a typed status reply. */
+export function isStatusReply(value: unknown): value is StatusReply
+{
+    return typeof value === 'object' && value !== null && (value as { [REPLY]?: unknown })[REPLY] === true;
+}
+
+/**
+ * The reply union a route's `responses` map admits: one {@link StatusReply} per declared
+ * status with that status's body type, plus `StatusReply<200, Out>` when `output` is
+ * declared, plus the always-legal bodyless reply (a 204/205/redirect carries nothing to
+ * validate).
+ */
+/**
+ * @internal A `responses` key as its numeric status. Reverse-mapped inference records the
+ * literal keys of `{ 404: problem }` as the STRING `"404"` - a plain `& number` on the
+ * keyof would erase every status, so this converts instead.
+ */
+type StatusOf<K> = K extends number ? K : K extends `${ infer N extends number }` ? N : never;
+
+export type ReplyOf<Out, Responses> =
+    | (Responses extends Record<PropertyKey, unknown>
+        ? { [S in keyof Responses]: StatusReply<StatusOf<S>, Responses[S]> }[keyof Responses]
+        : never)
+    | StatusReply<200, Out>
+    | StatusReply<number, undefined>;
+
 /** One declared route: the wire shape, no behavior. Lives in shared (client-safe) code.
  *  Schemas are native `@azerothjs/schema` OR any Standard Schema validator ({@link RouteSchema}). */
-export interface Route<Path extends string = string, In = undefined, Out = unknown, Query = undefined>
+export interface Route<Path extends string = string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>
 {
     kind: 'route';
     method: ApiMethod;
     path: Path;
     input?: RouteSchema<In>;
     query?: RouteSchema<Query>;
+
+    /** The DEFAULT (200) response body schema. */
     output?: RouteSchema<Out>;
+
+    /**
+     * Per-status response schemas beyond the 200 default: `{ 201: user, 404: problem }`.
+     * A handler speaks them through {@link reply} - validated exactly like `output`, and
+     * each becomes its own entry in the OpenAPI document.
+     */
+    responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
     docs?: RouteDocs;
 }
 
@@ -106,7 +176,7 @@ export interface Route<Path extends string = string, In = undefined, Out = unkno
  * contextual positions during inference, which is exactly the behavior needed.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variance-erasing existential; see the doc comment above
-export type AnyRoute = Route<any, any, any, any>;
+export type AnyRoute = Route<any, any, any, any, any>;
 
 /** A contract tree: routes grouped under names, nested arbitrarily. */
 export interface Contract
@@ -115,16 +185,17 @@ export interface Contract
 }
 
 /** Declares one route. Identity at runtime; the generics carry the wire types. */
-export function route<Path extends string, In = undefined, Out = unknown, Query = undefined>(
+export function route<Path extends string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
     definition: {
         method: ApiMethod;
         path: Path;
         input?: RouteSchema<In>;
         query?: RouteSchema<Query>;
         output?: RouteSchema<Out>;
+        responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
         docs?: RouteDocs;
     }
-): Route<Path, In, Out, Query>
+): Route<Path, In, Out, Query, Responses>
 {
     return { kind: 'route', ...definition };
 }
@@ -140,55 +211,56 @@ export function defineContract<const Shape extends Contract>(shape: Shape): Shap
 }
 
 /** What the method-sugar factories accept beside the path - everything but the method. */
-interface BodylessDefinition<Out, Query>
+interface BodylessDefinition<Out, Query, Responses extends Record<number, unknown>>
 {
     query?: RouteSchema<Query>;
     output?: RouteSchema<Out>;
+    responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
     docs?: RouteDocs;
 }
 
 /** As {@link BodylessDefinition}, for the methods that carry a request body. */
-interface BodyDefinition<In, Out, Query> extends BodylessDefinition<Out, Query>
+interface BodyDefinition<In, Out, Query, Responses extends Record<number, unknown>> extends BodylessDefinition<Out, Query, Responses>
 {
     input?: RouteSchema<In>;
 }
 
 /** `get('/users/:id', { output })` - sugar for {@link route}; GET carries no body. */
-export function get<Path extends string, Out = unknown, Query = undefined>(
-    path: Path, definition: BodylessDefinition<Out, Query> = {}
-): Route<Path, undefined, Out, Query>
+export function get<Path extends string, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: BodylessDefinition<Out, Query, Responses> = {}
+): Route<Path, undefined, Out, Query, Responses>
 {
     return { kind: 'route', method: 'GET', path, ...definition };
 }
 
 /** `post('/users', { input, output })` - sugar for {@link route}. */
-export function post<Path extends string, In = undefined, Out = unknown, Query = undefined>(
-    path: Path, definition: BodyDefinition<In, Out, Query> = {}
-): Route<Path, In, Out, Query>
+export function post<Path extends string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: BodyDefinition<In, Out, Query, Responses> = {}
+): Route<Path, In, Out, Query, Responses>
 {
     return { kind: 'route', method: 'POST', path, ...definition };
 }
 
 /** `put('/users/:id', { input, output })` - sugar for {@link route}. */
-export function put<Path extends string, In = undefined, Out = unknown, Query = undefined>(
-    path: Path, definition: BodyDefinition<In, Out, Query> = {}
-): Route<Path, In, Out, Query>
+export function put<Path extends string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: BodyDefinition<In, Out, Query, Responses> = {}
+): Route<Path, In, Out, Query, Responses>
 {
     return { kind: 'route', method: 'PUT', path, ...definition };
 }
 
 /** `patch('/account', { input, output })` - sugar for {@link route}. */
-export function patch<Path extends string, In = undefined, Out = unknown, Query = undefined>(
-    path: Path, definition: BodyDefinition<In, Out, Query> = {}
-): Route<Path, In, Out, Query>
+export function patch<Path extends string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: BodyDefinition<In, Out, Query, Responses> = {}
+): Route<Path, In, Out, Query, Responses>
 {
     return { kind: 'route', method: 'PATCH', path, ...definition };
 }
 
 /** `del('/users/:id')` - sugar for {@link route} (`delete` is a reserved word). */
-export function del<Path extends string, Out = unknown, Query = undefined>(
-    path: Path, definition: BodylessDefinition<Out, Query> = {}
-): Route<Path, undefined, Out, Query>
+export function del<Path extends string, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: BodylessDefinition<Out, Query, Responses> = {}
+): Route<Path, undefined, Out, Query, Responses>
 {
     return { kind: 'route', method: 'DELETE', path, ...definition };
 }
@@ -197,9 +269,9 @@ export function del<Path extends string, Out = unknown, Query = undefined>(
  * proxies, caches, and tooling may not recognize it. The surface is stable within the
  * 1.x train but carries an experimental flag until the RFC is.
  */
-export function query<Path extends string, In = undefined, Out = unknown>(
-    path: Path, definition: { input?: RouteSchema<In>; output?: RouteSchema<Out>; docs?: RouteDocs } = {}
-): Route<Path, In, Out>
+export function query<Path extends string, In = undefined, Out = unknown, Responses extends Record<number, unknown> = Record<never, never>>(
+    path: Path, definition: { input?: RouteSchema<In>; output?: RouteSchema<Out>; responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> }; docs?: RouteDocs } = {}
+): Route<Path, In, Out, undefined, Responses>
 {
     return { kind: 'route', method: 'QUERY', path, ...definition };
 }
@@ -318,8 +390,9 @@ type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) ext
 
 /** @internal One route's handler, its context intersected with the additions its guards supply. */
 type GuardedHandlerFor<R, Path extends string, Guards> =
-    R extends Route<infer P, infer In, infer Out, infer Query>
-        ? (context: HandlerContext<P, In, Query> & AdditionsFor<Path, Guards>) => Out | Response | Promise<Out | Response>
+    R extends Route<infer P, infer In, infer Out, infer Query, infer Responses>
+        ? (context: HandlerContext<P, In, Query> & AdditionsFor<Path, Guards>) =>
+        Out | ReplyOf<Out, Responses> | Response | Promise<Out | ReplyOf<Out, Responses> | Response>
         : never;
 
 /** The handler tree a contract demands UNDER a given guards map - additions flow into each context. */
