@@ -9,6 +9,18 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+
+- **reactivity**: the ownership tree is now first-class. `createRoot` builds an `Owner`
+  node (disposers, parent link, context storage, captured error routing);
+  `getOwner()`/`runWithOwner(owner, fn)` let async continuations create effects that
+  are OWNED - disposed with their scope instead of leaking - with errors still routed
+  to the boundary the owner was created in. `createContext`/`provideContext`/
+  `useContext` add owner-tree dependency injection: provided values flow down the tree,
+  nearer provides shadow outer ones, sibling scopes are isolated, and values are freed
+  on dispose. This is the primitive that lets component libraries thread theming or a
+  router without module-level singletons.
+
 ### Changed
 
 - **reactivity**: every write is now GLITCH-FREE. A top-level setter runs inside an

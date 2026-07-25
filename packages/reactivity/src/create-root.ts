@@ -14,18 +14,44 @@
 
 import type { DisposeFn } from './types.ts';
 import { assertFunction } from './validate.ts';
+import { currentErrorHandler, setCurrentErrorHandler } from './catch-error.ts';
 import { dtRegister, dtDispose, dtEnterOwner, dtExitOwner, dtEnabled } from './devtools.ts';
 
 /**
- * The active root's disposer collector, or null when no root is active.
- * {@link registerDisposer} pushes here; {@link createRoot} saves/restores it.
+ * A reactive ownership scope: the node behind every {@link createRoot}. Owners form a
+ * TREE (each root records the owner it was created under), carry the scope's disposers,
+ * lazily hold provided context values, and remember the error handler that was ambient
+ * at creation - which is what lets {@link runWithOwner} continue work in an async
+ * callback under the original scope's ownership, context, and error routing.
+ *
+ * Treat the object as OPAQUE: hold it, pass it to runWithOwner, nothing else. The
+ * fields are the framework's bookkeeping, not API.
+ */
+export interface Owner
+{
+    /** @internal The scope's collected teardown callbacks (LIFO on dispose). */
+    disposers: DisposeFn[];
+
+    /** @internal The owner this root was created under (the ownership tree edge). */
+    parent: Owner | null;
+
+    /** @internal Context values provided AT this owner; null until first provide. */
+    context: Map<symbol, unknown> | null;
+
+    /** @internal The error handler ambient at creation; restored by runWithOwner. */
+    errorHandler: ((error: unknown) => void) | null;
+}
+
+/**
+ * The active owner, or null outside any root.
+ * {@link registerDisposer} pushes into it; {@link createRoot} saves/restores it.
  *
  * @internal
  */
-export let currentRoot: DisposeFn[] | null = null;
+export let currentOwner: Owner | null = null;
 
 /**
- * Registers a disposer with the active root, if any; with no active root the caller
+ * Registers a disposer with the active owner, if any; with no active owner the caller
  * owns disposal. Called by createEffect/createMemo at construction.
  *
  * @internal
@@ -33,9 +59,59 @@ export let currentRoot: DisposeFn[] | null = null;
  */
 export function registerDisposer(dispose: DisposeFn): void
 {
-    if (currentRoot !== null)
+    if (currentOwner !== null)
     {
-        currentRoot.push(dispose);
+        currentOwner.disposers.push(dispose);
+    }
+}
+
+/**
+ * The active ownership scope, or null when none is open. Capture it before starting
+ * async work, then continue under it with {@link runWithOwner} - anything created in a
+ * plain async callback is otherwise UNOWNED (the active owner was restored when the
+ * synchronous scope returned) and leaks.
+ *
+ * @returns The active {@link Owner}, or null.
+ * @see {@link runWithOwner}
+ * @example
+ * const owner = getOwner();
+ * const data = await load();
+ * runWithOwner(owner, () => createEffect(() => render(data, filter())));
+ */
+export function getOwner(): Owner | null
+{
+    return currentOwner;
+}
+
+/**
+ * Runs `fn` under `owner`: effects/memos it creates register with that owner's
+ * disposers, {@link useContext} reads that owner's context chain, and errors route to
+ * the handler that was ambient when the owner was created. This is the async
+ * continuation primitive - capture with {@link getOwner} before the await, resume
+ * under it after. Passing null runs fn explicitly unowned.
+ *
+ * @typeParam T - fn's return type.
+ * @param owner - The scope to run under (from {@link getOwner}), or null for unowned.
+ * @param fn - The work to run under the scope.
+ * @returns fn's return value.
+ * @see {@link getOwner}
+ */
+export function runWithOwner<T>(owner: Owner | null, fn: () => T): T
+{
+    assertFunction(fn, 'runWithOwner', 'Pass the work as a function: runWithOwner(owner, () => { ... }).');
+
+    const previousOwner = currentOwner;
+    const previousHandler = currentErrorHandler;
+    currentOwner = owner;
+    setCurrentErrorHandler(owner === null ? null : owner.errorHandler);
+    try
+    {
+        return fn();
+    }
+    finally
+    {
+        currentOwner = previousOwner;
+        setCurrentErrorHandler(previousHandler);
     }
 }
 
@@ -110,10 +186,14 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
 {
     assertFunction(fn, 'createRoot', 'Pass the scope body as a function: createRoot((dispose) => { ... }).');
 
-    const disposers: DisposeFn[] = [];
+    // The scope's node in the ownership tree: parent is whatever owner is active at
+    // creation, and the ambient error handler is captured so runWithOwner can restore
+    // the same error routing for async continuations.
+    const owner: Owner = { disposers: [], parent: currentOwner, context: null, errorHandler: currentErrorHandler };
+    const disposers = owner.disposers;
 
-    const previousRoot = currentRoot;
-    currentRoot = disposers;
+    const previousRoot = currentOwner;
+    currentOwner = owner;
 
     // Announce the root to devtools and make it the OWNER of everything created in its body, so the panel
     // can group nodes by their root. Children read the active owner at registration.
@@ -149,6 +229,9 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
             }
         }
         disposers.length = 0;
+        // Free provided context values with the scope (the owner object itself may be
+        // retained by a captured getOwner() handle; its payload must not be).
+        owner.context = null;
         dtDispose(devtoolsId);
         if (failed)
         {
@@ -162,7 +245,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     }
     finally
     {
-        currentRoot = previousRoot;
+        currentOwner = previousRoot;
         dtExitOwner(previousOwner);
     }
 }

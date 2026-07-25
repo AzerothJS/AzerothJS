@@ -30,7 +30,8 @@ export type { OnOptions } from './on.ts';
 // Lifetimes: ownership scopes and teardown hooks.
 export { onCleanup } from './on-cleanup.ts';
 export { onRootDispose } from './on-root-dispose.ts';
-export { createRoot } from './create-root.ts';
+export { createRoot, getOwner, runWithOwner, type Owner } from './create-root.ts';
+export { createContext, provideContext, useContext, type Context } from './create-context.ts';
 
 // Derived helpers built on the core primitives.
 export { createDeferred } from './create-deferred.ts';
