@@ -4,7 +4,8 @@
 // single-branch construction, branch disposal on swap (no effect leak), and
 // preservation of inner reactive state across unrelated re-renders.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createMemo, createRoot, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal, createMemo, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, Show } from '@azerothjs/renderer';
 
 function mount(component: () => HTMLElement): HTMLElement

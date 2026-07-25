@@ -14,10 +14,18 @@ const alias = readdirSync(packagesDir)
     .filter((dir) =>
         existsSync(path.join(dir, 'package.json')) &&
         existsSync(path.join(dir, 'src', 'index.ts')))
-    .map((dir) =>
+    .flatMap((dir) =>
     {
         const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) as { name: string };
-        return { find: pkg.name, replacement: path.join(dir, 'src', 'index.ts') };
+        const entries = [];
+        // Subpath aliases FIRST: a bare string `find` prefix-matches, so `pkg/internal`
+        // must resolve before the bare package name grabs it.
+        if (existsSync(path.join(dir, 'src', 'internal.ts')))
+        {
+            entries.push({ find: `${ pkg.name }/internal`, replacement: path.join(dir, 'src', 'internal.ts') });
+        }
+        entries.push({ find: pkg.name, replacement: path.join(dir, 'src', 'index.ts') });
+        return entries;
     });
 
 export default defineConfig({

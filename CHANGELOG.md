@@ -41,6 +41,16 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **azerothjs / reactivity**: internal machinery left the public surface. Compiled
+  `.azeroth` output now imports its runtime from the new `azerothjs/internal` subpath -
+  the single compiled-output contract, welded to the compiler by a drift test - and the
+  public entry no longer exports `tmpl`/`bindHole`/`bindContent`/`bindEvent`/`bindSlot`/
+  `bindProps`/`setProp` (rebuild apps with the matching compiler). `@azerothjs/reactivity`
+  moved its framework plumbing (`serializeChild`, `wrapContentsAnchored`, the hydration
+  adoption protocol, `setStoreScopeResolver`, the `subscriberCount` test probe) to
+  `@azerothjs/reactivity/internal`; the public entry keeps the user primitives plus
+  `ssr`/`isSSRNode`/`escapeText`/`escapeAttr`. Internal subpaths are exempt from semver.
+
 - **reactivity**: `setSSRMarkers`/`getSSRMarkers` are REMOVED. Hydration markers are no
   longer a mutable global - they ride the render window itself:
   `runInMode('string', fn, { markers: true })` (what `renderToString` does) vs

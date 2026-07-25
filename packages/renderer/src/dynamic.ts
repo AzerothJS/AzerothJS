@@ -11,8 +11,10 @@
  * for fine-grained updates).
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, untrack, isStringMode, isHydrating, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createEffect, createRoot, untrack, isStringMode, isHydrating } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, materializeChild } from './h.ts';
 

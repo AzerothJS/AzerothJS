@@ -17,20 +17,11 @@
  * so a thrown null/undefined is distinguishable from "no error", at zero runtime cost.
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
 import type { MountNode } from './types.ts';
-import {
-    createSignal,
-    createEffect,
-    createRoot,
-    catchError,
-    isStringMode,
-    isHydrating,
-    runInMode,
-    serializeChild,
-    wrapContentsAnchored,
-    hydrationNode
-} from '@azerothjs/reactivity';
+import { createSignal, createEffect, createRoot, catchError, isStringMode, isHydrating, runInMode } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { createCoMarkers, appendToCo, clearCo, resolveMountNode } from './co-range.ts';
 
 /**

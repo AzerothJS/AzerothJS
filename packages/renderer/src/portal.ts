@@ -15,8 +15,10 @@
  * disconnects when the last one is gone. The observer/registry helpers below are internal.
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { destroyComponent } from '@azerothjs/component';
 
 /**

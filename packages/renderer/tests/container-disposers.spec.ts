@@ -6,7 +6,8 @@
 // SAME container, so render <-> hydrate can dispose each other's mount with no
 // effect leaks across remounts.
 import { describe, it, expect } from 'vitest';
-import { createSignal, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, hydrate } from '@azerothjs/renderer';
 import { renderToString } from '@azerothjs/server';
 

@@ -3,13 +3,8 @@
 // Full behavioral coverage for createSignal + subscriberCount (create-signal.ts).
 // Real graph, no mocks; DOM-less so any hidden DOM dependency would surface.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createEffect,
-    createMemo,
-    createRoot,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createEffect, createMemo, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 
 describe('createSignal - value semantics', () =>
 {

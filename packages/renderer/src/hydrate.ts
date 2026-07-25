@@ -10,7 +10,8 @@
  * and rebuild (a flash, and lost focus/scroll/input state).
  */
 
-import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
+import { createRoot, runInMode } from '@azerothjs/reactivity';
+import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity/internal';
 import type { MountNode } from '@azerothjs/component';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';

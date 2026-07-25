@@ -26,8 +26,9 @@
  *
  * Tree-shaking drops unused exports either way, so the choice is one of EXPLICITNESS, not bundle size.
  *
- * Generated `.azeroth` output imports its runtime helpers (tmpl/bindHole/bindSlot/bindProps/setProp)
- * from THIS package - that block is @internal below and is NOT application API.
+ * Generated `.azeroth` output imports its runtime helpers from the `azerothjs/internal`
+ * subpath (see ./internal.ts - the compiled-output runtime contract), NOT from this
+ * public entry - so the application API here can evolve without breaking compiled code.
  *
  * @see {@link createSignal}
  * @see {@link h}
@@ -113,19 +114,6 @@ export {
     css,
     collectStyleSheet,
     resetStyleSheet
-} from '@azerothjs/renderer';
-
-// Compiler-emitted runtime: imported by generated `.azeroth` output, NOT part
-// of the application API. Kept exported so compiled modules resolve them; each
-// is @internal and may change between releases.
-export {
-    tmpl,
-    bindHole,
-    bindContent,
-    bindEvent,
-    bindSlot,
-    bindProps,
-    setProp
 } from '@azerothjs/renderer';
 
 export type {

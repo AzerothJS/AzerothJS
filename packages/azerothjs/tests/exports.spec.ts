@@ -65,13 +65,6 @@ const reExports: Array<[string, Record<string, unknown>]> = [
     ['collectStyleSheet', renderer],
     ['resetStyleSheet', renderer],
 
-    // Compiler-emitted runtime (@internal but still re-exported so compiled output resolves)
-    ['tmpl', renderer],
-    ['bindHole', renderer],
-    ['bindSlot', renderer],
-    ['bindProps', renderer],
-    ['setProp', renderer],
-
     // Component
     ['destroyComponent', component],
     ['ErrorBoundary', component],
@@ -161,5 +154,25 @@ describe('azerothjs re-export integrity', () =>
         // The one non-function value export: the countries dataset is an array.
         expect(Array.isArray(core.countries)).toBe(true);
         expect(core.countries.length).toBeGreaterThan(0);
+    });
+});
+
+describe('the compiled runtime lives on the internal subpath, not the public entry', () =>
+{
+    it('the public entry no longer leaks the compiler-emitted helpers', () =>
+    {
+        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindEvent', 'bindSlot', 'bindProps', 'setProp'])
+        {
+            expect((core as Record<string, unknown>)[name], `"${ name }" must NOT be public`).toBeUndefined();
+        }
+    });
+
+    it('azerothjs/internal carries them for compiled output', async () =>
+    {
+        const internal = await import('azerothjs/internal');
+        for (const name of ['tmpl', 'bindHole', 'bindContent', 'bindEvent', 'bindSlot', 'bindProps', 'setProp', 'h', 'isStringMode'])
+        {
+            expect(typeof (internal as Record<string, unknown>)[name], `internal "${ name }"`).toBe('function');
+        }
     });
 });

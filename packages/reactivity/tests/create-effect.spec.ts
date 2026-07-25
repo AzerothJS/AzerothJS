@@ -4,14 +4,8 @@
 // dependency tracking, the return-value cleanup contract, onCleanup, manual dispose,
 // and ownership by the enclosing root.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createEffect,
-    createMemo,
-    createRoot,
-    onCleanup,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createEffect, createMemo, createRoot, onCleanup } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 
 describe('createEffect - execution', () =>
 {

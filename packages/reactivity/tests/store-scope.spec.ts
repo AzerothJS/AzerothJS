@@ -3,7 +3,8 @@
 // Full behavioral coverage for store-scope (store-scope.ts): the per-render scope key
 // that makes a store a client singleton but per-request-isolated under SSR.
 import { describe, it, expect, afterEach } from 'vitest';
-import { getStoreScope, runInStoreScope, setStoreScopeResolver } from '@azerothjs/reactivity';
+import { getStoreScope, runInStoreScope } from '@azerothjs/reactivity';
+import { setStoreScopeResolver } from '@azerothjs/reactivity/internal';
 
 describe('store-scope', () =>
 {

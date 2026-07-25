@@ -6,15 +6,8 @@
 // state riding the runInMode window (`runInMode('string', fn, { markers: true })`) -
 // there is no marker global to set, leak, or restore.
 import { describe, it, expect } from 'vitest';
-import {
-    ssr,
-    isSSRNode,
-    escapeText,
-    escapeAttr,
-    serializeChild,
-    runInMode,
-    wrapContentsAnchored
-} from '@azerothjs/reactivity';
+import { ssr, isSSRNode, escapeText, escapeAttr, runInMode } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity/internal';
 
 /** Runs `fn` in a string-mode window with markers on - the renderToString shape. */
 function withMarkers<T>(fn: () => T): T

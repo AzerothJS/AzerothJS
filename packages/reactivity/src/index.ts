@@ -17,7 +17,7 @@
  */
 
 // Core primitives: state, derivation, reaction.
-export { createSignal, subscriberCount } from './create-signal.ts';
+export { createSignal } from './create-signal.ts';
 export { createEffect } from './create-effect.ts';
 export { createMemo } from './create-memo.ts';
 
@@ -49,28 +49,12 @@ export type { UncaughtErrorContext } from './catch-error.ts';
 // Render-mode dispatch (dom / string / hydrate) and per-render store scope.
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
 export type { RenderMode, RunInModeOptions } from './render-mode.ts';
-export { getStoreScope, runInStoreScope, setStoreScopeResolver } from './store-scope.ts';
+export { getStoreScope, runInStoreScope } from './store-scope.ts';
 
-// SSR string-emission helpers.
-export {
-    isSSRNode,
-    ssr,
-    escapeText,
-    escapeAttr,
-    serializeChild,
-    wrapContentsAnchored
-} from './ssr.ts';
+// SSR string-emission helpers (the raw-HTML brand and the escapes; the framework's
+// own serializers live in ./internal - plumbing, not application API).
+export { isSSRNode, ssr, escapeText, escapeAttr } from './ssr.ts';
 export type { SSRNode } from './ssr.ts';
-
-// Hydration: adopting server-rendered DOM.
-export {
-    isHydrationNode,
-    hydrationNode,
-    transferCarriedSymbols,
-    HydrationCursor,
-    HydrationMismatchError
-} from './hydration.ts';
-export type { HydrationNode } from './hydration.ts';
 
 // Async/streaming resource types.
 export type { Resource } from './create-resource.ts';

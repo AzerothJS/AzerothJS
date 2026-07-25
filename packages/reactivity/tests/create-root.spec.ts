@@ -4,15 +4,8 @@
 // the dispose handle, cascading teardown of owned effects/memos, independent nesting,
 // and idempotent disposal.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createEffect,
-    createMemo,
-    createRoot,
-    onCleanup,
-    onRootDispose,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createEffect, createMemo, createRoot, onCleanup, onRootDispose } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 
 describe('createRoot', () =>
 {

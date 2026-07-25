@@ -24,7 +24,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { setStoreScopeResolver } from '@azerothjs/reactivity';
+import { setStoreScopeResolver } from '@azerothjs/reactivity/internal';
 
 /** What the async context carries for one request. @internal */
 interface RequestScope

@@ -20,7 +20,7 @@ describe('generateModule - module shape and imports', () =>
     {
         const code = gen('component Hi { <h1>hi</h1> }');
         expect(code).toContain('function Hi(props)');
-        expect(code).toContain('from \'azerothjs\'');
+        expect(code).toContain('from \'azerothjs/internal\'');
         // A static host output hoists a tmpl() clone.
         expect(code).toMatch(/const _tmpl\$1 = tmpl\(/);
         expect(code).toContain('import { ');

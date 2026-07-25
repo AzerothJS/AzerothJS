@@ -6,7 +6,8 @@
 // happy-dom, no mocks. Exercises the full lifecycle: mount -> reactive update ->
 // user interaction -> teardown.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createMemo, batch, subscriberCount, type Getter, type Setter } from '@azerothjs/reactivity';
+import { createSignal, createMemo, batch, type Getter, type Setter } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, Show, For, Switch, Match, classList, styleMap, createRef } from '@azerothjs/renderer';
 
 // `done` is a per-todo signal: the idiomatic way to get per-row reactivity from a

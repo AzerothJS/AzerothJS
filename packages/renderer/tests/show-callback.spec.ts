@@ -6,7 +6,8 @@
 // while the branch is mounted, and the branch is NOT rebuilt when the value changes (only on a
 // truthy<->falsy flip). The plain thunk form keeps its original contract (see show.spec.ts).
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, onCleanup, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal, createEffect, onCleanup } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, hydrate, Show } from '@azerothjs/renderer';
 import { renderToString } from '@azerothjs/server';
 

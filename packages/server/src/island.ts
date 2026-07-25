@@ -16,7 +16,8 @@
  * the page shell is NOT hydrated; reviving them is hydrateIslands()'s job, and islands do not nest).
  */
 
-import { isStringMode, isHydrating, serializeChild, escapeAttr, ssr } from '@azerothjs/reactivity';
+import { isStringMode, isHydrating, escapeAttr, ssr } from '@azerothjs/reactivity';
+import { serializeChild } from '@azerothjs/reactivity/internal';
 
 /**
  * island

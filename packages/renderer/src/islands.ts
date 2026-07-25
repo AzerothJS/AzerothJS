@@ -10,7 +10,8 @@
  * registry shape this accepts, so each island becomes its own chunk and the call site is one line.
  */
 
-import { createRoot, runInMode, isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity';
+import { createRoot, runInMode } from '@azerothjs/reactivity';
+import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '@azerothjs/reactivity/internal';
 import { containerDisposers } from './container-disposers.ts';
 
 /** What an island loader resolves to: the component, or a module whose default is the component. */

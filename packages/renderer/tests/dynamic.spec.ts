@@ -5,7 +5,8 @@
 // untracked props (a prop change does NOT rebuild the tree), and disposal of the
 // old component on swap.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createRoot, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, Dynamic } from '@azerothjs/renderer';
 
 type Comp = (props: Record<string, unknown>) => HTMLElement;

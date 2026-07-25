@@ -15,17 +15,10 @@
  */
 
 import type { Props, Child } from './types.ts';
-import type { DisposeFn, HydrationNode, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import {
-    createEffect,
-    createRoot,
-    isStringMode,
-    isHydrating,
-    hydrationNode,
-    isHydrationNode,
-    HydrationCursor,
-    transferCarriedSymbols
-} from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationNode, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createEffect, createRoot, isStringMode, isHydrating } from '@azerothjs/reactivity';
+import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols } from '@azerothjs/reactivity/internal';
 import { destroyComponent } from '@azerothjs/component';
 import { serializeElement } from './ssr.ts';
 import { delegateEvent, isDelegatedEvent } from './delegate.ts';

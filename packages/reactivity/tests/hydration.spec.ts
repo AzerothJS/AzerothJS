@@ -5,12 +5,7 @@
 // The comment-anchor walk methods are exercised end-to-end by the server package's
 // SSR -> hydrate tests; here we cover the element/text claiming and exhaustion checks.
 import { describe, it, expect } from 'vitest';
-import {
-    HydrationCursor,
-    HydrationMismatchError,
-    isHydrationNode,
-    hydrationNode
-} from '@azerothjs/reactivity';
+import { HydrationCursor, HydrationMismatchError, isHydrationNode, hydrationNode } from '@azerothjs/reactivity/internal';
 
 function container(html: string): HTMLElement
 {

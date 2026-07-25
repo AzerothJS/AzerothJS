@@ -45,7 +45,7 @@ import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
 import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren } from './ir.ts';
 
-const RUNTIME_MODULE = 'azerothjs';
+const RUNTIME_MODULE = 'azerothjs/internal';
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };

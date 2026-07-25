@@ -11,7 +11,8 @@
  */
 
 import type { Props, Child } from './types.ts';
-import { untrack, serializeChild, escapeText, escapeAttr, ssr } from '@azerothjs/reactivity';
+import { untrack, escapeText, escapeAttr, ssr } from '@azerothjs/reactivity';
+import { serializeChild } from '@azerothjs/reactivity/internal';
 import type { SSRNode } from '@azerothjs/reactivity';
 
 /**

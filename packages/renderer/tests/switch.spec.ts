@@ -4,7 +4,8 @@
 // priority ordering, fallback, reactive case swapping, single-branch mounting,
 // and branch disposal on swap (no leak).
 import { describe, it, expect } from 'vitest';
-import { createSignal, createRoot, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render, Switch, Match } from '@azerothjs/renderer';
 
 function mount(component: () => HTMLElement): HTMLElement

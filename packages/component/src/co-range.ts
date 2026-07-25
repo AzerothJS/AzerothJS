@@ -19,7 +19,7 @@
  * are the framework's control-flow contract, not app-facing API.
  */
 
-import { HydrationCursor } from '@azerothjs/reactivity';
+import { HydrationCursor } from '@azerothjs/reactivity/internal';
 import { destroyComponent } from './destroy-component.ts';
 
 /**

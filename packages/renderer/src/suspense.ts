@@ -15,7 +15,8 @@
  */
 
 import type { Resource } from '@azerothjs/reactivity';
-import { createMemo, isStringMode, serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity';
+import { createMemo, isStringMode } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored } from '@azerothjs/reactivity/internal';
 import type { MountNode } from '@azerothjs/component';
 import { Show } from './show.ts';
 

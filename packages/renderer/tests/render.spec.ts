@@ -4,7 +4,8 @@
 // reactive updates after mount, remount disposal (no leaks across renders),
 // destroy-hook invocation on clear, and the thunk contract.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createRoot, subscriberCount } from '@azerothjs/reactivity';
+import { createSignal, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render } from '@azerothjs/renderer';
 
 function makeContainer(): HTMLElement

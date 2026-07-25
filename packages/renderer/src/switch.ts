@@ -9,8 +9,10 @@
  * at the first match so a lower case's condition is only tracked while no higher case wins.
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createEffect, createRoot, isStringMode, isHydrating, untrack } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
 

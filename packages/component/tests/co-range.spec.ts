@@ -17,7 +17,7 @@ import {
     clearCo,
     adoptCoRange
 } from '@azerothjs/component';
-import { HydrationCursor } from '@azerothjs/reactivity';
+import { HydrationCursor } from '@azerothjs/reactivity/internal';
 import { setDestroyHooks } from '../src/destroy-hooks.ts';
 
 describe('createCoMarkers', () =>

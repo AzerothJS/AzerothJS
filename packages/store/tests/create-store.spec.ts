@@ -6,15 +6,8 @@
 // SSR scope isolation via runInStoreScope, and the null/undefined caching edge.
 // Real execution - the genuine reactivity core drives every assertion, no mocks.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createMemo,
-    createEffect,
-    createRoot,
-    runInStoreScope,
-    getStoreScope,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createMemo, createEffect, createRoot, runInStoreScope, getStoreScope } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { createStore } from '@azerothjs/store';
 
 describe('createStore - lazy singleton', () =>

@@ -3,13 +3,8 @@
 // Full behavioral coverage for untrack (untrack.ts): reading without subscribing,
 // return-value pass-through, nesting, and that writes inside untrack still notify.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createEffect,
-    createRoot,
-    untrack,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createEffect, createRoot, untrack } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 
 describe('untrack', () =>
 {

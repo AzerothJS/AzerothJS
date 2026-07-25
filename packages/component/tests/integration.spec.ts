@@ -11,12 +11,8 @@
 // renderer's removers use - dispose the root (reactive teardown) AND walk destroyComponent
 // (node-bound hooks) - which is exactly what render()'s remount and renderTest's unmount do.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createMemo,
-    subscriberCount,
-    createRoot
-} from '@azerothjs/reactivity';
+import { createSignal, createMemo, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 import { h, render } from '@azerothjs/renderer';
 import { ErrorBoundary, destroyComponent } from '@azerothjs/component';
 import { renderTest, leakGuard } from '@azerothjs/testing';

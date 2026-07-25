@@ -4,13 +4,8 @@
 // cached reads, lazy read-driven recompute, version-gated propagation, custom
 // equality, transitive chains, and disposal.
 import { describe, it, expect, vi } from 'vitest';
-import {
-    createSignal,
-    createMemo,
-    createEffect,
-    createRoot,
-    subscriberCount
-} from '@azerothjs/reactivity';
+import { createSignal, createMemo, createEffect, createRoot } from '@azerothjs/reactivity';
+import { subscriberCount } from '@azerothjs/reactivity/internal';
 
 describe('createMemo - compute lifecycle', () =>
 {

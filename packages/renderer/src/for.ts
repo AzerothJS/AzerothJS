@@ -17,8 +17,10 @@
  * without rebuilding the element. The reconcile internals below carry their own comments.
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, resolveReactive } from './h.ts';
 

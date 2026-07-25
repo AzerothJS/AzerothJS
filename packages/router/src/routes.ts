@@ -17,8 +17,10 @@
  * changes (route or params), not on cosmetic URL updates (same path, different hash/query).
  */
 
-import type { DisposeFn, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity';
-import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack, serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity';
+import type { DisposeFn } from '@azerothjs/reactivity';
+import type { HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
+import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '@azerothjs/reactivity';
+import { serializeChild, wrapContentsAnchored, hydrationNode } from '@azerothjs/reactivity/internal';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '@azerothjs/component';
 import { hydrateChild, playTransitionClasses } from '@azerothjs/renderer';
 import type { RouteMatch } from './types.ts';
