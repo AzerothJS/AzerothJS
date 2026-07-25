@@ -239,6 +239,26 @@ iff it is an assignment expression, a prefix/postfix `++`/`--`, or a zero-argume
 function literal, a call with arguments, or a call whose callee is itself a call or an index access - 
 is left to the type system.
 
+## Syntax highlighting anywhere
+
+The TextMate grammar ships WITH this package - one canonical copy, welded by test to
+the editor bundles:
+
+```js
+import { createHighlighter } from 'shiki';
+import azeroth from '@azerothjs/compiler/azeroth.tmLanguage.json' with { type: 'json' };
+
+const highlighter = await createHighlighter({
+    themes: ['github-dark'],
+    langs: [{ ...azeroth, name: 'azeroth' }]
+});
+highlighter.codeToHtml(source, { lang: 'azeroth', theme: 'github-dark' });
+```
+
+Any TextMate-compatible consumer (Shiki, docs generators, Sublime/TextMate
+themselves) can load the same file. A native github-linguist entry is prepared as
+a post-release submission so `.azeroth` highlights on GitHub itself.
+
 ## Type checking and diagnostics
 
 Three independent layers run during a build, in increasing depth.

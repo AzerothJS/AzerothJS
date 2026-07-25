@@ -11,6 +11,13 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **compiler**: the TextMate grammar ships with the package -
+  `@azerothjs/compiler/azeroth.tmLanguage.json` - one canonical copy any
+  TextMate-compatible consumer (Shiki, docs generators) loads directly; welded by
+  test to the VS Code extension bundle so the two can never diverge. The README
+  shows the three-line Shiki registration; the native github-linguist submission
+  is prepared as a post-release action.
+
 - **compiler**: declaration emit shares one host across files. The `.d.ts` emitter
   (the vite `emitDeclarations` mirror, the WebStorm `.azeroth-types` bridge) now
   parses lib files AND every node_modules dependency once per process and shares a

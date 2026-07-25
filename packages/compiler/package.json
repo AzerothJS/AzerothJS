@@ -14,10 +14,14 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
-        }
+        },
+        "./azeroth.tmLanguage.json": "./syntaxes/azeroth.tmLanguage.json"
     },
     "files": [
-        "dist"
+        "dist",
+        "syntaxes",
+        "GRAMMAR.md",
+        "STABILITY.md"
     ],
     "sideEffects": false,
     "dependencies": {
