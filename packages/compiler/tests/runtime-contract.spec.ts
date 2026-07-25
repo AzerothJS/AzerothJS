@@ -6,7 +6,7 @@
 // keyword, builtin, or markup helper to the emitter without exporting it from
 // azerothjs/internal fails HERE, not in a user's build.
 import { describe, it, expect } from 'vitest';
-import { generateModule } from '../src/codegen.ts';
+import { generateModule, EMITTED_CONTRACT_VERSION } from '../src/codegen.ts';
 import * as contract from 'azerothjs/internal';
 
 // A kitchen-sink module exercising every keyword, every wrapper block, every builtin
@@ -92,5 +92,35 @@ describe('the compiled-output runtime contract', () =>
         {
             expect(exported.has(name), `azerothjs/internal must export "${ name }"`).toBe(true);
         }
+    });
+});
+
+describe('the version handshake', () =>
+{
+    it('every runtime-consuming module asserts the contract version at load', () =>
+    {
+        const { code } = generateModule('export default component T { state n = 0; <p>{ n }</p> }', 'T.azeroth');
+        expect(code).toContain(`assertRuntimeContract(${ EMITTED_CONTRACT_VERSION });`);
+        // The assertion sits BEFORE any component code runs (module top level, after imports).
+        expect(code.indexOf('assertRuntimeContract')).toBeLessThan(code.indexOf('function T'));
+    });
+
+    it('compiler and runtime speak the SAME version (the lockstep weld)', () =>
+    {
+        expect(contract.RUNTIME_CONTRACT_VERSION).toBe(EMITTED_CONTRACT_VERSION);
+    });
+
+    it('the matching version passes; a mismatch throws the rebuild error', () =>
+    {
+        expect(() => contract.assertRuntimeContract(contract.RUNTIME_CONTRACT_VERSION)).not.toThrow();
+        expect(() => contract.assertRuntimeContract(0)).toThrow(/compiled for azerothjs runtime contract v0.*rebuild/s);
+        expect(() => contract.assertRuntimeContract(999)).toThrow(/same release train/);
+    });
+
+    it('a module with no runtime consumption emits no handshake (source passes through)', () =>
+    {
+        const result = generateModule('export const x = 1;');
+        expect(result.code).toBe('export const x = 1;');
+        expect(result.code).not.toContain('assertRuntimeContract');
     });
 });

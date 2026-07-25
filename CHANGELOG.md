@@ -11,6 +11,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **compiler / azerothjs**: the compiled-output version handshake. Every compiled
+  module now asserts the runtime-contract version it was built against
+  (`assertRuntimeContract(N)`, once, at load) against the runtime's
+  `RUNTIME_CONTRACT_VERSION`. A prebuilt artifact (a published `.azeroth` library's
+  dist, a stale bundle) meeting a runtime from a different contract era fails at
+  startup with a clear "rebuild with the matching compiler" error instead of
+  undefined behavior - this is what lets the compiled-output contract evolve after
+  1.0. The compiler's and runtime's versions are welded by a drift test.
 - **schema / form / api**: Standard Schema v1 everywhere. Every `@azerothjs/schema`
   schema now carries the `~standard` property, so a house schema plugs into ANY
   Standard-Schema-aware consumer (form resolvers, tRPC, other frameworks) exactly like a

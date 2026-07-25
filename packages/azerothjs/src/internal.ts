@@ -22,6 +22,33 @@
  * does not export fails the suite.
  */
 
+/**
+ * The runtime-contract version this runtime speaks. The compiler stamps every compiled
+ * module with the version it emitted against (`assertRuntimeContract(N)` right after the
+ * imports); the two move together in lockstep releases, and this handshake exists for
+ * the case lockstep cannot cover - PREBUILT compiled output (a published `.azeroth`
+ * library's dist, a stale app bundle) loaded against a runtime from a different train.
+ * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
+ * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
+ */
+export const RUNTIME_CONTRACT_VERSION = 1;
+
+/**
+ * The load-time handshake every compiled module runs. A mismatch is a clear, actionable
+ * error at startup - not undefined behavior three components deep.
+ */
+export function assertRuntimeContract(compiledWith: number): void
+{
+    if (compiledWith !== RUNTIME_CONTRACT_VERSION)
+    {
+        throw new Error(
+            `This module was compiled for azerothjs runtime contract v${ compiledWith }, but the installed ` +
+            `azerothjs speaks v${ RUNTIME_CONTRACT_VERSION }. Compiled output and runtime must come from the ` +
+            'same release train - rebuild the app (or update the prebuilt library) with the matching compiler.'
+        );
+    }
+}
+
 // Keyword lowerings + wrapper blocks + mode dispatch.
 export {
     createSignal,

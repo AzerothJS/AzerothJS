@@ -47,6 +47,17 @@ import { isReactive, type RenderPlan, type TemplateNode, type Binding, type Text
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
+/**
+ * The compiled-output runtime-contract version this compiler emits against. Every
+ * compiled module asserts it at load (`assertRuntimeContract(N)`), so a prebuilt
+ * artifact meeting a runtime that speaks a DIFFERENT contract fails with a clear
+ * "rebuild with the matching compiler" error instead of undefined behavior. Bump it
+ * ONLY when the emit vocabulary or helper semantics change incompatibly; the runtime's
+ * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it - the
+ * runtime-contract drift spec welds the two.
+ */
+export const EMITTED_CONTRACT_VERSION = 1;
+
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
 
@@ -1201,11 +1212,22 @@ function emitMarkupExpr(source: string, node: MarkupElement | MarkupFragment, so
     }
 }
 
-/** Builds the auto-injected runtime import, skipping names the source imports. */
+/**
+ * Builds the auto-injected runtime import (skipping names the source imports) plus the
+ * contract handshake: a module that consumes the runtime asserts the contract version it
+ * was compiled against, once, at load.
+ */
 function buildImport(source: string, emit: Emit): string
 {
-    const names = [...emit.used].filter(name => !alreadyImports(source, name));
-    return names.length > 0 ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n` : '';
+    if (emit.used.size === 0)
+    {
+        return '';
+    }
+    const withAssert = new Set(emit.used);
+    withAssert.add('assertRuntimeContract');
+    const names = [...withAssert].filter(name => !alreadyImports(source, name));
+    const importLine = names.length > 0 ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n` : '';
+    return `${ importLine }assertRuntimeContract(${ EMITTED_CONTRACT_VERSION });\n`;
 }
 
 /** Escapes text-node content for template HTML. */
