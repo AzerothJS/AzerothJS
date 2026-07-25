@@ -59,6 +59,12 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Changed (BREAKING - beta)
 
+- **store**: the `@azerothjs/store` package is DISCONTINUED - `createStore` now lives in
+  `@azerothjs/reactivity`, whose store-scope machinery it always built on (134 LOC split
+  across two packages was a boundary, not a module). `import { createStore } from
+  'azerothjs'` is unchanged; a direct `@azerothjs/store` import becomes
+  `@azerothjs/reactivity`.
+
 - **api**: ONE mount form. `implementContract` and the legacy
   `mountApi(implementation, { guards })` overload are REMOVED (with the
   `Implementation`/`HandlersOf`/`HandlerFor`/`ApiGuard`/`MountOptions` types) - the

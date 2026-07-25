@@ -19,7 +19,7 @@
  * are the framework's control-flow contract, not app-facing API.
  */
 
-import { HydrationCursor } from '@azerothjs/reactivity/internal';
+import { HydrationCursor, resolveThunks } from '@azerothjs/reactivity/internal';
 import { destroyComponent } from './destroy-component.ts';
 
 /**
@@ -107,14 +107,7 @@ export function createCoMarkers(coType: string): { fragment: DocumentFragment; t
  */
 export function resolveMountNode(value: unknown): Node | null | undefined
 {
-    let resolved = value;
-    let depth = 0;
-    while (typeof resolved === 'function' && depth < 16)
-    {
-        resolved = (resolved as () => unknown)();
-        depth++;
-    }
-    return resolved as Node | null | undefined;
+    return resolveThunks(value) as Node | null | undefined;
 }
 
 /**

@@ -6,7 +6,6 @@
  *   - @azerothjs/renderer   - h(), render/hydrate, control flow (Show/For/Switch/Match/Dynamic/
  *                             Suspense/Transition/Portal), refs, css/class/style bindings;
  *   - @azerothjs/component  - ErrorBoundary, destroyComponent;
- *   - @azerothjs/store      - createStore;
  *   - @azerothjs/form       - createForm + validators + phone/countries;
  *   - @azerothjs/router     - createRouter, Link/Routes/Outlet, the use* composables, history adapters;
  *   - @azerothjs/server     - SSR: renderToString / renderToStaticMarkup / renderToDocument.
@@ -64,7 +63,8 @@ export {
     isHydrating,
     runInMode,
     getStoreScope,
-    runInStoreScope
+    runInStoreScope,
+    createStore
 } from '@azerothjs/reactivity';
 
 export type {
@@ -144,10 +144,6 @@ export type {
 
 export { destroyComponent, ErrorBoundary } from '@azerothjs/component';
 export type { ErrorBoundaryProps } from '@azerothjs/component';
-
-// Store
-
-export { createStore } from '@azerothjs/store';
 
 // Form
 

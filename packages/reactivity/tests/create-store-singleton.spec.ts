@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { createSignal, createMemo, createEffect, createRoot, runInStoreScope, getStoreScope } from '@azerothjs/reactivity';
 import { subscriberCount } from '@azerothjs/reactivity/internal';
-import { createStore } from '@azerothjs/store';
+import { createStore } from '@azerothjs/reactivity';
 
 describe('createStore - lazy singleton', () =>
 {

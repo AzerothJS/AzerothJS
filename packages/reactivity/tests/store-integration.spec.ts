@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { createSignal, createMemo } from '@azerothjs/reactivity';
 import { h, render } from '@azerothjs/renderer';
-import { createStore } from '@azerothjs/store';
+import { createStore } from '@azerothjs/reactivity';
 
 function mount(component: () => HTMLElement): HTMLElement
 {

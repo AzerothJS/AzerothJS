@@ -50,6 +50,7 @@ export type { UncaughtErrorContext } from './catch-error.ts';
 export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mode.ts';
 export type { RenderMode, RunInModeOptions } from './render-mode.ts';
 export { getStoreScope, runInStoreScope } from './store-scope.ts';
+export { createStore } from './create-store.ts';
 
 // SSR string-emission helpers (the raw-HTML brand and the escapes; the framework's
 // own serializers live in ./internal - plumbing, not application API).

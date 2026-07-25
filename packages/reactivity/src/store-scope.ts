@@ -100,7 +100,7 @@ export function setStoreScopeResolver(resolver: (() => object | undefined) | nul
  * per request). A single accessor hides that difference behind one stable key.
  *
  * COMPILER / RUNTIME ROLE:
- * Runtime; the SSR-isolation seam. Read by @azerothjs/store when caching instances.
+ * Runtime; the SSR-isolation seam. Read by createStore when caching instances.
  *
  * INPUT CONTRACT:
  * - None.

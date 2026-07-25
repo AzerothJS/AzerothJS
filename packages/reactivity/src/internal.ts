@@ -9,6 +9,9 @@
  * here, that is a missing public API: open an issue instead of importing this path.
  */
 
+// THE thunk-chain unwrap every 'call while it is a function' site shares.
+export { resolveThunks } from './resolve-thunks.ts';
+
 // SSR serialization shared by every control-flow serializer.
 export { serializeChild, wrapContentsAnchored } from './ssr.ts';
 

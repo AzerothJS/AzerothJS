@@ -63,6 +63,7 @@ export {
     untrack,
     onCleanup,
     onRootDispose,
+    createStore,
     isStringMode,
     isHydrating
 } from '@azerothjs/reactivity';
@@ -95,5 +96,4 @@ export { ErrorBoundary } from '@azerothjs/component';
 export { Outlet } from '@azerothjs/router';
 
 // Keyword lowerings living outside reactivity.
-export { createStore } from '@azerothjs/store';
 export { createForm, createFieldArray } from '@azerothjs/form';

@@ -36,7 +36,6 @@
         "@azerothjs/renderer": "1.0.0-beta.2",
         "@azerothjs/component": "1.0.0-beta.2",
         "@azerothjs/server": "1.0.0-beta.2",
-        "@azerothjs/store": "1.0.0-beta.2",
         "@azerothjs/form": "1.0.0-beta.2",
         "@azerothjs/router": "1.0.0-beta.2"
     },

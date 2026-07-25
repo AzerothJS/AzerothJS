@@ -23,6 +23,7 @@
  */
 
 import { untrack } from './untrack.ts';
+import { resolveThunks } from './resolve-thunks.ts';
 import { ssrMarkersActive } from './render-mode.ts';
 
 /**
@@ -164,14 +165,7 @@ export function serializeChild(child: unknown): string
         // string`) collapses to its concrete value rather than serializing inner source.
         // Resolving here (not recursing) keeps a SINGLE `<!--[-->...<!--]-->` pair,
         // matching the one span the client hydrator adopts.
-        let value = untrack(() => (child as () => unknown)());
-        let depth = 0;
-        while (typeof value === 'function' && depth < 16)
-        {
-            const getter = value as () => unknown;
-            value = untrack(() => getter());
-            depth++;
-        }
+        const value = untrack(() => resolveThunks(child));
         const inner = serializeChild(value);
         return ssrMarkersActive() ? `<!--[-->${ inner }<!--]-->` : inner;
     }

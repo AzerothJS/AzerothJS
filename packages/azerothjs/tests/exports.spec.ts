@@ -12,7 +12,6 @@ import * as core from 'azerothjs';
 import * as reactivity from '@azerothjs/reactivity';
 import * as renderer from '@azerothjs/renderer';
 import * as component from '@azerothjs/component';
-import * as store from '@azerothjs/store';
 import * as form from '@azerothjs/form';
 import * as router from '@azerothjs/router';
 import * as server from '@azerothjs/server';
@@ -69,8 +68,7 @@ const reExports: Array<[string, Record<string, unknown>]> = [
     ['destroyComponent', component],
     ['ErrorBoundary', component],
 
-    // Store
-    ['createStore', store],
+    ['createStore', reactivity],
 
     // Form
     ['createForm', form],

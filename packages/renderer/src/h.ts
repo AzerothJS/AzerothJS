@@ -18,7 +18,7 @@ import type { Props, Child } from './types.ts';
 import type { DisposeFn } from '@azerothjs/reactivity';
 import type { HydrationNode, HydrationCursor as HydrationCursorType } from '@azerothjs/reactivity/internal';
 import { createEffect, createRoot, isStringMode, isHydrating } from '@azerothjs/reactivity';
-import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols } from '@azerothjs/reactivity/internal';
+import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols, resolveThunks } from '@azerothjs/reactivity/internal';
 import { destroyComponent } from '@azerothjs/component';
 import { serializeElement } from './ssr.ts';
 import { delegateEvent, isDelegatedEvent } from './delegate.ts';
@@ -276,17 +276,7 @@ function applyProps(el: HTMLElement, props: Props, delegate = false): void
  *
  * @internal
  */
-export function resolveReactive(value: unknown): unknown
-{
-    let resolved = value;
-    let depth = 0;
-    while (typeof resolved === 'function' && depth < 16)
-    {
-        resolved = (resolved as () => unknown)();
-        depth++;
-    }
-    return resolved;
-}
+export const resolveReactive: (value: unknown) => unknown = resolveThunks;
 
 /**
  * Wires up a `ref` prop, handing the created element back to the caller.

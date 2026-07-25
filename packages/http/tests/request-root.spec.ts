@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal, getStoreScope, runInStoreScope } from '@azerothjs/reactivity';
-import { createStore } from '@azerothjs/store';
+import { createStore } from '@azerothjs/reactivity';
 import { App } from '../src/app.ts';
 import { json } from '../src/respond.ts';
 import { onRequestCleanup } from '../src/request-root.ts';

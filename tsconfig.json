@@ -63,10 +63,6 @@
             [
                 "./packages/router/src/index.ts"
             ],
-            "@azerothjs/store":
-            [
-                "./packages/store/src/index.ts"
-            ],
             "@azerothjs/form":
             [
                 "./packages/form/src/index.ts"

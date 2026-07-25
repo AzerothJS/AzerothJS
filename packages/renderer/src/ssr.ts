@@ -12,6 +12,7 @@
 
 import type { Props, Child } from './types.ts';
 import { untrack, escapeText, escapeAttr, ssr } from '@azerothjs/reactivity';
+import { resolveThunks } from '@azerothjs/reactivity/internal';
 import { serializeChild } from '@azerothjs/reactivity/internal';
 import type { SSRNode } from '@azerothjs/reactivity';
 
@@ -69,16 +70,7 @@ const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
  */
 function resolveValue(value: unknown): unknown
 {
-    let resolved = value;
-    let depth = 0;
-    while (typeof resolved === 'function' && depth < 16)
-    {
-        const getter = resolved as () => unknown;
-        resolved = untrack(() => getter());
-        depth++;
-    }
-
-    return resolved;
+    return untrack(() => resolveThunks(value));
 }
 
 /**

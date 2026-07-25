@@ -129,7 +129,6 @@ const PUBLISH_ORDER =
     '@azerothjs/renderer',
     '@azerothjs/server',
     '@azerothjs/router',
-    '@azerothjs/store',
     // Logger before the backend packages: @azerothjs/http prints the startup banner
     // through it, so it must be resolvable on npm before http publishes.
     '@azerothjs/logger',

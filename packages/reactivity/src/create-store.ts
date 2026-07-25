@@ -1,5 +1,5 @@
 /**
- * MODULE: store/create-store
+ * MODULE: reactivity/create-store
  *
  * createStore wraps a factory in lazy-singleton + reactive-ownership behaviour. The factory returns
  * whatever shape you want (typically a bag of signals, memos, and methods); createStore guarantees:
@@ -22,7 +22,8 @@
  * directly or use createRoot + manual dispose.
  */
 
-import { createRoot, getStoreScope } from '@azerothjs/reactivity';
+import { createRoot } from './create-root.ts';
+import { getStoreScope } from './store-scope.ts';
 
 /**
  * createStore
