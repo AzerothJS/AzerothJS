@@ -1,80 +1,125 @@
 /**
  * MODULE: router/use-loader
  *
- * useLoader returns the live Resource holding the matched route's loader output. There is ONE
- * resource per router, so every useLoader(router) consumer sees the same data/loading/error and
- * shares one refetch(). Its source is the router's match memo, which drives its lifecycle: a match
- * change re-runs the loader; a mid-flight match change aborts the previous fetch via the shared
- * AbortSignal; a null match (404) or a loader-less leaf resets it to the no-fetch state; and
- * router-scope disposal aborts any in-flight fetch.
+ * useLoader returns the live Resource holding a route level's loader output. The router
+ * keeps ONE resource per matched-chain level (all levels load in parallel); this
+ * composable answers "which level do you mean" three ways:
  *
- * Type caveat: the router cannot know which leaf's loader is active at compile time, so the default
- * return is Resource<unknown>; pass a generic (useLoader<Post>(router)) for a per-call cast. A
- * future typed-routes pass can lift this without changing the call shape.
+ *   - `useLoader()` inside a route component - THIS component's level (the construction
+ *     frame `<Routes>` provides), falling back to the nearest ANCESTOR level that
+ *     declares a loader when this one doesn't - a leaf reading its layout's data.
+ *   - `useLoader(handle)` - the level where that {@link RouteHandle} sits in the current
+ *     match, TYPED as `Resource<Data>` from the handle's loader. Idle when the handle is
+ *     not part of the current match.
+ *   - `useLoader(router)` / bare `useLoader()` outside a chain - the DEEPEST level with
+ *     a loader (the v1 "leaf loader" semantics), tracking navigation reactively.
+ *
+ * Every form returns getters over the router's own per-level resources, so consumers
+ * share one coordinated data/loading/error state and one refetch per level.
  */
 
-import type { Resource } from '../reactivity/index.ts';
+import type { Getter, Resource } from '../reactivity/index.ts';
+import { createMemo, untrack } from '../reactivity/index.ts';
 import type { Router } from './router.ts';
+import type { RouteHandle } from './define-route.ts';
+import { currentRouteFrame, resolveRouter } from './provider.ts';
+
+/** @internal A Resource view over a LEVEL THAT MOVES (reactive level index into router.loaders). */
+function levelResource(router: Router, level: Getter<number | null>): Resource<unknown>
+{
+    const at = (): Resource<unknown> | null =>
+    {
+        const index = level();
+        return index === null ? null : router.loaders[index] ?? null;
+    };
+    return {
+        data: () => at()?.data(),
+        loading: () => at()?.loading() ?? false,
+        error: () => at()?.error() ?? null,
+        refetch: (): void => at()?.refetch()
+    };
+}
+
+/** @internal The deepest matched level declaring a loader, or null. */
+function deepestLoaderLevel(router: Router): number | null
+{
+    const m = router.match();
+    if (m === null)
+    {
+        return null;
+    }
+    for (let i = m.matched.length - 1; i >= 0; i--)
+    {
+        if (m.matched[i]?.loader)
+        {
+            return i;
+        }
+    }
+    return null;
+}
 
 /**
  * useLoader
  *
  * PURPOSE:
- * Returns the matched route's loader {@link Resource} (data/loading/error/refetch), cast to the
- * caller-supplied type.
- *
- * WHY IT EXISTS:
- * Route data loading needs the same loading/error/cancellation machinery as any async resource,
- * coordinated with navigation. The router already owns one such resource keyed on the active match;
- * useLoader is the ergonomic accessor route components reach for, mirroring other frameworks'
- * useLoaderData.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; a thin accessor over router.loader. The resource's reactivity (re-fetch on match
- * change, abort on supersession) is handled by the router's createResource.
+ * Returns the loader {@link Resource} (data/loading/error/refetch) for a route level -
+ * this component's own level, a handle's level (typed), or the deepest loading level.
  *
  * INPUT CONTRACT:
- * - router: the Router whose active loader to read.
+ * - `useLoader()` (no arguments) inside a route component body: this level. Outside a
+ *   component build it needs a router from `<RouterProvider>` context and reads the
+ *   deepest loading level.
+ * - `useLoader(handle, router?)`: that handle's level, `Resource<Data>` - no cast.
+ * - `useLoader(router)`: explicit router, deepest loading level (the v1 shape).
  *
  * OUTPUT CONTRACT:
- * - The SAME Resource<T> object every call (per router), so reading data()/loading()/error() inside
- *   an effect subscribes to the underlying signals. T is an unchecked cast.
- *
- * WHY THIS DESIGN:
- * Returning the single shared resource (rather than a fresh one) means every consumer observes one
- * coordinated state and one refetch(), and the router controls its lifecycle centrally. The generic
- * is a per-call cast because the active leaf is not known at compile time.
- *
- * WHEN TO USE:
- * Inside a route component to read its loader data, loading flag, error, or to trigger a refetch.
- *
- * WHEN NOT TO USE:
- * For ad-hoc fetches unrelated to routing (use {@link createResource} directly).
- *
- * EDGE CASES:
- * - When no route matches or the matched leaf has no loader, the resource is idle: data() is
- *   undefined and loading() is false.
- * - The T type argument is NOT verified - pass the type matching the route you are rendering.
- *
- * PERFORMANCE NOTES:
- * O(1): returns an existing object; no per-call allocation.
+ * - Getters over the router's shared per-level resources: consumers see one
+ *   coordinated state and one refetch() per level. Idle (data undefined, loading
+ *   false) when the level has no loader or no route matches.
  *
  * DEVELOPER WARNING:
- * The cast is unchecked - a wrong T compiles but lies at runtime. Read the resource inside an effect
- * to stay reactive to its loading/data/error transitions.
+ * Call it during component CONSTRUCTION (the top of the component body), like every
+ * composable; the returned resource stays live for later reads. The bare-generic cast
+ * (`useLoader<T>(router)`) remains unchecked - prefer a handle for checked typing.
  *
- * @typeParam T - The expected resolved-value type (unchecked cast).
- * @param router - The Router whose loader resource to return.
- * @returns The matched route's loader {@link Resource} as Resource<T>.
- * @see {@link createRouter}
- * @see {@link createResource}
  * @example
- * const user = useLoader<User>(router);
+ * const user = useLoader(userRoute);            // Resource<User> - typed by the handle
  * h('div', {}, () => user.loading() ? 'Loading...' : (user.data()?.name ?? 'No data'));
  */
-export function useLoader<T = unknown>(router: Router): Resource<T>
+export function useLoader<Path extends string, Data, Search>(handle: RouteHandle<Path, Data, Search>, router?: Router): Resource<Data>;
+export function useLoader<T = unknown>(router?: Router): Resource<T>;
+export function useLoader(
+    first?: Router | RouteHandle<string, unknown, unknown>, second?: Router
+): Resource<unknown>
 {
-    // Single source of truth: every caller gets the same object, so reads inside an effect
-    // subscribe to the same underlying signals.
-    return router.loader as Resource<T>;
+    // A handle carries `path`; a router never does.
+    if (first !== undefined && 'path' in first)
+    {
+        const handle = first;
+        const router = resolveRouter(second, 'useLoader');
+        const level = createMemo<number | null>(() =>
+        {
+            const m = router.match();
+            const index = m?.matched.indexOf(handle) ?? -1;
+            return index === -1 ? null : index;
+        });
+        return levelResource(router, level);
+    }
+
+    // Inside a chain build: THIS level, or the nearest ancestor that loads.
+    const frame = currentRouteFrame();
+    if (first === undefined && frame !== null)
+    {
+        const chain = untrack(() => frame.router.match())?.matched;
+        let level = frame.level;
+        while (level > 0 && chain?.[level]?.loader === undefined)
+        {
+            level--;
+        }
+        return frame.router.loaders[level] ?? levelResource(frame.router, () => null);
+    }
+
+    // The v1 shape: the deepest loading level of whatever is matched, reactively.
+    const router = resolveRouter(first, 'useLoader');
+    return levelResource(router, createMemo(() => deepestLoaderLevel(router)));
 }

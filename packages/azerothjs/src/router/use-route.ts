@@ -11,9 +11,9 @@
  * WHY they exist when router.location already does it: (1) SLICE MEMOIZATION - useParams/useQuery
  * re-fire only when their slice actually changes (navigating /users/42 -> /users/42#bio updates the
  * location signal but leaves params identical, so useParams stays quiet); (2) a FUTURE CONTEXT API
- * - when <RouterProvider> lands these will resolve the router from context instead of an argument,
- * so user code does not change shape, only the call drops the router argument. Each composable is a
- * thin wrapper; its contract is documented at its definition below.
+ * - <RouterProvider> HAS landed: every composable resolves the router from context when the
+ * argument is omitted; the explicit argument remains as an override (tests, nested routers). Each
+ * composable is a thin wrapper; its contract is documented at its definition below.
  */
 
 import type { Getter } from '../reactivity/index.ts';
@@ -21,13 +21,13 @@ import { createMemo } from '../reactivity/index.ts';
 import type { Params, Query, RouteLocation, RouteMatch } from './types.ts';
 import type { Router } from './router.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
+import { resolveRouter } from './provider.ts';
 
 /**
  * Returns a getter for the full reactive `RouteLocation`.
  *
- * Equivalent to `router.location` today; the indirection exists
- * so user code stays unchanged when we introduce a context-based
- * resolver later.
+ * Equivalent to `router.location`; with no argument the router
+ * resolves from the nearest <RouterProvider>.
  *
  * @example
  * ```ts
@@ -39,9 +39,9 @@ import { shallowEqualRecord } from './shallow-equal.ts';
  * });
  * ```
  */
-export function useRoute(router: Router): Getter<RouteLocation>
+export function useRoute(router?: Router): Getter<RouteLocation>
 {
-    return router.location;
+    return resolveRouter(router, 'useRoute').location;
 }
 
 /**
@@ -63,9 +63,9 @@ export function useRoute(router: Router): Getter<RouteLocation>
  * });
  * ```
  */
-export function useMatch(router: Router): Getter<RouteMatch | null>
+export function useMatch(router?: Router): Getter<RouteMatch | null>
 {
-    return router.match;
+    return resolveRouter(router, 'useMatch').match;
 }
 
 /**
@@ -87,10 +87,11 @@ export function useMatch(router: Router): Getter<RouteMatch | null>
  * });
  * ```
  */
-export function useParams(router: Router): Getter<Params>
+export function useParams(router?: Router): Getter<Params>
 {
+    const resolved = resolveRouter(router, 'useParams');
     return createMemo<Params>(
-        () => router.location().params,
+        () => resolved.location().params,
         { equals: shallowEqualRecord }
     );
 }
@@ -113,10 +114,11 @@ export function useParams(router: Router): Getter<Params>
  * });
  * ```
  */
-export function useQuery(router: Router): Getter<Query>
+export function useQuery(router?: Router): Getter<Query>
 {
+    const resolved = resolveRouter(router, 'useQuery');
     return createMemo<Query>(
-        () => router.location().query,
+        () => resolved.location().query,
         { equals: shallowEqualRecord }
     );
 }
@@ -157,12 +159,13 @@ export interface NavigateApi
  * h('button', { onClick: () => replace('/home') },  'Go home (no back stack)');
  * ```
  */
-export function useNavigate(router: Router): NavigateApi
+export function useNavigate(router?: Router): NavigateApi
 {
+    const resolved = resolveRouter(router, 'useNavigate');
     return {
-        navigate: router.navigate,
-        replace: router.replace,
-        back: router.back,
-        forward: router.forward
+        navigate: resolved.navigate,
+        replace: resolved.replace,
+        back: resolved.back,
+        forward: resolved.forward
     };
 }

@@ -35,12 +35,16 @@ async function withRouter(routes: Route[], initialUrl: string, fn: (router: Rout
 
 describe('useLoader - basic data flow', () =>
 {
-    it('returns the same shared resource object the router holds', async () =>
+    it('reads through the router-held per-level resources (shared state, one refetch)', async () =>
     {
-        const routes: Route[] = [{ path: '/', component: leaf }];
-        await withRouter(routes, '/', (router) =>
+        const routes: Route[] = [{ path: '/', component: leaf, loader: async () => 'root-data' }];
+        await withRouter(routes, '/', async (router) =>
         {
-            expect(useLoader(router)).toBe(router.loader);
+            const resource = useLoader(router);
+            await flush();
+            // The composable is a view over the SAME level resource the router owns.
+            expect(resource.data()).toBe(router.loaders[0]!.data());
+            expect(resource.data()).toBe('root-data');
         });
     });
 

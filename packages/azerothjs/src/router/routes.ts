@@ -26,6 +26,8 @@ import { playTransitionClasses } from '../renderer/index.ts';
 import { hydrateChild } from '../renderer/h.ts';
 import type { RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';
+import { componentOf } from './router.ts';
+import { withRouteLevel, resolveRouter } from './provider.ts';
 
 /** What a `transition` FUNCTION receives to pick (or veto) a name per swap. */
 export interface RouteTransitionContext
@@ -45,8 +47,8 @@ export interface RouteTransitionContext
  */
 export interface RoutesProps
 {
-    /** The router whose `match()` drives this dispatcher. */
-    router: Router;
+    /** The router whose `match()` drives this dispatcher; omit inside a <RouterProvider>. */
+    router?: Router;
 
     /**
      * Optional fallback component, rendered when no route matches. Use it for
@@ -129,15 +131,16 @@ export interface RoutesProps
  */
 export function Routes(props: RoutesProps): MountNode
 {
+    const router = resolveRouter(props.router, 'Routes');
     // Server-side rendering: evaluate the match ONCE (no live effect) and emit the
     // matched chain (or fallback) inside a contents anchor the client hydrator can
     // adopt - the same pattern as <Show>/<Switch>. (On the client, hydration currently
     // re-renders the matched chain rather than adopting it in place.)
     if (isStringMode())
     {
-        const matchResult = untrack(() => props.router.match());
+        const matchResult = untrack(() => router.match());
         const inner = matchResult !== null
-            ? serializeChild(renderChain(matchResult))
+            ? serializeChild(renderChain(matchResult, router))
             : (props.fallback ? serializeChild(props.fallback()) : '');
         return wrapContentsAnchored('routes', inner) as unknown as MountNode;
     }
@@ -149,14 +152,14 @@ export function Routes(props: RoutesProps): MountNode
         return hydrationNode((cursor: HydrationCursorType): void =>
         {
             const { target, contentCursor } = adoptCoRange(cursor);
-            driveRoutes(props, target, true, contentCursor);
+            driveRoutes(props, router, target, true, contentCursor);
         }) as unknown as MountNode;
     }
 
     // Fresh client render: comment markers bracket the active route (no wrapper
     // element), so <Routes> works directly inside <table>/<select>/<ul>.
     const { fragment, target } = createCoMarkers('routes');
-    driveRoutes(props, target, false);
+    driveRoutes(props, router, target, false);
     return fragment;
 }
 
@@ -168,7 +171,7 @@ export function Routes(props: RoutesProps): MountNode
  *
  * @internal
  */
-function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
+function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
     let branchDispose: DisposeFn | null = null;
     let firstRun = hydrateFirstRun;
@@ -207,14 +210,26 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
         {
             return transition;
         }
-        return transition({ from: previousMatch, to, navigation: props.router.navigationKind() });
+        return transition({ from: previousMatch, to, navigation: router.navigationKind() });
     }
 
     createEffect(() =>
     {
-        const matchResult = props.router.match();
+        const matchResult = router.match();
+
+        // A chain containing an unresolved lazy chunk is not renderable yet: keep
+        // the CURRENT screen (previous route, or nothing on a cold start - never a
+        // flash of a half-loaded chain) and return. chainReady is reactive and read
+        // unconditionally here, so the effect re-runs the moment the chunk lands; a
+        // FAILED chunk counts as ready and componentOf throws its load error into
+        // the branch, where an <ErrorBoundary> catches it.
+        if (matchResult !== null && !router.chainReady())
+        {
+            return;
+        }
+
         const factory: (() => MountNode) | null = matchResult !== null
-            ? (): MountNode => renderChain(matchResult)
+            ? (): MountNode => renderChain(matchResult, router)
             : (props.fallback ?? null);
 
         if (firstRun)
@@ -335,9 +350,15 @@ function driveRoutes(props: RoutesProps, target: CoTarget, hydrateFirstRun: bool
  * deeper levels won't be visible. (`<Outlet>` is just sugar for
  * `props.children`.)
  *
+ * Each level's component is CONSTRUCTED inside `withRouteLevel(router, i)`, so a
+ * `useLoader()`/`useSearch()` call in its body resolves this level (and this
+ * router) without any argument. Components resolve through `componentOf` - the
+ * direct component or the resolved lazy chunk (whose load error throws here,
+ * into the branch an `<ErrorBoundary>` wraps).
+ *
  * @internal
  */
-function renderChain(matchResult: RouteMatch): MountNode
+function renderChain(matchResult: RouteMatch, router: Router): MountNode
 {
     const chain = matchResult.matched;
     let current: MountNode | undefined = undefined;
@@ -349,7 +370,9 @@ function renderChain(matchResult: RouteMatch): MountNode
         {
             continue; // matched chains are dense; satisfies the indexed-access check
         }
-        current = route.component({ children: current });
+        const level = i;
+        const previous: MountNode | undefined = current;
+        current = withRouteLevel(router, level, () => componentOf(route)({ children: previous }));
     }
 
     if (current === undefined)

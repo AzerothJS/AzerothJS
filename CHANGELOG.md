@@ -11,6 +11,35 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **router**: the v2 core. (1) PER-LEVEL PARALLEL LOADERS - every matched route in the
+  chain may declare a loader and ALL levels start simultaneously (a layout loads beside
+  its leaf, never in a waterfall); a level that genuinely needs its parent's result
+  awaits the new `parent` promise (nearest loading ancestor), sequencing opt-in per
+  level. `router.loaders` is one resource per level; `router.pending()` is the reactive
+  navigation-in-flight signal. (2) LAZY ROUTES - `lazy: () => import('./Page.azeroth')`
+  code-splits a route; the chunk races the level's loaders, `<Routes>` holds the
+  current screen until it lands (no empty flash), a failed chunk throws into the tree
+  for `<ErrorBoundary>`, and `createRouter` boot-validates that every route declares
+  exactly one of `component`/`lazy`. (3) `<RouterProvider router>` - every composable
+  and router component now resolves the router from context; `useRoute()` instead of
+  `useRoute(router)` (the explicit argument stays as an override), and `useLoader()`
+  inside a route component resolves ITS level (falling back to the nearest ancestor
+  that loads). (4) `defineRoute(path, config)` TYPED HANDLES - pattern-inferred params
+  (`.to({ id })` compile-checked), loader-typed `useLoader(handle)`, and a `search`
+  schema whose validated+coerced value `useSearch(handle)` returns typed (an invalid
+  query degrades to `{}` with one console warning, never a crash). (5) SSR handoff v2 -
+  `matchAndLoad` pre-resolves lazy chunks and runs ALL levels' loaders in parallel;
+  the wire payload is versioned and per-level, and a stale or older-shaped payload is
+  rejected loudly in favor of a normal fetch.
+
+### Changed
+
+- **router** (BREAKING, per the ratified router-v2 design): `Router.loader` (the single
+  leaf resource) is replaced by per-level `Router.loaders` - `useLoader(router)` keeps
+  the old "deepest loading level" meaning; `LoaderHandoff` is now
+  `{ version, path, data: unknown[] }` (array by level); `Route.loader` receives
+  `{ params, query, signal, parent }`.
+
 - **http**: trusted-proxy URL truth. `serve(app, { trustProxy: true })` (granularly
   `{ proto: true }` / `{ host: true }`, also on `serveH2c` and `toWebRequest`) believes
   `X-Forwarded-Proto`/`X-Forwarded-Host` from a declared terminating proxy, so

@@ -11,7 +11,8 @@
 
 // Functions
 
-export { createRouter, targetToFullPath } from './router.ts';
+export { createRouter, targetToFullPath, resolveRouteComponent } from './router.ts';
+export { defineRoute } from './define-route.ts';
 export { createBrowserHistory, createMemoryHistory } from './history.ts';
 export { compilePath } from './path-pattern.ts';
 export { parseQuery, stringifyQuery } from './query.ts';
@@ -21,6 +22,7 @@ export { parseQuery, stringifyQuery } from './query.ts';
 export { Link } from './link.ts';
 export { Routes } from './routes.ts';
 export { Outlet } from './outlet.ts';
+export { RouterProvider } from './provider.ts';
 
 // Composables
 
@@ -32,7 +34,8 @@ export {
     useNavigate
 } from './use-route.ts';
 export { useLoader } from './use-loader.ts';
-export { matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID } from './handoff.ts';
+export { useSearch } from './use-search.ts';
+export { matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION } from './handoff.ts';
 
 // Types
 
@@ -43,13 +46,17 @@ export type {
     RouteLocation,
     RouteComponent,
     Route,
+    RouteLoaderArgs,
     RouteMatch,
     NavigateTarget,
     NavigateOptions,
     RouterMode,
     RouterConfig,
-    HistoryAdapter
+    HistoryAdapter,
+    SearchSchemaLike
 } from './types.ts';
+export type { RouteHandle, RoutePathParams, DefineRouteConfig, ToOptions, LoaderDataOf, SearchOf } from './define-route.ts';
+export type { RouterProviderProps } from './provider.ts';
 
 export type { Router, NavigationKind } from './router.ts';
 // Re-exported from azerothjs: the return contract RouteComponent uses.

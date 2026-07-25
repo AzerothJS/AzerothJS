@@ -57,7 +57,7 @@ describe('server side: matchAndLoad + document embedding through the real HTTP k
         expect(loader).toHaveBeenCalledTimes(1);
         expect(page).toContain(`id="${ LOADER_HANDOFF_ID }"`);
         expect(page).toContain('user-42');
-        expect(page).toContain('ssr:{'); // the render itself saw the data
+        expect(page).toContain('ssr:[{'); // the render itself saw the per-level data
     });
 
     it('no loader on the matched route means no tag (and no branching for the caller)', async () =>
@@ -100,7 +100,7 @@ describe('client side: adoption without a refetch', () =>
         embed(loaderHandoffScript(handoff));
         try
         {
-            expect(readLoaderHandoff()).toEqual({ path: '/users/7?tab=posts', data: { id: '7' } });
+            expect(readLoaderHandoff()).toEqual({ version: 2, path: '/users/7?tab=posts', data: [{ id: '7' }] });
         }
         finally
         {
@@ -112,7 +112,7 @@ describe('client side: adoption without a refetch', () =>
     {
         const clientLoader = vi.fn(async () => ({ fresh: true }));
         const routes = buildRoutes(clientLoader);
-        embed(loaderHandoffScript({ path: '/users/42', data: { id: '42', name: 'user-42' } }));
+        embed(loaderHandoffScript({ version: 2, path: '/users/42', data: [{ id: '42', name: 'user-42' }] }));
 
         try
         {
@@ -127,8 +127,8 @@ describe('client side: adoption without a refetch', () =>
                     initialLoaderData: readLoaderHandoff()
                 });
                 // Synchronous availability - what an SSR render (and hydration) reads.
-                expect(router.loader.data()).toEqual({ id: '42', name: 'user-42' });
-                expect(router.loader.loading()).toBe(false);
+                expect(router.loaders[0]!.data()).toEqual({ id: '42', name: 'user-42' });
+                expect(router.loaders[0]!.loading()).toBe(false);
             });
             await flush();
             expect(clientLoader).not.toHaveBeenCalled(); // adopted, not refetched
@@ -137,7 +137,7 @@ describe('client side: adoption without a refetch', () =>
             router.navigate('/users/43');
             await flush();
             expect(clientLoader).toHaveBeenCalledTimes(1);
-            expect(router.loader.data()).toEqual({ fresh: true });
+            expect(router.loaders[0]!.data()).toEqual({ fresh: true });
             dispose();
         }
         finally
@@ -159,12 +159,12 @@ describe('client side: adoption without a refetch', () =>
             router = createRouter({
                 routes,
                 history: createMemoryHistory('/users/9'),
-                initialLoaderData: { path: '/users/OLD', data: { id: 'OLD' } }
+                initialLoaderData: { version: 2, path: '/users/OLD', data: [{ id: 'OLD' }] }
             });
         });
         await flush();
         expect(clientLoader).toHaveBeenCalledTimes(1);
-        expect(router.loader.data()).toEqual({ id: '9' });
+        expect(router.loaders[0]!.data()).toEqual({ id: '9' });
         dispose();
     });
 

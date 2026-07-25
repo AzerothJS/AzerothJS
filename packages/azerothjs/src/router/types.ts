@@ -12,6 +12,24 @@
 import type { MountNode } from '../component/index.ts';
 
 /**
+ * What a route `search` schema must look like: the native `@azerothjs/schema` shape,
+ * structurally (`object({ ... })` satisfies it as-is). Declared structurally so the
+ * router stays decoupled from the schema package at the type level while accepting
+ * its schemas directly.
+ */
+export interface SearchSchemaLike<T = unknown>
+{
+    /**
+     * Validates (and coerces) a candidate query object; never throws. The shape is
+     * deliberately the WIDENED view of the schema package's discriminated ParseResult
+     * (`ok: boolean` with optional value/errors) - the discriminated union defeats
+     * TypeScript's inference of T through the extra failure-arm fields, and the router
+     * only ever branches on `ok` anyway.
+     */
+    safeParse: (value: unknown) => { ok: boolean; value?: T; errors?: Record<string, string> };
+}
+
+/**
  * Path parameters extracted from a URL.
  *
  * Each segment in a route pattern that starts with a colon
@@ -140,8 +158,27 @@ export interface Route
      */
     path: string;
 
-    /** Component to render when this route matches. */
-    component: RouteComponent;
+    /**
+     * Component to render when this route matches. Exactly ONE of `component`
+     * and `lazy` must be present; `createRouter` validates this at boot.
+     */
+    component?: RouteComponent;
+
+    /**
+     * Code-split alternative to `component`: a dynamic import resolved on first
+     * match. Accepts a module (`{ default }` - the natural `.azeroth` shape) or
+     * a bare component. The chunk fetch starts the moment the route matches and
+     * races IN PARALLEL with this level's loader; the previous screen stays
+     * until the chunk arrives (`router.pending()` is true meanwhile). A failed
+     * chunk load throws into the route tree - an `<ErrorBoundary>` above
+     * `<Routes>` catches it.
+     *
+     * @example
+     * ```ts
+     * { path: 'users/:id', lazy: () => import('./UserPage.azeroth'), loader: loadUser }
+     * ```
+     */
+    lazy?: () => Promise<{ default: RouteComponent } | RouteComponent>;
 
     /** Optional nested routes, matched against the unmatched suffix. */
     children?: Route[];
@@ -153,13 +190,11 @@ export interface Route
     meta?: Record<string, unknown>;
 
     /**
-     * Optional async loader. Runs when this route matches; the result is
-     * exposed via `useLoader(router)` inside the route's component tree.
-     * Powered by `createResource`: re-runs when params change, aborts on
-     * navigation away.
-     *
-     * The arg is bundled into an object so future fields (location, query,
-     * parent-loader data) can be added without a breaking signature change.
+     * Optional async loader. EVERY matched level's loader runs when the match
+     * changes, all levels IN PARALLEL - a layout loads its data beside its
+     * leaf, never in a waterfall. The result is exposed via `useLoader()`
+     * inside the route's component tree. Powered by `createResource`: re-runs
+     * when params change, aborts on navigation away.
      *
      * @example
      * ```ts
@@ -175,7 +210,36 @@ export interface Route
      * }
      * ```
      */
-    loader?: (args: { params: Params; signal: AbortSignal }) => Promise<unknown>;
+    loader?: (args: RouteLoaderArgs) => Promise<unknown>;
+
+    /**
+     * Schema for this route's SEARCH PARAMS (the query string), validated and
+     * coerced through `@azerothjs/schema` (`number({ coerce: true })` exists
+     * for exactly this transport). Read the typed result with `useSearch()`;
+     * an invalid query degrades to `{}` with a dev-mode warning rather than
+     * crashing the route - declare search fields optional/defaulted.
+     */
+    search?: SearchSchemaLike;
+}
+
+/** What a route {@link Route.loader} receives. */
+export interface RouteLoaderArgs
+{
+    /** Path params of the full matched chain. */
+    params: Params;
+
+    /** The parsed query string at navigation time. */
+    query: Query;
+
+    /** Fires when the navigation is superseded - pass it to fetch. */
+    signal: AbortSignal;
+
+    /**
+     * Resolves with the NEAREST ANCESTOR level's loader data (undefined when no
+     * ancestor loads). Await it only when this level genuinely depends on the
+     * parent's result - sequencing is opt-in per level, parallel is the default.
+     */
+    parent: Promise<unknown>;
 }
 
 /**
@@ -296,14 +360,22 @@ export interface RouterConfig
     initialLoaderData?: LoaderHandoff | undefined;
 }
 
-/** One route's server-loaded output, keyed by the exact URL it was loaded for. */
+/**
+ * The server-loaded output of one matched chain, keyed by the exact URL it was loaded
+ * for. `data` is BY LEVEL, aligned with the matched root-to-leaf chain (`undefined`
+ * for levels without a loader). `version` guards the wire shape: a client reading a
+ * handoff from an older server rejects it loudly and refetches instead of mis-adopting.
+ */
 export interface LoaderHandoff
 {
+    /** The handoff wire-format version; see {@link LOADER_HANDOFF_VERSION}. */
+    version: number;
+
     /** The base-relative pathname + search the data belongs to. */
     path: string;
 
-    /** Whatever the matched route's loader returned (must be JSON-serializable to cross the wire). */
-    data: unknown;
+    /** Per-level loader results, root to leaf (must be JSON-serializable to cross the wire). */
+    data: unknown[];
 }
 
 /**

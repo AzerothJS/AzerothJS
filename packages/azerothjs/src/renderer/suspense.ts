@@ -98,7 +98,7 @@ export interface SuspenseProps
  * @example
  * Suspense({
  *   fallback: () => h('div', { class: 'spinner' }),
- *   on: [router.loader],
+ *   on: [useLoader(userRoute)],
  *   children: () => Routes({ router })
  * });
  */

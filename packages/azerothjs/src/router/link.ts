@@ -24,6 +24,7 @@
 import { h } from '../renderer/index.ts';
 import type { Child } from '../renderer/index.ts';
 import type { NavigateTarget } from './types.ts';
+import { resolveRouter } from './provider.ts';
 import type { Router } from './router.ts';
 import { EXTERNAL_URL } from './router.ts';
 
@@ -39,8 +40,8 @@ export interface LinkProps
     /** Where to navigate. `string` is treated as a `fullPath`. */
     to: NavigateTarget;
 
-    /** The router instance to drive. */
-    router: Router;
+    /** The router instance to drive; omit inside a <RouterProvider> (or a <Routes> chain). */
+    router?: Router;
 
     /** If `true`, replaces the current history entry instead of pushing. */
     replace?: boolean;
@@ -164,6 +165,7 @@ function targetPathname(target: NavigateTarget): string
  */
 export function Link(props: LinkProps): HTMLElement
 {
+    const router = resolveRouter(props.router, 'Link');
     // The href is computed once at construction; the `to` prop is treated as
     // static. Users who need a reactive `to` can wrap the link in a `<Show>` or
     // rebuild it.
@@ -171,7 +173,7 @@ export function Link(props: LinkProps): HTMLElement
     // router.href() applies the configured base prefix to internal targets (and
     // leaves external URLs untouched), so the rendered anchor points at the real
     // URL even when the app is served under a sub-path.
-    const href = props.router.href(props.to);
+    const href = router.href(props.to);
     const isExternal = EXTERNAL_URL.test(href);
     const linkPathname = targetPathname(props.to);
 
@@ -220,11 +222,11 @@ export function Link(props: LinkProps): HTMLElement
 
         if (props.replace)
         {
-            props.router.replace(props.to, { scroll: props.scroll });
+            router.replace(props.to, { scroll: props.scroll });
         }
         else
         {
-            props.router.navigate(props.to, { scroll: props.scroll });
+            router.navigate(props.to, { scroll: props.scroll });
         }
     }
 
@@ -246,7 +248,7 @@ export function Link(props: LinkProps): HTMLElement
                         ? userClass()
                         : (userClass ?? '');
 
-                const isActive = props.router.location().pathname === linkPathname;
+                const isActive = router.location().pathname === linkPathname;
 
                 if (!isActive)
                 {
@@ -259,7 +261,7 @@ export function Link(props: LinkProps): HTMLElement
         props.activeClass === undefined
             ? undefined
             : (): string | null =>
-                props.router.location().pathname === linkPathname ? 'page' : null;
+                router.location().pathname === linkPathname ? 'page' : null;
 
     // Pass-through for unknown attrs: pull our own props out so we don't leak
     // them onto the <a> element. Anything else (id, style, aria-label, data-*)

@@ -23,6 +23,7 @@ import type { Getter, Resource } from '../reactivity/index.ts';
 import {
     createSignal,
     createMemo,
+    createEffect,
     createResource,
     onRootDispose,
     untrack
@@ -32,7 +33,10 @@ import type {
     NavigateOptions,
     NavigateTarget,
     Params,
+    Query,
     Route,
+    RouteComponent,
+    RouteLoaderArgs,
     RouteLocation,
     RouteMatch,
     RouterConfig
@@ -44,6 +48,105 @@ import { shallowEqualRecord } from './shallow-equal.ts';
 
 /** The cause of a location change; see {@link Router.navigationKind}. */
 export type NavigationKind = 'push' | 'replace' | 'pop';
+
+/**
+ * Resolved lazy-route components (or their load errors), cached per Route object for
+ * the process lifetime - a chunk downloads once no matter how many routers or
+ * navigations touch the route.
+ *
+ * @internal
+ */
+const LAZY_CACHE = new WeakMap<Route, { component: RouteComponent } | { error: unknown }>();
+
+/**
+ * Resolves a route's component: the direct `component`, or the `lazy` chunk (fetched
+ * once, cached). Exposed for the server (`matchAndLoad` pre-resolves lazy chains before
+ * a synchronous SSR render) and for ahead-of-need prefetching (hover, viewport).
+ */
+export async function resolveRouteComponent(route: Route): Promise<RouteComponent>
+{
+    if (route.component !== undefined)
+    {
+        return route.component;
+    }
+    const cached = LAZY_CACHE.get(route);
+    if (cached !== undefined)
+    {
+        if ('component' in cached)
+        {
+            return cached.component;
+        }
+        throw cached.error;
+    }
+    if (route.lazy === undefined)
+    {
+        throw new Error(`Route "${ route.path }" has neither component nor lazy - createRouter validation should have caught this.`);
+    }
+    try
+    {
+        const loaded = await route.lazy();
+        const component = typeof loaded === 'function' ? loaded : loaded.default;
+        LAZY_CACHE.set(route, { component });
+        return component;
+    }
+    catch (error)
+    {
+        LAZY_CACHE.set(route, { error });
+        throw error;
+    }
+}
+
+/**
+ * The route's usable component NOW: direct, or the resolved lazy chunk. Throws the
+ * chunk's LOAD ERROR when the fetch failed (an `<ErrorBoundary>` above `<Routes>`
+ * catches it) and a plain error when called before the chunk arrived - `<Routes>`
+ * guards on `router.chainReady()` so that never happens in the render path.
+ *
+ * @internal Exported for routes.ts and the SSR handoff.
+ */
+export function componentOf(route: Route): RouteComponent
+{
+    if (route.component !== undefined)
+    {
+        return route.component;
+    }
+    const cached = LAZY_CACHE.get(route);
+    if (cached === undefined)
+    {
+        throw new Error(`Route "${ route.path }": the lazy chunk has not resolved yet. `
+            + 'On the server, await matchAndLoad (or resolveRouteComponent) before rendering.');
+    }
+    if ('error' in cached)
+    {
+        throw cached.error;
+    }
+    return cached.component;
+}
+
+/**
+ * Boot-time shape check: every route carries exactly ONE of `component` / `lazy`.
+ * A silent both-or-neither would surface as a confusing render-time failure; the
+ * boot error names the route.
+ *
+ * @internal
+ */
+function validateRouteTree(routes: Route[]): void
+{
+    for (const route of routes)
+    {
+        const hasComponent = route.component !== undefined;
+        const hasLazy = route.lazy !== undefined;
+        if (hasComponent === hasLazy)
+        {
+            throw new Error(`Route "${ route.path }" must declare exactly one of \`component\` or \`lazy\`; `
+                + `it has ${ hasComponent ? 'both' : 'neither' }.`);
+        }
+        if (route.children !== undefined)
+        {
+            validateRouteTree(route.children);
+        }
+    }
+}
 
 /**
  * The object returned by `createRouter()`.
@@ -72,19 +175,31 @@ export interface Router
     match: Getter<RouteMatch | null>;
 
     /**
-     * Resource holding the matched route's loader output.
+     * One resource PER ROUTE LEVEL (index 0 = root of the matched chain), sized
+     * to the deepest chain in the route table. On a match change EVERY level
+     * with a loader starts simultaneously - parallel by construction. A level
+     * whose route has no loader (or is beyond the current chain) idles:
+     * `data()` undefined, `loading()` false.
      *
-     * The resource's source is the `match` memo. When the match changes (route
-     * or params change), the previous loader's `AbortSignal` fires and the new
-     * route's loader runs. When no route matches, or the matched route has no
-     * loader, the resource is in the "no key" state: `data()` is undefined and
-     * `loading()` is false.
-     *
-     * Typed as `Resource<unknown>` because the router can't know which leaf's
-     * loader is active at compile time. Use the `useLoader<T>(router)`
-     * composable to apply a per-call cast.
+     * Prefer `useLoader()` (nearest level inside a route component, typed via a
+     * route handle) over indexing this directly.
      */
-    loader: Resource<unknown>;
+    loaders: ReadonlyArray<Resource<unknown>>;
+
+    /**
+     * Reactive: true while ANY of the current navigation's work is in flight -
+     * a level loader still loading or a lazy route chunk still downloading.
+     * The pending-indicator signal (top bars, spinners).
+     */
+    pending: Getter<boolean>;
+
+    /**
+     * Reactive: false while the matched chain contains a lazy route whose chunk
+     * has not arrived yet. `<Routes>` holds the PREVIOUS screen until this goes
+     * true, so navigation to a code-split route never flashes an empty frame.
+     * @internal Consumed by `<Routes>`; user code wants {@link Router.pending}.
+     */
+    chainReady: Getter<boolean>;
 
     /**
      * What CAUSED the latest location change: `'push'` (navigate / a Link),
@@ -433,8 +548,13 @@ interface InternalState
  */
 export function createRouter(config: RouterConfig): Router
 {
+    validateRouteTree(config.routes);
     const leaves = flattenRoutes(config.routes);
     const history: HistoryAdapter = config.history ?? createBrowserHistory();
+
+    // The deepest possible chain, known statically: one loader resource per level
+    // is created up front (resources need the surrounding ownership scope).
+    const maxDepth = leaves.reduce((deepest, entry) => Math.max(deepest, entry.matched.length), 0);
 
     // Canonical base prefix ('' when there's no base). The router works in
     // base-relative space internally: route patterns, location.pathname,
@@ -562,17 +682,19 @@ export function createRouter(config: RouterConfig): Router
     });
 
     /**
-     * Bundles everything the loader fetcher needs: the loader function, the
-     * params it should receive, and a stable trigger handle that lives only as
-     * long as the current match. When the match changes, the source returns a
-     * new trigger object, so createResource re-fetches.
+     * Bundles everything one level's loader fetcher needs. Keyed by the match
+     * object identity: a match change produces new triggers, so every level's
+     * createResource re-fetches (in parallel - each level reacts independently).
      *
      * @internal
      */
     interface LoaderTrigger
     {
-        loader: (args: { params: Params; signal: AbortSignal }) => Promise<unknown>;
+        match: RouteMatch;
+        level: number;
+        loader: (args: RouteLoaderArgs) => Promise<unknown>;
         params: Params;
+        query: Query;
     }
 
     /**
@@ -608,40 +730,114 @@ export function createRouter(config: RouterConfig): Router
     );
 
     // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
-    // and only when its path (pathname + search) is EXACTLY what this router booted at, so
-    // a stale payload or a URL mismatch falls back to a normal fetch instead of serving the
-    // wrong page's data. Adoption seeds the resource as already settled (see
-    // ResourceOptions.initialValue): data is synchronously readable during an SSR render
-    // and the hydrating client never refetches what the server just loaded.
+    // and only when its path (pathname + search) is EXACTLY what this router booted at AND
+    // the wire-format version matches, so a stale payload, a URL mismatch, or an old-server
+    // shape all fall back to a normal fetch instead of serving the wrong data. Adoption
+    // seeds each LEVEL's resource as already settled: data is synchronously readable during
+    // an SSR render and the hydrating client never refetches what the server just loaded.
     const seed = config.initialLoaderData;
     const initialState = untrack(state);
-    const adopt = seed !== undefined && seed.path === initialState.pathname + initialState.search;
+    const adopt = seed !== undefined
+        && seed.version === 2
+        && Array.isArray(seed.data)
+        && seed.path === initialState.pathname + initialState.search;
 
-    // Loader resource. The source returns a LoaderTrigger when the matched leaf
-    // has a loader, and null otherwise (no match, or matched route declines to
-    // load). createResource handles cancellation and race-condition guarding so
-    // navigation away from a slow loader doesn't paint stale data.
-    const loader = createResource<unknown, LoaderTrigger>(
-        () =>
+    // Per-navigation promise slots, keyed by match identity: each level's fetcher
+    // deposits its promise so DESCENDANT levels can await `parent`. Levels react to
+    // the same match memo in creation order (root first), so an ancestor's slot is
+    // always deposited before a descendant's fetcher reads it.
+    let flightMatch: RouteMatch | null = null;
+    let flightSlots: Array<Promise<unknown> | undefined> = [];
+    function flightFor(m: RouteMatch): Array<Promise<unknown> | undefined>
+    {
+        if (flightMatch !== m)
         {
-            const m = match();
-            if (m === null)
+            flightMatch = m;
+            flightSlots = [];
+        }
+        return flightSlots;
+    }
+
+    // One resource per level; each level with a loader starts the moment the match
+    // changes - all levels IN PARALLEL by construction. createResource handles
+    // cancellation and race-guarding per level, exactly as it did for the old
+    // single leaf loader.
+    const loaders: Array<Resource<unknown>> = [];
+    for (let level = 0; level < maxDepth; level++)
+    {
+        loaders.push(createResource<unknown, LoaderTrigger>(
+            () =>
             {
-                return null;
-            }
-            const leaf = m.matched[m.matched.length - 1];
-            if (leaf === undefined || !leaf.loader)
+                const m = match();
+                const route = m?.matched[level];
+                if (m === null || route === undefined || !route.loader)
+                {
+                    return null;
+                }
+                return { match: m, level, loader: route.loader, params: m.params, query: parseQuery(untrack(state).search) };
+            },
+            async (trigger, signal) =>
             {
-                return null;
-            }
-            return { loader: leaf.loader, params: m.params };
-        },
-        async (trigger, signal) =>
+                const slots = flightFor(trigger.match);
+                // `parent` is the nearest ANCESTOR WITH A LOADER's promise; loaderless
+                // levels leave their slot empty and are skipped.
+                let parent: Promise<unknown> = Promise.resolve(undefined);
+                for (let above = trigger.level - 1; above >= 0; above--)
+                {
+                    const slot = slots[above];
+                    if (slot !== undefined)
+                    {
+                        parent = slot;
+                        break;
+                    }
+                }
+                const promise = trigger.loader({ params: trigger.params, query: trigger.query, signal, parent });
+                slots[trigger.level] = promise;
+                return promise;
+            },
+            adopt && (seed.data)[level] !== undefined
+                ? { initialValue: (seed.data)[level] }
+                : undefined
+        ));
+    }
+
+    // Lazy chunks: resolution starts the moment a match containing an unresolved
+    // lazy route lands (racing the same levels' loaders); arrivals bump a version
+    // signal so chainReady/pending re-evaluate.
+    const [lazyVersion, setLazyVersion] = createSignal(0);
+    createEffect(() =>
+    {
+        const m = match();
+        if (m === null)
         {
-            return trigger.loader({ params: trigger.params, signal });
-        },
-        adopt ? { initialValue: seed.data } : undefined
-    );
+            return;
+        }
+        for (const route of m.matched)
+        {
+            if (route.lazy !== undefined && !LAZY_CACHE.has(route))
+            {
+                void resolveRouteComponent(route).catch(() => undefined).then(() =>
+                {
+                    setLazyVersion((v) => v + 1);
+                });
+            }
+        }
+    });
+
+    /** True when every route in the current chain has a usable component. */
+    const chainReady = createMemo<boolean>(() =>
+    {
+        lazyVersion();
+        const m = match();
+        if (m === null)
+        {
+            return true;
+        }
+        return m.matched.every((route) => route.lazy === undefined || LAZY_CACHE.has(route));
+    });
+
+    const pending = createMemo<boolean>(() =>
+        !chainReady() || loaders.some((resource) => resource.loading()));
 
     function performNavigate(target: NavigateTarget, options: NavigateOptions): void
     {
@@ -673,7 +869,9 @@ export function createRouter(config: RouterConfig): Router
     return {
         location,
         match,
-        loader,
+        loaders,
+        pending,
+        chainReady,
         navigationKind: () => lastKind,
         navigate(to, options = {}): void
         {
