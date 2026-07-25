@@ -37,8 +37,11 @@ import { EXTERNAL_URL } from './router.ts';
  */
 export interface LinkProps
 {
-    /** Where to navigate. `string` is treated as a `fullPath`. */
-    to: NavigateTarget;
+    /**
+     * Where to navigate. `string` is treated as a `fullPath`. The FUNCTION form makes
+     * the destination reactive: href, active state, and the click target all track it.
+     */
+    to: NavigateTarget | (() => NavigateTarget);
 
     /** The router instance to drive; omit inside a <RouterProvider> (or a <Routes> chain). */
     router?: Router;
@@ -53,11 +56,19 @@ export interface LinkProps
     target?: string;
 
     /**
-     * Class to apply when this link's pathname matches the current router
-     * location's pathname exactly. Toggling is reactive. When set,
-     * `aria-current="page"` is also toggled in lockstep.
+     * Class to apply when this link is ACTIVE. Toggling is reactive; when set,
+     * `aria-current="page"` toggles in lockstep. Active means the location
+     * matches this link's pathname or any DESCENDANT of it (`/users` is active
+     * at `/users/42` - the nav-menu behavior) unless `end` demands exactness.
      */
     activeClass?: string;
+
+    /**
+     * `true` = active only on the EXACT pathname (index links). Default: prefix
+     * matching - except for `to="/"`, which would otherwise be active
+     * everywhere and defaults to exact.
+     */
+    end?: boolean;
 
     /** Optional user click handler. Runs before the interception logic. */
     onClick?: (event: MouseEvent) => void;
@@ -121,7 +132,7 @@ function targetPathname(target: NavigateTarget): string
  * base prefix is applied to internal targets, external URLs left untouched).
  *
  * INPUT CONTRACT:
- * - to: a NavigateTarget (string fullPath or structured); treated as STATIC (computed once).
+ * - to: a NavigateTarget (string fullPath or structured), or a FUNCTION of one for a reactive destination.
  * - router: the Router to drive.
  * - replace/scroll/target/activeClass/onClick/class/children, plus any other anchor attribute
  *   (id, style, aria-*, data-*) which passes through to the <a>.
@@ -140,21 +151,20 @@ function targetPathname(target: NavigateTarget): string
  * For in-app navigation links.
  *
  * WHEN NOT TO USE:
- * For a reactive destination (the `to` is read once - rebuild via {@link Show} for a changing
- * target). A purely external link can be a plain <a> (Link will pass it through anyway).
+ * A purely external link can be a plain <a> (Link will pass it through anyway).
  *
  * EDGE CASES:
  * - Modifier/middle clicks, target!=_self, external URLs, and an upstream preventDefault all pass
  *   through untouched.
- * - Active matching is path-level (query and hash are ignored).
+ * - Active matching is path-level (query and hash are ignored), prefix-by-default (`end` for exact).
  *
  * PERFORMANCE NOTES:
- * href and pathname are computed once at construction; active bindings are effects only when
- * activeClass is set.
+ * With a plain `to`, href is computed once; the function form adds one reactive attribute.
+ * Active bindings are effects only when activeClass is set.
  *
  * DEVELOPER WARNING:
- * `to` is static - a changing target needs a rebuild. The user `onClick` runs BEFORE interception;
- * calling preventDefault() in it cancels navigation entirely.
+ * The user `onClick` runs BEFORE interception; calling preventDefault() in it cancels
+ * navigation entirely.
  *
  * @param props - {@link LinkProps}: `to`, `router`, and optional styling/behavior + pass-through attrs.
  * @returns An <a> element wired for SPA navigation.
@@ -166,16 +176,19 @@ function targetPathname(target: NavigateTarget): string
 export function Link(props: LinkProps): HTMLElement
 {
     const router = resolveRouter(props.router, 'Link');
-    // The href is computed once at construction; the `to` prop is treated as
-    // static. Users who need a reactive `to` can wrap the link in a `<Show>` or
-    // rebuild it.
-    //
+
+    // The function form of `to` makes the destination REACTIVE: href becomes a
+    // reactive attribute, active matching tracks it, and clicks read it fresh.
+    // The plain form stays a one-time computation (no effect cost).
+    const reactiveTo = typeof props.to === 'function';
+    const target = (): NavigateTarget => (typeof props.to === 'function' ? props.to() : props.to);
+
     // router.href() applies the configured base prefix to internal targets (and
     // leaves external URLs untouched), so the rendered anchor points at the real
     // URL even when the app is served under a sub-path.
-    const href = router.href(props.to);
-    const isExternal = EXTERNAL_URL.test(href);
-    const linkPathname = targetPathname(props.to);
+    const href = reactiveTo ? (): string => router.href(target()) : router.href(target());
+    const isExternal = (): boolean => EXTERNAL_URL.test(typeof href === 'function' ? href() : href);
+    const linkPathname = (): string => targetPathname(target());
 
     // Runs the user's onClick first (if any), then applies the bail-out table
     // from the file header. Only when every condition says intercept do we
@@ -213,7 +226,7 @@ export function Link(props: LinkProps): HTMLElement
         }
 
         // External URL: don't intercept, let the browser go.
-        if (isExternal)
+        if (isExternal())
         {
             return;
         }
@@ -222,12 +235,27 @@ export function Link(props: LinkProps): HTMLElement
 
         if (props.replace)
         {
-            router.replace(props.to, { scroll: props.scroll });
+            router.replace(target(), { scroll: props.scroll });
         }
         else
         {
-            router.navigate(props.to, { scroll: props.scroll });
+            router.navigate(target(), { scroll: props.scroll });
         }
+    }
+
+    // Active matching: exact, or prefix at a SEGMENT boundary (never '/use' for
+    // '/users'). Trailing slashes normalize away so '/users/' and '/users' agree.
+    function isActive(): boolean
+    {
+        const strip = (p: string): string => (p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p);
+        const current = strip(router.location().pathname);
+        const link = strip(linkPathname());
+        if (current === link)
+        {
+            return true;
+        }
+        const end = props.end ?? link === '/';
+        return !end && current.startsWith(link === '/' ? '/' : link + '/');
     }
 
     // Active-state bindings (only when activeClass is set): both class and
@@ -248,9 +276,7 @@ export function Link(props: LinkProps): HTMLElement
                         ? userClass()
                         : (userClass ?? '');
 
-                const isActive = router.location().pathname === linkPathname;
-
-                if (!isActive)
+                if (!isActive())
                 {
                     return base;
                 }
@@ -260,8 +286,7 @@ export function Link(props: LinkProps): HTMLElement
     const ariaCurrentProp =
         props.activeClass === undefined
             ? undefined
-            : (): string | null =>
-                router.location().pathname === linkPathname ? 'page' : null;
+            : (): string | null => (isActive() ? 'page' : null);
 
     // Pass-through for unknown attrs: pull our own props out so we don't leak
     // them onto the <a> element. Anything else (id, style, aria-label, data-*)
@@ -273,6 +298,7 @@ export function Link(props: LinkProps): HTMLElement
         scroll: _scroll,
         target: _target,
         activeClass: _activeClass,
+        end: _end,
         onClick: _onClick,
         class: _class,
         children: _children,

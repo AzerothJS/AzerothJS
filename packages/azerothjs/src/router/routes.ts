@@ -40,6 +40,12 @@ export interface RouteTransitionContext
 
     /** What caused the change - 'push' | 'replace' | 'pop'; the directional-drift hook. */
     navigation: NavigationKind;
+
+    /** Pop distance (-1 back, +1 forward, 0 otherwise) - the finer directional hook. */
+    delta: number;
+
+    /** The target entry's stamp. */
+    key: string;
 }
 
 /**
@@ -210,7 +216,8 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         {
             return transition;
         }
-        return transition({ from: previousMatch, to, navigation: router.navigationKind() });
+        const l = router.location();
+        return transition({ from: previousMatch, to, navigation: l.navigationKind, delta: l.delta, key: l.key });
     }
 
     createEffect(() =>
@@ -257,6 +264,7 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
 
         // The name only applies when there is an OUTGOING single-element branch
         // to animate; the very first render mounts instantly.
+        const wasMounted = mounted;
         const name = mounted ? untrack(() => transitionName(matchResult)) : null;
         const animated = name !== null && currentEl !== null;
         previousMatch = matchResult;
@@ -290,6 +298,10 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
             teardownBranch();
         }
 
+        // Only a real NAVIGATION swap moves focus - the initial mount must not
+        // steal focus from wherever the user (or the browser) put it.
+        const moveFocus = wasMounted && router.focusManagement;
+
         if (factory)
         {
             // Each branch owns its own root so its effects dispose on swap.
@@ -305,6 +317,10 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
                 if (name !== null && currentEl !== null)
                 {
                     playTransitionClasses(currentEl, name, 'enter', props.transitionDuration, () => undefined);
+                }
+                if (moveFocus && currentEl !== null)
+                {
+                    focusRouteContent(currentEl);
                 }
             });
         }
@@ -336,6 +352,27 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         }
         clearCo(target);
     }
+}
+
+/**
+ * Moves focus into freshly swapped route content (an element marked
+ * `data-route-focus` wins; the content root otherwise), so keyboard and
+ * screen-reader users land where the navigation took them. A transient
+ * `tabindex="-1"` makes a non-focusable root focusable for exactly this
+ * programmatic move and cleans itself up on blur; `preventScroll` keeps the
+ * router's own scroll management authoritative.
+ *
+ * @internal
+ */
+function focusRouteContent(root: HTMLElement): void
+{
+    const target = root.querySelector<HTMLElement>('[data-route-focus]') ?? root;
+    if (!target.hasAttribute('tabindex'))
+    {
+        target.setAttribute('tabindex', '-1');
+        target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+    }
+    target.focus({ preventScroll: true });
 }
 
 /**

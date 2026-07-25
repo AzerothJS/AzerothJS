@@ -11,6 +11,31 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **router**: the navigation-UX layer. (1) GUARDS - `guard` on a route runs
+  root-to-leaf BEFORE anything renders or loads: return `false` to veto (the previous
+  location is restored, the guarded route never matches, its loaders never start), a
+  target or `redirect(...)` to go elsewhere (replacing the vetoed entry), or `true`
+  to pass; async guards hold the navigation (`pending()` covers the window), first
+  veto wins, and `matchAndLoad` runs the same guards server-side, surfacing redirects
+  as `{ redirect, replace }` for a real 302. (2) `redirect(to, { replace? })` - the
+  sentinel loaders THROW to turn a navigation into another one, client and server.
+  (3) `router.block(fn)` - leave blockers for the unsaved-form case: `false` (sync or
+  awaited) keeps the user in place; browser back/forward blocking is best-effort and
+  synchronous-only (documented - the History API cannot truly veto a pop).
+  (4) HISTORY STAMPS - every router-written entry carries a key + index, so
+  `location()` now tells the whole story: `navigationKind` ('push'/'replace'/'pop'),
+  `delta` (-1 back, +1 forward - direction is finally knowable), and a stable `key`
+  per entry; the Routes `transition` callback receives the same fields.
+  (5) MANAGED SCROLLING (on by default): push/replace scrolls to top or the `#hash`
+  target, pop RESTORES the position recorded for that entry; a per-navigation
+  `scroll` option overrides, `scrollBehavior` is the fine-grained escape hatch,
+  `scroll: false` opts out. (6) ROUTE-CHANGE FOCUS (on by default): after a
+  navigation swap, focus moves to the new content (a `data-route-focus` element
+  wins) so keyboard and screen-reader users land where the navigation took them;
+  `focus: false` opts out. (7) `Link` grows a reactive `to` (function form - href,
+  active state, and click target all track it) and prefix-aware active matching:
+  `/users` is active at `/users/42` (segment-boundary safe), `end: true` demands
+  exactness, and `to="/"` is exact by default.
 - **router**: the v2 core. (1) PER-LEVEL PARALLEL LOADERS - every matched route in the
   chain may declare a loader and ALL levels start simultaneously (a layout loads beside
   its leaf, never in a waterfall); a level that genuinely needs its parent's result
@@ -38,7 +63,12 @@ follow [Semantic Versioning](https://semver.org).
   leaf resource) is replaced by per-level `Router.loaders` - `useLoader(router)` keeps
   the old "deepest loading level" meaning; `LoaderHandoff` is now
   `{ version, path, data: unknown[] }` (array by level); `Route.loader` receives
-  `{ params, query, signal, parent }`.
+  `{ params, query, signal, parent }`; `router.navigationKind()` is DELETED - read
+  `location().navigationKind`; `matchAndLoad` returns `MatchAndLoadResult` (handoff,
+  `{ redirect }`, or null); router-written history entries WRAP user state
+  (`history.state.state` carries what you passed to `navigate`); scroll and focus
+  defaults change observable behavior (opt-outs: `scroll: false`, `focus: false`,
+  per-navigation `scroll`).
 
 - **http**: trusted-proxy URL truth. `serve(app, { trustProxy: true })` (granularly
   `{ proto: true }` / `{ host: true }`, also on `serveH2c` and `toWebRequest`) believes

@@ -45,7 +45,7 @@ describe('server side: matchAndLoad + document embedding through the real HTTP k
                 // The page component would render the routed tree here; the handoff flow
                 // under test is independent of what the body contains.
                 const el = document.createElement('main');
-                el.textContent = `ssr:${ JSON.stringify(handoff?.data) }`;
+                el.textContent = `ssr:${ JSON.stringify(handoff !== null && 'version' in handoff ? handoff.data : null) }`;
                 return el;
             }, { head: loaderHandoffScript(handoff), title: 'ssr' });
             return html(doc);

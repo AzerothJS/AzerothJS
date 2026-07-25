@@ -134,6 +134,11 @@ export function createBrowserHistory(): HistoryAdapter
             window.history.forward();
         },
 
+        state(): unknown
+        {
+            return window.history.state;
+        },
+
         subscribe(listener: (fullPath: string) => void): () => void
         {
             subscribers.add(listener);
@@ -219,15 +224,17 @@ export function createMemoryHistory(initial: string = '/'): HistoryAdapter
     const subscribers = new Set<(fullPath: string) => void>();
 
     // The navigation stack and the cursor into it. `back`/`forward` move the
-    // cursor; `push` truncates everything after it before appending.
-    const stack: string[] = [initial];
+    // cursor; `push` truncates everything after it before appending. Entries
+    // carry their state so the router's stamping (delta, scroll keys) works in
+    // tests and SSR exactly as in the browser.
+    const stack: Array<{ path: string; state: unknown }> = [{ path: initial, state: undefined }];
     let cursor = 0;
 
     // Snapshot before iterating so a listener that (un)subscribes during its own
     // callback doesn't corrupt the loop - same guard as the browser adapter.
     function notify(): void
     {
-        const fullPath = stack[cursor] ?? initial;
+        const fullPath = stack[cursor]?.path ?? initial;
         for (const listener of Array.from(subscribers))
         {
             listener(fullPath);
@@ -237,22 +244,27 @@ export function createMemoryHistory(initial: string = '/'): HistoryAdapter
     return {
         current(): string
         {
-            return stack[cursor] ?? initial;
+            return stack[cursor]?.path ?? initial;
         },
 
-        push(fullPath: string): void
+        push(fullPath: string, state?: unknown): void
         {
             // A new push invalidates the forward history.
             stack.length = cursor + 1;
-            stack.push(fullPath);
+            stack.push({ path: fullPath, state });
             cursor++;
             notify();
         },
 
-        replace(fullPath: string): void
+        replace(fullPath: string, state?: unknown): void
         {
-            stack[cursor] = fullPath;
+            stack[cursor] = { path: fullPath, state };
             notify();
+        },
+
+        state(): unknown
+        {
+            return stack[cursor]?.state;
         },
 
         back(): void

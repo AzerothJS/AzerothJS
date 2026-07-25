@@ -24,8 +24,9 @@
  * normal fetch - never to wrong data.
  */
 
-import type { LoaderHandoff, Route } from './types.ts';
+import type { LoaderHandoff, NavigateTarget, Route } from './types.ts';
 import { flattenRoutes, splitFullPath, resolveRouteComponent } from './router.ts';
+import { isRedirect } from './redirect.ts';
 import { parseQuery } from './query.ts';
 
 /** The DOM id of the handoff script tag. */
@@ -35,18 +36,31 @@ export const LOADER_HANDOFF_ID = '__azeroth-loader-handoff';
 export const LOADER_HANDOFF_VERSION = 2;
 
 /**
- * SERVER: matches `url` against `routes` and runs EVERY matched level's loader in
- * parallel - the same matching and the same parallelism the client router performs,
- * reused so the two sides cannot disagree. Lazy chunks in the chain are resolved here
- * too, so the synchronous SSR render that follows finds every component ready. Returns
- * null when nothing matches or no level declares a loader. The AbortSignal (pass the
- * request's) cancels the loaders when the client disconnects.
+ * What {@link matchAndLoad} produces: the handoff payload, a REDIRECT the server should
+ * answer with a real 302 (a guard or loader redirected), or null (no match, a guard
+ * veto, or nothing to load).
+ */
+export type MatchAndLoadResult =
+    | LoaderHandoff
+    | { redirect: NavigateTarget; replace: boolean }
+    | null;
+
+/**
+ * SERVER: matches `url` against `routes`, runs the chain's GUARDS root-to-leaf, and
+ * runs every matched level's loader in parallel - the same matching, guarding, and
+ * parallelism the client router performs, reused so the two sides cannot disagree.
+ * Lazy chunks in the chain are resolved here too, so the synchronous SSR render that
+ * follows finds every component ready.
+ *
+ * A guard or loader redirect surfaces as `{ redirect, replace }` - answer with a real
+ * 302. A guard VETO returns null (like no match: the caller renders its fallback).
+ * The AbortSignal (pass the request's) cancels the loaders when the client disconnects.
  */
 export async function matchAndLoad(
     routes: Route[],
     url: string | URL,
     options: { signal?: AbortSignal } = {}
-): Promise<LoaderHandoff | null>
+): Promise<MatchAndLoadResult>
 {
     const full = typeof url === 'string' ? url : url.pathname + url.search;
     const { pathname, search } = splitFullPath(full);
@@ -59,6 +73,42 @@ export async function matchAndLoad(
             continue;
         }
 
+        const query = parseQuery(search);
+
+        // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto
+        // means the route must not render (null, the no-match shape). `from` is null:
+        // a server render has no previous location.
+        for (const route of entry.matched)
+        {
+            if (route.guard === undefined)
+            {
+                continue;
+            }
+            let verdict: unknown;
+            try
+            {
+                verdict = await route.guard({ params: result.params, pathname, query, from: null });
+            }
+            catch (error)
+            {
+                if (isRedirect(error))
+                {
+                    return { redirect: error.to, replace: error.replace };
+                }
+                throw error;
+            }
+            if (verdict === false)
+            {
+                return null;
+            }
+            if (verdict !== true && verdict !== undefined && verdict !== null)
+            {
+                return isRedirect(verdict)
+                    ? { redirect: verdict.to, replace: verdict.replace }
+                    : { redirect: verdict as NavigateTarget, replace: true };
+            }
+        }
+
         await Promise.all(entry.matched
             .filter((route) => route.lazy !== undefined)
             .map((route) => resolveRouteComponent(route)));
@@ -69,31 +119,42 @@ export async function matchAndLoad(
         }
 
         const signal = options.signal ?? new AbortController().signal;
-        const query = parseQuery(search);
 
         // All levels start together; `parent` resolves to the nearest ancestor
         // loader's promise - the same slot discipline the client router applies.
         const slots: Array<Promise<unknown> | undefined> = [];
-        const data = await Promise.all(entry.matched.map((route, level) =>
+        let data: unknown[];
+        try
         {
-            if (!route.loader)
+            data = await Promise.all(entry.matched.map((route, level) =>
             {
-                return Promise.resolve(undefined);
-            }
-            let parent: Promise<unknown> = Promise.resolve(undefined);
-            for (let above = level - 1; above >= 0; above--)
-            {
-                const slot = slots[above];
-                if (slot !== undefined)
+                if (!route.loader)
                 {
-                    parent = slot;
-                    break;
+                    return Promise.resolve(undefined);
                 }
+                let parent: Promise<unknown> = Promise.resolve(undefined);
+                for (let above = level - 1; above >= 0; above--)
+                {
+                    const slot = slots[above];
+                    if (slot !== undefined)
+                    {
+                        parent = slot;
+                        break;
+                    }
+                }
+                const promise = route.loader({ params: result.params, query, signal, parent });
+                slots[level] = promise;
+                return promise;
+            }));
+        }
+        catch (error)
+        {
+            if (isRedirect(error))
+            {
+                return { redirect: error.to, replace: error.replace };
             }
-            const promise = route.loader({ params: result.params, query, signal, parent });
-            slots[level] = promise;
-            return promise;
-        }));
+            throw error;
+        }
 
         return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
     }
@@ -102,11 +163,12 @@ export async function matchAndLoad(
 
 /**
  * SERVER: the handoff as an inert JSON script tag for renderToDocument's `head`. Returns ''
- * for null, so `head: loaderHandoffScript(await matchAndLoad(...))` needs no branching.
+ * for null AND for the redirect shape (a redirecting response has no body to hydrate), so
+ * `head: loaderHandoffScript(await matchAndLoad(...))` needs no branching.
  */
-export function loaderHandoffScript(handoff: LoaderHandoff | null): string
+export function loaderHandoffScript(handoff: MatchAndLoadResult): string
 {
-    if (handoff === null)
+    if (handoff === null || !('version' in handoff))
     {
         return '';
     }

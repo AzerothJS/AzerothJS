@@ -29,9 +29,11 @@ import {
     untrack
 } from '../reactivity/index.ts';
 import type {
+    GuardContext,
     HistoryAdapter,
     NavigateOptions,
     NavigateTarget,
+    NavigationKind,
     Params,
     Query,
     Route,
@@ -42,12 +44,12 @@ import type {
     RouterConfig
 } from './types.ts';
 import { compilePath, type PathMatcher } from './path-pattern.ts';
+import { isRedirect } from './redirect.ts';
 import { parseQuery, stringifyQuery } from './query.ts';
 import { createBrowserHistory } from './history.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
 
-/** The cause of a location change; see {@link Router.navigationKind}. */
-export type NavigationKind = 'push' | 'replace' | 'pop';
+export type { NavigationKind } from './types.ts';
 
 /**
  * Resolved lazy-route components (or their load errors), cached per Route object for
@@ -201,14 +203,23 @@ export interface Router
      */
     chainReady: Getter<boolean>;
 
+    /** Whether route-change focus management is on (config `focus`, default true). @internal Consumed by `<Routes>`. */
+    focusManagement: boolean;
+
     /**
-     * What CAUSED the latest location change: `'push'` (navigate / a Link),
-     * `'replace'`, or `'pop'` (the browser's own back/forward - the two are not
-     * distinguishable without stamping history state, so they share one honest
-     * name). A plain read, not reactive - consult it INSIDE a reaction to the
-     * location, e.g. to pick a directional route-transition name.
+     * Registers a LEAVE BLOCKER (the unsaved-form case): before any navigation
+     * commits, every blocker runs with `{ from, to, kind }`; returning `false`
+     * (or resolving to it) keeps the user where they are. Returns the
+     * unregister function. Browser back/forward blocking is BEST-EFFORT and
+     * SYNCHRONOUS-ONLY (the History API cannot truly veto a pop: the router
+     * undoes the move, so use `window.confirm` - synchronous - for pop
+     * prompts; an async verdict counts as allow on pop). Leaving the site
+     * entirely is `beforeunload` territory - register your own listener.
+     *
+     * @example
+     * const unblock = router.block(({ from }) => form.dirty() ? window.confirm('Discard changes?') : true);
      */
-    navigationKind: () => NavigationKind;
+    block: (blocker: (context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>) => () => void;
 
     /**
      * Navigates to `to`, pushing a new history entry.
@@ -480,6 +491,33 @@ interface InternalState
     hash: string;
     /** Cached match result, used by both `location.params` and the `match` memo. */
     matched: RouteMatch | null;
+    /** How this location came to be; rides into RouteLocation. */
+    kind: NavigationKind;
+    /** Pop distance (see RouteLocation.delta). */
+    delta: number;
+    /** The entry's stamp (see RouteLocation.key). */
+    key: string;
+}
+
+/** @internal What the router stores in each history entry's state. */
+interface StampedState
+{
+    __az: { key: string; index: number };
+    state: unknown;
+}
+
+/** @internal The stamp of an entry's state, or null for unstamped/foreign entries. */
+function stampOf(state: unknown): { key: string; index: number } | null
+{
+    const az = (state as StampedState | null | undefined)?.__az;
+    return az !== undefined && typeof az.key === 'string' && typeof az.index === 'number' ? az : null;
+}
+
+/** @internal Monotonic entry keys, process-wide (stable enough; stamps live per entry). */
+let nextEntryKey = 0;
+function freshKey(): string
+{
+    return `az${ ++nextEntryKey }`;
 }
 
 /**
@@ -624,7 +662,7 @@ export function createRouter(config: RouterConfig): Router
         return null;
     }
 
-    function buildState(rawFullPath: string): InternalState
+    function buildState(rawFullPath: string, kind: NavigationKind, delta: number, key: string): InternalState
     {
         const { pathname: rawPathname, search, hash } = splitFullPath(rawFullPath);
 
@@ -639,26 +677,91 @@ export function createRouter(config: RouterConfig): Router
             pathname,
             search,
             hash,
-            matched: inner === null ? null : matchPathname(inner)
+            matched: inner === null ? null : matchPathname(inner),
+            kind,
+            delta,
+            key
         };
     }
 
+    // ENTRY STAMPS. Each router-written history entry carries { key, index } in its
+    // state (the user's own state rides beside it, under `.state`), which is what
+    // makes pop DIRECTION (delta) knowable and gives scroll restoration its keys.
+    // The index/key trackers follow the CURRENT entry.
+    const bootStamp = stampOf(history.state?.());
+    let currentIndex = bootStamp?.index ?? 0;
+    let currentKey = bootStamp?.key ?? freshKey();
+    if (bootStamp === null && history.state !== undefined)
+    {
+        // Stamp the entry the router booted on (no subscriber is attached yet, so
+        // this replace notifies nobody). A revisit of this entry then restores.
+        history.replace(history.current(), { __az: { key: currentKey, index: 0 }, state: undefined } satisfies StampedState);
+    }
+
     // Initial state, read straight from the live URL.
-    const [state, setState] = createSignal<InternalState>(buildState(history.current()));
+    const [state, setState] = createSignal<InternalState>(
+        buildState(history.current(), 'push', 0, currentKey));
 
     // What CAUSED the latest location change. performNavigate stamps a pending
     // kind just before the adapter call (whose subscribers run synchronously);
     // a change arriving with NO pending stamp came from the browser itself -
     // popstate, i.e. back/forward - and reads as 'pop'.
     let pendingKind: 'push' | 'replace' | null = null;
-    let lastKind: NavigationKind = 'push';
 
     // React to URL changes.
+    let suppressPop = false;
     const unsubHistory = history.subscribe((fullPath) =>
     {
-        lastKind = pendingKind ?? 'pop';
+        const kind: NavigationKind = pendingKind ?? 'pop';
         pendingKind = null;
-        setState(buildState(fullPath));
+
+        const stamp = stampOf(history.state?.());
+        let delta = 0;
+        if (kind === 'pop' && stamp !== null)
+        {
+            delta = stamp.index - currentIndex;
+        }
+
+        // Pop blocking, best-effort: the browser already moved, so a block means
+        // UNDOING the move (whose own pop must not re-consult the blockers). Only
+        // synchronous verdicts can hold a pop - see Router.block.
+        if (kind === 'pop')
+        {
+            if (suppressPop)
+            {
+                suppressPop = false;
+                currentIndex = stamp?.index ?? currentIndex;
+                currentKey = stamp?.key ?? currentKey;
+                return;
+            }
+            if (blockers.size > 0)
+            {
+                const context = { from: untrack(location), to: null, kind };
+                const blocked = [...blockers].some((blocker) => blocker(context) === false);
+                if (blocked)
+                {
+                    suppressPop = true;
+                    if (delta < 0)
+                    {
+                        history.forward();
+                    }
+                    else
+                    {
+                        history.back();
+                    }
+                    return;
+                }
+            }
+        }
+
+        if (kind === 'pop')
+        {
+            recordScroll();
+        }
+        currentIndex = stamp?.index ?? (kind === 'push' ? currentIndex + 1 : currentIndex);
+        currentKey = stamp?.key ?? freshKey();
+
+        setState(buildState(fullPath, kind, delta, currentKey));
     });
 
     // Cleanup when the surrounding root tears down. If this call happens
@@ -677,7 +780,10 @@ export function createRouter(config: RouterConfig): Router
             hash: s.hash,
             params: s.matched?.params ?? {},
             query: parseQuery(s.search),
-            fullPath: s.fullPath
+            fullPath: s.fullPath,
+            navigationKind: s.kind,
+            delta: s.delta,
+            key: s.key
         };
     });
 
@@ -702,32 +808,166 @@ export function createRouter(config: RouterConfig): Router
      * only the hash) don't invalidate downstream effects that watch the matched
      * route.
      */
-    const match = createMemo<RouteMatch | null>(
-        () => state().matched,
+    // Structural match equality: cosmetic URL changes (hash-only) must not invalidate
+    // downstream effects. `a`/`b` are previous/next values (a memo's first computed
+    // value bypasses `equals`); either side can be null ("no route matched").
+    const matchEquals = (a: RouteMatch | null, b: RouteMatch | null): boolean =>
+    {
+        if (a === b)
         {
-            equals: (a, b) =>
-            {
-                // `a` and `b` are the previous and next match values, never the
-                // memo's pre-init placeholder, because a memo's first computed
-                // value always bypasses `equals`. Either side can be `null`
-                // ("no route matched"), so the `== null` branch settles that
-                // before the structural route+params comparison.
-                if (a === b)
-                {
-                    return true;
-                }
-                if (a == null || b == null)
-                {
-                    return false;
-                }
-                if (a.route !== b.route)
-                {
-                    return false;
-                }
-                return shallowEqualRecord(a.params, b.params);
-            }
+            return true;
         }
-    );
+        if (a == null || b == null)
+        {
+            return false;
+        }
+        if (a.route !== b.route)
+        {
+            return false;
+        }
+        return shallowEqualRecord(a.params, b.params);
+    };
+
+    /** The URL's raw match, BEFORE guards - internal; everything renders off `match`. */
+    const rawMatch = createMemo<RouteMatch | null>(() => state().matched, { equals: matchEquals });
+
+    // The GUARDED match - the public reactive view. <Routes> and every level's loader
+    // resource key off this signal, so a navigation that a guard vetoes or redirects
+    // never renders and never loads. Guardless chains accept SYNCHRONOUSLY in the same
+    // flush (no timing change for the common case).
+    const [match, setMatch] = createSignal<RouteMatch | null>(null, { equals: matchEquals });
+    const [guarding, setGuarding] = createSignal(false);
+    let guardRun = 0;
+    let lastAcceptedFull: string | null = null;
+    let lastAcceptedLocation: RouteLocation | null = null;
+
+    createEffect(() =>
+    {
+        const m = rawMatch();
+        const run = ++guardRun;
+        const s = untrack(state);
+
+        const finish = (): void =>
+        {
+            if (run === guardRun)
+            {
+                setGuarding(false);
+            }
+        };
+        const accept = (value: RouteMatch | null): void =>
+        {
+            finish();
+            lastAcceptedFull = applyBase(s.fullPath);
+            lastAcceptedLocation = untrack(location);
+            setMatch(value);
+        };
+        const veto = (): void =>
+        {
+            finish();
+            if (lastAcceptedFull !== null)
+            {
+                // Restore the previous URL in place: the vetoed entry never renders and
+                // does not survive on the stack. The restored route's guards re-run and
+                // pass again (they passed before) - guards must be side-effect-free.
+                untrack(() => performNavigate(lastAcceptedFull as string, { replace: true }));
+            }
+            else
+            {
+                setMatch(null); // boot veto: nothing to restore; the fallback renders
+            }
+        };
+        // True = pass; false = this navigation is settled (veto or redirect performed).
+        const applyVerdict = (verdict: unknown): boolean =>
+        {
+            if (verdict === false)
+            {
+                veto();
+                return false;
+            }
+            if (verdict === true || verdict === undefined || verdict === null)
+            {
+                return true;
+            }
+            const target = isRedirect(verdict) ? verdict : { to: verdict as NavigateTarget, replace: true };
+            finish();
+            untrack(() => performNavigate(target.to, { replace: target.replace }));
+            return false;
+        };
+        const settleThrow = (error: unknown): void =>
+        {
+            if (isRedirect(error))
+            {
+                applyVerdict(error);
+                return;
+            }
+            // A throwing guard fails CLOSED: the guarded route must not render.
+            console.error('[azerothjs/router] a route guard threw; navigation vetoed.', error);
+            veto();
+        };
+
+        if (m === null)
+        {
+            accept(null);
+            return;
+        }
+
+        const context: GuardContext = {
+            params: m.params,
+            pathname: m.pathname,
+            query: parseQuery(s.search),
+            from: lastAcceptedLocation
+        };
+        const proceed = (index: number): void =>
+        {
+            for (let i = index; i < m.matched.length; i++)
+            {
+                const guardFn = m.matched[i]?.guard;
+                if (guardFn === undefined)
+                {
+                    continue;
+                }
+                let verdict: unknown;
+                try
+                {
+                    verdict = guardFn(context);
+                }
+                catch (error)
+                {
+                    settleThrow(error);
+                    return;
+                }
+                if (typeof (verdict as PromiseLike<unknown> | null)?.then === 'function')
+                {
+                    // Async guard: the navigation HOLDS (pending() true) until it settles;
+                    // a newer navigation supersedes this run entirely.
+                    setGuarding(true);
+                    void Promise.resolve(verdict as PromiseLike<unknown>).then(
+                        (resolved) =>
+                        {
+                            if (run === guardRun && applyVerdict(resolved))
+                            {
+                                proceed(i + 1);
+                            }
+                        },
+                        (error: unknown) =>
+                        {
+                            if (run === guardRun)
+                            {
+                                settleThrow(error);
+                            }
+                        }
+                    );
+                    return;
+                }
+                if (!applyVerdict(verdict))
+                {
+                    return;
+                }
+            }
+            accept(m);
+        };
+        proceed(0);
+    });
 
     // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
     // and only when its path (pathname + search) is EXACTLY what this router booted at AND
@@ -824,6 +1064,21 @@ export function createRouter(config: RouterConfig): Router
         }
     });
 
+    // A loader that THREW redirect(...) is a navigation instruction, not an error:
+    // perform it (replace by default - the interrupted entry must not survive).
+    createEffect(() =>
+    {
+        for (const resource of loaders)
+        {
+            const error = resource.error();
+            if (isRedirect(error))
+            {
+                untrack(() => performNavigate(error.to, { replace: error.replace }));
+                return;
+            }
+        }
+    });
+
     /** True when every route in the current chain has a usable component. */
     const chainReady = createMemo<boolean>(() =>
     {
@@ -837,33 +1092,139 @@ export function createRouter(config: RouterConfig): Router
     });
 
     const pending = createMemo<boolean>(() =>
-        !chainReady() || loaders.some((resource) => resource.loading()));
+        !chainReady() || guarding() || loaders.some((resource) => resource.loading()));
+
+    // MANAGED SCROLLING (browser only; config scroll !== false). Positions are
+    // recorded per entry KEY the moment we leave an entry - commitNavigate and the
+    // pop path both call recordScroll() BEFORE the URL moves - and applied one
+    // microtask after the location lands (the same flush <Routes> swapped in, so
+    // the new DOM is in place). A per-navigation `scroll` option overrides.
+    const scrollManaged = config.scroll !== false && typeof window !== 'undefined';
+    const scrollPositions = new Map<string, { x: number; y: number }>();
+    let navScrollOverride: boolean | undefined = undefined;
+    function recordScroll(): void
+    {
+        if (scrollManaged)
+        {
+            scrollPositions.set(currentKey, { x: window.scrollX, y: window.scrollY });
+        }
+    }
+    if (scrollManaged)
+    {
+        let appliedKey = untrack(location).key;
+        createEffect(() =>
+        {
+            const l = location();
+            if (l.key === appliedKey)
+            {
+                return;
+            }
+            appliedKey = l.key;
+            const override = navScrollOverride;
+            navScrollOverride = undefined;
+            queueMicrotask(() =>
+            {
+                if (override === false)
+                {
+                    return;
+                }
+                if (override === true)
+                {
+                    window.scrollTo({ top: 0, left: 0 });
+                    return;
+                }
+                const saved = scrollPositions.get(l.key) ?? null;
+                if (config.scrollBehavior !== undefined)
+                {
+                    const target = config.scrollBehavior({ location: l, saved });
+                    if (target !== false)
+                    {
+                        window.scrollTo({ left: target.x, top: target.y });
+                    }
+                    return;
+                }
+                if (l.navigationKind === 'pop' && saved !== null)
+                {
+                    window.scrollTo({ left: saved.x, top: saved.y });
+                    return;
+                }
+                if (l.hash.length > 1)
+                {
+                    const anchor = document.getElementById(l.hash.slice(1));
+                    if (anchor !== null)
+                    {
+                        anchor.scrollIntoView();
+                        return;
+                    }
+                }
+                window.scrollTo({ top: 0, left: 0 });
+            });
+        });
+    }
+
+    /** Leave-blockers registered via router.block(). */
+    const blockers = new Set<(context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>>();
 
     function performNavigate(target: NavigateTarget, options: NavigateOptions): void
     {
+        if (blockers.size > 0)
+        {
+            const context = {
+                from: untrack(location),
+                to: target,
+                kind: (options.replace === true ? 'replace' : 'push') as NavigationKind
+            };
+            const verdicts = [...blockers].map((blocker) => blocker(context));
+            if (verdicts.some((verdict) => verdict === false))
+            {
+                return;
+            }
+            const holds = verdicts.filter((verdict): verdict is Promise<boolean> => typeof verdict === 'object');
+            if (holds.length > 0)
+            {
+                // Async blockers HOLD the navigation; it commits only if every one allows.
+                void Promise.all(holds).then((resolved) =>
+                {
+                    if (resolved.every((allowed) => allowed))
+                    {
+                        commitNavigate(target, options);
+                    }
+                });
+                return;
+            }
+        }
+        commitNavigate(target, options);
+    }
+
+    function commitNavigate(target: NavigateTarget, options: NavigateOptions): void
+    {
+        recordScroll();
+        navScrollOverride = options.scroll;
+
         // resolve() applies the base prefix (internal targets only), so history
         // always holds the real browser URL.
         const fullPath = resolve(target);
 
+        // Every router-written entry is STAMPED: a fresh key, and an index one
+        // past the current entry for a push (a replace keeps the index). The
+        // user's own state rides beside the stamp.
+        const stamped: StampedState = {
+            __az: { key: freshKey(), index: options.replace ? currentIndex : currentIndex + 1 },
+            state: options.state
+        };
+        currentIndex = stamped.__az.index;
+        currentKey = stamped.__az.key;
+
         pendingKind = options.replace ? 'replace' : 'push';
         if (options.replace)
         {
-            history.replace(fullPath, options.state);
+            history.replace(fullPath, stamped);
         }
         else
         {
-            history.push(fullPath, options.state);
+            history.push(fullPath, stamped);
         }
         pendingKind = null;
-
-        // Optional opt-in scroll to top; the router doesn't restore scroll
-        // automatically. Users who need bespoke scroll behavior can subscribe
-        // to `location` instead. Guarded for SSR / memory-history: the router runs
-        // server-side (createMemoryHistory) where there is no `window`.
-        if (options.scroll && typeof window !== 'undefined')
-        {
-            window.scrollTo({ top: 0, left: 0 });
-        }
     }
 
     return {
@@ -872,7 +1233,15 @@ export function createRouter(config: RouterConfig): Router
         loaders,
         pending,
         chainReady,
-        navigationKind: () => lastKind,
+        focusManagement: config.focus !== false,
+        block(blocker): () => void
+        {
+            blockers.add(blocker);
+            return (): void =>
+            {
+                blockers.delete(blocker);
+            };
+        },
         navigate(to, options = {}): void
         {
             // untrack so navigate can be called from inside an effect without

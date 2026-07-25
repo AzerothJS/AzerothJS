@@ -127,15 +127,17 @@ describe('router.navigationKind', () =>
                 { path: '/about', component: pages.about }
             ]
         });
-        expect(router.navigationKind()).toBe('push'); // initial default
+        expect(router.location().navigationKind).toBe('push'); // initial default
 
         router.navigate('/about');
-        expect(router.navigationKind()).toBe('push');
+        expect(router.location().navigationKind).toBe('push');
+        expect(router.location().delta).toBe(0);
 
         router.replace('/');
-        expect(router.navigationKind()).toBe('replace');
+        expect(router.location().navigationKind).toBe('replace');
 
         router.back();
-        expect(router.navigationKind()).toBe('pop');
+        expect(router.location().navigationKind).toBe('pop');
+        expect(router.location().delta).toBe(-1); // stamps make direction knowable
     });
 });

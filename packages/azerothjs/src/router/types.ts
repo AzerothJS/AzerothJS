@@ -10,6 +10,7 @@
  */
 
 import type { MountNode } from '../component/index.ts';
+import type { Redirect } from './redirect.ts';
 
 /**
  * What a route `search` schema must look like: the native `@azerothjs/schema` shape,
@@ -92,7 +93,32 @@ export interface RouteLocation
 
     /** `pathname + search + hash`: the value you'd put in a `<Link href>`. */
     fullPath: string;
+
+    /**
+     * What CAUSED this location: `'push'` (navigate / a Link), `'replace'`, or
+     * `'pop'` (the browser's own back/forward). Riding IN the payload, one
+     * reactive read tells both where you are and how you got there - no
+     * ordering contract against a side-channel getter.
+     */
+    navigationKind: NavigationKind;
+
+    /**
+     * The pop distance: `-1` for back, `+1` for forward (larger magnitudes for
+     * multi-entry jumps), `0` for push/replace - knowable because the router
+     * STAMPS history entries. `0` also when the adapter cannot carry state or
+     * the popped entry predates the router.
+     */
+    delta: number;
+
+    /**
+     * This history entry's stamp: stable across revisits of the same entry.
+     * Keys scroll restoration and any per-entry effect state.
+     */
+    key: string;
 }
+
+/** The cause of a location change; carried on {@link RouteLocation.navigationKind}. */
+export type NavigationKind = 'push' | 'replace' | 'pop';
 
 /**
  * The component shape used by routes.
@@ -220,6 +246,42 @@ export interface Route
      * crashing the route - declare search fields optional/defaulted.
      */
     search?: SearchSchemaLike;
+
+    /**
+     * Runs BEFORE this route's (and its descendants') loaders when a navigation
+     * matches it - guards compose root-to-leaf down the chain, first veto wins,
+     * and NOTHING renders or loads until every guard passes. Return:
+     *
+     *   - `true` / nothing - pass;
+     *   - `false` - VETO: the navigation is cancelled and the previous location
+     *     restored (auth walls, feature flags);
+     *   - a {@link NavigateTarget} or `redirect(...)` - go there instead
+     *     (`/login` with a comeback query is the classic).
+     *
+     * May be async; the navigation holds (and `router.pending()` is true) until
+     * it settles. A THROWN `redirect(...)` behaves like returning it; any other
+     * throw fails CLOSED (veto) with a console error.
+     */
+    guard?: (context: GuardContext) => GuardVerdict | Promise<GuardVerdict>;
+}
+
+/** What a route {@link Route.guard} may produce. */
+export type GuardVerdict = boolean | NavigateTarget | Redirect | undefined;
+
+/** What a route {@link Route.guard} receives. */
+export interface GuardContext
+{
+    /** Path params of the navigation being guarded. */
+    params: Params;
+
+    /** The target pathname (base-relative). */
+    pathname: string;
+
+    /** The target's parsed query. */
+    query: Query;
+
+    /** The location being LEFT, or null on the initial navigation. */
+    from: RouteLocation | null;
 }
 
 /** What a route {@link Route.loader} receives. */
@@ -307,10 +369,10 @@ export interface NavigateOptions
     state?: unknown;
 
     /**
-     * If `true`, scroll the page to top after navigation. The router does not
-     * scroll automatically by default; set this to opt in for individual
-     * navigations, or wire your own scroll-restoration logic via the location
-     * signal. Default: `false`.
+     * Overrides the router's MANAGED scrolling for this navigation: `true`
+     * forces scroll-to-top, `false` leaves the scroll untouched. Omitted, the
+     * managed default applies (top on push/replace, hash target when present,
+     * restore on pop).
      */
     scroll?: boolean | undefined;
 }
@@ -358,6 +420,31 @@ export interface RouterConfig
      * exactly equals the initial pathname + search.
      */
     initialLoaderData?: LoaderHandoff | undefined;
+
+    /**
+     * Managed scrolling (ON by default in the browser): push/replace scrolls to top
+     * (or to the `#hash` target), pop RESTORES the position recorded for that history
+     * entry - the behavior every mainstream router ships. `false` disables it
+     * entirely; a per-navigation `scroll` option always wins; `scrollBehavior` is the
+     * fine-grained escape hatch.
+     */
+    scroll?: boolean;
+
+    /**
+     * Overrides the managed scroll decision per navigation: return a position to
+     * scroll there, or `false` to leave the scroll alone. `saved` is the recorded
+     * position when returning to a stamped entry (pop), else null.
+     */
+    scrollBehavior?: (context: { location: RouteLocation; saved: { x: number; y: number } | null }) => { x: number; y: number } | false;
+
+    /**
+     * Route-change FOCUS management (ON by default): after a navigation swaps the
+     * route content, focus moves to the new content (an element marked
+     * `data-route-focus` inside it wins) so keyboard and screen-reader users land
+     * where the navigation took them - the a11y behavior hand-rolled SPAs forget.
+     * `false` opts out.
+     */
+    focus?: boolean;
 }
 
 /**
@@ -425,4 +512,12 @@ export interface HistoryAdapter
      * function; call it to detach the listener.
      */
     subscribe(listener: (fullPath: string) => void): () => void;
+
+    /**
+     * The CURRENT entry's history state, when the adapter can read it (browser:
+     * `window.history.state`; memory: the stored entry state). Optional so custom
+     * adapters stay valid; without it the router's entry stamping - and therefore
+     * pop DIRECTION (`delta`) and scroll restoration - degrade gracefully.
+     */
+    state?(): unknown;
 }
