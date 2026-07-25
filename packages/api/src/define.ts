@@ -23,31 +23,14 @@
  * so this module and the client depend on nothing but @azerothjs/schema.
  */
 
-import type { Schema } from '@azerothjs/schema';
+import type { Schema, StandardSchemaV1 } from '@azerothjs/schema';
 
-/**
- * The Standard Schema v1 contract (https://standardschema.dev) - the `~standard`
- * property Zod, Valibot, ArkType, and others expose. A `route()` accepts EITHER a
- * native `@azerothjs/schema` Schema (which also self-describes for OpenAPI) OR any
- * Standard Schema validator, so a team keeps its existing schemas. A foreign schema
- * validates the boundary; its OpenAPI entry degrades to the permissive shape (it has
- * no `meta` for the exporter to walk).
- */
-export interface StandardSchemaV1<Output = unknown>
-{
-    readonly '~standard': {
-        readonly version: 1;
-        readonly vendor: string;
-        readonly validate: (value: unknown) =>
-        StandardResult<Output> | Promise<StandardResult<Output>>;
-        readonly types?: { readonly output: Output } | undefined;
-    };
-}
-
-/** @internal One Standard Schema validation outcome. */
-type StandardResult<Output> =
-    | { readonly value: Output; readonly issues?: undefined }
-    | { readonly issues: ReadonlyArray<{ readonly message: string; readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined }> };
+// The Standard Schema v1 contract (https://standardschema.dev) - the `~standard` property
+// Zod, Valibot, ArkType (and the house schema itself) expose. A `route()` accepts EITHER a
+// native `@azerothjs/schema` Schema (which also self-describes for OpenAPI) OR any Standard
+// Schema validator, so a team keeps its existing schemas. A foreign schema validates the
+// boundary; its OpenAPI entry degrades to the permissive shape (no `meta` to walk).
+export type { StandardSchemaV1 } from '@azerothjs/schema';
 
 /** A route boundary schema: the native self-describing one, or any Standard Schema validator. */
 export type RouteSchema<T> = Schema<T> | StandardSchemaV1<T>;

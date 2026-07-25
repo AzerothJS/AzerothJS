@@ -146,7 +146,30 @@ export interface SchemaMeta
 }
 
 /** A schema for T: runtime validation whose static type IS T. */
-export interface Schema<T>
+/**
+ * The Standard Schema v1 interop surface (https://standardschema.dev) - the `~standard`
+ * property Zod, Valibot, ArkType, and Standard-Schema-aware consumers (form resolvers,
+ * tRPC, other frameworks) speak. Every schema this package builds carries it, so a
+ * house schema plugs into ANY Standard Schema consumer - and the framework's own
+ * boundaries (api routes, forms) accept any foreign validator that carries it.
+ */
+export interface StandardSchemaV1<Output = unknown>
+{
+    readonly '~standard': {
+        readonly version: 1;
+        readonly vendor: string;
+        readonly validate: (value: unknown) =>
+        StandardResult<Output> | Promise<StandardResult<Output>>;
+        readonly types?: { readonly output: Output } | undefined;
+    };
+}
+
+/** One Standard Schema validation outcome. */
+export type StandardResult<Output> =
+    | { readonly value: Output; readonly issues?: undefined }
+    | { readonly issues: ReadonlyArray<{ readonly message: string; readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined }> };
+
+export interface Schema<T> extends StandardSchemaV1<T>
 {
     /** @internal Declaration metadata for compile-from-declaration consumers; see {@link SchemaMeta}. */
     meta?: SchemaMeta;
@@ -216,6 +239,20 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
                 return { ok: false, errors: toFieldErrors(collector.issues), issues: collector.issues };
             }
             return { ok: true, value: parsed as T };
+        },
+        // Standard Schema v1: the interop face any ~standard-aware consumer speaks.
+        // Always SYNCHRONOUS here (house validation is one pass, no async refinements);
+        // dotted issue paths map to the spec's segment arrays ('' = root = no path).
+        '~standard': {
+            version: 1,
+            vendor: 'azerothjs',
+            validate: (value: unknown) =>
+            {
+                const result = schema.safeParse(value);
+                return result.ok
+                    ? { value: result.value }
+                    : { issues: result.issues.map((issue) => ({ message: issue.message, path: issue.path === '' ? undefined : issue.path.split('.') })) };
+            }
         },
         optional(): Schema<T | undefined>
         {

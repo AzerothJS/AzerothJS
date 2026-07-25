@@ -117,8 +117,9 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
     const call = async (routeDef: AnyRoute, args: RawArgs): Promise<unknown> =>
     {
         // Pre-validate locally: same rules as the server, but the failure costs no network.
-        // A native schema uses its one-pass safeParse; a Standard Schema validator
-        // (Zod/Valibot) is validated on the server, so here it simply passes through.
+        // A native schema uses its one-pass safeParse; a FOREIGN Standard Schema validator
+        // (Zod/Valibot/ArkType) runs `~standard.validate` - awaited, since the call is
+        // already async - and its issues map to the same flat field-path SchemaError.
         let body = args.input;
         const nativeInput = routeDef.input as { safeParse?: (v: unknown) => { ok: true; value: unknown } | { ok: false; errors: Record<string, string>; issues?: Array<{ path: string; code: string; message: string }> } } | undefined;
         if (nativeInput !== undefined && typeof nativeInput.safeParse === 'function')
@@ -129,6 +130,25 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
                 throw new SchemaError(parsed.errors, parsed.issues);
             }
             body = parsed.value;
+        }
+        else if (routeDef.input !== undefined)
+        {
+            const standard = (routeDef.input as { ['~standard']: { validate: (v: unknown) => unknown } })['~standard'];
+            const result = await standard.validate(body) as
+                { value: unknown; issues?: undefined } | { issues: ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> | undefined }> };
+            if (result.issues !== undefined)
+            {
+                const errors: Record<string, string> = {};
+                const issues: Array<{ path: string; code: string; message: string }> = [];
+                for (const issue of result.issues)
+                {
+                    const path = (issue.path ?? []).map((seg) => typeof seg === 'object' ? String(seg.key) : String(seg)).join('.') || 'root';
+                    errors[path] = errors[path] ?? issue.message;
+                    issues.push({ path, code: 'invalid', message: issue.message });
+                }
+                throw new SchemaError(errors, issues);
+            }
+            body = result.value;
         }
 
         // AnyRoute erases Path to any (see define.ts); the assertion restores the runtime truth.

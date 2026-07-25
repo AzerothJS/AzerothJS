@@ -11,6 +11,16 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **schema / form / api**: Standard Schema v1 everywhere. Every `@azerothjs/schema`
+  schema now carries the `~standard` property, so a house schema plugs into ANY
+  Standard-Schema-aware consumer (form resolvers, tRPC, other frameworks) exactly like a
+  Zod schema. In the other direction, `FormConfig.schema` and per-field `validate`
+  entries accept any SYNCHRONOUS Standard Schema validator (Zod/Valibot/ArkType) beside
+  the native one - a team keeps its existing schemas - and the typed client now
+  pre-validates a foreign-schema input locally before the request leaves (mapping its
+  issue paths to the same flat field map). An async foreign schema in the sync form
+  pipeline is a loud configuration error, not a silent skip; foreign schemas still
+  degrade to the permissive OpenAPI shape (only native schemas self-describe fully).
 - **reactivity**: `onMount(fn)` - the sanctioned post-connection hook. Runs once, one
   microtask after the synchronous render (every insertion path is synchronous, so the
   DOM is connected by then), under the registering owner: effects it creates are owned,

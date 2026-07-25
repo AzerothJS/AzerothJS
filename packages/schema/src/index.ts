@@ -19,7 +19,7 @@ export {
 export type {
     Schema, Infer, ShapeType, Refinement, FieldValidator, FieldErrors, ParseResult,
     Issue, ParseOptions, RuleOverrides, RefineOptions, StringOptions, NumberOptions,
-    BooleanOptions, ArrayOptions, SchemaMeta
+    BooleanOptions, ArrayOptions, SchemaMeta, StandardSchemaV1, StandardResult
 } from './schema.ts';
 
 export {

@@ -24,7 +24,31 @@ import {
     untrack,
     onCleanup
 } from '@azerothjs/reactivity';
-import type { Schema, FieldValidator } from '@azerothjs/schema';
+import type { Schema, FieldValidator, StandardSchemaV1 } from '@azerothjs/schema';
+
+/**
+ * @internal Runs a FOREIGN Standard Schema validator synchronously: null on success,
+ * its issues on failure. The form's validation pipeline is synchronous by design
+ * (every keystroke revalidates), so an async-refining schema - `~standard.validate`
+ * returning a Promise - is a configuration error surfaced loudly, not a silent skip:
+ * async checks belong in validateAsync.
+ */
+function standardIssues<T>(
+    schema: StandardSchemaV1<T>,
+    value: unknown,
+    site: string
+): ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> | undefined }> | null
+{
+    const result = schema['~standard'].validate(value);
+    if (result instanceof Promise)
+    {
+        throw new Error(
+            `createForm ${ site }: this Standard Schema validator is ASYNCHRONOUS (its validate returned a Promise). ` +
+            'The sync validation pipeline runs per keystroke; put async checks in validateAsync, or use a synchronous schema.'
+        );
+    }
+    return result.issues === undefined ? null : result.issues;
+}
 
 /**
  * Re-exported from @azerothjs/schema - THE validation package owns the validator shape and the
@@ -72,25 +96,29 @@ export interface FormConfig<T extends object>
     initial: T;
 
     /**
-     * Per-field sync rules. Each entry is a FieldValidator OR an @azerothjs/schema node - a
-     * schema used per-field reports its first issue's message. Optional - fields without a
+     * Per-field sync rules. Each entry is a FieldValidator, an @azerothjs/schema node, or
+     * any SYNCHRONOUS Standard Schema validator (a Zod/Valibot field schema) - a schema
+     * used per-field reports its first issue's message. Optional - fields without a
      * rule are always considered valid. Run on every value change and on submit. Each rule
      * sees only its own field's value; for checks that span fields use {@link validateForm};
      * for one schema over the whole values object use {@link schema}.
      */
-    validate?: { [K in keyof T]?: FieldValidator<T[K]> | Schema<T[K]> } | undefined;
+    validate?: { [K in keyof T]?: FieldValidator<T[K]> | Schema<T[K]> | StandardSchemaV1<T[K]> } | undefined;
 
     /**
      * ONE schema for the whole values object - the same declaration the api client
      * pre-validates with and the server boundary enforces, so all three report identical
-     * failures. Issues land per-field (first issue per field wins; a nested path lands on its
-     * top-level field). Runs after the per-field rules and before {@link validateForm}; a
-     * per-field error wins over a schema error for the same field. The schema only ever
-     * speaks for fields it has reported on, so a server error injected via
-     * {@link FormApi.setError} on an untouched field survives. For code-driven UX (switching
-     * on issue codes), parse with the schema directly.
+     * failures. Native `@azerothjs/schema` OR any SYNCHRONOUS Standard Schema validator
+     * (Zod, Valibot, ArkType) - a team keeps its existing schemas; an async-refining
+     * foreign schema belongs in {@link validateAsync}, and using one here throws a
+     * descriptive error rather than silently skipping it. Issues land per-field (first
+     * issue per field wins; a nested path lands on its top-level field). Runs after the
+     * per-field rules and before {@link validateForm}; a per-field error wins over a
+     * schema error for the same field. The schema only ever speaks for fields it has
+     * reported on, so a server error injected via {@link FormApi.setError} on an
+     * untouched field survives.
      */
-    schema?: Schema<T>;
+    schema?: Schema<T> | StandardSchemaV1<T>;
 
     /**
      * Cross-field sync validation. Receives the full, typed values snapshot and returns a partial map of
@@ -360,8 +388,10 @@ export function createForm<T extends object>(
         {
             // The explicit annotation flattens the mapped-indexed type into a plain
             // union, which is what lets `typeof` narrow it (function -> FieldValidator,
-            // object -> Schema) without casts.
-            const rule: FieldValidator<T[keyof T]> | Schema<T[keyof T]> | undefined = config.validate[name];
+            // object -> schema) without casts. A native schema keeps its one-pass
+            // first-issue safeParse; a foreign Standard Schema runs `~standard.validate`
+            // (synchronously - see standardIssues).
+            const rule: FieldValidator<T[keyof T]> | Schema<T[keyof T]> | StandardSchemaV1<T[keyof T]> | undefined = config.validate[name];
             if (rule === undefined)
             {
                 continue;
@@ -370,13 +400,22 @@ export function createForm<T extends object>(
             {
                 fieldRules[name] = rule;
             }
-            else
+            else if ('safeParse' in rule)
             {
                 const schema = rule;
                 fieldRules[name] = (value: T[keyof T]): string | null =>
                 {
                     const parsed = schema.safeParse(value, { mode: 'first' });
                     return parsed.ok ? null : (parsed.issues[0]?.message ?? 'Invalid value');
+                };
+            }
+            else
+            {
+                const schema = rule;
+                fieldRules[name] = (value: T[keyof T]): string | null =>
+                {
+                    const issues = standardIssues(schema, value, String(name));
+                    return issues === null ? null : (issues[0]?.message ?? 'Invalid value');
                 };
             }
         }
@@ -393,21 +432,38 @@ export function createForm<T extends object>(
             return undefined;
         }
         const overlay = {} as { [K in keyof T]?: string | null };
-        const parsed = config.schema.safeParse(snapshot);
-        if (!parsed.ok)
+
+        // Native fast path keeps the one-pass safeParse (dotted string paths); a foreign
+        // Standard Schema validator maps its segment-array paths to the same shape.
+        let failures: ReadonlyArray<{ field: string; message: string }>;
+        if ('safeParse' in config.schema)
         {
-            for (const issue of parsed.issues)
+            const parsed = config.schema.safeParse(snapshot);
+            failures = parsed.ok ? [] : parsed.issues
+                .filter((issue) => issue.path !== '') // a root-level issue has no field to land on
+                .map((issue) => ({ field: issue.path.split('.')[0] ?? '', message: issue.message }));
+        }
+        else
+        {
+            const issues = standardIssues(config.schema, snapshot, 'schema');
+            failures = issues === null ? [] : issues.flatMap((issue) =>
             {
-                if (issue.path === '')
+                const seg = issue.path?.[0];
+                if (seg === undefined)
                 {
-                    continue; // a root-level issue has no field to land on
+                    return []; // a root-level issue has no field to land on
                 }
-                const field = issue.path.split('.')[0] as keyof T;
-                schemaSpoke.add(field);
-                if (overlay[field] === undefined)
-                {
-                    overlay[field] = issue.message; // first issue per field wins
-                }
+                return [{ field: String(typeof seg === 'object' ? seg.key : seg), message: issue.message }];
+            });
+        }
+
+        for (const { field, message } of failures)
+        {
+            const key = field as keyof T;
+            schemaSpoke.add(key);
+            if (overlay[key] === undefined)
+            {
+                overlay[key] = message; // first issue per field wins
             }
         }
         for (const field of schemaSpoke)

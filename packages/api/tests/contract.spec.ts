@@ -10,7 +10,7 @@
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { email, required } from '@azerothjs/form';
-import { object, string, number, boolean, type Infer } from '@azerothjs/schema';
+import { object, string, number, boolean, type Infer, type StandardSchemaV1 } from '@azerothjs/schema';
 import { App, HttpError, noContent } from '@azerothjs/http';
 import { defineContract, route, mountApi, createClient, ApiError, type HandlersWithGuards } from '@azerothjs/api';
 
@@ -345,5 +345,46 @@ describe('client path-parameter substitution', () =>
         });
         await client.file({ params: { name: 'a b', rest: 'x/y.txt' } });
         expect(seen).toEqual(['/f/a%20b/x/y.txt']);
+    });
+});
+
+describe('client pre-validation of FOREIGN (Standard Schema) inputs', () =>
+{
+    it('rejects locally with the flat field map - the transport is never called', async () =>
+    {
+        // A foreign validator typed as Standard Schema v1, so the route's In infers.
+        const zodish: StandardSchemaV1<{ name: string }> = {
+            '~standard': {
+                version: 1,
+                vendor: 'zod-stand-in',
+                validate: (value: unknown) =>
+                {
+                    const v = value as { name?: string };
+                    return typeof v.name === 'string' && v.name.length >= 2
+                        ? { value: { name: v.name } }
+                        : { issues: [{ message: 'Name too short', path: ['name'] }] };
+                }
+            }
+        };
+        const foreign = defineContract({
+            create: route({ method: 'POST', path: '/things', input: zodish })
+        });
+        let transportCalls = 0;
+        const client = createClient(foreign, {
+            baseUrl: '/api',
+            fetch: () =>
+            {
+                transportCalls++;
+                return Promise.resolve(Response.json({ ok: true }));
+            }
+        });
+
+        await expect(client.create({ input: { name: 'x' } })).rejects.toMatchObject({
+            fields: { name: 'Name too short' }
+        });
+        expect(transportCalls).toBe(0);              // failed BEFORE the wire
+
+        await client.create({ input: { name: 'Jaina' } });
+        expect(transportCalls).toBe(1);              // valid input goes through
     });
 });
