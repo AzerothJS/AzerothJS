@@ -173,3 +173,55 @@ describe('client side: adoption without a refetch', () =>
         expect(readLoaderHandoff()).toBeUndefined();
     });
 });
+
+describe('multi-level parity: the nested chain hands off level by level', () =>
+{
+    it('server loads ALL levels in parallel; the hydrating router seeds EVERY level, no refetch', async () =>
+    {
+        const layoutLoader = vi.fn(async () => ({ nav: ['a', 'b'] }));
+        const leafLoader = vi.fn(async ({ params }: { params: Record<string, string> }) => ({ id: params.id }));
+        const nested: Route[] = [{
+            path: '/shop',
+            component: leaf,
+            loader: layoutLoader,
+            children: [{ path: 'items/:id', component: leaf, loader: leafLoader }]
+        }];
+
+        const handoff = await matchAndLoad(nested, new URL('http://local/shop/items/9'));
+        expect(handoff).toEqual({
+            version: 2,
+            path: '/shop/items/9',
+            data: [{ nav: ['a', 'b'] }, { id: '9' }]
+        });
+        expect(layoutLoader).toHaveBeenCalledTimes(1);
+        expect(leafLoader).toHaveBeenCalledTimes(1);
+
+        document.head.insertAdjacentHTML('beforeend', loaderHandoffScript(handoff));
+        try
+        {
+            let dispose!: () => void;
+            let router!: Router;
+            createRoot((d) =>
+            {
+                dispose = d;
+                router = createRouter({
+                    routes: nested,
+                    history: createMemoryHistory('/shop/items/9'),
+                    initialLoaderData: readLoaderHandoff()
+                });
+                // BOTH levels synchronously present - what layout and leaf read while hydrating.
+                expect(router.loaders[0]!.data()).toEqual({ nav: ['a', 'b'] });
+                expect(router.loaders[1]!.data()).toEqual({ id: '9' });
+            });
+            await flush();
+            // Adopted, not refetched - at either level.
+            expect(layoutLoader).toHaveBeenCalledTimes(1);
+            expect(leafLoader).toHaveBeenCalledTimes(1);
+            dispose();
+        }
+        finally
+        {
+            document.getElementById(LOADER_HANDOFF_ID)?.remove();
+        }
+    });
+});
