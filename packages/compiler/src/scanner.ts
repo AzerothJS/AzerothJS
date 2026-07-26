@@ -13,8 +13,8 @@
  * balanced-brace capture for `{...}` holes and `(...)`/`[...]`).
  *
  * The predicates (isWhitespace/isIdentStart/isIdentPart) and skip helpers (skipString/skipTemplate/
- * skipRegex/skipLineComment/skipBlockComment/skipBalanced) are a family of small public utilities,
- * each with a concise example-bearing JSDoc; {@link findMarkupStart} is the substantive entry point.
+ * skipRegex/skipLineComment/skipBlockComment/skipBalanced) are a family of small public utilities;
+ * {@link findMarkupStart} is the substantive entry point.
  *
  * @see {@link findMarkupStart}
  */
@@ -218,10 +218,142 @@ export function skipRegex(src: string, i: number): number
     return i;
 }
 
+/** HTML void elements: no closing tag and no children (`<br>`, `<img>`, ...). */
+export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr'
+]);
+
+/**
+ * HTML raw-text elements: their content is CDATA, not markup. `<style>`/`<script>` carry `{`, `<`,
+ * and `&` that must stay LITERAL - the markup parser reads their content verbatim (no `{ ... }` holes,
+ * no nested tags) and the serializers emit it unescaped, so CSS and JSON-LD survive intact.
+ */
+export const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
+
+/** Characters that continue a tag name: identifiers plus `.` (`Foo.Bar`) and `-` (custom elements). */
+function isTagNameChar(ch: string): boolean
+{
+    return isIdentPart(ch) || ch === '.' || ch === '-';
+}
+
+/**
+ * Given `i` at a `<` that begins a markup element or fragment (in EXPRESSION position),
+ * returns the index just past the region's end. Consumes the whole tree - attribute
+ * expressions and holes via {@link skipBalanced}, nested elements recursively, text (including
+ * apostrophes and slashes) as OPAQUE - so nothing inside a markup region is mistaken for a
+ * string, regex, or stray brace by the surrounding brace scanner. This is what lets
+ * `{ok ? <span>Don't</span> : <span>Do</span>}` scan correctly: the apostrophe in text is
+ * markup content, not a string delimiter.
+ *
+ * @internal
+ */
+function skipMarkupRegion(src: string, start: number): number
+{
+    let i = start;
+    let depth = 0;
+
+    do
+    {
+        if (i >= src.length)
+        {
+            break;
+        }
+        if (src[i] === '<' && src[i + 1] === '/')
+        {
+            // Closing tag `</name>` or `</>`.
+            i += 2;
+            while (i < src.length && src[i] !== '>')
+            {
+                i++;
+            }
+            if (src[i] === '>')
+            {
+                i++;
+            }
+            depth--;
+            continue;
+        }
+        if (src[i] === '<')
+        {
+            // Opening tag or `<>` fragment. Scan to the end of the open tag, tracking
+            // self-closing, and only descend for a container element.
+            const opened = scanOpenTag(src, i);
+            i = opened.end;
+            if (!opened.selfClosing && !VOID_ELEMENTS.has(opened.tag))
+            {
+                depth++;
+            }
+            continue;
+        }
+        if (src[i] === '{')
+        {
+            // A hole (or `{/* comment */}`); its braces are balanced independently.
+            i = skipBalanced(src, i);
+            continue;
+        }
+        // Ordinary text: apostrophes, slashes, and quotes here are literal content.
+        i++;
+    }
+    while (depth > 0);
+
+    return i;
+}
+
+/**
+ * @internal Given `i` at the `<` of an opening tag (or `<>`), returns `{ end, selfClosing, tag }`.
+ * Attribute `{...}` expressions and quoted values are skipped whole. On malformed input it bails
+ * as self-closing at end-of-input rather than looping.
+ */
+function scanOpenTag(src: string, i: number): { end: number; selfClosing: boolean; tag: string }
+{
+    i++; // past '<'
+    if (src[i] === '>')
+    {
+        return { end: i + 1, selfClosing: false, tag: '' }; // fragment <>
+    }
+    const nameStart = i;
+    while (i < src.length && isTagNameChar(src[i] ?? ''))
+    {
+        i++;
+    }
+    const tag = src.slice(nameStart, i);
+
+    for (;;)
+    {
+        if (i >= src.length)
+        {
+            return { end: i, selfClosing: true, tag };
+        }
+        const ch = src[i];
+        if (ch === '/' && src[i + 1] === '>')
+        {
+            return { end: i + 2, selfClosing: true, tag };
+        }
+        if (ch === '>')
+        {
+            return { end: i + 1, selfClosing: false, tag };
+        }
+        if (ch === '{')
+        {
+            i = skipBalanced(src, i); // attribute expression or {...spread}
+            continue;
+        }
+        if (ch === '"' || ch === '\'')
+        {
+            i = skipString(src, i); // quoted attribute value
+            continue;
+        }
+        i++; // attribute name chars, '=', directives (class:x, bind:value)
+    }
+}
+
 /**
  * Given `i` at an opening bracket (`(`, `[`, or `{`), returns the index just
- * after the matching close, skipping strings, templates, comments, and nested
- * brackets so braces inside them don't count.
+ * after the matching close, skipping strings, templates, comments, regex literals, and
+ * embedded MARKUP regions so their contents (braces, apostrophes, slashes) don't count.
+ * Regex-vs-divide and markup-vs-less-than are disambiguated by the previous significant
+ * token, exactly as {@link findMarkupStart} does.
  *
  * @example
  * ```ts
@@ -235,10 +367,12 @@ export function skipBalanced(src: string, openIndex: number): number
     const close = open === '(' ? ')' : open === '[' ? ']' : '}';
     let depth = 0;
     let i = openIndex;
+    let prevChar = '';
+    let prevWord = '';
 
     while (i < src.length)
     {
-        const ch = src[i];
+        const ch = src[i] ?? '';
 
         if (ch === '/' && src[i + 1] === '/')
         {
@@ -250,20 +384,59 @@ export function skipBalanced(src: string, openIndex: number): number
             i = skipBlockComment(src, i);
             continue;
         }
+        // A `/` in expression position starts a REGEX literal; consume it whole so an
+        // apostrophe, brace, or paren inside (`/'/g`, `/\{/`) cannot desync the scan.
+        if (ch === '/' && isExpressionPosition(prevChar, prevWord))
+        {
+            i = skipRegex(src, i);
+            prevChar = ')'; // a regex value has ended: a following `/` is division
+            prevWord = '';
+            continue;
+        }
         if (ch === '"' || ch === '\'')
         {
             i = skipString(src, i);
+            prevChar = ')';
+            prevWord = '';
             continue;
         }
         if (ch === '`')
         {
             i = skipTemplate(src, i);
+            prevChar = ')';
+            prevWord = '';
             continue;
+        }
+        // A `<` in expression position begins MARKUP (unless it is a generic arrow's type
+        // parameters); skip the whole region so its text/tags never touch the brace depth.
+        if (ch === '<' && isExpressionPosition(prevChar, prevWord))
+        {
+            const next = src[i + 1];
+            if (next === '>' || isIdentStart(next))
+            {
+                if (next !== '>')
+                {
+                    const past = tryGenericArrow(src, i);
+                    if (past !== -1)
+                    {
+                        i = past; // only the `<...>` list; the arrow body still scans normally
+                        prevChar = '>';
+                        prevWord = '';
+                        continue;
+                    }
+                }
+                i = skipMarkupRegion(src, i);
+                prevChar = ')'; // a markup value has ended
+                prevWord = '';
+                continue;
+            }
         }
         if (ch === open)
         {
             depth++;
             i++;
+            prevChar = ch;
+            prevWord = '';
             continue;
         }
         if (ch === close)
@@ -274,8 +447,29 @@ export function skipBalanced(src: string, openIndex: number): number
             {
                 return i;
             }
+            prevChar = ch;
+            prevWord = '';
             continue;
         }
+        if (isWhitespace(ch))
+        {
+            i++; // whitespace does not change the previous significant token
+            continue;
+        }
+        if (isIdentStart(ch))
+        {
+            let j = i + 1;
+            while (j < src.length && isIdentPart(src[j] ?? ''))
+            {
+                j++;
+            }
+            prevWord = src.slice(i, j);
+            prevChar = src[j - 1] ?? '';
+            i = j;
+            continue;
+        }
+        prevChar = ch;
+        prevWord = '';
         i++;
     }
 
@@ -288,10 +482,14 @@ const EXPR_KEYWORDS = new Set([
     'yield', 'await', 'case', 'delete', 'void', 'new'
 ]);
 
-/** Punctuators after which an expression (hence markup / regex) can start. */
+/**
+ * Punctuators after which an expression (hence markup / regex) can start. `}` is here for the
+ * block-then-render shape (`effect { ... } <div>...`): the markup after a reactive block must
+ * read as markup, not as a less-than off the `}`.
+ */
 const EXPR_CHARS = new Set([
     '', '(', '{', '[', ',', ';', ':', '?', '=', '>', '<',
-    '&', '|', '!', '~', '+', '-', '*', '/', '%', '^', '\n'
+    '&', '|', '!', '~', '+', '-', '*', '/', '%', '^', '\n', '}'
 ]);
 
 /**
@@ -572,7 +770,7 @@ export function findMarkupStart(src: string, from: number): number
         if (isIdentStart(ch))
         {
             let j = i + 1;
-            while (j < src.length && isIdentPart(src[j]))
+            while (j < src.length && isIdentPart(src[j] ?? ''))
             {
                 j++;
             }

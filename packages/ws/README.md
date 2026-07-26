@@ -1,43 +1,70 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/ws
 
+**AzerothJS WebSocket server - RFC 6455 from scratch: handshake, framing, fragmentation, ping/pong, close codes**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fws?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/ws)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+
+</div>
+
+---
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A WebSocket server implementing RFC 6455 from scratch: zero dependencies, every protocol rule enforced with its mandated close code.
 
-## Install
+---
+
+## 📦 Install
+
+ESM-only, Node >= 22:
 
 ```sh
 npm install @azerothjs/ws
 ```
 
-## Overview
+---
+
+## 📖 Overview
+
+`attachWebSockets` upgrades WebSocket requests on any Node HTTP server and returns a detach
+function:
 
 ```ts
-import { serve } from '@azerothjs/http';
+import { createServer } from 'node:http';
 import { attachWebSockets } from '@azerothjs/ws';
 
-const served = await serve(app);
-attachWebSockets(served.server, {
+const server = createServer((_request, response) => response.end('ok'));
+
+const detach = attachWebSockets(server, {
     path: '/ws',
     verifyOrigin: (origin) => origin === 'https://app.example', // refuse cross-site hijacking pre-upgrade
     heartbeatMs: 30_000,                                        // reclaim half-open connections
-    onConnection(socket, request)
+    onConnection(socket)
     {
         socket.send('welcome');
         socket.onMessage = (data) => socket.send(data);        // string = text, bytes = binary
-        socket.onClose = (code, reason) => console.log(code);
+        socket.onClose = (code, reason) => console.log('closed', code, reason);
     }
 });
+
+server.listen(3000);
+// detach(): stop upgrading and destroy live sockets, so a graceful shutdown can finish.
 ```
+
+> [!TIP]
+> To run WebSockets beside your HTTP routes, hand it the server from `@azerothjs/http`:
+> `attachWebSockets((await serve(app)).server, { ... })`.
 
 The server-side API mirrors the browser's `WebSocket` (send / close / handler properties), so
 both ends of a connection read the same way.
 
-## What the implementation covers
+---
+
+## 🏗️ What the implementation covers
 
 - **The opening handshake** - strict validation, `Sec-WebSocket-Accept` derivation
   (verified against RFC 6455's own worked example), plain HTTP refusals for anything
@@ -59,7 +86,9 @@ both ends of a connection read the same way.
   awaitable `drain()` let a producer respect backpressure instead of buffering a slow
   consumer's stream in memory.
 
-## How it is tested
+---
+
+## 🧪 How it is tested
 
 Interop runs against Node's built-in `WebSocket` client (undici) - a foreign implementation,
 so echo, binary, server push, and the close handshake passing is genuine conformance, not
@@ -68,6 +97,16 @@ the package agreeing with itself. A raw-socket client then drives the violation 
 close codes) and a seeded fuzz feeds the parser garbage: the contract is frames or
 `ProtocolError`, never a crash or a hang.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+Part of the [AzerothJS](../../README.md) monorepo. Related packages:
+[`@azerothjs/http`](../http) (the web-standard HTTP kernel it attaches to),
+[`@azerothjs/cron`](../cron) (scheduling), and [`@azerothjs/logger`](../logger) (logging).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

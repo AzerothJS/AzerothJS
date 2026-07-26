@@ -19,7 +19,11 @@
  *                                    unbalanced generics, missing body brace) would otherwise VANISH
  *                                    into opaque TS; this names exactly what is wrong;
  *   - azeroth/keyword-shadow       - a body-local binding named like a capture-guarded keyword
- *                                    (the STABILITY.md capture clause).
+ *                                    (the STABILITY.md capture clause);
+ *   - azeroth/unterminated-declaration - a missing `;` that let a declaration absorb the next one
+ *                                    (the swallowed binding would silently vanish);
+ *   - azeroth/non-ascii-name       - a non-ASCII character in a declaration name (the ASCII-only
+ *                                    scanner would truncate it silently).
  *
  * (assign-derived and use-before-declaration are out of scope here - left to TypeScript; the harder
  * data-flow rules are future work.)
@@ -35,6 +39,7 @@ import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
 import { parseModule, step, skipTrivia } from './parser.ts';
+import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 import { isEventName } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice } from './ts-slice.ts';
@@ -457,9 +462,170 @@ function diagnoseKeywordShadows(source: string, component: ComponentDecl, out: A
     }
 }
 
+/** The body-item kinds that are `<keyword> <name> = <value>` declarations (name + value spans). */
+const DECLARATION_KINDS: ReadonlySet<string> = new Set([
+    'state', 'derived', 'deferred', 'resource', 'stream', 'store', 'selector', 'form'
+]);
+
+/**
+ * @internal Two silent-corruption traps in declaration scanning, surfaced loudly:
+ *
+ *   - `azeroth/non-ascii-name` - the identifier scanner is ASCII-only, so `state café = 1`
+ *     parses the name as `caf` and the rest silently becomes junk. Flag the truncation.
+ *   - `azeroth/unterminated-declaration` - `state a = 1  state b = 2;` (no `;` after the first)
+ *     parses as ONE declaration whose value ABSORBED the second, so `b` vanishes with no error.
+ *     Detect a declaration keyword at depth 0 inside a value and point at it.
+ */
+function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
+{
+    for (const item of component.body)
+    {
+        if (!DECLARATION_KINDS.has(item.kind))
+        {
+            continue;
+        }
+        const decl = item as { kind: string; name: string; start: number; nameStart: number; nameEnd: number; valueEnd: number; end: number };
+
+        const nextCp = source.codePointAt(decl.nameEnd);
+        if (nextCp !== undefined && nextCp > 0x7F && /\p{L}|\p{N}/u.test(String.fromCodePoint(nextCp)))
+        {
+            out.push({
+                code: 'azeroth/non-ascii-name',
+                severity: 'error',
+                message: `\`${ decl.kind } ${ decl.name }…\` has a non-ASCII character in its name. Declaration names are ASCII-only in 1.x - rename it (the character after \`${ decl.name }\` is not scanned as part of the name).`,
+                start: decl.nameStart,
+                end: decl.nameEnd + 1
+            });
+        }
+
+        const absorbed = findAbsorbedDeclaration(source, decl.nameEnd, decl.valueEnd);
+        if (absorbed !== -1)
+        {
+            out.push({
+                code: 'azeroth/unterminated-declaration',
+                severity: 'error',
+                message: 'Missing `;`: this declaration keyword sits inside the previous declaration\'s value, so it was absorbed and this binding will not exist. End the previous declaration with a semicolon.',
+                start: absorbed,
+                end: absorbed + (source.slice(absorbed).match(/^\w+/)?.[0].length ?? 1)
+            });
+        }
+
+        // A missing `;` also lets a declaration absorb the RETURN MARKUP. Two shapes:
+        //
+        //   1. `derived x = <div/>;` - markup right after `=`. `step` sees it in expression
+        //      position and reports `kind: 'markup'`; findAbsorbedMarkup points at it. (Markup
+        //      at bracket depth 0 in a value is never valid - it would emit raw, untransformed
+        //      markup into the JS.)
+        //   2. `state count = 0` then `<div>…` - the value `0` makes `<` a COMPARISON to `step`
+        //      (`0 < div > …`), so the markup is not seen as markup; instead the whole thing runs
+        //      to the component body end with no `;`. An unterminated value-declaration is the
+        //      tell: statementEnd only returns a non-`;` end when it hit the body limit.
+        const absorbedMarkup = findAbsorbedMarkup(source, decl.nameEnd, decl.valueEnd);
+        if (absorbedMarkup !== -1)
+        {
+            const tag = source.slice(absorbedMarkup).match(/^<\/?[A-Za-z][\w-]*|^<>/)?.[0].length ?? 1;
+            out.push({
+                code: 'azeroth/unterminated-declaration',
+                severity: 'error',
+                message: `Missing \`;\`: markup here was absorbed into the \`${ decl.kind } ${ decl.name }\` declaration's value, so the binding is malformed and this markup is dropped from the render. A declaration value cannot contain markup - end the declaration with a semicolon before it.`,
+                start: absorbedMarkup,
+                end: absorbedMarkup + tag
+            });
+        }
+        else if (source[decl.end - 1] !== ';')
+        {
+            // Unterminated: the declaration's value has no closing `;` and ran to the end of the
+            // component body, swallowing whatever followed - the return markup, the next
+            // statement - into a malformed value. (findAbsorbedDeclaration above already handles
+            // the decl->decl shape with its own, more specific message; this is the general case.)
+            out.push({
+                code: 'azeroth/unterminated-declaration',
+                severity: 'error',
+                message: `\`${ decl.kind } ${ decl.name }\` is missing its terminating \`;\`, so everything after the value - including the component's return markup - was absorbed into it and is lost. Add a semicolon after the value.`,
+                start: decl.start,
+                end: decl.nameEnd
+            });
+        }
+    }
+}
+
+/**
+ * @internal Scans `[from, to)` for a markup region at bracket depth 0 - markup absorbed into a
+ * declaration value because a `;` was missing (`state count = 0` then `<div>…`). Returns its
+ * offset, or -1. `step` only reports `kind: 'markup'` in expression position with a real tag/
+ * fragment start, so a `<` comparison operator (`a < b`) is never mistaken for markup; and markup
+ * nested inside brackets (depth > 0) is skipped, leaving only the top-level absorbed case.
+ */
+function findAbsorbedMarkup(source: string, from: number, to: number): number
+{
+    let i = from;
+    let depth = 0;
+    let prevChar = '';
+    let prevWord = '';
+    while (i < to)
+    {
+        const s = step(source, i, prevChar, prevWord);
+        if (s.kind === 'markup' && depth === 0)
+        {
+            return i;
+        }
+        if (s.kind === 'open')
+        {
+            depth++;
+        }
+        else if (s.kind === 'close')
+        {
+            depth--;
+        }
+        i = s.next;
+        prevChar = s.prevChar;
+        prevWord = s.prevWord;
+    }
+    return -1;
+}
+
+/**
+ * @internal Scans `[from, to)` for a declaration keyword at bracket depth 0 that is followed by an
+ * identifier name (the parser's own declaration-intent rule) - i.e. a swallowed declaration. Returns
+ * its offset, or -1. A member access (`store.foo`) or a value use (`x ? state : y`) is excluded
+ * because the keyword is either preceded by `.` or not followed by a name.
+ */
+function findAbsorbedDeclaration(source: string, from: number, to: number): number
+{
+    let i = from;
+    let depth = 0;
+    let prevChar = '';
+    let prevWord = '';
+    while (i < to)
+    {
+        const s = step(source, i, prevChar, prevWord);
+        if (s.kind === 'open')
+        {
+            depth++;
+        }
+        else if (s.kind === 'close')
+        {
+            depth--;
+        }
+        else if (s.kind === 'identifier' && depth === 0 && prevChar !== '.' && DECLARATION_KEYWORDS.has(s.text))
+        {
+            const nameAt = skipTrivia(source, s.next);
+            if (nameAt < to && isIdentStart(source[nameAt] ?? ''))
+            {
+                return i;
+            }
+        }
+        i = s.next;
+        prevChar = s.prevChar;
+        prevWord = s.prevWord;
+    }
+    return -1;
+}
+
 function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
 {
     diagnoseKeywordShadows(source, component, out);
+    diagnoseDeclarationSlips(source, component, out);
 
     // azeroth/constant-derived and azeroth/inert-effect
     const analysis = analyzeComponent(source, component);

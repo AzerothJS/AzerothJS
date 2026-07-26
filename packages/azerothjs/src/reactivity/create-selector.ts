@@ -16,6 +16,7 @@ import { currentSubscriber, createProducer, track } from './graph.ts';
 import { notifyWrite } from './batch.ts';
 import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
  * createSelector
@@ -114,6 +115,7 @@ export function createSelector<T>(
     }
 
     // Watch the source; on a change, notify only the old and new keys.
+    const frame = dtEnterPrimitive('selector', options.name);
     createEffect(() =>
     {
         const newValue = source();
@@ -129,7 +131,8 @@ export function createSelector<T>(
                 notifyKey(newValue);
             });
         }
-    });
+    }, { name: options.name });
+    dtExitPrimitive(frame);
 
     // Called inside an effect, subscribe that effect to this key's producer (not the
     // source), so it re-runs only when this key's selection state flips.

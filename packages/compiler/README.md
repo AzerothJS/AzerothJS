@@ -1,22 +1,50 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/compiler
 
+**The `.azeroth` single-file-component compiler (markup to `h()` calls) and the `azeroth()` Vite plugin.**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fcompiler?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/compiler)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+
+</div>
+
+---
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the build-time half: applications install [`azerothjs`](https://www.npmjs.com/package/azerothjs) as a dependency and this compiler (with its Vite plugin) as a dev dependency.
 
-## Overview
+---
+
+## 📖 Overview
 
 The `.azeroth` single-file-component compiler. A `.azeroth` file is a TypeScript module written with
 `component` blocks and AzerothJS markup. The compiler turns each component into one mode-aware runtime
 artifact and copies everything outside a component (imports, types, helpers) through unchanged.
 
-The supported way to use it is the **Vite plugin** - add `azeroth()` to a Vite config and imports of
-`.azeroth` files just work, with source maps back to the original markup and build-time lint and
-diagnostics.
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only, Node >= 22. `typescript` (`>=5 <7`) is a required peer - it parses and type-checks component
+> expressions. `vite` (`>=8`) is an optional peer, loaded only at transform time; install it to use the
+> `azeroth()` plugin (a Vite project already has it):
+
+```sh
+npm install -D @azerothjs/compiler typescript
+```
+
+---
+
+## 🚀 Quickstart
+
+> [!TIP]
+> The supported way to use it is the **Vite plugin** - add `azeroth()` to a Vite config and imports of
+> `.azeroth` files just work, with source maps back to the original markup and build-time lint and
+> diagnostics.
 
 ```ts
 // vite.config.ts
@@ -26,16 +54,9 @@ import { azeroth } from '@azerothjs/compiler';
 export default defineConfig({ plugins: [azeroth()] });
 ```
 
-It has no runtime dependencies; `typescript` is a peer dependency (used for parsing component
-expressions) and `vite` is a peer dependency loaded only at transform time.
+---
 
-## Install
-
-```sh
-npm install -D @azerothjs/compiler
-```
-
-## Architecture
+## 🏗️ Architecture
 
 `.azeroth` is component-only - there is no standalone markup transform. The pipeline, in run order:
 
@@ -54,7 +75,9 @@ There is **one IR and one emitter**. An element-rooted output emits a mode-dispa
 `<template>` cloned on the client, the same tree serialized to HTML for SSR, and adopted on hydration.
 Because SSR and hydration share the emitter, their comment markers line up by construction.
 
-## Public API
+---
+
+## 🧩 Public API
 
 The supported entry point is the Vite plugin; the lower-level pieces are exported for tooling.
 
@@ -78,7 +101,9 @@ The supported entry point is the Vite plugin; the lower-level pieces are exporte
 
 Every exported symbol is documented at its definition.
 
-## Authoring idiom and reactivity
+---
+
+## ✍️ Authoring idiom and reactivity
 
 A component is a `component` block. Declare reactive state with `state`, derived values with
 `derived`, and side effects with `effect`, and type props with an ordinary TypeScript parameter on the
@@ -239,12 +264,14 @@ iff it is an assignment expression, a prefix/postfix `++`/`--`, or a zero-argume
 function literal, a call with arguments, or a call whose callee is itself a call or an index access - 
 is left to the type system.
 
-## Syntax highlighting anywhere
+---
+
+## 🎨 Syntax highlighting anywhere
 
 The TextMate grammar ships WITH this package - one canonical copy, welded by test to
 the editor bundles:
 
-```js
+```ts
 import { createHighlighter } from 'shiki';
 import azeroth from '@azerothjs/compiler/azeroth.tmLanguage.json' with { type: 'json' };
 
@@ -256,10 +283,11 @@ highlighter.codeToHtml(source, { lang: 'azeroth', theme: 'github-dark' });
 ```
 
 Any TextMate-compatible consumer (Shiki, docs generators, Sublime/TextMate
-themselves) can load the same file. A native github-linguist entry is prepared as
-a post-release submission so `.azeroth` highlights on GitHub itself.
+themselves) can load the same file.
 
-## Type checking and diagnostics
+---
+
+## 🔍 Type checking and diagnostics
 
 Three independent layers run during a build, in increasing depth.
 
@@ -298,10 +326,20 @@ events. The check is **sound** - it never reports a false error. The deliberate 
 CHILDREN are not checked against a component's declared `children` type (a wrong-shaped child is a
 known false negative; render-callback children like `<For>`'s row function ARE typed) - modeling
 every runtime child shape exactly would risk the false positives this layer promises never to
-produce. It is enabled by default; turn it off with `typeCheck: false` if you want to skip it. The (immutable) TypeScript lib files are parsed once
-and reused across files, so a typical component checks in single-digit milliseconds; a fully shared
-incremental Program remains a possible future optimization.
+produce. It is enabled by default; turn it off with `typeCheck: false` if you want to skip it. The
+(immutable) TypeScript lib files are parsed once and reused across files; `createIncrementalChecker`
+binds the lib a single time and reuses one checker across every file in a build.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+- [AzerothJS](../../README.md) - the monorepo overview and the full package list.
+- [`azerothjs`](../azerothjs) - the framework runtime the compiled output targets.
+- [`@azerothjs/kit`](../kit) - per-route SSR, prerendering, and hydration for fullstack apps.
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

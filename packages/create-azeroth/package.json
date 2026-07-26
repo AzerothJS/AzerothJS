@@ -1,8 +1,8 @@
 {
     "name": "create-azeroth",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "description": "Scaffold an AzerothJS app - frontend, backend, or fullstack - with the framework's canon wired in: azeroth CLI verbs, eslint rules, typecheck gate, and a working dev loop. Run `npm create azeroth@latest`",
     "type": "module",
@@ -14,7 +14,7 @@
         "templates"
     ],
     "dependencies": {
-        "@azerothjs/logger": "1.0.0-beta.2"
+        "@azerothjs/logger": "1.0.0"
     },
     "sideEffects": false,
     "scripts": {

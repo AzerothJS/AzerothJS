@@ -36,13 +36,8 @@ import { isEventName, isFunctionLiteral } from './markup-util.ts';
 import { BUILTIN_SET as BUILTINS } from './builtins.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
-// Type-only (erased at runtime, so the runtime module graph stays acyclic). The
-// reverse edge - analyze importing the VALUE `lowerMarkup` from here - is
-// deliberate: analyze and codegen share this one lowerer as the single source of
-// truth for "what dynamic expressions does this markup contain", which avoids a
-// second, drift-prone markup walker. That is why `madge --circular` reports an
-// analyze<->lower cycle in the TYPE graph; it does not exist at runtime. See
-// analyze.ts `projectMarkup`.
+// Type-only (erased at runtime), so the runtime module graph stays acyclic even though analyze imports
+// the VALUE `lowerMarkup` from here. See the module header for why the type-graph cycle is intentional.
 import type { ReactiveAnalysis, ReactiveScope } from './analyze.ts';
 import type {
     RenderPlan,

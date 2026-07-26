@@ -1,4 +1,4 @@
-// Thin adapter. `CodeMapping` is owned by @azerothjs/compiler, alongside the projection that produces it,
-// so the mapping type the providers consume and the one the projection emits are the same class. This
-// module re-exports it under the local path the providers already import from.
+// Thin adapter: `CodeMapping` and its segment types are owned by @azerothjs/compiler,
+// alongside the projection that produces them, re-exported here under the local path
+// the providers import from.
 export { CodeMapping, type MappingSegment, type MappingKind } from '@azerothjs/compiler';

@@ -35,17 +35,24 @@ export function payloadResponse(body: string, contentType: string, init: Respons
         'content-type': contentType,
         'content-length': String(length)
     };
+    let setCookies: string[] = [];
     if (init.headers !== undefined)
     {
         // The custom-headers path normalizes ONCE through real Headers (handles records,
         // arrays, Headers instances, and casing) - only callers who pass headers pay it.
-        for (const [name, value] of new Headers(init.headers))
+        const headers = new Headers(init.headers);
+        for (const [name, value] of headers)
         {
             record[name] = value;
         }
+        // Headers iteration collapses duplicate set-cookie to one; getSetCookie() is the
+        // only accessor that preserves every cookie. Carry them apart from the record so
+        // a session + a csrf cookie both survive to the socket.
+        setCookies = headers.getSetCookie();
+        delete record['set-cookie'];
         record['content-length'] = String(length);
     }
-    return new PayloadResponse(body, init.status ?? 200, record);
+    return new PayloadResponse(body, init.status ?? 200, record, setCookies);
 }
 
 /** A JSON response; the default for API handlers. */
@@ -119,7 +126,7 @@ export interface QueryResultOptions extends ResponseInit
  * QUERY-specific headers: `Content-Location` (a GET-able results resource), `Location` (the
  * replayable query), and an opt-in `Cache-Control`. Use it so a QUERY endpoint advertises the
  * result semantics the method promises instead of hand-assembling headers.
-  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
  * proxies, caches, and tooling may not recognize it. The surface is stable within the
  * 1.x train but carries an experimental flag until the RFC is.
  */
@@ -145,7 +152,7 @@ export function queryResult(data: unknown, options: QueryResultOptions = {}): Re
 /**
  * The value for an `Accept-Query` response header - the query media types an endpoint accepts
  * (RFC 10008). Set it on OPTIONS or a 415 so a client discovers how to phrase its QUERY body.
-  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+ * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
  * proxies, caches, and tooling may not recognize it. The surface is stable within the
  * 1.x train but carries an experimental flag until the RFC is.
  */

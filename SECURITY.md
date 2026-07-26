@@ -8,7 +8,7 @@ release line** receives security fixes:
 | Version | Supported |
 | --- | --- |
 | the latest published release | yes |
-| older releases | no - upgrade to the latest release (`npx azeroth upgrade` rewrites every pin, installs, and runs the doctor) |
+| older releases | no - upgrade to the latest release (`npx @azerothjs/cli upgrade` rewrites every pin, installs, and runs the doctor) |
 
 ## Reporting a vulnerability
 

@@ -8,9 +8,9 @@
 // ships undocumented.
 
 import { describe, it, expect } from 'vitest';
-import { RUNTIME_FN, WRAPPER_FN } from '@azerothjs/compiler';
-import { keywordDocumentation, keywordOptions, keywordWithExample } from '../../src/language-service/language-data.ts';
-import { keywordSnippetLabels } from '../../src/language-service/providers/completion.ts';
+import { RUNTIME_FN, WRAPPER_FN, BUILTIN_COMPONENTS } from '@azerothjs/compiler';
+import { keywordDocumentation, keywordOptions, keywordWithExample, BUILTIN_COMPONENT_MAP } from '../../src/language-service/language-data.ts';
+import { keywordSnippetLabels, builtinSnippetNames } from '../../src/language-service/providers/completion.ts';
 
 const REACTIVE_KEYWORDS = Object.keys(RUNTIME_FN);
 const WRAPPER_KEYWORDS = Object.keys(WRAPPER_FN);
@@ -56,6 +56,38 @@ describe('keyword documentation completeness', () =>
                 expect(option.type, `${ keyword }.${ option.name } has no type`).toBeTruthy();
                 expect(option.doc.length, `${ keyword }.${ option.name } doc too thin`).toBeGreaterThan(15);
             }
+        }
+    });
+});
+
+describe('built-in component completeness (welded to the compiler\'s canonical list)', () =>
+{
+    // The compiler's exported BUILTIN_COMPONENTS is the authoritative set of control-flow
+    // built-ins. Every one must have LS hover docs AND a completion snippet body - the drift
+    // guard that would have caught Dynamic/Outlet shipping without snippets.
+    it('every compiler built-in has hover documentation (BUILTIN_COMPONENT_MAP)', () =>
+    {
+        for (const name of BUILTIN_COMPONENTS)
+        {
+            expect(BUILTIN_COMPONENT_MAP.has(name), `built-in '${ name }' has no hover doc entry`).toBe(true);
+        }
+    });
+
+    it('every compiler built-in has a completion snippet body', () =>
+    {
+        const snippets = builtinSnippetNames();
+        for (const name of BUILTIN_COMPONENTS)
+        {
+            expect(snippets, `built-in '${ name }' has no completion snippet body`).toContain(name);
+        }
+    });
+
+    it('the LS documents no phantom built-in the compiler does not know', () =>
+    {
+        const canonical = new Set(BUILTIN_COMPONENTS);
+        for (const name of BUILTIN_COMPONENT_MAP.keys())
+        {
+            expect(canonical.has(name), `LS documents '${ name }' but the compiler has no such built-in`).toBe(true);
         }
     });
 });

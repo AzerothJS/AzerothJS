@@ -32,7 +32,8 @@ export {
     skipTemplate,
     skipLineComment,
     skipBlockComment,
-    skipRegex
+    skipRegex,
+    VOID_ELEMENTS
 } from './scanner.ts';
 export { walkComponentTags } from './markup-util.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
@@ -65,10 +66,11 @@ export {
 // Emits a `.d.ts` for an `.azeroth` module so plain TypeScript (`tsc` and editors) can resolve and
 // type-check `.azeroth` imports from `.ts` files.
 export { emitDeclarations, emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
-export { RUNTIME_FN, WRAPPER_FN, type ConstructKind } from './keyword-spec.ts';
+export { RUNTIME_FN, WRAPPER_FN, DECLARATION_KEYWORDS, type ConstructKind } from './keyword-spec.ts';
 // THE single Azeroth -> TypeScript projection. Every tool (type checker, language service, TS plugin,
 // ESLint processor, declaration emitter) lowers `.azeroth` to TypeScript through this one function.
-export { generateVirtualCode, BUILTIN_COMPONENTS, type VirtualCode } from './project.ts';
+export { generateVirtualCode, type VirtualCode } from './project.ts';
+export { BUILTIN_COMPONENTS } from './builtins.ts';
 export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 export {
     vlqEncode,

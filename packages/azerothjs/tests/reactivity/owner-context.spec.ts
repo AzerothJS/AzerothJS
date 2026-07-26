@@ -170,3 +170,89 @@ describe('context', () =>
         expect(runWithOwner(owner, () => useContext(Ctx))).toBeUndefined(); // map cleared with the scope
     });
 });
+
+describe('effect/memo re-runs re-establish their creation owner and error handler', () =>
+{
+    it('getOwner() inside an effect stays the SAME owner on every re-run, not null', () =>
+    {
+        const [tick, setTick] = createSignal(0);
+        const seen: Array<ReturnType<typeof getOwner>> = [];
+        createRoot(() =>
+        {
+            createEffect(() =>
+            {
+                tick();
+                seen.push(getOwner());
+            });
+        });
+        setTick(1);
+        setTick(2);
+        expect(seen).toHaveLength(3);
+        expect(seen[0]).not.toBeNull();
+        // The re-runs see the same owner as the first run - not null, not a foreign owner.
+        expect(seen[1]).toBe(seen[0]);
+        expect(seen[2]).toBe(seen[0]);
+    });
+
+    it('useContext inside an effect resolves this scope on re-run, even when a FOREIGN scope triggers it', () =>
+    {
+        const Ctx = createContext<string>('ctx');
+        const reads: string[] = [];
+        createRoot(() =>
+        {
+            const [tick, setTick] = createSignal(0);
+            // Scope A reads context in an effect.
+            createRoot(() =>
+            {
+                provideContext(Ctx, 'A');
+                createEffect(() =>
+                {
+                    tick();
+                    reads.push(useContext(Ctx) ?? 'undefined');
+                });
+            });
+            // Scope B, providing a DIFFERENT value, drives A's re-run from B's own stack.
+            createRoot(() =>
+            {
+                provideContext(Ctx, 'B');
+                createEffect(() =>
+                {
+                    if (reads.length > 0 && reads.length < 3)
+                    {
+                        setTick(reads.length);
+                    }
+                });
+            });
+        });
+        // Every read must be 'A' - A's effect resolves A's context, never B's (the bleed bug).
+        expect(reads.every((value) => value === 'A')).toBe(true);
+    });
+
+    it('catchError catches a throw from an effect mounted DURING a later re-run', () =>
+    {
+        let caught: unknown = null;
+        createRoot(() =>
+        {
+            const [show, setShow] = createSignal(false);
+            catchError(() =>
+            {
+                createEffect(() =>
+                {
+                    if (show())
+                    {
+                        // A nested effect created on a re-run must inherit the boundary's handler.
+                        createEffect(() =>
+                        {
+                            throw new Error('late-boom');
+                        });
+                    }
+                });
+            }, (error) =>
+            {
+                caught = error;
+            });
+            setShow(true);
+        });
+        expect((caught as Error | null)?.message).toBe('late-boom');
+    });
+});

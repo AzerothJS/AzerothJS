@@ -1,16 +1,25 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="160" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
-# AzerothJS
+# azerothjs
 
-**The fine-grained fullstack TypeScript framework - compiled components, web-standard servers, one CLI. No Virtual DOM. Zero dependencies.**
+**The AzerothJS frontend framework: fine-grained reactivity, compiled `.azeroth` components, control flow, SSR + islands, router, and forms - one package.**
 
 [![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
-[![GitHub](https://img.shields.io/badge/GitHub-AzerothJS-181717?logo=github)](https://github.com/AzerothJS/AzerothJS)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
 </div>
+
+---
+
+No Virtual DOM. No third-party runtime dependencies.
+
+- Reach for it when you want fine-grained reactivity without a Virtual DOM: a signal write updates exactly the DOM nodes that read it - no component re-render, no diff.
+- Author `.azeroth` single-file components (compiled by `@azerothjs/compiler`) with `state`/`derived`/`effect` keywords, or use the primitives (`createSignal`, `createMemo`, `createEffect`) directly from `.ts`.
+- One install carries the whole frontend: reactivity, the `h()` renderer, control-flow components, stores, resources, router, forms, and SSR + islands (`renderToString` / `hydrate`).
+- ESM-only, Node >= 22, no third-party runtime dependencies.
 
 Signals drive effects that update real DOM nodes in place: a state write re-runs exactly the
 effects that read it, and each effect owns specific nodes. There is no component re-render and no
@@ -28,10 +37,13 @@ export default component Counter(props: { start?: number })
 }
 ```
 
-`state` and `derived` are language keywords - reads and writes stay plain (`count++`), the
-compiler wires the signals. `{count}` updates only its own text node.
+> [!TIP]
+> `state` and `derived` are language keywords - reads and writes stay plain (`count++`), the
+> compiler wires the signals. `{count}` updates only its own text node.
 
-## Install
+---
+
+## 📦 Install
 
 ```sh
 npm install azerothjs
@@ -67,7 +79,9 @@ the complete API surface:
 | Routing | `createRouter` `Link` `Routes` `Outlet` `useParams` `useQuery` `useNavigate` `useLoader` ... |
 | SSR | `renderToString` `renderToStaticMarkup` `renderToDocument` |
 
-## The `.azeroth` language
+---
+
+## 🧠 The `.azeroth` language
 
 A `.azeroth` file is a TypeScript module with `component` blocks. Inside a component, reactive
 declarations are first-class keywords:
@@ -96,7 +110,140 @@ form login = { email: '', password: '' } with {
 Control flow is components (`<Show>`, `<For>`, `<Switch>`...), styling is `class:`/`style:`
 directives, and two-way input binding is `bind:value`/`bind:checked`.
 
-## One artifact, three modes
+---
+
+## 🧩 Core API
+
+`azerothjs` is the single runtime import; tree-shaking drops what you don't use. Every symbol below
+is a real export of the package.
+
+### Reactivity
+
+`createSignal` (state), `createMemo` (cached derivation), and `createEffect` (reaction) are the
+core; `batch`, `untrack`, `createRoot`, and `onCleanup` control scheduling and lifetime.
+
+```ts
+import { createSignal, createMemo, createEffect, batch, untrack, createRoot, onCleanup } from 'azerothjs';
+
+const [count, setCount] = createSignal(0);
+const doubled = createMemo(() => count() * 2);
+
+createEffect(() => console.log(count(), doubled())); // re-runs when count changes
+
+batch(() => { setCount(1); setCount(2); });          // one flush, one effect run
+untrack(() => count());                              // read without subscribing
+
+const dispose = createRoot((dispose) =>
+{
+    createEffect(() => { /* ... */ });
+    onCleanup(() => { /* teardown when the root disposes */ });
+    return dispose;
+});
+dispose(); // tears down every effect created in the root
+```
+
+### Rendering
+
+`render` mounts a component into a container, `renderToString` emits HTML on the server, and
+`hydrate` adopts that server HTML on the client - see
+[One artifact, three modes](#one-artifact-three-modes) below.
+
+### Control flow
+
+Conditional, list, async, relocated, and error rendering are components, used inside `.azeroth`
+markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `ErrorBoundary`.
+
+```azeroth
+<Show when={user()} fallback={<a href="/login">Sign in</a>}>
+    <p>Welcome, {user()!.name}</p>
+</Show>
+
+<For each={items()}>
+    {(item, index) => <li>{index() + 1}. {item.label}</li>}
+</For>
+
+<Switch fallback={<NotFound />}>
+    <Match when={tab() === 'home'}><Home /></Match>
+    <Match when={tab() === 'about'}><About /></Match>
+</Switch>
+
+<ErrorBoundary fallback={(error, reset) => <button onClick={reset}>Retry ({String(error)})</button>}>
+    <Profile />
+</ErrorBoundary>
+```
+
+`Dynamic` renders a component chosen at runtime, `Suspense` shows a fallback while the resources in
+its `on` list load, and `Portal` renders its children into a target elsewhere in the document
+(default `document.body`).
+
+### Stores & resources
+
+`createStore` is a lazily-built singleton with per-request isolation under SSR; `createResource`
+wraps async data with `data`/`loading`/`error` getters and `refetch`; `createStream` consumes a
+streaming source.
+
+```ts
+import { createStore, createResource, createSignal } from 'azerothjs';
+
+const useCart = createStore(() =>
+{
+    const [items, setItems] = createSignal<string[]>([]);
+    return { items, add: (id: string) => setItems([...items(), id]) };
+});
+
+const user = createResource(() => fetch(`/api/users/${id()}`).then((r) => r.json()));
+user.loading(); // true while a fetch is in flight
+user.data();    // the resolved value, or undefined
+```
+
+### Forms
+
+`createForm` builds a reactive form from an `initial` shape, per-field `validate` rules (or one
+whole-form `schema`), and an `onSubmit`; `createFieldArray` manages a dynamic list of repeated
+sub-forms. The single-argument validators (`required`, `email`, `minLength`, `pattern`, `phone`,
+...) and `combine` are re-exported from `@azerothjs/schema`.
+
+```ts
+import { createForm, combine, required, email } from 'azerothjs';
+
+const form = createForm({
+    initial: { email: '', password: '' },
+    validate: { email: combine(required(), email()), password: required() },
+    onSubmit: async (values) => { await signIn(values); }
+});
+
+form.values();     // reactive values snapshot
+form.submitting(); // true while onSubmit is pending
+// <form onSubmit={form.handleSubmit}> ... <input {...form.register('email')} /> ... </form>
+```
+
+### Router
+
+`createRouter` takes a route table (routes are data, not `<Route>` elements); `RouterProvider`
+publishes it, `<Routes>` renders the matched component, `<Link>` navigates, and
+`useParams`/`useQuery`/`useNavigate` read location state.
+
+```ts
+import { createRouter } from 'azerothjs';
+
+const router = createRouter({
+    routes: [
+        { path: '/', component: Home },
+        { path: '/users/:id', component: UserProfile }
+    ]
+});
+```
+
+```azeroth
+<RouterProvider router={router}>
+    <nav><Link to="/users/42">Profile</Link></nav>
+    <Routes />
+</RouterProvider>
+```
+
+---
+
+## 🖥️ One artifact, three modes
 
 The same compiled component renders on the client, serializes on the server, and hydrates over
 server HTML - from a single intermediate representation, so the hydration markers line up by
@@ -110,7 +257,9 @@ const html = renderToString(() => App()); // server - pure string emission, no D
 hydrate(() => App(), root);                // adopt server HTML, don't rebuild
 ```
 
-## The server side
+---
+
+## 🌐 The server side
 
 SSR ships in `azerothjs` itself (`renderToString` above). The rest of the backend is its own
 zero-dependency stack under the same scope - run it behind an AzerothJS frontend, or entirely on
@@ -148,7 +297,9 @@ The halves are designed to meet: every request is a reactive root with the same 
 consumes, and a server validation failure's field map drops straight into a browser form's
 `setError`.
 
-## Editor support
+---
+
+## 🧭 Editor support
 
 - **VS Code** - the AzerothJS extension (built from `editors/vscode` in this repo):
   bundled language server, completion, hover docs for every keyword, cross-file navigation and
@@ -158,7 +309,9 @@ consumes, and a server validation failure's field map drops straight into a brow
 - **CI** - `azeroth-tsc` (from `@azerothjs/language-server`) type-checks `.ts` + `.azeroth` in one
   program, the `vue-tsc` equivalent.
 
-## Which package do I import from?
+---
+
+## 📥 Which package do I import from?
 
 The canon is one rule per side of the wire:
 
@@ -176,11 +329,19 @@ package documents as internal. Tree-shaking drops unused exports, so importing f
 one `azerothjs` package costs a bundle nothing over the old per-layer packages - which is
 why the frontend layers are no longer published separately.
 
-## Documentation
+---
+
+## 📚 Documentation
 
 Guides, package docs, and the full language reference live in the
-[GitHub repository](https://github.com/AzerothJS/AzerothJS).
+[GitHub repository](https://github.com/AzerothJS/AzerothJS); start from the
+[monorepo README](../../README.md). Related packages:
+[`@azerothjs/schema`](https://www.npmjs.com/package/@azerothjs/schema),
+[`@azerothjs/http`](https://www.npmjs.com/package/@azerothjs/http),
+[`@azerothjs/compiler`](https://www.npmjs.com/package/@azerothjs/compiler).
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

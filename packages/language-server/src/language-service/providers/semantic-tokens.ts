@@ -7,7 +7,7 @@
 // LSP's packed delta encoding.
 
 import ts from 'typescript';
-import { isWhitespace, isIdentPart, parseModule } from '@azerothjs/compiler';
+import { isWhitespace, isIdentPart, parseModule, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import {
     SEMANTIC_TOKEN_TYPES,
@@ -38,8 +38,8 @@ const BUILTIN_SET = new Set<string>(BUILTIN_COMPONENTS);
 // colour a component's reactive surface distinctly from plain variables.
 const REACTIVE_DECL_BITS = (MODIFIER_BIT.get('reactive') ?? 0) | (MODIFIER_BIT.get('declaration') ?? 0);
 
-/** Body-item kinds that declare a reactive name (effect declares none). */
-const REACTIVE_KINDS = new Set(['state', 'derived', 'deferred', 'resource', 'stream', 'store', 'selector', 'form']);
+/** Body-item kinds that declare a reactive name (`effect` declares none). */
+const REACTIVE_KINDS = DECLARATION_KEYWORDS;
 
 // The 2020 classifier (`SemanticClassificationFormat.TwentyTwenty`) packs each
 // span's classification as `((tokenType + 1) << typeOffset) | modifierBitset`,

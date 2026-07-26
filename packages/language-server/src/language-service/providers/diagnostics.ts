@@ -22,7 +22,7 @@ import {
 } from '../protocol.ts';
 import { keywordOptions } from '../language-data.ts';
 import { resolveLocation, type RequestContext } from '../request.ts';
-import type { RawTsDiagnostic } from '../ts-project.ts';
+import type { RawTsDiagnostic } from '../native-project.ts';
 
 /** All diagnostics for the document. */
 export function getDiagnostics(ctx: RequestContext): Diagnostic[]

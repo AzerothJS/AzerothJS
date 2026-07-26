@@ -54,18 +54,46 @@ export interface Owner
 export let currentOwner: Owner | null = null;
 
 /**
+ * Sets the active owner, returning the previous one. Effects and memos use this to
+ * re-establish their CREATION owner around every run - not just the first - so a node
+ * created during a re-run (a nested createRoot, a createResource, an onMount) is owned by
+ * the effect that created it, and context reads resolve against the right chain, regardless
+ * of whose write triggered the run.
+ *
+ * @internal
+ */
+export function setCurrentOwner(owner: Owner | null): Owner | null
+{
+    const previous = currentOwner;
+    currentOwner = owner;
+    return previous;
+}
+
+/**
  * Registers a disposer with the active owner, if any; with no active owner the caller
  * owns disposal. Called by createEffect/createMemo at construction.
+ *
+ * If the active owner is ALREADY disposed - the classic `runWithOwner(getOwner(), ...)`
+ * whose captured owner tore down during the await, or a node created by a disposer during
+ * that owner's own teardown - the disposer is run IMMEDIATELY instead of pushed. Pushing it
+ * into a drained array would leak the node: nothing disposes that array again, so the effect
+ * would run forever. Tearing down now keeps the just-created node from lingering.
  *
  * @internal
  * @param dispose - The teardown callback to collect into the active root.
  */
 export function registerDisposer(dispose: DisposeFn): void
 {
-    if (currentOwner !== null)
+    if (currentOwner === null)
     {
-        currentOwner.disposers.push(dispose);
+        return;
     }
+    if (currentOwner.disposed)
+    {
+        dispose();
+        return;
+    }
+    currentOwner.disposers.push(dispose);
 }
 
 /**
@@ -203,36 +231,57 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     const devtoolsId = dtEnabled() ? dtRegister('root', {}) : 0;
     const previousOwner = dtEnterOwner(devtoolsId);
 
-    // Dispose in reverse (stack order); clearing the array makes it idempotent. A
-    // throwing disposer must NOT strand its siblings (they would leak) nor leave the
-    // array half-cleared (a second dispose() would re-run survivors): isolate each
-    // call, drain fully, and surface the first error after teardown completes.
+    // Dispose in reverse (stack order). A throwing disposer must NOT strand its siblings
+    // (they would leak): isolate each call, drain fully, and surface the first error after
+    // teardown completes. `disposed` is set FIRST so a node created DURING teardown (a
+    // disposer that builds reactive work) sees a dead owner and tears itself down at once
+    // (registerDisposer) instead of registering into the array being drained. The drain is a
+    // pop loop, not a fixed countdown, so any disposer a disposer does register still runs -
+    // a bounded-length reverse scan would silently drop those. Idempotent via the guard.
     function dispose(): void
     {
+        if (owner.disposed)
+        {
+            return;
+        }
+        owner.disposed = true;
+
+        // Run disposers UNDER this (now-dead) owner so any reactive work a disposer spawns -
+        // `onRootDispose(() => createEffect(...))` and the like - registers here and is torn
+        // down at once by registerDisposer's disposed-owner path, instead of leaking as an
+        // unowned node. Restored in finally so teardown never bleeds the owner into the caller.
+        const previousOwner = currentOwner;
+        currentOwner = owner;
+
         let firstError: unknown;
         let failed = false;
-        for (let i = disposers.length - 1; i >= 0; i--)
+        try
         {
-            const disposer = disposers[i];
-            if (disposer === undefined)
+            while (disposers.length > 0)
             {
-                continue;
-            }
-            try
-            {
-                disposer();
-            }
-            catch (err)
-            {
-                if (!failed)
+                const disposer = disposers.pop();
+                if (disposer === undefined)
                 {
-                    failed = true;
-                    firstError = err;
+                    continue;
+                }
+                try
+                {
+                    disposer();
+                }
+                catch (err)
+                {
+                    if (!failed)
+                    {
+                        failed = true;
+                        firstError = err;
+                    }
                 }
             }
         }
-        disposers.length = 0;
-        owner.disposed = true;
+        finally
+        {
+            currentOwner = previousOwner;
+        }
         // Free provided context values with the scope (the owner object itself may be
         // retained by a captured getOwner() handle; its payload must not be).
         owner.context = null;

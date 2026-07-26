@@ -1,11 +1,10 @@
 /**
  * MODULE: component/destroy-hooks (internal)
  *
- * Internal storage for element teardown hooks - INTERNAL to azerothjs, not
- * re-exported from the package index. A teardown hook is stashed directly on the rendered DOM
- * element under a unique Symbol key, so destroyComponent(el) can find and run it regardless of
- * where the element ends up in the tree; the Symbol key never collides with user props or other
- * packages' markers.
+ * Internal storage for element teardown hooks. A teardown hook is stashed directly on the
+ * rendered DOM element under a unique Symbol key, so destroyComponent(el) can find and run it
+ * regardless of where the element ends up in the tree; the Symbol key never collides with user
+ * props or other packages' markers.
  */
 
 import type { DestroyHook } from './types.ts';

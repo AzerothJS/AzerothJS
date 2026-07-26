@@ -9,7 +9,9 @@ released together. The support statement is deliberately simple and honest:
 
 - **The latest published release line is supported** - bug fixes and security
   fixes land there. Moving to it is one command inside your project:
-  `npx azeroth upgrade` (rewrites every pin, installs, runs the doctor).
+  `npx @azerothjs/cli upgrade` (rewrites every pin, installs, runs the doctor).
+  Use the scoped name, not `npx azeroth` - the bare `azeroth` name on npm is an
+  unrelated squatted package.
 - **Older releases are not patched.** Pre-release versions (betas) are superseded
   the moment the next release publishes.
 - **There is no LTS designation yet.** Long-term support lines are a promise that

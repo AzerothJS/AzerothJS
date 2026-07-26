@@ -47,7 +47,7 @@ export interface CoTarget
  * @param end - The end-marker comment.
  * @returns A target whose `parent()` reads the markers' current parent live.
  */
-export function coMarkerTarget(start: ChildNode, end: ChildNode): CoTarget
+function coMarkerTarget(start: ChildNode, end: ChildNode): CoTarget
 {
     return { parent: (): Node => end.parentNode as Node, start, end };
 }

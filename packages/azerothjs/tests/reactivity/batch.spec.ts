@@ -175,4 +175,34 @@ describe('batch', () =>
             dispose();
         });
     });
+
+    it('one throwing effect does not strand the rest of the flush', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const [n, setN] = createSignal(0);
+            let bRuns = 0;
+            // Effect A throws once n goes positive, with no error handler around it.
+            createEffect(() =>
+            {
+                if (n() > 0)
+                {
+                    throw new Error('effect A boom');
+                }
+            });
+            // Effect B shares the same dependency and MUST still run when A throws.
+            createEffect(() =>
+            {
+                n();
+                bRuns++;
+            });
+            expect(bRuns).toBe(1); // both ran once on creation (n = 0, A did not throw)
+
+            // The write flushes both. A throws; the error surfaces from the write, but only
+            // AFTER B has run - a throwing effect no longer strands the rest of the flush.
+            expect(() => setN(1)).toThrow('effect A boom');
+            expect(bRuns).toBe(2);
+            dispose();
+        });
+    });
 });

@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { collectReads } from '../src/resolve.ts';
 import { parseExpressionSlice, parseStatementsSlice } from '../src/ts-slice.ts';
-import type { ReactiveSources, Dep } from '../src/resolve.ts';
+import type { ReactiveSources, Dep } from '../src/dep.ts';
 
 const sources = (names: string[], hasProps = false): ReactiveSources => ({ names: new Set(names), hasProps });
 

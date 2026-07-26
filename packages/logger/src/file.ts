@@ -408,31 +408,3 @@ export function fileSink(target: string, options: FileStreamOptions = {}): FileS
     Object.defineProperty(carrier, 'dropped', { get: (): number => stream.dropped, enumerable: true });
     return carrier as FileSink;
 }
-
-/**
- * Fans one record out to several sinks - pretty console for eyes plus an NDJSON file
- * for the permanent record is the canonical pair. A throwing sink is isolated: the
- * others still receive the record, per the logging-never-breaks-the-system doctrine.
- *
- * @example
- * ```ts
- * const log = createLogger({ sink: teeSink(prettySink(), fileSink('logs/')) });
- * ```
- */
-export function teeSink(...sinks: LogSink[]): LogSink
-{
-    return (record: LogRecord): void =>
-    {
-        for (const sink of sinks)
-        {
-            try
-            {
-                sink(record);
-            }
-            catch
-            {
-                // One broken destination must not silence the others.
-            }
-        }
-    };
-}

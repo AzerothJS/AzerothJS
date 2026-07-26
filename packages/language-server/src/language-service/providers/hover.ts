@@ -10,10 +10,10 @@
 // stray TS result even when the surrounding markup is mid-edit.
 
 import ts from 'typescript';
-import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart } from '@azerothjs/compiler';
+import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
 import type { Hover, Range } from '../protocol.ts';
 import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
-import { BUILTIN_COMPONENT_MAP, attributeDocumentation, keywordDocumentation, keywordOptions, keywordWithExample, type BuiltinComponent } from '../language-data.ts';
+import { BUILTIN_COMPONENT_MAP, attributeDocumentation, directiveDocumentation, keywordDocumentation, keywordOptions, keywordWithExample, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
 import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
 import { classHover } from './css-classes.ts';
@@ -91,6 +91,14 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
                 return prop
                     ? { contents: `**${ prop.name }** - \`<${ context.tag }>\` prop${ prop.required ? ' (required)' : '' }\n\n${ prop.doc }` }
                     : null;
+            }
+
+            // AzerothJS host-element directives (`bind:`/`class:`/`style:`): compiler sugar
+            // with no HTML/TS symbol, documented from the directive table.
+            const directive = directiveDocumentation(attribute);
+            if (directive !== undefined)
+            {
+                return { contents: directive };
             }
 
             // AzerothJS binds camelCase events; the HTML engine only knows the
@@ -435,15 +443,8 @@ function withOptionHover(ctx: RequestContext, offset: number): Hover | null
     };
 }
 
-/**
- * Keywords whose construct is followed by a declared NAME (`state x`, `component App`, `form login`,
- * `resource user`). Includes the factory declarations (resource/stream/store/selector/form) - each is
- * `<keyword> <name> = ...`, so its hover must accept a following name, not require an opening `{`.
- */
-const NAME_KEYWORDS = new Set([
-    'component', 'state', 'derived', 'deferred',
-    'resource', 'stream', 'store', 'selector', 'form'
-]);
+/** Keywords a declared NAME follows: the declaration keywords plus `component`. */
+const NAME_KEYWORDS = new Set<string>([...DECLARATION_KEYWORDS, 'component']);
 
 /**
  * Hover for an AzerothJS authoring keyword under the caret, or null. The word is

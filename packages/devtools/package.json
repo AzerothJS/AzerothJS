@@ -1,10 +1,10 @@
 {
     "name": "@azerothjs/devtools",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
-    "description": "AzerothJS devtools - tabbed in-page panel (tree, dependency graph, timeline, performance) plus an embeddable agent",
+    "description": "AzerothJS devtools - the in-page reactive inspector (components, timeline, graph, performance, server bridge) plus an embeddable agent",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -14,6 +14,11 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
+        },
+        "./server": {
+            "types": "./dist/server.d.ts",
+            "import": "./dist/server.js",
+            "default": "./dist/server.js"
         }
     },
     "files": [
@@ -24,8 +29,14 @@
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepublishOnly": "npm run build"
     },
-    "dependencies": {
-        "azerothjs": "1.0.0-beta.2"
+    "peerDependencies": {
+        "azerothjs": "^1.0.0",
+        "@azerothjs/ws": "^1.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@azerothjs/ws": {
+            "optional": true
+        }
     },
     "publishConfig": {
         "access": "public"

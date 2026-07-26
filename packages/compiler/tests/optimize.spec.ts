@@ -99,6 +99,14 @@ describe('evalConstant / tryEvalConstant', () =>
         expect(evalConstant('1 / 0')).toBeNull();
     });
 
+    it('does NOT fold a multi-statement slice (would silently drop the remainder)', () =>
+    {
+        // `1; sideEffect()` must not fold to `1` - that would compile away the second statement.
+        expect(evalConstant('1; sideEffect()')).toBeNull();
+        expect(evalConstant('1 + 2; drop()')).toBeNull();
+        expect(tryEvalConstant('1; alert(1)')).toBeNull();
+    });
+
     it('tryEvalConstant stringifies string/number constants but not booleans', () =>
     {
         expect(tryEvalConstant('1 + 2')).toBe('3');

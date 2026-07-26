@@ -36,13 +36,24 @@ export const LOADER_HANDOFF_ID = '__azeroth-loader-handoff';
 export const LOADER_HANDOFF_VERSION = 2;
 
 /**
- * What {@link matchAndLoad} produces: the handoff payload, a REDIRECT the server should
- * answer with a real 302 (a guard or loader redirected), or null (no match, a guard
- * veto, or nothing to load).
+ * What {@link matchAndLoad} produces - EVERY server-side routing outcome, kept distinct so a
+ * renderer never confuses "authorized, nothing to load" with "a guard said no":
+ *
+ *   - `LoaderHandoff`                    - matched, loaders ran; render and embed the data.
+ *   - `{ redirect, replace }`            - a guard or loader redirected; answer with a 302.
+ *   - `{ blocked: true, status }`        - a guard VETOED (returned false); the route MUST NOT
+ *                                          render. Answer with `status` (403), never a 200 page
+ *                                          - collapsing this into `null` is the SSR auth bypass.
+ *   - `{ notFound: true }`               - no route matched; render the app's fallback UI, but
+ *                                          with a real 404 (not a soft-404 at 200).
+ *   - `null`                             - matched and authorized, but no level has a loader;
+ *                                          render normally with no handoff.
  */
 export type MatchAndLoadResult =
     | LoaderHandoff
     | { redirect: NavigateTarget; replace: boolean }
+    | { blocked: true; status: number }
+    | { notFound: true }
     | null;
 
 /**
@@ -75,9 +86,9 @@ export async function matchAndLoad(
 
         const query = parseQuery(search);
 
-        // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto
-        // means the route must not render (null, the no-match shape). `from` is null:
-        // a server render has no previous location.
+        // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
+        // DISTINCT blocked result (a 403), never a rendered page. `from` is null: a server
+        // render has no previous location.
         for (const route of entry.matched)
         {
             if (route.guard === undefined)
@@ -99,7 +110,7 @@ export async function matchAndLoad(
             }
             if (verdict === false)
             {
-                return null;
+                return { blocked: true, status: 403 };
             }
             if (verdict !== true && verdict !== undefined && verdict !== null)
             {
@@ -158,7 +169,8 @@ export async function matchAndLoad(
 
         return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
     }
-    return null;
+    // No route in the table matched this URL.
+    return { notFound: true };
 }
 
 /**

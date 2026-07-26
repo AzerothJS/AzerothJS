@@ -214,3 +214,34 @@ describe('generateVirtualCode - source mapping', () =>
         }
     });
 });
+
+describe('generateVirtualCode - totality (never throws on incomplete source)', () =>
+{
+    // The projection is the single lowering behind the LSP, the ts-plugin, azeroth-tsc,
+    // and eslint. A throw here does not just break one file - the ts-plugin throws inside
+    // getScriptSnapshot and takes down ALL .ts IntelliSense project-wide. So mid-typing
+    // states must degrade to a verbatim projection, never throw.
+    const midEdit = [
+        'export default component App() { return <div>',        // unclosed tag
+        'export default component App() {',                      // unclosed body
+        'export default component App() { return <div><span>',   // nested unclosed
+        'export default component App() { state x = ',           // incomplete declaration
+        '<div>{name.replace(/'                                    // unterminated regex mid-hole
+    ];
+
+    for (const src of midEdit)
+    {
+        it(`degrades instead of throwing: ${ JSON.stringify(src.slice(0, 40)) }`, () =>
+        {
+            const vc = generateVirtualCode(src);
+            expect(typeof vc.code).toBe('string');
+            expect(vc.mapping).toBeDefined();
+        });
+    }
+
+    it('a valid module still projects normally after the guard', () =>
+    {
+        const vc = generateVirtualCode('export default component App() { return <h1>hi</h1>; }');
+        expect(vc.code).toContain('h(');
+    });
+});

@@ -1,20 +1,35 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/logger
 
+**AzerothJS logger - one zero-dependency logger with two faces: colored, iconed developer output and pino-class NDJSON for production, plus the framework's startup banner**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Flogger?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/logger)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+
+</div>
+
+---
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. One zero-dependency logger with two faces: colored, iconed developer output on a TTY, and pino-class NDJSON for production - plus the banner every AzerothJS process starts with.
 
-## Install
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only, Node >= 22:
 
 ```sh
 npm install @azerothjs/logger
 ```
 
-## Overview
+---
+
+## 📖 Overview
 
 ```ts
 import { createLogger } from '@azerothjs/logger';
@@ -56,14 +71,16 @@ NDJSON) and overridable: `createLogger({ face: 'ndjson' })` in code, or `AZEROTH
 `AZEROTH_LOG=debug`, `AZEROTH_LOG=pretty:trace` from the environment. In a browser, levels
 map onto styled `console` methods.
 
-## What the design promises
+---
+
+## 🤝 What the design promises
 
 - **A disabled level is free.** Below-threshold methods ARE a shared no-op - a
   `log.trace(...)` in a hot loop costs a plain call, so instrumentation can stay in
   production code. Guard genuinely expensive field construction with `log.enabled('debug')`.
 - **Child context is serialized once.** `child(fields)` pre-renders its bindings into the
-  NDJSON line, so contextual logging (request ids, job ids) costs what one extra string
-  concat costs - measured ahead of pino on the emit paths, ~10x ahead of winston.
+  NDJSON line, so contextual logging (request ids, job ids) costs about what one extra
+  string concat costs - not a re-serialization on every line.
 - **Redaction happens before any sink.** `redact: ['authorization', 'cookie']` replaces
   values at the logger, so no formatter, transport, or adapter can leak them.
 - **Errors are first-class.** Any `Error` field serializes as `{ name, message, stack }`
@@ -72,10 +89,11 @@ map onto styled `console` methods.
   pipe for CI viewers; a non-TTY stream is byte-clean; icons degrade to ASCII on terminals
   that cannot render them.
 
-## The pretty face's design
+---
 
-The developer face renders MEANING, not just strings, and its rules are deliberate
-(the full canon lives in this package's DESIGN.md):
+## 🎨 The pretty face's design
+
+The developer face renders MEANING, not just strings, and its rules are deliberate:
 
 - `info` lines drop the level word - the icon carries it; warn/error keep theirs and
   read louder by contrast, with their message tinted in the level's color.
@@ -104,7 +122,9 @@ The developer face renders MEANING, not just strings, and its rules are delibera
 Display only, always: values are styled, never altered, and the NDJSON faces carry
 every field with full epoch timestamps.
 
-## The banner
+---
+
+## 📣 The banner
 
 The framework's face at startup - `@azerothjs/http`'s `serve()` and the Vite dev plugin
 print it, and anything built on AzerothJS can too:
@@ -133,7 +153,9 @@ printBanner({
 a piped or collected stream never carries it. The ready time is whatever YOU measured; the
 banner never invents numbers.
 
-## Environment
+---
+
+## 🔧 Environment
 
 | Variable | Effect |
 | --- | --- |
@@ -142,7 +164,14 @@ banner never invents numbers.
 | `FORCE_COLOR` | forces color onto a non-TTY (`1`/`2`/`3` = 16/256/truecolor) |
 | `NODE_ENV=production` | auto face picks NDJSON and the banner stays silent |
 
-## Log files
+---
+
+## 📁 Log files
+
+> [!NOTE]
+> The file sinks are Node-only (they use `node:fs`/`node:path`), so they live at the
+> **`@azerothjs/logger/node`** subpath. The main `@azerothjs/logger` entry stays browser-safe -
+> import `createLogger` and the console/pretty/tee sinks from there, the file sinks from `/node`.
 
 Point the logger at a file to append forever, or at a FOLDER for day-named files with
 size rotation and retention - rotation is rename-free (a new name opens, the old file
@@ -150,7 +179,8 @@ just stops growing), which is what makes it correct on Windows, where an open fi
 cannot be renamed and antivirus loves holding handles:
 
 ```ts
-import { createLogger, fileStream } from '@azerothjs/logger';
+import { createLogger } from '@azerothjs/logger';
+import { fileStream } from '@azerothjs/logger/node';
 
 // logs/app-2026-07-21.ndjson, app-2026-07-21.2.ndjson, ... - NDJSON, never ANSI
 const log = createLogger({ stream: fileStream('logs/', { maxFileBytes: 32 * 1024 * 1024, maxFiles: 14 }) });
@@ -167,7 +197,8 @@ recovery: logging must never break the system.
 Both faces at once - pretty for eyes, a file for the record:
 
 ```ts
-import { createLogger, prettySink, fileSink, teeSink } from '@azerothjs/logger';
+import { createLogger, prettySink, teeSink } from '@azerothjs/logger';
+import { fileSink } from '@azerothjs/logger/node';
 
 const file = fileSink('logs/');
 const log = createLogger({ sink: teeSink(prettySink(), file) });
@@ -180,13 +211,16 @@ the file and leave your terminal silent (a file is not a TTY, so the logger pick
 NDJSON face for it):
 
 ```ts
-import { createLogger, prettySink, fileSink, teeSink } from '@azerothjs/logger';
+import { createLogger, prettySink, teeSink } from '@azerothjs/logger';
+import { fileSink } from '@azerothjs/logger/node';
 
 const log = createLogger({ sink: teeSink(prettySink(), fileSink('logs/')) });
 new App({ observe: logRequests(log) });
 ```
 
-## Custom sinks
+---
+
+## 🔌 Custom sinks
 
 A sink is one function; everything else is composition:
 
@@ -202,6 +236,16 @@ adapter, a test spy, or `@azerothjs/http`'s request logging all consume it struc
 For files, prefer `fileStream`/`fileSink` above - they add the batching, rotation, and
 crash-safety a bare write stream does not have.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+Part of the [AzerothJS](../../README.md) monorepo. Related packages:
+[`@azerothjs/http`](../http) (whose request logging consumes this record shape),
+[`@azerothjs/ws`](../ws) (WebSockets), and [`@azerothjs/cron`](../cron) (scheduling).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

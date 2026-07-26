@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
     createStream,
     createRoot,
+    createSignal,
     type Stream
 } from 'azerothjs';
 
@@ -51,6 +52,45 @@ describe('createStream - text accumulation', () =>
         expect(stream.partial()).toBe('Hello world');
         expect(stream.done()).toBe(true);
         expect(stream.error()).toBeNull();
+        dispose();
+    });
+
+    it('accepts the POSITIONAL (source, fetcher, options) form the `stream` keyword emits', async () =>
+    {
+        // The compiler lowers `stream x = (v) => fetch(v) with { source, parse }` to
+        // createStream(source, fetcher, options) - positional, parallel to createResource.
+        // The runtime must accept it (this was broken: only the options-object form existed).
+        let stream!: Stream;
+        let dispose!: () => void;
+        let fetcherSaw: string | undefined;
+        createRoot((d) =>
+        {
+            dispose = d;
+            const [channel] = createSignal('room-1');
+            const fetcher = (value: string): Promise<Response> =>
+            {
+                fetcherSaw = value;
+                return Promise.resolve(responseOf(['a', 'b']));
+            };
+            stream = createStream(() => channel(), fetcher, { parse: 'text' });
+        });
+        await until(() => stream.done());
+        expect(fetcherSaw).toBe('room-1'); // the fetcher received the resolved SOURCE VALUE
+        expect(stream.partial()).toBe('ab');
+        dispose();
+    });
+
+    it('accepts the positional form with no source: (fetcher, options)', async () =>
+    {
+        let stream!: Stream;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            stream = createStream(() => Promise.resolve(responseOf(['hi'])), { initial: '> ' });
+        });
+        await until(() => stream.done());
+        expect(stream.partial()).toBe('> hi');
         dispose();
     });
 

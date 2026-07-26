@@ -304,52 +304,17 @@ export const countries: CountryInfo[] =
 ];
 
 /**
- * getCountry
+ * Looks up a country by ISO 3166-1 alpha-2 code ('US', case-insensitive) or by E.164 calling
+ * code ('+1' or '1', leading `+` optional), returning the first matching row. ISO code is
+ * tried first, then calling code, so an all-letters query never matches a numeric code. Use it
+ * to resolve a single country for display or to map an ISO code to its calling code.
  *
- * PURPOSE:
- * Looks up a country by either its ISO 3166-1 alpha-2 code or its E.164 calling code (with or without
- * a leading `+`), returning the first matching row.
+ * For a calling code shared by several countries (+1, +7, +44, +590) the result is whichever
+ * sorts first by ISO code; enumerate all of them with `countries.filter()` when the distinction
+ * matters. The scan is linear over ~245 rows - build a Map from `countries` for hot paths.
  *
- * WHY IT EXISTS:
- * phone() needs to resolve an ISO code to its calling code (and vice versa) to build its allowed-codes
- * list and normalize national input; exposing the same lookup lets apps drive country pickers and
- * prefix displays from the one dataset instead of duplicating the mapping.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, form; the lookup phone() uses internally, also part of the public form surface.
- *
- * INPUT CONTRACT:
- * - codeOrCallingCode: an ISO alpha-2 code ('US', case-insensitive) OR a calling code ('+1' or '1').
- *   A leading `+` is stripped; empty input returns undefined.
- *
- * OUTPUT CONTRACT:
- * - The first matching {@link CountryInfo}, or undefined when nothing matches.
- *
- * WHY THIS DESIGN:
- * ISO code is tried first (letters, exact match), then calling code (digits, exact match), so an
- * all-letters query never accidentally matches a numeric code. "First match" keeps the signature
- * simple; callers needing every country for a shared code use countries.filter() directly.
- *
- * WHEN TO USE:
- * Resolving a single country for display, or mapping an ISO code to its calling code.
- *
- * WHEN NOT TO USE:
- * Enumerating ALL countries that share a calling code (+1, +7, +44, +590) - use countries.filter().
- *
- * EDGE CASES:
- * - Shared calling codes resolve to whichever country sorts first by ISO code (dataset ordering).
- * - Empty/falsy input returns undefined; unknown codes return undefined.
- *
- * PERFORMANCE NOTES:
- * Linear scan over ~245 rows per call (two passes worst case). Fine for occasional lookups; for
- * hot paths, build a Map from `countries` once.
- *
- * DEVELOPER WARNING:
- * Do NOT treat the result as authoritative for a shared calling code - +1 resolves to one NANP
- * country, not the caller's intended one. Disambiguate with the ISO code when it matters.
- *
- * @param codeOrCallingCode - 'US', 'us', '+1', '1' all valid
- * @returns The first matching `CountryInfo`, or `undefined`
+ * @param codeOrCallingCode - An ISO alpha-2 code or calling code; empty input returns undefined.
+ * @returns The first matching {@link CountryInfo}, or `undefined` when nothing matches.
  * @see {@link countries}
  * @see {@link phone}
  *

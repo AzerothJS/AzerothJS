@@ -11,8 +11,7 @@ import type {
     AzerothProject } from './ts-project.ts';
 import {
     isVirtualFile,
-    toAzerothPath,
-    toVirtualFile
+    toAzerothPath
 } from './ts-project.ts';
 import type { VirtualCode } from './virtual-code.ts';
 
@@ -96,6 +95,3 @@ export function tokenAt(sourceFile: ts.SourceFile, pos: number): ts.Node | undef
     };
     return find(sourceFile);
 }
-
-/** Re-exports so providers import file-name helpers from one place. */
-export { isVirtualFile, toAzerothPath, toVirtualFile };

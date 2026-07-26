@@ -18,11 +18,10 @@ import {
 import { LineIndex } from '../text.ts';
 import { pathToUri } from '../uri.ts';
 import {
-    isVirtualFile,
-    toAzerothPath,
     toGenerated,
     type RequestContext
 } from '../request.ts';
+import { isVirtualFile, toAzerothPath } from '../ts-project.ts';
 import type { AzerothProject } from '../ts-project.ts';
 
 /** The call-hierarchy node(s) for the symbol at `offset`. */

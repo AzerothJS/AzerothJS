@@ -1,8 +1,8 @@
 {
     "name": "azerothjs",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "description": "The AzerothJS frontend framework: fine-grained reactivity, compiled .azeroth components, control flow, SSR + islands, router, and forms - one package.",
     "type": "module",
@@ -32,7 +32,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/schema": "1.0.0-beta.2"
+        "@azerothjs/schema": "1.0.0"
     },
     "keywords": [
         "framework",

@@ -1,8 +1,8 @@
 {
     "name": "@azerothjs/compiler",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "description": "AzerothJS compiler - .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
     "type": "module",
@@ -25,17 +25,18 @@
     ],
     "sideEffects": false,
     "dependencies": {
-        "@azerothjs/logger": "1.0.0-beta.2"
+        "@azerothjs/logger": "1.0.0"
     },
     "peerDependencies": {
-        "vite": ">=6",
+        "azerothjs": "^1.0.0",
+        "vite": ">=8",
         "typescript": ">=5 <7"
     },
     "peerDependenciesMeta": {
-        "vite": {
+        "azerothjs": {
             "optional": true
         },
-        "typescript": {
+        "vite": {
             "optional": true
         }
     },

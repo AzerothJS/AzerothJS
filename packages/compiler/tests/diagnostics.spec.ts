@@ -279,3 +279,60 @@ describe('diagnoseModule - malformed-component (the vanished-component diagnosti
         expect(codesOf('const x = 1;\ncomponent Fine { <p>{x}</p> }\nconst y = 2;')).toEqual([]);
     });
 });
+
+describe('declaration slips (silent-corruption traps)', () =>
+{
+    it('flags a missing semicolon that absorbs the next declaration', () =>
+    {
+        const diag = find('component A { state a = 1\n  state b = 2; <p>{a}</p> }', 'azeroth/unterminated-declaration');
+        expect(diag).toBeDefined();
+        expect(diag?.severity).toBe('error');
+        // Points at the swallowed `state` keyword.
+        expect(diag && 'component A { state a = 1\n  state b = 2; <p>{a}</p> }'.slice(diag.start, diag.end)).toBe('state');
+    });
+
+    it('flags a non-ASCII character in a declaration name', () =>
+    {
+        const diag = find('component A { state café = 1; <p>{a}</p> }', 'azeroth/non-ascii-name');
+        expect(diag).toBeDefined();
+        expect(diag?.severity).toBe('error');
+    });
+
+    it('does NOT flag correctly-terminated declarations', () =>
+    {
+        expect(codes('component A { state a = 1; state b = 2; <p>{a}</p> }')).not.toContain('azeroth/unterminated-declaration');
+    });
+
+    it('does NOT flag a keyword used as a member access or a value', () =>
+    {
+        expect(codes('component A(props: { state: boolean }) { derived x = props.state ? 1 : 2; <p>{x}</p> }'))
+            .not.toContain('azeroth/unterminated-declaration');
+        expect(codes('component A { store s = { state: 1 }; <p>{s.state}</p> }'))
+            .not.toContain('azeroth/unterminated-declaration');
+    });
+
+    it('flags a missing semicolon that absorbs the RETURN MARKUP (decl -> markup)', () =>
+    {
+        // `state count = 0` with no `;`, then `<div>…`: the value ran to the body end and
+        // swallowed the markup (which vanishes). This used to compile to garbage with 0 errors.
+        const src = 'component App { state count = 0\n  <div>Count: {count()}</div> }';
+        const diag = find(src, 'azeroth/unterminated-declaration');
+        expect(diag).toBeDefined();
+        expect(diag?.severity).toBe('error');
+        expect(diag && src.slice(diag.start, diag.end)).toBe('state count');
+    });
+
+    it('flags markup placed directly as a declaration value', () =>
+    {
+        const src = 'component App { derived x = <div/>;\n  <p>ok</p> }';
+        const diag = find(src, 'azeroth/unterminated-declaration');
+        expect(diag).toBeDefined();
+        expect(diag && src.slice(diag.start, diag.end)).toBe('<div');
+    });
+
+    it('does NOT flag a `<` comparison in a declaration value', () =>
+    {
+        expect(codes('component A { derived x = a() < b() ? 1 : 2; <p>{x}</p> }'))
+            .not.toContain('azeroth/unterminated-declaration');
+    });
+});

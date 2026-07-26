@@ -26,7 +26,11 @@ export function isTemplateName(value: string): value is TemplateName
     return (TEMPLATES as readonly string[]).includes(value);
 }
 
-/** True when the directory does not exist or exists empty - the only states scaffold accepts. */
+/**
+ * True when the directory does not exist or exists empty - the only states scaffold accepts.
+ *
+ * @internal Exposed for tests; scaffold applies this guard itself.
+ */
 export function isEmptyTarget(target: string): boolean
 {
     if (!existsSync(target))
@@ -67,8 +71,15 @@ function copyTree(from: string, to: string, substitute: (text: string) => string
 }
 
 /**
- * Copies the named template into `target` with `{{name}}`/`{{version}}` substituted.
- * Throws when the target is not empty - the caller owns messaging and exit codes.
+ * Copies the named template tree into `target`, substituting `{{name}}` and `{{version}}`
+ * in every file. Call it once the CLI has resolved a valid template and destination.
+ *
+ * @param templatesRoot Directory holding the template folders, one per {@link TemplateName}.
+ * @param template Which template tree to copy.
+ * @param target Destination directory; created if absent, and must be empty.
+ * @param name Value written in place of `{{name}}` (the project/package name).
+ * @param version Value written in place of `{{version}}` - a semver range, e.g. `^1.0.0`.
+ * @throws Error when `target` already exists and is not empty; the caller owns messaging and exit codes.
  */
 export function scaffold(templatesRoot: string, template: TemplateName, target: string, name: string, version: string): void
 {

@@ -42,7 +42,7 @@
  */
 export type FieldValidator<V = unknown> = (value: V) => string | null;
 
-/** The shape `refine` accepts - a {@link FieldValidator}, by its historical name. */
+/** The shape `refine` accepts - an alias of {@link FieldValidator}. */
 export type Refinement<T> = FieldValidator<T>;
 
 /** The flat field-path error map - the wire/form-compatible failure shape. */
@@ -145,7 +145,6 @@ export interface SchemaMeta
     refinements?: ReadonlyArray<{ code?: string | undefined; message?: string | undefined }>;
 }
 
-/** A schema for T: runtime validation whose static type IS T. */
 /**
  * The Standard Schema v1 interop surface (https://standardschema.dev) - the `~standard`
  * property Zod, Valibot, ArkType, and Standard-Schema-aware consumers (form resolvers,
@@ -169,6 +168,7 @@ export type StandardResult<Output> =
     | { readonly value: Output; readonly issues?: undefined }
     | { readonly issues: ReadonlyArray<{ readonly message: string; readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined }> };
 
+/** A schema for T: runtime validation whose static type IS T. */
 export interface Schema<T> extends StandardSchemaV1<T>
 {
     /** @internal Declaration metadata for compile-from-declaration consumers; see {@link SchemaMeta}. */
@@ -203,6 +203,20 @@ export type Infer<S> = S extends Schema<infer T> ? T : never;
 
 /** @internal Marks optional schemas so object() can distinguish absent keys. */
 const IS_OPTIONAL = Symbol('optional');
+
+/**
+ * @internal Carries the {@link IS_OPTIONAL} marker from a source schema to a derived one.
+ * `.refine()`/`.nullable()` build a fresh schema; without this the marker is lost and
+ * `object()` stops skipping an absent optional key - which then runs the field's validator
+ * (and any refinement predicate) on `undefined`.
+ */
+function propagateOptional(source: unknown, derived: object): void
+{
+    if ((source as { [IS_OPTIONAL]?: boolean })[IS_OPTIONAL] === true)
+    {
+        (derived as { [IS_OPTIONAL]?: boolean })[IS_OPTIONAL] = true;
+    }
+}
 
 /** @internal The flat first-message-per-path projection of an issue list. */
 function toFieldErrors(issues: Issue[]): FieldErrors
@@ -267,10 +281,14 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
         {
             // null flows through as a VALUE (unlike optional's undefined, which object()
             // treats as absence) - it is JSON's explicit "no value here".
-            return base<T | null>(
+            const nullableSchema = base<T | null>(
                 (value, path, collector) => (value === null ? null : run(value, path, collector)),
                 meta === undefined ? undefined : { ...meta, nullable: true }
             );
+            // A `.optional().nullable()` chain must stay skippable as an absent object key:
+            // carry the optional marker forward so object() still elides it.
+            propagateOptional(schema, nullableSchema);
+            return nullableSchema;
         },
         refine(check: Refinement<T>, options: RefineOptions = {}): Schema<T>
         {
@@ -281,7 +299,7 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
                 ...meta,
                 refinements: [...meta.refinements ?? [], { code: options.code, message: options.message }]
             };
-            return base<T>((value, path, collector) =>
+            const refinedSchema = base<T>((value, path, collector) =>
             {
                 const before = collector.issues.length;
                 const parsed = run(value, path, collector);
@@ -289,13 +307,25 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
                 {
                     return undefined; // structurally invalid; the refinement never sees it
                 }
-                const message = check(parsed as T);
+                // An optional-absent (or nullable-null flowing to undefined) value has nothing
+                // to refine - running `check(undefined)` would throw inside a predicate written
+                // for the present value (`v.length`), turning an OMITTED optional field into a
+                // crash on valid input. Skip it; the refinement checks presence, not absence.
+                if (parsed === undefined)
+                {
+                    return undefined;
+                }
+                const message = check(parsed);
                 if (message !== null)
                 {
                     return fail(collector, path, options.code ?? 'refine', options.message ?? message);
                 }
                 return parsed;
             }, refinedMeta);
+            // `.optional().refine()` must remain a skippable absent key (object() keys off the
+            // marker, not meta) - without this, refine on an optional field is a landmine.
+            propagateOptional(schema, refinedSchema);
+            return refinedSchema;
         }
     };
     if (meta !== undefined)

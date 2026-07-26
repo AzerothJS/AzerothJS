@@ -154,6 +154,21 @@ export class HydrationCursor
      */
     public takeElement(expectedTag?: string): HTMLElement
     {
+        // Implicit <tbody>: the HTML parser wraps a <table>'s <tr>/<td> rows in a <tbody> that the
+        // client build (programmatic DOM) never creates, so a server row sits one level deeper than
+        // the descriptor expects. When a NON-tbody element is expected but the cursor is at an
+        // implicit <tbody>, splice its children into the walk so the row is adopted directly. An
+        // EXPLICIT <tbody> is expected as 'tbody' and matches below without unwrapping, so only the
+        // parser-inserted one is flattened.
+        if (expectedTag !== undefined && expectedTag.toLowerCase() !== 'tbody')
+        {
+            const at = this.#nodes[this.#index];
+            if (at && at.nodeType === 1 && (at as HTMLElement).tagName === 'TBODY')
+            {
+                this.#nodes.splice(this.#index, 1, ...Array.from(at.childNodes));
+            }
+        }
+
         const node = this.#nodes[this.#index];
 
         if (!node || node.nodeType !== 1)

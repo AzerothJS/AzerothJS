@@ -106,7 +106,7 @@ const KNOWN_EVENTS = new Set([
  * lintMarkup(node)[0].code; // 'azeroth/event-case'
  * ```
  */
-export function lintMarkup(node: MarkupElement | MarkupFragment, source?: string, options?: LintOptions): LintWarning[]
+export function lintMarkup(node: MarkupElement | MarkupFragment, source: string, options?: LintOptions): LintWarning[]
 {
     const warnings: LintWarning[] = [];
     const spacing = options?.interpolationSpacing ?? 'always';
@@ -118,7 +118,7 @@ export function lintMarkup(node: MarkupElement | MarkupFragment, source?: string
 function visit(
     node: MarkupElement | MarkupFragment | MarkupChild,
     warnings: LintWarning[],
-    source: string | undefined,
+    source: string,
     spacing: 'always' | 'never' | 'off'
 ): void
 {
@@ -129,7 +129,7 @@ function visit(
         {
             lintShowNarrowing(node, warnings);
         }
-        if (source !== undefined && spacing !== 'off')
+        if (spacing !== 'off')
         {
             for (const attr of node.attributes)
             {
@@ -137,7 +137,7 @@ function visit(
             }
         }
     }
-    if (node.kind === 'expression' && source !== undefined && spacing !== 'off')
+    if (node.kind === 'expression' && spacing !== 'off')
     {
         // A child hole's span covers `{...}`; the inner text sits between the braces.
         lintBraceSpacing(node.start + 1, node.end - 1, source, spacing, warnings);

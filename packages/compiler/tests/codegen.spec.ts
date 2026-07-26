@@ -601,3 +601,29 @@ describe('generateModule - event-handler validation', () =>
         expect(compile()).toContain('makeHandler(');
     });
 });
+
+describe('generateModule - regex and apostrophes in holes / markup (scanner regression)', () =>
+{
+    // Everyday code used to hard-fail the build with a bogus "Unclosed tag": a regex
+    // literal in a hole, or an apostrophe in markup text (`Don't`), desynced the brace
+    // scanner. These must compile.
+    it('compiles a regex literal inside a hole', () =>
+    {
+        const compile = (): string => gen('component C(props: { name: string }) { <p>{ props.name.replace(/\'/g, "") }</p> }');
+        expect(compile).not.toThrow();
+        expect(compile()).toContain('replace(');
+    });
+
+    it('compiles a regex whose body contains braces', () =>
+    {
+        const compile = (): string => gen('component C(props: { s: string }) { <p>{ props.s.match(/[{}]/) ? "y" : "n" }</p> }');
+        expect(compile).not.toThrow();
+    });
+
+    it('compiles an apostrophe in nested markup text inside a hole', () =>
+    {
+        const compile = (): string => gen('component C(props: { ok: boolean }) { <div>{ props.ok ? <span>Don\'t</span> : <span>Do</span> }</div> }');
+        expect(compile).not.toThrow();
+        expect(compile()).toContain('span');
+    });
+});

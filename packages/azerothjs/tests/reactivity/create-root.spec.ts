@@ -4,7 +4,7 @@
 // the dispose handle, cascading teardown of owned effects/memos, independent nesting,
 // and idempotent disposal.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, createMemo, createRoot, onCleanup, onRootDispose } from 'azerothjs';
+import { createSignal, createEffect, createMemo, createRoot, onCleanup, onRootDispose, getOwner, runWithOwner } from 'azerothjs';
 import { subscriberCount } from 'azerothjs/internal';
 
 describe('createRoot', () =>
@@ -153,6 +153,91 @@ describe('createRoot', () =>
             dispose();
             dispose();
         }).not.toThrow();
+        expect(subscriberCount(n)).toBe(0);
+    });
+});
+
+describe('createRoot - disposal robustness', () =>
+{
+    it('an effect created under an ALREADY-disposed owner does not leak (runWithOwner after teardown)', () =>
+    {
+        const [n, setN] = createSignal(0);
+        let captured!: ReturnType<typeof getOwner>;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            captured = getOwner();
+        });
+        // The owner tore down (as if a component unmounted during an await).
+        dispose();
+        expect(captured).not.toBeNull();
+
+        let runs = 0;
+        runWithOwner(captured, () =>
+        {
+            createEffect(() =>
+            {
+                n();
+                runs++;
+            });
+        });
+        // The effect ran its first pass once, then was immediately reaped - not left
+        // subscribed to `n`, which would re-run it forever.
+        expect(subscriberCount(n)).toBe(0);
+        setN(1);
+        expect(runs).toBe(1); // never re-ran: no leak
+    });
+
+    it('a disposer that spawns reactive work during teardown does not leak it', () =>
+    {
+        const [n, setN] = createSignal(0);
+        let runs = 0;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            onRootDispose(() =>
+            {
+                // Reactive work spawned DURING teardown: the owner is dead, so this must be
+                // reaped at once, not registered into the array being drained (dropped) nor
+                // left subscribed (leaked).
+                createEffect(() =>
+                {
+                    n();
+                    runs++;
+                });
+            });
+        });
+        dispose();
+        expect(subscriberCount(n)).toBe(0);
+        setN(1);
+        expect(runs).toBe(1); // ran once during teardown, never again
+    });
+
+    it('a throwing disposer neither strands siblings nor drops disposal-time registrations', () =>
+    {
+        const [n] = createSignal(0);
+        const order: string[] = [];
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            onRootDispose(() => order.push('first-registered')); // runs LAST (LIFO)
+            onRootDispose(() =>
+            {
+                throw new Error('boom');
+            });
+            onRootDispose(() => order.push('third-registered')); // runs FIRST
+            createEffect(() =>
+            {
+                n();
+            });
+        });
+        // The throwing disposer surfaces its error, but only AFTER every sibling ran and the
+        // effect was torn down.
+        expect(() => dispose()).toThrow('boom');
+        expect(order).toEqual(['third-registered', 'first-registered']);
         expect(subscriberCount(n)).toBe(0);
     });
 });

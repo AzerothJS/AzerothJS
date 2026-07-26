@@ -1,10 +1,18 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/eslint-plugin
 
+**AzerothJS ESLint rules - reactivity foot-guns in plain .ts files**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Feslint-plugin?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/eslint-plugin)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+
+</div>
+
+---
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A development-time companion to [`azerothjs`](https://www.npmjs.com/package/azerothjs) - install it as a dev dependency alongside the framework.
 
@@ -18,13 +26,24 @@ the projection rearranges markup around the embedded expressions, so those rules
 
 Requires ESLint 9+ (flat config).
 
-## Install
+---
+
+## 📦 Install
+
+ESM-only; requires Node >= 22.
 
 ```sh
-npm i -D @azerothjs/eslint-plugin
+npm install -D @azerothjs/eslint-plugin eslint @typescript-eslint/parser
 ```
 
-## Usage (flat config)
+> [!NOTE]
+> Peers: ESLint 9+ (flat config) and `@typescript-eslint/parser` 8+. TypeScript
+> (`>=5 <7`) is an optional peer - install it to enable the type-aware rules on
+> `.azeroth` files.
+
+---
+
+## 🚀 Usage (flat config)
 
 `configs.recommended` is an **array** - spread it into your config:
 
@@ -74,7 +93,9 @@ export default [
 ];
 ```
 
-## How it works
+---
+
+## 🏗️ How it works
 
 A `.azeroth` file uses `component` / `state` / `effect` / markup syntax that is not valid TypeScript,
 so it cannot be linted by feeding the raw text to a TS parser. The **authority on `.azeroth` semantics
@@ -93,7 +114,9 @@ Consequences of this design:
 The three rules below are syntactic and apply to plain `.ts` files; inside `.azeroth` the equivalent
 checks are the compiler's, surfaced by the processor.
 
-## Rules
+---
+
+## 📏 Rules
 
 | Rule | What it catches |
 | --- | --- |
@@ -104,7 +127,9 @@ checks are the compiler's, surfaced by the processor.
 Signals are tracked from `const [x, setX] = createSignal(...)` destructuring by name, so no
 type-services project wiring is needed (the trade-off: aliased or re-exported signals are invisible).
 
-## Markup rules (inside `.azeroth`)
+---
+
+## 📏 Markup rules (inside `.azeroth`)
 
 Your regular ESLint rules already reach INSIDE `{ ... }` expressions: the processor lints the
 compiler's TypeScript projection, where every expression is mapped byte-for-byte, so `eqeqeq`,
@@ -124,7 +149,9 @@ and are surfaced (with working `--fix`) by the processor:
 These are always-on warnings (they come from the compiler, not the rule registry), the same findings
 the `azeroth()` Vite plugin prints at build time and the editors squiggle.
 
-## Editor integration
+---
+
+## 🧭 Editor integration
 
 `.azeroth` files lint through the official ESLint integration once it is told to validate the `azeroth`
 extension:
@@ -138,6 +165,18 @@ extension:
   **Settings -> Languages & Frameworks -> JavaScript -> Code Quality Tools -> ESLint**, add `azeroth` to
   *Run for files*.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+See the [monorepo README](../../README.md) for the full framework. Related tooling:
+
+- [`@azerothjs/language-server`](../language-server) - the LSP server and the `azeroth-tsc` CLI type checker (where `.azeroth` type errors surface).
+- [`@azerothjs/typescript-plugin`](../typescript-plugin) - live `.ts` -> `.azeroth` resolution inside `tsserver`.
+- Editor extensions: [VS Code](../../editors/vscode), [JetBrains](../../editors/jetbrains).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

@@ -36,8 +36,8 @@ import {
     setCurrentCleanups
 } from './graph.ts';
 import { attachSubscriberProbe } from './create-signal.ts';
-import { registerDisposer } from './create-root.ts';
-import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
+import { currentOwner, registerDisposer, setCurrentOwner } from './create-root.ts';
+import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
 import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 
@@ -150,6 +150,11 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
     // Devtools node id (0 unless a devtools hook is attached); used to emit run/dispose events.
     let devtoolsId = 0;
 
+    // The ownership scope this memo is created under, re-established around every recompute so
+    // anything the compute creates is owned here and context reads resolve against this chain
+    // - not the scope of whichever write invalidated the memo.
+    const owner = currentOwner;
+
     const node: Subscriber =
     {
         // For a memo, execute() just re-marks; the recompute stays read-driven.
@@ -231,6 +236,8 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         setCurrentSubscriber(node);
         const previousCleanups = currentCleanups;
         setCurrentCleanups(cleanups);
+        const previousOwner = setCurrentOwner(owner);
+        const previousHandler = setCurrentErrorHandler(node.errorHandler);
         beginTrack(node);
         computing = true;
 
@@ -260,6 +267,8 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         {
             computing = false;
             endTrack(node);
+            setCurrentErrorHandler(previousHandler);
+            setCurrentOwner(previousOwner);
             setCurrentCleanups(previousCleanups);
             setCurrentSubscriber(previousSubscriber);
             if (devtoolsId !== 0)

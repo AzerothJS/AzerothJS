@@ -18,8 +18,11 @@ import {
     peekNode,
     pokeNode,
     type DevtoolsNode,
+    type DevtoolsPrimitive,
     type GraphSnapshot
 } from 'azerothjs';
+
+export type { DevtoolsPrimitive } from 'azerothjs';
 
 /** A live node in the agent's model. */
 export interface AgentNode
@@ -28,6 +31,12 @@ export interface AgentNode
     kind: 'signal' | 'effect' | 'memo' | 'root';
     name?: string | undefined;
     owner: number;
+    /** The higher-level primitive this node is part of (a resource's data signal), or absent. */
+    primitive?: DevtoolsPrimitive | undefined;
+    /** Groups every node of one primitive instance; absent for a bare state/derived/effect. */
+    group?: number | undefined;
+    /** The primitive instance's declared name, repeated on every member. */
+    groupName?: string | undefined;
     /** Source file (relative to /src), or '(unknown)'. */
     file: string;
     /** `file:line`, or ''. */
@@ -55,11 +64,12 @@ export interface TimelineEntry
     kind?: string | undefined;
     name?: string | undefined;
     /**
-     * For `run` events: why it ran - the name of the signal/memo whose write
-     * triggered this run, or '(initial)' for a first run. This is the
-     * "why did it run?" answer React/Vue devtools approximate.
+     * For `run` events: why it ran - the name of the DIRECT producer whose change triggered
+     * this run (reported by the runtime hook, not inferred), or '(initial)' for a first run.
      */
     cause?: string | undefined;
+    /** The triggering producer's node id (0/absent when initial/unknown), for click-to-jump. */
+    causeId?: number | undefined;
 }
 
 /** Per-kind liveness, for the leak detector. */
@@ -92,6 +102,9 @@ export interface AgentGraphNode
     kind: 'signal' | 'effect' | 'memo' | 'root';
     name?: string | undefined;
     owner: number;
+    primitive?: DevtoolsPrimitive | undefined;
+    group?: number | undefined;
+    groupName?: string | undefined;
     file: string;
     loc: string;
     open: string;
@@ -178,7 +191,11 @@ const SAMPLE_CAP = 30;
 /**
  * True when `samples` (oldest-first live counts) show sustained growth: the
  * recent half is materially and entirely above the older half. A flat plateau
- * or a one-time startup ramp does not qualify. Exported for testing.
+ * or a one-time startup ramp does not qualify.
+ *
+ * @param samples - Live node counts, oldest first, one per sample tick.
+ * @returns `true` when the samples indicate a sustained leak.
+ * @internal
  */
 export function detectLeakTrend(samples: number[]): boolean
 {
@@ -196,7 +213,11 @@ export function detectLeakTrend(samples: number[]): boolean
     return avg(recent) > avg(older) + 10 && (recent[recent.length - 1] ?? 0) > (recent[0] ?? 0);
 }
 
-/** Resolves the first /src/ frame of the current stack (creation site). */
+/**
+ * Resolves the first /src/ frame of the current stack (creation site). Accepts both path
+ * separators: browser and ESM frames carry URLs (forward slashes), while Windows CJS server
+ * frames - the bridge's agent runs in Node - carry backslash paths.
+ */
 function captureOrigin(): { file: string; loc: string; open: string }
 {
     const stack = new Error().stack ?? '';
@@ -206,10 +227,11 @@ function captureOrigin(): { file: string; loc: string; open: string }
         {
             continue;
         }
-        const match = /\/src\/([^?\s:)]+)[^:]*:(\d+):(\d+)/.exec(line);
+        const match = /[\\/]src[\\/]([^?\s:)]+)[^:]*:(\d+):(\d+)/.exec(line);
         if (match)
         {
-            const [, file = '(unknown)', lineNo = '0', col = '0'] = match;
+            const [, raw = '(unknown)', lineNo = '0', col = '0'] = match;
+            const file = raw.replace(/\\/g, '/');
             // The `open` form is what Vite's /__open-in-editor middleware
             // resolves (relative to the project root).
             return { file, loc: `${ file }:${ lineNo }`, open: `src/${ file }:${ lineNo }:${ col }` };
@@ -405,6 +427,9 @@ export function createAgent(): Agent
                 kind: node.kind,
                 name: node.name,
                 owner: node.owner,
+                primitive: node.primitive,
+                group: node.group,
+                groupName: node.groupName,
                 file: origin.file,
                 loc: origin.loc,
                 open: origin.open,
@@ -431,12 +456,15 @@ export function createAgent(): Agent
             history.delete(id);
             scheduleNotify();
         },
-        run(id: number): void
+        run(id: number, causeId: number): void
         {
             const stats = nodes.get(id);
-            // A first run (runs still 0) is the effect's initial execution;
-            // any later run was triggered by the most recent write.
-            const cause = stats && stats.runs === 0 ? '(initial)' : lastWrite?.name;
+            // The hook reports the DIRECT producer that triggered this run; a first run
+            // (runs still 0, no cause) is the initial execution.
+            const causeNode = causeId !== 0 ? nodes.get(causeId) : undefined;
+            const cause = causeNode !== undefined ? causeNode.name ?? `#${ causeId }`
+                : stats !== undefined && stats.runs === 0 ? '(initial)'
+                    : undefined;
             if (stats)
             {
                 stats.runs++;
@@ -446,7 +474,7 @@ export function createAgent(): Agent
             {
                 recordValue(id);
             }
-            push({ t: now(), type: 'run', id, kind: stats?.kind, name: stats?.name, cause });
+            push({ t: now(), type: 'run', id, kind: stats?.kind, name: stats?.name, cause, causeId: causeId !== 0 ? causeId : undefined });
             scheduleNotify();
         },
         write(id: number): void
@@ -486,6 +514,9 @@ export function createAgent(): Agent
                 kind: n.kind,
                 name: n.name,
                 owner: n.owner,
+                primitive: n.primitive,
+                group: n.group,
+                groupName: n.groupName,
                 file: s?.file ?? '(unknown)',
                 loc: s?.loc ?? '',
                 open: s?.open ?? '',
@@ -553,7 +584,7 @@ export function createAgent(): Agent
             histories[id] = ring.slice();
         }
         return {
-            version: 1,
+            version: 2,
             model,
             graph: getGraph(),
             timeline: timeline.slice(),

@@ -29,8 +29,10 @@ The parser advances through source one *structural unit* at a time. Units:
 - **Trivia** - whitespace; `// line` and `/* block */` comments. Transparent: trivia
   never changes disambiguation state.
 - **String literals** - `'...'` and `"..."` with `\` escapes.
-- **Template literals** - `` `...` `` including nested `${ ... }` substitutions,
-  which may themselves contain any unit (including markup).
+- **Template literals** - `` `...` `` including nested `${ ... }` substitutions. A
+  substitution is scanned as verbatim TypeScript (its braces, strings, and regexes are
+  balanced) but is NOT recompiled: markup inside a `${ ... }` is not lowered to render
+  calls. Place markup at a hole or the render position, not inside a template string.
 - **Regular-expression literals** - `/.../flags`, recognized only in expression
   position (§3); with character-class and escape handling.
 - **Numeric literals** - a digit begins a number.
@@ -52,11 +54,17 @@ previous significant token.
 - one of the keywords
   `return typeof instanceof in of do else yield await case delete void new`, or
 - one of the punctuators
-  `( { [ , ; : ? = > < & | ! ~ + - * / % ^` - or the start of input, or a newline
-  that ended the previous unit.
+  `( { [ } , ; : ? = > < & | ! ~ + - * / % ^` - or the start of input.
 
-After an identifier, a literal, or a closing bracket, the position is *operator
-position*: `/` is division, `<` is less-than.
+`}` is included for the block-then-render shape: `effect { ... } <div>...` or
+`dispose { ... } <ul>...`, where the markup after a reactive block must read as markup.
+The only case this misclassifies - `{obj}<ident`, an object literal compared with `<` and
+no space - is nonsensical and does not occur in practice.
+
+After an identifier, a literal, or a closing `)`/`]`, the position is *operator position*:
+`/` is division, `<` is less-than. A newline does NOT create expression position (there is
+no ASI here): `const x = foo` then a newline then `<div>` reads the `<` as less-than. End
+the statement with `;` before markup, or put the markup in a hole / at the render position.
 
 ### 3.1 The `/` rule
 
@@ -84,10 +92,9 @@ A `<` in expression position, followed by `>` or an identifier-start character, 
 
 - **No angle-bracket type assertions.** Write `value as Foo`. A `<Foo>value` is read
   as markup, and its missing `</Foo>` is reported as an unclosed tag.
-- **Generic arrows: write the trailing comma.** `<T,>(v: T) => v`. The comma makes
-  the markup interpretation fail before committing, in every position; the
-  structural probe (§3.2.2) additionally accepts the comma-less form in plain-code
-  scanning, but `<T,>` is the guaranteed, position-independent spelling - use it.
+- **Generic arrows: write the trailing comma.** `<T,>(v: T) => v`. A comma-less
+  `<T>(v: T) => v` is read as markup and reported as an unclosed `<T>` tag - in every
+  position. The trailing comma is required, exactly as in `.tsx`.
 - **Type arguments in call position are unaffected**: `foo<Bar>(x)`, `new C<Bar>()`.
 
 ## 4. Module grammar
@@ -118,7 +125,7 @@ of the following; anything unrecognized is an opaque TypeScript statement run.
 ```
 BodyItem        := ReactiveDecl | EffectBlock | WrapperBlock | Markup | OpaqueTS
 
-ReactiveDecl    := DeclKeyword Identifier ArraySuffix? `=` Value WithClause? `;`
+ReactiveDecl    := DeclKeyword Identifier ArraySuffix? ( `=` Value )? WithClause? `;`
 DeclKeyword     := `state` | `derived` | `deferred`
                  | `resource` | `stream` | `store` | `selector` | `form`
 ArraySuffix     := `[` `]`                             // permitted ONLY after a `form` name
@@ -144,7 +151,9 @@ Normative rules:
   value span feeds the reactive rewrite; a guessed boundary would silently change
   which reads get rewritten.
 - **`Value` is a verbatim TypeScript expression span** - never parsed here, may
-  contain markup (which is consumed as a unit).
+  contain markup (which is consumed as a unit). The initializer is syntactically
+  optional (an omitted `= Value` lowers to the primitive's no-argument form, e.g.
+  `state x;` -> `createSignal(undefined)`); always provide one in practice.
 - **The two `effect` forms.** Without parentheses: auto-tracked
   (`createEffect`). With an immediate `(` after the keyword: the
   explicit-dependency form - `effect (a, b) (values, prev) with { ... } { body }` -

@@ -62,14 +62,14 @@ describe('completion: `with { ... }` options per keyword', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    deferred d = c() with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('D.azeroth', src);
-        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'c() with { ')))).toEqual(['delay']);
+        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'c() with { ')))).toEqual(['delay', 'name']);
     });
 
     it('effect (deps) -> skipInitial', () =>
     {
         const src = 'export default component A\n{\n    state c = 0;\n    effect (c) with {  }\n    {\n    }\n    <p>x</p>\n}\n';
         const { service, uri } = open('W.azeroth', src);
-        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect (c) with { ')))).toEqual(['skipInitial']);
+        expect(optionLabels(service.getCompletions(uri, posAfter(src, 'effect (c) with { ')))).toEqual(['name', 'skipInitial']);
     });
 
     it('form -> validate/validateForm/validateAsync/asyncDebounceMs/onSubmit (+ array-form initial/validateArray)', () =>
@@ -77,7 +77,7 @@ describe('completion: `with { ... }` options per keyword', () =>
         const src = 'export default component A\n{\n    form f = { a: \'\' } with {  };\n    <p>x</p>\n}\n';
         const { service, uri } = open('F.azeroth', src);
         expect(optionLabels(service.getCompletions(uri, posAfter(src, 'with { ')))).toEqual(
-            ['asyncDebounceMs', 'initial', 'onSubmit', 'schema', 'validate', 'validateArray', 'validateAsync', 'validateForm']
+            ['asyncDebounceMs', 'initial', 'name', 'onSubmit', 'schema', 'validate', 'validateArray', 'validateAsync', 'validateForm']
         );
     });
 

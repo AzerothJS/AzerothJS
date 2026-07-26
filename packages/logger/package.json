@@ -1,8 +1,8 @@
 {
     "name": "@azerothjs/logger",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "description": "AzerothJS logger - one zero-dependency logger with two faces: colored, iconed developer output and pino-class NDJSON for production, plus the framework's startup banner",
     "type": "module",
@@ -14,6 +14,11 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
+        },
+        "./node": {
+            "types": "./dist/node.d.ts",
+            "import": "./dist/node.js",
+            "default": "./dist/node.js"
         }
     },
     "files": [

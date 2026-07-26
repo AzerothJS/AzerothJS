@@ -257,9 +257,10 @@ function isFactoryInitializer(init: ts.Node | undefined): boolean
  * with-clause pieces as RAW text; each emitter renders the value itself and applies (codegen) or skips
  * (projection) the reactive rewrite on these pieces:
  *   - resource/stream: `fn([() => (source), ] value [, rest])` - `source` drives refetch, `rest` is the
- *     remaining stream options (resource ignores any rest);
+ *     remaining options (`name`, and for a stream `parse`/`initial`);
  *   - selector: `fn(() => (value) [, opts])` - the value IS the source signal, the whole clause is options;
- *   - store: `fn(value)` when the value is already a factory function, else `fn(() => (value))`.
+ *   - store: `fn(value [, opts])` when the value is already a factory function, else `fn(() => (value) [, opts])`;
+ *     the clause is the trailing StoreOptions.
  *
  * @param kind - The factory keyword.
  * @param optsText - The `with { ... }` clause text (braces included), or null when absent.
@@ -273,14 +274,15 @@ export function factoryPlan(kind: FactoryKind, optsText: string | null, initiali
     if (kind === 'resource' || kind === 'stream')
     {
         const split = optsText !== null ? parseFactoryOptions(optsText) : { source: null, rest: null };
-        return { fn, source: split.source, rest: kind === 'stream' ? split.rest : null, opts: null, wrapValue: false };
+        return { fn, source: split.source, rest: split.rest, opts: null, wrapValue: false };
     }
     if (kind === 'selector')
     {
         return { fn, source: null, rest: null, opts: optsText, wrapValue: true };
     }
     // store: a bare object/value is wrapped in a factory arrow; an existing function is passed as-is.
-    return { fn, source: null, rest: null, opts: null, wrapValue: !isFactoryInitializer(initializer) };
+    // The with-clause is the trailing StoreOptions (`with { name: 'auth' }`).
+    return { fn, source: null, rest: null, opts: optsText, wrapValue: !isFactoryInitializer(initializer) };
 }
 
 /** The structural split of a component parameter, recovered by the TypeScript parser. */

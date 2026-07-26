@@ -34,6 +34,9 @@ export interface FieldArrayConfig<T extends object>
     /** Factory for a fresh, blank row. Called by `append()` and to seed new rows. */
     blank: () => T;
 
+    /** Debug name surfaced to devtools; each row's form is labeled `name[key]`. */
+    name?: string;
+
     /** Initial rows. Defaults to an empty list. */
     initial?: T[];
 
@@ -189,6 +192,7 @@ export function createFieldArray<T extends object>(config: FieldArrayConfig<T>):
             dispose = rootDispose;
             return createForm<T>({
                 initial: value,
+                name: config.name === undefined ? undefined : `${ config.name }[${ key }]`,
                 validate: config.validate,
                 validateForm: config.validateForm,
                 validateAsync: config.validateAsync,

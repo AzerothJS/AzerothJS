@@ -183,8 +183,20 @@ export function tryEvalConstant(code: string): string | null
  */
 export function evalConstant(code: string): string | number | boolean | null
 {
-    const statement = parseExpressionSlice(code, 0).sourceFile.statements[0];
+    const sourceFile = parseExpressionSlice(code, 0).sourceFile;
+    // Only a SINGLE expression that spans the WHOLE slice can be folded. A slice with more than
+    // one statement (`1; sideEffect()`) or trailing tokens after the expression would otherwise
+    // fold just the prefix and silently drop the rest - changing behaviour, not just optimizing.
+    if (sourceFile.statements.length !== 1)
+    {
+        return null;
+    }
+    const statement = sourceFile.statements[0];
     if (statement === undefined || !ts.isExpressionStatement(statement))
+    {
+        return null;
+    }
+    if (code.slice(statement.expression.end).trim() !== '')
     {
         return null;
     }

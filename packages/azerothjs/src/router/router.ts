@@ -832,6 +832,16 @@ export function createRouter(config: RouterConfig): Router
     /** The URL's raw match, BEFORE guards - internal; everything renders off `match`. */
     const rawMatch = createMemo<RouteMatch | null>(() => state().matched, { equals: matchEquals });
 
+    // Navigation machinery the guard effect below can reach on its FIRST synchronous run
+    // (a guard that vetoes or redirects the boot URL calls performNavigate immediately).
+    // These bindings must exist before that run - the scroll/blocker state is declared here,
+    // ahead of the guard effect, rather than beside the scroll/block code lower down, so a
+    // boot-time guard redirect cannot hit a temporal-dead-zone ReferenceError.
+    const scrollManaged = config.scroll !== false && typeof window !== 'undefined';
+    const scrollPositions = new Map<string, { x: number; y: number }>();
+    let navScrollOverride: boolean | undefined = undefined;
+    const blockers = new Set<(context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>>();
+
     // The GUARDED match - the public reactive view. <Routes> and every level's loader
     // resource key off this signal, so a navigation that a guard vetoes or redirects
     // never renders and never loads. Guardless chains accept SYNCHRONOUSLY in the same
@@ -1113,9 +1123,9 @@ export function createRouter(config: RouterConfig): Router
     // pop path both call recordScroll() BEFORE the URL moves - and applied one
     // microtask after the location lands (the same flush <Routes> swapped in, so
     // the new DOM is in place). A per-navigation `scroll` option overrides.
-    const scrollManaged = config.scroll !== false && typeof window !== 'undefined';
-    const scrollPositions = new Map<string, { x: number; y: number }>();
-    let navScrollOverride: boolean | undefined = undefined;
+    // scrollManaged / scrollPositions / navScrollOverride are declared above the guard
+    // effect (a boot-time guard redirect reaches them synchronously); recordScroll and the
+    // scroll effect below close over those same bindings.
     function recordScroll(): void
     {
         if (scrollManaged)
@@ -1176,8 +1186,8 @@ export function createRouter(config: RouterConfig): Router
         });
     }
 
-    /** Leave-blockers registered via router.block(). */
-    const blockers = new Set<(context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>>();
+    // `blockers` (the router.block() leave-guards set) is declared above the guard effect;
+    // performNavigate reads it on a boot-time guard redirect.
 
     function performNavigate(target: NavigateTarget, options: NavigateOptions): void
     {

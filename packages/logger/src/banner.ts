@@ -40,7 +40,14 @@ export interface BannerOptions
     stream?: WritableLike | undefined;
 }
 
-/** @internal "12 ms", "3.42 s" - sub-10ms keeps one decimal, seconds past 1000. */
+/**
+ * Formats an elapsed duration for a startup/ready line. Under 10 ms keeps one
+ * decimal (`0.4 ms`), tens through hundreds round to whole milliseconds (`12 ms`),
+ * and a second or more switches to seconds with two decimals (`3.42 s`).
+ *
+ * @param ms - Elapsed milliseconds, as measured by the caller.
+ * @returns The duration as a display string with its unit.
+ */
 export function formatReady(ms: number): string
 {
     if (ms >= 1000)

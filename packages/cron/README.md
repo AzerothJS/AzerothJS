@@ -1,20 +1,35 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/cron
 
+**AzerothJS job scheduler - drift-free cron expressions with timezone/DST semantics, overlap control, and graceful drain, zero dependencies**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fcron?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/cron)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A zero-dependency job scheduler for Node >= 24: real cron expressions with honest timezone/DST semantics, built to fix everything a hand-rolled `setInterval` quietly gets wrong.
+</div>
 
-## Install
+---
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A zero-dependency job scheduler for Node >= 22: real cron expressions with honest timezone/DST semantics, built to fix everything a hand-rolled `setInterval` quietly gets wrong.
+
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only, Node >= 22:
 
 ```sh
 npm install @azerothjs/cron
 ```
 
-## Overview
+---
+
+## 📖 Overview
 
 ```ts
 import { createScheduler } from '@azerothjs/cron';
@@ -29,7 +44,9 @@ console.log(scheduler.jobs());   // the printable table: next run, last run, out
 await scheduler.stop();          // disarm + drain in-flight runs (pair with the server's shutdown)
 ```
 
-## What setInterval gets wrong, fixed by construction
+---
+
+## 🛡️ What setInterval gets wrong, fixed by construction
 
 - **Drift.** Every arm computes the NEXT wall-clock occurrence and sets one timeout to it -
   "daily at midnight" stays midnight instead of accumulating lag.
@@ -47,7 +64,9 @@ await scheduler.stop();          // disarm + drain in-flight runs (pair with the
 - **Loud registration.** A malformed expression, unknown timezone, duplicate name, or an
   expression that can never match (`0 0 31 2 *`) throws AT `schedule()`, not at 3am.
 
-## Expressions
+---
+
+## ⏰ Expressions
 
 Standard 5 fields (`minute hour day-of-month month day-of-week`) with ranges (`1-5`), steps
 (`*/15`, `1-30/5`, vixie `10/5`), lists (`mon,wed,fri`), month/day names, and the
@@ -55,6 +74,16 @@ Standard 5 fields (`minute hour day-of-month month day-of-week`) with ranges (`1
 are both restricted, a date matching EITHER runs (the vixie rule). The engine itself is
 exported - `parseExpression` + `nextOccurrence` answer "when would this run next?" anywhere.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+Part of the [AzerothJS](../../README.md) monorepo. Related packages:
+[`@azerothjs/http`](../http) (the HTTP kernel whose `shutdown()` pairs with `stop()`),
+[`@azerothjs/ws`](../ws) (WebSockets), and [`@azerothjs/logger`](../logger) (logging).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

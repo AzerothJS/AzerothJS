@@ -1,9 +1,9 @@
 /**
  * MODULE: compiler/markup-util - shared codegen string/markup utilities
  *
- * The markup -> runtime EMITTER that once lived here (`generate()`) is gone: top-level component
- * output and expression-embedded markup both compile from the IR via the single emitter in codegen.ts.
- * What remains are the small shared helpers that emitter still needs:
+ * The small shared helpers the codegen emitter (codegen.ts) consults. Top-level component output and
+ * expression-embedded markup both compile from the IR through that single emitter; this module holds
+ * the pieces it needs:
  *   - wrapDynamic   - the reactivity-shape heuristic (wrap a computed expression in a getter; leave a
  *                     bare getter / fn-literal / collection verbatim);
  *   - isFunctionLiteral / isBareReference / isCollectionLiteral - the expression-shape predicates the

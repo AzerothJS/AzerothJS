@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/typescript-plugin",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "description": "AzerothJS TypeScript language-service plugin - resolves .azeroth imports with real types in tsserver/editors",
     "type": "commonjs",
     "main": "./dist/index.js",
@@ -34,7 +34,7 @@
     },
     "license": "MIT",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "repository": {
         "type": "git",
@@ -46,6 +46,6 @@
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     },
     "dependencies": {
-        "@azerothjs/language-server": "1.0.0-beta.2"
+        "@azerothjs/language-server": "1.0.0"
     }
 }

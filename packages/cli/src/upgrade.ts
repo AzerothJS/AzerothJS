@@ -120,7 +120,7 @@ function npm(args: string, cwd: string, capture: boolean): { status: number; std
 }
 
 /** Resolves a dist-tag (or verifies a version) to the concrete version string. */
-export function resolveTarget(spec: string, cwd: string): string | null
+function resolveTarget(spec: string, cwd: string): string | null
 {
     const { status, stdout } = npm(`view azerothjs@${ spec } version`, cwd, true);
     if (status !== 0 || stdout === '')

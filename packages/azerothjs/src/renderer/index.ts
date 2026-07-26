@@ -45,8 +45,6 @@ export { playTransitionClasses } from './transition-classes.ts';
 
 // Public type contracts.
 export type { Props, Child } from './types.ts';
-// Re-exported from azerothjs: the client-side return contract for
-// components and control-flow components (HTMLElement | DocumentFragment).
 export type { MountNode } from '../component/index.ts';
 export type { ShowProps } from './show.ts';
 export type { ForProps } from './for.ts';

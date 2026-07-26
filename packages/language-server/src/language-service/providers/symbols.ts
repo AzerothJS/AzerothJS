@@ -11,7 +11,8 @@ import {
     type SymbolKindValue,
     type WorkspaceSymbol
 } from '../protocol.ts';
-import { isVirtualFile, resolveLocation, toAzerothPath, type RequestContext } from '../request.ts';
+import { resolveLocation, type RequestContext } from '../request.ts';
+import { isVirtualFile, toAzerothPath } from '../ts-project.ts';
 import type { AzerothProject } from '../ts-project.ts';
 
 /** The outline for the document. */

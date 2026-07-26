@@ -1,14 +1,24 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/language-server
 
+**AzerothJS language server - a Language Server Protocol front-end for .azeroth files**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Flanguage-server?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/language-server)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+
+</div>
+
+---
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. A development-time companion to [`azerothjs`](https://www.npmjs.com/package/azerothjs) - the editor extensions bundle it; `azeroth-tsc` runs it in CI.
 
-## Overview
+---
+
+## 📖 Overview
 
 A [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 frontend for `.azeroth` files. It is a thin adapter: it owns the LSP connection
@@ -19,13 +29,25 @@ intelligence (the TypeScript bridge, the markup model, and the providers).
 Editors that speak LSP (the VS Code extension and the JetBrains plugin in this
 repository, among others) launch this server and talk to it over stdio.
 
-## Install
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only; requires Node >= 22. `azerothjs` is a peer dependency.
 
 ```sh
-npm install -D @azerothjs/language-server
+npm install -D @azerothjs/language-server azerothjs
 ```
 
-## Architecture
+The package provides three binaries: `azeroth-language-server` (the LSP server,
+run over stdio by editors), `azeroth-tsc` (the combined `.ts` + `.azeroth` CLI
+type checker), and `azeroth-docgen` (a Markdown/HTML API reference for
+`.azeroth` components).
+
+---
+
+## 🏗️ Architecture
 
 The server holds one `AzerothLanguageService` **per workspace root** (multi-root
 aware: each document resolves against the service whose root is its longest
@@ -47,7 +69,9 @@ sync, settings) separate from language concerns (the TypeScript bridge, the
 markup model). The same service instance also powers the unit test suite and can
 back any other host without this package.
 
-## Components
+---
+
+## 🧱 Components
 
 | File | Role |
 | --- | --- |
@@ -84,8 +108,7 @@ npx azeroth-tsc --watch    # re-check on change (alias: -w)
 One checker covers the whole project, so the canonical consumer build is just
 the checker plus the bundler:
 
-```jsonc
-// package.json
+```json
 {
     "scripts": {
         "build": "azeroth-tsc && vite build",
@@ -117,7 +140,9 @@ or changes, rather than pulled, so errors appear as the user types. Each carries
 its `source` (`azeroth` for markup parse errors, `azeroth-ts` for TypeScript
 errors) from the service.
 
-## Running
+---
+
+## ▶️ Running
 
 Editors launch the bundled binary over stdio:
 
@@ -134,7 +159,9 @@ import { createConnection } from 'vscode-languageserver/node.js';
 startServer(createConnection(/* your reader/writer */));
 ```
 
-## Capabilities
+---
+
+## ✨ Capabilities
 
 Completion (with resolve), hover, definition, type-definition, references,
 document highlights, rename, document symbols, workspace symbols, signature help,
@@ -147,7 +174,9 @@ The legend for semantic tokens is `component`, `tag`, `attribute`, `event`,
 `string`, `delimiter`, with no modifiers. Editors must register the same legend
 so these token types get themed.
 
-## Formatting: the placement, stated
+---
+
+## 🎨 Formatting: the placement, stated
 
 There is ONE formatting engine for `.azeroth`, and it lives here - the
 language-service format provider (document, range, and on-type). What it does in
@@ -162,13 +191,26 @@ language-service format provider (document, range, and on-type). What it does in
 Markup pretty-printing, when it comes, joins THIS engine - there will never be a
 second formatting implementation that could disagree with the editors.
 
+---
 
-## Configuration
+## 🔧 Configuration
 
 Configuration is supplied by the client through `initializationOptions` and
 `workspace/configuration`. TypeScript intelligence uses the nearest
 `tsconfig.json` in the workspace, resolved by the language service.
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+See the [monorepo README](../../README.md) for the full framework. Related tooling:
+
+- [`@azerothjs/typescript-plugin`](../typescript-plugin) - live `.ts` -> `.azeroth` resolution inside `tsserver`.
+- [`@azerothjs/eslint-plugin`](../eslint-plugin) - reactivity lint rules and a `.azeroth` lint target.
+- Editor extensions built on this server: [VS Code](../../editors/vscode), [JetBrains](../../editors/jetbrains).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

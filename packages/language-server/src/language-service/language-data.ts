@@ -3,11 +3,11 @@
 // events) and the framework's built-in components.
 //
 // The built-in component data here is transcribed directly from the runtime's
-// own prop interfaces (azerothjs, azerothjs, the compiler's
-// auto-import set) - it is not invented. Deep type detail (exact prop types,
-// generics) still flows from TypeScript at hover/signature time; this table
-// exists so completion can *offer* the components and their props with a useful
-// one-line summary before the type bridge fills in the rest.
+// own prop interfaces (the `azerothjs` package and the compiler's auto-import
+// set), not invented. Deep type detail (exact prop types, generics) still flows
+// from TypeScript at hover/signature time; this table exists so completion can
+// *offer* the components and their props with a useful one-line summary before
+// the type bridge fills in the rest.
 
 /** A completion-ready description of a built-in component. */
 export interface BuiltinComponent
@@ -160,7 +160,7 @@ export const DOM_EVENTS: string[] =
  * attributes already carry MDN docs straight from the HTML engine; this only
  * fills the gaps.
  */
-export const ATTRIBUTE_DOCS: Record<string, string> =
+const ATTRIBUTE_DOCS: Record<string, string> =
 {
     type: 'The kind of control to render (e.g. `text`, `checkbox`, `email`, `number`, `password`).',
     value: 'The control\'s current value. In AzerothJS, bind it reactively: `value={signal()}`.',
@@ -192,6 +192,42 @@ export const ATTRIBUTE_DOCS: Record<string, string> =
 export function attributeDocumentation(name: string): string | undefined
 {
     return ATTRIBUTE_DOCS[name.toLowerCase()];
+}
+
+/**
+ * Hover documentation for the AzerothJS host-element directives (`bind:` / `class:` /
+ * `style:`). Keyed by the prefix before the `:`, so `bind:value`, `class:active`, and
+ * `style:color` all resolve. These are compiler sugar with no HTML/TS symbol to describe,
+ * so this table is the only hover source for them.
+ */
+const DIRECTIVE_DOCS: Record<string, string> =
+{
+    bind: '**`bind:`** - two-way binding\n\n'
+        + 'Binds a form control\'s value to a `state` in both directions: the input shows the state, '
+        + 'and user edits write it back. `bind:value` for text/number inputs, `bind:checked` for '
+        + 'checkboxes/radios. Lowers to a `value`/`checked` prop plus the matching `onInput`/`onChange` handler.\n\n'
+        + '```azeroth\n<input bind:value={ name } />\n<input type="checkbox" bind:checked={ agreed } />\n```',
+    class: '**`class:`** - conditional class\n\n'
+        + 'Toggles a single CSS class by a boolean expression - `class:active={ isActive }` adds the '
+        + '`active` class when the expression is truthy and removes it when falsy, without disturbing the '
+        + 'element\'s other classes. Compose several, or use the `classList(...)` helper for a whole map.\n\n'
+        + '```azeroth\n<button class:primary={ true } class:disabled={ busy() }>Save</button>\n```',
+    style: '**`style:`** - inline style property\n\n'
+        + 'Sets one inline CSS property reactively - `style:color={ theme() }` writes `element.style.color`. '
+        + 'The property name is the part after the colon (kebab or camelCase); the value updates in place '
+        + 'when its expression changes.\n\n'
+        + '```azeroth\n<div style:color={ danger() ? \'red\' : \'inherit\' } style:width={ pct() + \'%\' }></div>\n```'
+};
+
+/**
+ * Hover documentation for a host-element directive attribute (`bind:value`, `class:active`,
+ * `style:color`, ...), keyed by the `{bind,class,style}` prefix. Returns undefined for a
+ * plain attribute.
+ */
+export function directiveDocumentation(name: string): string | undefined
+{
+    const colon = name.indexOf(':');
+    return colon === -1 ? undefined : DIRECTIVE_DOCS[name.slice(0, colon)];
 }
 
 /**
@@ -353,7 +389,8 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     derived: SIGNAL_OPTIONS,
     deferred:
     [
-        { name: 'delay', type: 'number', doc: 'Debounce window in milliseconds - the value updates only after this many ms with no further source change. Default `150`.' }
+        { name: 'delay', type: 'number', doc: 'Debounce window in milliseconds - the value updates only after this many ms with no further source change. Default `150`.' },
+        { name: 'name', type: 'string', doc: 'Debug name for devtools. The dev server passes the declared identifier automatically; set this to override the label.' }
     ],
     effect:
     [
@@ -361,21 +398,29 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
     ],
     watch:
     [
-        { name: 'skipInitial', type: 'boolean', doc: 'When `true`, skip the initial run - the body runs only on the first dependency change (with genuine previous values).' }
+        { name: 'skipInitial', type: 'boolean', doc: 'When `true`, skip the initial run - the body runs only on the first dependency change (with genuine previous values).' },
+        { name: 'name', type: 'string', doc: 'Optional debug name for the underlying effect, surfaced by devtools and error tooling.' }
+    ],
+    store:
+    [
+        { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the store\'s internal nodes under this label. The dev server passes the declared identifier automatically.' }
     ],
     resource:
     [
-        { name: 'source', type: '() => S | false | null | undefined', doc: 'A signal/getter that drives the fetch - the resource refetches when it changes, and skips fetching while it is falsy (the fetched value is passed to the fetcher). Omit `source` for a one-shot fetch.' }
+        { name: 'source', type: '() => S | false | null | undefined', doc: 'A signal/getter that drives the fetch - the resource refetches when it changes, and skips fetching while it is falsy (the fetched value is passed to the fetcher). Omit `source` for a one-shot fetch.' },
+        { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the resource\'s data/loading/error nodes. The dev server passes the declared identifier automatically.' }
     ],
     stream:
     [
         { name: 'source', type: '() => S | false | null | undefined', doc: 'A signal/getter that drives the stream - it restarts when this changes, and is idle while falsy.' },
         { name: 'parse', type: "'text' | 'sse' | 'ndjson' | ((chunk: string) => string)", doc: 'How to split the byte stream into chunks. Default `text` (raw decoded text).' },
-        { name: 'initial', type: 'T', doc: 'The value `data()` holds before the first chunk arrives.' }
+        { name: 'initial', type: 'T', doc: 'The value `data()` holds before the first chunk arrives.' },
+        { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the stream\'s partial/done/error nodes. The dev server passes the declared identifier automatically.' }
     ],
     selector:
     [
-        { name: 'equals', type: '(prev: T, next: T) => boolean', doc: 'Custom equality for detecting a selection change. Defaults to `Object.is`.' }
+        { name: 'equals', type: '(prev: T, next: T) => boolean', doc: 'Custom equality for detecting a selection change. Defaults to `Object.is`.' },
+        { name: 'name', type: 'string', doc: 'Debug name for devtools; labels the selector\'s watcher effect. The dev server passes the declared identifier automatically.' }
     ],
     // The `form` keyword covers BOTH a flat form (createForm) and an array-form `form name[]`
     // (createFieldArray). This one list offers every option either accepts; the projection type-checks the
@@ -390,7 +435,8 @@ export const KEYWORD_OPTIONS: Record<string, readonly KeywordOption[]> =
         { name: 'asyncDebounceMs', type: 'number', doc: 'Debounce (ms) before an async validator fires after the value settles. Default `300`.' },
         { name: 'onSubmit', type: '(values: T) => void | Promise<void>', doc: 'Flat form only. Called with the values snapshot when validation passes; may return a Promise (`submitting()` is true for its duration).' },
         { name: 'initial', type: 'T[]', doc: 'Array-form only. The starting rows. Each row is a `createForm` of the blank shape.' },
-        { name: 'validateArray', type: '(rows: T[]) => string | null', doc: 'Array-form only. A rule over the whole list (min/max length, no duplicates). Surfaced as `name.error()`.' }
+        { name: 'validateArray', type: '(rows: T[]) => string | null', doc: 'Array-form only. A rule over the whole list (min/max length, no duplicates). Surfaced as `name.error()`.' },
+        { name: 'name', type: 'string', doc: 'Debug name for devtools; groups the form\'s field and derived nodes. The dev server passes the declared identifier automatically.' }
     ]
 };
 
@@ -412,10 +458,11 @@ export const KEYWORD_WITH_EXAMPLE: Record<string, string> =
     derived: 'derived total = price * quantity with { equals: (a, b) => a === b };',
     deferred: 'deferred results = query with { delay: 300 };',
     effect: 'effect with { name: \'sync\' }\n{\n    save(data);\n}',
-    watch: 'watch (count) with { skipInitial: true }\n{\n    log(count);\n}',
+    watch: 'effect (count) with { skipInitial: true }\n{\n    log(count);\n}',
     resource: 'resource user = (id) => fetchUser(id) with { source: selectedId };',
     stream: 'stream feed = (id) => openFeed(id) with { source: channelId, parse: \'sse\' };',
     selector: 'selector isActive = activeId with { equals: Object.is };',
+    store: 'store auth = createAuth with { name: \'auth\' };',
     form: 'form login = { email: \'\', password: \'\' } with {\n    validate: { email: combine(required(), email()) },\n    onSubmit: async (values) => { await signIn(values); }\n};'
 };
 

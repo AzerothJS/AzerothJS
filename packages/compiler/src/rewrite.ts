@@ -59,6 +59,19 @@ const COMPOUND: ReadonlyMap<ts.SyntaxKind, string> = new Map([
 ]);
 
 /**
+ * The "assigned a derived" error message, shared by the reactive-rewrite guard (this module) and
+ * the semantic diagnostic (diagnostics.ts) so both phases report identically.
+ *
+ * @param name - The derived value's name.
+ * @returns The error message.
+ * @internal
+ */
+export function assignToDerivedMessage(name: string): string
+{
+    return `Cannot assign to \`${ name }\`: a \`derived\` value is read-only. Compute it from \`state\`, or make \`${ name }\` a \`state\` if it must change.`;
+}
+
+/**
  * The setter name for a state declaration: `count` -> `setCount`. Codegen must declare the setter
  * with this same name so the rewritten writes resolve.
  *
@@ -70,20 +83,6 @@ const COMPOUND: ReadonlyMap<ts.SyntaxKind, string> = new Map([
  * ```
  * @internal
  */
-/**
- * The single source of truth for the "assigned a derived" error message, shared by the
- * reactive-rewrite guard (this module) and the semantic diagnostic (diagnostics.ts) so both
- * phases report identically.
- *
- * @param name - The derived value's name.
- * @returns The error message.
- * @internal
- */
-export function assignToDerivedMessage(name: string): string
-{
-    return `Cannot assign to \`${ name }\`: a \`derived\` value is read-only. Compute it from \`state\`, or make \`${ name }\` a \`state\` if it must change.`;
-}
-
 export function setterName(name: string): string
 {
     return `set${ name.charAt(0).toUpperCase() }${ name.slice(1) }`;

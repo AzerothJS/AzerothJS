@@ -18,8 +18,6 @@ export { renderToDocument } from './render-to-document.ts';
 export type { RenderToDocumentOptions } from './render-to-document.ts';
 export { island } from './island.ts';
 
-// Re-export the CSS flush helpers (defined in the renderer) so a server only needs to import
-// from azerothjs.
 export { collectStyleSheet, resetStyleSheet } from '../renderer/index.ts';
 
 export type { SSRNode, RenderMode } from '../reactivity/index.ts';

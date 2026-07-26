@@ -26,10 +26,18 @@ import type { Producer, Subscriber } from './types.ts';
  * {@link DevtoolsNode}, or {@link GraphSnapshot}. An agent compares this (and `GraphSnapshot.version`)
  * against what it was built for and can refuse / degrade on a mismatch instead of misreading data.
  */
-export const DEVTOOLS_PROTOCOL_VERSION = 1;
+export const DEVTOOLS_PROTOCOL_VERSION = 2;
 
 /** The kind of a reactive node, as surfaced to devtools. */
 export type DevtoolsNodeKind = 'signal' | 'memo' | 'effect' | 'root';
+
+/**
+ * The higher-level primitive a node was created inside. The base kinds stay the substrate: a
+ * resource IS its data/loading/error signals plus a fetch effect. This tag lets a panel present
+ * those nodes as the primitive the user declared instead of an anonymous pile of internals. A bare
+ * `state`/`derived`/`effect` needs no tag - its kind (ungrouped signal/memo/effect) already says it.
+ */
+export type DevtoolsPrimitive = 'store' | 'resource' | 'stream' | 'selector' | 'deferred' | 'form';
 
 /** A reactive node as announced to the hook at creation. */
 export interface DevtoolsNode
@@ -46,6 +54,15 @@ export interface DevtoolsNode
 
     /** Id of the owning root, or 0 when created outside any root. */
     owner: number;
+
+    /** The higher-level primitive this node is part of; absent for a bare signal/memo/effect/root. */
+    primitive?: DevtoolsPrimitive | undefined;
+
+    /** Groups every node of one primitive instance (a stable per-instance id); 0/absent = ungrouped. */
+    group?: number | undefined;
+
+    /** The primitive instance's debug name, repeated on every member of the group. */
+    groupName?: string | undefined;
 }
 
 /**
@@ -62,8 +79,12 @@ export interface DevtoolsHook
     /** The node `id` was disposed and removed from the graph. */
     disposed(id: number): void;
 
-    /** An effect or memo (`id`) executed (its body ran). */
-    run(id: number): void;
+    /**
+     * An effect or memo (`id`) executed (its body ran). `cause` is the id of the DIRECT producer
+     * whose change triggered this run (a signal for a first-level consumer, the memo in between for
+     * one further down), or 0 for an initial/untriggered run.
+     */
+    run(id: number, cause: number): void;
 
     /** A signal (`id`) was written (its value changed). */
     write(id: number): void;
@@ -76,6 +97,9 @@ export interface GraphSnapshotNode
     kind: DevtoolsNodeKind;
     name?: string | undefined;
     owner: number;
+    primitive?: DevtoolsPrimitive | undefined;
+    group?: number | undefined;
+    groupName?: string | undefined;
     /** Producer version (bumps on value change); 0 for a pure consumer (effect/root). */
     version: number;
     /** Number of consumers currently subscribed to this node (0 for a pure consumer). */
@@ -115,6 +139,11 @@ interface NodeRecord
     kind: DevtoolsNodeKind;
     name?: string | undefined;
     owner: number;
+    primitive?: DevtoolsPrimitive | undefined;
+    group?: number | undefined;
+    groupName?: string | undefined;
+    /** The producer id stamped by the most recent write reaching this consumer; consumed by the next run. */
+    pendingCause?: number;
     /** The producer side (signal value, memo cache, or a memo acting as a producer). */
     producer?: Producer;
     /** The consumer side (effect, or a memo acting as a consumer). */
@@ -137,6 +166,30 @@ let nextId = 1;
 /** The owning root's devtools id for nodes created in the current scope; threaded like the active root. @internal */
 let currentOwner = 0;
 
+/** The active primitive-construction frame: nodes registered while set belong to that instance. @internal */
+interface PrimitiveFrame
+{
+    primitive: DevtoolsPrimitive;
+    group: number;
+    name?: string | undefined;
+}
+
+/**
+ * The primitive-frame stack. Constructors push on entry and truncate back on exit WITHOUT
+ * try/finally; a frame leaked by a throwing constructor (a user getter running inside a creation-
+ * time effect) is healed at the enclosing root boundary - {@link dtExitOwner} truncates to the
+ * depth captured by {@link dtEnterOwner}, and createRoot's own finally always runs that pair.
+ *
+ * @internal
+ */
+const frameStack: PrimitiveFrame[] = [];
+
+/** Frame depth captured per owner entry, restored (with truncation) on owner exit. @internal */
+const ownerFrameDepths: number[] = [];
+
+/** Group-id source for primitive instances; separate from node ids so neither space aliases the other. @internal */
+let nextGroup = 1;
+
 /**
  * Installs a devtools hook and returns an uninstall function. Replacing an existing hook is allowed (the
  * previous one stops receiving events). On uninstall the registry is cleared so no node references are
@@ -154,6 +207,7 @@ export function setDevtoolsHook(next: DevtoolsHook): () => void
         {
             hook = null;
             registry.clear();
+            frameStack.length = 0;
         }
     };
 }
@@ -189,6 +243,13 @@ export function dtRegister(
     }
     const id = nextId++;
     const full: NodeRecord = { kind, owner: currentOwner, ...record };
+    const frame = frameStack[frameStack.length - 1];
+    if (frame !== undefined)
+    {
+        full.primitive = frame.primitive;
+        full.group = frame.group;
+        full.groupName = frame.name;
+    }
     registry.set(id, full);
     if (full.producer !== undefined)
     {
@@ -198,22 +259,73 @@ export function dtRegister(
     {
         full.subscriber.devtoolsId = id;
     }
-    hook.created({ id, kind, name: full.name, owner: full.owner });
+    hook.created({
+        id,
+        kind,
+        name: full.name,
+        owner: full.owner,
+        primitive: full.primitive,
+        group: full.group,
+        groupName: full.groupName
+    });
     return id;
 }
 
-/** Pushes `id` as the active owner for nodes created inside a root body; returns the previous owner to restore. @internal */
+/**
+ * Opens a primitive-construction frame: every node registered until the matching
+ * {@link dtExitPrimitive} is stamped as belonging to this instance of `primitive`. Frames nest
+ * (a store building a resource attributes the resource's internals to the resource); the deepest
+ * frame wins. Returns the depth token to pass to {@link dtExitPrimitive}.
+ *
+ * @internal
+ */
+export function dtEnterPrimitive(primitive: DevtoolsPrimitive, name?: string): number
+{
+    const depth = frameStack.length;
+    if (hook !== null)
+    {
+        frameStack.push({ primitive, group: nextGroup++, name });
+    }
+    return depth;
+}
+
+/**
+ * Closes the frame opened at `depth` (and, by truncation, any inner frame a throw leaked past
+ * its own exit). @internal
+ */
+export function dtExitPrimitive(depth: number): void
+{
+    if (frameStack.length > depth)
+    {
+        frameStack.length = depth;
+    }
+}
+
+/**
+ * Pushes `id` as the active owner for nodes created inside a root body; returns the previous
+ * owner to restore. Also captures the primitive-frame depth: {@link dtExitOwner} runs in
+ * createRoot's finally, so a frame leaked inside the root (a throwing constructor) is truncated
+ * at the root boundary instead of mis-stamping everything created after it.
+ *
+ * @internal
+ */
 export function dtEnterOwner(id: number): number
 {
     const previous = currentOwner;
     currentOwner = id;
+    ownerFrameDepths.push(frameStack.length);
     return previous;
 }
 
-/** Restores the active owner after a root body returns. @internal */
+/** Restores the active owner after a root body returns, healing any leaked primitive frames. @internal */
 export function dtExitOwner(previous: number): void
 {
     currentOwner = previous;
+    const depth = ownerFrameDepths.pop();
+    if (depth !== undefined && frameStack.length > depth)
+    {
+        frameStack.length = depth;
+    }
 }
 
 /** Announces a node's disposal and drops it from the registry. No-op when the node was never registered. @internal */
@@ -227,22 +339,69 @@ export function dtDispose(id: number): void
     hook.disposed(id);
 }
 
-/** Announces that effect/memo `id` ran. @internal */
-export function dtRun(id: number): void
+/**
+ * Stamps `fromId` as the pending run-cause on every consumer subscribed to `producer`, then
+ * recurses through consumers that are themselves producers (memos) stamping THEM as the cause one
+ * level further down - so each consumer attributes its next run to its DIRECT dependency, not the
+ * original signal. The `pendingCause === fromId` short-circuit doubles as the cycle guard.
+ *
+ * @internal
+ */
+function stampCauses(fromId: number, producer: Producer, depth: number): void
 {
-    if (hook !== null && id !== 0)
+    if (depth > 32)
     {
-        hook.run(id);
+        return;
+    }
+    for (const link of producer.subs)
+    {
+        const subId = link.consumer.devtoolsId ?? 0;
+        if (subId === 0)
+        {
+            continue;
+        }
+        const record = registry.get(subId);
+        if (record === undefined || record.pendingCause === fromId)
+        {
+            continue;
+        }
+        record.pendingCause = fromId;
+        if (record.producer !== undefined)
+        {
+            stampCauses(subId, record.producer, depth + 1);
+        }
     }
 }
 
-/** Announces that signal `id` was written. @internal */
+/** Announces that effect/memo `id` ran, with the producer that triggered it (0 = initial run). @internal */
+export function dtRun(id: number): void
+{
+    if (hook === null || id === 0)
+    {
+        return;
+    }
+    const record = registry.get(id);
+    const cause = record?.pendingCause ?? 0;
+    if (record !== undefined)
+    {
+        record.pendingCause = 0;
+    }
+    hook.run(id, cause);
+}
+
+/** Announces that signal `id` was written, and stamps its downstream consumers' run-causes. @internal */
 export function dtWrite(id: number): void
 {
-    if (hook !== null && id !== 0)
+    if (hook === null || id === 0)
     {
-        hook.write(id);
+        return;
     }
+    const producer = registry.get(id)?.producer;
+    if (producer !== undefined)
+    {
+        stampCauses(id, producer, 0);
+    }
+    hook.write(id);
 }
 
 /**
@@ -264,6 +423,9 @@ export function snapshotReactiveGraph(): GraphSnapshot
             kind: record.kind,
             name: record.name,
             owner: record.owner,
+            primitive: record.primitive,
+            group: record.group,
+            groupName: record.groupName,
             version: record.producer?.version ?? 0,
             subscribers: record.producer?.subs.length ?? 0,
             sources: record.subscriber?.deps.length ?? 0

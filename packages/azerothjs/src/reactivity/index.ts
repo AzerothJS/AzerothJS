@@ -51,6 +51,7 @@ export { getRenderMode, isStringMode, isHydrating, runInMode } from './render-mo
 export type { RenderMode, RunInModeOptions } from './render-mode.ts';
 export { getStoreScope, runInStoreScope } from './store-scope.ts';
 export { createStore } from './create-store.ts';
+export type { StoreOptions } from './create-store.ts';
 
 // SSR string-emission helpers (the raw-HTML brand and the escapes; the framework's
 // own serializers live in ./internal - plumbing, not application API).
@@ -74,6 +75,7 @@ export type {
     DevtoolsHook,
     DevtoolsNode,
     DevtoolsNodeKind,
+    DevtoolsPrimitive,
     GraphSnapshot,
     GraphSnapshotNode,
     GraphEdge,

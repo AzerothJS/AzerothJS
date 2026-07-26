@@ -41,6 +41,7 @@ export interface PageRoute extends Route
     children?: PageRoute[];
 }
 
+/** The routes, client dist, and optional renderer {@link mountPages} needs. */
 export interface KitOptions
 {
     /** The route table - the same one the client router mounts. */
@@ -142,7 +143,13 @@ function registerDynamic(
             {
                 return new Response(null, { status: 302, headers: { location: result.to } });
             }
-            return htmlResponse(result.html);
+            // A vetoed route renders NOTHING: serve the plain shell (so the client can boot
+            // and show its own 403 UI) with the guard's status - never the protected page.
+            if (result.kind === 'blocked')
+            {
+                return htmlResponse(shell, { status: result.status });
+            }
+            return htmlResponse(result.html, { status: result.status });
         }
         return htmlResponse(shell);
     });

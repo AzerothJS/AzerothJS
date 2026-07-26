@@ -46,6 +46,15 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set
 ]);
 
 /**
+ * HTML raw-text elements: their content is CDATA. `<script>`/`<style>` text is emitted VERBATIM,
+ * never HTML-escaped - a browser does not decode entities inside them (raw text), so escaping `&`/`<`
+ * would render `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD. Mirrors the compiler's set.
+ *
+ * @internal
+ */
+const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
+
+/**
  * Props that h()'s DOM path sets as content rather than attributes
  * (`el.innerHTML = x` / `el.textContent = x`). The serializer handles them
  * as element content in {@link serializeElement}, so they must NOT be
@@ -54,6 +63,20 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set
  * @internal
  */
 const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
+
+/**
+ * Characters an HTML attribute name may not contain (the HTML5 attribute-name
+ * production): controls, space, quote, apostrophe, `>`, `/`, and `=`. A name
+ * carrying any of these cannot be written as an attribute without breaking out
+ * of the attribute context - which is exactly the injection an attacker attempts
+ * by controlling a prop KEY (`h('div', { 'x" onmouseover="alert(1)': 'v' })`).
+ * The DOM path's `setAttribute` throws `InvalidCharacterError` on such a name; the
+ * serializer must reject it too rather than emit it raw.
+ *
+ * @internal
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters is the POINT: a control char in an attribute name is invalid HTML and an injection vector
+const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'>/=]/;
 
 /**
  * Resolves a possibly-reactive prop value to a concrete value, reading getters
@@ -98,7 +121,7 @@ function resolveValue(value: unknown): unknown
  * serializeAttrs({ onClick: handler, ref: r }); // '' (handlers/refs skipped)
  * ```
  */
-export function serializeAttrs(props: Props): string
+function serializeAttrs(props: Props): string
 {
     let out = '';
 
@@ -117,6 +140,16 @@ export function serializeAttrs(props: Props): string
         if (CONTENT_PROPERTIES.has(key))
         {
             continue;
+        }
+
+        // Reject an attribute name that cannot be safely written - mirroring the
+        // DOM path's setAttribute, which throws InvalidCharacterError. A prop key
+        // carrying a quote/space/`>` is either a bug or an injection attempt to
+        // break out of the attribute context and inject a live handler; emitting
+        // it raw is the XSS. Fail loud, identically on server and client.
+        if (key === '' || INVALID_ATTR_NAME.test(key))
+        {
+            throw new Error(`azeroth: invalid attribute name ${ JSON.stringify(key) } - names may not contain whitespace, quotes, '>', '/', or '='.`);
         }
 
         const value = resolveValue(rawValue);
@@ -153,7 +186,7 @@ export function serializeAttrs(props: Props): string
  * serializeChildren([serializeElement('b', {}, ['!'])]); // '<b>!</b>'
  * ```
  */
-export function serializeChildren(children: Child[]): string
+function serializeChildren(children: Child[]): string
 {
     let out = '';
 
@@ -195,6 +228,24 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
     if (VOID_ELEMENTS.has(tagName))
     {
         return ssr(`<${ tagName }${ attrs }>`);
+    }
+
+    // Raw-text element (`<script>`/`<style>`): content is CDATA, emitted verbatim (same trust model
+    // as innerHTML). The compiler feeds a single literal string here; escaping it would corrupt the
+    // CSS/JSON-LD, since a browser does not decode entities inside these elements.
+    if (RAW_TEXT_ELEMENTS.has(tagName))
+    {
+        let raw = '';
+        for (const child of children)
+        {
+            if (child === null || child === undefined || child === false)
+            {
+                continue;
+            }
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- raw-text content is caller-trusted CDATA; a reactive value is resolved, any non-string is coerced like the DOM path
+            raw += String(typeof child === 'function' ? resolveValue(child) ?? '' : child);
+        }
+        return ssr(`<${ tagName }${ attrs }>${ raw }</${ tagName }>`);
     }
 
     let inner: string;

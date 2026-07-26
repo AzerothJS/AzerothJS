@@ -20,8 +20,6 @@ import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
 import { StyleIndex } from './style-index.ts';
 import { createNativeLsBackend, type NativeLsBackend, type RawTsDiagnostic } from './native-project.ts';
 
-export type { RawTsDiagnostic } from './native-project.ts';
-
 /** Suffix that marks a synthetic virtual file backing a `.azeroth` module. */
 const VIRTUAL_SUFFIX = '.azeroth.ts';
 

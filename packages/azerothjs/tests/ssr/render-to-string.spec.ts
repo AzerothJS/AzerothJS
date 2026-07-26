@@ -21,6 +21,16 @@ describe('renderToString - the no-DOM contract', () =>
     });
 });
 
+describe('renderToString - misuse guard', () =>
+{
+    it('throws a clear error when passed an already-built value instead of a thunk', () =>
+    {
+        // renderToString(App()) - the classic missing `() =>`. The value is not a function.
+        expect(() => renderToString('<div>built</div>' as unknown as () => HTMLElement))
+            .toThrow(/expects a THUNK/);
+    });
+});
+
 describe('renderToString - element / attribute / text correctness', () =>
 {
     it('serializes a single element with text', () =>
@@ -71,6 +81,17 @@ describe('renderToString - element / attribute / text correctness', () =>
     {
         expect(renderToString(() => h('ul', {}, [h('li', {}, 'a'), h('li', {}, 'b')])))
             .toBe('<ul><li>a</li><li>b</li></ul>');
+    });
+
+    it('emits <style>/<script> content VERBATIM (raw text, never HTML-escaped)', () =>
+    {
+        // A browser does not decode entities inside raw-text elements, so escaping `&`/`<`
+        // here would corrupt the CSS/JSON-LD (`&amp;` would render literally).
+        expect(renderToString(() => h('style', {}, '.a{color:red}')))
+            .toBe('<style>.a{color:red}</style>');
+        expect(renderToString(() => h('script', { type: 'application/ld+json' },
+            '{"@context":"https://schema.org","name":"A & B","d":"x < y"}')))
+            .toBe('<script type="application/ld+json">{"@context":"https://schema.org","name":"A & B","d":"x < y"}</script>');
     });
 });
 

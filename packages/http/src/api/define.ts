@@ -362,7 +362,9 @@ export function del<Path extends string, Out = unknown, Query = undefined, Respo
     return { kind: 'route', method: 'DELETE', path, ...definition };
 }
 
-/** `query('/search', { input, output })` - a QUERY route; `input` is the query document.  * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+/**
+ * `query('/search', { input, output })` - a QUERY route; `input` is the query document.
+ * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
  * proxies, caches, and tooling may not recognize it. The surface is stable within the
  * 1.x train but carries an experimental flag until the RFC is.
  */

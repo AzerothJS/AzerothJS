@@ -34,7 +34,7 @@
  */
 
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Handler } from './app.ts';
@@ -75,6 +75,23 @@ export function contentTypeFor(path: string): string
     return CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/**
+ * @internal Does the relative path contain a hidden segment (one starting with `.`)?
+ * `.well-known` is exempt - RFC 8615 reserves it as a public, servable path. `.` and `..`
+ * are moot here (the traversal check already handles them) but count as dotfiles too.
+ */
+function hasDotSegment(relative: string): boolean
+{
+    for (const segment of relative.split(/[/\\]/))
+    {
+        if (segment.startsWith('.') && segment !== '.well-known')
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 export interface StaticOptions
 {
     /**
@@ -92,6 +109,14 @@ export interface StaticOptions
      * (a non-wildcard route), the whole route is one fixed file - `index` is served.
      */
     param?: string;
+
+    /**
+     * Serve dotfiles (a path segment beginning with `.`). Default `false`: a request for
+     * `/.env`, `/.git/config`, or any hidden file is a 404. `.well-known/` is ALWAYS served
+     * regardless (RFC 8615 reserves it as a public path for ACME, security.txt, etc.). Set
+     * `true` only when the root deliberately contains servable hidden files.
+     */
+    dotfiles?: boolean;
 }
 
 /**
@@ -101,14 +126,29 @@ export interface StaticOptions
 export function staticFiles(rootDir: string, options: StaticOptions = {}): Handler
 {
     const root = resolve(rootDir);
+    // The root's REAL path (symlinks resolved), resolved ONCE and cached: a served file's
+    // realpath must stay under it, so a symlink INSIDE the root pointing outside cannot leak
+    // arbitrary files. Resolved lazily via the SAME async realpath the per-request check uses
+    // (a sync/async mismatch expands Windows 8.3 short names inconsistently), and falls back
+    // to the logical root if it does not exist.
+    let realRootPromise: Promise<string> | null = null;
+    const getRealRoot = (): Promise<string> => (realRootPromise ??= realpath(root).catch(() => root));
     const cacheControl = options.cacheControl ?? 'public, max-age=0, must-revalidate';
     const index = options.index ?? 'index.html';
     const param = options.param ?? 'path';
+    const allowDotfiles = options.dotfiles === true;
 
     return async (context) =>
     {
         const relative = context.params[param] ?? '';
         if (relative.includes('\0'))
+        {
+            throw new NotFoundError();
+        }
+
+        // Dotfiles (a segment starting with `.`) are hidden by default - serving `/.env` or
+        // `/.git/config` is a real exposure. `.well-known` is the one public exception.
+        if (!allowDotfiles && hasDotSegment(relative))
         {
             throw new NotFoundError();
         }
@@ -129,6 +169,16 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             info = await stat(target).catch(() => null);
         }
         if (info === null || !info.isFile())
+        {
+            throw new NotFoundError();
+        }
+
+        // The string check above only proves the LOGICAL path is under root; a symlink
+        // component can still point outside. Verify the REAL path stays contained - this is
+        // what stops an in-root symlink from serving `/etc/passwd`.
+        const realRoot = await getRealRoot();
+        const realTarget = await realpath(target).catch(() => null);
+        if (realTarget === null || (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)))
         {
             throw new NotFoundError();
         }

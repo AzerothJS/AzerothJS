@@ -14,10 +14,16 @@ import { dirname, join } from 'node:path';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import type { PageRenderer } from './ssr.ts';
 
+/** The routes, client dist, and renderer the static {@link prerender} pass needs. */
 export interface PrerenderOptions
 {
+    /** The route table - the same one passed to {@link mountPages}. */
     routes: PageRoute[];
+
+    /** The built client directory (vite's dist); prerendered pages are written here. */
     clientDir: string;
+
+    /** The per-url page renderer from the SSR bundle (`createPageRenderer(App, routes)`). */
     renderer: PageRenderer;
 }
 
@@ -53,6 +59,18 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         {
             throw new Error(`kit prerender: "${ page.path }" redirected to "${ result.to }" during prerender - `
                 + 'a static page cannot redirect; drop the guard or use render: \'server\'.');
+        }
+        // A static page that a guard blocks (or that doesn't match) cannot be a prerendered
+        // file - both are contradictions someone should hear about at build time.
+        if (result.kind === 'blocked')
+        {
+            throw new Error(`kit prerender: "${ page.path }" was blocked by a guard (status ${ result.status }) during prerender - `
+                + 'a static page cannot be guarded; drop the guard or use render: \'server\'.');
+        }
+        if (result.status === 404)
+        {
+            throw new Error(`kit prerender: "${ page.path }" did not match any route during prerender - `
+                + 'remove it from the static set or fix the route table.');
         }
         const file = join(options.clientDir, prerenderFileFor(page.path));
         mkdirSync(dirname(file), { recursive: true });

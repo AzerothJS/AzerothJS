@@ -10,7 +10,7 @@
  *     expression runs through the R2 rewrite (rewrite.ts): reactive reads/writes become
  *     getter/setter calls.
  *   - The markup output is emitted from ONE IR (the RenderPlan produced by lower.ts) through a single
- *     emitter, with NO legacy fallback:
+ *     emitter:
  *       * an element-rooted output emits a MODE-DISPATCHED body (emitUnifiedBody): the IR->h() tree
  *         (emitNode) for SSR string + hydrate, and a hoisted tmpl() clone wired by
  *         firstChild/nextSibling paths for fresh DOM render;
@@ -27,7 +27,8 @@
  */
 
 import { findMarkupStart } from './scanner.ts';
-import { parseMarkup, CompileError, VOID_ELEMENTS } from './markup-parser.ts';
+import { parseMarkup, CompileError } from './markup-parser.ts';
+import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './scanner.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
@@ -53,13 +54,28 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * artifact meeting a runtime that speaks a DIFFERENT contract fails with a clear
  * "rebuild with the matching compiler" error instead of undefined behavior. Bump it
  * ONLY when the emit vocabulary or helper semantics change incompatibly; the runtime's
- * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it - the
- * runtime-contract drift spec welds the two.
+ * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
+ * spec fails the build if the two disagree.
  */
 export const EMITTED_CONTRACT_VERSION = 1;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
+
+/**
+ * Renders a keyword's trailing options argument. In dev emission the declared identifier is
+ * injected as the primitive's devtools `name`; user-written options are spread after it, so an
+ * explicit `with { name }` wins. Outside dev the options pass through untouched (or render empty).
+ */
+function namedOptions(opts: string | null, name: string, emit: Emit): string
+{
+    if (!emit.dev)
+    {
+        return opts !== null ? `, ${ opts }` : '';
+    }
+    const label = JSON.stringify(name);
+    return opts !== null ? `, { name: ${ label }, ...(${ opts }) }` : `, { name: ${ label } }`;
+}
 
 /** Result of compiling a `.azeroth` module with the new pipeline. */
 export interface CompileResult
@@ -78,6 +94,14 @@ export interface GenerateOptions
      * half the compiled output - for apps that never server-render.
      */
     ssr?: boolean;
+
+    /**
+     * Dev-server emission: every reactive keyword passes its declared identifier as the
+     * primitive's devtools debug name (`state count` -> `createSignal(0, { name: "count" })`),
+     * so the inspector labels nodes with the names the user wrote. Off (the default) emits
+     * no names - production output is unchanged by this feature existing.
+     */
+    dev?: boolean;
 }
 
 /** Tracks runtime names used and templates hoisted while emitting a module. */
@@ -88,6 +112,9 @@ interface Emit
 
     /** Client-only build: skip the SSR/hydration branch in every component body. */
     clientOnly: boolean;
+
+    /** Dev emission: keyword declarations pass their identifier as the devtools debug name. */
+    dev: boolean;
     /**
      * True while emitting markup embedded inside an expression (`emitMarkupExpr`).
      * In this mode the emit helpers leave reads RAW - a single outer
@@ -212,7 +239,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
     }
 
     const module = parseModule(source);
-    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, raw: false };
+    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -371,18 +398,18 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const parsed = parseDeclarationSlice(source, item);
             const init = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : 'undefined';
             const typeArg = parsed?.type ? `<${ parsed.type.getText(parsed.sourceFile) }>` : '';
-            const opts = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
+            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
             emit.used.add(RUNTIME_FN.state);
-            lines.push(`const [${ item.name }, ${ setterName(item.name) }] = ${ RUNTIME_FN.state }${ typeArg }(${ init }${ opts });`);
+            lines.push(`const [${ item.name }, ${ setterName(item.name) }] = ${ RUNTIME_FN.state }${ typeArg }(${ init }${ namedOptions(rawOpts, item.name, emit) });`);
         }
         else if (item.kind === 'derived' || item.kind === 'deferred')
         {
             const parsed = parseDeclarationSlice(source, item);
             const init = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : 'undefined';
-            const opts = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
+            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
             const fn = RUNTIME_FN[item.kind];
             emit.used.add(fn);
-            lines.push(`const ${ item.name } = ${ fn }(() => (${ init })${ opts });`);
+            lines.push(`const ${ item.name } = ${ fn }(() => (${ init })${ namedOptions(rawOpts, item.name, emit) });`);
         }
         else if (item.kind === 'form')
         {
@@ -396,6 +423,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const withObj = item.optionsStart !== null && item.optionsEnd !== null
                 ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources)
                 : null;
+            const nameKey = emit.dev ? `name: ${ JSON.stringify(item.name) }, ` : '';
             if (item.isArray)
             {
                 // `form NAME[] = { ...blankRow } [with { ... }]` -> a `createFieldArray` declaration: the
@@ -403,14 +431,14 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
                 // object supplies validate/validateArray/etc. Read explicitly (NAME.rows()/NAME.append()).
                 emit.used.add(RUNTIME_FN_FIELD_ARRAY);
                 const config = withObj !== null
-                    ? `{ blank: () => (${ initial }), ...(${ withObj }) }`
-                    : `{ blank: () => (${ initial }) }`;
+                    ? `{ ${ nameKey }blank: () => (${ initial }), ...(${ withObj }) }`
+                    : `{ ${ nameKey }blank: () => (${ initial }) }`;
                 lines.push(`const ${ item.name } = ${ RUNTIME_FN_FIELD_ARRAY }(${ config });`);
             }
             else
             {
                 emit.used.add(RUNTIME_FN.form);
-                const config = withObj !== null ? `{ initial: (${ initial }), ...(${ withObj }) }` : `{ initial: (${ initial }) }`;
+                const config = withObj !== null ? `{ ${ nameKey }initial: (${ initial }), ...(${ withObj }) }` : `{ ${ nameKey }initial: (${ initial }) }`;
                 lines.push(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`);
             }
         }
@@ -428,10 +456,10 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
 
             const sourceArg = plan.source !== null ? `() => (${ rewriteReactive(plan.source, sources) }), ` : '';
             const valueArg = plan.wrapValue ? `() => (${ value })` : value;
-            const trailing = plan.rest !== null ? `, ${ rewriteReactive(plan.rest, sources) }`
-                : plan.opts !== null ? `, ${ rewriteReactive(plan.opts, sources) }` : '';
+            const rawTrailing = plan.rest !== null ? rewriteReactive(plan.rest, sources)
+                : plan.opts !== null ? rewriteReactive(plan.opts, sources) : null;
             emit.used.add(plan.fn);
-            lines.push(`const ${ item.name } = ${ plan.fn }(${ sourceArg }${ valueArg }${ trailing });`);
+            lines.push(`const ${ item.name } = ${ plan.fn }(${ sourceArg }${ valueArg }${ namedOptions(rawTrailing, item.name, emit) });`);
         }
         else if (item.kind === 'effect')
         {
@@ -1134,6 +1162,21 @@ function serialize(node: TemplateNode): string
     if (VOID_ELEMENTS.has(node.tag))
     {
         return html;
+    }
+    // Raw-text element (`<script>`/`<style>`): its content is CDATA, emitted VERBATIM. A browser
+    // does not decode entities inside these elements, so HTML-escaping `&`/`<` here would render
+    // `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD. The parser already read the content
+    // as a single literal text node (no holes), so only text children appear.
+    if (RAW_TEXT_ELEMENTS.has(node.tag))
+    {
+        for (const child of node.children)
+        {
+            if (child.kind === 'text')
+            {
+                html += child.value;
+            }
+        }
+        return `${ html }</${ node.tag }>`;
     }
     // An only-child hole serializes to NOTHING: the element bounds the content,
     // so bindContent needs no anchor pair (see onlyChildHoleOf).

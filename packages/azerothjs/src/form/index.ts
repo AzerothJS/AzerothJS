@@ -33,8 +33,8 @@ export type {
     FieldArrayRow
 } from './field-array.ts';
 
-// The rules live in @azerothjs/schema - THE validation package, shared by this form, the api
-// client, and the server boundary. Re-exported here so existing form imports keep working.
+// Validators live in @azerothjs/schema - THE validation package, shared by this form, the api
+// client, and the server boundary.
 export {
     required,
     minLength,

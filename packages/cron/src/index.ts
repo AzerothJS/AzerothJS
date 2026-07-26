@@ -1,7 +1,7 @@
 /**
  * MODULE: cron - the AzerothJS job scheduler
  *
- * Zero-dependency scheduled work for Node >= 24: 5-field cron expressions (names, ranges,
+ * Zero-dependency scheduled work for Node >= 22: 5-field cron expressions (names, ranges,
  * steps, @aliases) evaluated in any IANA timezone with honest DST semantics, drift-free
  * single-timeout arming, overlap control, a printable job table, error isolation, and a
  * graceful drain built to sit next to an HTTP server's shutdown. The expression engine

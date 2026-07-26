@@ -50,12 +50,18 @@ const LAYOUT_RULES_OFF: Linter.RulesRecord = Object.fromEntries(
     LAYOUT_RULE_NAMES.flatMap(name => [[name, 'off'], [`@stylistic/${ name }`, 'off']])
 );
 
+/** The reactivity rule modules keyed by their unprefixed name, for hosts that register rules individually. */
 const rules: Record<string, Rule.RuleModule> = {
     'no-self-write-in-effect': noSelfWriteInEffect,
     'require-effect-disposal': requireEffectDisposal,
     'handler-call': handlerCall
 };
 
+/**
+ * The `@azerothjs/eslint-plugin` object: the reactivity rules for plain `.ts` files, the `.azeroth`
+ * processor and parser, and the flat-config `recommended` preset. This is the package's default export;
+ * spread `configs.recommended` (an array) into a flat config to enable everything.
+ */
 const plugin: ESLint.Plugin & { configs: { recommended: Linter.Config[] } } = {
     meta:
     {
@@ -121,11 +127,10 @@ plugin.configs.recommended = [
             'azeroth/no-self-write-in-effect': 'off',
             'azeroth/require-effect-disposal': 'off',
             'azeroth/handler-call': 'off',
-            // NOTE: `prefer-const` is intentionally LEFT ON. `state x = v` lowers to `let x = v`, which
-            // would draw a false positive when that state is never reassigned - but the processor drops
-            // exactly those (a prefer-const message landing on a `state` name), so a genuine user `let foo`
-            // that is never reassigned is still flagged. (It was previously disabled wholesale, which
-            // silenced that real signal too.)
+            // `prefer-const` is intentionally LEFT ON. `state x = v` lowers to `let x = v`, which would
+            // draw a false positive when that state is never reassigned - but the processor drops exactly
+            // those (a prefer-const message landing on a `state` name), so a genuine user `let foo` that is
+            // never reassigned is still flagged.
             ...LAYOUT_RULES_OFF
         }
     }

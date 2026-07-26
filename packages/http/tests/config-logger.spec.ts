@@ -66,6 +66,23 @@ describe('loadConfig: typed, loud, all-at-once', () =>
         expect(logged).toContain('[redacted]');
         expect(logged).toContain('example.com');
     });
+
+    it('redacts secrets on the console.log / util.inspect path, not only JSON', async () =>
+    {
+        // console.log(config) and util.inspect(config) IGNORE toJSON and enumerate the object,
+        // so a JSON-only redaction leaks the plaintext. The inspect hook must also redact.
+        const { inspect } = await import('node:util');
+        const config = loadConfig({
+            dbUrl: str('DATABASE_URL', { secret: true }),
+            host: str('HOST')
+        }, { DATABASE_URL: 'postgres://user:SUPERSECRETpw@host/db', HOST: 'example.com' });
+
+        const shown = inspect(config);
+        expect(shown).not.toContain('SUPERSECRETpw');
+        expect(shown).toContain('[redacted]');
+        expect(shown).toContain('example.com'); // non-secret still visible
+        expect(config.dbUrl).toBe('postgres://user:SUPERSECRETpw@host/db'); // code still reads real value
+    });
 });
 
 describe('createMinimalLogger: the record contract', () =>

@@ -190,6 +190,17 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
         return createHydrationNode(tag, props, children) as unknown as HTMLElement;
     }
 
+    // DOM-build path (not the compiled hot path - that clones tmpl()). A missing `document` here
+    // means the tree is being built OUTSIDE string mode on the server - almost always
+    // `renderToString(App())` where the `() =>` thunk was forgotten, so App() ran and reached h()
+    // before string mode was active. Name that instead of the raw "document is not defined".
+    if (typeof document === 'undefined')
+    {
+        throw new ReferenceError(`h(<${ tag }>) needs a DOM, but \`document\` is undefined. On the server, `
+            + 'render with a THUNK - renderToString(() => App(props)) - so the tree builds in string mode; '
+            + 'building it eagerly (renderToString(App())) runs h() against a missing DOM.');
+    }
+
     const el = createElementByTag(tag);
 
     applyProps(el, props);
@@ -866,6 +877,24 @@ export function bindSlot(marker: ChildNode, result: Node | null | undefined): vo
 }
 
 /**
+ * Whether a reactive value carries hydration descriptors: a {@link HydrationNode}, or an
+ * array containing one (holes may return `[<a/>, 'text', count()]`). During a hydration
+ * first run these must be ADOPTED against the server content, not coerced by buildNode -
+ * which would stringify the descriptor to `[object Object]`.
+ *
+ * @internal
+ */
+function containsHydrationNode(value: unknown): boolean
+{
+    if (isHydrationNode(value))
+    {
+        return true;
+    }
+
+    return Array.isArray(value) && value.some(containsHydrationNode);
+}
+
+/**
  * Drives a reactive hole and patches its content in place as `child` re-runs. The range is bounded
  * by `closeAnchor`: a `<!--]-->` comment for an anchored hole, or `null` for the anchor-free only-child
  * case, where the ELEMENT itself bounds the content (insert = append, so the whole element is the
@@ -875,15 +904,21 @@ export function bindSlot(marker: ChildNode, result: Node | null | undefined): vo
  * existing text node in place (no flash, node identity preserved); multi-node values (arrays and
  * fragments) render as direct children via {@link spliceMultiNode}; single element/node values swap.
  *
+ * When `hydrating`, the FIRST effect run adopts the server content: a hole that returns element/list
+ * markup evaluates to hydration descriptors (h() runs in hydrate mode), which are claimed against the
+ * server nodes via {@link hydrateChild} instead of being rebuilt. A primitive hole skips adoption and
+ * reuses the server text node through the scalar fast-path. Later runs behave like the DOM path.
+ *
  * @internal
  */
-function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown): void
+function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown, hydrating = false): void
 {
     // The hole's live anchor node: the single primitive text node in the common
     // case. Extra nodes (an array-valued hole) are removed the first time the
     // value is materialised as a real node.
     let currentNode: ChildNode | null = content[0] ?? null;
     let extras: ChildNode[] = content.slice(1);
+    let firstRun = hydrating;
 
     createEffect(() =>
     {
@@ -893,8 +928,37 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
             const value = createRoot((d) =>
             {
                 localDispose = d;
-                return resolveReactive(child);
+                const resolved = resolveReactive(child);
+                // Hydration first run: an element/list hole built HydrationNode descriptors in
+                // hydrate mode. Adopt the server content between the anchors here (inside this run's
+                // root, so the listeners/effects the descriptors wire are owned and torn down on
+                // swap) rather than letting buildNode stringify the descriptor to `[object Object]`.
+                if (firstRun && containsHydrationNode(resolved))
+                {
+                    const cursor = new HydrationCursor(parent, content);
+                    hydrateChild(resolved as Child, cursor);
+                    cursor.assertExhausted('reactive hole');
+                }
+                return resolved;
             });
+
+            if (firstRun)
+            {
+                firstRun = false;
+                if (containsHydrationNode(value))
+                {
+                    // The adopted server nodes ARE this binding's live range; later runs swap/patch
+                    // them. Teardown disposes the run's effects and fires destroy hooks; the next
+                    // run removes the nodes via the currentNode/extras logic (as the DOM path does).
+                    currentNode = content[0] ?? null;
+                    extras = content.slice(1);
+                    return () =>
+                    {
+                        localDispose?.();
+                        destroyNodes(content);
+                    };
+                }
+            }
 
             // Primitive into the existing text node. The dominant case: a
             // `() => `Count: ${ n() }`` hole. Keep the node and only touch `.data`
@@ -1029,6 +1093,16 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
         // hydration.
         transferCarriedSymbols(node, el);
 
+        // `innerHTML`/`textContent` OWN the element's content: the server rendered it from the
+        // prop (raw HTML, or an escaped text node), not from child descriptors. applyProps above
+        // already re-applied the prop onto the live element, so its content is correct - walking
+        // the children (there are none) would (correctly) find the server-rendered content
+        // unclaimed and trip the whole-page fallback. Skip the child walk.
+        if ('innerHTML' in props || 'textContent' in props)
+        {
+            return;
+        }
+
         const childCursor = new HydrationCursor(el);
         for (const child of children)
         {
@@ -1113,5 +1187,5 @@ function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): v
 {
     cursor.takeOpenAnchor();
     const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
-    driveHoleRange(cursor.parent, closeAnchor, content, child);
+    driveHoleRange(cursor.parent, closeAnchor, content, child, true);
 }

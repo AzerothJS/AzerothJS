@@ -29,6 +29,12 @@ import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity
  */
 function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean): string
 {
+    if (typeof component !== 'function')
+    {
+        throw new TypeError('renderToString expects a THUNK that builds the tree, e.g. '
+            + 'renderToString(() => App(props)). It received an already-built value - the tree must '
+            + 'build INSIDE the string-mode render, or h() runs against a missing server DOM.');
+    }
     // Markers ride the mode window itself (exception-safe, render-scoped) - there is no
     // separate marker global to set and restore.
     return runInMode('string', (): string =>

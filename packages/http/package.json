@@ -1,10 +1,10 @@
 {
     "name": "@azerothjs/http",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
-    "description": "AzerothJS server kernel - zero-dependency, web-standard Request/Response HTTP stack where every request is a reactive root",
+    "description": "AzerothJS server kernel - web-standard Request/Response HTTP stack (no third-party dependencies) where every request is a reactive root",
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
@@ -42,9 +42,11 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/logger": "1.0.0-beta.2",
-        "azerothjs": "1.0.0-beta.2",
-        "@azerothjs/schema": "1.0.0-beta.2"
+        "@azerothjs/logger": "1.0.0",
+        "@azerothjs/schema": "1.0.0"
+    },
+    "peerDependencies": {
+        "azerothjs": "^1.0.0"
     },
     "publishConfig": {
         "access": "public"
@@ -63,5 +65,8 @@
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/http",
     "bugs": {
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    },
+    "devDependencies": {
+        "@seriousme/openapi-schema-validator": "^2.9.0"
     }
 }

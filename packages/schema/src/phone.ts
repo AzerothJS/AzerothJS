@@ -73,62 +73,25 @@ export interface PhoneOptions
 }
 
 /**
- * phone
+ * Validator factory: accepts phone numbers in E.164 international format, optionally
+ * restricted to (and normalized for) a list of countries. Use it in a form's `validate`
+ * map for lightweight phone checks without bundling full libphonenumber metadata (~70 KB).
  *
- * PURPOSE:
- * Validator factory: returns a FieldValidator<string> that accepts E.164 phone numbers, optionally
- * restricted to (and normalized for) a list of countries.
+ * Human punctuation (spaces, hyphens, dots, parentheses) is stripped, so `+1 (415) 555-1234`
+ * and `+14155551234` validate identically. The number must start with `+` and carry 8 to 15
+ * digits. With `countries` set, the digits must begin with one of those countries' calling
+ * codes - a coarse prefix match that does NOT disambiguate a code shared by several countries
+ * (`+1` accepts any NANP number). With `defaultCountry` set (or a single-entry `countries`
+ * list, which supplies it automatically), national input without a leading `+` is normalized
+ * to E.164 first: a leading national-trunk `0` is dropped and the calling code prepended.
  *
- * WHY IT EXISTS:
- * Forms commonly need phone validation, but bundling full libphonenumber metadata (~70 KB) is overkill
- * for "looks like a valid international number". phone() covers the common case with zero dependencies,
- * and composes with libphonenumber-js via combine() when exact rules are required.
+ * An empty allowed-codes list (only unknown ISO codes passed) rejects every input. Allowed and
+ * default calling codes are resolved once at construction, so each call is cheap. Skips empty
+ * values - pair with {@link combine} and `required()` when the field is mandatory. This is
+ * format/prefix validation only; it does not prove a number is assigned or dialable.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, form; a validator factory for createForm's `validate` map, built on the country dataset
- * (getCountry) to resolve calling codes.
- *
- * INPUT CONTRACT:
- * - options?: { countries?, defaultCountry?, message? } - all optional (see {@link PhoneOptions}).
- *
- * OUTPUT CONTRACT:
- * - A FieldValidator<string>: value -> error message | null. Allowed calling codes and the default
- *   calling code are precomputed once at construction, not per call.
- *
- * WHY THIS DESIGN:
- * Calling codes are resolved + de-duplicated at construction (US/CA both map to '1'), so each call is
- * cheap. National-format normalization (drop a leading trunk '0', prepend the calling code) lets users
- * type local numbers. The country check is a coarse prefix match, NOT longest-prefix disambiguation -
- * deliberate, to stay dependency-free.
- *
- * WHEN TO USE:
- * Lightweight phone validation in forms, with optional country restriction.
- *
- * WHEN NOT TO USE:
- * Exact per-country length, mobile-vs-landline, or carrier rules - chain libphonenumber-js instead.
- *
- * EDGE CASES:
- * - Skips empty values (pair with required()).
- * - An empty allowed-codes list (only unknown ISO codes passed) rejects every input.
- * - Shared calling codes are not disambiguated (+1 accepts any NANP number).
- * - defaultCountry is auto-inferred when exactly one country is listed.
- *
- * PERFORMANCE NOTES:
- * Country lookups + de-dup run once at construction; per-call work is a couple of regex tests plus a
- * prefix scan over the (small) allowed-codes array.
- *
- * DEVELOPER WARNING:
- * This is FORMAT/PREFIX validation, not real-number validation - it does not prove a number is
- * assigned or dialable. Don't rely on it for that.
- *
- * Skips empty values - pair with `required()` to enforce both:
- *
- * ```ts
- * validate: { phone: combine(required(), phone({ countries: ['US', 'GB'] })) }
- * ```
- *
- * @param options - Optional `{ countries, defaultCountry, message }` configuration
- * @returns A `FieldValidator<string>` ready to slot into a form's `validate` map
+ * @param options - `{ countries, defaultCountry, message }`; see {@link PhoneOptions}.
+ * @returns A `FieldValidator<string>` for a form's `validate` map.
  * @see {@link PhoneOptions}
  * @see {@link combine}
  *

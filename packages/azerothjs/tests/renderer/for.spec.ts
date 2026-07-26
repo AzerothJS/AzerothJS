@@ -299,3 +299,27 @@ describe('For - edge cases', () =>
         container.remove();
     });
 });
+
+describe('For - each guard', () =>
+{
+    it('renders nothing for a nullish each (not-yet-loaded data), no crash', () =>
+    {
+        const [data] = createSignal<Row[] | null>(null);
+        const container = mount(() => h('ul', {}, For({
+            each: data as unknown as Row[] | (() => Row[]),
+            key: (r) => r.id,
+            children: (r) => h('li', {}, r.name)
+        })));
+        expect(rowEls(container)).toHaveLength(0);
+        container.remove();
+    });
+
+    it('throws a clear error for a non-array each', () =>
+    {
+        expect(() => mount(() => h('ul', {}, For({
+            each: { nope: true } as unknown as Row[],
+            key: (r) => r.id,
+            children: (r) => h('li', {}, r.name)
+        })))).toThrow(/<For each> expected an array/);
+    });
+});

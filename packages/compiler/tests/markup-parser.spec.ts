@@ -154,6 +154,56 @@ describe('parseMarkup - holes, fragments, components', () =>
     });
 });
 
+describe('parseMarkup - raw-text elements (script/style)', () =>
+{
+    it('reads <style> content verbatim, not as a hole', () =>
+    {
+        const e = el('<style>.a{color:red}</style>');
+        expect(e.tag).toBe('style');
+        expect(e.children).toHaveLength(1);
+        const text = e.children[0] as MarkupText;
+        expect(text.kind).toBe('text');
+        expect(text.value).toBe('.a{color:red}');
+    });
+
+    it('reads JSON-LD <script> content verbatim (braces intact)', () =>
+    {
+        const e = el('<script type="application/ld+json">{"@context":"https://schema.org","name":"x"}</script>');
+        expect(e.tag).toBe('script');
+        const text = e.children[0] as MarkupText;
+        expect(text.value).toBe('{"@context":"https://schema.org","name":"x"}');
+    });
+
+    it('does not parse `<` or `{` inside a <script> as markup', () =>
+    {
+        const e = el('<script>if (a < b && obj.x) { run() }</script>');
+        expect(e.children).toHaveLength(1);
+        const text = e.children[0] as MarkupText;
+        expect(text.value).toBe('if (a < b && obj.x) { run() }');
+    });
+
+    it('handles an empty raw-text element', () =>
+    {
+        const e = el('<style></style>');
+        expect(e.tag).toBe('style');
+        expect(e.children).toHaveLength(0);
+    });
+
+    it('does not stop at a `</` for a DIFFERENT tag inside the content', () =>
+    {
+        const e = el('<script>const s = "a</b>c";</script>');
+        expect((e.children[0] as MarkupText).value).toBe('const s = "a</b>c";');
+    });
+
+    it('leaves a capitalized <Style> as a component, not a raw-text element', () =>
+    {
+        const e = el('<Style>{value}</Style>');
+        expect(e.isComponent).toBe(true);
+        // Its child is a real hole, parsed normally (not swallowed as raw text).
+        expect(e.children[0]?.kind).toBe('expression');
+    });
+});
+
 describe('parseMarkup - CompileError cases', () =>
 {
     it('throws on a mismatched closing tag with the offending offset', () =>

@@ -1,28 +1,39 @@
-// The in-page devtools panel: a plain-DOM frontend over the agent
-// (agent.ts), which is the only code that touches the framework. The panel
-// renders the agent's model/graph/timeline and never observes itself (it is
-// not built with AzerothJS - see the prompt's hard rule).
+// The in-page devtools panel: a plain-DOM shell over the agent (agent.ts), which is the only
+// code that touches the framework. The panel renders the agent's model/graph/timeline and never
+// observes itself: it is deliberately NOT built with AzerothJS (the observer must not perturb
+// the graph it inspects).
 //
-// Chrome: starts as a small draggable launcher icon (live effect-count
-// badge) so it never covers the app. Expand to a tabbed panel - Tree,
-// Graph, Timeline, Performance, Settings. The panel can FLOAT (drag +
-// corner-resize) or DOCK to the left/right/bottom edge (edge-resize), and
-// pop out into its own window. Dock side, size, position, collapsed state,
-// and active tab persist in localStorage.
+// Chrome: a draggable launcher pill (live effect-count badge) that expands into the inspector -
+// an icon rail (Components, Timeline, Graph, Performance, Server, Settings), a search-first
+// toolbar (Ctrl+K), a master-detail body, and an inspector pane that sits right on a wide panel
+// and bottom on a narrow one. The panel FLOATS (drag + corner-resize) or DOCKS to an edge, and
+// every restore path is clamped so no persisted state can produce an off-screen or zero-size
+// panel. Everything lives inside a shadow root so host CSS can never reach in.
 //
-// Install BEFORE mounting so nodes created earlier are captured. Dev-only;
-// tree-shaken from production builds.
+// Install BEFORE mounting so nodes created earlier are captured. Dev-only; tree-shaken from
+// production builds.
 
 import {
     createAgent,
-    type AgentNode,
-    type AgentGraph,
-    type AgentGraphNode,
     type AgentModel,
+    type AgentGraph,
     type AgentHealth,
     type TimelineEntry,
     type SessionSnapshot
 } from './agent.ts';
+import { el, icon } from './dom.ts';
+import { buildStyle } from './theme.ts';
+import {
+    renderComponents,
+    renderTimeline,
+    renderGraph,
+    renderPerf,
+    renderInspector,
+    renderServer,
+    scrollToSelected,
+    type PanelCtx
+} from './views.ts';
+import { createServerLink, bridgeUrl } from './server-client.ts';
 
 export { createAgent, previewValue, detectLeakTrend } from './agent.ts';
 export type {
@@ -35,21 +46,34 @@ export type {
     AgentHealth,
     KindHealth,
     SessionSnapshot,
-    AgentRequest
+    AgentRequest,
+    DevtoolsPrimitive
 } from './agent.ts';
 
 const PANEL_ID = 'azeroth-devtools';
-const MAX_ROWS = 400;
 const UI_KEY = 'azeroth-devtools:ui';
 
 type Dock = 'float' | 'left' | 'right' | 'bottom';
-type Tab = 'tree' | 'graph' | 'timeline' | 'perf' | 'settings';
+type View = 'components' | 'timeline' | 'graph' | 'perf' | 'server' | 'settings';
+
+const DOCKS: readonly Dock[] = ['float', 'left', 'right', 'bottom'];
+const VIEW_IDS: readonly View[] = ['components', 'timeline', 'graph', 'perf', 'server', 'settings'];
+
+/** Icon rail entries (lucide-style stroke paths, inlined - the panel has no dependencies). */
+const VIEWS: { id: View; title: string; d: string }[] = [
+    { id: 'components', title: 'Components', d: 'm12 2-10 5 10 5 10-5-10-5Z M2 12l10 5 10-5 M2 17l10 5 10-5' },
+    { id: 'timeline', title: 'Timeline', d: 'M12 6v6l4 2 M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20Z' },
+    { id: 'graph', title: 'Graph', d: 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4' },
+    { id: 'perf', title: 'Performance', d: 'M22 12h-4l-3 9L9 3l-3 9H2' },
+    { id: 'server', title: 'Server', d: 'M2 4h20v6H2Z M2 14h20v6H2Z M6 7h.01 M6 17h.01' },
+    { id: 'settings', title: 'Settings', d: 'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6' }
+];
 
 interface UiState
 {
     collapsed: boolean;
     dock: Dock;
-    tab: Tab;
+    view: View;
     floatLeft: number | null;
     floatTop: number | null;
     floatW: number;
@@ -60,27 +84,60 @@ interface UiState
 const DEFAULT_UI: UiState = {
     collapsed: true,
     dock: 'float',
-    tab: 'tree',
+    view: 'components',
     floatLeft: null,
     floatTop: null,
-    floatW: 380,
-    floatH: 460,
-    dockSize: 360
+    floatW: 460,
+    floatH: 520,
+    dockSize: 380
 };
+
+const MIN_W = 300;
+const MIN_H = 220;
+const MIN_DOCK = 240;
+
+/**
+ * Validates and clamps a persisted UI state. Garbage (an unknown dock, a NaN size, a float
+ * position saved on a larger monitor) degrades to a usable value instead of an invisible panel.
+ */
+function sanitizeUi(raw: unknown): UiState
+{
+    const r = (raw !== null && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof UiState, unknown>>;
+    const num = (v: unknown, fallback: number, min: number, max: number): number =>
+        typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(v, min), max) : fallback;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const floatW = num(r.floatW, DEFAULT_UI.floatW, MIN_W, Math.max(MIN_W, vw - 16));
+    const floatH = num(r.floatH, DEFAULT_UI.floatH, MIN_H, Math.max(MIN_H, vh - 16));
+    const hasPos = typeof r.floatLeft === 'number' && Number.isFinite(r.floatLeft)
+        && typeof r.floatTop === 'number' && Number.isFinite(r.floatTop);
+
+    return {
+        collapsed: typeof r.collapsed === 'boolean' ? r.collapsed : DEFAULT_UI.collapsed,
+        dock: DOCKS.includes(r.dock as Dock) ? r.dock as Dock : DEFAULT_UI.dock,
+        view: VIEW_IDS.includes(r.view as View) ? r.view as View : DEFAULT_UI.view,
+        floatLeft: hasPos ? Math.min(Math.max(r.floatLeft as number, 0), Math.max(0, vw - 60)) : null,
+        floatTop: hasPos ? Math.min(Math.max(r.floatTop as number, 0), Math.max(0, vh - 40)) : null,
+        floatW,
+        floatH,
+        dockSize: num(r.dockSize, DEFAULT_UI.dockSize, MIN_DOCK, Math.max(MIN_DOCK, Math.max(vw, vh) - 16))
+    };
+}
 
 function loadUi(): UiState
 {
     try
     {
         const raw = localStorage.getItem(UI_KEY);
-        if (raw)
+        if (raw !== null)
         {
-            return { ...DEFAULT_UI, ...(JSON.parse(raw) as Partial<UiState>) };
+            return sanitizeUi(JSON.parse(raw));
         }
     }
     catch
     {
-        // localStorage unavailable - use defaults.
+        // localStorage unavailable or corrupt - use defaults.
     }
     return { ...DEFAULT_UI };
 }
@@ -97,13 +154,18 @@ function saveUi(ui: UiState): void
     }
 }
 
-const TABS: { id: Tab; label: string }[] = [
-    { id: 'tree', label: 'Tree' },
-    { id: 'graph', label: 'Graph' },
-    { id: 'timeline', label: 'Timeline' },
-    { id: 'perf', label: 'Perf' },
-    { id: 'settings', label: 'Settings' }
-];
+const SERVER_URL_KEY = 'azeroth-devtools:server-url';
+
+/** Options for {@link installDevtools}. */
+export interface InstallOptions
+{
+    /**
+     * The backend to inspect in the Server tab: an http(s) API base
+     * (`import.meta.env.VITE_API_URL`) or a full ws URL. The tab connects to the
+     * `attachDevtools` bridge there on first open; a URL entered in the tab wins over this.
+     */
+    server?: string;
+}
 
 /** @internal */
 let active: { uninstall: () => void } | null = null;
@@ -115,10 +177,10 @@ let active: { uninstall: () => void } | null = null;
  * @example
  * ```ts
  * import { installDevtools } from '@azerothjs/devtools';
- * installDevtools();
+ * installDevtools({ server: import.meta.env.VITE_API_URL });
  * ```
  */
-export function installDevtools(): () => void
+export function installDevtools(options: InstallOptions = {}): () => void
 {
     if (active !== null)
     {
@@ -127,607 +189,370 @@ export function installDevtools(): () => void
 
     const agent = createAgent();
     const ui = loadUi();
-    let filter = '';
-    // The node shown in the inspector drawer (click a row to select).
     let selectedId: number | null = null;
-    // Ordered ids of the selectable rows in the current view, for arrow-key
-    // navigation; rebuilt every render.
-    let navOrder: number[] = [];
     let pointerInPanel = false;
-    // When an exported session is imported, the panel renders from it (read
-    // only) instead of the live agent.
+    // When an exported session is imported, the panel renders from it (read only).
     let snapshot: SessionSnapshot | null = null;
 
-    // View layer: live agent data, or the imported snapshot when one is loaded.
-    function viewModel(): AgentModel
+    /** The mounted chrome, built once by mount(). */
+    interface PanelDom
     {
-        return snapshot ? snapshot.model : agent.getModel();
+        host: HTMLElement;
+        root: HTMLElement;
+        launcher: HTMLElement;
+        badge: HTMLElement;
+        panel: HTMLElement;
+        summary: HTMLElement;
+        search: HTMLInputElement;
+        main: HTMLElement;
+        sideRight: HTMLElement;
+        sideBottom: HTMLElement;
     }
-    function viewGraph(): AgentGraph
-    {
-        return snapshot ? snapshot.graph : agent.getGraph();
-    }
-    function viewTimeline(): TimelineEntry[]
-    {
-        return snapshot ? snapshot.timeline : agent.getTimeline();
-    }
-    function viewHealth(): AgentHealth
-    {
-        return snapshot ? snapshot.health : agent.getHealth();
-    }
-    function viewHistory(id: number): number[]
-    {
-        return snapshot ? (snapshot.histories[id] ?? []) : agent.getHistory(id);
-    }
-    function viewPeek(id: number): { ok: boolean; value?: string }
-    {
-        if (snapshot)
-        {
-            const v = snapshot.values[id];
-            return v !== undefined ? { ok: true, value: v } : { ok: false };
-        }
-        return agent.peek(id);
-    }
-
-    /** The mounted chrome, built once by mount(). One record instead of four nullable
-     *  lets: every consumer narrows a single value, so no per-site non-null assertions. */
-    interface PanelDom { root: HTMLElement; launcher: HTMLElement; badge: HTMLElement; panel: HTMLElement }
     let dom: PanelDom | null = null;
+
+    const ctx: PanelCtx = {
+        agent,
+        live: true,
+        filter: '',
+        selectedId: null,
+        navOrder: [],
+        openGroups: new Set<number>(),
+        openBursts: new Set<number>(),
+        model(): AgentModel
+        {
+            return snapshot ? snapshot.model : agent.getModel();
+        },
+        graph(): AgentGraph
+        {
+            return snapshot ? snapshot.graph : agent.getGraph();
+        },
+        timeline(): TimelineEntry[]
+        {
+            return snapshot ? snapshot.timeline : agent.getTimeline();
+        },
+        health(): AgentHealth
+        {
+            return snapshot ? snapshot.health : agent.getHealth();
+        },
+        history(id: number): number[]
+        {
+            return snapshot ? (snapshot.histories[id] ?? []) : agent.getHistory(id);
+        },
+        peek(id: number): { ok: boolean; value?: string }
+        {
+            if (snapshot)
+            {
+                const v = snapshot.values[id];
+                return v !== undefined ? { ok: true, value: v } : { ok: false };
+            }
+            return agent.peek(id);
+        },
+        select(id: number): void
+        {
+            selectedId = selectedId === id ? null : id;
+            render();
+        },
+        openInEditor(open: string): void
+        {
+            if (open !== '')
+            {
+                // Vite's /__open-in-editor middleware; a production preview just fails silently.
+                void fetch(`/__open-in-editor?file=${ encodeURIComponent(open) }`).catch(() => undefined);
+            }
+        },
+        rerender(): void
+        {
+            render();
+        }
+    };
 
     // The agent already coalesces its notifications, so render directly.
     const unsubscribe = agent.subscribe(() => render());
     const justDragged = new WeakSet<HTMLElement>();
+
+    // --- server bridge ---------------------------------------------------
+
+    // Deferred: a status change can fire synchronously from connect() DURING a render pass
+    // (the Server tab's first-open auto-connect); rendering re-entrantly would double the view.
+    const serverLink = createServerLink(() =>
+    {
+        if (!ui.collapsed && ui.view === 'server')
+        {
+            setTimeout(() => render(), 0);
+        }
+    });
+    let serverAutoTried = false;
+
+    function savedServerUrl(): string
+    {
+        try
+        {
+            return localStorage.getItem(SERVER_URL_KEY) ?? '';
+        }
+        catch
+        {
+            return '';
+        }
+    }
+
+    const EMPTY_MODEL: AgentModel = { nodes: [], counts: { signal: 0, effect: 0, memo: 0, root: 0 }, lastWrite: null };
+    const EMPTY_GRAPH: AgentGraph = { nodes: [], edges: [] };
+
+    /** The Server tab's view context: the same panel machinery, sourced from the streamed session. */
+    const serverCtx: PanelCtx = {
+        agent,
+        live: false,
+        filter: '',
+        selectedId: null,
+        navOrder: [],
+        openGroups: new Set<number>(),
+        openBursts: new Set<number>(),
+        model: () => serverLink.session()?.model ?? EMPTY_MODEL,
+        graph: () => serverLink.session()?.graph ?? EMPTY_GRAPH,
+        timeline: () => serverLink.session()?.timeline ?? [],
+        health: () => serverLink.session()?.health ?? { kinds: [], leaks: [] },
+        history: (id) => serverLink.session()?.histories[id] ?? [],
+        peek(id): { ok: boolean; value?: string }
+        {
+            const v = serverLink.session()?.values[id];
+            return v !== undefined ? { ok: true, value: v } : { ok: false };
+        },
+        select(id: number): void
+        {
+            selectedId = selectedId === id ? null : id;
+            render();
+        },
+        openInEditor(): void
+        {
+            // Server files are outside the frontend dev server's editor middleware.
+        },
+        rerender(): void
+        {
+            render();
+        }
+    };
+
+    /** The context the active view reads: the server mirror on the Server tab, the page otherwise. */
+    function activeCtx(): PanelCtx
+    {
+        return ui.view === 'server' && serverLink.session() !== null ? serverCtx : ctx;
+    }
 
     // --- rendering -------------------------------------------------------
 
     function render(): void
     {
         const d = dom ?? mount();
+        ctx.live = snapshot === null;
+        ctx.selectedId = selectedId;
 
-        const model = viewModel();
+        const model = ctx.model();
         d.badge.textContent = String(model.counts.effect);
+        d.summary.textContent =
+            `${ model.counts.signal } sig | ${ model.counts.effect } eff | ${ model.counts.memo } memo`
+            + (model.lastWrite ? ` | last: ${ model.lastWrite.name }` : '');
 
-        const summary = d.panel.querySelector('[data-devtools-summary]') as HTMLElement;
-        summary.textContent =
-            `${ model.counts.signal } sig | ${ model.counts.effect } eff | ${ model.counts.memo } memo` +
-            (model.lastWrite ? ` | last: ${ model.lastWrite.name }` : '');
+        if (ui.collapsed)
+        {
+            return;
+        }
 
-        const content = d.panel.querySelector('[data-devtools-content]') as HTMLElement;
-        content.textContent = '';
-        navOrder = [];
+        d.main.textContent = '';
+        ctx.navOrder = [];
 
         if (snapshot)
         {
-            content.appendChild(snapshotBanner());
+            const banner = el('div', 'az-banner');
+            const label = el('span', 'az-spacer', 'Viewing imported snapshot (read only)');
+            const back = el('button', 'az-btn', 'Return to live');
+            back.addEventListener('click', () =>
+            {
+                snapshot = null;
+                selectedId = null;
+                render();
+            });
+            banner.append(label, back);
+            d.main.appendChild(banner);
         }
 
-        if (ui.tab !== 'settings')
+        switch (ui.view)
         {
-            content.appendChild(legendFor(ui.tab));
-        }
-
-        switch (ui.tab)
-        {
-            case 'tree':
-                renderTree(content, model.nodes);
-                break;
-            case 'graph':
-                renderGraph(content, viewGraph());
+            case 'components':
+                renderComponents(ctx, d.main);
                 break;
             case 'timeline':
-                renderTimeline(content);
+                renderTimeline(ctx, d.main);
+                break;
+            case 'graph':
+                renderGraph(ctx, d.main);
                 break;
             case 'perf':
-                renderPerf(content, model.nodes);
+                renderPerf(ctx, d.main);
+                break;
+            case 'server':
+                renderServerView(d.main);
                 break;
             case 'settings':
-                renderSettings(content);
+                renderSettings(d.main);
                 break;
         }
 
-        renderDetail();
-    }
-
-    /** A one-line explainer for the active tab, so rows are self-describing. */
-    function legendFor(t: Tab): HTMLElement
-    {
-        const text: Record<Exclude<Tab, 'settings'>, string> = {
-            tree: 'What each component owns. kind | name (#id if unnamed) = value | runs(r) / writes(w). Click a row to inspect.',
-            graph: 'Who depends on whom. Each effect/memo lists the signals it reads; orange = changed since last run.',
-            timeline: 'Recent events, newest first. run shows "<- cause" (the write that triggered it). Click to inspect.',
-            perf: 'Liveness per kind and a sustained-growth leak check, then the busiest nodes. Click a row to inspect.'
-        };
-        const el = document.createElement('div');
-        el.setAttribute('style', 'position:sticky;top:0;background:#101a14;color:#6f9683;padding:4px 0 6px;border-bottom:1px solid #1c3024;margin-bottom:4px;z-index:1');
-        el.textContent = text[t as Exclude<Tab, 'settings'>];
-        return el;
-    }
-
-    /** Banner shown while an imported snapshot is being viewed (read only). */
-    function snapshotBanner(): HTMLElement
-    {
-        const el = document.createElement('div');
-        el.setAttribute('style', 'display:flex;gap:8px;align-items:center;background:#1f2e3a;color:#9ec9ff;border:1px solid #2c4a5e;border-radius:4px;padding:4px 8px;margin-bottom:6px');
-        const label = document.createElement('span');
-        label.setAttribute('style', 'flex:1');
-        label.textContent = 'Viewing imported snapshot (read only)';
-        const back = smallButton('Return to live', false);
-        back.addEventListener('click', () =>
+        // Inspector placement adapts to the panel's width: a right pane when there is room,
+        // a bottom drawer otherwise. The Server tab inspects the streamed server graph.
+        const wide = d.panel.clientWidth >= 560;
+        const side = wide ? d.sideRight : d.sideBottom;
+        const other = wide ? d.sideBottom : d.sideRight;
+        other.style.display = 'none';
+        other.textContent = '';
+        if (selectedId === null)
         {
-            snapshot = null;
-            selectedId = null;
-            render();
-        });
-        el.append(label, back);
-        return el;
-    }
-
-    function matches(n: AgentNode): boolean
-    {
-        if (filter === '')
-        {
-            return true;
-        }
-        const f = filter.toLowerCase();
-        return (n.name ?? '').toLowerCase().includes(f) || n.kind.includes(f) || n.file.toLowerCase().includes(f);
-    }
-
-    /** Tree: nodes grouped by the source file that created them. */
-    function renderTree(content: HTMLElement, nodes: AgentNode[]): void
-    {
-        const rows = nodes.filter((n) => n.kind !== 'root' && matches(n));
-        const groups = new Map<string, AgentNode[]>();
-        for (const n of rows)
-        {
-            const arr = groups.get(n.file);
-            if (arr)
-            {
-                arr.push(n);
-            }
-            else
-            {
-                groups.set(n.file, [n]);
-            }
-        }
-        const ordered = [...groups.entries()].sort((a, b) =>
-            activity(b[1]) - activity(a[1]) || b[1].length - a[1].length);
-
-        let shown = 0;
-        for (const [file, members] of ordered)
-        {
-            const head = document.createElement('div');
-            head.setAttribute('style', 'margin-top:6px;color:#9fe3c0;font-weight:bold;border-top:1px solid #21382b;padding-top:4px');
-            const sig = members.filter((m) => m.kind === 'signal').length;
-            const eff = members.filter((m) => m.kind === 'effect').length;
-            const memo = members.filter((m) => m.kind === 'memo').length;
-            head.textContent = `${ file }  (${ sig } sig, ${ eff } eff${ memo ? `, ${ memo } memo` : '' })`;
-            content.appendChild(head);
-
-            for (const n of members.sort((a, b) => (b.runs + b.writes) - (a.runs + a.writes)))
-            {
-                content.appendChild(nodeRow(n));
-                if (++shown >= MAX_ROWS)
-                {
-                    return;
-                }
-            }
-        }
-    }
-
-    const SVG_NS = 'http://www.w3.org/2000/svg';
-
-    /** A small line chart of a signal/memo's recent numeric values. */
-    function sparkline(values: number[]): SVGSVGElement
-    {
-        const w = 220;
-        const h = 32;
-        const pad = 3;
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-        const span = max - min || 1;
-        const dx = (w - pad * 2) / Math.max(values.length - 1, 1);
-        const point = (v: number, i: number): { x: number; y: number } => ({
-            x: pad + i * dx,
-            y: h - pad - ((v - min) / span) * (h - pad * 2)
-        });
-
-        const svg = document.createElementNS(SVG_NS, 'svg');
-        svg.setAttribute('viewBox', `0 0 ${ w } ${ h }`);
-        svg.setAttribute('style', `width:100%;height:${ h }px;background:#0a120d;border:1px solid #1c3024;border-radius:4px`);
-
-        const poly = document.createElementNS(SVG_NS, 'polyline');
-        poly.setAttribute('points', values.map((v, i) =>
-        {
-            const p = point(v, i);
-            return `${ p.x.toFixed(1) },${ p.y.toFixed(1) }`;
-        }).join(' '));
-        poly.setAttribute('fill', 'none');
-        poly.setAttribute('stroke', '#7fd4a8');
-        poly.setAttribute('stroke-width', '1.5');
-        svg.appendChild(poly);
-
-        // Marker on the latest value.
-        const last = point(values[values.length - 1] ?? 0, values.length - 1);
-        const dot = document.createElementNS(SVG_NS, 'circle');
-        dot.setAttribute('cx', last.x.toFixed(1));
-        dot.setAttribute('cy', last.y.toFixed(1));
-        dot.setAttribute('r', '2.5');
-        dot.setAttribute('fill', '#ffe9b0');
-        svg.appendChild(dot);
-
-        const tip = document.createElementNS(SVG_NS, 'title');
-        tip.textContent = `${ values.length } samples  min ${ min }  max ${ max }  now ${ values[values.length - 1] }`;
-        svg.appendChild(tip);
-        return svg;
-    }
-
-    /**
-     * A focused dependency map for the selected node: what it reads on the
-     * left, the node in the center, what re-runs when it changes on the right.
-     * A full 250-node graph is a hairball; the neighborhood is what's useful.
-     */
-    function svgNeighborhood(graph: AgentGraph, id: number): SVGSVGElement | null
-    {
-        const node = graph.nodes.find((n) => n.id === id);
-        if (!node)
-        {
-            return null;
-        }
-        const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-        const reads = graph.edges.filter((e) => e.to === id).slice(0, 8);
-        const usedBy = graph.edges.filter((e) => e.from === id).slice(0, 8);
-
-        const rows = Math.max(reads.length, usedBy.length, 1);
-        const rowH = 26;
-        const padY = 14;
-        const width = 320;
-        const height = rows * rowH + padY * 2;
-        const cy = height / 2;
-        const leftX = 6;
-        const sideW = 92;
-        const centerX = 118;
-        const centerW = 84;
-        const rightX = 222;
-
-        const svg = document.createElementNS(SVG_NS, 'svg');
-        svg.setAttribute('viewBox', `0 0 ${ width } ${ height }`);
-        svg.setAttribute('style', `width:100%;height:${ height }px;margin:2px 0 6px`);
-
-        function box(x: number, y: number, w: number, n: AgentGraphNode, center: boolean): void
-        {
-            const color = KIND_COLOR[n.kind] ?? '#7fd4a8';
-            const g = document.createElementNS(SVG_NS, 'g');
-            g.setAttribute('style', 'cursor:pointer');
-            g.addEventListener('click', () => select(n.id));
-
-            const rect = document.createElementNS(SVG_NS, 'rect');
-            rect.setAttribute('x', String(x));
-            rect.setAttribute('y', String(y - 9));
-            rect.setAttribute('width', String(w));
-            rect.setAttribute('height', '18');
-            rect.setAttribute('rx', '4');
-            rect.setAttribute('fill', center ? color : '#18271e');
-            rect.setAttribute('stroke', color);
-            rect.setAttribute('stroke-width', center ? '0' : '1');
-
-            const text = document.createElementNS(SVG_NS, 'text');
-            text.setAttribute('x', String(x + w / 2));
-            text.setAttribute('y', String(y + 3));
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('font-size', '10');
-            text.setAttribute('font-family', 'ui-monospace,Consolas,monospace');
-            text.setAttribute('fill', center ? '#0a120d' : color);
-            const label = labelOf(n);
-            text.textContent = label.length > 13 ? `${ label.slice(0, 12) }...` : label;
-            const tip = document.createElementNS(SVG_NS, 'title');
-            tip.textContent = `${ n.kind } ${ label }`;
-            g.append(rect, text, tip);
-            svg.appendChild(g);
-        }
-
-        function link(x1: number, y1: number, x2: number, y2: number, stale: boolean): void
-        {
-            const line = document.createElementNS(SVG_NS, 'line');
-            line.setAttribute('x1', String(x1));
-            line.setAttribute('y1', String(y1));
-            line.setAttribute('x2', String(x2));
-            line.setAttribute('y2', String(y2));
-            line.setAttribute('stroke', stale ? '#ffcf6b' : '#3a5e48');
-            line.setAttribute('stroke-width', '1');
-            svg.insertBefore(line, svg.firstChild); // lines behind boxes
-        }
-
-        reads.forEach((e, i) =>
-        {
-            const y = padY + rowH / 2 + i * rowH;
-            const p = byId.get(e.from);
-            if (p)
-            {
-                box(leftX, y, sideW, p, false);
-            }
-            link(leftX + sideW, y, centerX, cy, e.stale);
-        });
-        usedBy.forEach((e, i) =>
-        {
-            const y = padY + rowH / 2 + i * rowH;
-            const c = byId.get(e.to);
-            if (c)
-            {
-                box(rightX, y, sideW, c, false);
-            }
-            link(centerX + centerW, cy, rightX, y, e.stale);
-        });
-        box(centerX, cy, centerW, node, true);
-        return svg;
-    }
-
-    /** Graph: each consumer and the producers it depends on (adjacency). */
-    function renderGraph(content: HTMLElement, graph: AgentGraph): void
-    {
-        if (selectedId !== null)
-        {
-            const diagram = svgNeighborhood(graph, selectedId);
-            if (diagram)
-            {
-                const cap = document.createElement('div');
-                cap.setAttribute('style', 'color:#8fb8a2;margin:2px 0');
-                cap.textContent = 'reads (left)  ->  selected  ->  used by (right)';
-                content.append(cap, diagram);
-            }
+            side.style.display = 'none';
+            side.textContent = '';
         }
         else
         {
-            const hint = document.createElement('div');
-            hint.setAttribute('style', 'color:#6f9683;margin:2px 0');
-            hint.textContent = 'Tip: click any node to see its dependency map.';
-            content.appendChild(hint);
-        }
-
-        const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-        const out = new Map<number, { to: number; stale: boolean }[]>();
-        for (const e of graph.edges)
-        {
-            const arr = out.get(e.to);
-            if (arr)
+            side.style.display = 'block';
+            if (wide)
             {
-                arr.push({ to: e.from, stale: e.stale });
+                side.style.width = `${ Math.min(320, Math.floor(d.panel.clientWidth * 0.42)) }px`;
             }
             else
             {
-                out.set(e.to, [{ to: e.from, stale: e.stale }]);
+                side.style.maxHeight = '45%';
+            }
+            renderInspector(activeCtx(), side, () =>
+            {
+                selectedId = null;
+                render();
+            });
+        }
+    }
+
+    /** The Server tab: connection bar + the server's components tree, mirrored live. */
+    function renderServerView(main: HTMLElement): void
+    {
+        const status = serverLink.status();
+
+        // First open: try the configured backend (or the last manually-used URL) once.
+        if (!serverAutoTried && status === 'idle')
+        {
+            serverAutoTried = true;
+            const initial = savedServerUrl() || (options.server !== undefined ? bridgeUrl(options.server) : '');
+            if (initial !== '')
+            {
+                serverLink.connect(initial);
             }
         }
 
-        const consumers = graph.nodes
-            .filter((n) => (n.kind === 'effect' || n.kind === 'memo') && (filter === '' || labelOf(n).toLowerCase().includes(filter.toLowerCase())))
-            .sort((a, b) => (b.runs - a.runs));
-
-        let shown = 0;
-        for (const c of consumers)
+        const bar = el('div', 'az-toolbar');
+        const url = el('input', 'az-search az-mono');
+        url.placeholder = 'ws://localhost:5200/__azeroth/devtools';
+        url.value = serverLink.url() || savedServerUrl() || (options.server !== undefined ? bridgeUrl(options.server) : '');
+        url.addEventListener('pointerdown', (e) => e.stopPropagation());
+        const connect = (): void =>
         {
-            const head = document.createElement('div');
-            markRow(head, c.id);
-            const sel = c.id === selectedId;
-            head.setAttribute('style', `display:flex;gap:6px;align-items:baseline;margin-top:6px;cursor:pointer;border-radius:3px;padding:1px 4px;${ sel ? 'background:#233a2c' : '' }`);
-            head.addEventListener('click', () => select(c.id));
-            const tag = document.createElement('span');
-            tag.setAttribute('style', `color:${ KIND_COLOR[c.kind] ?? '#ffcf6b' };width:42px;flex:none`);
-            tag.textContent = c.kind;
-            const nm = document.createElement('span');
-            nm.setAttribute('style', 'color:#e8f3ec;font-weight:bold');
-            nm.textContent = labelOf(c);
-            head.append(tag, nm);
-            content.appendChild(head);
-
-            for (const dep of out.get(c.id) ?? [])
-            {
-                const producer = byId.get(dep.to);
-                const line = document.createElement('div');
-                line.setAttribute('style', `display:flex;gap:6px;padding:0 4px 0 20px;cursor:pointer;color:${ dep.stale ? '#ffcf6b' : '#9ec9ff' }`);
-                line.addEventListener('click', () => select(dep.to));
-                const arrow = document.createElement('span');
-                arrow.setAttribute('style', 'color:#5e7d6c');
-                arrow.textContent = 'reads';
-                const pn = document.createElement('span');
-                pn.textContent = `${ producer ? labelOf(producer) : `#${ dep.to }` }${ dep.stale ? '  (changed)' : '' }`;
-                line.append(arrow, pn);
-                content.appendChild(line);
-            }
-            if (++shown >= MAX_ROWS)
+            const target = bridgeUrl(url.value);
+            if (target === '')
             {
                 return;
             }
-        }
-        if (consumers.length === 0)
-        {
-            empty(content, 'No dependencies yet. Interact with the app.');
-        }
-    }
-
-    /** Timeline: most recent reactive events, newest first. */
-    function renderTimeline(content: HTMLElement): void
-    {
-        const events = viewTimeline();
-
-        // The record toolbar is live-only; a snapshot's stream is frozen.
-        if (snapshot)
-        {
-            const note = document.createElement('div');
-            note.setAttribute('style', 'color:#6f9683;margin:2px 0');
-            note.textContent = `${ events.length } events (imported)`;
-            content.appendChild(note);
-        }
-        else
-        {
-            renderTimelineToolbar(content, events.length);
-        }
-
-        const recent = events.slice(-MAX_ROWS).reverse();
-        const typeColor: Record<string, string> = {
-            write: '#ffcf6b', run: '#7fd4a8', disposed: '#b08aa0', created: '#9ec9ff'
+            try
+            {
+                localStorage.setItem(SERVER_URL_KEY, target);
+            }
+            catch
+            {
+                // Non-fatal.
+            }
+            serverLink.connect(target);
+            render();
         };
-        for (const e of recent)
+        url.addEventListener('keydown', (e) =>
         {
-            const row = document.createElement('div');
-            markRow(row, e.id);
-            row.setAttribute('style', `display:flex;gap:8px;align-items:baseline;padding:1px 4px;border-radius:3px;cursor:pointer;${ e.type === 'disposed' ? 'opacity:0.55' : '' }`);
-            row.addEventListener('click', () => select(e.id));
-            const t = document.createElement('span');
-            const c = typeColor[e.type] ?? '#9fe3c0';
-            t.setAttribute('style', `width:62px;flex:none;text-align:center;background:${ c };color:#0a120d;border-radius:4px;font-weight:bold`);
-            t.textContent = e.type;
-            const name = document.createElement('span');
-            name.setAttribute('style', 'color:#e8f3ec;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-            name.textContent = `${ e.name ?? `#${ e.id }` }${ e.kind ? `  (${ e.kind })` : '' }`;
-            row.append(t, name);
-            // "why did it run?" - a run shows the write that triggered it.
-            if (e.type === 'run' && e.cause)
+            if (e.key === 'Enter')
             {
-                const why = document.createElement('span');
-                why.setAttribute('style', 'color:#ffcf6b;flex:none');
-                why.textContent = `<- ${ e.cause }`;
-                row.appendChild(why);
+                connect();
             }
-            content.appendChild(row);
-        }
-        if (recent.length === 0)
-        {
-            empty(content, 'No events yet.');
-        }
-    }
-
-    /** The live record/clear toolbar for the Timeline tab. */
-    function renderTimelineToolbar(content: HTMLElement, total: number): void
-    {
-        const bar = document.createElement('div');
-        bar.setAttribute('style', 'display:flex;gap:6px;align-items:center;margin:2px 0 6px');
-        const rec = agent.isRecording();
-        const toggle = document.createElement('button');
-        toggle.setAttribute('style', `display:flex;align-items:center;gap:5px;background:${ rec ? '#3a1f1f' : '#18271e' };color:#d7ecdf;border:1px solid ${ rec ? '#5e2c2c' : '#2c4a38' };border-radius:4px;padding:2px 8px;cursor:pointer;font:inherit`);
-        const dot = document.createElement('span');
-        dot.setAttribute('style', `width:8px;height:8px;border-radius:50%;display:inline-block;background:${ rec ? '#ff5b5b' : '#6f9683' }`);
-        const recLabel = document.createElement('span');
-        recLabel.textContent = rec ? 'Recording' : 'Paused';
-        toggle.append(dot, recLabel);
-        toggle.title = rec ? 'Pause capture (model keeps updating)' : 'Resume capture';
-        toggle.addEventListener('click', () =>
-        {
-            agent.setRecording(!agent.isRecording());
-            render();
         });
-        const clear = smallButton('Clear', false);
-        clear.addEventListener('click', () =>
+        const action = el('button', 'az-btn', serverLink.status() === 'open' ? 'Disconnect' : 'Connect');
+        action.addEventListener('click', () =>
         {
-            agent.clearTimeline();
-            render();
-        });
-        const count = document.createElement('span');
-        count.setAttribute('style', 'color:#6f9683;margin-left:auto');
-        count.textContent = `${ total } event${ total === 1 ? '' : 's' }`;
-        bar.append(toggle, clear, count);
-        content.appendChild(bar);
-    }
-
-    /** Performance: leak detector (liveness per kind) + activity hotspots. */
-    function renderPerf(content: HTMLElement, nodes: AgentNode[]): void
-    {
-        const health = viewHealth();
-
-        if (health.leaks.length > 0)
-        {
-            const warn = document.createElement('div');
-            warn.setAttribute('style', 'background:#3a1f1f;color:#ffb4b4;border:1px solid #5e2c2c;border-radius:4px;padding:4px 8px;margin-bottom:6px');
-            const kinds = health.leaks.map((l) => `${ l.live } ${ l.kind }s`).join(', ');
-            warn.textContent = `Possible leak: ${ kinds } alive, almost none disposed. Check for missing dispose/onCleanup.`;
-            content.appendChild(warn);
-        }
-
-        for (const k of health.kinds)
-        {
-            if (k.created === 0)
+            if (serverLink.status() === 'open')
             {
-                continue;
+                serverLink.disconnect();
+                selectedId = null;
+                render();
             }
-            const row = document.createElement('div');
-            const leaking = health.leaks.some((l) => l.kind === k.kind);
-            row.setAttribute('style', `display:flex;gap:8px;${ leaking ? 'color:#ffb4b4' : 'color:#b9d8c8' }`);
-            const label = document.createElement('span');
-            label.setAttribute('style', `width:54px;flex:none;color:${ KIND_COLOR[k.kind] ?? '#9fe3c0' }`);
-            label.textContent = k.kind;
-            const stat = document.createElement('span');
-            stat.textContent = k.kind === 'signal'
-                ? `${ k.live } live  (${ k.created } created)`
-                : `${ k.live } live  (${ k.created } created, ${ k.disposed } disposed)`;
-            row.append(label, stat);
-            content.appendChild(row);
-        }
+            else
+            {
+                connect();
+            }
+        });
+        const dot = el('span', `az-status ${ status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : status === 'idle' ? '' : 'err' }`,
+            status === 'idle' ? 'off' : status);
+        bar.append(url, action, dot);
+        main.appendChild(bar);
 
-        const hot = document.createElement('div');
-        hot.setAttribute('style', 'margin-top:8px;color:#9fe3c0;border-top:1px solid #21382b;padding-top:4px');
-        hot.textContent = 'Hotspots (most re-runs / writes)';
-        content.appendChild(hot);
-
-        const ranked = nodes
-            .filter((n) => n.kind !== 'root' && matches(n))
-            .sort((a, b) => (b.runs + b.writes) - (a.runs + a.writes))
-            .slice(0, MAX_ROWS);
-        for (const n of ranked)
+        const session = serverLink.session();
+        if (status === 'open' && session !== null)
         {
-            content.appendChild(nodeRow(n, true));
+            serverCtx.filter = ctx.filter;
+            serverCtx.selectedId = selectedId;
+            renderComponents(serverCtx, main);
+            return;
         }
-        if (ranked.length === 0)
-        {
-            empty(content, 'No activity yet.');
-        }
+        renderServer(ctx, main);
     }
 
-    /** Settings: dock controls, filter, and clear. */
-    function renderSettings(content: HTMLElement): void
+    /** Settings: dock, pop-out, session export/import, and the shortcut list. */
+    function renderSettings(main: HTMLElement): void
     {
-        const dockRow = document.createElement('div');
-        dockRow.setAttribute('style', 'display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px');
-        const dockLabel = document.createElement('span');
-        dockLabel.setAttribute('style', 'color:#9fe3c0;margin-right:4px');
-        dockLabel.textContent = 'Dock:';
-        dockRow.appendChild(dockLabel);
-        for (const d of ['float', 'left', 'right', 'bottom'] as Dock[])
+        main.onscroll = null;
+        ctx.navOrder = [];
+
+        main.appendChild(el('div', 'az-section', 'Dock'));
+        const dockRow = el('div', 'az-legend');
+        dockRow.style.display = 'flex';
+        dockRow.style.gap = '5px';
+        for (const dock of DOCKS)
         {
-            const b = smallButton(d, ui.dock === d);
+            const b = el('button', `az-btn${ ui.dock === dock ? ' on' : '' }`, dock);
             b.addEventListener('click', () =>
             {
-                ui.dock = d;
+                ui.dock = dock;
                 saveUi(ui);
                 applyLayout();
                 render();
             });
             dockRow.appendChild(b);
         }
-        content.appendChild(dockRow);
+        const pop = el('button', 'az-btn', 'pop out');
+        pop.addEventListener('click', popOut);
+        dockRow.appendChild(pop);
+        main.appendChild(dockRow);
 
-        const popBtn = smallButton('pop out to window', false);
-        popBtn.addEventListener('click', popOut);
-        content.appendChild(popBtn);
-
-        // Session export / import - for attaching state to a bug report.
-        const sessionRow = document.createElement('div');
-        sessionRow.setAttribute('style', 'display:flex;gap:4px;flex-wrap:wrap;margin-top:8px');
-        const sessionLabel = document.createElement('span');
-        sessionLabel.setAttribute('style', 'color:#9fe3c0;margin-right:4px;width:100%');
-        sessionLabel.textContent = 'Session:';
-        sessionRow.appendChild(sessionLabel);
-
-        const exportBtn = smallButton('export JSON', false);
+        main.appendChild(el('div', 'az-section', 'Session'));
+        const sessionRow = el('div', 'az-legend');
+        sessionRow.style.display = 'flex';
+        sessionRow.style.gap = '5px';
+        const exportBtn = el('button', 'az-btn', 'export JSON');
+        exportBtn.title = 'Download the full model/graph/timeline for a bug report';
         exportBtn.addEventListener('click', () =>
         {
             const json = JSON.stringify(agent.exportSession(), null, 2);
-            downloadText('azeroth-devtools-session.json', json);
-            void copyText(json);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'azeroth-devtools-session.json';
+            a.click();
+            URL.revokeObjectURL(url);
         });
-        const importBtn = smallButton('import', false);
-        const fileInput = document.createElement('input');
+        const importBtn = el('button', 'az-btn', 'import');
+        const fileInput = el('input');
         fileInput.type = 'file';
         fileInput.accept = 'application/json,.json';
-        fileInput.setAttribute('style', 'display:none');
+        fileInput.style.display = 'none';
         fileInput.addEventListener('change', () =>
         {
             const file = fileInput.files?.[0];
@@ -738,11 +563,9 @@ export function installDevtools(): () => void
         });
         importBtn.addEventListener('click', () => fileInput.click());
         sessionRow.append(exportBtn, importBtn, fileInput);
-        content.appendChild(sessionRow);
-
         if (snapshot)
         {
-            const back = smallButton('return to live', false);
+            const back = el('button', 'az-btn on', 'return to live');
             back.addEventListener('click', () =>
             {
                 snapshot = null;
@@ -751,29 +574,22 @@ export function installDevtools(): () => void
             });
             sessionRow.appendChild(back);
         }
+        main.appendChild(sessionRow);
 
-        const hint = document.createElement('div');
-        hint.setAttribute('style', 'margin-top:8px;color:#6f9683');
-        hint.textContent = 'Name signals/effects for readable rows: createSignal(0, { name: "cart" }).';
-        content.appendChild(hint);
-    }
+        main.appendChild(el('div', 'az-section', 'Shortcuts'));
+        for (const [keys, what] of [
+            ['Ctrl+K', 'focus the filter'],
+            ['Up / Down', 'move the selection'],
+            ['Enter (in filter)', 'inspect the first match'],
+            ['Esc', 'close the inspector']
+        ])
+        {
+            main.appendChild(el('div', 'az-hint', `${ keys }  -  ${ what }`));
+        }
 
-    /** Triggers a browser download of a text file. */
-    function downloadText(name: string, text: string): void
-    {
-        const blob = new Blob([text], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-
-    function copyText(text: string): Promise<void>
-    {
-        // Insecure contexts (plain-HTTP dev hosts) have no clipboard - the types say otherwise.
-        return (navigator as { clipboard?: Clipboard }).clipboard?.writeText(text).catch(() => undefined) ?? Promise.resolve();
+        main.appendChild(el('div', 'az-section', 'Tips'));
+        main.appendChild(el('div', 'az-hint',
+            'Declared keyword names label everything automatically on the dev server. In plain TS, pass { name } to createSignal/createResource/createForm for the same labels.'));
     }
 
     async function loadSnapshotFile(file: File): Promise<void>
@@ -787,10 +603,7 @@ export function installDevtools(): () => void
             }
             snapshot = parsed as SessionSnapshot;
             selectedId = null;
-            ui.tab = 'tree';
-            saveUi(ui);
-            refreshTabStyles();
-            render();
+            setView('components');
         }
         catch
         {
@@ -798,104 +611,40 @@ export function installDevtools(): () => void
         }
     }
 
-    const KIND_COLOR: Record<string, string> = {
-        signal: '#7fd4a8',
-        memo: '#9ec9ff',
-        effect: '#ffcf6b',
-        root: '#b08aa0'
-    };
-
-    /** Tag a row as selectable: enables arrow-key nav and scroll-into-view. */
-    function markRow(el: HTMLElement, id: number): void
+    function setView(view: View): void
     {
-        el.setAttribute('data-node-id', String(id));
-        if (!navOrder.includes(id))
+        // Node ids are per-graph: a selection cannot survive the page <-> server boundary.
+        if ((view === 'server') !== (ui.view === 'server'))
         {
-            navOrder.push(id);
+            selectedId = null;
         }
-    }
-
-    function nodeRow(n: AgentNode, withLoc = false): HTMLElement
-    {
-        const row = document.createElement('div');
-        markRow(row, n.id);
-        const selected = n.id === selectedId;
-        row.setAttribute('style', `display:flex;gap:8px;align-items:baseline;padding:1px 6px;cursor:pointer;border-radius:3px;${ selected ? 'background:#233a2c' : '' }`);
-        row.addEventListener('mouseenter', () =>
+        ui.view = view;
+        saveUi(ui);
+        const d = dom;
+        if (d !== null)
         {
-            if (n.id !== selectedId)
+            for (const v of VIEWS)
             {
-                row.style.background = '#18271e';
-            }
-        });
-        row.addEventListener('mouseleave', () =>
-        {
-            row.style.background = n.id === selectedId ? '#233a2c' : '';
-        });
-        row.addEventListener('click', () => select(n.id));
-
-        const kind = document.createElement('span');
-        kind.setAttribute('style', `width:42px;flex:none;color:${ KIND_COLOR[n.kind] ?? '#7fd4a8' }`);
-        kind.textContent = n.kind;
-
-        const name = document.createElement('span');
-        name.setAttribute('style', 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e8f3ec');
-        let text = labelOf(n);
-        if (n.kind === 'signal' || n.kind === 'memo')
-        {
-            const peeked = viewPeek(n.id);
-            if (peeked.ok)
-            {
-                text += ` = ${ peeked.value }`;
+                const b = d.panel.querySelector(`[data-devtools-tab="${ v.id }"]`);
+                b?.classList.toggle('on', v.id === view);
             }
         }
-        if (withLoc && n.loc)
-        {
-            text += `  ${ n.loc }`;
-        }
-        name.textContent = text;
-        name.title = n.loc || labelOf(n);
-
-        // Labeled counter: "3 runs" / "2 writes" - no cryptic single letters.
-        const counters = document.createElement('span');
-        counters.setAttribute('style', 'flex:none;color:#8fb8a2');
-        if (n.kind === 'signal')
-        {
-            counters.textContent = `${ n.writes } write${ n.writes === 1 ? '' : 's' }`;
-            counters.title = 'How many times this signal has been set.';
-        }
-        else
-        {
-            counters.textContent = `${ n.runs } run${ n.runs === 1 ? '' : 's' }`;
-            counters.title = 'How many times this effect/memo has executed (initial run included).';
-        }
-
-        row.append(kind, name, counters);
-        return row;
-    }
-
-    function select(id: number): void
-    {
-        selectedId = selectedId === id ? null : id;
         render();
     }
 
-    function scrollSelectedIntoView(): void
-    {
-        const d = dom;
-        if (selectedId === null || d === null)
-        {
-            return;
-        }
-        const el = d.panel.querySelector(`[data-devtools-content] [data-node-id="${ selectedId }"]`);
-        el?.scrollIntoView({ block: 'nearest' });
-    }
+    // --- keyboard --------------------------------------------------------
 
-    /** Arrow keys move the selection; Escape closes the inspector. */
     function onKeyDown(e: KeyboardEvent): void
     {
         if (ui.collapsed || dom === null)
         {
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K'))
+        {
+            dom.search.focus();
+            dom.search.select();
+            e.preventDefault();
             return;
         }
         const tgt = e.target;
@@ -917,21 +666,21 @@ export function installDevtools(): () => void
         {
             return;
         }
-        // Only claim the arrow keys when the user is actually working in the
-        // panel, so app shortcuts keep working otherwise.
+        // Only claim the arrows while the user is working in the panel.
         if (!pointerInPanel && selectedId === null)
         {
             return;
         }
-        if (navOrder.length === 0)
+        const order = activeCtx().navOrder;
+        if (order.length === 0)
         {
             return;
         }
-        const idx = selectedId === null ? -1 : navOrder.indexOf(selectedId);
+        const idx = selectedId === null ? -1 : order.indexOf(selectedId);
         const nextIdx = e.key === 'ArrowDown'
-            ? Math.min(idx + 1, navOrder.length - 1)
+            ? Math.min(idx + 1, order.length - 1)
             : Math.max(idx - 1, 0);
-        const next = navOrder[nextIdx < 0 ? 0 : nextIdx];
+        const next = order[nextIdx < 0 ? 0 : nextIdx];
         if (next !== undefined)
         {
             selectedId = next;
@@ -941,263 +690,55 @@ export function installDevtools(): () => void
         }
     }
 
-    /** The inspector drawer: everything known about the selected node. */
-    function renderDetail(): void
+    function scrollSelectedIntoView(): void
     {
         const d = dom;
-        if (d === null)
+        if (d === null || selectedId === null)
         {
             return;
         }
-        const drawer = d.panel.querySelector('[data-devtools-detail]') as HTMLElement;
-        drawer.textContent = '';
-
-        if (selectedId === null)
+        if (ui.view === 'components' || (ui.view === 'server' && serverLink.session() !== null))
         {
-            drawer.style.display = 'none';
+            const vctx = activeCtx();
+            vctx.selectedId = selectedId;
+            scrollToSelected(vctx, d.main);
             return;
         }
-
-        const graph = viewGraph();
-        const node = graph.nodes.find((n) => n.id === selectedId);
-        if (!node)
-        {
-            // The node was disposed while selected - clear and hide.
-            selectedId = null;
-            drawer.style.display = 'none';
-            return;
-        }
-        drawer.style.display = 'block';
-
-        // Title row: colored kind + name + close.
-        const title = document.createElement('div');
-        title.setAttribute('style', 'display:flex;align-items:center;gap:8px;margin-bottom:6px');
-        const tag = document.createElement('span');
-        tag.setAttribute('style', `background:${ KIND_COLOR[node.kind] ?? '#7fd4a8' };color:#0a120d;border-radius:4px;padding:0 6px;font-weight:bold`);
-        tag.textContent = node.kind;
-        const who = document.createElement('strong');
-        who.setAttribute('style', 'color:#e8f3ec;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        who.textContent = node.name ?? `#${ node.id }`;
-        const close = document.createElement('button');
-        close.textContent = 'x';
-        close.setAttribute('title', 'Close inspector');
-        close.setAttribute('style', barButtonStyle());
-        close.addEventListener('click', () =>
-        {
-            selectedId = null;
-            render();
-        });
-        title.append(tag, who, close);
-        drawer.appendChild(title);
-
-        // Source location - click to open in the editor (Vite dev only).
-        const srcRow = document.createElement('div');
-        srcRow.setAttribute('style', 'display:flex;gap:6px;margin:2px 0;align-items:baseline');
-        const srcLbl = document.createElement('span');
-        srcLbl.setAttribute('style', 'width:64px;flex:none;color:#8fb8a2');
-        srcLbl.textContent = 'source';
-        const srcText = node.loc || node.file || '(unknown)';
-        if (node.open)
-        {
-            const link = document.createElement('button');
-            link.setAttribute('style', 'flex:1;text-align:left;background:none;border:0;padding:0;color:#9ec9ff;text-decoration:underline;cursor:pointer;font:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-            link.textContent = srcText;
-            link.title = `Open ${ node.open } in your editor`;
-            link.addEventListener('click', () => openInEditor(node.open));
-            srcRow.append(srcLbl, link);
-        }
-        else
-        {
-            const val = document.createElement('span');
-            val.setAttribute('style', 'flex:1;color:#9ec9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-            val.textContent = srcText;
-            srcRow.append(srcLbl, val);
-        }
-        drawer.appendChild(srcRow);
-
-        // Value + inline edit (signals can be poked; memos are read-only).
-        if (node.kind === 'signal' || node.kind === 'memo')
-        {
-            const peeked = viewPeek(node.id);
-            const valRow = document.createElement('div');
-            valRow.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 0');
-            const lbl = document.createElement('span');
-            lbl.setAttribute('style', 'width:64px;flex:none;color:#8fb8a2');
-            lbl.textContent = 'value';
-            valRow.appendChild(lbl);
-
-            // Signals are editable live; memos and imported snapshots are read only.
-            if (node.kind === 'signal' && !snapshot)
-            {
-                const input = document.createElement('input');
-                input.value = peeked.ok ? String(peeked.value) : '';
-                input.setAttribute('style', 'flex:1;background:#0a120d;color:#ffe9b0;border:1px solid #2c4a38;border-radius:4px;padding:2px 6px;font:inherit');
-                const set = smallButton('Set', false);
-                set.addEventListener('click', () => applyEdit(node.id, input.value));
-                input.addEventListener('keydown', (e) =>
-                {
-                    if ((e).key === 'Enter')
-                    {
-                        applyEdit(node.id, input.value);
-                    }
-                });
-                valRow.append(input, set);
-            }
-            else
-            {
-                const v = document.createElement('span');
-                v.setAttribute('style', 'color:#ffe9b0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-                v.textContent = peeked.ok ? String(peeked.value) : '(uncomputed)';
-                valRow.appendChild(v);
-            }
-            drawer.appendChild(valRow);
-
-            // Value-history sparkline (numeric signals/memos only).
-            const hist = viewHistory(node.id);
-            if (hist.length >= 2)
-            {
-                const histRow = document.createElement('div');
-                histRow.setAttribute('style', 'display:flex;gap:6px;align-items:center;margin:2px 0');
-                const lbl = document.createElement('span');
-                lbl.setAttribute('style', 'width:64px;flex:none;color:#8fb8a2');
-                lbl.textContent = 'history';
-                const box = document.createElement('div');
-                box.setAttribute('style', 'flex:1;min-width:0');
-                box.appendChild(sparkline(hist));
-                histRow.append(lbl, box);
-                drawer.appendChild(histRow);
-            }
-        }
-
-        // Activity.
-        drawer.appendChild(field(node.kind === 'signal' ? 'writes' : 'runs',
-            String(node.kind === 'signal' ? node.writes : node.runs), '#8fb8a2'));
-
-        // Relationships, from the dependency graph.
-        const dependsOn = graph.edges.filter((e) => e.to === node.id).map((e) => e.from);
-        const usedBy = graph.edges.filter((e) => e.from === node.id).map((e) => e.to);
-        drawer.appendChild(relList('reads', dependsOn, graph));
-        drawer.appendChild(relList('used by', usedBy, graph));
-    }
-
-    /** Opens a source location via Vite's /__open-in-editor middleware. */
-    function openInEditor(open: string): void
-    {
-        if (!open)
-        {
-            return;
-        }
-        // Relative URL -> same origin as the dev server. No-op if the endpoint
-        // is absent (e.g. a production preview), since the fetch just fails.
-        void fetch(`/__open-in-editor?file=${ encodeURIComponent(open) }`).catch(() => undefined);
-    }
-
-    function applyEdit(id: number, raw: string): void
-    {
-        // Try JSON first (numbers, booleans, null, arrays, objects), fall back
-        // to the raw string so plain text works without quoting.
-        let value: unknown;
-        try
-        {
-            value = JSON.parse(raw);
-        }
-        catch
-        {
-            value = raw;
-        }
-        agent.poke(id, value);
-        render();
-    }
-
-    function field(label: string, value: string, color: string): HTMLElement
-    {
-        const row = document.createElement('div');
-        row.setAttribute('style', 'display:flex;gap:6px;margin:2px 0');
-        const lbl = document.createElement('span');
-        lbl.setAttribute('style', 'width:64px;flex:none;color:#8fb8a2');
-        lbl.textContent = label;
-        const val = document.createElement('span');
-        val.setAttribute('style', `flex:1;color:${ color };overflow:hidden;text-overflow:ellipsis;white-space:nowrap`);
-        val.textContent = value;
-        val.title = value;
-        row.append(lbl, val);
-        return row;
-    }
-
-    function relList(label: string, ids: number[], graph: AgentGraph): HTMLElement
-    {
-        const wrap = document.createElement('div');
-        wrap.setAttribute('style', 'display:flex;gap:6px;margin:2px 0');
-        const lbl = document.createElement('span');
-        lbl.setAttribute('style', 'width:64px;flex:none;color:#8fb8a2');
-        lbl.textContent = label;
-        const list = document.createElement('span');
-        list.setAttribute('style', 'flex:1;display:flex;flex-wrap:wrap;gap:4px');
-
-        if (ids.length === 0)
-        {
-            const none = document.createElement('span');
-            none.setAttribute('style', 'color:#5e7d6c');
-            none.textContent = '-';
-            list.appendChild(none);
-        }
-        for (const id of ids)
-        {
-            const dep = graph.nodes.find((n) => n.id === id);
-            const chip = document.createElement('button');
-            chip.setAttribute('style', `background:#18271e;color:${ KIND_COLOR[dep?.kind ?? 'signal'] ?? '#7fd4a8' };border:1px solid #2c4a38;border-radius:4px;padding:0 6px;cursor:pointer;font:inherit`);
-            chip.textContent = dep ? labelOf(dep) : `#${ id }`;
-            chip.addEventListener('click', () => select(id));
-            list.appendChild(chip);
-        }
-        wrap.append(lbl, list);
-        return wrap;
-    }
-
-    function labelOf(n: { name?: string | undefined; id: number }): string
-    {
-        return n.name ?? `#${ n.id }`;
-    }
-
-    function activity(members: AgentNode[]): number
-    {
-        let n = 0;
-        for (const m of members)
-        {
-            n += m.runs + m.writes;
-        }
-        return n;
-    }
-
-    function empty(content: HTMLElement, message: string): void
-    {
-        const el = document.createElement('div');
-        el.setAttribute('style', 'color:#6f9683;padding:8px 0');
-        el.textContent = message;
-        content.appendChild(el);
+        d.main.querySelector(`[data-node-id="${ selectedId }"]`)?.scrollIntoView({ block: 'nearest' });
     }
 
     // --- chrome ----------------------------------------------------------
 
     function mount(): PanelDom
     {
-        const root = document.createElement('div');
-        root.id = PANEL_ID;
-        root.setAttribute('style', 'position:fixed;z-index:2147483646;font:11px/1.5 ui-monospace,Consolas,monospace');
+        // The panel lives inside a SHADOW ROOT, not the light DOM. This fully isolates it from
+        // the host page: the app's CSS (a Tailwind preflight `*{}` reset, global rules, a theme)
+        // cannot reach across the shadow boundary, and the panel's styles never leak out.
+        // Without this the panel inherits host styles and renders broken (a stray white strip at
+        // the window edge). A single host element carries the id for external reference.
+        const host = document.createElement('div');
+        host.id = PANEL_ID;
+        // Inert host: out of normal flow at zero size so it can never shift the app's layout.
+        host.setAttribute('style', 'position:fixed;top:0;left:0;width:0;height:0');
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.appendChild(buildStyle());
+
+        const root = el('div', 'az-root');
+        root.setAttribute('data-devtools-root', '');
 
         const launcher = buildLauncher();
-        const panel = buildPanel();
-        const badge = launcher.querySelector('[data-devtools-badge]') as HTMLElement;
-        dom = { root, launcher, badge, panel };
+        const built = buildPanel();
+        dom = { host, root, launcher, badge: launcher.querySelector('[data-devtools-badge]') as HTMLElement, ...built };
 
-        root.append(launcher, panel);
-        document.body.appendChild(root);
+        root.append(launcher, built.panel);
+        shadow.appendChild(root);
+        document.body.appendChild(host);
 
-        panel.addEventListener('mouseenter', () =>
+        built.panel.addEventListener('mouseenter', () =>
         {
             pointerInPanel = true;
         });
-        panel.addEventListener('mouseleave', () =>
+        built.panel.addEventListener('mouseleave', () =>
         {
             pointerInPanel = false;
         });
@@ -1209,30 +750,19 @@ export function installDevtools(): () => void
 
     function buildLauncher(): HTMLElement
     {
-        const el = document.createElement('button');
-        el.setAttribute('data-devtools-launcher', '');
-        el.setAttribute('title', 'AzerothJS devtools - click to open, drag to move');
-        el.setAttribute('style', [
-            'display:flex', 'align-items:center', 'gap:6px',
-            'background:#101a14', 'color:#7fd4a8', 'border:1px solid #2c4a38',
-            'border-radius:999px', 'padding:5px 10px', 'cursor:grab',
-            'font:inherit', 'box-shadow:0 2px 8px rgba(0,0,0,0.4)', 'user-select:none'
-        ].join(';'));
+        const pill = el('button', 'az-launcher');
+        pill.setAttribute('data-devtools-launcher', '');
+        pill.title = 'AzerothJS devtools - click to open, drag to move';
+        const mark = el('span', '', 'AZ');
+        const badge = el('span', 'az-badge', '0');
+        badge.setAttribute('data-devtools-badge', '');
+        pill.append(mark, badge);
 
-        const dot = document.createElement('span');
-        dot.textContent = 'AZ';
-        dot.setAttribute('style', 'font-weight:bold;letter-spacing:1px');
-        const b = document.createElement('span');
-        b.setAttribute('data-devtools-badge', '');
-        b.setAttribute('style', 'background:#2c4a38;color:#d7ecdf;border-radius:999px;padding:0 6px;min-width:14px;text-align:center');
-        b.textContent = '0';
-        el.append(dot, b);
-
-        el.addEventListener('click', () =>
+        pill.addEventListener('click', () =>
         {
-            if (justDragged.has(el))
+            if (justDragged.has(pill))
             {
-                justDragged.delete(el);
+                justDragged.delete(pill);
                 return;
             }
             ui.collapsed = false;
@@ -1240,37 +770,25 @@ export function installDevtools(): () => void
             applyLayout();
             render();
         });
-        makeDraggable(el, true);
-        return el;
+        makeDraggable(pill, true);
+        return pill;
     }
 
-    function buildPanel(): HTMLElement
+    function buildPanel(): Omit<PanelDom, 'host' | 'root' | 'launcher' | 'badge'>
     {
-        const el = document.createElement('div');
-        el.setAttribute('data-devtools-panel', '');
-        el.setAttribute('style', [
-            'display:flex', 'flex-direction:column', 'overflow:hidden',
-            'background:#101a14', 'color:#d7ecdf',
-            'border:1px solid #2c4a38', 'border-radius:6px',
-            'box-shadow:0 4px 16px rgba(0,0,0,0.5)'
-        ].join(';'));
+        const panel = el('div', 'az-panel');
+        panel.setAttribute('data-devtools-panel', '');
 
-        // Title bar (drag handle when floating).
-        const header = document.createElement('div');
+        // Header: brand, live summary, collapse. The drag handle when floating.
+        const header = el('div', 'az-header');
         header.setAttribute('data-devtools-header', '');
-        header.setAttribute('style', 'display:flex;align-items:center;gap:8px;padding:6px 8px;background:linear-gradient(90deg,#1a3326,#16241c 60%,#241c2e);border-bottom:1px solid #2c4a38;user-select:none;flex:none');
-
-        const heading = document.createElement('strong');
-        heading.setAttribute('style', 'color:#7fd4a8;letter-spacing:0.5px;text-shadow:0 0 6px rgba(127,212,168,0.4)');
-        heading.textContent = 'AzerothJS';
-        const summary = document.createElement('span');
+        const brand = el('strong', 'az-brand');
+        const markSpan = el('span', 'az-mark', '▲');
+        brand.append(markSpan, document.createTextNode('AzerothJS'));
+        const summary = el('span', 'az-summary');
         summary.setAttribute('data-devtools-summary', '');
-        summary.setAttribute('style', 'color:#7fd4a8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-
-        const collapse = document.createElement('button');
-        collapse.textContent = '-';
-        collapse.setAttribute('title', 'Collapse to icon');
-        collapse.setAttribute('style', barButtonStyle());
+        const collapse = el('button', 'az-iconbtn', '-');
+        collapse.title = 'Collapse to icon';
         collapse.addEventListener('pointerdown', (e) => e.stopPropagation());
         collapse.addEventListener('click', (e) =>
         {
@@ -1279,89 +797,75 @@ export function installDevtools(): () => void
             saveUi(ui);
             applyLayout();
         });
+        header.append(brand, summary, collapse);
 
-        header.append(heading, summary, collapse);
-
-        // Tab bar.
-        const tabbar = document.createElement('div');
-        tabbar.setAttribute('style', 'display:flex;gap:2px;padding:4px 6px 0;background:#16241c;flex:none');
-        for (const t of TABS)
-        {
-            const tab = document.createElement('button');
-            tab.setAttribute('data-devtools-tab', t.id);
-            tab.textContent = t.label;
-            tab.setAttribute('style', tabStyle(ui.tab === t.id));
-            tab.addEventListener('pointerdown', (e) => e.stopPropagation());
-            tab.addEventListener('click', (e) =>
-            {
-                e.stopPropagation();
-                ui.tab = t.id;
-                saveUi(ui);
-                refreshTabStyles();
-                render();
-            });
-            tabbar.appendChild(tab);
-        }
-
-        // Filter.
-        const search = document.createElement('input');
-        search.setAttribute('placeholder', 'filter by name / file / kind');
-        search.setAttribute('style', 'margin:6px;background:#0a120d;color:#d7ecdf;border:1px solid #2c4a38;border-radius:4px;padding:2px 6px;font:inherit;flex:none');
+        // Toolbar: the one always-visible filter.
+        const toolbar = el('div', 'az-toolbar');
+        const search = el('input', 'az-search');
+        search.placeholder = 'Filter by name, primitive, kind, or file';
         search.addEventListener('pointerdown', (e) => e.stopPropagation());
         search.addEventListener('input', () =>
         {
-            filter = search.value;
+            ctx.filter = search.value;
             render();
         });
-        // Enter jumps straight to the first match's inspector.
         search.addEventListener('keydown', (e) =>
         {
-            if ((e).key !== 'Enter')
+            if (e.key !== 'Enter')
             {
                 return;
             }
-            const hit = viewModel().nodes.find((n) => n.kind !== 'root' && matches(n));
+            const f = search.value.toLowerCase();
+            const hit = ctx.model().nodes.find((n) => n.kind !== 'root'
+                && ((n.name ?? '').toLowerCase().includes(f) || (n.groupName ?? '').toLowerCase().includes(f) || n.file.toLowerCase().includes(f)));
             if (hit)
             {
                 selectedId = hit.id;
                 render();
+                scrollSelectedIntoView();
             }
         });
+        const kbd = el('span', 'az-kbd', 'Ctrl K');
+        toolbar.append(search, kbd);
 
-        // Scrollable content.
-        const content = document.createElement('div');
-        content.setAttribute('data-devtools-content', '');
-        content.setAttribute('style', 'flex:1;overflow:auto;padding:0 8px 8px');
+        // Body: icon rail | main | right inspector.
+        const body = el('div', 'az-body');
+        const rail = el('div', 'az-rail');
+        for (const v of VIEWS)
+        {
+            const b = el('button', `az-railbtn${ ui.view === v.id ? ' on' : '' }`);
+            b.setAttribute('data-devtools-tab', v.id);
+            b.title = v.title;
+            b.appendChild(icon(v.d));
+            b.addEventListener('pointerdown', (e) => e.stopPropagation());
+            b.addEventListener('click', (e) =>
+            {
+                e.stopPropagation();
+                setView(v.id);
+            });
+            rail.appendChild(b);
+        }
 
-        // Inspector drawer (shown when a node is selected).
-        const detail = document.createElement('div');
-        detail.setAttribute('data-devtools-detail', '');
-        detail.setAttribute('style', 'display:none;flex:none;max-height:45%;overflow:auto;padding:8px;background:#0c1610;border-top:2px solid #2c4a38');
+        const main = el('div', 'az-main');
+        main.setAttribute('data-devtools-content', '');
+        const sideRight = el('div', 'az-side');
+        sideRight.setAttribute('data-devtools-detail', '');
+        sideRight.style.display = 'none';
+        body.append(rail, main, sideRight);
 
-        el.append(header, tabbar, search, content, detail);
+        const sideBottom = el('div', 'az-side bottom');
+        sideBottom.style.display = 'none';
 
-        // Resize handle.
-        const handle = document.createElement('div');
+        panel.append(header, toolbar, body, sideBottom);
+
+        // Resize handle (repositioned per dock mode by applyLayout).
+        const handle = el('div', 'az-resize');
         handle.setAttribute('data-devtools-resize', '');
-        el.appendChild(handle);
+        panel.appendChild(handle);
         makeResizable(handle);
 
         makeDraggable(header, false);
-        return el;
-    }
-
-    function refreshTabStyles(): void
-    {
-        const d = dom;
-        if (d === null)
-        {
-            return;
-        }
-        for (const t of TABS)
-        {
-            const el = d.panel.querySelector(`[data-devtools-tab="${ t.id }"]`) as HTMLElement;
-            el.setAttribute('style', tabStyle(ui.tab === t.id));
-        }
+        return { panel, summary, search, main, sideRight, sideBottom };
     }
 
     // --- layout (dock / float / collapse / resize) -----------------------
@@ -1385,17 +889,29 @@ export function installDevtools(): () => void
             return;
         }
 
+        // Re-clamp against the CURRENT viewport: it may have shrunk since the state was saved.
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        ui.floatW = Math.min(Math.max(ui.floatW, MIN_W), Math.max(MIN_W, vw - 16));
+        ui.floatH = Math.min(Math.max(ui.floatH, MIN_H), Math.max(MIN_H, vh - 16));
+
         if (ui.dock === 'float')
         {
+            if (ui.floatLeft !== null && ui.floatTop !== null)
+            {
+                ui.floatLeft = Math.min(Math.max(ui.floatLeft, 0), Math.max(0, vw - ui.floatW));
+                ui.floatTop = Math.min(Math.max(ui.floatTop, 0), Math.max(0, vh - 40));
+            }
             placeFloating();
             d.panel.style.width = `${ ui.floatW }px`;
             d.panel.style.height = `${ ui.floatH }px`;
             header.style.cursor = 'grab';
-            handle.setAttribute('style', resizeHandleStyle('corner'));
+            handle.style.cssText = 'position:absolute;background:transparent;z-index:1;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize';
             return;
         }
 
         // Docked: pin to an edge, full span on the cross axis.
+        ui.dockSize = Math.min(Math.max(ui.dockSize, MIN_DOCK), Math.max(MIN_DOCK, (ui.dock === 'bottom' ? vh : vw) - 16));
         header.style.cursor = 'default';
         d.root.style.left = ui.dock === 'right' ? 'auto' : '0';
         d.root.style.right = ui.dock === 'right' ? '0' : 'auto';
@@ -1406,13 +922,13 @@ export function installDevtools(): () => void
         {
             d.panel.style.width = '100vw';
             d.panel.style.height = `${ ui.dockSize }px`;
-            handle.setAttribute('style', resizeHandleStyle('top'));
+            handle.style.cssText = 'position:absolute;background:transparent;z-index:1;left:0;top:0;width:100%;height:6px;cursor:ns-resize';
         }
         else
         {
             d.panel.style.width = `${ ui.dockSize }px`;
             d.panel.style.height = '100vh';
-            handle.setAttribute('style', resizeHandleStyle(ui.dock === 'right' ? 'left' : 'right'));
+            handle.style.cssText = `position:absolute;background:transparent;z-index:1;${ ui.dock === 'right' ? 'left' : 'right' }:0;top:0;width:6px;height:100%;cursor:ew-resize`;
         }
     }
 
@@ -1443,7 +959,6 @@ export function installDevtools(): () => void
     {
         handle.addEventListener('pointerdown', (down: PointerEvent) =>
         {
-            // Dragging only repositions a floating panel (or the launcher).
             const d = dom;
             if (down.button !== 0 || d === null || (!isLauncher && ui.dock !== 'float'))
             {
@@ -1524,20 +1039,20 @@ export function installDevtools(): () => void
             {
                 if (ui.dock === 'float')
                 {
-                    ui.floatW = Math.max(260, Math.min(startW + (e.clientX - startX), window.innerWidth - 20));
-                    ui.floatH = Math.max(200, Math.min(startH + (e.clientY - startY), window.innerHeight - 20));
+                    ui.floatW = Math.max(MIN_W, Math.min(startW + (e.clientX - startX), window.innerWidth - 20));
+                    ui.floatH = Math.max(MIN_H, Math.min(startH + (e.clientY - startY), window.innerHeight - 20));
                 }
                 else if (ui.dock === 'bottom')
                 {
-                    ui.dockSize = Math.max(120, Math.min(startH - (e.clientY - startY), window.innerHeight - 20));
+                    ui.dockSize = Math.max(MIN_DOCK, Math.min(startH - (e.clientY - startY), window.innerHeight - 20));
                 }
                 else if (ui.dock === 'left')
                 {
-                    ui.dockSize = Math.max(220, Math.min(startW + (e.clientX - startX), window.innerWidth - 20));
+                    ui.dockSize = Math.max(MIN_DOCK, Math.min(startW + (e.clientX - startX), window.innerWidth - 20));
                 }
                 else
                 {
-                    ui.dockSize = Math.max(220, Math.min(startW - (e.clientX - startX), window.innerWidth - 20));
+                    ui.dockSize = Math.max(MIN_DOCK, Math.min(startW - (e.clientX - startX), window.innerWidth - 20));
                 }
                 applyLayout();
             };
@@ -1554,6 +1069,7 @@ export function installDevtools(): () => void
                 handle.removeEventListener('pointermove', move);
                 handle.removeEventListener('pointerup', up);
                 saveUi(ui);
+                render();
             };
             handle.addEventListener('pointermove', move);
             handle.addEventListener('pointerup', up);
@@ -1564,16 +1080,16 @@ export function installDevtools(): () => void
 
     function popOut(): void
     {
-        const win = window.open('', 'azeroth-devtools', 'width=440,height=560');
+        const win = window.open('', 'azeroth-devtools', 'width=460,height=580');
         if (!win)
         {
             return;
         }
         win.document.title = 'AzerothJS devtools';
-        win.document.body.style.cssText = 'margin:0;background:#101a14;color:#d7ecdf;font:12px/1.5 ui-monospace,Consolas,monospace';
-        const host = win.document.createElement('pre');
-        host.style.cssText = 'padding:10px;white-space:pre-wrap';
-        win.document.body.appendChild(host);
+        win.document.body.style.cssText = 'margin:0;background:#0e141b;color:#d5e1ec;font:12px/1.5 ui-monospace,Consolas,monospace';
+        const pre = win.document.createElement('pre');
+        pre.style.cssText = 'padding:10px;white-space:pre-wrap';
+        win.document.body.appendChild(pre);
 
         // Same-origin window: read the agent directly, no transport needed.
         const tick = (): void =>
@@ -1587,47 +1103,14 @@ export function installDevtools(): () => void
             const lines = [`signals ${ m.counts.signal }  effects ${ m.counts.effect }  memos ${ m.counts.memo }`, ''];
             for (const n of m.nodes.filter((x) => x.kind !== 'root').sort((a, b) => (b.runs + b.writes) - (a.runs + a.writes)).slice(0, 200))
             {
-                const v = (n.kind === 'signal' || n.kind === 'memo') ? agent.peek(n.id) : { ok: false };
-                lines.push(`${ n.kind.padEnd(6) } ${ (n.name ?? `#${ n.id }`).padEnd(20) } ${ v.ok ? `= ${ v.value }` : '' }  ${ n.file }`);
+                const v = (n.kind === 'signal' || n.kind === 'memo') ? agent.peek(n.id) : { ok: false as const };
+                const label = n.groupName !== undefined ? `${ n.groupName }.${ n.name ?? n.id }` : n.name ?? `#${ n.id }`;
+                lines.push(`${ n.kind.padEnd(6) } ${ label.padEnd(24) } ${ v.ok ? `= ${ 'value' in v ? v.value : '' }` : '' }  ${ n.file }`);
             }
-            host.textContent = lines.join('\n');
+            pre.textContent = lines.join('\n');
         };
         const timer = win.setInterval(tick, 400);
         tick();
-    }
-
-    // --- styles ----------------------------------------------------------
-
-    function barButtonStyle(): string
-    {
-        return 'background:#2c4a38;color:#d7ecdf;border:0;border-radius:4px;width:20px;height:18px;cursor:pointer;font:inherit;line-height:1;flex:none';
-    }
-
-    function tabStyle(activeTab: boolean): string
-    {
-        return `background:${ activeTab ? '#2c4a38' : 'transparent' };color:${ activeTab ? '#fff' : '#9fe3c0' };border:0;border-radius:4px 4px 0 0;padding:3px 8px;cursor:pointer;font:inherit`;
-    }
-
-    function smallButton(label: string, on: boolean): HTMLElement
-    {
-        const b = document.createElement('button');
-        b.textContent = label;
-        b.setAttribute('style', `background:${ on ? '#3a5e48' : '#2c4a38' };color:#d7ecdf;border:0;border-radius:4px;padding:2px 8px;cursor:pointer;font:inherit`);
-        return b;
-    }
-
-    function resizeHandleStyle(where: 'corner' | 'left' | 'right' | 'top'): string
-    {
-        const base = 'position:absolute;background:transparent;z-index:1';
-        if (where === 'corner')
-        {
-            return `${ base };right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize`;
-        }
-        if (where === 'top')
-        {
-            return `${ base };left:0;top:0;width:100%;height:6px;cursor:ns-resize`;
-        }
-        return `${ base };${ where }:0;top:0;width:6px;height:100%;cursor:ew-resize`;
     }
 
     function uninstall(): void
@@ -1638,9 +1121,10 @@ export function installDevtools(): () => void
         }
         active = null;
         unsubscribe();
+        serverLink.dispose();
         document.removeEventListener('keydown', onKeyDown);
         agent.uninstall();
-        dom?.root.remove();
+        dom?.host.remove();
         dom = null;
     }
 

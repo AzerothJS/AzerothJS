@@ -323,3 +323,32 @@ export function consoleSink(): LogSink
         console[METHOD[record.level]]('%c' + record.level + '%c ' + record.message, BADGE_CSS[record.level], '', record.fields);
     };
 }
+
+/**
+ * Fans one record out to several sinks - a pretty console for eyes plus an NDJSON file
+ * for the permanent record is the canonical pair. A throwing sink is isolated: the others
+ * still receive the record, per the logging-never-breaks-the-system doctrine. Pure and
+ * browser-safe (it only composes the sinks it is given).
+ *
+ * @example
+ * ```ts
+ * const log = createLogger({ sink: teeSink(prettySink(), consoleSink()) });
+ * ```
+ */
+export function teeSink(...sinks: LogSink[]): LogSink
+{
+    return (record: LogRecord): void =>
+    {
+        for (const sink of sinks)
+        {
+            try
+            {
+                sink(record);
+            }
+            catch
+            {
+                // One broken destination must not silence the others.
+            }
+        }
+    };
+}

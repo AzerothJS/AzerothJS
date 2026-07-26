@@ -10,18 +10,11 @@
 // parser (to understand structure), so a `<` inside an attribute expression
 // like `title={a < b}` is never mistaken for a tag.
 
-import { findMarkupStart, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace, parseMarkup } from '@azerothjs/compiler';
+import { findMarkupStart, skipBalanced, skipString, isIdentStart, isIdentPart, isWhitespace, parseMarkup, VOID_ELEMENTS } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import { collectMarkupNodes } from '../markup-model.ts';
 import type { Range } from '../protocol.ts';
 import type { RequestContext } from '../request.ts';
-
-/** Void HTML elements have no closing tag, so they are never auto-closed. */
-const VOID_ELEMENTS = new Set
-([
-    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-    'link', 'meta', 'param', 'source', 'track', 'wbr'
-]);
 
 /**
  * After the user types `>`, returns a snippet that closes the just-opened tag

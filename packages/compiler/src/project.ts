@@ -26,7 +26,7 @@ import type { ComponentDecl, BodyItem } from './ast.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 
 import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scanner.ts';
-import { parseMarkup } from './markup-parser.ts';
+import { CompileError, parseMarkup } from './markup-parser.ts';
 import {
     walkComponentTags,
     isEventName,
@@ -42,22 +42,11 @@ import { parseModule } from './parser.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
 import { RUNTIME_FN } from './keyword-spec.ts';
+import { BUILTIN_SET } from './builtins.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
 /** Module the auto-injected runtime bindings point at (matches the compiler's codegen). */
 const RUNTIME_MODULE = 'azerothjs';
-
-/**
- * Built-in control-flow components the compiler auto-imports from the runtime when markup uses them.
- * Kept in sync with codegen so the virtual module resolves the same symbols the shipped module would.
- */
-export const BUILTIN_COMPONENTS: readonly string[] =
-[
-    'Show', 'For', 'Switch', 'Match', 'Portal', 'Dynamic',
-    'Suspense', 'ErrorBoundary', 'Transition', 'Outlet'
-];
-
-const BUILTIN_SET = new Set(BUILTIN_COMPONENTS);
 
 /**
  * `AzerothHandler<'onClick'>` maps a camelCase event prop to the right DOM event (via lib.dom's
@@ -144,7 +133,28 @@ class Builder
  */
 export function generateVirtualCode(source: string): VirtualCode
 {
-    const module = parseModule(source);
+    let module: ReturnType<typeof parseModule>;
+    try
+    {
+        module = parseModule(source);
+    }
+    catch (error)
+    {
+        // A committed parse failure is the NORMAL mid-typing state (`component App { <div>`
+        // before the close is typed). generateVirtualCode is the single lowering behind the
+        // LSP, the ts-plugin, azeroth-tsc, and eslint - so a throw here does not just break
+        // this file, it takes down ALL TypeScript IntelliSense project-wide (the ts-plugin
+        // throws inside getScriptSnapshot). Degrade to a verbatim identity projection instead:
+        // TS reports errors on the raw text (correct for an incomplete component), every tool
+        // keeps working, and the mapping stays 1:1 so positions still resolve.
+        if (error instanceof CompileError)
+        {
+            const fallback = new Builder(source);
+            fallback.copy(0, source.length, 'script');
+            return { code: fallback.out, mapping: new CodeMapping(fallback.segments) };
+        }
+        throw error;
+    }
     const builder = new Builder(source);
     const usedRuntime = new Set<string>();
     let usedHandler = false;
@@ -650,7 +660,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     builder.emit('const ');
                     builder.copy(c.nameStart, c.nameEnd, 'script');
                     // Wrap with __azRowForm (declared in finalize) so `NAME.rows()` types each row as
-                    // `FieldArrayRow<R> & R`. Now that a `<For>` render-callback child is contextually typed
+                    // `FieldArrayRow<R> & R`. Because a `<For>` render-callback child is contextually typed
                     // from `ForProps<FieldArrayRow<R> & R>`, that `& R` half is what types the row variable's
                     // field access (`row.field`, `bind:value={row.field}`) - mirroring the runtime rewrite to
                     // `row.form.values().field`. The createFieldArray config still type-checks (it is wrapped).

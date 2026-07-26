@@ -14,9 +14,7 @@ export { destroyComponent } from './destroy-component.ts';
 export { ErrorBoundary } from './error-boundary.ts';
 export type { ErrorBoundaryProps } from './error-boundary.ts';
 
-// Shared control-flow placement helpers (comment-marker ranges). Consumed by the renderer's
-// control-flow components; here because they need destroyComponent and renderer depends on
-// component, not the reverse.
+// Shared control-flow placement helpers (comment-marker ranges) consumed by the renderer.
 export {
     adoptCoRange,
     createCoMarkers,

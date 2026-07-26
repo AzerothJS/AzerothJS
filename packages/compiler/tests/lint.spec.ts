@@ -6,12 +6,14 @@
 // unparseable regions).
 import { describe, it, expect } from 'vitest';
 import { lintMarkup, lintSource, parseMarkup } from '@azerothjs/compiler';
-import type { MarkupElement, LintWarning } from '@azerothjs/compiler';
+import type { LintWarning } from '@azerothjs/compiler';
 
 function lint(src: string): LintWarning[]
 {
+    // These cases target the non-spacing rules (event-case, duplicate-attr, Show-narrowing);
+    // spacing is exercised by its own `spacing()` helper below, so disable it here.
     const { node } = parseMarkup(src, 0);
-    return lintMarkup(node);
+    return lintMarkup(node, src, { interpolationSpacing: 'off' });
 }
 
 describe('lintMarkup - duplicate-attr', () =>
@@ -255,11 +257,9 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         expect(warnings[0]!.fix).toEqual({ range: [4, 7], text: 'x' });
     });
 
-    it('off mode and the source-less legacy call disable the rule', () =>
+    it('off mode disables the interpolation-spacing rule', () =>
     {
         expect(spacing('<p>{x}</p>', { interpolationSpacing: 'off' })).toEqual([]);
-        const { node } = parseMarkup('<p>{x}</p>', 0);
-        expect(lintMarkup(node as MarkupElement)).toEqual([]);
     });
 
     it('lintSource threads the source and options through', () =>

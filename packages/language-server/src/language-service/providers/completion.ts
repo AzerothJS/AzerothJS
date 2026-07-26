@@ -311,6 +311,12 @@ export function keywordSnippetLabels(): string[]
     return KEYWORD_SNIPPETS.map((snippet) => snippet.label);
 }
 
+/** @internal The built-in component names that have a completion snippet body - for the drift guard. */
+export function builtinSnippetNames(): string[]
+{
+    return Object.keys(BUILTIN_SNIPPETS);
+}
+
 /** A completion item for one `with { ... }` option key, from the language-data registry. */
 function optionCompletion(option: KeywordOption): CompletionItem
 {
@@ -373,7 +379,9 @@ const BUILTIN_SNIPPETS: Record<string, string> = {
     Suspense: 'Suspense on={[$1]} fallback={$2}>$0</Suspense>',
     Portal: 'Portal>$0</Portal>',
     ErrorBoundary: 'ErrorBoundary fallback={(err, reset) => $1}>$0</ErrorBoundary>',
-    Transition: 'Transition when={$1}>$0</Transition>'
+    Transition: 'Transition when={$1}>$0</Transition>',
+    Dynamic: 'Dynamic component={$1} $0/>',
+    Outlet: 'Outlet$0 />'
 };
 
 /**

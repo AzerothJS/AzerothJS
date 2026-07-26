@@ -1,15 +1,20 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/testing
 
+**AzerothJS testing utilities - auto-disposing mounts, subscriber leak guards, event helpers**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Ftesting?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/testing)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Test helpers for [`azerothjs`](https://www.npmjs.com/package/azerothjs) apps - install as a dev dependency alongside the framework.
+</div>
 
-Testing utilities for AzerothJS apps: auto-disposing mounts, subscriber
-leak guards, and a bubbling-event helper.
+---
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Test helpers for [`azerothjs`](https://www.npmjs.com/package/azerothjs) apps: auto-disposing mounts, subscriber leak guards, and a bubbling-event helper. Install as a dev dependency alongside the framework.
 
 ```ts
 import { renderTest, leakGuard, fire, cleanup } from '@azerothjs/testing';
@@ -43,12 +48,27 @@ it('updates and tears down cleanly', () =>
   assertion that throws if teardown left subscriptions behind.
 - `fire(el, type, init?)` dispatches a bubbling, cancelable event.
 
-## Install
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only, Node >= 22. `azerothjs` is a required peer - the helpers mount and inspect its reactive trees:
 
 ```sh
-npm install -D @azerothjs/testing
+npm install -D @azerothjs/testing azerothjs
 ```
 
-## License
+---
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+## 🔗 Related
+
+- [AzerothJS](../../README.md) - the monorepo overview and the full package list.
+- [`azerothjs`](../azerothjs) - the framework runtime these helpers mount and inspect (required peer).
+- [`@azerothjs/kit`](../kit) - per-route SSR, prerendering, and hydration for fullstack apps.
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

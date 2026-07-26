@@ -161,12 +161,11 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
     }
 }
 
-/** The served-socket shape `serve`/`serveH2c` return. */
 /**
- * The handle serve()/serveH2c() return. Generic over the concrete server class so a
- * consumer handing  to something that needs the HTTP/1 Server (ws
- * attachment, socket tuning) gets the REAL type - serve() yields Served<Server>,
- * serveH2c() Served<Http2Server>; the default keeps existing annotations working.
+ * The served-socket handle that `serve`/`serveH2c` return. Generic over the concrete server
+ * class so a caller that needs the real HTTP/1 `Server` (for ws attachment or socket tuning)
+ * keeps its exact type: `serve` yields `Served<Server>`, `serveH2c` yields `Served<Http2Server>`,
+ * and the default union keeps bare annotations working.
  */
 export interface Served<S extends Server | Http2Server = Server | Http2Server>
 {

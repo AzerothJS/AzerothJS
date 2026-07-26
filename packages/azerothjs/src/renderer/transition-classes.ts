@@ -10,7 +10,7 @@
  */
 
 /** @internal Default transitionend backstop (ms). */
-export const TRANSITION_FALLBACK_MS = 1000;
+const TRANSITION_FALLBACK_MS = 1000;
 
 /** Elements already warned about un-animatable display so navigation loops stay quiet. */
 const warnedContents = new WeakSet<HTMLElement>();

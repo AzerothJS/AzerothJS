@@ -11,6 +11,228 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **`@azerothjs/devtools` rewritten as a primitive-aware inspector.** The panel now speaks
+  the authoring language: each declared `form`/`resource`/`store`/`stream`/`selector`/
+  `deferred` renders as ONE named, collapsible group with a live status badge (a resource
+  shows pending/ready/error, a form valid/invalid/submitting), and bare `state`/`derived`/
+  `effect` rows carry their declared names and current values. New chrome: an icon rail
+  (Components / Timeline / Graph / Performance / Server / Settings), a search-first toolbar
+  (Ctrl+K), an adaptive master-detail inspector (right pane wide, bottom drawer narrow), a
+  windowed components list that stays smooth at thousands of nodes, burst-grouped timeline
+  rows, and empty states that teach. Persisted layout state is validated and clamped on
+  every restore, so a saved geometry can never come back off-screen.
+- **Devtools hook protocol v2** (`azerothjs`, additive). Nodes carry `primitive`/`group`/
+  `groupName` so higher-level primitives are attributable to their internals, and
+  `DevtoolsHook.run(id, cause)` reports the DIRECT producer whose change triggered each run
+  (the timeline's `run values <- email` is measured, not inferred). The higher-level
+  constructors gained an optional `name` option (`createStore` gained an options parameter);
+  `on()` accepts `{ name }` too. Zero-cost-when-detached is unchanged.
+- **Keyword names flow to devtools automatically.** On the dev server the compiler passes
+  every reactive keyword's declared identifier as its debug name (`state count` ->
+  `createSignal(0, { name: "count" })`); an explicit `with { name }` wins, and `store` now
+  accepts a `with { ... }` options clause. Every keyword's `with { name }` completes and
+  documents in both editors. Production output is byte-identical to before.
+- **Server inspection bridge** (`@azerothjs/devtools/server`). `attachDevtools(served.server)`
+  exposes a dev-only WebSocket (`/__azeroth/devtools`) streaming the server's reactive graph -
+  requests are reactive roots - and the panel's Server tab mirrors it live with the same
+  components view and inspector. Refuses to run under `NODE_ENV=production`; browser
+  connections are limited to localhost origins by default. `@azerothjs/ws` becomes an
+  optional peer of the devtools package.
+
+### Changed
+
+- **`@azerothjs/logger` is now browser-safe at its main entry.** `createLogger` and the sinks
+  (`prettySink`/`ndjsonSink`/`consoleSink`/`teeSink`), the banner, serialization, and the color
+  utilities load in a bundler without touching a Node builtin, so a frontend can `createLogger()`
+  for structured console output. The Node-only pieces moved to a `@azerothjs/logger/node`
+  subpath: the file sinks (`fileStream`/`fileSink`, which use `node:fs`/`node:path`) and the
+  terminal prompts (`select`/`textInput`/`intro`/`outro`, which use `node:readline`). Update
+  server/CLI imports of those to `@azerothjs/logger/node`; everything else is unchanged. This
+  fixes a Vite "Module node:path has been externalized for browser compatibility" crash when a
+  client imported the logger.
+
+### Fixed
+
+- **`@azerothjs/devtools` panel is now isolated in a shadow root.** The panel mounted as a
+  light-DOM child of `<body>`, so the host app's global CSS (a Tailwind preflight `*{}` reset,
+  a theme's inherited `color`, `border`, or `box-sizing`) leaked in and could collapse it to a
+  broken white strip at the window edge. It now mounts inside an `attachShadow({ mode: 'open' })`
+  host with its own base stylesheet, fully isolating it from - and from leaking into - the page.
+  The host element is inert (out of flow, zero-size) so it can never shift the app's layout.
+- **Hydration of element/list holes.** A reactive hole that returns an element or a list
+  (`{cond ? <A/> : <B/>}`, `{items.map(...)}`) hydrated to the literal text
+  `[object Object]` - the hole's `h()` output is a hydration descriptor in hydrate mode,
+  and the hole driver stringified it instead of adopting the server nodes. It now adopts
+  the server content on the first run, as `<Show>`/`<For>` already did.
+- **Streaming responses run request cleanups at the stream's end**, not when the handler
+  returns. `onRequestCleanup` teardown for a streaming body (SSE, static file, multipart,
+  any `new Response(stream)`) previously fired while the stream was still producing,
+  releasing a pooled connection/transaction mid-flight. Buffered responses are unchanged.
+- **Hydration no longer falls back to a full client render** for elements rendered with
+  `innerHTML`/`textContent` (their content is owned by the prop), or for a `<table>` whose
+  `<tr>` rows the browser wrapped in an implicit `<tbody>` (now tolerated).
+- **Owner/scheduler robustness.** A reactive node created under an already-disposed owner
+  (the `runWithOwner(getOwner(), …)`-after-await pattern) is now torn down immediately
+  instead of leaking; disposers registered *during* teardown run instead of being dropped;
+  and a throwing effect no longer strands the rest of a flush - the others still run and the
+  error surfaces after.
+- **`{ secret: true }` config values** are redacted on the `console.log`/`util.inspect` path,
+  not only `JSON.stringify` (added the `nodejs.util.inspect.custom` hook).
+- **Compiler diagnostics for a missing `;` before markup.** `state count = 0` with no
+  semicolon followed by markup silently dropped the markup and emitted broken JS; it is now
+  an `azeroth/unterminated-declaration` error. Markup placed directly as a declaration value
+  is flagged too.
+- **`<script>`/`<style>` are parsed as raw-text (CDATA).** Their content (CSS, a JSON-LD
+  `<script type="application/ld+json">`) is read verbatim and serialized unescaped, instead
+  of being parsed for `{ … }` holes and HTML-escaped (which corrupted `&`/`<`).
+- **`evalConstant`** no longer folds a multi-statement slice to its first expression,
+  which silently dropped the remainder.
+- Clearer errors for `<For each={…}>` with a nullish value (renders nothing) or a non-array,
+  and for `renderToString(App())` called without the `() =>` thunk.
+
+### Changed
+
+- **`azerothjs` is now a ranged peer dependency** (`^1.0.0`) of `@azerothjs/http`,
+  `@azerothjs/kit`, `@azerothjs/testing`, and `@azerothjs/devtools`, instead of an exact
+  regular dependency. The runtime holds module-level state (the per-request store scope), so
+  an exact pin let a version skew install a second copy and silently break request isolation;
+  a ranged peer dedupes to one copy.
+- **`typescript` is a required peer of `@azerothjs/compiler`** (no longer marked optional):
+  the package eagerly loads TypeScript-backed analysis, so it was never truly optional.
+
+## [1.0.0] - 2026-07-26
+
+The first stable release. Every package, the `azerothjs` entry package, and both
+editor integrations move to 1.0.0 in lockstep.
+
+### Changed (production readiness)
+
+- **engines**: the Node floor is now `>=22` (down from `>=24`) - Node 22 is Active LTS
+  through 2027 and every published package runs on it. The zero-build backend's
+  `node src/main.ts` needs unflagged native TypeScript (Node 22.18+, 23.6+, or 24),
+  which `azeroth doctor` now checks precisely.
+- **@azerothjs/compiler**: `lintMarkup(node, source, options?)` - the `source` argument is
+  now required (was optional, which silently disabled the interpolation-spacing rule -
+  a legacy call shape).
+- **@azerothjs/eslint-plugin / language-server**: `azerothjs` is now an (optional) peer
+  dependency of the compiler and language-server, so a compiler that emits imports for a
+  runtime version the app doesn't have is caught by npm instead of a raw ESM error. The
+  compiler's `vite` peer is `>=8` (it uses vite 8's `transformWithOxc`).
+
+### Fixed (editor markup model)
+
+- **@azerothjs/compiler**: a root markup element written directly after a reactive block -
+  `effect { ... } <div>...`, `dispose { ... } <ul>...` - is now recognized as markup by the
+  scanner (a block-closing `}` begins expression position), so the editor gives it semantic
+  tokens, hover, and completion. It already compiled; only the editor's markup model missed it.
+
+### Changed (drift-proofing)
+
+- The language server's reactive-keyword set (semantic tokens), name-keyword set (hover), and
+  void-element set (auto-close) now import the compiler's canonical tables instead of keeping
+  hand-maintained copies, so a keyword or built-in added to the compiler can never be silently
+  missed by the editor. The compiler's void-element list is now a single set (the scanner's),
+  re-exported to the parser and tooling.
+
+### Added (editor completeness)
+
+- Hover documentation for the `bind:` / `class:` / `style:` directives.
+- Completion snippet bodies for the `Dynamic` and `Outlet` built-ins (previously offered
+  by name only). A new completeness spec welds the language server's built-in docs and
+  snippets to the compiler's canonical `BUILTIN_COMPONENTS` list, so a built-in can no
+  longer ship without both.
+
+### Fixed (pre-1.0 audit round 2)
+
+- **azerothjs**: the `stream` keyword produced code that crashed at first fetch. The
+  compiler lowers `stream x = (v) => fetch(v) with { source }` to a positional
+  `createStream(source, fetcher, options)` call (parallel to `createResource`), but
+  the runtime only accepted a single options object - and the proving type error was
+  silently dropped by the language server's diagnostics policy. `createStream` now has
+  the same positional overloads as `createResource`; the emitted call type-checks and
+  runs. Locked with positional-form tests.
+- **@azerothjs/http**: `@seriousme/openapi-schema-validator` (used by an http test) is
+  now a declared devDependency; it previously resolved only through a stale lockfile
+  entry from the pre-fold layout, so a clean install would have broken the test. The
+  9 leftover ghost workspace entries from folded packages were purged from the lockfile.
+- **language-server**: the `effect (deps)` hover no longer shows a `watch (...)` example
+  that the parser rejects (the `watch` keyword form no longer exists).
+
+### Removed (dead / legacy code)
+
+- **@azerothjs/http**: a dead `HttpError` re-export from `app.ts` (the package entry
+  `index.ts` already exports it) - a leftover alias violating the no-legacy rule.
+- Dead `export` modifiers on module-private helpers across azerothjs, cli,
+  compiler, and language-server (symbols retained, public surface trimmed).
+- **@azerothjs/compiler**: the duplicate `BUILTIN_COMPONENTS` list in `project.ts` now
+  imports the canonical one from `builtins.ts` (was a hand-maintained twin that could
+  drift from the runtime's actual built-ins).
+- **@azerothjs/eslint-plugin**: dropped a redundant `azerothjs` peer (it flows through
+  the compiler/language-server deps) and declared its real `typescript` peer.
+
+### Fixed (pre-1.0 blocker sweep)
+
+A from-scratch adversarial review found ten confirmed release-blockers, each
+reproduced against the shipped build and each now fixed with a pinned regression test:
+
+- **compiler (parser)**: a regex literal or an apostrophe inside a markup hole no
+  longer breaks compilation. The brace scanner (`skipBalanced`) was blind to regex
+  literals and to embedded markup, so `<p>{ name.replace(/'/g, '') }</p>` or an
+  apostrophe in nested markup text (`{ ok ? <span>Don't</span> : ... }`) desynced
+  the scan and hard-failed the build with a bogus "Unclosed tag". The scanner now
+  consumes regex literals (disambiguated from division by the preceding token) and
+  markup regions as whole units.
+- **azerothjs (reactivity)**: `createEffect`/`createMemo` now re-establish their
+  CREATION owner and error handler around EVERY run, not just the first. Previously
+  a re-run inherited whatever scope triggered it, so `useContext` bled across
+  components, `getOwner()` returned null on re-runs, and `<ErrorBoundary>` missed
+  throws from dynamically-mounted children.
+- **azerothjs (SSR)**: attribute NAMES are validated during serialization - a prop
+  key containing a quote, space, or `>` (an injection attempt to break out of the
+  attribute context) is now rejected, mirroring the DOM path's `setAttribute`.
+  Previously such a name was emitted raw, injecting a live handler (XSS).
+- **azerothjs / @azerothjs/kit (router + SSR)**: a guard that returns `false` no
+  longer leaks its protected page. `matchAndLoad` now returns a distinct blocked
+  result (and separate not-found/redirect arms) instead of collapsing a veto into
+  `null`; `createPageRenderer` maps it to a 403 that renders NOTHING, and a
+  no-match renders the app's fallback at a real 404 - `PageResult` gained a `status`.
+  Previously a vetoed SSR route was served as a rendered 200 (authorization bypass).
+- **azerothjs (router)**: a synchronous `redirect()` from a guard on the initial URL
+  no longer crashes `createRouter` with a temporal-dead-zone `ReferenceError` (the
+  auth deep-link pattern) - the navigation machinery the boot-time guard reaches is
+  now declared ahead of the guard effect.
+- **@azerothjs/http (kernel)**: `json`/`text`/`html` responses no longer drop all
+  but one `Set-Cookie`. Cookies are carried apart from the header record (which
+  cannot hold duplicates) so a session + a CSRF cookie both reach the client.
+- **@azerothjs/http (static)**: `staticFiles` no longer follows a symlink out of the
+  served root (a real-path containment check is enforced) and no longer serves
+  dotfiles (`/.env`, `/.git/config`) - hidden files are 404 by default, with
+  `.well-known` exempt and a `dotfiles` opt-in.
+- **@azerothjs/schema**: `.optional().refine()` (and `.nullable()`) no longer throws
+  a `TypeError` on an absent field. The optional marker now propagates through
+  `refine`/`nullable`, and a refinement is skipped when the value is absent - an
+  omitted optional field was previously a 500 on otherwise-valid input.
+- **@azerothjs/kit (SSR)**: the shell splice uses function replacers, so rendered
+  content or loader data containing `$&`, `` $` ``, or `$'` can no longer splice the
+  document's own head/tail into the output.
+- **compiler (projection)**: `generateVirtualCode` no longer throws on incomplete
+  source. A mid-typing parse failure (the normal editing state) now degrades to a
+  verbatim projection instead of throwing - which previously took down ALL
+  TypeScript IntelliSense project-wide through the tsserver plugin.
+
+Two silent-corruption traps in declaration scanning are now loud diagnostics
+(warnings from the build, errors in the editor) instead of miscompiling:
+
+- **compiler**: `azeroth/unterminated-declaration` - a missing `;` that lets one
+  declaration absorb the next (`state a = 1` newline `state b = 2` parsed as a
+  single declaration, silently dropping `b`) is now flagged at the swallowed
+  keyword.
+- **compiler**: `azeroth/non-ascii-name` - a non-ASCII character in a declaration
+  name (`state café`), which the ASCII-only scanner would truncate silently, is now
+  flagged.
+
+### Added
+
 - **kit** (NEW package): `@azerothjs/kit` - the assembled car. Per-route rendering
   over the pieces that already exist: the router's own route table gains one
   optional field (`render: 'server' | 'static' | 'client'`) and the kit does the

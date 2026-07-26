@@ -128,13 +128,14 @@ const PUBLISH_ORDER =
     // The frontend framework - ONE real package (reactivity/component/renderer/ssr/router/form).
     'azerothjs',
     '@azerothjs/testing',
-    '@azerothjs/devtools',
     // Logger before the backend packages: @azerothjs/http prints the startup banner
     // through it, so it must be resolvable on npm before http publishes.
     '@azerothjs/logger',
     '@azerothjs/cron',
     '@azerothjs/http',
     '@azerothjs/ws',
+    // Devtools after ws: its server bridge peers (optionally) on @azerothjs/ws.
+    '@azerothjs/devtools',
     '@azerothjs/kit',
     '@azerothjs/compiler',
     '@azerothjs/language-server',

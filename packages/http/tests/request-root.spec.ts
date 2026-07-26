@@ -158,3 +158,85 @@ describe('onRequestCleanup: teardown always runs', () =>
         expect(() => onRequestCleanup(() => undefined)).toThrow(/outside a request/);
     });
 });
+
+describe('onRequestCleanup: streaming responses defer teardown to stream-end', () =>
+{
+    it('does NOT run cleanup until a streaming body is fully consumed', async () =>
+    {
+        let released = false;
+        const app = new App();
+        app.get('/stream', () =>
+        {
+            // A live producer that emits after an await - the resource (a pooled connection,
+            // a transaction) is still in use while this pulls. Releasing it at handler-return
+            // would be a use-after-release; the fix ties release to the stream's end.
+            const body = new ReadableStream<Uint8Array>({
+                async pull(controller)
+                {
+                    await pause(15);
+                    if (released)
+                    {
+                        // If the cleanup already ran, the resource is gone - surface it in-band.
+                        controller.enqueue(new TextEncoder().encode('USE-AFTER-RELEASE'));
+                        controller.close();
+                        return;
+                    }
+                    controller.enqueue(new TextEncoder().encode('chunk'));
+                    controller.close();
+                }
+            });
+            onRequestCleanup(() => void (released = true));
+            return new Response(body, { headers: { 'content-type': 'text/plain' } });
+        });
+
+        const response = await app.handle(new Request('http://local/stream'));
+        // The handler returned, but the stream has not been read: cleanup MUST still be pending.
+        expect(released).toBe(false);
+
+        const text = await response.text(); // drain the body to completion
+        expect(text).toBe('chunk');           // never 'USE-AFTER-RELEASE'
+        expect(released).toBe(true);          // now, and only now, the cleanup has run
+    });
+
+    it('runs cleanup when the consumer CANCELS a stream mid-flight (client disconnect)', async () =>
+    {
+        let released = false;
+        const app = new App();
+        app.get('/sse', () =>
+        {
+            const body = new ReadableStream<Uint8Array>({
+                async pull(controller)
+                {
+                    await pause(10);
+                    controller.enqueue(new TextEncoder().encode('tick\n'));
+                }
+            });
+            onRequestCleanup(() => void (released = true));
+            return new Response(body);
+        });
+
+        const response = await app.handle(new Request('http://local/sse'));
+        expect(released).toBe(false);
+
+        const reader = response.body!.getReader();
+        await reader.read();        // pull one chunk
+        expect(released).toBe(false); // still streaming
+        await reader.cancel();      // client goes away
+        expect(released).toBe(true);  // teardown fires on cancel
+    });
+
+    it('buffered responses still run cleanup before handle() resolves', async () =>
+    {
+        // The buffered fast path is unchanged: PayloadResponse is not instanceof Response,
+        // so its cleanups run synchronously in the settle path, not deferred.
+        let released = false;
+        const app = new App();
+        app.get('/buffered', () =>
+        {
+            onRequestCleanup(() => void (released = true));
+            return json({ ok: true });
+        });
+        await app.handle(new Request('http://local/buffered'));
+        expect(released).toBe(true);
+    });
+});

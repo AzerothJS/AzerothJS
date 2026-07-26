@@ -7,7 +7,7 @@
 // notifications on a macrotask, so every reactive burst is followed by flush().
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { installDevtools } from '@azerothjs/devtools';
-import { createSignal, createEffect, createRoot, type DisposeFn } from 'azerothjs';
+import { createSignal, createEffect, createRoot, createResource, type DisposeFn } from 'azerothjs';
 
 let uninstall: (() => void) | null = null;
 
@@ -37,9 +37,13 @@ afterEach(() =>
     uninstall = null;
 });
 
+// The panel mounts inside a shadow root (isolating it from host page CSS), so its content is
+// reached through the host's shadowRoot, not the host's light DOM. Returns null once the host
+// is removed on uninstall - which is exactly what the teardown test asserts.
 function panelRoot(): HTMLElement | null
 {
-    return document.getElementById('azeroth-devtools');
+    const host = document.getElementById('azeroth-devtools');
+    return (host?.shadowRoot?.querySelector('[data-devtools-root]') as HTMLElement | null) ?? null;
 }
 
 /** Installs, creates a small live graph, waits for the first render; returns its disposer. */
@@ -141,6 +145,83 @@ describe('installDevtools - live rendering', () =>
         timelineTab.click();
         const content = root.querySelector('[data-devtools-content]') as HTMLElement;
         expect(content.textContent).toContain('write');
+        dispose();
+    });
+
+    it('a declared primitive renders as ONE named group, not an anonymous pile of internals', async () =>
+    {
+        uninstall = installDevtools();
+        let dispose: DisposeFn = () => undefined;
+        createRoot((d) =>
+        {
+            dispose = d;
+            createResource(() => Promise.resolve(1), { name: 'user' });
+        });
+        await flush();
+
+        const root = panelRoot() as HTMLElement;
+        (root.querySelector('[data-devtools-launcher]') as HTMLElement).click();
+        await flush();
+
+        const content = root.querySelector('[data-devtools-content]') as HTMLElement;
+        const groupHead = content.querySelector('.az-grouphead') as HTMLElement;
+        expect(groupHead).not.toBeNull();
+        expect(groupHead.textContent).toContain('resource');
+        expect(groupHead.textContent).toContain('user');
+        // Members are collapsed until the group is opened.
+        expect(content.querySelectorAll('.az-member').length).toBe(0);
+        groupHead.click();
+        const members = [...(root.querySelector('[data-devtools-content]') as HTMLElement).querySelectorAll('.az-member')];
+        expect(members.length).toBeGreaterThanOrEqual(3);
+        expect(members.map((m) => m.textContent).join(' ')).toContain('data');
+        dispose();
+    });
+
+    it('the Server tab teaches how to enable the bridge when none is connected', async () =>
+    {
+        const dispose = await installWithGraph();
+        const root = panelRoot() as HTMLElement;
+        (root.querySelector('[data-devtools-launcher]') as HTMLElement).click();
+        (root.querySelector('[data-devtools-tab="server"]') as HTMLElement).click();
+        const content = root.querySelector('[data-devtools-content]') as HTMLElement;
+        expect(content.textContent).toContain('Server inspection');
+        expect(content.textContent).toContain('attachDevtools');
+        dispose();
+    });
+});
+
+describe('installDevtools - persisted-state hardening', () =>
+{
+    it('garbage persisted UI state degrades to a usable panel, never an off-screen sliver', async () =>
+    {
+        try
+        {
+            localStorage.setItem('azeroth-devtools:ui', JSON.stringify({
+                collapsed: false,
+                dock: 'sideways',
+                view: 'bogus',
+                floatLeft: -9999,
+                floatTop: 123456,
+                floatW: -50,
+                floatH: 1,
+                dockSize: 'huge'
+            }));
+        }
+        catch
+        {
+            return; // No storage in this environment - nothing to harden against.
+        }
+
+        const dispose = await installWithGraph();
+        const root = panelRoot() as HTMLElement;
+        const panel = (root.querySelector('[data-devtools-header]') as HTMLElement).parentElement as HTMLElement;
+        // Open (collapsed=false honored), with every number clamped to the minimums.
+        expect(panel.style.display).not.toBe('none');
+        expect(parseInt(panel.style.width, 10)).toBeGreaterThanOrEqual(300);
+        expect(parseInt(panel.style.height, 10)).toBeGreaterThanOrEqual(220);
+        // The components view (the fallback for the unknown view id) is active.
+        const active = root.querySelector('[data-devtools-tab="components"]') as HTMLElement;
+        expect(active.classList.contains('on')).toBe(true);
         dispose();
     });
 });

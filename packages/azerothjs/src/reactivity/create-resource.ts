@@ -24,6 +24,7 @@ import { createSignal } from './create-signal.ts';
 import { createEffect } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
  * The reactive shape returned by {@link createResource}.
@@ -135,6 +136,9 @@ export interface ResourceOptions<T>
      * fetches, and a skip-key reset discards the seed along with the data it clears.
      */
     initialValue?: T;
+
+    /** Debug name surfaced to devtools; groups the resource's data/loading/error/fetch nodes. */
+    name?: string;
 }
 
 export function createResource<T>(
@@ -166,13 +170,14 @@ export function createResource<T, S>(
     // ResourceOptions doc for the exact semantics.
     let pendingInitial = options !== undefined && 'initialValue' in options;
 
-    const [data, setData] = createSignal<T | undefined>(options?.initialValue);
-    const [loading, setLoading] = createSignal<boolean>(false);
-    const [error, setError] = createSignal<unknown>(null);
+    const frame = dtEnterPrimitive('resource', options?.name);
+    const [data, setData] = createSignal<T | undefined>(options?.initialValue, { name: 'data' });
+    const [loading, setLoading] = createSignal<boolean>(false, { name: 'loading' });
+    const [error, setError] = createSignal<unknown>(null, { name: 'error' });
 
     // Internal: refetch() bumps `tick` to force the wrapper effect to re-run with the
     // same source value. Never exposed.
-    const [tick, setTick] = createSignal(0);
+    const [tick, setTick] = createSignal(0, { name: 'tick' });
 
     // The three values meaning "no key, don't fetch". 0 and '' are valid keys.
     function isSkipValue(v: unknown): boolean
@@ -281,7 +286,8 @@ export function createResource<T, S>(
 
         // Aborting on the next re-run (or root dispose) is the cancellation guarantee.
         onCleanup(() => controller.abort());
-    });
+    }, { name: 'fetch' });
+    dtExitPrimitive(frame);
 
     return {
         data,

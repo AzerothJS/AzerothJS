@@ -22,6 +22,9 @@ export interface OnOptions
      * once immediately, like a plain effect.
      */
     skipInitial?: boolean;
+
+    /** Optional debug name for the underlying effect, surfaced by devtools and error tooling. */
+    name?: string | undefined;
 }
 
 /**
@@ -141,5 +144,5 @@ export function on<T extends readonly Getter<unknown>[]>(
         });
 
         isFirst = false;
-    });
+    }, { name: options?.name });
 }

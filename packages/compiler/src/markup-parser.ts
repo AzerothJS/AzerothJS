@@ -22,7 +22,9 @@ import {
     isIdentPart,
     isWhitespace,
     skipBalanced,
-    skipString
+    skipString,
+    VOID_ELEMENTS,
+    RAW_TEXT_ELEMENTS
 } from './scanner.ts';
 
 /**
@@ -62,18 +64,6 @@ export class CompileError extends Error
         this.offset = offset;
     }
 }
-
-/**
- * HTML void elements: they have no children and no closing tag. In `.azeroth` markup they may be
- * written either self-closed (`<br/>`) or HTML-style (`<br>`); both parse to a childless element.
- * Shared with the SSR serializer (codegen) so the parser and the emitter agree on which tags close
- * themselves.
- */
-export const VOID_ELEMENTS: ReadonlySet<string> = new Set
-([
-    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-    'link', 'meta', 'param', 'source', 'track', 'wbr'
-]);
 
 /**
  * Maximum markup nesting depth. Real component trees are nowhere near this; the cap exists so a
@@ -235,6 +225,16 @@ class MarkupParser
             };
         }
 
+        // Raw-text element (`<script>`/`<style>`): its content is CDATA, read verbatim up to the
+        // matching close tag - NOT parsed for `{ ... }` holes or nested `<tags>`, which would corrupt
+        // CSS/JS/JSON-LD. Matched by EXACT (lowercase) name so a `<Style>` component is untouched.
+        if (RAW_TEXT_ELEMENTS.has(tag))
+        {
+            const raw = this.#parseRawText(tag);
+            this.#expectClosingTag(tag);
+            return { kind: 'element', tag, isComponent: false, attributes, children: raw, start, end: this.pos };
+        }
+
         const children = this.#parseChildren();
         this.#expectClosingTag(tag);
 
@@ -247,6 +247,37 @@ class MarkupParser
             start,
             end: this.pos
         };
+    }
+
+    /**
+     * Reads a raw-text element's content verbatim, stopping at the matching close tag (`</tag`
+     * followed by whitespace / `/` / `>` / EOF). No hole or nested-tag parsing: `{`, `<`, `&` are
+     * literal, so CSS and JSON-LD survive intact. The tag match is case-sensitive, consistent with
+     * {@link #expectClosingTag} (a `</Style>` close on a `<style>` is a mismatch, as `</DIV>` is on a
+     * `<div>`). Returns a single text child (or none, for an empty element); `pos` is left at the `<`
+     * of the close tag for {@link #expectClosingTag}.
+     */
+    #parseRawText(tag: string): MarkupChild[]
+    {
+        const start = this.pos;
+        while (this.pos < this.#src.length)
+        {
+            if (this.#peek() === '<' && this.#peek(1) === '/'
+                && this.#src.slice(this.pos + 2, this.pos + 2 + tag.length) === tag)
+            {
+                const after = this.#src[this.pos + 2 + tag.length];
+                if (after === undefined || after === '>' || after === '/' || isWhitespace(after))
+                {
+                    break;
+                }
+            }
+            this.pos++;
+        }
+        if (this.pos === start)
+        {
+            return [];
+        }
+        return [{ kind: 'text', value: this.#src.slice(start, this.pos), start, end: this.pos }];
     }
 
     static #isComponentTag(tag: string): boolean

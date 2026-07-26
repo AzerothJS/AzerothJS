@@ -33,7 +33,11 @@ const fakeRenderer = (url: string, shell: string): Promise<PageResult> =>
     {
         return Promise.resolve({ kind: 'redirect', to: '/login', replace: true });
     }
-    return Promise.resolve({ kind: 'html', html: shell.replace('<div id="root"></div>', `<div id="root">SSR:${ url }</div>`) });
+    if (url.startsWith('/forbidden'))
+    {
+        return Promise.resolve({ kind: 'blocked', status: 403 });
+    }
+    return Promise.resolve({ kind: 'html', status: 200, html: shell.replace('<div id="root"></div>', `<div id="root">SSR:${ url }</div>`) });
 };
 
 const dirs: string[] = [];
@@ -95,6 +99,16 @@ describe('mountPages', () =>
         const response = await fetch(app, '/locked');
         expect(response.status).toBe(302);
         expect(response.headers.get('location')).toBe('/login');
+    });
+
+    it('a guard VETO serves the status with the pristine shell, never the rendered component', async () =>
+    {
+        const { app } = build([{ path: '/forbidden', component }], true);
+        const response = await fetch(app, '/forbidden');
+        expect(response.status).toBe(403);
+        const body = await response.text();
+        expect(body).toContain('<div id="root"></div>'); // empty root - nothing protected rendered
+        expect(body).not.toContain('SSR:'); // the component was never rendered
     });
 
     it("render: 'client' serves the pristine shell; API routes registered before keep priority", async () =>

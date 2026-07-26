@@ -12,10 +12,6 @@
  *   ./router      - createRouter, Link/Routes/Outlet, the use* composables
  *   ./form        - createForm, field arrays, validators, phone/countries
  *
- * These were once six lockstep npm packages re-exported through an umbrella; compiled
- * `.azeroth` output always imported THIS package, so the split was never real - now the
- * package is. One README, one semver surface, one tarball.
- *
  * Generated `.azeroth` output imports its runtime helpers from the `azerothjs/internal`
  * subpath (see ./internal.ts - the compiled-output runtime contract), NOT from this
  * public entry - so the application API here can evolve without breaking compiled code.

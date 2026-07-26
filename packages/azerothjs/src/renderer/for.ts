@@ -70,6 +70,27 @@ export interface ForProps<T>
 }
 
 /**
+ * Coerces a resolved `each` value to a real array. A nullish `each` - the common
+ * not-yet-loaded `each={data()}` that starts `null`/`undefined` - renders NOTHING rather
+ * than crashing on `.entries()`; a non-array, non-nullish value is a caller mistake surfaced
+ * with a clear message instead of the cryptic `Cannot read properties of null (reading 'entries')`.
+ *
+ * @internal
+ */
+function asItemArray<T>(value: unknown): T[]
+{
+    if (value === null || value === undefined)
+    {
+        return [];
+    }
+    if (!Array.isArray(value))
+    {
+        throw new TypeError(`<For each> expected an array, received ${ typeof value }. Pass an array or a getter that returns one.`);
+    }
+    return value as T[];
+}
+
+/**
  * Per-key tracking: the rendered element plus the createRoot
  * dispose for any reactive primitives the renderItem function
  * created. Disposing the root tears down those effects when the
@@ -209,7 +230,7 @@ export function For<T>(props: ForProps<T>): MountNode
     // parent on hydration too (no wrapper element - works inside <tbody> etc.).
     if (isStringMode())
     {
-        const items = untrack(() => resolveReactive(props.each)) as T[];
+        const items = asItemArray<T>(untrack(() => resolveReactive(props.each)));
         let inner = '';
 
         // entries() (not index reads) keeps each element typed T even when T itself
@@ -275,7 +296,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
 
     createEffect(() =>
     {
-        const items = resolveReactive(props.each) as T[];
+        const items = asItemArray<T>(resolveReactive(props.each));
 
         // Only `each` drives the reconcile - everything below (key fns,
         // render fns, signal reads inside them) runs UNTRACKED. Suspending

@@ -209,12 +209,6 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
     return steps;
 }
 
-/**
- * Every quality gate the project's shape demands - azeroth-tsc for a frontend,
- * `tsc --noEmit` for a backend, eslint wherever a config exists; a fullstack app
- * checks its server half first (fail-fast on the cheaper gate). A missing tool is
- * never a silent skip: it becomes a printed note.
- */
 /** One `vitest run` per half that has vitest installed; a half without it is a note, not a failure. */
 export function planTest(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
@@ -244,6 +238,12 @@ export function planTest(project: FrontendProject | BackendProject | FullstackPr
     }
 }
 
+/**
+ * Every quality gate the project's shape demands - azeroth-tsc for a frontend,
+ * `tsc --noEmit` for a backend, eslint wherever a config exists; a fullstack app
+ * checks its server half first (fail-fast on the cheaper gate). A missing tool is
+ * never a silent skip: it becomes a printed note.
+ */
 export function planCheck(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
     const notes: string[] = [];
@@ -267,7 +267,7 @@ export function planCheck(project: FrontendProject | BackendProject | FullstackP
 
 /**
  * Deployable artifacts in dependency order (server before client). A NATIVE backend
- * deliberately produces zero steps - Node >= 24 runs the TypeScript source, and the
+ * deliberately produces zero steps - Node >= 22 runs the TypeScript source, and the
  * plan's note says so rather than inventing a build to look busy.
  *
  * @throws PlanError when a required tool is not installed in the project.
@@ -332,7 +332,7 @@ function buildServerPlan(server: BackendProject): Plan
         return {
             command: 'build',
             steps: [],
-            notes: ['api: no build step - Node >= 24 runs the TypeScript source natively; deploy src/ as-is']
+            notes: ['api: no build step - Node >= 22 runs the TypeScript source natively; deploy src/ as-is']
         };
     }
     const tsc = need(server.dir, TSC, 'typescript');

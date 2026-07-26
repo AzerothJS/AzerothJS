@@ -24,10 +24,21 @@ import { loaderHandoffScript, matchAndLoad, renderToString } from 'azerothjs';
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
 
-/** One rendered page, or the redirect a guard/loader demanded. */
+/**
+ * One page-render outcome. The union may GROW (a streaming arm is planned), so a
+ * consumer switching on `kind` must handle an unknown default rather than assume these
+ * are exhaustive.
+ *
+ *   - `html`     - rendered markup to serve with `status` (defaults to 200; a not-found
+ *                  page renders the app's fallback UI at 404).
+ *   - `redirect` - a guard/loader redirected; serve a 302.
+ *   - `blocked`  - a guard VETOED; serve `status` (403) with NO rendered component. This is
+ *                  the arm that stops the guard-veto authorization bypass.
+ */
 export type PageResult =
-    | { kind: 'html'; html: string }
-    | { kind: 'redirect'; to: string; replace: boolean };
+    | { kind: 'html'; html: string; status: number }
+    | { kind: 'redirect'; to: string; replace: boolean }
+    | { kind: 'blocked'; status: number };
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
 export type PageRenderer = (url: string, shell: string) => Promise<PageResult>;
@@ -44,6 +55,8 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
     return async (url, shell) =>
     {
         const loaded = await matchAndLoad(routes, url);
+
+        // A guard/loader redirect -> a real 302; never render the target.
         if (loaded !== null && 'redirect' in loaded)
         {
             const to = typeof loaded.redirect === 'string'
@@ -52,7 +65,18 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             return { kind: 'redirect', to, replace: loaded.replace };
         }
 
-        const handoff = loaded ?? undefined;
+        // A guard VETO -> serve the status, render NOTHING. Rendering here is the SSR
+        // authorization bypass: string-mode rendering does not re-run guards (matchAndLoad
+        // owns that server-side), so a rendered vetoed route would ship the protected
+        // component in a 200 document.
+        if (loaded !== null && 'blocked' in loaded)
+        {
+            return { kind: 'blocked', status: loaded.status };
+        }
+
+        // No route matched -> render the app's own fallback UI, but with a real 404 status.
+        const notFound = loaded !== null && 'notFound' in loaded;
+        const handoff = loaded !== null && 'version' in loaded ? loaded : undefined;
         const body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }));
 
         if (!shell.includes(ROOT_MARKER))
@@ -60,12 +84,18 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             throw new Error(`kit: the built shell has no \`${ ROOT_MARKER }\` to render into - `
                 + 'the client index.html must keep an empty root element.');
         }
-        let html = shell.replace(ROOT_MARKER, `<div id="root">${ body }</div>`);
-        const script = loaderHandoffScript(loaded);
+        // Function replacers, NOT the string form: rendered markup and the JSON
+        // handoff routinely contain `$&`, `` $` ``, `$'`, `$$` (any text with a
+        // literal `$` before a quote or ampersand), which the string form would
+        // interpret as replacement patterns and splice the document's own head or
+        // tail into the output. The function form treats the replacement verbatim.
+        const rendered = `<div id="root">${ body }</div>`;
+        let html = shell.replace(ROOT_MARKER, () => rendered);
+        const script = handoff !== undefined ? loaderHandoffScript(loaded) : '';
         if (script !== '')
         {
-            html = html.replace('</head>', `${ script }</head>`);
+            html = html.replace('</head>', () => `${ script }</head>`);
         }
-        return { kind: 'html', html };
+        return { kind: 'html', html, status: notFound ? 404 : 200 };
     };
 }

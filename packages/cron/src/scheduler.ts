@@ -134,7 +134,27 @@ interface Job
 /** setTimeout's ceiling; longer spans re-arm at the cap and recompute from the wall clock. */
 const MAX_DELAY = 2_147_483_647;
 
-/** Builds a scheduler. Jobs arm as they are registered; see {@link Scheduler}. */
+/**
+ * Creates a job scheduler over the cron expression engine. Register work with
+ * {@link Scheduler.schedule} (cron), {@link Scheduler.every} (fixed interval), or
+ * {@link Scheduler.at} (daily time); each job arms as it is registered and re-arms itself from
+ * the wall clock after every run. Reach for it when work must run on a schedule inside a
+ * long-lived process - a server, a worker - rather than an external cron daemon.
+ *
+ * @param options - Failure observer, lifecycle logger, and whether armed timers pin the process alive.
+ * @returns A {@link Scheduler} for registering jobs, reading the table, and draining on shutdown.
+ * @example
+ * ```ts
+ * const scheduler = createScheduler({ onError: (err, job) => report(err, job) });
+ *
+ * scheduler.schedule('digest', '0 8 * * 1', sendWeeklyDigest, { timeZone: 'Europe/Berlin' });
+ * scheduler.every('heartbeat', 30_000, ping);
+ * scheduler.at('backup', '02:30', runBackup);
+ *
+ * console.table(scheduler.jobs());
+ * await scheduler.stop({ drain: true }); // on SIGTERM: disarm, await in-flight runs
+ * ```
+ */
 export function createScheduler(options: SchedulerOptions = {}): Scheduler
 {
     const jobs = new Map<string, Job>();

@@ -119,6 +119,36 @@ export function notifyWrite(producer: Producer): void
 function drainQueue(): void
 {
     let guard = 0;
+    let firstError: unknown;
+    let failed = false;
+
+    // Run one queued effect in ISOLATION: an effect whose body throws with no error handler
+    // (no catchError, no uncaught handler) must not strand the rest of THIS flush - the other
+    // affected effects still run on settled state. The first such error is captured and
+    // surfaced after the queue drains, so the write/batch still throws, just not mid-flush.
+    const run = (subscriber: Subscriber): void =>
+    {
+        if (subscriber.isDisposed)
+        {
+            return;
+        }
+        try
+        {
+            // Run the body directly (not execute(), which would just re-queue while batching
+            // is still true). Writes this run makes notify through execute() and so defer to
+            // the next round.
+            (subscriber.runScheduled ?? subscriber.execute)();
+        }
+        catch (error)
+        {
+            if (!failed)
+            {
+                failed = true;
+                firstError = error;
+            }
+        }
+    };
+
     while (solo !== null || queue.size > 0)
     {
         if (solo !== null && queue.size === 0)
@@ -126,10 +156,7 @@ function drainQueue(): void
             // Fast lane: the round's one effect, no Set traffic at all.
             const only = solo;
             solo = null;
-            if (!only.isDisposed)
-            {
-                (only.runScheduled ?? only.execute)();
-            }
+            run(only);
         }
         else
         {
@@ -144,13 +171,7 @@ function drainQueue(): void
 
             for (const subscriber of effects)
             {
-                if (!subscriber.isDisposed)
-                {
-                    // Run the body directly (not execute(), which would just re-queue while
-                    // batching is still true). Writes this run makes notify through execute()
-                    // and so defer to the next round.
-                    (subscriber.runScheduled ?? subscriber.execute)();
-                }
+                run(subscriber);
             }
         }
 
@@ -166,6 +187,13 @@ function drainQueue(): void
                 'cycle (derive with createMemo, guard the write, or read with untrack).'
             );
         }
+    }
+
+    // The whole queue drained; now surface the first effect error (if any).
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `failed` is set inside the run() closure; the rule's flow analysis cannot see the mutation and narrows it to its initial false
+    if (failed)
+    {
+        throw firstError;
     }
 }
 

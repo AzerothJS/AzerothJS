@@ -1,8 +1,8 @@
 {
     "name": "@azerothjs/cli",
-    "version": "1.0.0-beta.2",
+    "version": "1.0.0",
     "engines": {
-        "node": ">=24"
+        "node": ">=22"
     },
     "description": "AzerothJS command line - one verb per job: dev (the fullstack conductor), check, build, doctor, info. Detects your project's shape, composes the tools you already have, and prints exactly what it runs",
     "type": "module",
@@ -30,7 +30,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/logger": "1.0.0-beta.2"
+        "@azerothjs/logger": "1.0.0"
     },
     "publishConfig": {
         "access": "public"

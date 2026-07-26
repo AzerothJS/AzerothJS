@@ -3,9 +3,9 @@
  *
  * Every character the CLI shows a human goes through here - and every color comes
  * from @azerothjs/logger's palette, the framework's ONE source of ANSI codes and
- * capability detection (NO_COLOR/FORCE_COLOR/TTY/dumb-terminal rules live there,
- * the framework's ONE source of ANSI codes). This module owns only the CLI's vocabulary: dim
- * machinery text, rotating child labels, verdict marks, the brand accents.
+ * capability detection (NO_COLOR/FORCE_COLOR/TTY/dumb-terminal rules live there).
+ * This module owns only the CLI's vocabulary: dim machinery text, rotating child
+ * labels, verdict marks, the brand accents.
  *
  * The division of labor: terminal owns HOW text looks, commands own WHAT is said.
  * Machine-facing surfaces (--print plans, the info block) pass through unstyled by

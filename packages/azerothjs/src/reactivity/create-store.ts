@@ -24,6 +24,14 @@
 
 import { createRoot } from './create-root.ts';
 import { getStoreScope } from './store-scope.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
+
+/** Options for {@link createStore}. */
+export interface StoreOptions
+{
+    /** Debug name surfaced to devtools; groups the store's internal nodes under this label. */
+    name?: string;
+}
 
 /**
  * createStore
@@ -87,7 +95,7 @@ import { getStoreScope } from './store-scope.ts';
  * });
  * useCounter().inc(); // shared instance, effects already owned
  */
-export function createStore<T>(factory: () => T): () => T
+export function createStore<T>(factory: () => T, options?: StoreOptions): () => T
 {
     // Cached instance PER store scope. On the client there is one stable scope,
     // so this behaves as the original app-wide singleton; the server runs each
@@ -112,10 +120,12 @@ export function createStore<T>(factory: () => T): () => T
             // scope (the whole JS context on the client; until the render ends on
             // the server). `has` - not a truthy check - so a factory that returns
             // null/undefined still caches exactly once.
+            const frame = dtEnterPrimitive('store', options?.name);
             createRoot(() =>
             {
                 instances.set(scope, factory());
             });
+            dtExitPrimitive(frame);
         }
 
         return instances.get(scope) as T;

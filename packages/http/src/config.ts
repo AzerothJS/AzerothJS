@@ -160,20 +160,23 @@ export function loadConfig<Shape extends Record<string, ConfigVar<unknown>>>(
 
     // Redaction: the VALUES stay readable (code needs them); only the object's own
     // serializations hide them - the log-the-whole-config accident is the threat model.
+    // Both serialization paths are covered: JSON.stringify honors `toJSON`, while
+    // console.log/util.inspect IGNORE it and enumerate properties instead - so the secret
+    // would print in plaintext without the inspect hook below. The redaction properties are
+    // non-enumerable, so the `{ ...values }` snapshot they return never re-copies them.
     if (secrets.size > 0)
     {
-        Object.defineProperty(values, 'toJSON', {
-            value(): Record<string, unknown>
+        const redact = (): Record<string, unknown> =>
+        {
+            const safe: Record<string, unknown> = { ...values };
+            for (const key of secrets)
             {
-                const safe: Record<string, unknown> = { ...values };
-                for (const key of secrets)
-                {
-                    safe[key] = '[redacted]';
-                }
-                delete (safe as { toJSON?: unknown }).toJSON;
-                return safe;
+                safe[key] = '[redacted]';
             }
-        });
+            return safe;
+        };
+        Object.defineProperty(values, 'toJSON', { value: redact });
+        Object.defineProperty(values, Symbol.for('nodejs.util.inspect.custom'), { value: redact });
     }
     return values as ConfigOf<Shape>;
 }

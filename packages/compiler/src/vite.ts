@@ -268,6 +268,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
     // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
     let checker: AzerothTypeChecker | null = null;
     let root = process.cwd();
+    let dev = false;
 
     return {
         name: 'azerothjs',
@@ -314,13 +315,16 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 : [...current, extension];
         },
 
-        // Capture the resolved project root so buildStart can locate every `.azeroth` file.
-        configResolved(resolved: { root?: string })
+        // Capture the resolved project root so buildStart can locate every `.azeroth` file, and
+        // whether this is the dev server (keyword declarations then carry their identifiers as
+        // devtools debug names; a production build's output is unchanged).
+        configResolved(resolved: { root?: string; command?: string })
         {
             if (resolved.root)
             {
                 root = resolved.root;
             }
+            dev = resolved.command === 'serve';
         },
 
         // The framework's face on the dev server: one banner when the server is up,
@@ -437,7 +441,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             let compiled: ReturnType<typeof generateModule>;
             try
             {
-                compiled = generateModule(code, filename, { ssr: options.ssr !== false });
+                compiled = generateModule(code, filename, { ssr: options.ssr !== false, dev });
             }
             catch (err)
             {

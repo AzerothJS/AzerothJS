@@ -80,12 +80,14 @@ function resolveFace(face: LoggerFace, stream: WritableLike | undefined): 'prett
     {
         return face;
     }
-    if (typeof process === 'undefined')
+    // A browser has no `process`; some bundlers shim a PARTIAL one (env only, no stdout).
+    // Either way there is no writable TTY, so the browser face is the console sink.
+    const out = stream ?? (typeof process === 'undefined' ? undefined : process.stdout);
+    if (out === undefined)
     {
         return 'console';
     }
-    const out = stream ?? process.stdout;
-    const production = process.env.NODE_ENV === 'production';
+    const production = typeof process !== 'undefined' && process.env.NODE_ENV === 'production';
     return out.isTTY === true && !production ? 'pretty' : 'ndjson';
 }
 

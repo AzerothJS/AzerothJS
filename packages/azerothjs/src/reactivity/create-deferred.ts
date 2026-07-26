@@ -14,6 +14,7 @@ import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
 import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
  * Options for {@link createDeferred}.
@@ -28,6 +29,9 @@ export interface DeferredOptions
      * @default 150
      */
     delay?: number;
+
+    /** Debug name surfaced to devtools; labels the deferred value and groups its internals. */
+    name?: string;
 }
 
 /**
@@ -98,10 +102,11 @@ export interface DeferredOptions
 export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions): Getter<T>
 {
     const delay = options?.delay ?? 150;
+    const frame = dtEnterPrimitive('deferred', options?.name);
 
     // Seed the internal signal with the current source value (no delay); untrack keeps
     // this read from subscribing any enclosing effect.
-    const [deferred, setDeferred] = createSignal<T>(untrack(() => source()));
+    const [deferred, setDeferred] = createSignal<T>(untrack(() => source()), { name: options?.name });
 
     let timerId: ReturnType<typeof setTimeout> | null = null;
     let isFirst = true;
@@ -136,5 +141,6 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
         };
     });
 
+    dtExitPrimitive(frame);
     return deferred;
 }

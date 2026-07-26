@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createLogger } from '../src/logger.ts';
-import { fileStream, fileSink, teeSink } from '../src/file.ts';
+import { fileStream, fileSink } from '../src/file.ts';
+import { teeSink } from '../src/sinks.ts';
 import type { LogRecord } from '../src/record.ts';
 
 const roots: string[] = [];
@@ -254,8 +255,10 @@ describe('crash safety', () =>
     {
         const path = join(root(), 'exit.ndjson');
         const entry = pathToFileURL(join(import.meta.dirname, '..', 'src', 'index.ts')).href;
+        const nodeEntry = pathToFileURL(join(import.meta.dirname, '..', 'src', 'node.ts')).href;
         const script = `
-            const { createLogger, fileStream } = await import(${ JSON.stringify(entry) });
+            const { createLogger } = await import(${ JSON.stringify(entry) });
+            const { fileStream } = await import(${ JSON.stringify(nodeEntry) });
             const log = createLogger({ stream: fileStream(${ JSON.stringify(path) }) });
             log.info('one'); log.info('two'); log.info('three');
             process.exit(0); // no flush, no close - the exit hook must save these

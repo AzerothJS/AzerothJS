@@ -35,17 +35,20 @@
 export let currentErrorHandler: ((error: unknown) => void) | null = null;
 
 /**
- * Installs/clears the current error handler; used by catchError to set and restore it
- * around its body.
+ * Installs/clears the current error handler and RETURNS the previous one; used by catchError
+ * (and effect/memo runs) to set and restore it around a body.
  *
  * @internal
  * @param handler - The handler to install, or null to clear.
+ * @returns The handler that was active before this call.
  */
 export function setCurrentErrorHandler(
     handler: ((error: unknown) => void) | null
-): void
+): ((error: unknown) => void) | null
 {
+    const previous = currentErrorHandler;
     currentErrorHandler = handler;
+    return previous;
 }
 
 /** Where an uncaught reactive error escaped from. */

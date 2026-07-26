@@ -5,7 +5,7 @@
 > hydrated route - scaffold it with `npm create azeroth@latest` and pick fullstack.
 
 An [AzerothJS](https://github.com/AzerothJS/AzerothJS) backend. No build step:
-Node >= 24 runs the TypeScript source directly.
+Node >= 22 runs the TypeScript source directly.
 
 ## Scripts
 

@@ -112,7 +112,7 @@ describe('production shape: the hour-three files are already waiting', () =>
         }
         const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { scripts: Record<string, string>; engines: Record<string, string> };
         expect(pkg.scripts['test']).toBe('vitest run');
-        expect(pkg.engines['node']).toBe('>=24');
+        expect(pkg.engines['node']).toBe('>=22');
     });
 
     it('frontend ships a component test, a favicon slot, and its own README', () =>

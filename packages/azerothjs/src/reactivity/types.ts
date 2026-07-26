@@ -190,8 +190,8 @@ export interface SignalOptions<T>
     /** Custom equality; defaults to Object.is. */
     equals?: EqualsFn<T>;
 
-    /** Optional debug name. */
-    name?: string;
+    /** Optional debug name. Explicit undefined is equivalent to absent. */
+    name?: string | undefined;
 }
 
 /**
@@ -199,8 +199,8 @@ export interface SignalOptions<T>
  */
 export interface EffectOptions
 {
-    /** Optional debug name, surfaced by error tooling. */
-    name?: string;
+    /** Optional debug name, surfaced by error tooling. Explicit undefined is equivalent to absent. */
+    name?: string | undefined;
 }
 
 /**
@@ -214,4 +214,7 @@ export interface SelectorOptions<T>
 {
     /** Custom equality for detecting a selection change; defaults to Object.is. */
     equals?: EqualsFn<T>;
+
+    /** Debug name surfaced to devtools; labels the selector's watcher effect. */
+    name?: string;
 }

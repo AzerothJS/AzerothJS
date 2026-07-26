@@ -35,6 +35,7 @@ import { createSignal } from './create-signal.ts';
 import { createEffect } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
  * Built-in parse mode names. Pass a function instead for full
@@ -83,6 +84,9 @@ export interface StreamOptions<S = void>
      * Default: `''`.
      */
     initial?: string;
+
+    /** Debug name surfaced to devtools; groups the stream's partial/done/error/drive nodes. */
+    name?: string;
 }
 
 /**
@@ -412,6 +416,36 @@ function isSkipSource(value: unknown): boolean
 }
 
 /**
+ * @internal Normalizes createStream's three call forms into one {@link StreamOptions} object.
+ * A positional fetcher `(sourceValue, signal) => Response` is wrapped into the internal
+ * `({ source, signal }) => Response` shape, so the object-form fetcher and the positional
+ * form the `stream` keyword emits both feed the same driver. Discriminated exactly like
+ * createResource: the second argument being a function means "source + fetcher".
+ */
+function normalizeStreamOptions<S>(
+    a: StreamOptions<S> | (() => S | false | null | undefined) | PositionalStandaloneFetcher,
+    b?: PositionalSourceFetcher<S> | StreamTail<void>,
+    c?: StreamTail<S>
+): StreamOptions<S>
+{
+    // Object form: the first argument is the options object.
+    if (typeof a !== 'function')
+    {
+        return a;
+    }
+    const hasSource = typeof b === 'function';
+    const tail = (hasSource ? c : b as StreamTail<S> | undefined) ?? {};
+    if (hasSource)
+    {
+        const source = a as () => S | false | null | undefined;
+        const fetcher = b;
+        return { ...tail, source, fetcher: ({ source: value, signal }) => fetcher(value, signal) };
+    }
+    const fetcher = a as PositionalStandaloneFetcher;
+    return { ...tail, fetcher: ({ signal }) => fetcher(signal) };
+}
+
+/**
  * createStream
  *
  * PURPOSE:
@@ -490,20 +524,52 @@ function isSkipSource(value: unknown): boolean
  * });
  * h('div', {}, () => reply.partial());
  */
-export function createStream<S = void>(options: StreamOptions<S>): Stream
+/** A positional fetcher with a source: receives the resolved source value and the abort signal. */
+type PositionalSourceFetcher<S> = (source: S, signal: AbortSignal) => Promise<Response>;
+
+/** A positional fetcher with no source: receives only the abort signal. */
+type PositionalStandaloneFetcher = (signal: AbortSignal) => Promise<Response>;
+
+/** The `parse`/`initial` tail shared by the positional forms (source + fetcher live in the args). */
+type StreamTail<S> = Omit<StreamOptions<S>, 'fetcher' | 'source'>;
+
+/**
+ * Positional form with a source - `createStream(source, fetcher, options?)`. This is the form
+ * the `stream` keyword lowers to (parallel to `createResource(source, fetcher)`); the fetcher
+ * receives the resolved source value and the signal.
+ */
+export function createStream<S>(
+    source: () => S | false | null | undefined,
+    fetcher: PositionalSourceFetcher<S>,
+    options?: StreamTail<S>
+): Stream;
+/** Positional form with no source - `createStream(fetcher, options?)`. */
+export function createStream(
+    fetcher: PositionalStandaloneFetcher,
+    options?: StreamTail<void>
+): Stream;
+/** Options-object form - `createStream({ source, fetcher, parse, initial })`. */
+export function createStream<S = void>(options: StreamOptions<S>): Stream;
+export function createStream<S = void>(
+    a: StreamOptions<S> | (() => S | false | null | undefined) | PositionalStandaloneFetcher,
+    b?: PositionalSourceFetcher<S> | StreamTail<void>,
+    c?: StreamTail<S>
+): Stream
 {
+    const options = normalizeStreamOptions<S>(a, b, c);
     const initial = options.initial ?? '';
     const source = options.source;
     const hasSource = source !== undefined;
 
-    const [partial, setPartial] = createSignal(initial);
-    const [done, setDone] = createSignal(true);  // true until first fetch starts
-    const [error, setError] = createSignal<unknown>(null);
+    const frame = dtEnterPrimitive('stream', options.name);
+    const [partial, setPartial] = createSignal(initial, { name: 'partial' });
+    const [done, setDone] = createSignal(true, { name: 'done' });  // true until first fetch starts
+    const [error, setError] = createSignal<unknown>(null, { name: 'error' });
 
     // `tick` lets `refetch()` force the driving effect to re-run
     // even when the source hasn't changed - same trick as in
     // createResource. Internal, never exposed.
-    const [tick, setTick] = createSignal(0);
+    const [tick, setTick] = createSignal(0, { name: 'tick' });
 
     /**
      * Resets the user-facing state to "fresh stream". Wrapped in
@@ -729,7 +795,8 @@ export function createStream<S = void>(options: StreamOptions<S>): Stream
         }
 
         startStream(sourceValue);
-    });
+    }, { name: 'drive' });
+    dtExitPrimitive(frame);
 
     return {
         partial,

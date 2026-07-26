@@ -19,10 +19,6 @@ import type { Dep, ReactiveSources } from './dep.ts';
 
 import { traverseReactive } from './walk.ts';
 
-// `Dep` and `ReactiveSources` are pure data (no TypeScript dependency); they
-// live in ./dep.ts and are re-exported here for the collector's consumers.
-export type { Dep, ReactiveSources } from './dep.ts';
-
 /**
  * collectReads
  *

@@ -35,49 +35,17 @@ export interface RenderResult
 const mounted = new Set<RenderResult>();
 
 /**
- * renderTest
+ * Mounts a component for a test: a fresh container appended to document.body with the tree built
+ * inside its own reactive root, returning the container and an idempotent unmount. Use it for any
+ * unit or integration test of a component or reactive binding; for SSR string output call
+ * renderToString directly, and note it requires a DOM (happy-dom/jsdom/browser).
  *
- * PURPOSE:
- * Mounts a component for a test - a fresh container appended to document.body, the tree built inside
- * its own reactive root - and returns the container plus an idempotent unmount.
+ * The container is attached to document.body so delegated events fire, so always unmount (or rely
+ * on {@link cleanup}) or trees bleed across tests. unmount disposes the root and removes nodes one
+ * by one - not `innerHTML = ''` - so MutationObserver teardown (Portal auto-cleanup) fires and
+ * destroy hooks run per element, matching render()'s remount contract.
  *
- * WHY IT EXISTS:
- * Every reactive-tree test needs the same mount/dispose lifecycle, and forgetting disposal leaks
- * effects into later tests. renderTest owns that lifecycle so a test can't get it wrong.
- *
- * COMPILER / RUNTIME ROLE:
- * Test-time, testing; wraps createRoot plus the render() teardown contract (root dispose + per-node
- * destroy hooks).
- *
- * INPUT CONTRACT:
- * - component: a function returning the root element to mount.
- *
- * OUTPUT CONTRACT:
- * - A {@link RenderResult}: `container` (attached to document.body) and `unmount()` (idempotent).
- *
- * WHY THIS DESIGN:
- * The container is ATTACHED to document.body so delegated events actually fire. unmount disposes the
- * root AND removes nodes one-by-one (not `innerHTML = ''`) so MutationObserver teardown (Portal
- * auto-cleanup) fires and destroy hooks run per element - the same contract as render()'s remount path.
- *
- * WHEN TO USE:
- * Any unit/integration test of a component or a reactive binding.
- *
- * WHEN NOT TO USE:
- * SSR string-output tests (call renderToString directly - no DOM needed); environments without a DOM.
- *
- * EDGE CASES:
- * - unmount is idempotent (a second call no-ops).
- * - {@link cleanup} unmounts any result you forgot to unmount.
- *
- * PERFORMANCE NOTES:
- * One container + one root per call; negligible.
- *
- * DEVELOPER WARNING:
- * Requires a DOM (happy-dom/jsdom/browser). The container is attached to document.body, so always
- * unmount (or rely on cleanup) or trees bleed across tests.
- *
- * @param component - A function returning the root element
+ * @param component - A function returning the root element to mount
  * @returns A {@link RenderResult} with the attached container and an idempotent unmount
  * @see {@link cleanup}
  * @see {@link leakGuard}
@@ -156,46 +124,15 @@ export function cleanup(): void
 }
 
 /**
- * leakGuard
+ * Snapshots the subscriber count of each signal or memo getter and returns an assertion that
+ * throws - naming each offending getter and its before->after counts - if any getter holds MORE
+ * subscribers than at the snapshot. Use it in leak tests around a mount -> mutate -> unmount cycle
+ * to make "teardown released every subscription" assertable, since leaked effects are invisible to
+ * DOM assertions.
  *
- * PURPOSE:
- * Snapshots the subscriber count of each signal/memo getter and returns an assertion that throws
- * (naming the offenders) if any getter holds MORE subscribers than at the snapshot.
- *
- * WHY IT EXISTS:
- * Leaked effects are INVISIBLE to DOM assertions - a disposed-looking tree can still hold live
- * subscribers. This makes "tearing down the tree released every subscription" assertable.
- *
- * COMPILER / RUNTIME ROLE:
- * Test-time, testing; built on reactivity's subscriberCount probe.
- *
- * INPUT CONTRACT:
- * - getters: the signal/memo getters to watch.
- *
- * OUTPUT CONTRACT:
- * - A function to call after teardown; it throws (listing each offending getter and its before->after
- *   counts) if any getter gained subscribers, and returns nothing on success.
- *
- * WHY THIS DESIGN:
- * It compares post-teardown counts to a baseline, so it flags NET leaks regardless of how many
- * subscribers existed at the start, and names each offender for fast debugging.
- *
- * WHEN TO USE:
- * Leak tests around a mount -> mutate -> unmount cycle.
- *
- * WHEN NOT TO USE:
- * Asserting an exact subscriber count (it only flags increases); getters meant to stay subscribed
- * past the check.
- *
- * EDGE CASES:
- * - Equal or fewer subscribers passes; only an increase throws.
- *
- * PERFORMANCE NOTES:
- * O(getters) at snapshot and at check.
- *
- * DEVELOPER WARNING:
- * Snapshot BEFORE mounting and check AFTER unmounting - snapshot while mounted and the baseline
- * already includes the subscriptions you are trying to detect.
+ * Snapshot BEFORE mounting and check AFTER unmounting: snapshot while mounted and the baseline
+ * already includes the subscriptions you are trying to detect. It flags only net increases, so
+ * equal or fewer subscribers passes.
  *
  * @param getters - Signal or memo getters to watch
  * @returns An assertion function that throws if subscriptions were not released

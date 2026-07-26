@@ -6,8 +6,7 @@
  * leaves non-markup byte-for-byte: a generated line that came from verbatim source maps 1:1; a
  * generated line inside a compiled markup region maps to that region's starting position.
  *
- * These are small, pure public utilities (re-exported from the package index); each carries a concise
- * JSDoc + example rather than a full block.
+ * These are small, pure public utilities.
  *
  * @see {@link encodeMappings} - assemble the `mappings` string
  * @see {@link vlqEncode} - the base64 VLQ number format

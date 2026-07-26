@@ -20,7 +20,8 @@ import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { colorTier, intro, outro, palette, select, textInput } from '@azerothjs/logger';
+import { colorTier, palette } from '@azerothjs/logger';
+import { intro, outro, select, textInput } from '@azerothjs/logger/node';
 
 import { TEMPLATES, isTemplateName, scaffold, type TemplateName } from './scaffold.ts';
 

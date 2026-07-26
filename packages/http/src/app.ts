@@ -379,10 +379,10 @@ export class App<Ctx extends object = object>
      * would wrongly signal a state change. The handler MUST NOT mutate state - that contract is
      * what lets responses be cached and requests retried. Read the body as you would a POST's
      * (readJson/readForm enforce the required Content-Type); reply with `queryResult`.
-      * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
- * proxies, caches, and tooling may not recognize it. The surface is stable within the
- * 1.x train but carries an experimental flag until the RFC is.
- */
+     * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
+     * proxies, caches, and tooling may not recognize it. The surface is stable within the
+     * 1.x train but carries an experimental flag until the RFC is.
+     */
     public query<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('QUERY', pattern, handler);
@@ -536,6 +536,3 @@ export class App<Ctx extends object = object>
         return finishDispatch(request, out);
     }
 }
-
-/** Re-exported so `throw new HttpError(...)` and `new App()` come from one import. */
-export { HttpError };

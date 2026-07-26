@@ -123,7 +123,7 @@ describe('fullstack version skew', () =>
 
 describe('general behavior', () =>
 {
-    it('the node version check passes on the running node (>= 24 in this repo)', () =>
+    it('the node version check passes on the running node (>= 22.18 native-TS floor)', () =>
     {
         const dir = root();
         write(dir, 'package.json', packageJson({ '@azerothjs/http': '^0.9.0' }));

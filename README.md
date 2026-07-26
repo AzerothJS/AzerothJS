@@ -1,22 +1,40 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS - the A with the dragon" width="160" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="140" />
 
 # AzerothJS
 
-**The fine-grained fullstack TypeScript framework - compiled components, web-standard servers, one CLI. No Virtual DOM. Zero dependencies.**
+### The fine-grained, fullstack TypeScript framework
 
-[![npm](https://img.shields.io/npm/v/azerothjs?label=azerothjs&color=2ea44f)](https://www.npmjs.com/package/azerothjs)
-[![CI](https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml/badge.svg)](https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node >= 24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](package.json)
+**Compiled components · web-standard servers · one CLI**
+<br/>No Virtual DOM. No diffing. Zero dependencies.
+
+<p>
+  <a href="https://www.npmjs.com/package/azerothjs"><img src="https://img.shields.io/npm/v/azerothjs?color=2ea44f&label=azerothjs" alt="npm" /></a>
+  <a href="https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml"><img src="https://github.com/AzerothJS/AzerothJS/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node >= 22" /></a>
+  <img src="https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white" alt="Types included" />
+  <img src="https://img.shields.io/badge/dependencies-0-2ea44f" alt="Zero dependencies" />
+</p>
+
+<p>
+  <b><a href="#quick-start">Quick start</a></b> ·
+  <b><a href="#why">Why</a></b> ·
+  <b><a href="#language">Language</a></b> ·
+  <b><a href="#server">Server</a></b> ·
+  <b><a href="#packages">Packages</a></b> ·
+  <b><a href="#editors">Editors</a></b>
+</p>
 
 </div>
 
-Signals drive effects that update real DOM nodes in place. Components are written as `component`
-blocks in `.azeroth` single-file components; the compiler lowers them to one mode-aware artifact
-that clones DOM on the client, serializes HTML on the server, and adopts that HTML on hydration - 
-all from a single intermediate representation.
+---
+
+Signals drive effects that update **real DOM nodes in place**. Components are written as `component`
+blocks in `.azeroth` single-file components; the compiler lowers each one to a single mode-aware
+artifact that **clones DOM on the client, serializes HTML on the server, and adopts that HTML on
+hydration** - all from one intermediate representation.
 
 ```azeroth
 export default component Counter(props: { start?: number })
@@ -30,24 +48,32 @@ export default component Counter(props: { start?: number })
 }
 ```
 
-`{count}` updates only its own text node. There is no component re-render and no diff - the
-reactive graph itself is the update mechanism.
+> [!TIP]
+> `{count}` updates **only its own text node**. There is no component re-render and no diff - the
+> reactive graph *itself* is the update mechanism. Write `count++`; the compiler wires the reactivity.
 
-## Quick start
+---
 
-The fastest path is the scaffolder - a frontend, backend, or fullstack app with the
-whole toolchain wired (one `npm run dev`, `azeroth check` as the gate):
+<a id="quick-start"></a>
+
+## ⚡ Quick start
+
+The fastest path is the scaffolder - a frontend, backend, or fullstack app with the whole toolchain
+wired in (one `npm run dev`, `azeroth check` as the gate):
 
 ```sh
 npm create azeroth@latest my-app
 cd my-app && npm install && npm run dev
 ```
 
-Or wire a Vite project by hand:
+<details>
+<summary><b>... or wire a Vite project by hand</b></summary>
+
+<br/>
 
 ```sh
 npm install azerothjs
-npm install -D @azerothjs/compiler
+npm install -D @azerothjs/compiler typescript
 ```
 
 ```ts
@@ -70,7 +96,13 @@ That is the whole setup: the Vite plugin compiles `.azeroth` files (with build-t
 diagnostics, and real TypeScript type checking), and `azerothjs` is the one runtime import an
 application needs.
 
-## Why AzerothJS
+</details>
+
+---
+
+<a id="why"></a>
+
+## ✨ Why AzerothJS
 
 - **Fine-grained by construction.** A signal write re-runs exactly the effects that read it; each
   effect owns specific DOM nodes. No VDOM, no diffing, no component re-renders.
@@ -82,14 +114,25 @@ application needs.
   one emitter and one IR.
 - **Editor tooling at framework grade.** A compiler-powered language server drives both the
   [VS Code extension](editors/vscode) and the [JetBrains plugin](editors/jetbrains): completion,
-  hover docs for every keyword, go-to-definition and find-references *across* the `.ts` <->
-  `.azeroth` boundary, safe cross-file rename, semantic highlighting with a distinct color for
-  reactive names, and `azeroth-tsc` for CI type checking.
-- **Readable end to end.** Every layer - the signal graph, the renderer, the compiler and its IR - 
-  is written from scratch with no hidden runtime magic. The source is meant to be studied as much
-  as used.
+  hover docs for every keyword, go-to-definition and find-references *across* the `.ts` ⇄ `.azeroth`
+  boundary, safe cross-file rename, and semantic highlighting with a distinct color for reactive names.
+- **No hidden runtime.** The signal graph, the renderer, and the compiler with its IR are all written
+  from scratch - small, dependency-free, and readable when you need to know exactly what runs.
 
-## Reactivity in 20 lines
+### At a glance
+
+| 🎨 Frontend | 🌐 Backend | 🛠️ Tooling |
+| --- | --- | --- |
+| Signals · memos · effects | Web-standard HTTP kernel | `.azeroth` compiler + Vite plugin |
+| `.azeroth` compiled components | Every request is a reactive root | Language server (VS Code + JetBrains) |
+| No-VDOM real-DOM renderer | WebSocket server (RFC 6455) | ESLint plugin + TypeScript plugin |
+| SSR · hydration · islands | Cron scheduler | `azeroth` CLI + scaffolder |
+| Router · forms · stores | Schema validation + typed API client | Testing harness + devtools |
+| Control-flow components | Two-face structured logger | Type-checked production builds |
+
+---
+
+## 🧠 Reactivity in 20 lines
 
 The `.azeroth` keywords compile down to three primitives you can also use directly in TypeScript:
 
@@ -107,7 +150,11 @@ Dependencies are tracked automatically at read time - there is no dependency arr
 scopes disposal, `onCleanup` registers teardown, `batch` coalesces writes, `untrack` reads without
 subscribing.
 
-## The `.azeroth` language
+---
+
+<a id="language"></a>
+
+## 🧩 The `.azeroth` language
 
 A `.azeroth` file is a TypeScript module with `component` blocks. Inside a component:
 
@@ -116,16 +163,17 @@ A `.azeroth` file is a TypeScript module with `component` blocks. Inside a compo
 | `state x = v` | writable reactive state (`x++` just works) | `createSignal` |
 | `derived y = expr` | cached computed value | `createMemo` |
 | `effect { ... }` | side effect, auto-tracked (`effect (deps)` for explicit ones) | `createEffect` |
-| `form f = shape with { ... }` | fields + validation + submit lifecycle ([details](packages/form)) | `createForm` |
+| `form f = shape with { ... }` | fields + validation + submit lifecycle | `createForm` |
 | `form rows[] = blank with { ... }` | dynamic list of repeated sub-forms | `createFieldArray` |
-| `store` / `resource` / `stream` / `selector` / `deferred` | shared state, async data, streams, keyed selection, debounced values | their factories |
+| `store` · `resource` · `stream` · `selector` · `deferred` | shared state, async data, streams, keyed selection, debounced values | their factories |
 
-Markup uses components for control flow - `<Show>`, `<For>`, `<Switch>/<Match>`, `<Dynamic>`,
+Markup uses components for control flow - `<Show>`, `<For>`, `<Switch>`/`<Match>`, `<Dynamic>`,
 `<Suspense>`, `<Portal>`, `<ErrorBoundary>` - plus `class:`/`style:` directives and `bind:` for
-pure-mirror inputs. Hover any keyword in the editor for its full documentation and `with { ... }`
-options.
+pure-mirror inputs. Hover any keyword in the editor for its full documentation and `with { ... }` options.
 
-## Rendering: CSR, SSR, hydration
+---
+
+## 🖥️ Rendering: CSR, SSR, hydration
 
 ```ts
 import { render, hydrate, renderToString } from 'azerothjs';
@@ -136,12 +184,15 @@ const html = renderToString(() => App());     // server: pure string emission, n
 hydrate(() => App(), root);                   // client over server HTML: adopt, don't rebuild
 ```
 
-## The server half
+---
 
-The backend is the same philosophy, written from scratch: zero dependencies, web-standard
-types, and reactivity as the spine - **every request runs inside a reactive root**, so
-stores are request-isolated across `await` exactly as they are under SSR, and cleanup
-always runs.
+<a id="server"></a>
+
+## 🌐 The server half
+
+The backend is the same philosophy, written from scratch: no third-party dependencies, web-standard
+types, and reactivity as the spine - **every request runs inside a reactive root**, so stores are
+request-isolated across `await` exactly as they are under SSR, and cleanup always runs.
 
 ```ts
 import { App, serve, json, readValidated } from '@azerothjs/http';
@@ -151,68 +202,83 @@ const app = new App();
 app.get('/accounts/:id', (context) => json({ id: context.params.id })); // params typed from the pattern
 app.post('/accounts', async (context) =>
 {
-    const input = await readValidated(context.request, createAccount); // 422s carry the form-compatible field map
+    const input = await readValidated(context.request, createAccount); // 422s carry the field map
     return json({ created: input }, { status: 201 });
 });
 
 const served = await serve(app, { port: 3000 });
 ```
 
-There is no build step - Node >= 24 runs the TypeScript source directly, and
-`app.handle(new Request(...))` is the entire integration-testing story. One error path
-(shape it with `serializeError`), scoped middleware (`app.with(requireAuth)`), typed env
+> [!NOTE]
+> There is no build step - Node >= 22 runs the TypeScript source directly, and
+> `app.handle(new Request(...))` is the entire integration-testing story.
+
+One error path (shape it with `serializeError`), scoped middleware (`app.with(requireAuth)`), typed env
 config, static files, SSE, graceful shutdown - and beside http: [`@azerothjs/schema`](packages/schema)
 validation, typed API contracts with a fully inferred client (`@azerothjs/http/api`),
 [`@azerothjs/ws`](packages/ws) WebSockets, [`@azerothjs/cron`](packages/cron) scheduling, and
-[`@azerothjs/logger`](packages/logger) with file rotation. The same fine-grained discipline,
-the whole way down.
+[`@azerothjs/logger`](packages/logger). The same fine-grained discipline, the whole way down.
 
-## One CLI
+---
 
-`azeroth` understands every project shape - frontend, backend, or fullstack - by looking
-at what exists, with no config file:
+## 🛠️ One CLI
 
-```sh
-azeroth dev      # the fullstack conductor: server watch + vite, one banner, one Ctrl+C
-azeroth check    # every gate the shape demands: azeroth-tsc, tsc --noEmit, eslint
-azeroth build    # artifacts in dependency order (a native backend has none - by design)
-azeroth doctor   # diagnoses the environment against a catalog of real-world failures
-```
+`azeroth` understands every project shape - frontend, backend, or fullstack - by looking at what
+exists, with **no config file**:
 
-`--print` on any command shows the exact child invocations and exits - nothing hidden,
-nothing to eject.
+| Command | What it does |
+| --- | --- |
+| `azeroth dev` | The fullstack conductor: server watch + Vite, one banner, one Ctrl+C |
+| `azeroth check` | Every gate the shape demands: `azeroth-tsc`, `tsc --noEmit`, ESLint |
+| `azeroth build` | Deployable artifacts in dependency order (a native backend has none, by design) |
+| `azeroth test` | Each half's Vitest suite (server first) |
+| `azeroth upgrade` | Move every AzerothJS pin to a target version, install, and run the doctor |
+| `azeroth doctor` | Diagnose the environment against a catalog of real-world failures |
+| `azeroth info` | A paste-able environment block for bug reports |
 
-## Packages
+Add `--print` to any command to see the exact child invocations and exit - nothing hidden, nothing to eject.
+
+---
+
+<a id="packages"></a>
+
+## 📦 Packages
 
 Everything is versioned in lockstep. `azerothjs` is the one package a frontend installs; the
 `@azerothjs/*` scope holds the backend stack, the compiler, and the tooling.
 
 | Package | Purpose |
 | --- | --- |
-| [`azerothjs`](packages/azerothjs) | **The frontend framework - one real package.** Signals/memos/effects + owner tree, `h()` and the control-flow components, stores, forms, the router, and SSR (`renderToString`/islands) live inside as one surface. |
+| [`azerothjs`](packages/azerothjs) | **The frontend framework - one real package.** Signals/memos/effects + owner tree, `h()` and the control-flow components, stores, forms, the router, and SSR (`renderToString`/islands). |
 | [`@azerothjs/compiler`](packages/compiler) | The `.azeroth` compiler + the `azeroth()` Vite plugin (dev dependency). |
-| [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. Typed API contracts with a fully inferred client live inside at `@azerothjs/http/api`. |
-| [`@azerothjs/kit`](packages/kit) | The assembled car: per-route SSR, static prerendering, and hydration wired over the router's own route table, the renderer, and the HTTP server. |
+| [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. Typed API contracts with a fully inferred client live at `@azerothjs/http/api`. |
+| [`@azerothjs/kit`](packages/kit) | The assembled car: per-route SSR, static prerendering, and hydration over the router's route table, the renderer, and the HTTP server. |
 | [`@azerothjs/schema`](packages/schema) | Validation combinators whose TypeScript types are inferred from the declaration. |
 | [`@azerothjs/ws`](packages/ws) | WebSocket server implementing RFC 6455 from scratch. |
 | [`@azerothjs/cron`](packages/cron) | Cron scheduler with honest timezone/DST semantics and overlap policies. |
-| [`@azerothjs/logger`](packages/logger) | Two-face logger: pretty on a dev TTY, NDJSON elsewhere; file/folder sinks with rename-free rotation. |
-| [`@azerothjs/cli`](packages/cli) | The `azeroth` command line: `dev` (the fullstack conductor), `check`, `build`, `test`, `doctor`, `upgrade`, `info`. |
+| [`@azerothjs/logger`](packages/logger) | Two-face logger: pretty on a dev TTY, NDJSON elsewhere; plus the startup banner. |
+| [`@azerothjs/cli`](packages/cli) | The `azeroth` command line: `dev`, `check`, `build`, `test`, `upgrade`, `doctor`, `info`. |
 | [`create-azeroth`](packages/create-azeroth) | `npm create azeroth` - frontend / backend / fullstack templates with the canon wired in. |
 | [`@azerothjs/testing`](packages/testing) | `renderTest`, `cleanup`, `leakGuard`, `fire` for app tests. |
 | [`@azerothjs/devtools`](packages/devtools) | Dev-only in-page panel: reactive tree, dependency graph, timeline. |
 | [`@azerothjs/eslint-plugin`](packages/eslint-plugin) | Reactivity lint rules + a processor that makes `.azeroth` a first-class lint target. |
-| [`@azerothjs/language-server`](packages/language-server) | LSP frontend + the `azeroth-tsc` CLI type checker; the editor intelligence (TypeScript bridge, markup model, providers) lives inside at `./language-service`. |
+| [`@azerothjs/language-server`](packages/language-server) | LSP frontend + the `azeroth-tsc` CLI type checker. |
 | [`@azerothjs/typescript-plugin`](packages/typescript-plugin) | tsserver plugin: real `.azeroth` types inside `.ts` files. |
 
-## Editor support
+---
+
+<a id="editors"></a>
+
+## 🧭 Editor support
 
 | Editor | What you get |
 | --- | --- |
 | [**VS Code**](editors/vscode) | Bundled language server (no Node required), tsserver plugin auto-wired, semantic highlighting, cross-file navigation and rename, inlay hints, formatting. |
 | [**JetBrains**](editors/jetbrains) (WebStorm, IDEA Ultimate, ...) | Native `.azeroth` language + the same language server over LSP; usage-aware inspections (a `.ts` export used only from `.azeroth` is not "unused"), themeable reactive colors. |
 
-## Testing
+---
+
+## 🧪 Testing
 
 ```ts
 import { renderTest, fire, leakGuard } from '@azerothjs/testing';
@@ -228,9 +294,14 @@ unmount();
 guard(); // throws if any subscription survived teardown
 ```
 
-## Development (this repository)
+---
 
-An npm-workspaces monorepo, Node >= 24.
+<details>
+<summary><b>🏗️ Developing this repository</b></summary>
+
+<br/>
+
+An npm-workspaces monorepo, Node >= 22.
 
 ```sh
 npm install
@@ -244,6 +315,10 @@ npm run verify       # everything above + publish contract + leak gate
 Releases are scripted (`npm run release -- <version>`); tags trigger CI that attaches the editor
 artifacts to the GitHub Release.
 
-## License
+</details>
 
-[MIT](LICENSE)
+---
+
+<div align="center">
+<sub>Released under the <a href="LICENSE">MIT License</a>.</sub>
+</div>

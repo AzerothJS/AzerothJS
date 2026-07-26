@@ -15,7 +15,7 @@
 // fetcher, not option keys), so their expected sets are documented explicitly.
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import { KEYWORD_OPTIONS } from '../../src/language-service/language-data.ts';
-import type { SignalOptions, EffectOptions, SelectorOptions, DeferredOptions, OnOptions, FormConfig, FieldArrayConfig } from 'azerothjs';
+import type { SignalOptions, EffectOptions, SelectorOptions, DeferredOptions, OnOptions, StoreOptions, FormConfig, FieldArrayConfig } from 'azerothjs';
 
 /** The option names the allowlist offers for a keyword. */
 function allowed(keyword: string): Set<string>
@@ -40,20 +40,26 @@ describe('KEYWORD_OPTIONS matches the runtime option surface', () =>
 
     it('deferred == keyof DeferredOptions (delay, not timeout)', () =>
     {
-        expectTypeOf<'delay'>().toEqualTypeOf<keyof DeferredOptions>();
-        expect(allowed('deferred')).toEqual(new Set(['delay']));
+        expectTypeOf<'delay' | 'name'>().toEqualTypeOf<keyof DeferredOptions>();
+        expect(allowed('deferred')).toEqual(new Set(['delay', 'name']));
     });
 
     it('watch (effect deps) == keyof OnOptions (skipInitial, not defer)', () =>
     {
-        expectTypeOf<'skipInitial'>().toEqualTypeOf<keyof OnOptions>();
-        expect(allowed('watch')).toEqual(new Set(['skipInitial']));
+        expectTypeOf<'skipInitial' | 'name'>().toEqualTypeOf<keyof OnOptions>();
+        expect(allowed('watch')).toEqual(new Set(['skipInitial', 'name']));
+    });
+
+    it('store == keyof StoreOptions', () =>
+    {
+        expectTypeOf<'name'>().toEqualTypeOf<keyof StoreOptions>();
+        expect(allowed('store')).toEqual(new Set(['name']));
     });
 
     it('selector == keyof SelectorOptions', () =>
     {
-        expectTypeOf<'equals'>().toEqualTypeOf<keyof SelectorOptions<unknown>>();
-        expect(allowed('selector')).toEqual(new Set(['equals']));
+        expectTypeOf<'equals' | 'name'>().toEqualTypeOf<keyof SelectorOptions<unknown>>();
+        expect(allowed('selector')).toEqual(new Set(['equals', 'name']));
     });
 
     it('form == (FormConfig union FieldArrayConfig) user options, INCLUDING schema', () =>
@@ -64,22 +70,22 @@ describe('KEYWORD_OPTIONS matches the runtime option surface', () =>
         // the clause, so it stays in the set.
         type FormOptionKey = Exclude<keyof FormConfig<Record<string, unknown>> | keyof FieldArrayConfig<Record<string, unknown>>, 'blank'>;
         expectTypeOf<FormOptionKey>().toEqualTypeOf<
-            'initial' | 'validate' | 'schema' | 'validateForm' | 'validateAsync' | 'asyncDebounceMs' | 'onSubmit' | 'validateArray'
+            'initial' | 'validate' | 'schema' | 'validateForm' | 'validateAsync' | 'asyncDebounceMs' | 'onSubmit' | 'validateArray' | 'name'
         >();
         expect(allowed('form')).toEqual(new Set([
-            'initial', 'validate', 'schema', 'validateForm', 'validateAsync', 'asyncDebounceMs', 'onSubmit', 'validateArray'
+            'initial', 'validate', 'schema', 'validateForm', 'validateAsync', 'asyncDebounceMs', 'onSubmit', 'validateArray', 'name'
         ]));
         // The regression that started this: `schema` must be allowed on `form`.
         expect(allowed('form').has('schema')).toBe(true);
     });
 
-    it('resource is curated: only the extracted `source` getter (initialValue is an internal SSR seam)', () =>
+    it('resource is curated: source + name (initialValue stays an internal SSR seam)', () =>
     {
-        expect(allowed('resource')).toEqual(new Set(['source']));
+        expect(allowed('resource')).toEqual(new Set(['source', 'name']));
     });
 
     it('stream is curated: source + the StreamOptions the clause carries', () =>
     {
-        expect(allowed('stream')).toEqual(new Set(['source', 'parse', 'initial']));
+        expect(allowed('stream')).toEqual(new Set(['source', 'parse', 'initial', 'name']));
     });
 });

@@ -33,6 +33,15 @@ export class PayloadResponse implements Response
      * encodes natively in `end(string)`, so the hot path never runs TextEncoder. */
     readonly #payload: Uint8Array<ArrayBuffer> | string;
 
+    /**
+     * Set-Cookie is the one header a Response may carry more than once, and a plain
+     * `Record<string, string>` cannot hold that - so cookies live here, apart from the
+     * record, and are re-joined only at the boundaries (the adapter's `raw()`, the
+     * `headers` view, a materialized Response). Without this, two `set-cookie`s collapse
+     * to one (session OR csrf, silently lost).
+     */
+    readonly #setCookies: readonly string[];
+
     #bytesCache: Uint8Array<ArrayBuffer> | null = null;
 
     #headers: Headers | null = null;
@@ -43,11 +52,12 @@ export class PayloadResponse implements Response
 
     #real: Response | null = null;
 
-    constructor(payload: Uint8Array<ArrayBuffer> | string, status: number, headerRecord: Record<string, string>)
+    constructor(payload: Uint8Array<ArrayBuffer> | string, status: number, headerRecord: Record<string, string>, setCookies: readonly string[] = [])
     {
         this.#payload = payload;
         this.#status = status;
         this.#headerRecord = headerRecord;
+        this.#setCookies = setCookies;
     }
 
     /** @internal The payload as bytes, encoded on first need and cached. */
@@ -66,9 +76,14 @@ export class PayloadResponse implements Response
      * is returned AS a string - `res.end(string)` encodes natively during the write, which
      * beats encoding in JS first. @internal
      */
-    public raw(): { status: number; headers: Record<string, string>; payload: Uint8Array | string }
+    public raw(): { status: number; headers: Record<string, string | string[]>; payload: Uint8Array | string }
     {
-        return { status: this.#status, headers: this.#headerRecord, payload: this.#payload };
+        // A multi-cookie response re-joins the array under `set-cookie`; Node's writeHead
+        // accepts a string[] value and emits one header line per entry.
+        const headers: Record<string, string | string[]> = this.#setCookies.length > 0
+            ? { ...this.#headerRecord, 'set-cookie': [...this.#setCookies] }
+            : this.#headerRecord;
+        return { status: this.#status, headers, payload: this.#payload };
     }
 
     /**
@@ -80,11 +95,19 @@ export class PayloadResponse implements Response
     public withHeaders(extra: Record<string, string>): PayloadResponse
     {
         const record: Record<string, string> = { ...this.#headerRecord };
+        const cookies = [...this.#setCookies];
         for (const [name, value] of Object.entries(extra))
         {
+            // A set-cookie added here JOINS the carried cookies rather than clobbering the
+            // record's single slot, so edge middleware can add a cookie without dropping one.
+            if (name.toLowerCase() === 'set-cookie')
+            {
+                cookies.push(value);
+                continue;
+            }
             record[name.toLowerCase()] = value;
         }
-        return new PayloadResponse(this.#payload, this.#status, record);
+        return new PayloadResponse(this.#payload, this.#status, record, cookies);
     }
 
     public get status(): number
@@ -104,7 +127,15 @@ export class PayloadResponse implements Response
 
     public get headers(): Headers
     {
-        this.#headers ??= new Headers(this.#headerRecord);
+        if (this.#headers === null)
+        {
+            const headers = new Headers(this.#headerRecord);
+            for (const cookie of this.#setCookies)
+            {
+                headers.append('set-cookie', cookie);
+            }
+            this.#headers = headers;
+        }
         return this.#headers;
     }
 
@@ -175,7 +206,7 @@ export class PayloadResponse implements Response
 
     public clone(): Response
     {
-        return new PayloadResponse(this.#payload, this.#status, { ...this.#headerRecord });
+        return new PayloadResponse(this.#payload, this.#status, { ...this.#headerRecord }, this.#setCookies);
     }
 
     public get redirected(): boolean
@@ -196,7 +227,15 @@ export class PayloadResponse implements Response
     /** @internal A real Response over the same payload, for the members nobody hot-paths. */
     #materialize(): Response
     {
-        this.#real ??= new Response(this.#encoded().slice(), { status: this.#status, headers: this.#headerRecord });
+        if (this.#real === null)
+        {
+            const headers = new Headers(this.#headerRecord);
+            for (const cookie of this.#setCookies)
+            {
+                headers.append('set-cookie', cookie);
+            }
+            this.#real = new Response(this.#encoded().slice(), { status: this.#status, headers });
+        }
         return this.#real;
     }
 }

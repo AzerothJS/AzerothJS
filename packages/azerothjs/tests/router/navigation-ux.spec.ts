@@ -203,8 +203,13 @@ describe('redirect() from a loader', () =>
         expect(await matchAndLoad(throwing, new URL('http://local/old')))
             .toEqual({ redirect: '/new', replace: false });
 
+        // A guard VETO is a DISTINCT blocked result (a 403), never null - collapsing it into
+        // null was the SSR authorization bypass (a renderer treated null as "render anyway").
         const vetoed: Route[] = [{ path: '/locked', component: leaf, guard: () => false, loader: async () => 'x' }];
-        expect(await matchAndLoad(vetoed, new URL('http://local/locked'))).toBeNull();
+        expect(await matchAndLoad(vetoed, new URL('http://local/locked'))).toEqual({ blocked: true, status: 403 });
+
+        // No route matched -> a distinct not-found result (a real 404), also not null.
+        expect(await matchAndLoad(guarded, new URL('http://local/nope'))).toEqual({ notFound: true });
     });
 });
 

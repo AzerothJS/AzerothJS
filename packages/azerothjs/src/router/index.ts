@@ -64,7 +64,6 @@ export type { MatchAndLoadResult } from './handoff.ts';
 export type { RouterProviderProps } from './provider.ts';
 
 export type { Router, NavigationKind } from './router.ts';
-// Re-exported from azerothjs: the return contract RouteComponent uses.
 export type { MountNode } from '../component/index.ts';
 export type { PathMatcher } from './path-pattern.ts';
 export type { LinkProps } from './link.ts';

@@ -1,20 +1,37 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 
 # @azerothjs/http
 
+**AzerothJS server kernel - web-standard Request/Response HTTP stack (no third-party dependencies) where every request is a reactive root**
+
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fhttp?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/http)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the server half: a zero-dependency, web-standard HTTP stack for Node >= 24, written from scratch.
+</div>
 
-## Install
+---
+
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the server half: a web-standard HTTP stack for Node >= 22, written from scratch with no third-party dependencies (it builds only on sibling `@azerothjs/*` packages - the reactive request root, schema validation, and the logger).
+
+---
+
+## 📦 Install
+
+> [!NOTE]
+> ESM-only, Node >= 22. `azerothjs` is a REQUIRED peer: the kernel wires per-request
+> reactive-root isolation into the `azerothjs` runtime, and both halves must share one copy of
+> it, so it is installed alongside rather than bundled.
 
 ```sh
-npm install @azerothjs/http
+npm install @azerothjs/http azerothjs
 ```
 
-## Overview
+---
+
+## 📖 Overview
 
 Handlers are `(context) => Response` on WHATWG types - one context carries the request, params, URL, and middleware additions. Node's `http`/`http2`
 appear only in edge adapters, which buys three things at once: the same app runs on any
@@ -46,9 +63,11 @@ Scaffold a complete runnable server like this - a custom error envelope, a scope
 guard, and graceful shutdown, in one file with no build step - with
 `npm create azeroth@latest` (the backend template).
 
-## Development
+---
 
-There is no build step in the dev loop. Node >= 24 runs TypeScript directly, so
+## 🛠️ Development
+
+There is no build step in the dev loop. Node >= 22 runs TypeScript directly, so
 the whole story is one command:
 
 ```sh
@@ -105,7 +124,9 @@ is what Node resolves at runtime, and the tsconfig above lets `tsc` accept it to
 metadata that strip-only execution does not emit. Then compile with `tsc` and run
 `node --watch dist/main.js`. A plain `@azerothjs/http` app needs none of that.
 
-## The typed contract layer - `@azerothjs/http/api`
+---
+
+## 🧩 The typed contract layer - `@azerothjs/http/api`
 
 The API-contract system lives in this package as the `./api` subpath: declare a
 contract once (routes + schemas, no handlers), mount it with `mountApi` (typed
@@ -114,13 +135,15 @@ export OpenAPI from the same declaration, and consume it in the browser through 
 fully inferred client at `@azerothjs/http/api/client` (client-safe: it never drags
 server code into a bundle). The full guide: [docs/api.md](./docs/api.md).
 
-## What is in the box
+---
+
+## 🧰 What is in the box
 
 - **Radix router** - no regex, O(segments), route conflicts FAIL BOOT with a printable
   table; 405 + `Allow` distinguished from 404; params typed from the pattern string.
 - **One error path** - every throw (sync or async) becomes a stable wire shape
   `{ error: { code, message, details? } }`; 4xx messages cross the wire, 5xx internals stay
-  home; `ValidationError.details.fields` is the exact map `@azerothjs/form`'s `setError`
+  home; `ValidationError.details.fields` is the exact map `azerothjs`'s form `setError`
   consumes. Speak your own envelope with `new App({ serializeError })` - one place to reshape
   the body (route-miss 404s included), the same guarantees.
 - **Bodies with limits on by default** - JSON, urlencoded, raw, and a from-scratch
@@ -145,7 +168,9 @@ server code into a bundle). The full guide: [docs/api.md](./docs/api.md).
   and partial responses exempt), typed env config that reports every problem in ONE boot error,
   structured logging as an interface, graceful shutdown, HTTP/1.1 + h2c adapters.
 
-## Production hardening
+---
+
+## 🛡️ Production hardening
 
 Cross-cutting response concerns wrap the whole app as composable EDGE middleware - a
 `(next) => next` decorator that returns new `Response` values, never mutating a channel.
@@ -190,8 +215,11 @@ duration, and the request id; expose a cheap `GET /healthz` returning 200 for or
 probes; and enable HSTS via `securityHeaders({ hsts })` only when TLS terminates in front - it
 is emitted only over a connection proven secure.
 
-## The QUERY method (RFC 10008)
+---
 
+## 🔎 The QUERY method (RFC 10008)
+
+> [!IMPORTANT]
 > **Experimental.** RFC 10008 is not yet deployed internet reality - proxies, caches,
 > and tooling may not recognize QUERY. The API is stable within 1.x but flagged until
 > the RFC lands broadly.
@@ -224,12 +252,26 @@ QUERY is new, so some intermediaries (older proxies, CDNs, browsers) may not pas
 the path end to end for your deployment. On Node's own `fetch`/`Request` it works today, both as a
 client and a server.
 
-## Performance
+---
 
-Benchmarked against express, fastify, and hono on identical, correctness-verified
-scenarios: decisively ahead of Express everywhere, within a few percent of Fastify on
-trivial GETs, and AHEAD of Fastify on JSON echo - with the request root ON.
+## ⚡ Performance
 
-## License
+The hot path is built to stay allocation-light: the request and response are lazy shims over
+the Node objects, so headers and body are read on demand rather than eagerly copied, and the
+per-request reactive root is a scope entry, not a fresh runtime. That isolation is ON in the
+serving path - it is a property of the architecture, not a mode you trade away for speed.
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+---
+
+## 🔗 Related
+
+The server half of the [AzerothJS](../../README.md) monorepo. Related packages:
+[`azerothjs`](../azerothjs) (the reactive runtime this kernel shares as a peer),
+[`@azerothjs/ws`](../ws) (WebSockets), [`@azerothjs/cron`](../cron) (scheduling), and
+[`@azerothjs/logger`](../logger) (logging).
+
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

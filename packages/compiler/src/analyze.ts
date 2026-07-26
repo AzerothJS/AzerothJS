@@ -25,12 +25,13 @@ import * as ts from 'typescript';
 import type { Span, MarkupElement, MarkupFragment, MarkupChild } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 import type { RenderPlan } from './ir.ts';
+import type { Dep, ReactiveSources } from './dep.ts';
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { lowerMarkup } from './lower.ts';
 import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parsePropsPattern, parseComponentParam, formFieldKeys } from './ts-slice.ts';
-import { collectReads, type ReactiveSources, type Dep } from './resolve.ts';
+import { collectReads } from './resolve.ts';
 
 /** A reactive source declared by the component. */
 export interface ReactiveSourceInfo

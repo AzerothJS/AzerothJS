@@ -423,24 +423,6 @@ function collectNode(source: string, node: MarkupElement | MarkupFragment, out: 
     }
 }
 
-/**
- * The innermost element whose *opening tag* contains `offset` (so the caret is
- * in its attribute area), searching markup nested in holes too. Used to resolve
- * a component's props type for attribute completion/hover.
- *
- * @example
- * ```ts
- * enclosingElement('const x = <Counter start={0}/>;', 20)?.tag; // 'Counter'
- * ```
- */
-/**
- * When `offset` sits inside a `with { ... }` options clause, returns the authoring keyword that owns
- * it (`state` | `derived` | `deferred` | `effect` | `watch` | `resource` | `stream` | `selector`); null
- * otherwise. A provider maps the
- * returned keyword to its option set. The compiler parser supplies the clause's exact span, so this
- * is accurate across brace styles and nesting (no hand-rolled brace matching). The parser is total
- * (it never throws), but a malformed buffer is guarded all the same.
- */
 /** A caret sitting inside a keyword's `with { ... }` options clause. */
 export interface WithClauseContext
 {

@@ -29,7 +29,18 @@ export interface DoctorResult
 
 const DECORATOR_PACKAGES = ['typeorm', '@mikro-orm/core'];
 const SUPPORTED_VITE_MAJORS = [7, 8];
-const SUPPORTED_NODE_MAJOR = 24;
+// The zero-build backend runs TypeScript source directly (`node src/main.ts`), which needs
+// unflagged native type-stripping: Node 22.18+ (backported), 23.6+, or 24+. The published
+// packages themselves run on Node 22+ as compiled JS; this floor is the DEV-run requirement.
+const NATIVE_TS_NODE = { major: 22, minor: 18 };
+
+/** True when `version` (e.g. "22.18.0") can run `node file.ts` without a flag. */
+function runsTypeScriptNatively(version: string): boolean
+{
+    const [major, minor] = version.split('.').map((part) => Number(part) || 0);
+    return (major ?? 0) > NATIVE_TS_NODE.major
+        || ((major ?? 0) === NATIVE_TS_NODE.major && (minor ?? 0) >= NATIVE_TS_NODE.minor);
+}
 
 function tsconfigText(dir: string): string
 {
@@ -63,15 +74,14 @@ function installedVersion(fromDir: string, packageName: string): string | null
 
 function checkNodeVersion(needsBackendNode: boolean): DoctorResult
 {
-    const major = Number(process.versions.node.split('.')[0] ?? '0');
-    if (major >= SUPPORTED_NODE_MAJOR)
+    if (runsTypeScriptNatively(process.versions.node))
     {
         return { name: 'node version', status: 'ok', detail: `v${ process.versions.node }` };
     }
     return {
         name: 'node version',
         status: needsBackendNode ? 'fail' : 'warn',
-        detail: `v${ process.versions.node } - the backend stack needs Node >= ${ SUPPORTED_NODE_MAJOR } (native TypeScript execution)`
+        detail: `v${ process.versions.node } - the zero-build backend runs TypeScript directly, which needs Node ${ NATIVE_TS_NODE.major }.${ NATIVE_TS_NODE.minor }+ (or 23.6+/24). The packages themselves run on Node 22+.`
     };
 }
 

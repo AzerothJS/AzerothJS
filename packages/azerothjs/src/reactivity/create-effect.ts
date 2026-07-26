@@ -34,8 +34,8 @@ import {
 } from './graph.ts';
 import { isBatching, queueEffect } from './batch.ts';
 import { isStringMode } from './render-mode.ts';
-import { registerDisposer } from './create-root.ts';
-import { currentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
+import { currentOwner, registerDisposer, setCurrentOwner } from './create-root.ts';
+import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
 import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 
@@ -155,6 +155,15 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
     // Devtools node id (0 unless a devtools hook is attached); used to emit run/dispose events.
     let devtoolsId = 0;
 
+    // The ownership scope this effect is created under. Re-established around EVERY run (not
+    // just the first) so work during a re-run resolves against THIS scope: a nested effect,
+    // memo, createResource, or onMount registers with this owner and is disposed with this
+    // effect; a nested createRoot takes this owner as its PARENT (a detached lifetime the
+    // caller disposes, but whose context chain still resolves up through here); and a
+    // useContext() read resolves against this owner's chain rather than the ambient owner of
+    // whoever's write triggered the run.
+    const owner = currentOwner;
+
     const subscriber: Subscriber =
     {
         // execute() is the SCHEDULER (notify routes here): run now, or queue if batching.
@@ -257,6 +266,11 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         const previousCleanups = currentCleanups;
         setCurrentCleanups(cleanups);
 
+        // Re-establish the creation owner + its error handler for the duration of the run, so
+        // nested nodes inherit THIS scope (not the triggering write's). Restored in finally.
+        const previousOwner = setCurrentOwner(owner);
+        const previousHandler = setCurrentErrorHandler(subscriber.errorHandler);
+
         beginTrack(subscriber);
         running = true;
 
@@ -295,6 +309,8 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         {
             running = false;
             endTrack(subscriber);
+            setCurrentErrorHandler(previousHandler);
+            setCurrentOwner(previousOwner);
             setCurrentCleanups(previousCleanups);
             setCurrentSubscriber(previousSubscriber);
             hasRun = true;

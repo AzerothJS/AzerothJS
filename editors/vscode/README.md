@@ -1,16 +1,38 @@
-<p align="center">
-    <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="128" />
-</p>
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="128" />
 
 # AzerothJS for VS Code
 
-Official language support for [AzerothJS](https://github.com/AzerothJS/AzerothJS) -
-the fine-grained fullstack framework. Full intelligence for `.azeroth` single-file
-components, powered by the framework's own compiler - not heuristics.
+**Framework-grade editor support for `.azeroth` single-file components, powered by the compiler - not heuristics.**
 
-<!-- SHOT SLOT 1: hero GIF - completion + hover in a component (dark theme) -->
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%3E%3D1.84-blue.svg)](https://code.visualstudio.com)
 
-## The `.ts` ⇄ `.azeroth` boundary, dissolved
+</div>
+
+---
+
+Official language support for [AzerothJS](../../README.md) - the fine-grained,
+zero-dependency, fullstack TypeScript framework. Full intelligence for `.azeroth`
+single-file components, backed by the framework's own compiler.
+
+---
+
+## ✨ What you get
+
+- **A bundled language server** - no Node.js required; install and open a `.azeroth`
+  file, that's it.
+- **The `.ts` ⇄ `.azeroth` boundary dissolved** - definition, references, and rename
+  work in both directions across your TypeScript and your components.
+- **Compiler-true diagnostics and types** - real type errors in expressions, real props
+  at the boundary, no `any`.
+- **Semantic highlighting that shows reactivity** - reactive names get their own color,
+  so you always see what re-renders.
+
+---
+
+## 🌉 The `.ts` ⇄ `.azeroth` boundary, dissolved
 
 The differentiator: your TypeScript files and your components behave as ONE codebase.
 
@@ -22,9 +44,9 @@ The differentiator: your TypeScript files and your components behave as ONE code
   typed, errors are real, no `any` at the boundary.
 - Unused-export analysis, quick-open, and workspace symbols see both worlds.
 
-<!-- SHOT SLOT 2: rename-across-the-boundary, before/after split -->
+---
 
-## Everything a first-class language gets
+## 📋 Everything a first-class language gets
 
 | Feature | Details |
 | --- | --- |
@@ -40,9 +62,9 @@ The differentiator: your TypeScript files and your components behave as ONE code
 | **Colors & links** | CSS color swatches in style values; clickable document links. |
 | **Formatting & editing aids** | Document + range formatting, on-type formatting, tag auto-close, linked editing of tag pairs. |
 
-<!-- SHOT SLOT 3: semantic highlighting - reactive names colored, side by side with plain TS -->
+---
 
-## Zero-config companions
+## 🔌 Zero-config companions
 
 The extension pre-wires common tooling so a project needs **no `.vscode/settings.json`**:
 
@@ -51,19 +73,24 @@ The extension pre-wires common tooling so a project needs **no `.vscode/settings
 - **Tailwind CSS**: `class="..."`, `class={...}`, and `classList({...})` all
   complete via pre-wired `includeLanguages` + `classRegex`.
 
-These are defaults - your own settings of the same keys win. Companion extensions
-are recommended, never required.
+> [!NOTE]
+> These are defaults - your own settings of the same keys win. Companion extensions
+> are recommended, never required.
 
-## Quick start
+---
 
-1. Install the extension - the server is **bundled**; no Node.js required.
+## 🚀 Quick start
+
+1. Install the extension - the language server is **bundled**; no Node.js required.
 2. Open any `.azeroth` file. That's it.
 3. New to AzerothJS? `npm create azeroth@latest my-app` scaffolds a working
    frontend, backend, or fullstack project in one command.
 
-## Key settings
+---
 
-Settings live under `azeroth.*` (*Settings → Extensions → AzerothJS*) - 33
+## ⚙️ Key settings
+
+Settings live under `azeroth.*` (*Settings -> Extensions -> AzerothJS*) - 33
 per-feature toggles. The ones most people touch:
 
 | Setting | Default | Effect |
@@ -78,14 +105,29 @@ per-feature toggles. The ones most people touch:
 Every capability (hover, rename, CodeLens, semantic tokens, ...) has its own
 `azeroth.<feature>.enable` switch.
 
-## Requirements
+---
+
+## ✅ Requirements
 
 | Requirement | Minimum |
 | --- | --- |
 | VS Code | 1.84 |
 | Node.js | **not required** - the language server is bundled |
 
-## Troubleshooting
+---
+
+## 🏗️ Building from source
+
+From the monorepo root:
+
+```sh
+npm run bundle  -w azerothjs-vscode   # bundle the language server
+npm run package -w azerothjs-vscode   # produce the .vsix
+```
+
+---
+
+## 🔧 Troubleshooting
 
 - **The file icon doesn't show?** Third-party file-icon themes (e.g. Material
   Icon Theme) override extension icons by design. The AzerothJS icon shows under
@@ -94,11 +136,17 @@ Every capability (hover, rename, CodeLens, semantic tokens, ...) has its own
   from the command palette, or reload the window.
 - TypeScript intelligence follows the nearest `tsconfig.json` in your workspace.
 
-## Links
+---
 
-[Framework](https://github.com/AzerothJS/AzerothJS) ·
+## 🔗 Links
+
+[Framework](../../README.md) ·
 [Getting started](https://github.com/AzerothJS/AzerothJS#quick-start) ·
 [Issues](https://github.com/AzerothJS/AzerothJS/issues) ·
 [Changelog](https://github.com/AzerothJS/AzerothJS/blob/main/CHANGELOG.md)
 
-License: [MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+---
+
+<div align="center">
+<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+</div>

@@ -104,6 +104,50 @@ describe('scanner - skip helpers', () =>
         const src = '{ a: 1';
         expect(skipBalanced(src, 0)).toBe(src.length);
     });
+
+    // A regex or an apostrophe inside a hole used to desync the brace scanner (the regex
+    // was scanned as chars, then an inner apostrophe triggered a string skip that ran to
+    // EOF) - hard-failing the whole build with a bogus "Unclosed tag". The scanner now
+    // consumes regex literals and embedded markup as units.
+    it('skipBalanced treats a regex literal in expression position as a unit', () =>
+    {
+        const src = '{ name.replace(/\'/g, "") } rest';
+        const end = skipBalanced(src, 0);
+        expect(src.slice(end)).toBe(' rest');
+    });
+
+    it('skipBalanced skips a regex whose body contains braces and parens', () =>
+    {
+        const src = '{ s.match(/[{}()]/) ? 1 : 0 } rest';
+        const end = skipBalanced(src, 0);
+        expect(src.slice(end)).toBe(' rest');
+    });
+
+    it('skipBalanced still treats `/` after a value as division, not a regex', () =>
+    {
+        const src = '{ a / b } rest';
+        const end = skipBalanced(src, 0);
+        expect(src.slice(end)).toBe(' rest');
+    });
+
+    it('skipBalanced skips embedded markup whose TEXT contains an apostrophe', () =>
+    {
+        const src = '{ ok ? <span>Don\'t</span> : <span>Do</span> } rest';
+        const end = skipBalanced(src, 0);
+        expect(src.slice(end)).toBe(' rest');
+    });
+
+    it('skipBalanced skips a self-closing element and a void element in a hole', () =>
+    {
+        expect('{ show ? <br> : <hr/> } rest'.slice(skipBalanced('{ show ? <br> : <hr/> } rest', 0))).toBe(' rest');
+    });
+
+    it('skipBalanced skips nested markup with holes and closing tags', () =>
+    {
+        const src = '{ <ul><li>{ item(\'a\') }</li></ul> } rest';
+        const end = skipBalanced(src, 0);
+        expect(src.slice(end)).toBe(' rest');
+    });
 });
 
 describe('findMarkupStart - expression position detection', () =>
@@ -121,6 +165,22 @@ describe('findMarkupStart - expression position detection', () =>
     it('rejects a less-than operator (a < b)', () =>
     {
         expect(findMarkupStart('a < b', 0)).toBe(-1);
+    });
+
+    it('finds markup after a block close (the effect{}/dispose{} then render shape)', () =>
+    {
+        // A reactive block closes with `}`, and the trailing markup must read as markup -
+        // not as a less-than off the `}`. This is what the editor's markup model relies on.
+        const src = 'effect { run(); } <div>hi</div>';
+        expect(src[findMarkupStart(src, 0)]).toBe('<');
+        expect(findMarkupStart(src, 0)).toBe(src.indexOf('<div>'));
+    });
+
+    it('still rejects a spaced comparison after a `}` (object literal `< b`)', () =>
+    {
+        // `{a:1} < b` is a comparison: a markup `<` must be immediately followed by `>` or an
+        // identifier, and here it is followed by a space, so it stays a less-than.
+        expect(findMarkupStart('({a:1}) < b', 0)).toBe(-1);
     });
 
     it('does not look inside string literals', () =>

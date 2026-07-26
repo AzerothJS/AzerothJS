@@ -1,16 +1,16 @@
 /**
  * MODULE: compiler/keyword-spec - single source of truth for reactive keyword -> runtime mapping
  *
- * Every reactive component-body keyword maps to exactly one runtime helper, and the three emitters that
- * lower these keywords each used to hardcode that mapping plus the kind categories they branch on:
+ * Every reactive component-body keyword maps to exactly one runtime helper. Three emitters consult that
+ * mapping (and the kind categories they branch on):
  *   - codegen.ts        emits the runtime JS call (`createSignal(...)`);
  *   - project.ts        emits the type-equivalent TS for the projection;
  *   - lower-reactive.ts lowers the SAME keywords when nested in an inner scope.
  *
  * Keeping the mapping and the categories here means renaming a runtime helper, or adding/reclassifying a
- * construct, is a one-line change in ONE place - and the three emitters can never drift on which helper a
- * keyword calls. The per-target EMIT mechanics (string rewrite vs mapped builder vs marker edits) stay in
- * each emitter; only the shared metadata they consult lives here.
+ * construct, is a one-line change in ONE place, and the three emitters agree on which helper a keyword
+ * calls. The per-target EMIT mechanics (string rewrite vs mapped builder vs marker edits) stay in each
+ * emitter; only the shared metadata they consult lives here.
  *
  * WHAT EARNS KEYWORD STATUS (and what does NOT):
  * A construct is a keyword only if it is a REACTIVE declaration that forces the compiler to transform

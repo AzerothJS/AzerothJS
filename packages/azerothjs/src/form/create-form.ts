@@ -24,6 +24,7 @@ import {
     untrack,
     onCleanup
 } from '../reactivity/index.ts';
+import { dtEnterPrimitive, dtExitPrimitive } from '../reactivity/devtools.ts';
 import type { Schema, FieldValidator, StandardSchemaV1 } from '@azerothjs/schema';
 
 /**
@@ -51,12 +52,12 @@ function standardIssues<T>(
 }
 
 /**
- * Re-exported from @azerothjs/schema - THE validation package owns the validator shape and the
- * built-in rules (required/email/minLength/...). A sync field validator returns the error
- * message for invalid input, or `null` when the value is acceptable; it sees only its OWN
- * field's value (single-argument by design). Anything spanning SIBLING fields (password
- * confirm, `end >= start`) belongs in {@link FormConfig.validateForm}; one schema over the
- * whole object goes in {@link FormConfig.schema}.
+ * A synchronous field validator: returns the error message for invalid input, or `null` when
+ * the value is acceptable. It sees only its OWN field's value (single-argument by design).
+ * Anything spanning SIBLING fields (password confirm, `end >= start`) belongs in {@link
+ * FormConfig.validateForm}; one schema over the whole object goes in {@link FormConfig.schema}.
+ * The validator shape and built-in rules (required/email/minLength/...) are defined in
+ * @azerothjs/schema.
  */
 export type { FieldValidator } from '@azerothjs/schema';
 
@@ -94,6 +95,9 @@ export interface FormConfig<T extends object>
 {
     /** Initial values for every field. The keys here define the form's shape. */
     initial: T;
+
+    /** Debug name surfaced to devtools; groups the form's field/derived/submit nodes. Explicit undefined is equivalent to absent. */
+    name?: string | undefined;
 
     /**
      * Per-field sync rules. Each entry is a FieldValidator, an @azerothjs/schema node, or
@@ -358,6 +362,7 @@ export function createForm<T extends object>(
 {
     const initial = config.initial;
     const fieldNames = Object.keys(initial) as (keyof T)[];
+    const frame = dtEnterPrimitive('form', config.name);
 
     // Per-field signals: one signal per field, kept in a map so register(name)
     // and setValue(name, value) can look up the right setter generically. The
@@ -372,7 +377,7 @@ export function createForm<T extends object>(
     const fields = {} as { [K in keyof T]: FieldHandle<T[K]> };
     for (const name of fieldNames)
     {
-        const [getter, setter] = createSignal<T[keyof T]>(initial[name]);
+        const [getter, setter] = createSignal<T[keyof T]>(initial[name], { name: String(name) });
         fields[name] = {
             value: getter,
             setValue: setter
@@ -479,10 +484,10 @@ export function createForm<T extends object>(
     // Errors / touched / submit signals.
     const initialErrors = makeRecord<keyof T, string | null>(fieldNames, null);
     const initialTouched = makeRecord<keyof T, boolean>(fieldNames, false);
-    const [errors, setErrors] = createSignal(initialErrors);
-    const [touched, setTouched] = createSignal(initialTouched);
-    const [submitting, setSubmitting] = createSignal(false);
-    const [submitError, setSubmitError] = createSignal<unknown>(null);
+    const [errors, setErrors] = createSignal(initialErrors, { name: 'errors' });
+    const [touched, setTouched] = createSignal(initialTouched, { name: 'touched' });
+    const [submitting, setSubmitting] = createSignal(false, { name: 'submitting' });
+    const [submitError, setSubmitError] = createSignal<unknown>(null, { name: 'submitError' });
 
     // Derived: values, dirty, isValid.
     //
@@ -497,7 +502,7 @@ export function createForm<T extends object>(
             out[name] = fields[name].value();
         }
         return out;
-    });
+    }, { name: 'values' });
 
     const dirty = createMemo<{ [K in keyof T]: boolean }>(() =>
     {
@@ -512,7 +517,7 @@ export function createForm<T extends object>(
             out[name] = v[name] !== initial[name];
         }
         return out;
-    });
+    }, { name: 'dirty' });
 
     const isValid = createMemo<boolean>(() =>
     {
@@ -525,11 +530,12 @@ export function createForm<T extends object>(
             }
         }
         return true;
-    });
+    }, { name: 'isValid' });
 
     // Async-validation pending state: per-field "is a server check in flight".
     const [validating, setValidating] = createSignal(
-        makeRecord<keyof T, boolean>(fieldNames, false)
+        makeRecord<keyof T, boolean>(fieldNames, false),
+        { name: 'validating' }
     );
 
     const isValidating = createMemo<boolean>(() =>
@@ -543,7 +549,7 @@ export function createForm<T extends object>(
             }
         }
         return false;
-    });
+    }, { name: 'isValidating' });
 
     function setValidatingField(name: keyof T, pending: boolean): void
     {
@@ -953,6 +959,7 @@ export function createForm<T extends object>(
         );
     }
 
+    dtExitPrimitive(frame);
     return {
         values,
         errors,

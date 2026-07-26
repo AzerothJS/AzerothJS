@@ -116,6 +116,127 @@ describe('hydrate - adoption', () =>
     });
 });
 
+describe('hydrate - reactive element/list holes', () =>
+{
+    it('adopts a reactive hole that returns an ELEMENT (not [object Object])', () =>
+    {
+        const [on, setOn] = createSignal(true);
+        const App = (): HTMLElement =>
+            h('div', {}, () => (on() ? h('strong', {}, 'ON') : h('em', {}, 'OFF')));
+        const container = ssrInto(App);
+        const serverStrong = container.querySelector('strong')!;
+        expect(serverStrong.textContent).toBe('ON');
+
+        hydrate(App, container);
+        // The server element is adopted in place - NOT stringified to "[object Object]".
+        expect(container.textContent).not.toContain('[object Object]');
+        expect(container.querySelector('strong')).toBe(serverStrong);
+
+        // Reactive after hydration: the hole swaps element type on flip.
+        setOn(false);
+        expect(container.querySelector('strong')).toBeNull();
+        expect(container.querySelector('em')!.textContent).toBe('OFF');
+        container.remove();
+    });
+
+    it('adopts a reactive hole that returns a LIST of elements', () =>
+    {
+        const [items, setItems] = createSignal(['a', 'b', 'c']);
+        const App = (): HTMLElement =>
+            h('ul', {}, () => items().map((t) => h('li', {}, t)));
+        const container = ssrInto(App);
+        const serverRows = Array.from(container.querySelectorAll('li'));
+        expect(serverRows.length).toBe(3);
+        expect(container.textContent).not.toContain('[object Object]');
+
+        hydrate(App, container);
+        // Rows adopted in place, no corruption.
+        expect(container.textContent).not.toContain('[object Object]');
+        const afterRows = Array.from(container.querySelectorAll('li'));
+        expect(afterRows[0]).toBe(serverRows[0]);
+        expect(afterRows[2]).toBe(serverRows[2]);
+
+        // Reactive after hydration.
+        setItems(['x']);
+        const finalRows = Array.from(container.querySelectorAll('li'));
+        expect(finalRows.length).toBe(1);
+        expect(finalRows[0]!.textContent).toBe('x');
+        container.remove();
+    });
+
+    it('adopts a reactive hole mixing element and text children', () =>
+    {
+        const [n, setN] = createSignal(2);
+        const App = (): HTMLElement =>
+            h('p', {}, () => [h('b', {}, 'count:'), ` ${ n() }`]);
+        const container = ssrInto(App);
+        expect(container.textContent).not.toContain('[object Object]');
+        expect(container.querySelector('b')!.textContent).toBe('count:');
+
+        hydrate(App, container);
+        expect(container.textContent).not.toContain('[object Object]');
+        expect(container.textContent).toContain('count:');
+        expect(container.textContent).toContain('2');
+
+        setN(9);
+        expect(container.textContent).toContain('9');
+        container.remove();
+    });
+});
+
+describe('hydrate - content props and implicit tbody (no false fallback)', () =>
+{
+    it('adopts an element rendered with innerHTML without a whole-page fallback', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const App = (): HTMLElement => h('div', { id: 'ih', innerHTML: '<b>hi</b>' });
+        const container = ssrInto(App);
+        const serverDiv = container.querySelector('#ih')!;
+
+        hydrate(App, container);
+        expect(warn).not.toHaveBeenCalled(); // no mismatch fallback
+        expect(container.querySelector('#ih')).toBe(serverDiv); // adopted in place
+        expect(serverDiv.innerHTML).toBe('<b>hi</b>');
+        warn.mockRestore();
+        container.remove();
+    });
+
+    it('adopts an element rendered with textContent without a fallback', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const App = (): HTMLElement => h('div', { textContent: 'plain' });
+        const container = ssrInto(App);
+        hydrate(App, container);
+        expect(warn).not.toHaveBeenCalled();
+        expect(container.querySelector('div')!.textContent).toBe('plain');
+        warn.mockRestore();
+        container.remove();
+    });
+
+    it('adopts a table whose <tr> rows the browser wrapped in an implicit <tbody>', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const [cell, setCell] = createSignal('a');
+        const App = (): HTMLElement =>
+            h('table', {}, h('tr', {}, h('td', {}, () => cell()), h('td', {}, 'static')));
+        const container = ssrInto(App);
+        // happy-dom, like a real browser, inserts the implicit tbody on innerHTML parse.
+        const serverCell = container.querySelector('td')!;
+
+        hydrate(App, container);
+        expect(warn).not.toHaveBeenCalled(); // implicit tbody tolerated, no fallback
+        expect(container.querySelector('td')).toBe(serverCell); // row adopted in place
+
+        setCell('CHANGED'); // reactivity wired onto the adopted cell
+        expect(serverCell.textContent).toBe('CHANGED');
+        warn.mockRestore();
+        container.remove();
+    });
+});
+
 describe('hydrate - mismatch fallback', () =>
 {
     it('falls back to a clean client render when the client tree diverges structurally', () =>
