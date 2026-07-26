@@ -9,7 +9,8 @@ import
 } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import type { PageRenderer, PageRoute } from '@azerothjs/kit';
-import { createLogger, fileStream } from '@azerothjs/logger';
+import { createLogger } from '@azerothjs/logger';
+import { fileStream } from '@azerothjs/logger/node';
 
 import { buildApp } from './app.ts';
 import { config, isProduction } from './config.ts';

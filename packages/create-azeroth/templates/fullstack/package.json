@@ -15,7 +15,7 @@
         "check": "azeroth check",
         "build": "azeroth build",
         "test": "npm test --workspaces --if-present",
-        "start": "node server/src/main.ts"
+        "start": "npm start --workspace server"
     },
     "devDependencies": {
         "@azerothjs/cli": "{{version}}"

@@ -426,6 +426,35 @@ export function createForm<T extends object>(
         }
     }
 
+    // Cross-field validateForm: the accumulating set records which fields it has EVER flagged, so
+    // a now-passing field is explicitly cleared even when the natural "partial error map" style
+    // returns `{}` (or omits the field). Without this, a fixed password-confirm stays invalid.
+    const crossSpoke = new Set<keyof T>();
+    function runCross(snapshot: T): { [K in keyof T]?: string | null } | undefined
+    {
+        if (!config.validateForm)
+        {
+            return undefined;
+        }
+        const overlay: { [K in keyof T]?: string | null } = { ...config.validateForm(snapshot) };
+        for (const name of fieldNames)
+        {
+            const err: string | null | undefined = overlay[name];
+            if (err !== undefined && err !== null)
+            {
+                crossSpoke.add(name);
+            }
+        }
+        for (const field of crossSpoke)
+        {
+            if (!(field in overlay) || overlay[field] === undefined)
+            {
+                overlay[field] = null; // previously flagged, now passing (or omitted): clear
+            }
+        }
+        return overlay;
+    }
+
     // Whole-form schema: issues map onto their top-level field. The accumulating set records
     // which fields the schema has EVER spoken for, so a fixed field is explicitly cleared
     // (null) while a field the schema never flagged keeps errors injected via setError().
@@ -576,7 +605,7 @@ export function createForm<T extends object>(
 
         // Overlay order: whole-form schema first, then cross-field - structure/format errors
         // read before relationship errors, and a per-field error wins for its field either way.
-        const overlays = [runSchema(snapshot), config.validateForm ? config.validateForm(snapshot) : undefined];
+        const overlays = [runSchema(snapshot), runCross(snapshot)];
         for (const overlay of overlays)
         {
             if (overlay)
@@ -604,7 +633,7 @@ export function createForm<T extends object>(
         untrack(() =>
         {
             const schemaOverlay = runSchema(snapshot);
-            const cross = config.validateForm ? config.validateForm(snapshot) : undefined;
+            const cross = runCross(snapshot);
 
             // Nothing to recompute: leave the errors map alone, so an error
             // injected via setError() survives. (The initial map is all-null.)

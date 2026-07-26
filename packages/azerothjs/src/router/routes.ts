@@ -21,7 +21,7 @@ import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
-import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode } from '../component/index.ts';
 import { playTransitionClasses } from '../renderer/index.ts';
 import { hydrateChild } from '../renderer/h.ts';
 import type { RouteMatch } from './types.ts';
@@ -311,7 +311,9 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
             createRoot((dispose) =>
             {
                 branchDispose = dispose;
-                const built = untrack(build);
+                // resolveMountNode per the co-range caller contract: a fallback/factory result
+                // may be a thunk that must be invoked before it can be appended as a node.
+                const built = resolveMountNode(untrack(build)) ?? null;
                 appendToCo(target, built);
                 currentEl = built instanceof HTMLElement ? built : null;
                 if (name !== null && currentEl !== null)

@@ -101,7 +101,7 @@ describe('integration - generateModule (emitted JS)', () =>
     it('preserves the opaque import and emits the factory', () =>
     {
         expect(code).toContain('import { fetchUser } from \'./api\';');
-        expect(code).toContain('function UserCard(props)');
+        expect(code).toContain('function UserCard(props = {})');
     });
 
     it('desugars all reactive constructs', () =>

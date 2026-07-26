@@ -39,7 +39,8 @@
             "types": "./dist/prerender.d.ts",
             "import": "./dist/prerender.js",
             "default": "./dist/prerender.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "bin": {
         "azeroth-kit-prerender": "./dist/prerender-cli.js"
@@ -52,12 +53,13 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@azerothjs/http": "1.0.0"
+        "@azerothjs/http": "^1.0.0"
     },
     "peerDependencies": {
         "azerothjs": "^1.0.0"
     },
     "engines": {
         "node": ">=22"
-    }
+    },
+    "sideEffects": false
 }

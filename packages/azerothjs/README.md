@@ -158,7 +158,7 @@ markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `E
     <p>Welcome, {user()!.name}</p>
 </Show>
 
-<For each={items()}>
+<For each={items()} key={(item) => item.id}>
     {(item, index) => <li>{index() + 1}. {item.label}</li>}
 </For>
 

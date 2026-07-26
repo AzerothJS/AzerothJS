@@ -28,6 +28,34 @@ import {
 } from './scanner.ts';
 
 /**
+ * The named HTML character references decoded in text content. Numeric references (`&#38;`,
+ * `&#x26;`) are handled generically; this table covers the common named set (an unknown name is
+ * left verbatim). The five XML built-ins plus the entities real markup routinely carries -
+ * spaces, dashes, quotes, symbols, arrows, and common accents.
+ */
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ',
+    copy: '©', reg: '®', trade: '™', hellip: '…',
+    mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’',
+    ldquo: '“', rdquo: '”', laquo: '«', raquo: '»',
+    times: '×', divide: '÷', plusmn: '±', deg: '°',
+    micro: 'µ', para: '¶', sect: '§', middot: '·',
+    bull: '•', dagger: '†', Dagger: '‡', permil: '‰',
+    prime: '′', Prime: '″', euro: '€', pound: '£',
+    cent: '¢', yen: '¥', curren: '¤', frac12: '½',
+    frac14: '¼', frac34: '¾', larr: '←', uarr: '↑',
+    rarr: '→', darr: '↓', harr: '↔', hearts: '♥',
+    spades: '♠', clubs: '♣', diams: '♦', check: '✓',
+    cross: '✗', star: '★', ensp: ' ', emsp: ' ',
+    thinsp: ' ', zwnj: '‌', zwj: '‍', shy: '­',
+    iexcl: '¡', iquest: '¿', ordf: 'ª', ordm: 'º',
+    aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó',
+    uacute: 'ú', ntilde: 'ñ', uuml: 'ü', ouml: 'ö',
+    auml: 'ä', szlig: 'ß', ccedil: 'ç', agrave: 'à',
+    egrave: 'è'
+};
+
+/**
  * Thrown when the markup is malformed. Carries the source offset.
  *
  * @example
@@ -540,7 +568,34 @@ class MarkupParser
             // survive as a single-space text node, or the neighbours render fused.
             return raw.includes('\n') ? '' : ' ';
         }
-        return raw.replace(/\s*\n\s*/g, ' ');
+        return MarkupParser.#decodeEntities(raw.replace(/\s*\n\s*/g, ' '));
+    }
+
+    /**
+     * Decodes HTML character references in text content, so authored `&amp;`/`&lt;`/`&nbsp;`/
+     * `&copy;`/`&#38;` become the characters they name (matching HTML/JSX/Vue/Svelte), instead of
+     * rendering as the literal entity text. Only text nodes are decoded - `<script>`/`<style>` CDATA
+     * is read separately and never reaches here. Numeric references are fully supported; named
+     * references cover the common set, and an unknown name is left verbatim (safe degradation).
+     */
+    static #decodeEntities(text: string): string
+    {
+        if (!text.includes('&'))
+        {
+            return text;
+        }
+        return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) =>
+        {
+            if (body.charCodeAt(0) === 35) // '#'
+            {
+                const code = body[1] === 'x' || body[1] === 'X'
+                    ? parseInt(body.slice(2), 16)
+                    : parseInt(body.slice(1), 10);
+                return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : whole;
+            }
+            const named = NAMED_ENTITIES[body];
+            return named !== undefined ? named : whole;
+        });
     }
 
     /** True when a `{ ... }` hole has no actual expression (only comments/space). */

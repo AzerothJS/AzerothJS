@@ -701,7 +701,10 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
             const parsed = value.run(element, path === '' ? key : `${ path }.${ key }`, collector);
             if (parsed !== undefined)
             {
-                out[key] = parsed;
+                // defineProperty, not `out[key] = parsed`: the keys are ATTACKER-controlled, and a
+                // plain assignment to `__proto__` invokes the prototype setter (poisoning the parsed
+                // object with attacker-supplied inherited properties) instead of adding an own key.
+                Object.defineProperty(out, key, { value: parsed, enumerable: true, writable: true, configurable: true });
             }
             if (collector.first && collector.issues.length > 0)
             {

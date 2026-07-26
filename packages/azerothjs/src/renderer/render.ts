@@ -96,6 +96,19 @@ export function render(component: () => MountNode, container: HTMLElement): void
     createRoot((dispose) =>
     {
         containerDisposers.set(container, dispose);
-        container.appendChild(component());
+        // A fragment-root component (`component F { <>...</> }`) returns an ARRAY of nodes; append
+        // each so a multi-node root mounts as direct children instead of crashing on appendChild.
+        const output = component();
+        if (Array.isArray(output))
+        {
+            for (const node of output as Node[])
+            {
+                container.appendChild(node);
+            }
+        }
+        else
+        {
+            container.appendChild(output);
+        }
     });
 }

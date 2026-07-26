@@ -36,14 +36,14 @@ export default component GuestBook()
             <label>
                 Name
                 <input bind:value={ sign.name } placeholder="Jaina" />
-                <Show when={ sign.errors().name }>
+                <Show when={ sign.touched().name && sign.errors().name }>
                     <small class="error">{ sign.errors().name }</small>
                 </Show>
             </label>
             <label>
                 Message
                 <input bind:value={ sign.message } placeholder="Well met!" />
-                <Show when={ sign.errors().message }>
+                <Show when={ sign.touched().message && sign.errors().message }>
                     <small class="error">{ sign.errors().message }</small>
                 </Show>
             </label>

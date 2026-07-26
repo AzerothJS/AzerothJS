@@ -29,7 +29,8 @@
             "types": "./dist/api/client-entry.d.ts",
             "import": "./dist/api/client-entry.js",
             "default": "./dist/api/client-entry.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "files": [
         "dist"
@@ -42,8 +43,8 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/logger": "1.0.0",
-        "@azerothjs/schema": "1.0.0"
+        "@azerothjs/logger": "^1.0.0",
+        "@azerothjs/schema": "^1.0.0"
     },
     "peerDependencies": {
         "azerothjs": "^1.0.0"

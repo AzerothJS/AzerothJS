@@ -46,6 +46,6 @@
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     },
     "dependencies": {
-        "@azerothjs/language-server": "1.0.0"
+        "@azerothjs/language-server": "^1.0.0"
     }
 }

@@ -62,6 +62,11 @@ export interface ReactiveAnalysis
     sources: ReactiveSourceInfo[];
     hasProps: boolean;
     scopes: ReactiveScope[];
+    /** The props parameter's author-chosen identifier (`props`/`p`/`data`), or null for a destructured
+     * pattern. Codegen emits the runtime signature with this name so `p.x` body reads resolve. */
+    paramName?: string | null | undefined;
+    /** True when the props parameter destructures a rest element (`{ a, ...rest }`) - unsupported. */
+    hasRestProp?: boolean | undefined;
     /** Destructured-prop aliases from a `component Name({ a, b }: P)` signature (local name -> read expr). */
     propAliases?: ReadonlyMap<string, string> | undefined;
     /** `form` declarations: form name -> its field-key set (drives the `NAME.field` read/write rewrite). */
@@ -141,7 +146,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
     // additionally introduces reactive aliases so a bare `a` read lowers to `props.a`.
     const param = component.propsParam
         ? parseComponentParam(source.slice(component.propsParam.start, component.propsParam.end), component.propsParam.start)
-        : { typeSpan: null, patternSpan: null };
+        : { typeSpan: null, patternSpan: null, identName: null, hasRest: false };
     const hasProps = component.propsParam !== null;
     const propAliases = param.patternSpan
         ? parsePropsPattern(source.slice(param.patternSpan.start, param.patternSpan.end))
@@ -207,7 +212,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         }
     }
 
-    return { sources, hasProps, scopes, propAliases, forms, rowForms };
+    return { sources, hasProps, scopes, paramName: param.identName, hasRestProp: param.hasRest, propAliases, forms, rowForms };
 }
 
 /**

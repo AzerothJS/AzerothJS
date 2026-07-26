@@ -15,7 +15,8 @@
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         },
-        "./azeroth.tmLanguage.json": "./syntaxes/azeroth.tmLanguage.json"
+        "./azeroth.tmLanguage.json": "./syntaxes/azeroth.tmLanguage.json",
+        "./package.json": "./package.json"
     },
     "files": [
         "dist",
@@ -25,7 +26,7 @@
     ],
     "sideEffects": false,
     "dependencies": {
-        "@azerothjs/logger": "1.0.0"
+        "@azerothjs/logger": "^1.0.0"
     },
     "peerDependencies": {
         "azerothjs": "^1.0.0",

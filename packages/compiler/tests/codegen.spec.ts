@@ -19,7 +19,7 @@ describe('generateModule - module shape and imports', () =>
     it('emits a factory function and imports the runtime helpers it uses', () =>
     {
         const code = gen('component Hi { <h1>hi</h1> }');
-        expect(code).toContain('function Hi(props)');
+        expect(code).toContain('function Hi(props = {})');
         expect(code).toContain('from \'azerothjs/internal\'');
         // A static host output hoists a tmpl() clone.
         expect(code).toMatch(/const _tmpl\$1 = tmpl\(/);
@@ -91,7 +91,7 @@ describe('generateModule - reactive desugaring', () =>
     {
         const code = gen('component Card({ title, size = "sm" }: CardProps) { <p class={size}>{title}</p> }');
         // The runtime function still takes a single `props` object; the destructured names are aliases.
-        expect(code).toContain('function Card(props)');
+        expect(code).toContain('function Card(props = {})');
         expect(code).toContain('props.title');
         expect(code).toContain('(props.size ?? "sm")');
         // A snapshot `const { ... } = props` would lose reactivity, so it must NOT be emitted.
@@ -321,13 +321,13 @@ describe('generateModule - reactive desugaring', () =>
     it('compiles a function-style signature `component Name(props: T)` to a plain function', () =>
     {
         const code = gen('interface P { title: string }\nexport default component Card(props: P) { <h1>{props.title}</h1> }');
-        expect(code).toContain('function Card(props)');
+        expect(code).toContain('function Card(props = {})');
     });
 
     it('carries type parameters from a generic component signature', () =>
     {
         const code = gen('interface P<T> { items: T[] }\nexport default component Box<T>(props: P<T>) { <ul>{props.items.length}</ul> }');
-        expect(code).toContain('function Box<T>(props)');
+        expect(code).toContain('function Box<T>(props = {})');
     });
 
     it('recognises a no-props function-style signature with empty parens `component Name()`', () =>
@@ -335,14 +335,14 @@ describe('generateModule - reactive desugaring', () =>
         // Empty parens carry no props type - it must still parse as a component (not fall
         // through to opaque passthrough, which would leak the `component Name()` text raw).
         const code = gen('export default component Page() { <main>hi</main> }');
-        expect(code).toContain('function Page(props)');
+        expect(code).toContain('function Page(props = {})');
         expect(code).not.toMatch(/\bcomponent\s+Page/);
     });
 
     it('recognises an untyped param signature `component Name(props)`', () =>
     {
         const code = gen('export default component Page(props) { <main>{props.title}</main> }');
-        expect(code).toContain('function Page(props)');
+        expect(code).toContain('function Page(props = {})');
         expect(code).not.toMatch(/\bcomponent\s+Page/);
     });
 });

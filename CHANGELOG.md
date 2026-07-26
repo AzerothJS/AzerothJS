@@ -9,6 +9,49 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed (pre-1.0 release review)
+
+An adversarial review against the built/packed distribution found and this release fixes:
+
+- **A prop-less `<C/>` no longer crashes** a component that reads its props. The prop-less-tag
+  optimization emits `C()`; the component now takes `props = {}`, so a defaulted/optional-props
+  component used with no attributes renders instead of throwing `Cannot read properties of undefined`.
+- **A builtin's `fallback` prop is no longer double-wrapped.** The compiler wrapped
+  `fallback={(error, reset) => ...}` in an extra `() => (...)` thunk, so `<ErrorBoundary>` received
+  `undefined` for its error/reset and `<Routes fallback>` crashed (blank app on any unmatched URL).
+  A function-literal fallback now passes through; a bare-markup fallback is still wrapped.
+- **Block-bodied render callbacks stay reactive.** A hole in markup returned from
+  `{(row) => { ...; return <span>{ signal }</span>; }}` was emitted as a one-shot value and never
+  updated; it is now wrapped in a getter like the expression-bodied form.
+- **Component props parameters lower correctly.** A parameter named anything other than `props`
+  (`component C(p: P)`) and NESTED destructuring (`{ pos: { x, y } }`) now work; a **rest element**
+  (`{ a, ...rest }`) is rejected with a located `azeroth/unsupported-props-rest` error instead of
+  silently emitting code that reads an unbound `rest`.
+- **A fragment-root component mounts.** `component F { <>...</> }` returned a bare array that crashed
+  `render()` and serialized to `[object Object],...`; `render()` and `renderToString()` now handle a
+  multi-node root as direct children.
+- **HTML character references in text are decoded.** `&amp;`/`&lt;`/`&nbsp;`/`&copy;`/`&mdash;`/`&#38;`
+  render as their characters (matching HTML/JSX/Vue/Svelte) instead of as literal entity text.
+- **Cross-field `validateForm` errors clear.** A field flagged only by `validateForm` that returns the
+  documented partial map (`{}` when valid) now clears once the fields agree, so a fixed
+  password-confirm form becomes valid; previously it stayed `isValid() === false` forever.
+- **`@azerothjs/schema` `record()` is prototype-pollution safe.** An untrusted `__proto__` key is
+  stored as an own property (via `defineProperty`) instead of invoking the prototype setter, so it
+  neither poisons the parsed object nor is silently dropped.
+- **Devtools no longer leaks signals.** With a hook attached, a disposed component's signals are now
+  swept from the registry when their root disposes (signals have no disposal event of their own), so
+  a long dev session no longer grows unbounded and the graph snapshot returns to baseline.
+- **The reactive graph no longer pins a disposed consumer.** `track()`'s dedup cache
+  (`producer.seenConsumer`) is cleared when that consumer unlinks, so a long-lived signal does not
+  retain an unmounted reader's closure.
+- **Internal package dependencies use `^1.0.0`, not an exact pin**, so a patch to one framework
+  package no longer forces a duplicate copy of another in a consumer's tree.
+- **Every package exports `./package.json`** (tools that `require.resolve('pkg/package.json')` work),
+  and `@azerothjs/kit` declares `"sideEffects": false`.
+- **create-azeroth templates run on first `npm run dev`.** The backend and fullstack templates
+  imported `fileStream` from `@azerothjs/logger` (it lives on `@azerothjs/logger/node`); the fullstack
+  root `npm start` now runs the server from its own workspace so the production command boots.
+
 ### Added
 
 - **`@azerothjs/devtools` rewritten as a primitive-aware inspector.** The panel now speaks

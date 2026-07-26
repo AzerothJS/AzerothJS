@@ -30,7 +30,7 @@ import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError } from './markup-parser.ts';
 import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './scanner.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
-import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
+import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
@@ -496,7 +496,12 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     // Carry through any type parameters from a `component Name<T>(...)` signature so the body's `T`
     // references resolve; oxc strips them for the runtime output.
     const typeParams = component.typeParams ? source.slice(component.typeParams.start, component.typeParams.end) : '';
-    return `function ${ component.name }${ typeParams }(props)\n{\n${ body }\n}`;
+    // Emit the runtime signature with the AUTHOR'S parameter name when it is a plain identifier
+    // (`component C(p: T)` -> `function C(p = {})`), so a body reading `p.x` resolves. A destructured
+    // pattern lowers to `props.<name>` reads, so its runtime param is the canonical `props`.
+    // `= {}` so a prop-less call site (`<C/>` lowers to `C()`) still gives the body a props object.
+    const paramName = analysis.paramName ?? 'props';
+    return `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n${ body }\n}`;
 }
 
 /** Emits the component's rendered output via the unified IR-driven emitter. */
@@ -774,8 +779,20 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         else
         {
             const value = rewriteExpr(source, prop.expr, sources, emit);
-            // Factory props (`fallback`) are lazy thunks; value props are reactive getters.
-            parts.push(FACTORY_ATTRS.has(prop.name) ? `${ objectKey(prop.name) }: () => (${ value })` : `get ${ objectKey(prop.name) }() { return (${ value }); }`);
+            if (FACTORY_ATTRS.has(prop.name))
+            {
+                // A factory prop (`fallback`) is a function the component invokes - for
+                // ErrorBoundary with `(error, reset)`, for Routes with no args. If the author
+                // already wrote a function, pass it THROUGH; wrapping it in `() => (...)` would
+                // make the component's `fallback(error, reset)` call hit the wrapper and discard
+                // the arguments. A bare markup value (`fallback={<p/>}`) is wrapped so it stays lazy.
+                const raw = source.slice(prop.expr.span.start, prop.expr.span.end).trim();
+                parts.push(`${ objectKey(prop.name) }: ${ isFunctionLiteral(raw) ? value : `() => (${ value })` }`);
+            }
+            else
+            {
+                parts.push(`get ${ objectKey(prop.name) }() { return (${ value }); }`);
+            }
         }
     }
 
@@ -941,6 +958,17 @@ function rewriteBody(source: string, start: number, end: number, sources: Reacti
 function exprValue(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
     const rewritten = rewriteExpr(source, expr, sources, emit);
+    if (emit.raw)
+    {
+        // Embedded-markup (raw) mode: this hole sits in markup returned from a BLOCK-bodied
+        // render callback (or another expression), where the dep analysis can't see which reads
+        // are reactive and the reactive read-rewrite runs on the OUTER expression AFTER this. A
+        // bare hole would be rewritten to a one-shot `tick()` and never update. Wrap it in a getter
+        // so a reactive read stays fine-grained; h() calls the getter either way, so a static read
+        // (a row param) is still correct. A function/collection literal is already the right shape.
+        const t = rewritten.trim();
+        return isFunctionLiteral(t) || isCollectionLiteral(t) ? rewritten : `() => (${ rewritten })`;
+    }
     // isReactive covers reads the dep analysis can SEE (component sources) plus the
     // explicit reactive flag. For the rest, fall back to a conservative reactivity heuristic so a
     // computed expression the analysis CAN'T see (a store read like `counter.count()`,

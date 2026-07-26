@@ -328,15 +328,35 @@ export function dtExitOwner(previous: number): void
     }
 }
 
-/** Announces a node's disposal and drops it from the registry. No-op when the node was never registered. @internal */
+/**
+ * Announces a node's disposal and drops it from the registry. No-op when the node was never
+ * registered. When a ROOT disposes, also sweep any of its still-registered nodes - signals have no
+ * disposal event of their own (they are GC'd), so without this sweep every signal a disposed
+ * component created would be pinned in the registry forever while a hook is attached (a dev-session
+ * memory leak, and phantom nodes in the graph snapshot).
+ *
+ * @internal
+ */
 export function dtDispose(id: number): void
 {
     if (hook === null || id === 0)
     {
         return;
     }
+    const record = registry.get(id);
     registry.delete(id);
     hook.disposed(id);
+    if (record?.kind === 'root')
+    {
+        for (const [childId, child] of registry)
+        {
+            if (child.owner === id)
+            {
+                registry.delete(childId);
+                hook.disposed(childId);
+            }
+        }
+    }
 }
 
 /**

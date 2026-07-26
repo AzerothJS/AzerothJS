@@ -629,6 +629,22 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
 
     // azeroth/constant-derived and azeroth/inert-effect
     const analysis = analyzeComponent(source, component);
+
+    // A rest element in the props parameter (`{ a, ...rest }`) cannot be lowered: props are read
+    // through per-key getters to stay reactive, and there is no single getter for "the remaining
+    // props". Reject it with a located error instead of emitting a body that reads an unbound `rest`.
+    if (analysis.hasRestProp && component.propsParam !== null)
+    {
+        out.push({
+            code: 'azeroth/unsupported-props-rest',
+            severity: 'error',
+            message: 'A rest element (`...rest`) in a component props parameter is not supported: '
+                + 'props are read through getters to stay reactive. Name the props you use, or take the '
+                + 'whole object (`component C(props: P)`) and read `props.x`.',
+            start: component.propsParam.start,
+            end: component.propsParam.end
+        });
+    }
     for (const scope of analysis.scopes)
     {
         // A reactive dependency means it is neither constant nor inert. A scope that is NOT pure

@@ -14,7 +14,7 @@
         "templates"
     ],
     "dependencies": {
-        "@azerothjs/logger": "1.0.0"
+        "@azerothjs/logger": "^1.0.0"
     },
     "sideEffects": false,
     "scripts": {

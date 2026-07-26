@@ -213,6 +213,12 @@ function unlink(link: Link): void
         subs[link.slot] = last;
         last.slot = link.slot;
     }
+    // Clear the track() dedup cache when it points at the consumer being detached, so a disposed
+    // consumer's closure is not pinned on a long-lived producer until some other consumer reads it.
+    if (link.producer.seenConsumer === link.consumer)
+    {
+        link.producer.seenConsumer = null;
+    }
     if (subs.length === 0 && link.producer.onUnsubscribed)
     {
         link.producer.onUnsubscribed();

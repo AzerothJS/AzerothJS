@@ -17,7 +17,8 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "files": [
         "dist"
@@ -30,7 +31,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/logger": "1.0.0"
+        "@azerothjs/logger": "^1.0.0"
     },
     "publishConfig": {
         "access": "public"

@@ -51,8 +51,14 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
                 try
                 {
                     // In string mode, h()/components return an SSRNode cast to HTMLElement.
-                    // Read its serialized html back out.
+                    // Read its serialized html back out. A fragment-root component returns an ARRAY
+                    // of SSRNodes; concatenate each one's html so a multi-node root serializes as its
+                    // children (not the array's `[object Object],...` string form).
                     const node = component() as unknown;
+                    if (Array.isArray(node))
+                    {
+                        return (node as unknown[]).map(n => isSSRNode(n) ? n.html : String(n)).join('');
+                    }
                     return isSSRNode(node) ? node.html : String(node);
                 }
                 finally

@@ -131,7 +131,7 @@ describe('component params - codegen runtime semantics', () =>
     {
         for (const src of Object.values(FORM))
         {
-            expect(gen(src)).toContain('function Button(props)');
+            expect(gen(src)).toContain('function Button(props = {})');
         }
     });
 

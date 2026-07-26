@@ -300,6 +300,16 @@ export interface ComponentParam
      * (`{ a, b = d }: T`), or null when the parameter is a plain identifier (`props: T`).
      */
     patternSpan: { start: number; end: number } | null;
+
+    /**
+     * The parameter's identifier when it is a plain name (`props`, `p`, `data`), so codegen can emit
+     * the runtime signature with the AUTHOR'S name - a body reading `p.x` needs the parameter to be
+     * `p`, not the hardcoded `props`. Null for a destructuring pattern (which lowers to `props.<name>`).
+     */
+    identName: string | null;
+
+    /** True when the pattern contains a rest element (`{ a, ...rest }`), which the lowering can't alias. */
+    hasRest: boolean;
 }
 
 /** Wrapper around the parameter so its node offsets are a fixed shift from the source. */
@@ -322,23 +332,27 @@ export function parseComponentParam(paramText: string, base: number): ComponentP
 {
     if (paramText.trim() === '')
     {
-        return { typeSpan: null, patternSpan: null };
+        return { typeSpan: null, patternSpan: null, identName: null, hasRest: false };
     }
     const sf = parse(`${ PARAM_WRAPPER_PREFIX }${ paramText }){}`);
     const stmt = sf.statements[0];
     const param = stmt !== undefined && ts.isFunctionDeclaration(stmt) ? stmt.parameters[0] : undefined;
     if (param === undefined)
     {
-        return { typeSpan: null, patternSpan: null };
+        return { typeSpan: null, patternSpan: null, identName: null, hasRest: false };
     }
     const shift = base - PARAM_WRAPPER_PREFIX.length;
     const typeSpan = param.type !== undefined
         ? { start: param.type.getStart(sf) + shift, end: param.type.getEnd() + shift }
         : null;
-    const patternSpan = ts.isObjectBindingPattern(param.name)
+    const isPattern = ts.isObjectBindingPattern(param.name);
+    const patternSpan = isPattern
         ? { start: param.name.getStart(sf) + shift, end: param.name.getEnd() + shift }
         : null;
-    return { typeSpan, patternSpan };
+    const identName = ts.isIdentifier(param.name) ? param.name.text : null;
+    const hasRest = ts.isObjectBindingPattern(param.name)
+        && param.name.elements.some(e => e.dotDotDotToken !== undefined);
+    return { typeSpan, patternSpan, identName, hasRest };
 }
 
 /**
@@ -364,33 +378,50 @@ export function parsePropsPattern(patternText: string): Map<string, string>
     {
         return aliases;
     }
-    for (const element of decl.name.elements)
+
+    // Walk the pattern, threading the accessor prefix so a NESTED binding (`{ pos: { x } }`) aliases
+    // `x` to `props.pos.x`. Each level's key read still goes through the prop getter, so reads stay
+    // fine-grained. Rest/computed/non-identifier keys are skipped (they degrade to unbound reads, which
+    // codegen rejects with a diagnostic rather than emit silently).
+    const walk = (pattern: ts.ObjectBindingPattern, prefix: string): void =>
     {
-        // Only simple `name` / `prop: name` / `name = default` bindings alias; rest/nested/computed do not.
-        if (element.dotDotDotToken !== undefined || !ts.isIdentifier(element.name))
+        for (const element of pattern.elements)
         {
-            continue;
-        }
-        const local = element.name.text;
-        let prop = local;
-        if (element.propertyName !== undefined)
-        {
-            if (ts.isIdentifier(element.propertyName) || ts.isStringLiteralLike(element.propertyName) || ts.isNumericLiteral(element.propertyName))
+            if (element.dotDotDotToken !== undefined)
             {
-                prop = element.propertyName.text;
+                continue; // rest element - handled by a codegen diagnostic
             }
-            else
+            let prop: string | null = null;
+            if (element.propertyName !== undefined)
             {
-                continue; // computed property name - cannot statically resolve the prop
+                if (ts.isIdentifier(element.propertyName) || ts.isStringLiteralLike(element.propertyName) || ts.isNumericLiteral(element.propertyName))
+                {
+                    prop = element.propertyName.text;
+                }
             }
+            else if (ts.isIdentifier(element.name))
+            {
+                prop = element.name.text;
+            }
+            if (prop === null || !/^[A-Za-z_$][\w$]*$/.test(prop))
+            {
+                continue;
+            }
+            const read = `${ prefix }.${ prop }`;
+            if (ts.isObjectBindingPattern(element.name))
+            {
+                walk(element.name, read); // nested: descend with the extended accessor
+                continue;
+            }
+            if (!ts.isIdentifier(element.name))
+            {
+                continue; // array pattern or other - not aliased
+            }
+            const local = element.name.text;
+            const def = element.initializer !== undefined ? element.initializer.getText(sf) : null;
+            aliases.set(local, def !== null ? `(${ read } ?? ${ def })` : read);
         }
-        if (!/^[A-Za-z_$][\w$]*$/.test(prop))
-        {
-            continue; // non-identifier prop key - skip rather than emit invalid `props.<key>`
-        }
-        const read = `props.${ prop }`;
-        const def = element.initializer !== undefined ? element.initializer.getText(sf) : null;
-        aliases.set(local, def !== null ? `(${ read } ?? ${ def })` : read);
-    }
+    };
+    walk(decl.name, 'props');
     return aliases;
 }

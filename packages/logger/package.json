@@ -19,7 +19,8 @@
             "types": "./dist/node.d.ts",
             "import": "./dist/node.js",
             "default": "./dist/node.js"
-        }
+        },
+        "./package.json": "./package.json"
     },
     "files": [
         "dist"
