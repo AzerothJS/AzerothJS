@@ -16,9 +16,10 @@ import { parseArgs } from 'node:util';
 import { printBanner } from '@azerothjs/logger';
 
 import { detectProject, type Project } from './detect.ts';
-import { PlanError, formatStep, isRunnable, planBuild, planCheck, planDev, type Plan } from './plan.ts';
+import { PlanError, formatStep, isRunnable, planBuild, planCheck, planDev, planTest, type Plan } from './plan.ts';
 import { printNotes, runDev, runToCompletion } from './run.ts';
 import { runDoctor } from './doctor.ts';
+import { runUpgrade } from './upgrade.ts';
 import { renderInfo } from './info.ts';
 import { bold, brand, dim, fail, mark, print, statusMark, verdictGlyph } from './terminal.ts';
 
@@ -41,6 +42,8 @@ function usage(): string
         ['dev', 'Run the app in watch mode - the fullstack conductor'],
         ['check', "Every quality gate the project's shape demands (both halves, server first)"],
         ['build', 'Deployable artifacts in dependency order (a native backend has none - by design)'],
+        ['test', "Run each half's vitest suite (server first)"],
+        ['upgrade', 'Move every AzerothJS pin to a target version, install, and run the doctor'],
         ['doctor', 'Diagnose the environment against the known failure catalog'],
         ['info', 'A paste-able environment block for bug reports']
     ];
@@ -188,15 +191,31 @@ async function main(): Promise<number>
         }
         case 'check':
         case 'build':
+        case 'test':
         {
             const project = detectOrExit(cwd, app, server);
-            const plan = planOrExit(project, command === 'check' ? planCheck : planBuild);
+            const plan = planOrExit(project, command === 'check' ? planCheck : command === 'build' ? planBuild : planTest);
             if (values.print)
             {
                 printPlan(plan);
                 return 0;
             }
             return runToCompletion(plan);
+        }
+        case 'upgrade':
+        {
+            return runUpgrade(cwd, positionals[1] ?? 'latest', {
+                dryRun: values.print,
+                doctor: () =>
+                {
+                    const results = runDoctor(detectProject(cwd, { app, server }));
+                    for (const result of results)
+                    {
+                        print(`${ statusMark(result.status) } ${ result.name.padEnd(22) } ${ result.detail }`);
+                    }
+                    return results.some((result) => result.status === 'fail') ? 1 : 0;
+                }
+            });
         }
         case 'doctor':
         {

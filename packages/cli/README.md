@@ -21,14 +21,27 @@ npm install --save-dev @azerothjs/cli
 azeroth dev      Run the app in watch mode - the fullstack conductor
 azeroth check    Every quality gate the project's shape demands
 azeroth build    Deployable artifacts in dependency order
+azeroth test     Run each half's vitest suite (server first)
+azeroth upgrade  Move every AzerothJS pin to a target version, install, run the doctor
 azeroth doctor   Diagnose the environment against the known failure catalog
 azeroth info     A paste-able environment block for bug reports
 ```
 
+`azeroth upgrade` takes a version or dist-tag (`azeroth upgrade`, `azeroth upgrade
+1.0.0`, `azeroth upgrade beta`); tags resolve to a concrete version, every
+`azerothjs`/`@azerothjs/*`/`create-azeroth` pin across the root and its workspaces
+is rewritten with its range prefix preserved, then `npm install` and the doctor run.
+`--print` shows the change table without touching anything.
+
+> **Run `azeroth` inside a project.** Scaffolded apps depend on `@azerothjs/cli`, so
+> `npx azeroth <command>` resolves THIS package locally. Outside a project,
+> `npx azeroth` would fetch the unrelated npm package squatting that name - new
+> projects always start with `npm create azeroth@latest`, never `npx azeroth`.
+
 There is no config file. The CLI detects your project's shape from what already exists:
 
 - **frontend** - a vite config plus `azerothjs` (or `@azerothjs/compiler`)
-- **backend** - an `@azerothjs/http`/`ws`/`api`/`cron` dependency, no vite config.
+- **backend** - an `@azerothjs/http`/`ws`/`cron` dependency, no vite config.
   Subdivides by how it must run: a decorator ORM (TypeORM etc.) means tsc must emit
   first (**built**); otherwise Node >= 24 runs the TypeScript source directly (**native**)
 - **fullstack** - a directory whose children are exactly one frontend and one backend

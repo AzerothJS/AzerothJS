@@ -11,6 +11,16 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **cli**: two new verbs. `azeroth test` runs each half's vitest suite (server
+  first), planned and printable like every other command. `azeroth upgrade [target]`
+  moves every `azerothjs`/`@azerothjs/*`/`create-azeroth` pin across the root and
+  its workspaces to one version (a dist-tag like `beta` resolves to a concrete
+  version first), preserving each pin's range prefix and the file's formatting
+  byte-for-byte, then runs `npm install` and the doctor; `--print` shows the change
+  table without touching anything. The READMEs now document the scaffold canon -
+  `npm create azeroth@latest` - with the warning that bare `npx azeroth` outside a
+  project resolves an unrelated squatted npm package.
+
 - **create-azeroth**: the fullstack template is now the CANON TOUR. Two client
   routes through the router in `.azeroth` (`<RouterProvider>`/`<Routes>`/`<Link
   activeClass end>`), ONE shared contract file both halves import

@@ -43,7 +43,7 @@ export interface Step
 /** What one command will run: the ordered steps plus the human notes explaining any gaps. */
 export interface Plan
 {
-    command: 'dev' | 'check' | 'build';
+    command: 'dev' | 'check' | 'build' | 'test';
     steps: Step[];
 
     /** Human notes printed before execution - skipped gates, "no build step needed", etc. */
@@ -64,6 +64,7 @@ const VITE = 'vite/bin/vite.js';
 const TSC = 'typescript/bin/tsc';
 const ESLINT = 'eslint/bin/eslint.js';
 const AZEROTH_TSC = '@azerothjs/language-server/dist/tsc-cli.js';
+const VITEST = 'vitest/vitest.mjs';
 const ESLINT_CONFIGS = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts', 'eslint.config.mts'];
 
 /**
@@ -212,6 +213,35 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
  * checks its server half first (fail-fast on the cheaper gate). A missing tool is
  * never a silent skip: it becomes a printed note.
  */
+/** One `vitest run` per half that has vitest installed; a half without it is a note, not a failure. */
+export function planTest(project: FrontendProject | BackendProject | FullstackProject): Plan
+{
+    const notes: string[] = [];
+    const testStep = (dir: string, label: string): Step[] =>
+    {
+        const vitest = resolveTool(dir, VITEST);
+        if (vitest === null)
+        {
+            notes.push(`${ label }: vitest not installed - tests skipped`);
+            return [];
+        }
+        return [step({ label: `${ label } test`, cwd: dir, script: vitest, args: ['run'], longRunning: false })];
+    };
+    switch (project.kind)
+    {
+        case 'frontend':
+            return { command: 'test', steps: testStep(project.dir, 'web'), notes };
+        case 'backend':
+            return { command: 'test', steps: testStep(project.dir, 'api'), notes };
+        case 'fullstack':
+            return {
+                command: 'test',
+                steps: [...testStep(project.server.dir, 'api'), ...testStep(project.app.dir, 'web')],
+                notes
+            };
+    }
+}
+
 export function planCheck(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
     const notes: string[] = [];

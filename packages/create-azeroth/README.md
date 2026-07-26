@@ -13,6 +13,12 @@ The scaffolder: a frontend, backend, or fullstack app with the whole toolchain w
 npm create azeroth@latest
 ```
 
+> `npm create azeroth` is THE canonical entry (it resolves this package,
+> `create-azeroth`). Do not use `npx azeroth` to start a project - the bare
+> `azeroth` name on npm is an unrelated squatted package; the real `azeroth` CLI
+> comes with your scaffolded app as `@azerothjs/cli` and runs locally via
+> `npx azeroth dev` inside it.
+
 Two questions at most - a name and a shape - then:
 
 ```sh
