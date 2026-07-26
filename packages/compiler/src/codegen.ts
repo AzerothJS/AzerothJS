@@ -281,7 +281,15 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
         else
         {
             hadComponent = true;
-            push(generateComponent(source, item, emit), item.start, false);
+            // Record one piece per emitted line (from the component's spans) rather than a single
+            // coarse piece for the whole component, so the source map is line-accurate.
+            const gen = generateComponent(source, item, emit);
+            const base = out.length;
+            for (const span of gen.spans)
+            {
+                pieces.push({ outStart: base + span.genOffset, sourceStart: span.sourceOffset, verbatim: false });
+            }
+            out += gen.code;
         }
     }
 
@@ -364,8 +372,11 @@ function validatePlan(plan: RenderPlan): void
     }
 }
 
-/** Emits a single component as a factory function. */
-function generateComponent(source: string, component: ComponentDecl, emit: Emit): string
+/** A generated component's code plus the source-map anchors linking its lines to `.azeroth` offsets. */
+interface ComponentEmit { code: string; spans: { genOffset: number; sourceOffset: number }[] }
+
+/** Emits a single component as a factory function, with per-line source-map anchors. */
+function generateComponent(source: string, component: ComponentDecl, emit: Emit): ComponentEmit
 {
     const analysis = analyzeComponent(source, component);
     const lowered = lowerComponent(source, component, analysis);
@@ -391,6 +402,15 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     };
 
     const lines: string[] = [];
+    // Source offset that each emitted line maps back to, so the source map resolves a runtime throw
+    // (and the devtools' creation-line attribution) to the construct's REAL `.azeroth` line instead
+    // of collapsing the whole component onto its declaration line.
+    const lineSrc: number[] = [];
+    const line = (code: string, src: number): void =>
+    {
+        lines.push(code);
+        lineSrc.push(src);
+    };
     for (const item of component.body)
     {
         if (item.kind === 'state')
@@ -400,7 +420,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const typeArg = parsed?.type ? `<${ parsed.type.getText(parsed.sourceFile) }>` : '';
             const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
             emit.used.add(RUNTIME_FN.state);
-            lines.push(`const [${ item.name }, ${ setterName(item.name) }] = ${ RUNTIME_FN.state }${ typeArg }(${ init }${ namedOptions(rawOpts, item.name, emit) });`);
+            line(`const [${ item.name }, ${ setterName(item.name) }] = ${ RUNTIME_FN.state }${ typeArg }(${ init }${ namedOptions(rawOpts, item.name, emit) });`, item.nameStart);
         }
         else if (item.kind === 'derived' || item.kind === 'deferred')
         {
@@ -409,7 +429,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
             const fn = RUNTIME_FN[item.kind];
             emit.used.add(fn);
-            lines.push(`const ${ item.name } = ${ fn }(() => (${ init })${ namedOptions(rawOpts, item.name, emit) });`);
+            line(`const ${ item.name } = ${ fn }(() => (${ init })${ namedOptions(rawOpts, item.name, emit) });`, item.nameStart);
         }
         else if (item.kind === 'form')
         {
@@ -433,13 +453,13 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
                 const config = withObj !== null
                     ? `{ ${ nameKey }blank: () => (${ initial }), ...(${ withObj }) }`
                     : `{ ${ nameKey }blank: () => (${ initial }) }`;
-                lines.push(`const ${ item.name } = ${ RUNTIME_FN_FIELD_ARRAY }(${ config });`);
+                line(`const ${ item.name } = ${ RUNTIME_FN_FIELD_ARRAY }(${ config });`, item.nameStart);
             }
             else
             {
                 emit.used.add(RUNTIME_FN.form);
                 const config = withObj !== null ? `{ ${ nameKey }initial: (${ initial }), ...(${ withObj }) }` : `{ ${ nameKey }initial: (${ initial }) }`;
-                lines.push(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`);
+                line(`const ${ item.name } = ${ RUNTIME_FN.form }(${ config });`, item.nameStart);
             }
         }
         else if (isFactoryItem(item))
@@ -459,7 +479,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const rawTrailing = plan.rest !== null ? rewriteReactive(plan.rest, sources)
                 : plan.opts !== null ? rewriteReactive(plan.opts, sources) : null;
             emit.used.add(plan.fn);
-            lines.push(`const ${ item.name } = ${ plan.fn }(${ sourceArg }${ valueArg }${ namedOptions(rawTrailing, item.name, emit) });`);
+            line(`const ${ item.name } = ${ plan.fn }(${ sourceArg }${ valueArg }${ namedOptions(rawTrailing, item.name, emit) });`, item.nameStart);
         }
         else if (item.kind === 'effect')
         {
@@ -467,7 +487,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             emit.used.add(RUNTIME_FN.effect);
             // `with { ... }` passes options (e.g. `name`) to createEffect; effect is always auto-tracked.
             const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
-            lines.push(`${ RUNTIME_FN.effect }(() => {${ bodyCode }}${ optionsArg });`);
+            line(`${ RUNTIME_FN.effect }(() => {${ bodyCode }}${ optionsArg });`, item.start);
         }
         else if (item.kind === 'watch')
         {
@@ -476,23 +496,23 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const deps = watchDepGetters(source.slice(item.depsStart, item.depsEnd), sources, true).join(', ');
             const params = item.paramsStart !== null && item.paramsEnd !== null ? source.slice(item.paramsStart, item.paramsEnd) : '';
             const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
-            lines.push(`${ RUNTIME_FN.watch }([${ deps }], (${ params }) => {${ bodyCode }}${ optionsArg });`);
+            line(`${ RUNTIME_FN.watch }([${ deps }], (${ params }) => {${ bodyCode }}${ optionsArg });`, item.start);
         }
         else if (item.kind === 'wrapper')
         {
             const bodyCode = rewriteBody(source, item.bodyStart, item.bodyEnd, sources, emit);
             emit.used.add(item.fn);
-            lines.push(`${ item.fn }(() => {${ bodyCode }});`);
+            line(`${ item.fn }(() => {${ bodyCode }});`, item.start);
         }
         else if (item.kind === 'opaque-statements')
         {
-            lines.push(rewriteBody(source, item.start, item.end, sources, emit));
+            line(rewriteBody(source, item.start, item.end, sources, emit), item.start);
         }
     }
 
-    lines.push(emitOutput(source, plan, sources, emit));
+    const markupItem = component.body.find(i => i.kind === 'markup');
+    line(emitOutput(source, plan, sources, emit), markupItem?.start ?? component.start);
 
-    const body = lines.map(line => `    ${ line }`).join('\n');
     // Carry through any type parameters from a `component Name<T>(...)` signature so the body's `T`
     // references resolve; oxc strips them for the runtime output.
     const typeParams = component.typeParams ? source.slice(component.typeParams.start, component.typeParams.end) : '';
@@ -501,7 +521,24 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     // pattern lowers to `props.<name>` reads, so its runtime param is the canonical `props`.
     // `= {}` so a prop-less call site (`<C/>` lowers to `C()`) still gives the body a props object.
     const paramName = analysis.paramName ?? 'props';
-    return `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n${ body }\n}`;
+    const sig = `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n`;
+
+    // One source-map anchor per emitted line, keyed to the construct's source offset (the signature
+    // maps to the component declaration). Without this the whole body collapses onto one piece and a
+    // runtime throw - or the devtools' creation-line attribution - resolves to the wrong `.azeroth` line.
+    const rendered = lines.map(l => `    ${ l }`);
+    const spans: { genOffset: number; sourceOffset: number }[] = [{ genOffset: 0, sourceOffset: component.start }];
+    let pos = sig.length;
+    for (let i = 0; i < rendered.length; i++)
+    {
+        const src = lineSrc[i];
+        if (src !== undefined)
+        {
+            spans.push({ genOffset: pos, sourceOffset: src });
+        }
+        pos += (rendered[i] ?? '').length + 1; // +1 for the '\n' between lines (join) / before the closing brace
+    }
+    return { code: `${ sig }${ rendered.join('\n') }\n}`, spans };
 }
 
 /** Emits the component's rendered output via the unified IR-driven emitter. */

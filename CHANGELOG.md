@@ -51,6 +51,11 @@ An adversarial review against the built/packed distribution found and this relea
 - **create-azeroth templates run on first `npm run dev`.** The backend and fullstack templates
   imported `fileStream` from `@azerothjs/logger` (it lives on `@azerothjs/logger/node`); the fullstack
   root `npm start` now runs the server from its own workspace so the production command boots.
+- **Source maps are line-accurate.** The compiler emitted one coarse mapping for a whole component, so
+  a runtime throw's stack, a debugger breakpoint, and the devtools' creation-line attribution all
+  resolved to the component's declaration line instead of the real construct. Each emitted construct
+  (state/derived/effect/form/factory and the markup) now carries its own source anchor, so a `derived`
+  resolves to its own `.azeroth` line.
 
 ### Added
 
