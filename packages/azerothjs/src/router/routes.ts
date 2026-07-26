@@ -364,17 +364,59 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
  * programmatic move and cleans itself up on blur; `preventScroll` keeps the
  * router's own scroll management authoritative.
  *
+ * When focusing the FALLBACK region (the app did not mark a `[data-route-focus]`
+ * target), the region is tagged with `data-azeroth-route-focus-fallback` for the
+ * duration of the programmatic focus and a single, overridable stylesheet hides the
+ * default focus ring for that attribute: this is a focus-for-assistive-tech on a whole
+ * page region, not a user-driven control focus, so a visible outline around it reads as a
+ * stray page/window border. The framework never mutates the element's inline styles -
+ * presentation stays declarative and app-overridable - and an app that opts in with
+ * `[data-route-focus]` keeps its outline fully stylable.
+ *
  * @internal
  */
 function focusRouteContent(root: HTMLElement): void
 {
-    const target = root.querySelector<HTMLElement>('[data-route-focus]') ?? root;
+    const marked = root.querySelector<HTMLElement>('[data-route-focus]');
+    const target = marked ?? root;
     if (!target.hasAttribute('tabindex'))
     {
         target.setAttribute('tabindex', '-1');
-        target.addEventListener('blur', () => target.removeAttribute('tabindex'), { once: true });
+        // Only the router's own fallback region is tagged; a marked target is the app's to style.
+        const tagged = marked === null;
+        if (tagged)
+        {
+            ensureRouteFocusStyle();
+            target.setAttribute(ROUTE_FOCUS_FALLBACK_ATTR, '');
+        }
+        target.addEventListener('blur', () =>
+        {
+            target.removeAttribute('tabindex');
+            target.removeAttribute(ROUTE_FOCUS_FALLBACK_ATTR);
+        }, { once: true });
     }
     target.focus({ preventScroll: true });
+}
+
+const ROUTE_FOCUS_FALLBACK_ATTR = 'data-azeroth-route-focus-fallback';
+
+/**
+ * Injects, once per document, the single overridable rule that hides the default focus ring on
+ * the router's transient programmatic route-focus region. Author-level (no `!important`) so an
+ * app can override it; scoped to the framework-owned attribute so it touches nothing else.
+ *
+ * @internal
+ */
+function ensureRouteFocusStyle(): void
+{
+    if (typeof document === 'undefined' || document.querySelector(`style[${ ROUTE_FOCUS_FALLBACK_ATTR }]`))
+    {
+        return;
+    }
+    const styleEl = document.createElement('style');
+    styleEl.setAttribute(ROUTE_FOCUS_FALLBACK_ATTR, '');
+    styleEl.textContent = `[${ ROUTE_FOCUS_FALLBACK_ATTR }]{outline:none}`;
+    document.head.appendChild(styleEl);
 }
 
 /**

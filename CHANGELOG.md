@@ -56,6 +56,15 @@ An adversarial review against the built/packed distribution found and this relea
   resolved to the component's declaration line instead of the real construct. Each emitted construct
   (state/derived/effect/form/factory and the markup) now carries its own source anchor, so a `derived`
   resolves to its own `.azeroth` line.
+- **Route-change focus no longer draws a stray focus ring around the page.** After a navigation the
+  router moves focus into the new route for keyboard and screen-reader users; when the app has not
+  marked a `[data-route-focus]` target it focuses the content root via a transient `tabindex="-1"`,
+  which drew the browser's default focus ring around the whole region (a two-tone box that read as a
+  stray window border, most visibly after a keyboard-driven navigation). The router now tags that
+  fallback region with `data-azeroth-route-focus-fallback` for the duration of the programmatic focus
+  and injects one overridable, author-level stylesheet rule that hides the ring for it - never touching
+  the element's inline styles. An app-marked `[data-route-focus]` target is left entirely alone and
+  stays fully stylable.
 
 ### Added
 

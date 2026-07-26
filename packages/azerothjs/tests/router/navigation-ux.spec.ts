@@ -373,6 +373,59 @@ describe('route-change focus', () =>
             host.remove();
         }
     });
+
+    it('tags the fallback region for ring suppression without touching inline styles; leaves marked targets alone', async () =>
+    {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const plain = (): HTMLElement =>
+        {
+            const el = document.createElement('div'); el.textContent = 'plain'; return el;
+        };
+        const marked = (): HTMLElement =>
+        {
+            const el = document.createElement('div');
+            const heading = document.createElement('h1');
+            heading.setAttribute('data-route-focus', '');
+            heading.textContent = 'marked';
+            el.append(heading);
+            return el;
+        };
+        let router!: Router;
+        render(() =>
+        {
+            router = createRouter({
+                routes: [{ path: '/plain', component: plain }, { path: '/marked', component: marked }],
+                history: createMemoryHistory('/marked')
+            });
+            return Routes({ router });
+        }, host);
+        try
+        {
+            await flush();
+            router.navigate('/plain');
+            await flush();
+            const fallback = document.activeElement as HTMLElement | null;
+            // Fallback region: tagged for the overridable ring-suppression rule, inline style untouched.
+            expect(fallback?.hasAttribute('data-azeroth-route-focus-fallback')).toBe(true);
+            expect(fallback?.style.outline).toBe('');
+            expect(document.querySelector('style[data-azeroth-route-focus-fallback]')?.textContent)
+                .toBe('[data-azeroth-route-focus-fallback]{outline:none}');
+
+            router.navigate('/marked');
+            await flush();
+            const opted = document.activeElement as HTMLElement | null;
+            // The app opted in via [data-route-focus]: the router tags nothing and touches no styles.
+            expect(opted?.hasAttribute('data-route-focus')).toBe(true);
+            expect(opted?.hasAttribute('data-azeroth-route-focus-fallback')).toBe(false);
+            expect(opted?.style.outline).toBe('');
+        }
+        finally
+        {
+            render(() => document.createElement('span'), host);
+            host.remove();
+        }
+    });
 });
 
 describe('Link: prefix-aware active matching + reactive to', () =>
