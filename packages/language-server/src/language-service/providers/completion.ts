@@ -299,10 +299,17 @@ const KEYWORD_SNIPPETS: readonly { label: string; detail: string; insertText: st
     { label: 'component', detail: 'component declaration', insertText: 'component ${1:Name}(props: ${2:Props})\n{\n    ${0}\n}' },
     { label: 'batch', detail: 'batched writes', insertText: 'batch\n{\n    ${0}\n}' },
     { label: 'untrack', detail: 'read without tracking', insertText: 'untrack\n{\n    ${0}\n}' },
+    { label: 'mount', detail: 'connected hook', insertText: 'mount\n{\n    ${0}\n}' },
     { label: 'cleanup', detail: 'teardown hook', insertText: 'cleanup\n{\n    ${0}\n}' },
     { label: 'dispose', detail: 'root-disposal hook', insertText: 'dispose\n{\n    ${0}\n}' },
     { label: 'with', detail: 'reactive options clause', insertText: 'with { ${0} }' }
 ];
+
+/** @internal The snippet labels - consumed by the keyword-completeness guard in the test suite. */
+export function keywordSnippetLabels(): string[]
+{
+    return KEYWORD_SNIPPETS.map((snippet) => snippet.label);
+}
 
 /** A completion item for one `with { ... }` option key, from the language-data registry. */
 function optionCompletion(option: KeywordOption): CompletionItem

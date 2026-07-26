@@ -72,7 +72,14 @@ if (!existsSync(pluginDist))
 }
 const pluginDest = path.join(stage, 'node_modules', '@azerothjs', 'typescript-plugin');
 cpSync(path.join(pluginSrc, 'dist'), path.join(pluginDest, 'dist'), { recursive: true });
-copyFileSync(path.join(pluginSrc, 'package.json'), path.join(pluginDest, 'package.json'));
+// The staged dist is a self-contained CJS bundle, so the staged manifest must not
+// declare the plugin's workspace dependencies (vsce's `npm list` probe would report
+// the unpublished @azerothjs/language-server as missing).
+const pluginPkg = JSON.parse(readFileSync(path.join(pluginSrc, 'package.json'), 'utf8'));
+delete pluginPkg.dependencies;
+delete pluginPkg.devDependencies;
+delete pluginPkg.scripts;
+writeFileSync(path.join(pluginDest, 'package.json'), JSON.stringify(pluginPkg, null, 2));
 
 // 4c) NOW that the plugin is physically present, DECLARE it in the staged manifest so vsce's
 // `npm list --production` sees it as satisfied (not extraneous). It is written AFTER the

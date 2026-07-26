@@ -27,6 +27,32 @@ const SOURCE = [
     ''
 ].join('\n');
 
+const LIFECYCLE_SOURCE = [
+    'export default component Widget',            // 0
+    '{',                                           // 1
+    '    state count = 0;',                        // 2
+    '    mount',                                   // 3  `mount` at col 4 (brace on next line)
+    '    {',                                        // 4
+    '        console.log(\'connected\');',          // 5
+    '    }',                                        // 6
+    '    effect (count) (value, previous)',        // 7  the explicit-dependency form, `effect` at col 4
+    '    {',                                        // 8
+    '        console.log(previous, value);',       // 9
+    '    }',                                        // 10
+    '    <p>{count()}</p>',                        // 11
+    '}',                                           // 12
+    ''
+].join('\n');
+
+function lifecycleHoverAt(line: number, character: number): string | null
+{
+    const service = new AzerothLanguageService(fixtures, tsconfig);
+    const uri = pathToFileURL(path.join(fixtures, 'Widget.azeroth')).href;
+    service.didOpen(uri, LIFECYCLE_SOURCE);
+    const hover = service.getHover(uri, { line, character });
+    return hover && typeof hover.contents === 'string' ? hover.contents : null;
+}
+
 function hoverAt(line: number, character: number): string | null
 {
     const service = new AzerothLanguageService(fixtures, tsconfig);
@@ -53,5 +79,14 @@ describe('hover: AzerothJS keywords', () =>
         const contents = hoverAt(6, 10);
         expect(contents).not.toContain('AzerothJS component');
         expect(contents).not.toContain('reactive state');
+    });
+
+    it('documents `mount` (brace on the next line)', () => expect(lifecycleHoverAt(3, 6)).toContain('connected'));
+
+    it('serves the explicit-dependency doc for `effect (deps)`, not the auto-tracked one', () =>
+    {
+        const contents = lifecycleHoverAt(7, 6);
+        expect(contents).toContain('explicit');
+        expect(contents).not.toContain('reactive side effect');
     });
 });

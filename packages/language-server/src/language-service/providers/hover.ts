@@ -483,8 +483,9 @@ function keywordHover(ctx: RequestContext, offset: number): Hover | null
     }
 
     // Require the token the construct opens with (so `effect()` / a variable named
-    // `state` doesn't match): a name for declarations, `(` for `watch`, else `{` -
-    // or a `with` options clause, which a block keyword takes before its body brace.
+    // `state` doesn't match): a name for declarations, `(` for the explicit-dependency
+    // effect form, else `{` - or a `with` options clause, which a block keyword takes
+    // before its body brace.
     let after = end;
     while (after < ctx.source.length && isWhitespace(ctx.source[after]))
     {
@@ -515,6 +516,17 @@ function keywordHover(ctx: RequestContext, offset: number): Hover | null
               + withOptionsSection(owner)
             : doc;
         return { contents, range: ctx.lineIndex.rangeAt(start, end) };
+    }
+    // The explicit-dependency form reads `effect (deps) ...` - same keyword, its own
+    // construct (kind 'watch' in the compiler); serve ITS documentation, not the
+    // auto-tracked effect's.
+    if (word === 'effect' && next === '(')
+    {
+        const depsDoc = keywordDocumentation('watch');
+        if (depsDoc !== undefined)
+        {
+            return { contents: depsDoc + withOptionsSection('watch'), range: ctx.lineIndex.rangeAt(start, end) };
+        }
     }
     return { contents: doc + withOptionsSection(word), range: ctx.lineIndex.rangeAt(start, end) };
 }

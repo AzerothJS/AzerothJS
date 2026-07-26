@@ -95,10 +95,6 @@
             "@azerothjs/eslint-plugin":
             [
                 "./packages/eslint-plugin/src/index.ts"
-            ],
-            "azerothjs":
-            [
-                "./packages/azerothjs/src/index.ts"
             ]
         }
     },

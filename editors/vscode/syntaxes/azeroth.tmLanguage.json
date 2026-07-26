@@ -131,13 +131,13 @@
 
         "azeroth-keywords":
         {
-            "comment": "AzerothJS-specific keywords. Each is anchored to where it STARTS its construct (a following name, `{`, or `(`) and guarded by `(?<!\\.)`, so an ordinary identifier or member access - `this.state`, `sub.dispose()`, `chokidar.watch(...)`, a runtime `batch(() => …)` call - is left uncoloured; only the keyword forms light up. Component-body keywords carry no semantic-token type, so this base layer is what colours them.",
+            "comment": "AzerothJS-specific keywords. Each is anchored to where it STARTS its construct (a following name, `{`, or `(`) and guarded by `(?<!\\.)`, so an ordinary identifier or member access - `this.state`, `sub.dispose()`, a runtime `batch(() => …)` call - is left uncoloured; only the keyword forms light up. Component-body keywords carry no semantic-token type, so this base layer is what colours them.",
             "patterns":
             [
                 { "comment": "`component Name` declaration - the keyword plus its name.", "match": "(?<!\\.)\\b(component)\\s+([_$A-Za-z][\\w$]*)", "captures": { "1": { "name": "storage.type.component.azeroth" }, "2": { "name": "entity.name.type.component.azeroth" } } },
                 { "comment": "Reactive variable + factory declarations: `state x`, `derived y`, `deferred z`, `resource r`, `stream s`, `store st`, `selector sel`, `form f` (the name follows on the same line).", "match": "(?<!\\.)\\b(state|derived|deferred|resource|stream|store|selector|form)\\b(?=\\s+[_$A-Za-z])", "name": "storage.type.azeroth" },
                 { "comment": "Reactive control / lifecycle blocks: `effect { … }`, the wrapper blocks, and the `with { … }` options clause (`state x = v with { equals }`, `effect with { … } { }`). The `|$` arm matches the keyword when its `{` opens on the NEXT line (the codebase's brace style); the `with\\b` arm matches a block keyword followed by its options clause (`effect with { … }`); a `(` form like `batch(() => …)` is excluded, so a runtime call stays a function call.", "match": "(?<!\\.)\\b(effect|batch|untrack|cleanup|dispose|mount|with)\\b(?=\\s*(?:\\{|with\\b|$))", "name": "keyword.control.azeroth" },
-                { "comment": "`watch (deps) { … }` block.", "match": "(?<!\\.)\\b(watch)\\b(?=\\s*\\()", "name": "keyword.control.azeroth" }
+                { "comment": "The explicit-dependency effect form: `effect (deps) [(values, prev)] { … }`. Anchored past the whole `(deps)` list to a following `(`, `{`, or end of line, so a plain call `effect(...)` with code after it stays a function call.", "match": "(?<!\\.)\\b(effect)\\b(?=\\s*\\([^)]*\\)\\s*(?:\\(|\\{|$))", "name": "keyword.control.azeroth" }
             ]
         },
 

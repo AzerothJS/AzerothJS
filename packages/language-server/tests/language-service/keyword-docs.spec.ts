@@ -8,20 +8,31 @@
 // ships undocumented.
 
 import { describe, it, expect } from 'vitest';
-import { RUNTIME_FN } from '@azerothjs/compiler';
+import { RUNTIME_FN, WRAPPER_FN } from '@azerothjs/compiler';
 import { keywordDocumentation, keywordOptions, keywordWithExample } from '../../src/language-service/language-data.ts';
+import { keywordSnippetLabels } from '../../src/language-service/providers/completion.ts';
 
 const REACTIVE_KEYWORDS = Object.keys(RUNTIME_FN);
+const WRAPPER_KEYWORDS = Object.keys(WRAPPER_FN);
 
 describe('keyword documentation completeness', () =>
 {
     it('every reactive keyword the compiler lowers has hover documentation', () =>
     {
-        for (const keyword of [...REACTIVE_KEYWORDS, 'component'])
+        for (const keyword of [...REACTIVE_KEYWORDS, ...WRAPPER_KEYWORDS, 'component'])
         {
             const doc = keywordDocumentation(keyword);
             expect(doc, `keyword '${ keyword }' has no hover documentation`).toBeTruthy();
             expect(doc!.length).toBeGreaterThan(20);
+        }
+    });
+
+    it('every wrapper keyword has a completion snippet (the gap that let `mount` ship without one)', () =>
+    {
+        const labels = keywordSnippetLabels();
+        for (const keyword of WRAPPER_KEYWORDS)
+        {
+            expect(labels, `wrapper keyword '${ keyword }' has no completion snippet`).toContain(keyword);
         }
     });
 

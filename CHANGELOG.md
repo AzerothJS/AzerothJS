@@ -52,6 +52,23 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- **compiler / language-server / editors**: the `mount` keyword is now first-class
+  across the WHOLE toolchain, not just the parser. It gains hover documentation
+  and a completion snippet in the language server (both editors receive them over
+  LSP), and the wrapper-keyword table moved to `keyword-spec.ts` (`WRAPPER_FN`) as
+  the single source the parser AND the tooling completeness guards key off - a
+  future wrapper keyword that ships without docs or a snippet now FAILS the suite
+  (the hole that let `mount` slip through). Stale `watch` remnants are gone: the
+  VS Code grammar's dead `watch (` rule is replaced by a real
+  `effect (deps)` anchor (the renamed form was previously uncoloured), the
+  JetBrains lexer no longer paints `watch` as a keyword, and hovering
+  `effect (deps)` now serves the explicit-dependency documentation instead of the
+  auto-tracked effect's. Both editor artifacts rebuilt against the train
+  (`azerothjs-vscode-1.0.0-beta.2.vsix`, `azerothjs-jetbrains-1.0.0-beta.2.zip`),
+  with the vsix stager taught to strip the bundled typescript-plugin's workspace
+  dependencies (its dist is self-contained; the declared-dependency fix from the
+  tooling fold broke vsce's npm-list probe).
+
 - **azerothjs (SSR)**: `renderToString`/`renderToStaticMarkup` now establish a
   disposable ownership root around the render, exactly as client-side `render()`/
   `hydrate()` do - a root component that calls `provideContext()` (every router
@@ -71,9 +88,8 @@ follow [Semantic Versioning](https://semver.org).
   document, range, and on-type), TypeScript regions formatted by the real TS
   formatter mapped through the projection, and markup preserved VERBATIM by
   construction (unmappable edits are dropped - the formatter structurally cannot
-  mangle markup). Markup pretty-printing joins this engine when it comes; a
-  Prettier plugin is a planned 1.x wrapper around this provider, never a second
-  implementation.
+  mangle markup). Markup pretty-printing joins this engine when it comes - never
+  a second implementation that could disagree with the editors.
 
 - **project**: the trust pages. `GOVERNANCE.md` states plainly how the project is
   run - single maintainer, and exactly WHAT BINDS decisions (the normative grammar,

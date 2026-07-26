@@ -46,7 +46,7 @@ import {
     scanTypeParams
 } from './scanner.ts';
 import { parseMarkup, CompileError } from './markup-parser.ts';
-import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
+import { DECLARATION_KEYWORDS, WRAPPER_FN } from './keyword-spec.ts';
 
 /** The class of a single structural unit produced by {@link step}. */
 export type StepKind = 'trivia' | 'literal' | 'identifier' | 'markup' | 'open' | 'close' | 'punct';
@@ -631,12 +631,7 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
     }
 
     // Block-wrapper keywords: `<kw> { body }` -> `<fn>(() => { body })`.
-    const wrapperFn = word === 'batch' ? 'batch'
-        : word === 'untrack' ? 'untrack'
-            : word === 'cleanup' ? 'onCleanup'
-                : word === 'dispose' ? 'onRootDispose'
-                    : word === 'mount' ? 'onMount'
-                        : null;
+    const wrapperFn = WRAPPER_FN[word] ?? null;
     if (wrapperFn !== null)
     {
         const brace = skipTrivia(source, j);

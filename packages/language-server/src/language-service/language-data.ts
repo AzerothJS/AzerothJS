@@ -234,10 +234,16 @@ export const KEYWORD_DOCS: Record<string, string> =
         'the outside world (DOM, logging, network). Use `cleanup` (or return a function) to tear down before the next run.\n\n' +
         '```azeroth\neffect\n{\n    document.title = title;\n}\n```',
     watch:
-        '**`watch`** - explicit-dependency effect\n\n' +
+        '**`effect (deps)`** - explicit-dependency effect\n\n' +
         'An effect with an EXPLICIT dependency list instead of automatic tracking. It runs when a listed dependency ' +
         'changes, with access to the previous and current values.\n\n' +
-        '```azeroth\nwatch (count) (value, previous)\n{\n    console.log(previous, \'->\', value);\n}\n```',
+        '```azeroth\neffect (count) (value, previous)\n{\n    console.log(previous, \'->\', value);\n}\n```',
+    mount:
+        '**`mount`** - connected hook\n\n' +
+        'Runs its body once, after the component is CONNECTED to the document - the place for work that needs the ' +
+        'rendered DOM or the browser (measuring, focusing, subscriptions, data fetches). It never runs during ' +
+        'server rendering. Pair with `cleanup` for teardown.\n\n' +
+        '```azeroth\nmount\n{\n    input.focus();\n}\n```',
     batch:
         '**`batch`** - batched writes\n\n' +
         'Groups signal writes so dependents re-run ONCE, after the block - instead of synchronously after each ' +

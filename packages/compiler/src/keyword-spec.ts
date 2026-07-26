@@ -63,6 +63,21 @@ export const RUNTIME_FN: Record<Exclude<ConstructKind, 'wrapper'>, string> =
  */
 export const RUNTIME_FN_FIELD_ARRAY = 'createFieldArray';
 
+/**
+ * The wrapper keywords: `<keyword> { body }` lowers to `<fn>(() => { body })`. The parser
+ * consults this table to recognize them, and the language tooling's completeness guards key
+ * off it - a wrapper keyword added here without hover documentation or a completion snippet
+ * fails the language-server suite, exactly like a {@link RUNTIME_FN} keyword would.
+ */
+export const WRAPPER_FN: Readonly<Record<string, string>> =
+{
+    batch: 'batch',
+    untrack: 'untrack',
+    cleanup: 'onCleanup',
+    dispose: 'onRootDispose',
+    mount: 'onMount'
+};
+
 /** A factory keyword kind. */
 export type FactoryKind = 'resource' | 'stream' | 'store' | 'selector' | 'form';
 

@@ -159,9 +159,8 @@ language-service format provider (document, range, and on-type). What it does in
   dropped, so the formatter is STRUCTURALLY incapable of mangling your markup -
   the failure mode that makes people turn formatters off.
 
-Markup pretty-printing, when it comes, joins THIS engine. A Prettier plugin is a
-planned 1.x wrapper AROUND this provider - never a second implementation that
-could disagree with the editors.
+Markup pretty-printing, when it comes, joins THIS engine - there will never be a
+second formatting implementation that could disagree with the editors.
 
 
 ## Configuration
