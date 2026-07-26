@@ -191,19 +191,18 @@ Everything is versioned in lockstep. `azerothjs` is the one package a frontend i
 | --- | --- |
 | [`azerothjs`](packages/azerothjs) | **The frontend framework - one real package.** Signals/memos/effects + owner tree, `h()` and the control-flow components, stores, forms, the router, and SSR (`renderToString`/islands) live inside as one surface. |
 | [`@azerothjs/compiler`](packages/compiler) | The `.azeroth` compiler + the `azeroth()` Vite plugin (dev dependency). |
-| [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. |
+| [`@azerothjs/http`](packages/http) | Zero-dependency web-standard HTTP kernel; every request is a reactive root. Typed API contracts with a fully inferred client live inside at `@azerothjs/http/api`. |
+| [`@azerothjs/kit`](packages/kit) | The assembled car: per-route SSR, static prerendering, and hydration wired over the router's own route table, the renderer, and the HTTP server. |
 | [`@azerothjs/schema`](packages/schema) | Validation combinators whose TypeScript types are inferred from the declaration. |
-| [`@azerothjs/api`](packages/api) | One API contract: the server mount and a fully inferred client, no codegen. |
 | [`@azerothjs/ws`](packages/ws) | WebSocket server implementing RFC 6455 from scratch. |
 | [`@azerothjs/cron`](packages/cron) | Cron scheduler with honest timezone/DST semantics and overlap policies. |
 | [`@azerothjs/logger`](packages/logger) | Two-face logger: pretty on a dev TTY, NDJSON elsewhere; file/folder sinks with rename-free rotation. |
-| [`@azerothjs/cli`](packages/cli) | The `azeroth` command line: `dev` (the fullstack conductor), `check`, `build`, `doctor`, `info`. |
+| [`@azerothjs/cli`](packages/cli) | The `azeroth` command line: `dev` (the fullstack conductor), `check`, `build`, `test`, `doctor`, `upgrade`, `info`. |
 | [`create-azeroth`](packages/create-azeroth) | `npm create azeroth` - frontend / backend / fullstack templates with the canon wired in. |
 | [`@azerothjs/testing`](packages/testing) | `renderTest`, `cleanup`, `leakGuard`, `fire` for app tests. |
 | [`@azerothjs/devtools`](packages/devtools) | Dev-only in-page panel: reactive tree, dependency graph, timeline. |
 | [`@azerothjs/eslint-plugin`](packages/eslint-plugin) | Reactivity lint rules + a processor that makes `.azeroth` a first-class lint target. |
-| [`@azerothjs/language-service`](packages/language-service) | The editor intelligence (TypeScript bridge, markup model, providers). |
-| [`@azerothjs/language-server`](packages/language-server) | LSP frontend + the `azeroth-tsc` CLI type checker. |
+| [`@azerothjs/language-server`](packages/language-server) | LSP frontend + the `azeroth-tsc` CLI type checker; the editor intelligence (TypeScript bridge, markup model, providers) lives inside at `./language-service`. |
 | [`@azerothjs/typescript-plugin`](packages/typescript-plugin) | tsserver plugin: real `.azeroth` types inside `.ts` files. |
 
 ## Editor support

@@ -23,6 +23,9 @@ const alias = readdirSync(packagesDir)
         for (const [sub, file] of [
             ['api/client', 'api/client-entry.ts'],
             ['language-service', 'language-service/index.ts'],
+            ['ssr', 'ssr.ts'],
+            ['client', 'client.ts'],
+            ['prerender', 'prerender.ts'],
             ['api', 'api/index.ts'],
             ['internal', 'internal.ts'],
             ['node', 'node.ts']

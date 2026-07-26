@@ -3,6 +3,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
     plugins: [azeroth()],
+    // The SSR bundle (src/entry.server.ts) inlines its dependencies, so dist-server
+    // is ONE self-contained file - production imports it with no client node_modules.
+    ssr:
+    {
+        noExternal: true
+    },
     server:
     {
         proxy:

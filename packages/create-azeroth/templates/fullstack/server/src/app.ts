@@ -4,7 +4,7 @@
 // between your own halves).
 import { App, json, type RequestObserver } from '@azerothjs/http';
 import { mountApi } from '@azerothjs/http/api';
-import { staticFiles } from '@azerothjs/http/node';
+import { mountPages, type KitOptions } from '@azerothjs/kit';
 import { contract, type Entry } from './contract.ts';
 
 export interface AppOptions
@@ -12,8 +12,8 @@ export interface AppOptions
     dev: boolean;
     observe?: RequestObserver;
 
-    /** Serve the built client from this directory (production); omit in dev - vite serves it. */
-    clientDir?: string;
+    /** The built client + SSR renderer (production); omit in dev - vite serves the client. */
+    pages?: KitOptions;
 }
 
 export function buildApp(options: AppOptions): App
@@ -43,18 +43,14 @@ export function buildApp(options: AppOptions): App
         }
     });
 
-    if (options.clientDir !== undefined)
+    if (options.pages !== undefined)
     {
-        // One origin in production: everything that is not /api is the client.
-        // '/' serves the PRERENDERED home (index.html - SSR'd at build time and
-        // hydrated in the browser); client-routed pages get the plain SPA shell
-        // (spa.html) so a direct load of /guestbook renders client-side without a
-        // markup mismatch.
-        const client = staticFiles(options.clientDir);
-        const shell = staticFiles(options.clientDir, { index: 'spa.html' });
-        app.get('/', client);
-        app.get('/guestbook', shell);
-        app.get('/*path', client);
+        // One origin in production: everything that is not /api is a page or an
+        // asset. The kit reads the route table's per-route `render` mode - the
+        // prerendered home is served as a file, /guestbook SSRs per request (a
+        // redirecting guard becomes a real 302), and everything else falls through
+        // to the built client's assets. Mounted LAST so nothing shadows the API.
+        mountPages(app, options.pages);
     }
 
     return app;

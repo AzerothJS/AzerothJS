@@ -1,18 +1,18 @@
-// The shell: one router, two routes, client-side navigation. The optional `url`
-// prop is the SSR seam - the prerender script renders App at a fixed URL through a
-// memory history; the browser omits it and the router reads the address bar.
+// The shell: one router over the ONE route table (src/routes.ts). The optional
+// props are the SSR seam - `url` pins a memory history when the kit renders
+// server-side; `handoff` seeds loader data so the hydrating client never refetches
+// what the server just loaded. The browser omits both and the router reads the
+// address bar.
 import { RouterProvider, Routes, Link, createRouter, createMemoryHistory } from 'azerothjs';
-import Home from './pages/home.azeroth';
-import GuestBook from './pages/guest-book.azeroth';
+import type { LoaderHandoff } from 'azerothjs';
+import { routes } from './routes.ts';
 
-export default component App(props: { url?: string })
+export default component App(props: { url?: string; handoff?: LoaderHandoff })
 {
     const router = createRouter({
-        routes: [
-            { path: '/', component: Home },
-            { path: '/guestbook', component: GuestBook }
-        ],
-        history: props.url !== undefined ? createMemoryHistory(props.url) : undefined
+        routes,
+        history: props.url !== undefined ? createMemoryHistory(props.url) : undefined,
+        initialLoaderData: props.handoff
     });
 
     <RouterProvider router={ router }>

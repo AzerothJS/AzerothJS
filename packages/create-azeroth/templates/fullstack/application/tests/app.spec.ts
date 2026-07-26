@@ -1,6 +1,6 @@
 // Component tests run against real DOM (happy-dom) through the compiler - the same
 // pipeline that serves the app. renderTest mounts, cleanup unmounts between tests.
-// App takes a `url` so tests (like the prerender script) pin the route.
+// App takes a `url` so tests (like the kit's SSR renderer) pin the route.
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderTest, cleanup, fire } from '@azerothjs/testing';
 

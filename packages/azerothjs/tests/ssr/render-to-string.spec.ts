@@ -8,7 +8,7 @@
 // No mocks: the real reactivity core (signals, memos, render-mode stack), the real renderer
 // (h, control-flow), and the real string emitter run end to end.
 import { describe, it, expect } from 'vitest';
-import { renderToString, renderToStaticMarkup, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo } from 'azerothjs';
+import { renderToString, renderToStaticMarkup, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext } from 'azerothjs';
 
 describe('renderToString - the no-DOM contract', () =>
 {
@@ -92,6 +92,21 @@ describe('renderToString - nested components', () =>
                 h('main', {}, h('p', {}, 'Body')));
         expect(renderToString(() => App()))
             .toBe('<section id="root"><header><h1>Title</h1></header><main><p>Body</p></main></section>');
+    });
+
+    it('a ROOT component may provideContext - the render establishes an ownership root like render() does', () =>
+    {
+        // The regression the kit surfaced: every router app provides context at the top
+        // of the tree (RouterProvider), which requires an owner. renderToString must
+        // establish one, exactly as client-side render()/hydrate() do.
+        const Theme = createContext<string>('theme');
+        const Child = (): HTMLElement => h('p', {}, useContext(Theme) ?? 'missing');
+        const App = (): HTMLElement =>
+        {
+            provideContext(Theme, 'dark');
+            return h('div', {}, Child());
+        };
+        expect(renderToString(() => App())).toBe('<div><p>dark</p></div>');
     });
 });
 

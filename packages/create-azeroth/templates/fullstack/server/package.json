@@ -12,7 +12,9 @@
     },
     "dependencies": {
         "@azerothjs/http": "{{version}}",
-        "@azerothjs/logger": "{{version}}"
+        "@azerothjs/kit": "{{version}}",
+        "@azerothjs/logger": "{{version}}",
+        "@azerothjs/schema": "{{version}}"
     },
     "devDependencies": {
         "@types/node": "^24.0.0",

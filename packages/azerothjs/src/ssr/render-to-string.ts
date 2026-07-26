@@ -15,7 +15,7 @@
  * renderToString(() => new MyComponent(props).element).
  */
 
-import { runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
+import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
 
 /**
  * Renders `component` to an HTML string in 'string' mode with hydration markers toggled per
@@ -36,12 +36,24 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
         // requests. Renders are synchronous, so one render's scope is set and restored before
         // another can start (see store-scope in azerothjs).
         runInStoreScope((): string =>
-        {
-            // In string mode, h()/components return an SSRNode cast to HTMLElement. Read its
-            // serialized html back out.
-            const node = component() as unknown;
-            return isSSRNode(node) ? node.html : String(node);
-        }), { markers });
+            // The tree builds inside a disposable ownership root, exactly as render()/
+            // hydrate() establish client-side - a root component may provideContext()
+            // (every router app does), which requires an owner. The tree is serialized
+            // and dead by return, so the root disposes immediately.
+            createRoot((dispose): string =>
+            {
+                try
+                {
+                    // In string mode, h()/components return an SSRNode cast to HTMLElement.
+                    // Read its serialized html back out.
+                    const node = component() as unknown;
+                    return isSSRNode(node) ? node.html : String(node);
+                }
+                finally
+                {
+                    dispose();
+                }
+            })), { markers });
 }
 
 /**

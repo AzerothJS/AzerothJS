@@ -65,6 +65,8 @@ const TSC = 'typescript/bin/tsc';
 const ESLINT = 'eslint/bin/eslint.js';
 const AZEROTH_TSC = '@azerothjs/language-server/dist/tsc-cli.js';
 const VITEST = 'vitest/vitest.mjs';
+const KIT_PRERENDER = '@azerothjs/kit/dist/prerender-cli.js';
+const KIT_SSR_ENTRY = 'src/entry.server.ts';
 const ESLINT_CONFIGS = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts', 'eslint.config.mts'];
 
 /**
@@ -276,29 +278,51 @@ export function planBuild(project: FrontendProject | BackendProject | FullstackP
     {
         case 'frontend':
         {
-            const vite = need(project.dir, VITE, 'vite');
-            return {
-                command: 'build',
-                steps: [step({ label: 'web', cwd: project.dir, script: vite, args: ['build'], longRunning: false })],
-                notes: []
-            };
+            const notes: string[] = [];
+            return { command: 'build', steps: webBuildSteps(project.dir, 'web', notes), notes };
         }
         case 'backend':
             return buildServerPlan(project);
         case 'fullstack':
         {
             const server = buildServerPlan(project.server);
-            const vite = need(project.app.dir, VITE, 'vite');
             return {
                 command: 'build',
                 steps: [
                     ...server.steps,
-                    step({ label: 'web', cwd: project.app.dir, script: vite, args: ['build'], longRunning: false })
+                    ...webBuildSteps(project.app.dir, 'web', server.notes)
                 ],
                 notes: server.notes
             };
         }
     }
+}
+
+/**
+ * The web half's build. Detection-first, like everything else here: a project with
+ * `src/entry.server.ts` and `@azerothjs/kit` installed is a kit app, so the client
+ * build is followed by the SSR bundle and the static prerender pass - the kit's
+ * three-step production build under the one `azeroth build` the templates wire.
+ */
+function webBuildSteps(dir: string, label: string, notes: string[]): Step[]
+{
+    const vite = need(dir, VITE, 'vite');
+    const client = step({ label, cwd: dir, script: vite, args: ['build'], longRunning: false });
+    if (!existsSync(join(dir, KIT_SSR_ENTRY)))
+    {
+        return [client];
+    }
+    const prerender = resolveTool(dir, KIT_PRERENDER);
+    if (prerender === null)
+    {
+        notes.push(`${ label }: ${ KIT_SSR_ENTRY } found but @azerothjs/kit is not installed - skipping the SSR build and prerender pass`);
+        return [client];
+    }
+    return [
+        client,
+        step({ label: `${ label } ssr`, cwd: dir, script: vite, args: ['build', '--ssr', KIT_SSR_ENTRY, '--outDir', 'dist-server'], longRunning: false }),
+        step({ label: `${ label } prerender`, cwd: dir, script: prerender, args: [], longRunning: false })
+    ];
 }
 
 function buildServerPlan(server: BackendProject): Plan

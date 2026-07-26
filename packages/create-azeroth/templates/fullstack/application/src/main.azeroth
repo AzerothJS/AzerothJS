@@ -1,16 +1,9 @@
-import { hydrate, render } from 'azerothjs';
+// The client entry: one call. A page that arrived WITH markup (the prerendered
+// home, an SSR'd /guestbook) is ADOPTED in place - hydration - with the server's
+// loader handoff read back so nothing refetches; an empty shell (the dev server,
+// a `render: 'client'` page) renders normally.
+import { bootClient } from '@azerothjs/kit/client';
 
 import App from './App.azeroth';
 
-// The prerendered home page (dist/index.html) arrives WITH markup: adopt it in
-// place instead of rebuilding - that is hydration. The dev server and the SPA
-// shell (spa.html) arrive with an empty root: render normally.
-const root = document.getElementById('root')!;
-if (root.childNodes.length > 0)
-{
-    hydrate(() => App(), root);
-}
-else
-{
-    render(() => App(), root);
-}
+bootClient(App);

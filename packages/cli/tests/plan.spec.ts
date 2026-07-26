@@ -206,6 +206,28 @@ describe('planBuild', () =>
         const labels = planBuild(project).steps.map((step) => step.label);
         expect(labels).toEqual(['api', 'web']);
     });
+
+    it('a kit app (src/entry.server.ts + @azerothjs/kit) builds client, SSR bundle, then prerenders', () =>
+    {
+        const dir = root();
+        installTools(dir);
+        write(dir, 'node_modules/@azerothjs/kit/dist/prerender-cli.js', '');
+        write(dir, 'src/entry.server.ts', '');
+        const plan = planBuild(frontend(dir));
+        expect(plan.steps.map((step) => step.label)).toEqual(['web', 'web ssr', 'web prerender']);
+        expect(plan.steps[1]?.args).toEqual(['build', '--ssr', 'src/entry.server.ts', '--outDir', 'dist-server']);
+        expect(plan.steps[2]?.script).toContain('prerender-cli');
+    });
+
+    it('an SSR entry WITHOUT the kit installed is an honest note, never a silent skip', () =>
+    {
+        const dir = root();
+        installTools(dir);
+        write(dir, 'src/entry.server.ts', '');
+        const plan = planBuild(frontend(dir));
+        expect(plan.steps.map((step) => step.label)).toEqual(['web']);
+        expect(plan.notes.join(' ')).toContain('@azerothjs/kit');
+    });
 });
 
 describe('formatStep - what --print shows', () =>

@@ -129,11 +129,11 @@ describe('production shape: the hour-three files are already waiting', () =>
     {
         const dir = target();
         scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'prod', '^1.0.0');
-        for (const file of ['.github/workflows/ci.yml', 'README.md', 'server/Dockerfile', 'server/.env.example', 'server/tests/app.spec.ts', 'application/tests/app.spec.ts', 'application/public/favicon.svg'])
+        for (const file of ['.github/workflows/ci.yml', 'README.md', 'server/Dockerfile', 'server/.env.example', 'server/tests/app.spec.ts', 'application/tests/app.spec.ts', 'application/public/favicon.svg', 'application/src/routes.ts', 'application/src/entry.server.ts'])
         {
             expect(existsSync(join(dir, file)), file).toBe(true);
         }
-        expect(readFileSync(join(dir, 'server/src/app.ts'), 'utf8')).toContain('staticFiles');
+        expect(readFileSync(join(dir, 'server/src/app.ts'), 'utf8')).toContain('mountPages');
     });
 
     it('the fullstack halves agree on the API path the demo calls (no first-click 404)', () =>

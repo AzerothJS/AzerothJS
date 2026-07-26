@@ -8,13 +8,14 @@ An [AzerothJS](https://github.com/AzerothJS/AzerothJS) fullstack app:
 
 | Piece | Where | The idea |
 | --- | --- | --- |
-| Client routing | `application/src/App.azeroth` | Two routes, `<RouterProvider>` + `<Routes>` + `<Link activeClass>`; composables need no router argument |
+| ONE route table | `application/src/routes.ts` | The router's own table IS the manifest - plus one `render:` field per route ('static' / 'server' / 'client') |
+| Client routing | `application/src/App.azeroth` | `<RouterProvider>` + `<Routes>` + `<Link activeClass>` over that table; composables need no router argument |
 | ONE shared contract | `server/src/contract.ts` | Routes + schemas declared once; imported by BOTH halves; client-safe by construction |
 | Typed API client | `application/src/api.ts` | `createClient(contract)` - calls fully inferred, inputs validated BEFORE the wire |
 | Schema-validated form | `application/src/pages/guest-book.azeroth` | The `form` keyword with the SAME schema the server enforces - one declaration, three enforcement points |
 | Boundary validation | `server/src/app.ts` | `mountApi` - a forged request gets the 422 whose field map the form displays |
-| SSR + hydration | `application/src/entry-server.ts` + `scripts/prerender.mjs` | The home route is prerendered at build and hydrated in the browser (`main.azeroth`) |
-| One-origin deploy | `server/Dockerfile` + `.github/workflows/ci.yml` | One container, orchestrator probe, CI running the same gates as local |
+| SSR, prerender, hydration | `application/src/entry.server.ts` + `main.azeroth` | `createPageRenderer` SSRs through the router's guards and loaders; the home is prerendered at build, `/guestbook` per request; `bootClient` hydrates both |
+| One-origin deploy | `server/src/main.ts` (`mountPages`) + `server/Dockerfile` | One container serves API + pages + assets; orchestrator probe; CI runs the same gates as local |
 
 ## Scripts (from this root)
 

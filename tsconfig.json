@@ -67,6 +67,10 @@
             [
                 "./packages/ws/src/index.ts"
             ],
+            "@azerothjs/kit": ["./packages/kit/src/index.ts"],
+            "@azerothjs/kit/ssr": ["./packages/kit/src/ssr.ts"],
+            "@azerothjs/kit/prerender": ["./packages/kit/src/prerender.ts"],
+            "@azerothjs/kit/client": ["./packages/kit/src/client.ts"],
             "@azerothjs/http/api": ["./packages/http/src/api/index.ts"],
             "@azerothjs/http/api/client": ["./packages/http/src/api/client-entry.ts"],
             "@azerothjs/compiler":

@@ -147,6 +147,22 @@ The legend for semantic tokens is `component`, `tag`, `attribute`, `event`,
 `string`, `delimiter`, with no modifiers. Editors must register the same legend
 so these token types get themed.
 
+## Formatting: the placement, stated
+
+There is ONE formatting engine for `.azeroth`, and it lives here - the
+language-service format provider (document, range, and on-type). What it does in
+1.0 is deliberate:
+
+- **TypeScript regions format** through the real TypeScript formatter, mapped back
+  through the projection - the same engine editors use for `.ts`.
+- **Markup is preserved verbatim.** An edit that does not map cleanly to source is
+  dropped, so the formatter is STRUCTURALLY incapable of mangling your markup -
+  the failure mode that makes people turn formatters off.
+
+Markup pretty-printing, when it comes, joins THIS engine. A Prettier plugin is a
+planned 1.x wrapper AROUND this provider - never a second implementation that
+could disagree with the editors.
+
 
 ## Configuration
 

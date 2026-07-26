@@ -11,6 +11,70 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **kit** (NEW package): `@azerothjs/kit` - the assembled car. Per-route rendering
+  over the pieces that already exist: the router's own route table gains one
+  optional field (`render: 'server' | 'static' | 'client'`) and the kit does the
+  rest - no new routing system, no new data layer, no config format.
+  `createPageRenderer(App, routes)` (the SSR bundle's one line) renders a url
+  through the router's guards and loaders via `matchAndLoad` - a redirecting guard
+  surfaces as a REAL 302, parallel loader data rides the hydration handoff - and
+  splices into vite's built shell so hashed asset tags survive. `mountPages(app,
+  { routes, clientDir, renderer })` registers every page in its mode plus asset
+  fallback on an `@azerothjs/http` app. `bootClient(App)` is the whole client
+  entry (hydrate over markup, render into an empty shell, handoff read back).
+  The `azeroth-kit-prerender` bin (also programmatic via `@azerothjs/kit/prerender`)
+  writes every `render: 'static'` page through the real renderer at build time,
+  preserving the pristine shell as `shell.html`; a static page that redirects or
+  carries path parameters is a loud build error. Parameterized pages under an
+  inherited `static` mode downgrade to per-request SSR. 12 behavioral tests drive
+  the real HTTP kernel, real renderToString, and real hydrate - no mocks.
+
+- **cli**: `azeroth build` detects a kit app (`src/entry.server.ts` +
+  `@azerothjs/kit` installed) and plans the full production build - client build,
+  SSR bundle (`vite build --ssr`), then the prerender pass; an SSR entry without
+  the kit installed gets an honest note, never a silent skip.
+
+- **create-azeroth**: the fullstack template now runs ON the kit - the
+  before/after proof of the assembly. `src/routes.ts` is the one table (home
+  `render: 'static'`, guest book `render: 'server'`); `entry.server.ts` is two
+  lines (`createPageRenderer` + the re-exported routes); `main.azeroth` is one
+  call (`bootClient(App)`); the server mounts everything with `mountPages`. The
+  hand-wired `entry-server.ts` render/splice, `scripts/prerender.mjs`, the
+  hydrate-or-render branching, and the per-path static routes are all DELETED -
+  replaced by the kit calls. The SSR bundle is self-contained (`ssr.noExternal`),
+  so the Docker image copies two build artifacts and needs no client
+  node_modules; `SSR_ENTRY` joins the environment surface. The server package now
+  declares `@azerothjs/schema` (previously resolved only through hoisting). The
+  application half's scripts delegate to the CLI (`azeroth dev` / `check` /
+  `build`) exactly like the standalone templates - the kit build steps live in
+  ONE place, the CLI's printable plan, instead of being duplicated as a raw
+  command line in the workspace script.
+
+### Fixed
+
+- **azerothjs (SSR)**: `renderToString`/`renderToStaticMarkup` now establish a
+  disposable ownership root around the render, exactly as client-side `render()`/
+  `hydrate()` do - a root component that calls `provideContext()` (every router
+  app: `<RouterProvider>`) previously CRASHED server rendering with
+  "provideContext() called outside any ownership scope".
+
+- **azerothjs (router)**: the guarded-match pipeline rides effects, and effects
+  never run in string mode - so `<Routes>` serialized the FALLBACK for every url
+  during SSR. The router now accepts the raw match synchronously at construction
+  in string mode. Guards gate NAVIGATION; by the time a server renders, the
+  request was already routed and authorized (`matchAndLoad` runs the chain's
+  guards server-side and turns redirects/vetoes into real 302s/skips BEFORE
+  rendering) - the string render is a pure serializer of that decision.
+
+- **language-server**: the formatting placement, stated. The README now documents
+  the deliberate 1.0 posture: one formatting engine (the language-service provider -
+  document, range, and on-type), TypeScript regions formatted by the real TS
+  formatter mapped through the projection, and markup preserved VERBATIM by
+  construction (unmappable edits are dropped - the formatter structurally cannot
+  mangle markup). Markup pretty-printing joins this engine when it comes; a
+  Prettier plugin is a planned 1.x wrapper around this provider, never a second
+  implementation.
+
 - **project**: the trust pages. `GOVERNANCE.md` states plainly how the project is
   run - single maintainer, and exactly WHAT BINDS decisions (the normative grammar,
   the ratified syntax-stability policy, SemVer over the lockstep train, the test

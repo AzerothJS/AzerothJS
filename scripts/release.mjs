@@ -135,6 +135,7 @@ const PUBLISH_ORDER =
     '@azerothjs/cron',
     '@azerothjs/http',
     '@azerothjs/ws',
+    '@azerothjs/kit',
     '@azerothjs/compiler',
     '@azerothjs/language-server',
     '@azerothjs/typescript-plugin',

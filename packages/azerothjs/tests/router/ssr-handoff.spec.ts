@@ -9,7 +9,7 @@
 // one loader, data crossing the boundary exactly once.
 
 import { describe, it, expect, vi } from 'vitest';
-import { createRoot, renderToDocument } from 'azerothjs';
+import { createRoot, h, renderToDocument, renderToString, RouterProvider, Routes } from 'azerothjs';
 import { App, html } from '@azerothjs/http';
 import {
     createRouter, createMemoryHistory,
@@ -223,5 +223,51 @@ describe('multi-level parity: the nested chain hands off level by level', () =>
         {
             document.getElementById(LOADER_HANDOFF_ID)?.remove();
         }
+    });
+});
+
+describe('string-mode rendering: the guarded match resolves SYNCHRONOUSLY at construction', () =>
+{
+    // The regression the kit surfaced: effects never run in string mode, so the
+    // guard pipeline stayed silent, match() stayed null, and <Routes> serialized
+    // the FALLBACK for every url. Server-side, guards are matchAndLoad's job
+    // (real 302s before rendering); the string render accepts the raw match.
+    const pages: Route[] = [
+        { path: '/', component: () => h('h1', {}, 'home') },
+        { path: '/about', component: () => h('h1', {}, 'about') }
+    ];
+
+    it('renderToString serializes the MATCHED route, not the fallback', () =>
+    {
+        const rendered = renderToString(() =>
+        {
+            const router = createRouter({ routes: pages, history: createMemoryHistory('/about') });
+            return RouterProvider({ router, children: () => Routes({ fallback: () => h('h1', {}, 'nope') }) });
+        });
+        expect(rendered).toContain('about');
+        expect(rendered).not.toContain('nope');
+    });
+
+    it('an UNMATCHED url still serializes the fallback', () =>
+    {
+        const rendered = renderToString(() =>
+        {
+            const router = createRouter({ routes: pages, history: createMemoryHistory('/missing') });
+            return RouterProvider({ router, children: () => Routes({ fallback: () => h('h1', {}, 'nope') }) });
+        });
+        expect(rendered).toContain('nope');
+    });
+
+    it('a route with an ASYNC guard still serializes - server enforcement lives in matchAndLoad', () =>
+    {
+        const guarded: Route[] = [
+            { path: '/admin', component: () => h('h1', {}, 'admin'), guard: async () => true }
+        ];
+        const rendered = renderToString(() =>
+        {
+            const router = createRouter({ routes: guarded, history: createMemoryHistory('/admin') });
+            return RouterProvider({ router, children: () => Routes({}) });
+        });
+        expect(rendered).toContain('admin');
     });
 });

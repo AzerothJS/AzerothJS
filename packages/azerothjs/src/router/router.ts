@@ -25,6 +25,7 @@ import {
     createMemo,
     createEffect,
     createResource,
+    isStringMode,
     onRootDispose,
     untrack
 } from '../reactivity/index.ts';
@@ -968,6 +969,19 @@ export function createRouter(config: RouterConfig): Router
         };
         proceed(0);
     });
+
+    // SSR: effects never run in string mode, so the guarded-match pipeline above
+    // stays silent and <Routes> would serialize the fallback for EVERY url. Guards
+    // gate NAVIGATION; by the time a server renders, the request was already routed
+    // and authorized - matchAndLoad runs the chain's guards server-side and turns a
+    // redirecting/vetoing guard into a real 302/skip BEFORE any rendering starts.
+    // The string render is a pure serializer of that decision: accept the raw match
+    // synchronously and do not re-run guards (an async guard could never settle
+    // inside a synchronous render anyway).
+    if (isStringMode())
+    {
+        setMatch(untrack(rawMatch));
+    }
 
     // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
     // and only when its path (pathname + search) is EXACTLY what this router booted at AND

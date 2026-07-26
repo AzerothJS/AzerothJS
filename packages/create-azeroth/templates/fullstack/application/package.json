@@ -7,12 +7,14 @@
         "node": ">=24"
     },
     "scripts": {
-        "dev": "vite",
-        "build": "vite build && vite build --ssr src/entry-server.ts --outDir dist-server && node scripts/prerender.mjs",
+        "dev": "azeroth dev",
+        "check": "azeroth check",
+        "build": "azeroth build",
         "test": "vitest run",
         "preview": "vite preview"
     },
     "dependencies": {
+        "@azerothjs/kit": "{{version}}",
         "azerothjs": "{{version}}"
     },
     "devDependencies": {
