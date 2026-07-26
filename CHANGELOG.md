@@ -11,6 +11,16 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **project**: the trust pages. `GOVERNANCE.md` states plainly how the project is
+  run - single maintainer, and exactly WHAT BINDS decisions (the normative grammar,
+  the ratified syntax-stability policy, SemVer over the lockstep train, the test
+  suite as executable specification) - including the single-maintainer question
+  answered with structural mitigations rather than promises. `SUPPORT.md` gains
+  the honest support-window statement (latest release line supported, one-command
+  upgrade via `azeroth upgrade`, no LTS designation before the 2.0 horizon).
+  `SECURITY.md` stays in sync with the train (the folded package name fixed, the
+  upgrade path referenced).
+
 - **cli**: two new verbs. `azeroth test` runs each half's vitest suite (server
   first), planned and printable like every other command. `azeroth upgrade [target]`
   moves every `azerothjs`/`@azerothjs/*`/`create-azeroth` pin across the root and

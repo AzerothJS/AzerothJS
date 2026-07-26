@@ -8,7 +8,7 @@ release line** receives security fixes:
 | Version | Supported |
 | --- | --- |
 | the latest published release | yes |
-| older releases | no - upgrade to the latest release |
+| older releases | no - upgrade to the latest release (`npx azeroth upgrade` rewrites every pin, installs, and runs the doctor) |
 
 ## Reporting a vulnerability
 
@@ -43,7 +43,7 @@ Please include, where possible:
 
 Areas of this project with a genuine security surface:
 
-- **SSR output escaping** (`@azerothjs/server`): text and attribute values are
+- **SSR output escaping** (the `azerothjs` SSR half): text and attribute values are
   escaped on render; anything that lets untrusted input reach unescaped HTML is a
   vulnerability.
 - **The compiler and language tooling** (`@azerothjs/compiler`, the language
