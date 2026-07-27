@@ -1,6 +1,6 @@
 {
     "name": "create-azeroth",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "engines": {
         "node": ">=22"
     },
@@ -23,7 +23,7 @@
         "overlays"
     ],
     "dependencies": {
-        "@azerothjs/logger": "^1.0.0"
+        "@azerothjs/logger": "^1.1.0"
     },
     "sideEffects": false,
     "scripts": {

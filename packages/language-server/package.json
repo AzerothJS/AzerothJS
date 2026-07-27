@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/language-server",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "AzerothJS language server - a Language Server Protocol front-end for .azeroth files",
     "keywords": [
         "azerothjs",
@@ -43,7 +43,7 @@
         "typescript": ">=6 <7",
         "vscode-languageserver": "^10",
         "vscode-languageserver-textdocument": "^1",
-        "@azerothjs/compiler": "^1.0.0",
+        "@azerothjs/compiler": "^1.1.0",
         "vscode-css-languageservice": "^6",
         "vscode-html-languageservice": "^5"
     },
@@ -73,6 +73,6 @@
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     },
     "peerDependencies": {
-        "azerothjs": "^1.0.0"
+        "azerothjs": "^1.1.0"
     }
 }

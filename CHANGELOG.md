@@ -9,6 +9,8 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-27
+
 ### Added (create-azeroth)
 
 - **Template options.** The scaffolder grows a curated matrix, asked as yes/no prompts
@@ -1170,7 +1172,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...v1.0.0
 [1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...v1.0.0-beta.2
 [0.9.0-beta.4]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.3...v0.9.0-beta.4
