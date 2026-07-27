@@ -9,6 +9,37 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added (create-azeroth)
+
+- **Template options.** The scaffolder grows a curated matrix, asked as yes/no prompts
+  interactively and passed as flags in CI: `--router` (frontend) wires pages + nav on the
+  framework's own client-side router - a route table, two pages, `<Link>` navigation, zero
+  extra dependencies; `--tailwind` (frontend and fullstack) wires Tailwind v4 through
+  `@tailwindcss/vite` with the starter's design tokens mapped to real utilities via
+  `@theme inline`. The two compose. Options are overlays applied over one base per shape
+  with three operations only - file copy, package.json merge, README append - no plugin
+  API, no hooks.
+
+### Changed (create-azeroth)
+
+- **The starters look like a product.** Every template's landing view is redesigned around
+  the signal strip - the component's real reactive graph as its hero (the `state` cell is
+  the button; `derived` cells recompute from the same click) - over a token system with
+  one ice-blue accent, paired light/dark backgrounds, and a monospace display voice. The
+  fullstack home's health check and guest book gained honest loading / failed / empty
+  states, a retry, and a submit-failure path.
+- **Templates ship the framework's own lint canon.** Every shape carries an
+  `eslint.config.ts` (loaded via `jiti`) with the house rules - allman blocks, 4-space
+  indent, single quotes, the azeroth reactivity rules - and the server shapes now lint
+  through `azeroth check` like the frontend ones.
+- **Real favicons.** The placeholder `favicon.svg` is replaced by the brand PNGs
+  (16/32 + apple-touch) in the frontend and fullstack templates.
+
+## [1.0.0] - 2026-07-27
+
+The first stable release. Every package, the `azerothjs` entry package, and both
+editor integrations move to 1.0.0 in lockstep.
+
 ### Fixed (pre-1.0 release review)
 
 An adversarial review against the built/packed distribution found and this release fixes:
@@ -129,7 +160,7 @@ An adversarial review against the built/packed distribution found and this relea
   `innerHTML`/`textContent` (their content is owned by the prop), or for a `<table>` whose
   `<tr>` rows the browser wrapped in an implicit `<tbody>` (now tolerated).
 - **Owner/scheduler robustness.** A reactive node created under an already-disposed owner
-  (the `runWithOwner(getOwner(), …)`-after-await pattern) is now torn down immediately
+  (the `runWithOwner(getOwner(), ...)`-after-await pattern) is now torn down immediately
   instead of leaking; disposers registered *during* teardown run instead of being dropped;
   and a throwing effect no longer strands the rest of a flush - the others still run and the
   error surfaces after.
@@ -141,10 +172,10 @@ An adversarial review against the built/packed distribution found and this relea
   is flagged too.
 - **`<script>`/`<style>` are parsed as raw-text (CDATA).** Their content (CSS, a JSON-LD
   `<script type="application/ld+json">`) is read verbatim and serialized unescaped, instead
-  of being parsed for `{ … }` holes and HTML-escaped (which corrupted `&`/`<`).
+  of being parsed for `{ ... }` holes and HTML-escaped (which corrupted `&`/`<`).
 - **`evalConstant`** no longer folds a multi-statement slice to its first expression,
   which silently dropped the remainder.
-- Clearer errors for `<For each={…}>` with a nullish value (renders nothing) or a non-array,
+- Clearer errors for `<For each={...}>` with a nullish value (renders nothing) or a non-array,
   and for `renderToString(App())` called without the `() =>` thunk.
 
 ### Changed
@@ -156,11 +187,6 @@ An adversarial review against the built/packed distribution found and this relea
   a ranged peer dedupes to one copy.
 - **`typescript` is a required peer of `@azerothjs/compiler`** (no longer marked optional):
   the package eagerly loads TypeScript-backed analysis, so it was never truly optional.
-
-## [1.0.0] - 2026-07-26
-
-The first stable release. Every package, the `azerothjs` entry package, and both
-editor integrations move to 1.0.0 in lockstep.
 
 ### Changed (production readiness)
 
@@ -1144,7 +1170,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...v1.0.0
 [1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...v1.0.0-beta.2
 [0.9.0-beta.4]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.3...v0.9.0-beta.4
 [0.9.0-beta.3]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.2...v0.9.0-beta.3

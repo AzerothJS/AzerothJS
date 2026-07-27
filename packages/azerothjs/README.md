@@ -14,16 +14,15 @@
 
 ---
 
-No Virtual DOM. No third-party runtime dependencies.
-
-- Reach for it when you want fine-grained reactivity without a Virtual DOM: a signal write updates exactly the DOM nodes that read it - no component re-render, no diff.
-- Author `.azeroth` single-file components (compiled by `@azerothjs/compiler`) with `state`/`derived`/`effect` keywords, or use the primitives (`createSignal`, `createMemo`, `createEffect`) directly from `.ts`.
-- One install carries the whole frontend: reactivity, the `h()` renderer, control-flow components, stores, resources, router, forms, and SSR + islands (`renderToString` / `hydrate`).
-- ESM-only, Node >= 22, no third-party runtime dependencies.
-
 Signals drive effects that update real DOM nodes in place: a state write re-runs exactly the
-effects that read it, and each effect owns specific nodes. There is no component re-render and no
-diffing - the reactive graph itself is the update mechanism.
+effects that read it, and each effect owns specific nodes. There is no Virtual DOM, no diff,
+and no component re-render - the reactive graph itself is the update mechanism.
+
+Author `.azeroth` single-file components (compiled by `@azerothjs/compiler`) with
+`state`/`derived`/`effect` keywords, or use the primitives (`createSignal`, `createMemo`,
+`createEffect`) directly from `.ts`. One install carries the whole frontend - reactivity, the
+`h()` renderer, control flow, stores, resources, router, forms, and SSR + hydration - with zero
+third-party runtime dependencies. ESM-only, Node >= 22.
 
 ```azeroth
 export default component Counter(props: { start?: number })
@@ -144,9 +143,17 @@ dispose(); // tears down every effect created in the root
 
 ### Rendering
 
-`render` mounts a component into a container, `renderToString` emits HTML on the server, and
-`hydrate` adopts that server HTML on the client - see
-[One artifact, three modes](#one-artifact-three-modes) below.
+The same compiled component renders on the client, serializes on the server, and hydrates over
+server HTML - from a single intermediate representation, so the hydration markers line up by
+construction:
+
+```ts
+import { render, hydrate, renderToString } from 'azerothjs';
+
+render(() => App(), root);                 // client: build and mount real DOM
+const html = renderToString(() => App()); // server: pure string emission, no DOM shim
+hydrate(() => App(), root);                // client over server HTML: adopt, don't rebuild
+```
 
 ### Control flow
 
@@ -243,46 +250,11 @@ const router = createRouter({
 
 ---
 
-## 🖥️ One artifact, three modes
-
-The same compiled component renders on the client, serializes on the server, and hydrates over
-server HTML - from a single intermediate representation, so the hydration markers line up by
-construction:
-
-```ts
-import { render, hydrate, renderToString } from 'azerothjs';
-
-render(() => App(), root);                 // client
-const html = renderToString(() => App()); // server - pure string emission, no DOM shim
-hydrate(() => App(), root);                // adopt server HTML, don't rebuild
-```
-
----
-
 ## 🌐 The server side
 
 SSR ships in `azerothjs` itself (`renderToString` above). The rest of the backend is its own
 zero-dependency stack under the same scope - run it behind an AzerothJS frontend, or entirely on
 its own: nothing in it requires the client packages.
-
-```ts
-import { App, json, serve, readValidated } from '@azerothjs/http';
-import { object, string, number } from '@azerothjs/schema';
-
-const createUser = object({ name: string({ min: 2 }), age: number({ int: true }) });
-
-const app = new App();
-
-app.get('/users/:id', (request, ctx) => json({ id: ctx.params.id })); // params typed from the pattern
-
-app.post('/users', async (request) =>
-{
-    const input = await readValidated(request, createUser); // typed, normalized; failure -> 422
-    return json({ created: input.name }, { status: 201 });
-});
-
-const served = await serve(app, { port: 3000 });
-```
 
 | Package | What it is |
 | --- | --- |

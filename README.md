@@ -66,6 +66,9 @@ npm create azeroth@latest my-app
 cd my-app && npm install && npm run dev
 ```
 
+Pick a shape (frontend, backend, fullstack) and its options - `--router` for pages on the
+framework's own router, `--tailwind` for Tailwind v4 wired through `@tailwindcss/vite`.
+
 <details>
 <summary><b>... or wire a Vite project by hand</b></summary>
 
@@ -119,20 +122,9 @@ application needs.
 - **No hidden runtime.** The signal graph, the renderer, and the compiler with its IR are all written
   from scratch - small, dependency-free, and readable when you need to know exactly what runs.
 
-### At a glance
-
-| 🎨 Frontend | 🌐 Backend | 🛠️ Tooling |
-| --- | --- | --- |
-| Signals · memos · effects | Web-standard HTTP kernel | `.azeroth` compiler + Vite plugin |
-| `.azeroth` compiled components | Every request is a reactive root | Language server (VS Code + JetBrains) |
-| No-VDOM real-DOM renderer | WebSocket server (RFC 6455) | ESLint plugin + TypeScript plugin |
-| SSR · hydration · islands | Cron scheduler | `azeroth` CLI + scaffolder |
-| Router · forms · stores | Schema validation + typed API client | Testing harness + devtools |
-| Control-flow components | Two-face structured logger | Type-checked production builds |
-
 ---
 
-## 🧠 Reactivity in 20 lines
+## 🧠 The primitives underneath
 
 The `.azeroth` keywords compile down to three primitives you can also use directly in TypeScript:
 
