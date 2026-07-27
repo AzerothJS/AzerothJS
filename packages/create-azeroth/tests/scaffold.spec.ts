@@ -168,16 +168,22 @@ describe('production shape: the hour-three files are already waiting', () =>
         }
     });
 
-    it('npm pack ships every template file - dotfiles and dot-directories included', () =>
+    it('npm pack ships every template file - dotfiles and dot-directories included', { timeout: 30000 }, () =>
     {
-        // npm's human listing goes to stderr; --json puts the file list on stdout.
+        // npm's human listing goes to stderr; --json puts the file list on stdout. An isolated cache and
+        // the notifiers off keep a busy parallel run from serializing behind a shared npm cache lock or
+        // corrupting stdout with an update notice; the JSON is sliced from its first `[` for the same reason.
+        const cache = mkdtempSync(join(tmpdir(), 'create-azeroth-npm-cache-'));
+        roots.push(cache);
         const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
             cwd: join(TEMPLATES_ROOT, '..'),
             encoding: 'utf8',
-            shell: process.platform === 'win32'
+            shell: process.platform === 'win32',
+            env: { ...process.env, npm_config_cache: cache, npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false' }
         });
-        const [report] = JSON.parse(raw) as Array<{ files: Array<{ path: string }> }>;
-        const shipped = new Set(report?.files.map((file) => file.path.replaceAll('\\', '/')));
+        const jsonStart = raw.indexOf('[');
+        const [report] = (jsonStart >= 0 ? JSON.parse(raw.slice(jsonStart)) : []) as Array<{ files: Array<{ path: string }> }>;
+        const shipped = new Set((report?.files ?? []).map((file) => file.path.replaceAll('\\', '/')));
         for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/frontend/public/favicon.svg'])
         {
             expect(shipped.has(mustShip), mustShip).toBe(true);

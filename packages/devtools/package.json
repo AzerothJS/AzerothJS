@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS devtools - the in-page reactive inspector (components, timeline, graph, performance, server bridge) plus an embeddable agent",
+    "keywords": [
+        "azerothjs",
+        "devtools",
+        "inspector",
+        "debugging",
+        "reactivity",
+        "timeline"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

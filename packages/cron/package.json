@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS job scheduler - drift-free cron expressions with timezone/DST semantics, overlap control, and graceful drain, zero dependencies",
+    "keywords": [
+        "azerothjs",
+        "cron",
+        "scheduler",
+        "jobs",
+        "cron-expression",
+        "zero-dependency"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

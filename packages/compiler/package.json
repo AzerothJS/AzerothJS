@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS compiler - .azeroth single-file-component compiler (markup to h() calls) and Vite plugin",
+    "keywords": [
+        "azerothjs",
+        "compiler",
+        "vite-plugin",
+        "single-file-components",
+        "reactive",
+        "dom"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

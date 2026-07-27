@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "Scaffold an AzerothJS app - frontend, backend, or fullstack - with the framework's canon wired in: azeroth CLI verbs, eslint rules, typecheck gate, and a working dev loop. Run `npm create azeroth@latest`",
+    "keywords": [
+        "azerothjs",
+        "create",
+        "scaffold",
+        "starter",
+        "template",
+        "fullstack"
+    ],
     "type": "module",
     "bin": {
         "create-azeroth": "./dist/cli.js"

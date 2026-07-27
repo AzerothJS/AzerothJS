@@ -2,6 +2,14 @@
     "name": "@azerothjs/language-server",
     "version": "1.0.0",
     "description": "AzerothJS language server - a Language Server Protocol front-end for .azeroth files",
+    "keywords": [
+        "azerothjs",
+        "language-server",
+        "lsp",
+        "editor",
+        "tooling",
+        "intellisense"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

@@ -691,6 +691,11 @@ export class AzerothProject
                 allowJs: true,
                 checkJs: false,
                 noEmit: true,
+                // The projection is generated, inference-based code and the host never emits, so
+                // isolatedDeclarations (a hand-source declaration-emit constraint) is both moot and wrong
+                // here: it flags every component's synthesized function for a return type the author neither
+                // writes nor should. Off, so a real tsconfig with it enabled stays quiet inside `.azeroth`.
+                isolatedDeclarations: false,
                 module: options.module ?? ts.ModuleKind.ESNext,
                 target: options.target ?? ts.ScriptTarget.ESNext,
                 moduleResolution: options.moduleResolution ?? ts.ModuleResolutionKind.Bundler,

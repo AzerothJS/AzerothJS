@@ -5,6 +5,13 @@
         "node": ">=22"
     },
     "description": "AzerothJS validation schema core - zero-dependency validators that infer their TypeScript types",
+    "keywords": [
+        "azerothjs",
+        "schema",
+        "validation",
+        "type-inference",
+        "zero-dependency"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS server kernel - web-standard Request/Response HTTP stack (no third-party dependencies) where every request is a reactive root",
+    "keywords": [
+        "azerothjs",
+        "http",
+        "server",
+        "fetch",
+        "request-response",
+        "zero-dependency"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

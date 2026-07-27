@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS WebSocket server - RFC 6455 from scratch: handshake, framing, fragmentation, ping/pong, close codes",
+    "keywords": [
+        "azerothjs",
+        "websocket",
+        "ws",
+        "rfc6455",
+        "realtime",
+        "server"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

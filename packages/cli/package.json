@@ -5,6 +5,14 @@
         "node": ">=22"
     },
     "description": "AzerothJS command line - one verb per job: dev (the fullstack conductor), check, build, doctor, info. Detects your project's shape, composes the tools you already have, and prints exactly what it runs",
+    "keywords": [
+        "azerothjs",
+        "cli",
+        "dev-server",
+        "build",
+        "scaffold",
+        "command-line"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

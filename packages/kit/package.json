@@ -10,14 +10,20 @@
         "hydration"
     ],
     "homepage": "https://github.com/AzerothJS/AzerothJS/tree/main/packages/kit",
-    "bugs": "https://github.com/AzerothJS/AzerothJS/issues",
+    "bugs": {
+        "url": "https://github.com/AzerothJS/AzerothJS/issues"
+    },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/AzerothJS/AzerothJS.git",
         "directory": "packages/kit"
     },
     "license": "MIT",
-    "author": "IntelligentQuantum",
+    "author": {
+        "name": "IntelligentQuantum",
+        "email": "IntelligentQuantum@Gmail.Com",
+        "url": "https://IntelligentQuantum.Dev/"
+    },
     "type": "module",
     "exports": {
         ".": {
@@ -50,13 +56,17 @@
     ],
     "scripts": {
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
-        "test": "vitest run"
+        "test": "vitest run",
+        "prepublishOnly": "npm run build"
     },
     "dependencies": {
         "@azerothjs/http": "^1.0.0"
     },
     "peerDependencies": {
         "azerothjs": "^1.0.0"
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "engines": {
         "node": ">=22"

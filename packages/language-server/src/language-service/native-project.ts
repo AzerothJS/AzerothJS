@@ -155,6 +155,9 @@ export function createNativeLsBackend(host: NativeBackendHost): NativeLsBackend 
             allowJs: true,
             checkJs: false,
             noEmit: true,
+            // Matches the classic host: the generated projection is never emitted, so
+            // isolatedDeclarations is moot here and must not flag a component's synthesized function.
+            isolatedDeclarations: false,
             allowImportingTsExtensions: true,
             skipLibCheck: true
         };

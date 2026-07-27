@@ -52,6 +52,14 @@ export default defineConfig({
         // "no DOM shim required" SSR contract is genuinely exercised.
         environment: 'happy-dom',
         include: ['packages/*/tests/**/*.spec.ts'],
+        // The real-socket / real-process suites (ws close handshakes, the node adapter, sse,
+        // kit, npm-spawning scaffold checks) do genuine I/O; under full file parallelism on a
+        // loaded machine their aggregate occasionally crosses the 5s default, which read as a
+        // flake, not a defect. A higher ceiling only affects tests that would otherwise exceed
+        // it - fast unit tests are unchanged - so it removes the false failures without masking
+        // a real hang materially (a truly stuck test still fails, just later).
+        testTimeout: 15000,
+        hookTimeout: 15000,
         clearMocks: true,
         restoreMocks: true
     }

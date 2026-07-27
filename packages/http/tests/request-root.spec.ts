@@ -227,8 +227,8 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
 
     it('buffered responses still run cleanup before handle() resolves', async () =>
     {
-        // The buffered fast path is unchanged: PayloadResponse is not instanceof Response,
-        // so its cleanups run synchronously in the settle path, not deferred.
+        // The buffered fast path is unchanged: a PayloadResponse is excluded from
+        // isStreamingResponse, so its cleanups run synchronously in the settle path, not deferred.
         let released = false;
         const app = new App();
         app.get('/buffered', () =>

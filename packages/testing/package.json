@@ -5,6 +5,13 @@
         "node": ">=22"
     },
     "description": "AzerothJS testing utilities - auto-disposing mounts, subscriber leak guards, event helpers",
+    "keywords": [
+        "azerothjs",
+        "testing",
+        "test-utils",
+        "components",
+        "vitest"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

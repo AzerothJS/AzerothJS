@@ -2,6 +2,13 @@
     "name": "@azerothjs/eslint-plugin",
     "version": "1.0.0",
     "description": "AzerothJS ESLint rules - reactivity foot-guns in plain .ts files",
+    "keywords": [
+        "azerothjs",
+        "eslint",
+        "eslint-plugin",
+        "linting",
+        "reactivity"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",
