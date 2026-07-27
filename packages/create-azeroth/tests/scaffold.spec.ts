@@ -47,6 +47,18 @@ describe('the copy engine', () =>
         expect(readFileSync(join(dir, 'index.html'), 'utf8')).toContain('<title>my-app</title>');
     });
 
+    it('binary assets survive byte-for-byte - no UTF-8 round trip', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'frontend', dir, 'binary-safe', '^1.0.0');
+        for (const asset of ['favicon-16.png', 'favicon-32.png', 'apple-touch-icon.png'])
+        {
+            const source = readFileSync(join(TEMPLATES_ROOT, 'frontend/public', asset));
+            const copied = readFileSync(join(dir, 'public', asset));
+            expect(copied.equals(source), asset).toBe(true);
+        }
+    });
+
     it('refuses a non-empty target - scaffolding never overwrites', () =>
     {
         const dir = target();

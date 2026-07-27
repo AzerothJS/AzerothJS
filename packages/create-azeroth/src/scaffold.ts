@@ -7,7 +7,8 @@
  * travel under an underscore alias because their real names are live in this repo:
  * npm strips `.gitignore` out of published packages, and ESLint 10 resolves the
  * nearest `eslint.config.ts` per file, so a real one inside `templates/` would hijack
- * the monorepo's own lint runs. Every template file is text by construction.
+ * the monorepo's own lint runs. Template files are text except a short list of binary
+ * asset extensions (favicons), which are copied byte-for-byte.
  * The target must not already contain files - scaffolding never overwrites anything.
  *
  * OPTIONS are overlays under `overlays/<template>/<option>/`, applied after the base
@@ -20,7 +21,7 @@
  * refinement.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /** The shapes a scaffold can produce, in the order the prompt offers them. */
@@ -97,9 +98,18 @@ function copyTree(from: string, to: string, substitute: (text: string) => string
             continue;
         }
         const target = join(to, RENAMES[entry.name] ?? entry.name);
+        // Binary assets (favicons, images) are copied byte-for-byte - a UTF-8 round
+        // trip would corrupt them, and they carry no {{placeholders}} by definition.
+        if (BINARY_EXTENSIONS.test(entry.name))
+        {
+            copyFileSync(source, target);
+            continue;
+        }
         writeFileSync(target, substitute(readFileSync(source, 'utf8')));
     }
 }
+
+const BINARY_EXTENSIONS = /\.(png|ico|jpe?g|gif|webp|avif|woff2?)$/i;
 
 /** Merges the patch's top-level objects key-wise into the sibling package.json (scalars replace). */
 function mergePackageJson(manifestPath: string, patchText: string): void

@@ -13,7 +13,7 @@ describe('App', () =>
     it('renders the home route and counts fine-grained - only the text node updates', () =>
     {
         const { container } = renderTest(() => App({ url: '/' }));
-        const button = container.querySelector('button.cell');
+        const button = container.querySelector<HTMLButtonElement>('button.cell');
         expect(button?.textContent).toContain('count = 0');
         if (button)
         {
