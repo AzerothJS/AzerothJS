@@ -6,19 +6,39 @@
  * package's own - the whole @azerothjs family versions in lockstep), and a few files
  * travel under an underscore alias because their real names are live in this repo:
  * npm strips `.gitignore` out of published packages, and ESLint 10 resolves the
- * nearest `eslint.config.js` per file, so a real one inside `templates/` would hijack
+ * nearest `eslint.config.ts` per file, so a real one inside `templates/` would hijack
  * the monorepo's own lint runs. Every template file is text by construction.
  * The target must not already contain files - scaffolding never overwrites anything.
+ *
+ * OPTIONS are overlays under `overlays/<template>/<option>/`, applied after the base
+ * with exactly three operations - a file copy that MAY overwrite a base file, a
+ * `_package.merge.json` that merges its top-level objects into the sibling
+ * package.json, and a `_readme.append.md` appended to the sibling README.md. No
+ * hooks, no codemods: an option that cannot be expressed in those three operations
+ * redesigns the base until it can. When two options both refine the same file, a
+ * combined overlay named `<a>-<b>` (alphabetical) applied LAST carries the merged
+ * refinement.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /** The shapes a scaffold can produce, in the order the prompt offers them. */
 export const TEMPLATES = ['frontend', 'backend', 'fullstack'] as const;
 
 /** One of the three template names - the CLI validates free-form input with {@link isTemplateName}. */
 export type TemplateName = (typeof TEMPLATES)[number];
+
+/** The overlay options each shape offers, in application order. */
+export const TEMPLATE_OPTIONS: Record<TemplateName, readonly OptionName[]> =
+{
+    frontend: ['router', 'tailwind'],
+    backend: [],
+    fullstack: ['tailwind']
+};
+
+/** An overlay option name; validity is per-shape - see {@link TEMPLATE_OPTIONS}. */
+export type OptionName = 'router' | 'tailwind';
 
 /** Narrows user-typed input (a menu number is resolved before this) to a template name. */
 export function isTemplateName(value: string): value is TemplateName
@@ -51,7 +71,7 @@ export function isEmptyTarget(target: string): boolean
 const RENAMES: Record<string, string> =
 {
     '_gitignore': '.gitignore',
-    '_eslint.config.js': 'eslint.config.js'
+    '_eslint.config.ts': 'eslint.config.ts'
 };
 
 function copyTree(from: string, to: string, substitute: (text: string) => string): void
@@ -65,28 +85,90 @@ function copyTree(from: string, to: string, substitute: (text: string) => string
             copyTree(source, join(to, entry.name), substitute);
             continue;
         }
+        if (entry.name === '_package.merge.json')
+        {
+            mergePackageJson(join(to, 'package.json'), substitute(readFileSync(source, 'utf8')));
+            continue;
+        }
+        if (entry.name === '_readme.append.md')
+        {
+            const readme = join(to, 'README.md');
+            writeFileSync(readme, `${ readFileSync(readme, 'utf8').replace(/\n*$/, '\n\n') }${ substitute(readFileSync(source, 'utf8')) }`);
+            continue;
+        }
         const target = join(to, RENAMES[entry.name] ?? entry.name);
         writeFileSync(target, substitute(readFileSync(source, 'utf8')));
     }
 }
 
+/** Merges the patch's top-level objects key-wise into the sibling package.json (scalars replace). */
+function mergePackageJson(manifestPath: string, patchText: string): void
+{
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const patch = JSON.parse(patchText) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(patch))
+    {
+        const current = manifest[key];
+        manifest[key] = typeof value === 'object' && value !== null && !Array.isArray(value)
+            && typeof current === 'object' && current !== null && !Array.isArray(current)
+            ? Object.fromEntries(Object.entries({ ...current, ...value }).sort(([a], [b]) => a.localeCompare(b)))
+            : value;
+    }
+    writeFileSync(manifestPath, `${ JSON.stringify(manifest, null, 4) }\n`);
+}
+
+/**
+ * The overlay directories a template + option selection applies, in order: each chosen
+ * option's own overlay, then the combined `<a>-<b>` overlay when it exists on disk
+ * (it carries the files both options refine, so it must win).
+ */
+function overlayDirs(overlaysRoot: string, template: TemplateName, options: readonly OptionName[]): string[]
+{
+    const chosen = TEMPLATE_OPTIONS[template].filter((option) => options.includes(option));
+    const dirs = chosen.map((option) => join(overlaysRoot, template, option));
+    if (chosen.length > 1)
+    {
+        const combined = join(overlaysRoot, template, chosen.join('-'));
+        if (existsSync(combined))
+        {
+            dirs.push(combined);
+        }
+    }
+    return dirs;
+}
+
 /**
  * Copies the named template tree into `target`, substituting `{{name}}` and `{{version}}`
- * in every file. Call it once the CLI has resolved a valid template and destination.
+ * in every file, then applies each chosen option's overlay (see the module banner).
+ * Call it once the CLI has resolved a valid template, options, and destination.
  *
- * @param templatesRoot Directory holding the template folders, one per {@link TemplateName}.
+ * @param templatesRoot Directory holding the template folders, one per {@link TemplateName};
+ *                      option overlays live in its sibling `overlays/` directory.
  * @param template Which template tree to copy.
  * @param target Destination directory; created if absent, and must be empty.
  * @param name Value written in place of `{{name}}` (the project/package name).
  * @param version Value written in place of `{{version}}` - a semver range, e.g. `^1.0.0`.
- * @throws Error when `target` already exists and is not empty; the caller owns messaging and exit codes.
+ * @param options Overlay options to apply; each must be valid for the shape per {@link TEMPLATE_OPTIONS}.
+ * @throws Error when `target` already exists and is not empty, or an option does not
+ *         belong to the template; the caller owns messaging and exit codes.
  */
-export function scaffold(templatesRoot: string, template: TemplateName, target: string, name: string, version: string): void
+export function scaffold(templatesRoot: string, template: TemplateName, target: string, name: string, version: string, options: readonly OptionName[] = []): void
 {
     if (!isEmptyTarget(target))
     {
         throw new Error(`${ target } already exists and is not empty - scaffolding never overwrites`);
     }
+    for (const option of options)
+    {
+        if (!TEMPLATE_OPTIONS[template].includes(option))
+        {
+            throw new Error(`--${ option } is not an option for the ${ template } template`);
+        }
+    }
     const substitute = (text: string): string => text.replaceAll('{{name}}', name).replaceAll('{{version}}', version);
     copyTree(join(templatesRoot, template), target, substitute);
+    for (const overlay of overlayDirs(join(dirname(templatesRoot), 'overlays'), template, options))
+    {
+        copyTree(overlay, target, substitute);
+    }
 }

@@ -1,14 +1,45 @@
+// Your root component. `state` declares a signal; each `derived` recomputes from
+// it; the markup compiles to direct DOM updates. The cells below are this
+// component's real reactive graph - click the state cell and only the three value
+// text nodes change. Edit this file and save: the change is live.
 export default component App()
 {
     state count = 0;
+    derived parity = count % 2 === 0 ? 'even' : 'odd';
+    derived doubled = count * 2;
 
     <main class="app">
+        <p class="brand">&#9650; azerothjs</p>
         <h1>{{name}}</h1>
-        <p>
-            An AzerothJS app. Edit <code>src/App.azeroth</code> and save - the change is live.
+        <p class="claim">
+            Fine-grained reactivity, compiled. Click the state cell: the update
+            walks the graph below and lands on exact DOM nodes - no virtual DOM,
+            no re-render.
         </p>
-        <button onClick={ () => count += 1 }>
-            count is { count }
-        </button>
+
+        <div class="signals">
+            <button class="cell is-state" onClick={ () => count += 1 }>
+                <span class="keyword">state</span>
+                <code>count = { count }</code>
+            </button>
+            <span class="flow" aria-hidden="true">-&gt;</span>
+            <div class="cell">
+                <span class="keyword">derived</span>
+                <code>parity = { parity }</code>
+            </div>
+            <span class="flow" aria-hidden="true">-&gt;</span>
+            <div class="cell">
+                <span class="keyword">derived</span>
+                <code>doubled = { doubled }</code>
+            </div>
+        </div>
+        <p class="hint">src/App.azeroth owns everything above - edit it and save.</p>
+
+        <ul class="next">
+            <li><code>npm test</code><span>component tests over real DOM</span></li>
+            <li><code>npm run check</code><span>typecheck + lint every component</span></li>
+            <li><code>npm run build</code><span>static dist/ for any host</span></li>
+            <li><a href="https://github.com/AzerothJS/AzerothJS">docs and examples</a></li>
+        </ul>
     </main>
 }

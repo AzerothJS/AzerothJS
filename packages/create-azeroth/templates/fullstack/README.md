@@ -23,7 +23,7 @@ An [AzerothJS](https://github.com/AzerothJS/AzerothJS) fullstack app:
 | --- | --- |
 | `npm run dev` | BOTH halves under one banner: the server on :3000, vite on :5173 with `/api` proxied |
 | `npm test` | both suites: `app.handle()` API tests + component tests over real DOM |
-| `npm run check` | every gate: server `tsc --noEmit`, client `azeroth-tsc` + eslint |
+| `npm run check` | every gate: server `tsc --noEmit` + eslint, client `azeroth-tsc` + eslint |
 | `npm run build` | artifacts in dependency order (the server has none - by design) |
 | `npm start` | production: the server serves the API **and** the built client - one origin |
 
@@ -52,3 +52,8 @@ docker run -p 3000:3000 {{name}}
 
 `/api/healthz` answers orchestrator probes. CI runs the same gates you run
 locally (`.github/workflows/ci.yml`): check, build, test.
+
+## Options
+
+This shape scaffolds with `--tailwind` (Tailwind v4 via `@tailwindcss/vite` in
+the application half). An applied option documents itself in a section below.

@@ -18,6 +18,7 @@ export default component App(props: { url?: string; handoff?: LoaderHandoff })
     <RouterProvider router={ router }>
         <div class="app">
             <nav>
+                <span class="brand">&#9650; {{name}}</span>
                 <Link to="/" activeClass="active" end>Home</Link>
                 <Link to="/guestbook" activeClass="active">Guest book</Link>
             </nav>

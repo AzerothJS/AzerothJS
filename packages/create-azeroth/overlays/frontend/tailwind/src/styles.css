@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+/* The starter's design tokens, exposed to Tailwind: the custom properties adapt
+   via light-dark(), and `@theme inline` maps them to real utilities (bg-panel,
+   text-ice, border-line, font-mono, animate-rise). */
+:root
+{
+    color-scheme: light dark;
+    --bg: light-dark(#f6f8fa, #0b1118);
+    --panel: light-dark(#ffffff, #111a25);
+    --ink: light-dark(#1c2733, #dce6f2);
+    --ice: light-dark(#1f6fa8, #5fb3e8);
+    --line: color-mix(in srgb, var(--ink) 16%, transparent);
+    --faint: color-mix(in srgb, var(--ink) 62%, transparent);
+}
+
+@theme inline
+{
+    --color-bg: var(--bg);
+    --color-panel: var(--panel);
+    --color-ink: var(--ink);
+    --color-ice: var(--ice);
+    --color-line: var(--line);
+    --color-faint: var(--faint);
+    --font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
+    --animate-rise: rise 300ms ease-out both;
+
+    @keyframes rise
+    {
+        from
+        {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+    }
+}
+
+@layer base
+{
+    html
+    {
+        background: var(--bg);
+        color: var(--ink);
+    }
+
+    :focus-visible
+    {
+        outline: 2px solid var(--ice);
+        outline-offset: 2px;
+    }
+}

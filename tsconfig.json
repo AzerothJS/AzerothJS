@@ -55,6 +55,10 @@
             [
                 "./packages/logger/src/index.ts"
             ],
+            "@azerothjs/logger/node":
+            [
+                "./packages/logger/src/node.ts"
+            ],
             "@azerothjs/http":
             [
                 "./packages/http/src/index.ts"
@@ -92,6 +96,10 @@
             [
                 "./packages/devtools/src/index.ts"
             ],
+            "@azerothjs/devtools/server":
+            [
+                "./packages/devtools/src/server.ts"
+            ],
             "@azerothjs/eslint-plugin":
             [
                 "./packages/eslint-plugin/src/index.ts"
@@ -101,7 +109,8 @@
     "include":
     [
         "packages/*/src/**/*",
-        "packages/*/tests/**/*"
+        "packages/*/tests/**/*",
+        "eslint.config.ts"
     ],
     "exclude":
     [

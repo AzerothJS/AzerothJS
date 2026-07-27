@@ -47,10 +47,10 @@ npm install
 npm run dev
 ```
 
-Non-interactive (CI) - pass the shape explicitly:
+Non-interactive (CI) - pass the shape explicitly; options come only from flags:
 
 ```sh
-npm create azeroth@latest my-app -- --template fullstack
+npm create azeroth@latest my-app -- --template fullstack --tailwind
 ```
 
 > [!NOTE]
@@ -72,6 +72,17 @@ npm create azeroth@latest my-app -- --template fullstack
 
 Every template ships the [`azeroth`](https://www.npmjs.com/package/@azerothjs/cli) verbs
 as its scripts - `dev`, `check`, `build` - and nothing else to configure.
+
+## 🧩 Options
+
+A curated set per shape, asked as yes/no in interactive runs and passed as flags in CI:
+
+| Option | Templates | What it adds |
+| --- | --- | --- |
+| `--router` | `frontend` | Pages + nav with the framework's **own** client-side router - a route table, two pages, and `<Link>` navigation, zero extra dependencies. |
+| `--tailwind` | `frontend`, `fullstack` | Tailwind v4 via `@tailwindcss/vite` (no PostCSS config), with the starter's design tokens mapped to utilities through `@theme inline`. |
+
+The two compose: `--router --tailwind` scaffolds the routed app styled with utilities.
 
 ---
 

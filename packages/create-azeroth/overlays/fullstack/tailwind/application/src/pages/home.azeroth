@@ -1,0 +1,80 @@
+// The `render: 'static'` route (src/routes.ts): prerendered at BUILD time
+// (azeroth-kit-prerender renders it through the same compiled component) and the
+// browser ADOPTS that markup instead of rebuilding it - view-source on / shows
+// real content. Everything below stays fully reactive after hydration.
+export default component Home()
+{
+    state count = 0;
+    derived parity = count % 2 === 0 ? 'even' : 'odd';
+
+    state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
+    state latency = 0;
+
+    const ping = async (): Promise<void> =>
+    {
+        status = 'checking';
+        const started = performance.now();
+        try
+        {
+            const response = await fetch('/api/healthz'); // proxied to server/ in dev - see vite.config.ts
+            latency = Math.round(performance.now() - started);
+            status = response.ok ? 'up' : 'down';
+        }
+        catch
+        {
+            status = 'down';
+        }
+    };
+
+    <section class="page">
+        <h1 class="font-mono font-semibold tracking-tight text-[clamp(1.6rem,5vw,2.1rem)] mb-3">{{name}}</h1>
+        <p class="text-faint leading-relaxed mb-8">
+            application/ (compiled components on vite) + server/ (@azerothjs/http) -
+            one <code class="font-mono">npm run dev</code> runs both. This page was rendered at build
+            and hydrated live; the <a class="text-ice" href="/guestbook">guest book</a> is SSR'd per
+            request through the shared typed contract.
+        </p>
+
+        <div class="flex items-center flex-wrap gap-3 mb-8">
+            <button
+                class="cell is-state flex flex-col gap-1.5 px-4 py-3 border border-line rounded-lg bg-panel text-left cursor-pointer transition hover:border-ice active:scale-[0.98]"
+                onClick={ () => count += 1 }
+            >
+                <span class="font-mono text-[0.7rem] tracking-[0.06em] text-ice">state</span>
+                <code class="font-mono text-[0.95rem]">count = { count }</code>
+            </button>
+            <span class="font-mono text-faint select-none" aria-hidden="true">-&gt;</span>
+            <div class="cell flex flex-col gap-1.5 px-4 py-3 border border-line rounded-lg bg-panel">
+                <span class="font-mono text-[0.7rem] tracking-[0.06em] text-ice">derived</span>
+                <code class="font-mono text-[0.95rem]">parity = { parity }</code>
+            </div>
+        </div>
+
+        <div class="border border-line rounded-lg bg-panel p-4">
+            <div class="flex items-center justify-between gap-4">
+                <code class="font-mono text-[0.9rem]">GET /api/healthz</code>
+                <button
+                    class="text-[0.9rem] px-5 py-2 rounded-md border border-ice bg-ice/12 cursor-pointer transition hover:enabled:bg-ice/22 disabled:opacity-60 disabled:cursor-default"
+                    onClick={ () => void ping() }
+                    disabled={ status === 'checking' }
+                >
+                    Ping
+                </button>
+            </div>
+            <Switch>
+                <Match when={ status === 'idle' }>
+                    <p class="text-faint text-[0.9rem] mt-3">The server half answers under /api - proxied in dev, same origin in production.</p>
+                </Match>
+                <Match when={ status === 'checking' }>
+                    <p class="text-faint text-[0.9rem] mt-3">Asking the server...</p>
+                </Match>
+                <Match when={ status === 'up' }>
+                    <p class="font-mono text-ice text-[0.9rem] mt-3">200 ok - { latency } ms round trip</p>
+                </Match>
+                <Match when={ status === 'down' }>
+                    <p class="text-danger text-[0.9rem] mt-3">No answer. <code class="font-mono">npm run dev</code> from the project root starts both halves.</p>
+                </Match>
+            </Switch>
+        </div>
+    </section>
+}

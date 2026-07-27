@@ -23,7 +23,7 @@ import { parseArgs } from 'node:util';
 import { colorTier, palette } from '@azerothjs/logger';
 import { intro, outro, select, textInput } from '@azerothjs/logger/node';
 
-import { TEMPLATES, isTemplateName, scaffold, type TemplateName } from './scaffold.ts';
+import { TEMPLATES, TEMPLATE_OPTIONS, isTemplateName, scaffold, type OptionName, type TemplateName } from './scaffold.ts';
 
 // The scaffolder's user interface writes to stdout/stderr directly (stderr for errors,
 // so stdout stays pipe-clean). The runtime logger records are telemetry; none of this is.
@@ -54,16 +54,28 @@ const VERSION = ((): string =>
 
 const USAGE = `create-azeroth ${ VERSION }
 
-Usage: npm create azeroth@latest [name] [-- --template <frontend|backend|fullstack>]
+Usage: npm create azeroth@latest [name] [-- --template <frontend|backend|fullstack>] [--router] [--tailwind]
 
-Scaffolds an AzerothJS app. With no arguments it asks two questions; with both
-answers given it asks nothing (CI-safe).`;
+Scaffolds an AzerothJS app. With no arguments it asks a few questions; with the
+name and template given it asks nothing (CI-safe) and options come only from flags.
+
+Options per template:
+  frontend   --router     the framework's own client-side router (no extra dependency)
+             --tailwind   Tailwind v4 via @tailwindcss/vite
+  fullstack  --tailwind   Tailwind v4 in the application half
+  backend    (none)`;
 
 const TEMPLATE_HINTS: Record<TemplateName, string> =
 {
     frontend: 'a vite app in .azeroth components',
     backend: 'an @azerothjs/http server, no build step',
     fullstack: 'application/ + server/, one dev command'
+};
+
+const OPTION_HINTS: Record<OptionName, string> =
+{
+    router: 'pages + nav with the built-in router, zero extra dependencies',
+    tailwind: 'Tailwind v4 utilities over the starter design tokens'
 };
 
 async function main(): Promise<number>
@@ -75,6 +87,8 @@ async function main(): Promise<number>
             args: process.argv.slice(2),
             options: {
                 template: { type: 'string', short: 't' },
+                router: { type: 'boolean', default: false },
+                tailwind: { type: 'boolean', default: false },
                 help: { type: 'boolean', short: 'h', default: false },
                 version: { type: 'boolean', short: 'v', default: false }
             },
@@ -144,11 +158,47 @@ async function main(): Promise<number>
         return 2;
     }
 
+    // Options: flags always count; a flag for another shape is an error, not a shrug.
+    // Interactive runs are asked one yes/no per option the shape offers and the flags
+    // did not already answer; non-interactive runs (CI) take exactly what the flags say.
+    const flagged = (['router', 'tailwind'] as const).filter((option) => parsed.values[option]);
+    for (const option of flagged)
+    {
+        if (!TEMPLATE_OPTIONS[template].includes(option))
+        {
+            fail(`--${ option } is not an option for the ${ template } template`);
+            return 2;
+        }
+    }
+    const options: OptionName[] = [...flagged];
+    if (interactive)
+    {
+        for (const option of TEMPLATE_OPTIONS[template])
+        {
+            if (options.includes(option))
+            {
+                continue;
+            }
+            const answer = await select(`Add ${ option }?`, [
+                { value: 'no', hint: 'skip - add it later by scaffolding fresh' },
+                { value: 'yes', hint: OPTION_HINTS[option] }
+            ]);
+            if (answer === null)
+            {
+                return 2; // cancelled - the prompt already said so
+            }
+            if (answer === 'yes')
+            {
+                options.push(option);
+            }
+        }
+    }
+
     const target = resolve(process.cwd(), name);
     const templatesRoot = fileURLToPath(new URL('../templates', import.meta.url));
     try
     {
-        scaffold(templatesRoot, template, target, basename(target), `^${ VERSION }`);
+        scaffold(templatesRoot, template, target, basename(target), `^${ VERSION }`, options);
     }
     catch (error)
     {
@@ -156,8 +206,10 @@ async function main(): Promise<number>
         return 2;
     }
 
+    const shape = template === 'fullstack' ? `${ template }: application/ + server/` : template;
+    const chosen = options.length > 0 ? ` + ${ options.join(' + ') }` : '';
     outro(
-        `Scaffolded ${ name } (${ template }${ template === 'fullstack' ? ': application/ + server/' : '' })`,
+        `Scaffolded ${ name } (${ shape }${ chosen })`,
         [`cd ${ name }`, 'npm install', 'npm run dev']
     );
     return 0;

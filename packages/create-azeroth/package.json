@@ -19,7 +19,8 @@
     },
     "files": [
         "dist",
-        "templates"
+        "templates",
+        "overlays"
     ],
     "dependencies": {
         "@azerothjs/logger": "^1.0.0"

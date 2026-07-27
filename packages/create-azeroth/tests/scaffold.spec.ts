@@ -7,7 +7,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,8 +42,8 @@ describe('the copy engine', () =>
         expect(pkg.dependencies['azerothjs']).toBe('^1.2.3');
         expect(existsSync(join(dir, '.gitignore'))).toBe(true);
         expect(existsSync(join(dir, '_gitignore'))).toBe(false);
-        expect(existsSync(join(dir, 'eslint.config.js'))).toBe(true);
-        expect(existsSync(join(dir, '_eslint.config.js'))).toBe(false);
+        expect(existsSync(join(dir, 'eslint.config.ts'))).toBe(true);
+        expect(existsSync(join(dir, '_eslint.config.ts'))).toBe(false);
         expect(readFileSync(join(dir, 'index.html'), 'utf8')).toContain('<title>my-app</title>');
     });
 
@@ -54,6 +54,99 @@ describe('the copy engine', () =>
         expect(() => scaffold(TEMPLATES_ROOT, 'backend', dir, 'x', '^1.0.0')).toThrow(/never overwrites/);
         writeFileSync(join(dir, 'extra.txt'), '');
         expect(isEmptyTarget(dir)).toBe(false);
+    });
+});
+
+describe('options: overlays compose over the base', () =>
+{
+    /** Every file under `dir`, relative, with its content - for placeholder/alias sweeps. */
+    function walk(dir: string, prefix = ''): Array<{ path: string; text: string }>
+    {
+        return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+            entry.isDirectory()
+                ? walk(join(dir, entry.name), `${ prefix }${ entry.name }/`)
+                : [{ path: `${ prefix }${ entry.name }`, text: readFileSync(join(dir, entry.name), 'utf8') }]);
+    }
+
+    it('frontend --router: table + pages + shell, zero new dependencies', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'frontend', dir, 'routed', '^1.0.0', ['router']);
+        expect(existsSync(join(dir, 'src/routes.ts'))).toBe(true);
+        expect(existsSync(join(dir, 'src/pages/home.azeroth'))).toBe(true);
+        expect(existsSync(join(dir, 'src/pages/about.azeroth'))).toBe(true);
+        expect(readFileSync(join(dir, 'src/App.azeroth'), 'utf8')).toContain('RouterProvider');
+        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> };
+        expect(pkg.devDependencies['tailwindcss']).toBeUndefined();
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Router');
+        expect(detectProject(dir).kind).toBe('frontend');
+    });
+
+    it('frontend --tailwind: plugin wired, deps merged sorted, tokens exposed', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'frontend', dir, 'styled', '^1.0.0', ['tailwind']);
+        expect(readFileSync(join(dir, 'src/styles.css'), 'utf8')).toContain("@import 'tailwindcss'");
+        expect(readFileSync(join(dir, 'vite.config.ts'), 'utf8')).toContain('tailwindcss()');
+        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> };
+        expect(pkg.devDependencies['tailwindcss']).toBe('^4.0.0');
+        expect(pkg.devDependencies['@tailwindcss/vite']).toBe('^4.0.0');
+        expect(Object.keys(pkg.devDependencies)).toEqual([...Object.keys(pkg.devDependencies)].sort((a, b) => a.localeCompare(b)));
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Tailwind CSS');
+        expect(detectProject(dir).kind).toBe('frontend');
+    });
+
+    it('frontend --router --tailwind: the combined overlay wins the shared files', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'frontend', dir, 'both', '^1.0.0', ['router', 'tailwind']);
+        const app = readFileSync(join(dir, 'src/App.azeroth'), 'utf8');
+        expect(app).toContain('RouterProvider');
+        expect(app).toContain('animate-rise');
+        expect(readFileSync(join(dir, 'src/pages/home.azeroth'), 'utf8')).toContain('bg-panel');
+        expect(readFileSync(join(dir, 'src/styles.css'), 'utf8')).toContain("@import 'tailwindcss'");
+        const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+        expect(readme).toContain('## Router');
+        expect(readme).toContain('## Tailwind CSS');
+        expect(detectProject(dir).kind).toBe('frontend');
+    });
+
+    it('fullstack --tailwind: the application half is styled, the SSR seam intact', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'full-styled', '^1.0.0', ['tailwind']);
+        expect(readFileSync(join(dir, 'application/src/styles.css'), 'utf8')).toContain("@import 'tailwindcss'");
+        expect(readFileSync(join(dir, 'application/src/App.azeroth'), 'utf8')).toContain('handoff');
+        expect(readFileSync(join(dir, 'application/vite.config.ts'), 'utf8')).toContain("'/api': 'http://localhost:3000'");
+        const pkg = JSON.parse(readFileSync(join(dir, 'application/package.json'), 'utf8')) as { devDependencies: Record<string, string> };
+        expect(pkg.devDependencies['@tailwindcss/vite']).toBe('^4.0.0');
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Tailwind CSS');
+        expect(detectProject(dir).kind).toBe('fullstack');
+    });
+
+    it('an option outside its shape is refused', () =>
+    {
+        expect(() => scaffold(TEMPLATES_ROOT, 'backend', target(), 'x', '^1.0.0', ['router']))
+            .toThrow(/--router is not an option/);
+        expect(() => scaffold(TEMPLATES_ROOT, 'backend', target(), 'x', '^1.0.0', ['tailwind']))
+            .toThrow(/--tailwind is not an option/);
+    });
+
+    it('no combination leaks a placeholder, a manifest file, or an underscore alias', () =>
+    {
+        const combos: Array<['frontend' | 'fullstack', Array<'router' | 'tailwind'>]> =
+            [['frontend', ['router']], ['frontend', ['tailwind']], ['frontend', ['router', 'tailwind']], ['fullstack', ['tailwind']]];
+        for (const [template, options] of combos)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, template, dir, 'swept', '^1.0.0', options);
+            for (const file of walk(dir))
+            {
+                expect(file.text, file.path).not.toContain('{{name}}');
+                expect(file.text, file.path).not.toContain('{{version}}');
+                expect(file.path).not.toMatch(/(^|\/)_/);
+            }
+        }
     });
 });
 
@@ -119,7 +212,7 @@ describe('production shape: the hour-three files are already waiting', () =>
     {
         const dir = target();
         scaffold(TEMPLATES_ROOT, 'frontend', dir, 'prod', '^1.0.0');
-        for (const file of ['tests/app.spec.ts', 'public/favicon.svg', 'README.md', 'vite.config.ts'])
+        for (const file of ['tests/app.spec.ts', 'public/favicon-32.png', 'README.md', 'vite.config.ts'])
         {
             expect(existsSync(join(dir, file)), file).toBe(true);
         }
@@ -129,7 +222,7 @@ describe('production shape: the hour-three files are already waiting', () =>
     {
         const dir = target();
         scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'prod', '^1.0.0');
-        for (const file of ['.github/workflows/ci.yml', 'README.md', 'server/Dockerfile', 'server/.env.example', 'server/tests/app.spec.ts', 'application/tests/app.spec.ts', 'application/public/favicon.svg', 'application/src/routes.ts', 'application/src/entry.server.ts'])
+        for (const file of ['.github/workflows/ci.yml', 'README.md', 'server/Dockerfile', 'server/.env.example', 'server/tests/app.spec.ts', 'application/tests/app.spec.ts', 'application/public/favicon-32.png', 'application/src/routes.ts', 'application/src/entry.server.ts'])
         {
             expect(existsSync(join(dir, file)), file).toBe(true);
         }
@@ -184,7 +277,7 @@ describe('production shape: the hour-three files are already waiting', () =>
         const jsonStart = raw.indexOf('[');
         const [report] = (jsonStart >= 0 ? JSON.parse(raw.slice(jsonStart)) : []) as Array<{ files: Array<{ path: string }> }>;
         const shipped = new Set((report?.files ?? []).map((file) => file.path.replaceAll('\\', '/')));
-        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/frontend/public/favicon.svg'])
+        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/frontend/public/favicon-32.png', 'overlays/frontend/router/src/routes.ts', 'overlays/fullstack/tailwind/application/_package.merge.json'])
         {
             expect(shipped.has(mustShip), mustShip).toBe(true);
         }

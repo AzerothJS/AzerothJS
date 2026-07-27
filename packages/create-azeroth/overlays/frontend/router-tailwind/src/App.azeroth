@@ -1,0 +1,28 @@
+// The shell: one router over the ONE route table (src/routes.ts). `<Link>` swaps
+// pages client-side - no reload, the URL updates, back/forward work. The optional
+// `url` prop pins a memory history so tests render a specific route; the browser
+// omits it and the router reads the address bar. Styling is Tailwind utilities
+// over the tokens in src/styles.css.
+import { RouterProvider, Routes, Link, createRouter, createMemoryHistory } from 'azerothjs';
+import { routes } from './routes.ts';
+
+export default component App(props: { url?: string })
+{
+    const router = createRouter({
+        routes,
+        history: props.url !== undefined ? createMemoryHistory(props.url) : undefined
+    });
+
+    <RouterProvider router={ router }>
+        <div class="app max-w-2xl mx-auto px-6 pb-16 pt-6">
+            <nav class="flex items-baseline gap-5 pb-4 mb-10 border-b border-line">
+                <span class="font-mono text-[0.85rem] tracking-[0.04em] text-ice mr-auto">&#9650; {{name}}</span>
+                <Link class="text-[0.95rem] text-faint no-underline pb-1 border-b-2 border-transparent hover:text-ink [&.active]:text-ink [&.active]:border-ice" to="/" activeClass="active" end>Home</Link>
+                <Link class="text-[0.95rem] text-faint no-underline pb-1 border-b-2 border-transparent hover:text-ink [&.active]:text-ink [&.active]:border-ice" to="/about" activeClass="active">About</Link>
+            </nav>
+            <main class="motion-safe:animate-rise">
+                <Routes fallback={ () => <h1>Not found</h1> } />
+            </main>
+        </div>
+    </RouterProvider>
+}

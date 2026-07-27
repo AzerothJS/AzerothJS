@@ -1,0 +1,49 @@
+// Your root component. `state` declares a signal; each `derived` recomputes from
+// it; the markup compiles to direct DOM updates. The cells below are this
+// component's real reactive graph - click the state cell and only the three value
+// text nodes change. Styling is Tailwind utilities over the tokens in
+// src/styles.css; the `cell`/`is-state` marker classes are hooks for tests.
+export default component App()
+{
+    state count = 0;
+    derived parity = count % 2 === 0 ? 'even' : 'odd';
+    derived doubled = count * 2;
+
+    <main class="app max-w-2xl mx-auto px-6 pb-16 pt-[clamp(3rem,12vh,7rem)] motion-safe:animate-rise">
+        <p class="font-mono text-[0.8rem] tracking-[0.08em] text-ice mb-3">&#9650; azerothjs</p>
+        <h1 class="font-mono font-semibold tracking-tight text-[clamp(1.8rem,5vw,2.4rem)] mb-3">{{name}}</h1>
+        <p class="text-faint leading-relaxed mb-10">
+            Fine-grained reactivity, compiled. Click the state cell: the update
+            walks the graph below and lands on exact DOM nodes - no virtual DOM,
+            no re-render.
+        </p>
+
+        <div class="grid grid-cols-[auto_auto_auto] justify-start items-center gap-3 max-sm:grid-cols-1">
+            <button
+                class="cell is-state row-span-2 col-start-1 max-sm:row-span-1 max-sm:col-auto flex flex-col gap-1.5 px-4 py-3 border border-line rounded-lg bg-panel text-left cursor-pointer transition hover:border-ice active:scale-[0.98]"
+                onClick={ () => count += 1 }
+            >
+                <span class="font-mono text-[0.7rem] tracking-[0.06em] text-ice">state</span>
+                <code class="font-mono text-[0.95rem]">count = { count }</code>
+            </button>
+            <span class="font-mono text-faint select-none max-sm:hidden" aria-hidden="true">-&gt;</span>
+            <div class="cell flex flex-col gap-1.5 px-4 py-3 border border-line rounded-lg bg-panel">
+                <span class="font-mono text-[0.7rem] tracking-[0.06em] text-ice">derived</span>
+                <code class="font-mono text-[0.95rem]">parity = { parity }</code>
+            </div>
+            <span class="font-mono text-faint select-none max-sm:hidden" aria-hidden="true">-&gt;</span>
+            <div class="cell flex flex-col gap-1.5 px-4 py-3 border border-line rounded-lg bg-panel">
+                <span class="font-mono text-[0.7rem] tracking-[0.06em] text-ice">derived</span>
+                <code class="font-mono text-[0.95rem]">doubled = { doubled }</code>
+            </div>
+        </div>
+        <p class="font-mono text-[0.8rem] text-faint mt-5 mb-12">src/App.azeroth owns everything above - edit it and save.</p>
+
+        <ul class="pt-4 border-t border-line">
+            <li class="flex items-baseline gap-4 py-1.5"><code class="font-mono text-[0.85rem] min-w-[9.5rem]">npm test</code><span class="text-faint text-[0.9rem]">component tests over real DOM</span></li>
+            <li class="flex items-baseline gap-4 py-1.5"><code class="font-mono text-[0.85rem] min-w-[9.5rem]">npm run check</code><span class="text-faint text-[0.9rem]">typecheck + lint every component</span></li>
+            <li class="flex items-baseline gap-4 py-1.5"><code class="font-mono text-[0.85rem] min-w-[9.5rem]">npm run build</code><span class="text-faint text-[0.9rem]">static dist/ for any host</span></li>
+            <li class="flex items-baseline gap-4 py-1.5"><a class="font-mono text-[0.85rem] text-ice hover:underline" href="https://github.com/AzerothJS/AzerothJS">docs and examples</a></li>
+        </ul>
+    </main>
+}

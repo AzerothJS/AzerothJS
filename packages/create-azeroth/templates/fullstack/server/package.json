@@ -7,6 +7,7 @@
         "node": ">=22"
     },
     "scripts": {
+        "check": "azeroth check",
         "test": "vitest run",
         "start": "node src/main.ts"
     },
@@ -17,8 +18,15 @@
         "@azerothjs/schema": "{{version}}"
     },
     "devDependencies": {
+        "@azerothjs/cli": "{{version}}",
+        "@azerothjs/eslint-plugin": "{{version}}",
+        "@eslint/js": "^10.0.1",
         "@types/node": "^24.0.0",
+        "eslint": "^10.7.0",
+        "globals": "^17.7.0",
+        "jiti": "^2.7.0",
         "typescript": "~6.0.2",
+        "typescript-eslint": "^8.63.0",
         "vitest": "^4.0.0"
     }
 }

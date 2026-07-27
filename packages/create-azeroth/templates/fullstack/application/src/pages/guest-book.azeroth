@@ -9,29 +9,52 @@ import { entryInput, type Entry } from '../../../server/src/contract.ts';
 export default component GuestBook()
 {
     state entries: Entry[] = [];
-    state loaded = false;
+    state phase: 'loading' | 'ready' | 'failed' = 'loading';
+
+    const load = async (): Promise<void> =>
+    {
+        phase = 'loading';
+        try
+        {
+            entries = await client.guestbook.list();
+            phase = 'ready';
+        }
+        catch
+        {
+            phase = 'failed';
+        }
+    };
 
     mount
     {
-        void client.guestbook.list().then((list) =>
-        {
-            entries = list;
-            loaded = true;
-        });
+        void load();
     }
 
-    form sign = { name: '', message: '' } with {
+    form sign = { name: '', message: '' } with
+    {
         schema: entryInput,
         onSubmit: async (values) =>
         {
-            const created = await client.guestbook.sign({ input: values });
-            entries = [created, ...entries];
-            sign.reset();
+            try
+            {
+                const created = await client.guestbook.sign({ input: values });
+                entries = [created, ...entries];
+                sign.reset();
+            }
+            catch
+            {
+                sign.setError('message', 'Could not reach the server - try again.');
+            }
         }
     };
 
     <section class="page">
         <h1>Guest book</h1>
+        <p class="claim">
+            One schema validates this form, the typed client call, and the server
+            boundary. Submit with a short name to watch the same rule answer from
+            the browser first.
+        </p>
         <form onSubmit={ sign.handleSubmit }>
             <label>
                 Name
@@ -47,8 +70,24 @@ export default component GuestBook()
                     <small class="error">{ sign.errors().message }</small>
                 </Show>
             </label>
-            <button type="submit" disabled={ sign.submitting() }>Sign</button>
+            <button type="submit" disabled={ sign.submitting() }>
+                { sign.submitting() ? 'Signing...' : 'Sign' }
+            </button>
         </form>
+        <Switch>
+            <Match when={ phase === 'loading' }>
+                <p class="muted">Loading entries...</p>
+            </Match>
+            <Match when={ phase === 'failed' }>
+                <p class="error">
+                    Could not load entries.
+                    <button class="retry" onClick={ () => void load() }>Retry</button>
+                </p>
+            </Match>
+            <Match when={ entries.length === 0 }>
+                <p class="muted">No entries yet - be the first.</p>
+            </Match>
+        </Switch>
         <ul class="entries">
             <For each={ entries } key={ (item) => item.id }>
                 { (item) =>
@@ -59,8 +98,5 @@ export default component GuestBook()
                 }
             </For>
         </ul>
-        <Show when={ loaded && entries.length === 0 }>
-            <p class="muted">No entries yet - be the first.</p>
-        </Show>
     </section>
 }

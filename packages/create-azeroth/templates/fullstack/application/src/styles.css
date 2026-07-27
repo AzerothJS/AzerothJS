@@ -1,103 +1,316 @@
-:root {
+/* The starter's design tokens. One accent (the framework's ice blue), paired
+   backgrounds via light-dark(), and a monospace display voice - the audience is
+   a developer, so the terminal is the typography. */
+:root
+{
     color-scheme: light dark;
+    --bg: light-dark(#f6f8fa, #0b1118);
+    --panel: light-dark(#ffffff, #111a25);
+    --ink: light-dark(#1c2733, #dce6f2);
+    --ice: light-dark(#1f6fa8, #5fb3e8);
+    --danger: light-dark(#b4231f, #ef8a86);
+    --line: color-mix(in srgb, var(--ink) 16%, transparent);
+    --faint: color-mix(in srgb, var(--ink) 62%, transparent);
+    --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
     font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--ink);
 }
 
-body {
+body
+{
     margin: 0;
     min-height: 100vh;
 }
 
-.app {
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 1.5rem;
+:focus-visible
+{
+    outline: 2px solid var(--ice);
+    outline-offset: 2px;
 }
 
-.app nav {
+.app
+{
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 4rem;
+}
+
+.app nav
+{
     display: flex;
-    gap: 1rem;
+    align-items: baseline;
+    gap: 1.25rem;
+    padding-bottom: 1rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.app nav .brand
+{
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    color: var(--ice);
+    margin-right: auto;
+}
+
+.app nav a
+{
+    font-size: 0.95rem;
+    color: var(--faint);
+    text-decoration: none;
+    padding-bottom: 0.2rem;
+    border-bottom: 2px solid transparent;
+}
+
+.app nav a:hover
+{
+    color: var(--ink);
+}
+
+.app nav a.active
+{
+    color: var(--ink);
+    border-bottom-color: var(--ice);
+}
+
+@media (prefers-reduced-motion: no-preference)
+{
+    .app main
+    {
+        animation: rise 300ms ease-out both;
+    }
+
+    @keyframes rise
+    {
+        from
+        {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+    }
+}
+
+.page h1
+{
+    font-family: var(--mono);
+    font-size: clamp(1.6rem, 5vw, 2.1rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.75rem;
+}
+
+.claim
+{
+    color: var(--faint);
+    line-height: 1.6;
+    margin: 0 0 2rem;
+}
+
+.claim a
+{
+    color: var(--ice);
+}
+
+/* The signal strip: the component's reactive graph as its hero - the state cell
+   is the button, the derived cell recomputes from the same click. */
+.signals
+{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     margin-bottom: 2rem;
 }
 
-.app nav a {
-    color: inherit;
-    text-decoration: none;
-    opacity: 0.7;
-    padding-bottom: 0.2rem;
-}
-
-.app nav a.active {
-    opacity: 1;
-    border-bottom: 2px solid currentColor;
-}
-
-.page .row {
+.cell
+{
     display: flex;
-    gap: 0.75rem;
-    margin: 1rem 0;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--panel);
+    font: inherit;
+    color: inherit;
+    text-align: left;
 }
 
-.page form label {
+button.cell
+{
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease;
+}
+
+button.cell:hover
+{
+    border-color: var(--ice);
+}
+
+button.cell:active
+{
+    transform: scale(0.98);
+}
+
+.cell .keyword
+{
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    color: var(--ice);
+}
+
+.cell code
+{
+    font-family: var(--mono);
+    font-size: 0.95rem;
+}
+
+.flow
+{
+    font-family: var(--mono);
+    color: var(--faint);
+    user-select: none;
+}
+
+/* The API card: one request, honest states. */
+.api
+{
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--panel);
+    padding: 1rem;
+}
+
+.api-head
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.api-head code
+{
+    font-family: var(--mono);
+    font-size: 0.9rem;
+}
+
+.api p
+{
+    margin: 0.75rem 0 0;
+    font-size: 0.9rem;
+}
+
+.ok
+{
+    font-family: var(--mono);
+    color: var(--ice);
+}
+
+.page form
+{
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--panel);
+    padding: 1.25rem;
+    margin-bottom: 2rem;
+}
+
+.page form label
+{
     display: block;
-    margin-bottom: 0.9rem;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
 }
 
-.page form input {
+.page form input
+{
     display: block;
     width: 100%;
     box-sizing: border-box;
     font: inherit;
-    margin-top: 0.25rem;
+    margin-top: 0.3rem;
     padding: 0.5rem 0.7rem;
-    border-radius: 0.5rem;
-    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-    background: transparent;
+    border-radius: 0.4rem;
+    border: 1px solid var(--line);
+    background: var(--bg);
     color: inherit;
 }
 
-.page .error {
-    display: block;
-    color: #d66;
-    margin-top: 0.25rem;
+.page form input:hover
+{
+    border-color: color-mix(in srgb, var(--ink) 30%, transparent);
 }
 
-.entries {
-    list-style: none;
-    padding: 0;
-}
-
-.entries li {
-    display: flex;
-    gap: 0.6rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.muted {
-    opacity: 0.6;
-}
-
-.app h1 {
-    font-size: 2.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.app p {
-    opacity: 0.75;
-    margin-bottom: 2rem;
-}
-
-.app button {
+.page button:not(.cell)
+{
     font: inherit;
-    padding: 0.6rem 1.4rem;
-    border-radius: 0.5rem;
-    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-    background: color-mix(in srgb, currentColor 8%, transparent);
+    font-size: 0.9rem;
+    padding: 0.5rem 1.2rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--ice);
+    background: color-mix(in srgb, var(--ice) 12%, transparent);
     color: inherit;
     cursor: pointer;
+    transition: background 120ms ease;
 }
 
-.app button:hover {
-    background: color-mix(in srgb, currentColor 14%, transparent);
+.page button:not(.cell):hover:enabled
+{
+    background: color-mix(in srgb, var(--ice) 22%, transparent);
+}
+
+.page button:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+.retry
+{
+    margin-left: 0.5rem;
+}
+
+.error
+{
+    display: block;
+    color: var(--danger);
+    margin-top: 0.3rem;
+    font-size: 0.85rem;
+}
+
+.muted
+{
+    color: var(--faint);
+}
+
+.entries
+{
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+}
+
+.entries li
+{
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.entries strong
+{
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.entries span
+{
+    color: var(--faint);
 }

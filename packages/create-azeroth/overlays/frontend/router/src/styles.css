@@ -1,0 +1,245 @@
+/* The starter's design tokens. One accent (the framework's ice blue), paired
+   backgrounds via light-dark(), and a monospace display voice - the audience is
+   a developer, so the terminal is the typography. */
+:root
+{
+    color-scheme: light dark;
+    --bg: light-dark(#f6f8fa, #0b1118);
+    --panel: light-dark(#ffffff, #111a25);
+    --ink: light-dark(#1c2733, #dce6f2);
+    --ice: light-dark(#1f6fa8, #5fb3e8);
+    --line: color-mix(in srgb, var(--ink) 16%, transparent);
+    --faint: color-mix(in srgb, var(--ink) 62%, transparent);
+    --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+}
+
+body
+{
+    margin: 0;
+    min-height: 100vh;
+}
+
+:focus-visible
+{
+    outline: 2px solid var(--ice);
+    outline-offset: 2px;
+}
+
+.app
+{
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 4rem;
+}
+
+.app nav
+{
+    display: flex;
+    align-items: baseline;
+    gap: 1.25rem;
+    padding-bottom: 1rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.app nav .brand
+{
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    color: var(--ice);
+    margin-right: auto;
+}
+
+.app nav a
+{
+    font-size: 0.95rem;
+    color: var(--faint);
+    text-decoration: none;
+    padding-bottom: 0.2rem;
+    border-bottom: 2px solid transparent;
+}
+
+.app nav a:hover
+{
+    color: var(--ink);
+}
+
+.app nav a.active
+{
+    color: var(--ink);
+    border-bottom-color: var(--ice);
+}
+
+@media (prefers-reduced-motion: no-preference)
+{
+    .app main
+    {
+        animation: rise 300ms ease-out both;
+    }
+
+    @keyframes rise
+    {
+        from
+        {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+    }
+}
+
+.page h1
+{
+    font-family: var(--mono);
+    font-size: clamp(1.6rem, 5vw, 2.1rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.75rem;
+}
+
+.claim
+{
+    color: var(--faint);
+    line-height: 1.6;
+    margin: 0 0 2rem;
+}
+
+/* The signal strip: the home component's reactive graph, laid out as the fan-out
+   it is - both derived cells read `count`, so both arrows leave the state cell. */
+.signals
+{
+    display: grid;
+    grid-template-columns: auto auto auto;
+    justify-content: start;
+    align-items: center;
+    column-gap: 0.75rem;
+    row-gap: 0.75rem;
+}
+
+.signals .is-state
+{
+    grid-row: 1 / 3;
+    grid-column: 1;
+}
+
+.cell
+{
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--panel);
+    font: inherit;
+    color: inherit;
+    text-align: left;
+}
+
+button.cell
+{
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease;
+}
+
+button.cell:hover
+{
+    border-color: var(--ice);
+}
+
+button.cell:active
+{
+    transform: scale(0.98);
+}
+
+.cell .keyword
+{
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    color: var(--ice);
+}
+
+.cell code
+{
+    font-family: var(--mono);
+    font-size: 0.95rem;
+}
+
+.flow
+{
+    font-family: var(--mono);
+    color: var(--faint);
+    user-select: none;
+}
+
+.hint
+{
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--faint);
+    margin: 1.25rem 0 1rem;
+}
+
+.next
+{
+    list-style: none;
+    margin: 0 0 1.5rem;
+    padding: 1rem 0 0;
+    border-top: 1px solid var(--line);
+}
+
+.next li
+{
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.4rem 0;
+}
+
+.next code
+{
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    min-width: 9.5rem;
+}
+
+.next span
+{
+    color: var(--faint);
+    font-size: 0.9rem;
+}
+
+.next a
+{
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--ice);
+    text-decoration: none;
+}
+
+.next a:hover
+{
+    text-decoration: underline;
+}
+
+@media (max-width: 480px)
+{
+    .signals
+    {
+        grid-template-columns: 1fr;
+    }
+
+    .signals .is-state
+    {
+        grid-row: auto;
+    }
+
+    .flow
+    {
+        display: none;
+    }
+}

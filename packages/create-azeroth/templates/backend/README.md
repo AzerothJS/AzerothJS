@@ -13,7 +13,7 @@ Node >= 22 runs the TypeScript source directly.
 | --- | --- |
 | `npm run dev` | `node --watch` via the azeroth CLI - restarts on save |
 | `npm test` | integration tests via `app.handle(new Request(...))` - no server needed |
-| `npm run check` | typecheck (`tsc --noEmit`) |
+| `npm run check` | typecheck (`tsc --noEmit`) + eslint |
 | `npm run build` | nothing, on purpose - the source IS the artifact |
 | `npm start` | production: `node src/main.ts` |
 

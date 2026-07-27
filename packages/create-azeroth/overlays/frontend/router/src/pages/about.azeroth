@@ -1,0 +1,25 @@
+// The second route - it exists to prove the router: the nav swap that brought
+// you here changed the URL without a reload. Routing is three pieces, all in
+// this folder's parent.
+export default component About()
+{
+    <section class="page">
+        <h1>About</h1>
+        <p class="claim">
+            You navigated here client-side: the URL changed, nothing reloaded,
+            and back/forward work. Routing is three pieces:
+        </p>
+        <ul class="next">
+            <li><code>src/routes.ts</code><span>the route table - one row per page</span></li>
+            <li><code>src/pages/</code><span>one component per route</span></li>
+            <li><code>src/App.azeroth</code><span>the shell: nav links + the route outlet</span></li>
+        </ul>
+        <p class="hint">Next steps from here:</p>
+        <ul class="next">
+            <li><code>npm test</code><span>component tests over real DOM</span></li>
+            <li><code>npm run check</code><span>typecheck + lint every component</span></li>
+            <li><code>npm run build</code><span>static dist/ for any host</span></li>
+            <li><a href="https://github.com/AzerothJS/AzerothJS">docs and examples</a></li>
+        </ul>
+    </section>
+}

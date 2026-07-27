@@ -13,21 +13,18 @@ export function buildApp(options: { dev: boolean; observe?: RequestObserver }): 
     // serializeError shapes EVERY error (route-miss 404s included) into one house
     // envelope instead of the default { error: { code, message } }. Delete it to keep
     // the default.
-    const app = new App(
-        {
-            dev: options.dev,
-            observe: options.observe,
-            serializeError: ({ error, expose }: ErrorSerializerContext) => (
-                {
-                    ok: false,
-                    error:
-                        {
-                            code: error.code,
-                            message: expose ? error.message : 'Something went wrong',
-                            fields: (error.details as { fields?: Record<string, string> } | undefined)?.fields
-                        }
-                })
-        });
+    const app = new App({
+        dev: options.dev,
+        observe: options.observe,
+        serializeError: ({ error, expose }: ErrorSerializerContext) => ({
+            ok: false,
+            error: {
+                code: error.code,
+                message: expose ? error.message : 'Something went wrong',
+                fields: (error.details as { fields?: Record<string, string> } | undefined)?.fields
+            }
+        })
+    });
 
     // The orchestrator probe: cheap, dependency-free, always 200 when the process lives.
     app.get('/healthz', () => json({ ok: true }));

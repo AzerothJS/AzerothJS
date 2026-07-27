@@ -1,0 +1,102 @@
+// The contract page: the SAME schema (server/src/contract.ts) validates the form
+// in the browser, the typed client call before the wire, and the server boundary -
+// one declaration, three enforcement points. `mount { }` loads the list once the
+// page is connected; the `form` keyword owns fields, errors, and the submit
+// lifecycle.
+import { client } from '../api.ts';
+import { entryInput, type Entry } from '../../../server/src/contract.ts';
+
+export default component GuestBook()
+{
+    state entries: Entry[] = [];
+    state phase: 'loading' | 'ready' | 'failed' = 'loading';
+
+    const load = async (): Promise<void> =>
+    {
+        phase = 'loading';
+        try
+        {
+            entries = await client.guestbook.list();
+            phase = 'ready';
+        }
+        catch
+        {
+            phase = 'failed';
+        }
+    };
+
+    mount
+    {
+        void load();
+    }
+
+    form sign = { name: '', message: '' } with
+    {
+        schema: entryInput,
+        onSubmit: async (values) =>
+        {
+            try
+            {
+                const created = await client.guestbook.sign({ input: values });
+                entries = [created, ...entries];
+                sign.reset();
+            }
+            catch
+            {
+                sign.setError('message', 'Could not reach the server - try again.');
+            }
+        }
+    };
+
+    <section class="page">
+        <h1 class="font-mono font-semibold tracking-tight text-[clamp(1.6rem,5vw,2.1rem)] mb-3">Guest book</h1>
+        <p class="text-faint leading-relaxed mb-8">
+            One schema validates this form, the typed client call, and the server
+            boundary. Submit with a short name to watch the same rule answer from
+            the browser first.
+        </p>
+        <form class="border border-line rounded-lg bg-panel p-5 mb-8" onSubmit={ sign.handleSubmit }>
+            <label class="block text-[0.9rem] mb-4">
+                Name
+                <input class="block w-full box-border font-[inherit] mt-1.5 px-3 py-2 rounded-md border border-line bg-bg text-inherit hover:border-ink/30" bind:value={ sign.name } placeholder="Jaina" />
+                <Show when={ sign.touched().name && sign.errors().name }>
+                    <small class="block text-danger text-[0.85rem] mt-1.5">{ sign.errors().name }</small>
+                </Show>
+            </label>
+            <label class="block text-[0.9rem] mb-4">
+                Message
+                <input class="block w-full box-border font-[inherit] mt-1.5 px-3 py-2 rounded-md border border-line bg-bg text-inherit hover:border-ink/30" bind:value={ sign.message } placeholder="Well met!" />
+                <Show when={ sign.touched().message && sign.errors().message }>
+                    <small class="block text-danger text-[0.85rem] mt-1.5">{ sign.errors().message }</small>
+                </Show>
+            </label>
+            <button class="text-[0.9rem] px-5 py-2 rounded-md border border-ice bg-ice/12 cursor-pointer transition hover:enabled:bg-ice/22 disabled:opacity-60 disabled:cursor-default" type="submit" disabled={ sign.submitting() }>
+                { sign.submitting() ? 'Signing...' : 'Sign' }
+            </button>
+        </form>
+        <Switch>
+            <Match when={ phase === 'loading' }>
+                <p class="text-faint">Loading entries...</p>
+            </Match>
+            <Match when={ phase === 'failed' }>
+                <p class="text-danger">
+                    Could not load entries.
+                    <button class="ml-2 text-[0.9rem] px-3 py-1 rounded-md border border-ice bg-ice/12 cursor-pointer hover:bg-ice/22" onClick={ () => void load() }>Retry</button>
+                </p>
+            </Match>
+            <Match when={ entries.length === 0 }>
+                <p class="text-faint">No entries yet - be the first.</p>
+            </Match>
+        </Switch>
+        <ul class="entries mt-4">
+            <For each={ entries } key={ (item) => item.id }>
+                { (item) =>
+                    <li class="flex items-baseline gap-3 py-2.5 border-b border-line">
+                        <strong class="font-mono text-[0.9rem] font-semibold">{ item.name }</strong>
+                        <span class="text-faint">{ item.message }</span>
+                    </li>
+                }
+            </For>
+        </ul>
+    </section>
+}

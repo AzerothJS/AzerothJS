@@ -24,7 +24,13 @@ components, compiled - no Virtual DOM, updates hit exact DOM nodes.
 | `src/main.azeroth` | Entry: `render(() => App(), ...)`. |
 | `src/App.azeroth` | Your root component - `state`, markup, and plain TypeScript in one file. |
 | `tests/` | `renderTest` component tests. |
-| `public/` | Static assets served as-is (replace `favicon.svg` with your own). |
+| `public/` | Static assets served as-is (replace the favicon PNGs with your own). |
+
+## Options
+
+This shape scaffolds with `--router` (pages + nav on the framework's own
+client-side router, no extra dependency) and/or `--tailwind` (Tailwind v4 via
+`@tailwindcss/vite`). An applied option documents itself in a section below.
 
 ## Deploy
 

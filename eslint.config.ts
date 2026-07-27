@@ -12,7 +12,7 @@ import { handlerCall } from './packages/eslint-plugin/src/rules/handler-call.ts'
 const typeAwareSrc = ['packages/**/*.ts'];
 const typeAwareTests = ['packages/*/tests/**/*.ts'];
 
-export default defineConfig([
+const config: ReturnType<typeof defineConfig> = defineConfig([
     globalIgnores([
         '**/dist/**',
         '**/node_modules/**',
@@ -25,9 +25,10 @@ export default defineConfig([
         // own job at test runtime, so they live outside every TS project (mirrors
         // the exclude in the package's tsconfig.build.json).
         'packages/typescript-plugin/tests/fixtures/**',
-        // Scaffolding templates reference dependencies that exist only in a
-        // scaffolded app (and carry {{placeholders}}) - they are data, not code.
-        'packages/create-azeroth/templates/**'
+        // Scaffolding templates and option overlays reference dependencies that exist
+        // only in a scaffolded app (and carry {{placeholders}}) - they are data, not code.
+        'packages/create-azeroth/templates/**',
+        'packages/create-azeroth/overlays/**'
     ]),
     tseslint.configs.recommended,
     {
@@ -199,3 +200,5 @@ export default defineConfig([
         }
     }
 ]);
+
+export default config;

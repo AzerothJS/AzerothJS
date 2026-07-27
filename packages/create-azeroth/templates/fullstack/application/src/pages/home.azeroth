@@ -6,30 +6,66 @@ export default component Home()
 {
     state count = 0;
     derived parity = count % 2 === 0 ? 'even' : 'odd';
-    state health = '';
+
+    state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
+    state latency = 0;
 
     const ping = async (): Promise<void> =>
     {
-        const response = await fetch('/api/healthz'); // proxied to server/ - see vite.config.ts
-        health = JSON.stringify(await response.json());
+        status = 'checking';
+        const started = performance.now();
+        try
+        {
+            const response = await fetch('/api/healthz'); // proxied to server/ in dev - see vite.config.ts
+            latency = Math.round(performance.now() - started);
+            status = response.ok ? 'up' : 'down';
+        }
+        catch
+        {
+            status = 'down';
+        }
     };
 
     <section class="page">
         <h1>{{name}}</h1>
-        <p>
-            application/ (vite) + server/ (@azerothjs/http) - one <code>npm run dev</code>
-            runs both. This page is server-rendered at build and hydrated in the browser;
-            the <a href="/guestbook">guest book</a> shows the typed API contract and the
-            <code>form</code> keyword.
+        <p class="claim">
+            application/ (compiled components on vite) + server/ (@azerothjs/http) -
+            one <code>npm run dev</code> runs both. This page was rendered at build
+            and hydrated live; the <a href="/guestbook">guest book</a> is SSR'd per
+            request through the shared typed contract.
         </p>
-        <div class="row">
-            <button onClick={ () => count += 1 }>
-                count is { count } ({ parity })
+
+        <div class="signals">
+            <button class="cell is-state" onClick={ () => count += 1 }>
+                <span class="keyword">state</span>
+                <code>count = { count }</code>
             </button>
-            <button onClick={ () => void ping() }>
-                ping the api
-            </button>
+            <span class="flow" aria-hidden="true">-&gt;</span>
+            <div class="cell">
+                <span class="keyword">derived</span>
+                <code>parity = { parity }</code>
+            </div>
         </div>
-        <p class="health">{ health }</p>
+
+        <div class="api">
+            <div class="api-head">
+                <code>GET /api/healthz</code>
+                <button onClick={ () => void ping() } disabled={ status === 'checking' }>Ping</button>
+            </div>
+            <Switch>
+                <Match when={ status === 'idle' }>
+                    <p class="muted">The server half answers under /api - proxied in dev, same origin in production.</p>
+                </Match>
+                <Match when={ status === 'checking' }>
+                    <p class="muted">Asking the server...</p>
+                </Match>
+                <Match when={ status === 'up' }>
+                    <p class="ok">200 ok - { latency } ms round trip</p>
+                </Match>
+                <Match when={ status === 'down' }>
+                    <p class="error">No answer. <code>npm run dev</code> from the project root starts both halves.</p>
+                </Match>
+            </Switch>
+        </div>
     </section>
 }
