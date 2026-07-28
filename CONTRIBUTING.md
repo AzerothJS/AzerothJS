@@ -138,16 +138,35 @@ name - it names where the change lives:
 | `scripts` | repo scripts | `chore(scripts): support resuming interrupted version bumps` |
 | `build` | build wiring (tsconfig, build order) | `fix(build): missing packages to tsconfig and build order` |
 | `deps` / `deps-dev` | dependency bumps (dependabot's prefixes) | `chore(deps): bump vscode-languageserver to 10.0.1` |
+| `github` | issue/PR templates and community health files | `chore(github): refresh the affected-package lists` |
+| `hooks` | the git hooks in `.husky/` | `feat(hooks): enforce Conventional Commits on commit-msg` |
+| `changelog` / `readme` / `contributing` | one root document | `docs(changelog): promote the 1.1.0 section` |
 | `release` | the release commit itself (created by `release.mjs`) | `chore(release): v1.1.0` |
+
+**A change that spans several areas** has two accepted forms - pick whichever
+reads better in `git log --oneline`:
+
+- **One umbrella scope**, with the parts named in the summary. Prefer this when
+  the areas share a parent: `feat(packages): store, reactivity, and the renderer
+  share one thunk-unwrap`.
+- **A comma list**, when there is no common parent: `docs(changelog,readme):
+  promote 1.0.0`, `feat(http,api): streaming multipart and contract file routes`.
+
+Keep the header under ~100 characters (the hook nudges, it does not block) and
+put the detail in the body after a blank line.
 
 Common types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
 `chore`, `ci`. Mark a breaking change with `!` after the scope and a
 `BREAKING CHANGE:` footer, e.g.
 `build(packages)!: raise the Node engines floor to >=24 in every published package`.
 
-This convention is a readability and history aid; it is **not** wired into any
-automated versioning (see Releases below), so it's documented here rather than
-enforced by a commit hook.
+A `commit-msg` hook enforces this shape (`scripts/check-commit-msg.mjs`, run by
+husky) - a zero-dependency check, not commitlint. It is strict about the **type**
+and the summary, and only shape-checks the scope, so it never argues with a
+legitimate commit. Git's own generated messages (merge, revert, `fixup!`) pass
+through untouched. The convention is still a readability and history aid: it is
+**not** wired into automated versioning (see Releases below), which stays a
+deliberate, hand-cut decision.
 
 ## Pull requests
 
@@ -169,7 +188,7 @@ npm run release -- rc                      # promote the line to rc.1
 npm run release -- stable                  # cut the stable release (drop the suffix)
 npm run release -- minor                   # next minor, staying on the current channel
 npm run release -- minor --channel stable  # next minor as a stable release
-npm run release -- 1.1.0            # or spell out the full version
+npm run release -- 2.0.0-rc.1              # or spell out the full version
 npm run release -- beta --dry-run          # preview every step, change nothing
 ```
 
@@ -209,10 +228,10 @@ reset the parts to its right to `0` (a MINOR bump zeroes PATCH: `1.4.7 -> 1.5.0`
 | `MINOR` | a backward-compatible feature | `1.4.7 -> 1.5.0` |
 | `PATCH` | a backward-compatible bug fix | `1.4.7 -> 1.4.8` |
 
-While the project is on `0.y.z` (major version zero) the API is still
-stabilizing, so **any** release - even a MINOR bump - may break. Reaching
-`1.1.0` is the commitment that the public API is stable and won't break without
-a MAJOR bump.
+While a project is on `0.y.z` (major version zero) its API is still stabilizing,
+so **any** release - even a MINOR bump - may break. Reaching `1.0.0` is the
+commitment that the public API is stable and won't break without a MAJOR bump;
+AzerothJS made that commitment and is past it.
 
 A `-channel.n` suffix marks a **pre-release**: a version that ranks *below* the
 stable release of the same number (`0.0.0-beta.1` is older than `0.0.0`). The

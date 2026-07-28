@@ -1,0 +1,4 @@
+# Enforce the Conventional Commits shape documented in CONTRIBUTING ("Commit
+# messages"). Zero-dependency: a small node script, not commitlint - this repo
+# ships almost no dev dependencies and the rule set is one regex wide.
+node scripts/check-commit-msg.mjs "$1"

@@ -20,7 +20,8 @@
 //
 //   0.y.z (major version zero) is the "still stabilizing" phase: ANYTHING may
 //   change at any time, so even a MINOR bump is allowed to break. AzerothJS is
-//   here (0.6.x) until it commits to a stable 1.0.0 API.
+//   PAST that phase: it committed to a stable API at 1.0.0, so a breaking change
+//   now requires a MAJOR bump.
 //
 // A `-<channel>.<n>` suffix marks a PRE-RELEASE: a version that comes BEFORE the
 // stable release of the same number (1.0.0-beta.2 is OLDER than 1.0.0). The
@@ -40,8 +41,8 @@
 // A pre-release ALWAYS ranks below its stable (1.0.0-rc.1 < 1.0.0); within a
 // channel the trailing number is compared numerically (beta.2 < beta.11).
 //
-// A typical road to 1.0:
-//   0.6.0 -> 1.0.0-alpha.1 -> ... -> 1.0.0-beta.1 -> 1.0.0-rc.1 -> 1.0.0
+// A typical road to a major release:
+//   1.4.0 -> 2.0.0-alpha.1 -> ... -> 2.0.0-beta.1 -> 2.0.0-rc.1 -> 2.0.0
 //
 // npm DIST-TAG (a MOVABLE pointer, separate from the immutable version):
 //   `npm i azerothjs`              installs whatever `latest` points to.
@@ -78,7 +79,9 @@
 //   --dry-run       Print every step without changing files, committing, or publishing.
 //   --channel <c>   Channel for patch/minor/major bumps (alpha|beta|rc|next|canary|stable).
 //   --no-changelog  Skip the automatic CHANGELOG.md [Unreleased] promotion.
-//   --skip-checks   Skip the build / lint / test gate (not recommended).
+//   --skip-checks   Skip the full verify gate - lint, typecheck, build, publish
+//                   contract, tests, leak, publish smoke (not recommended; it
+//                   exists to resume an interrupted publish that already passed).
 //   --no-bump       Don't bump/commit/tag; just push the existing tag and publish.
 //   --no-push       Skip the git push.
 //   --no-publish    Skip the npm publish.
@@ -94,8 +97,8 @@
 //
 // Publishing is IDEMPOTENT: versions already on the registry are skipped, so an
 // interrupted run can simply be re-run. The bump also promotes CHANGELOG.md's
-// [Unreleased] section and keeps the version examples in CONTRIBUTING.md and the
-// bug-report template current.
+// [Unreleased] section and keeps the bug-report template's version placeholder
+// current (see DOC_VERSION_ANCHORS - docs are rewritten only at named anchors).
 //
 // The npm dist-tag is derived from the version: a prerelease (1.2.0-beta.3) is
 // published under its prerelease id (`beta`); a stable version under `latest`.
@@ -281,7 +284,7 @@ Options:
   --dry-run            Show every step; change nothing.
   --channel <c>        Channel for patch/minor/major (alpha|beta|rc|stable).
   --no-changelog       Skip the CHANGELOG.md [Unreleased] promotion.
-  --skip-checks        Skip the build/lint/test gate (not recommended).
+  --skip-checks        Skip the full verify gate (not recommended; for resuming).
   --no-bump            Push + publish an existing tag; don't bump/commit/tag.
   --no-push            Skip the git push.
   --no-publish         Skip the npm publish.
@@ -361,10 +364,12 @@ function releaseFiles()
             files.push(editorFile);
         }
     }
-    // Docs that quote the current version as an example (the CONTRIBUTING release commands, the
-    // bug-report version placeholder). Including them keeps the examples current for free instead
-    // of drifting a release behind until someone notices.
-    for (const docFile of ['CONTRIBUTING.md', path.join('.github', 'ISSUE_TEMPLATE', 'bug_report.yml')])
+    // Docs that quote the current version in a form worth keeping fresh. Each must have an
+    // entry in DOC_VERSION_ANCHORS: only that anchored occurrence is rewritten, never the
+    // surrounding prose. CONTRIBUTING.md is deliberately NOT here - its version mentions are
+    // pedagogy ("reaching 1.0.0 is the commitment that the API is stable") that a blind
+    // replace once turned into a false statement about a later version.
+    for (const docFile of Object.keys(DOC_VERSION_ANCHORS))
     {
         if (existsSync(path.join(ROOT, docFile)))
         {
@@ -372,6 +377,28 @@ function releaseFiles()
         }
     }
     return files;
+}
+
+/**
+ * Anchored rewrites for documentation files, keyed by repo-relative path. Each value builds
+ * a pattern in the same `(head)VERSION(tail)` shape the manifest branches use, so only that
+ * one quoted occurrence is rewritten and any other version in the file is left alone.
+ *
+ * This replaces a blind `split(current).join(next)`, which rewrote EVERY X.Y.Z in the file -
+ * it corrupted the CONTRIBUTING sentence about reaching 1.0.0 into a false statement about
+ * a later version, and `guardDocVersions` could not see it (that guard only matched
+ * prerelease-shaped tokens).
+ */
+const DOC_VERSION_ANCHORS =
+{
+    [path.join('.github', 'ISSUE_TEMPLATE', 'bug_report.yml')]:
+        (current) => new RegExp(`(placeholder:\\s*"e\\.g\\. )${ escapeRegExp(current) }(")`)
+};
+
+/** Escapes a literal for embedding in a RegExp. */
+function escapeRegExp(literal)
+{
+    return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -524,10 +551,18 @@ function bumpFiles(current, next)
         }
         else
         {
-            // Docs: the exact current version is always safe to update; anything else is
-            // left alone and caught by the guard below.
-            occurrences = before.split(current).length - 1;
-            after = occurrences > 0 ? before.split(current).join(next) : before;
+            // Docs: ONLY the anchored occurrence registered for this file. A blind
+            // whole-file replace corrupts prose that legitimately names an older version.
+            const anchorFor = DOC_VERSION_ANCHORS[file];
+            if (anchorFor === undefined)
+            {
+                fail(`${ file }: no DOC_VERSION_ANCHORS entry - refusing to blind-replace versions in a doc`);
+            }
+            after = before.replace(anchorFor(current), (_m, head, tail) =>
+            {
+                occurrences++;
+                return `${ head }${ next }${ tail }`;
+            });
         }
 
         if (occurrences === 0)
@@ -557,10 +592,14 @@ function bumpFiles(current, next)
  * base for permanent semver-pedagogy examples that must never track a release.
  * Scoped to the bumped doc files; CHANGELOG legitimately holds history and
  * manifests are parse-validated above.
+ *
+ * The token matches BARE `X.Y.Z` as well as prerelease forms: the prerelease-only
+ * regex this replaces could not see a stable version left behind by a drifted
+ * example, which is exactly how a corrupted CONTRIBUTING sentence shipped.
  */
 function guardDocVersions(current, next)
 {
-    const versionToken = /\b\d+\.\d+\.\d+-(?:alpha|beta|rc)\.\d+\b/g;
+    const versionToken = /\b\d+\.\d+\.\d+(?:-(?:alpha|beta|rc|next|canary)\.\d+)?\b/g;
     for (const file of releaseFiles())
     {
         if (file.endsWith('package.json') || file.endsWith('.kts'))
@@ -570,7 +609,7 @@ function guardDocVersions(current, next)
         const text = readFileSync(path.join(ROOT, file), 'utf8');
         const strays = [...text.matchAll(versionToken)]
             .map((m) => m[0])
-            .filter((v) => v !== next && !v.startsWith('0.0.0-') && !(dryRun && v === current));
+            .filter((v) => v !== next && !v.startsWith('0.0.0') && !(dryRun && v === current));
         if (strays.length > 0)
         {
             fail(`${ file }: stray version token(s) after bump: ${ [...new Set(strays)].join(', ') } - fix the drifted example (expected only ${ next })`);
@@ -864,14 +903,21 @@ else if (resuming)
 
 if (!options.skipChecks)
 {
-    log('\nVerifying (build, lint, publish contract, publish smoke)');
-    act('npm', ['run', 'build']);
+    // The FULL gate, cheap-first. This must match what CI would reject, because
+    // publishing happens BEFORE the tag is pushed: a version that fails typecheck,
+    // tests, or the leak check would otherwise reach npm minutes before CI ever
+    // saw it, and a published version cannot be taken back.
+    log('\nVerifying (lint, typecheck, build, publish contract, tests, leak, publish smoke)');
     act('npm', ['run', 'lint']);
+    act('npm', ['run', 'typecheck']);
+    act('npm', ['run', 'build']);
     // Validate the published artifacts before tagging: publint checks each
     // package.json contract; the smoke test packs + installs the tarballs and
     // imports them, catching a broken exports map or a corrupted inter-package
     // pin that the src-aliased suite cannot see.
     act('npm', ['run', 'lint:publish']);
+    act('npm', ['test']);
+    act('npm', ['run', 'leak']);
     act('npm', ['run', 'smoke']);
 }
 

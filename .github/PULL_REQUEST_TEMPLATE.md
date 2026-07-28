@@ -33,19 +33,19 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 <!-- Check every package whose published API or runtime behaviour is changed.
      Unchanged packages and editor-only changes can be left unchecked. -->
 
-- [ ] `@azerothjs/reactivity`
-- [ ] `@azerothjs/renderer`
-- [ ] `@azerothjs/component`
-- [ ] `@azerothjs/store`
-- [ ] `@azerothjs/form`
-- [ ] `@azerothjs/router`
-- [ ] `@azerothjs/server`
+- [ ] `azerothjs` (reactivity, renderer, control flow, router, forms, SSR)
 - [ ] `@azerothjs/compiler`
-- [ ] `azerothjs` (entry package)
+- [ ] `@azerothjs/kit`
+- [ ] `@azerothjs/http`
+- [ ] `@azerothjs/schema`
+- [ ] `@azerothjs/ws`
+- [ ] `@azerothjs/cron`
+- [ ] `@azerothjs/logger`
+- [ ] `@azerothjs/cli`
+- [ ] `create-azeroth`
 - [ ] `@azerothjs/testing`
-- [ ] `@azerothjs/language-service` / `@azerothjs/language-server` / `@azerothjs/typescript-plugin`
-- [ ] `@azerothjs/eslint-plugin`
 - [ ] `@azerothjs/devtools`
+- [ ] `@azerothjs/language-server` / `@azerothjs/typescript-plugin` / `@azerothjs/eslint-plugin`
 - [ ] `editors/vscode`
 - [ ] `editors/jetbrains`
 
@@ -72,7 +72,7 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 - [ ] `npm test` passes
 - [ ] `npm run build` succeeds for all packages
 - [ ] `npm run typecheck` passes
-- [ ] `npm run leak` shows no reactive-graph leaks *(required when touching `@azerothjs/reactivity` or any reactive primitive)*
+- [ ] `npm run leak` shows no reactive-graph leaks *(required when touching `azerothjs` reactivity - signals, effects, roots, stores - or any reactive primitive)*
 - [ ] New behaviour is covered by tests in the relevant `tests/*.spec.ts`
 - [ ] Bug fixes include a regression test
 - [ ] Public API additions/changes have doc comments that explain **why**, not just what

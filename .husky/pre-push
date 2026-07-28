@@ -5,5 +5,5 @@
 #
 # Note both run against workspace SOURCE (no build step), matching CI - so keep the
 # typescript-plugin's tsconfig paths inheriting the root's @azerothjs -> src map.
-echo "pre-push: lint + typecheck (CI gate)…"
+echo "pre-push: lint + typecheck (CI gate)..."
 npm run lint && npm run typecheck

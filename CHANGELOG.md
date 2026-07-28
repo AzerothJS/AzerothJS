@@ -9,6 +9,38 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Added (release + contribution infrastructure)
+
+- **GitHub Releases carry the changelog.** `scripts/release-notes.mjs` extracts the
+  version's hand-written `CHANGELOG.md` section and the release workflow passes it as the
+  release body alongside `--generate-notes`, so a release page reads: install block,
+  curated changelog, then GitHub's own "What's Changed" PR list and compare link. A
+  re-pushed tag now refreshes the notes instead of skipping them.
+- **Commit messages are enforced.** A `commit-msg` hook runs `scripts/check-commit-msg.mjs`,
+  a zero-dependency Conventional Commits check (strict about the type and summary, shape-only
+  about the scope, transparent to git's own merge/revert/fixup messages).
+- **A documentation issue form** (`.github/ISSUE_TEMPLATE/docs.yml`) for doc defects that
+  are not code bugs.
+
+### Fixed (release + contribution infrastructure)
+
+- **The version bump no longer corrupts prose.** `bumpFiles()` replaced every `X.Y.Z` in a
+  documentation file, which had rewritten a CONTRIBUTING sentence about reaching 1.0.0 into
+  a false statement about a later version. Docs are now rewritten only at named anchors
+  (`DOC_VERSION_ANCHORS`), CONTRIBUTING.md is no longer bumped at all, and the post-bump
+  guard also catches bare `X.Y.Z` tokens instead of prerelease-shaped ones alone.
+- **The release gate now matches CI before anything is published.** It runs lint, typecheck,
+  build, publish contract, tests, leak, and publish smoke; previously typecheck, tests, and
+  the leak check ran only in CI - after the tag push, which is after npm already had the
+  version.
+- **Issue and PR templates name packages that exist.** The dropdowns listed
+  `@azerothjs/reactivity`, `renderer`, `component`, `router`, `store`, `form`, and `server` -
+  none of which are packages - and omitted `http`, `kit`, `ws`, `cron`, `logger`, `schema`,
+  `cli`, and `create-azeroth`. The feature-request example also proposed lazy route
+  splitting, which already ships.
+- **CHANGELOG compare links**: the missing `[1.0.0-beta.1]` definition is restored, so
+  `[1.0.0-beta.2]` no longer skips a released tag.
+
 ## [1.1.0] - 2026-07-27
 
 ### Added (create-azeroth)
@@ -1175,7 +1207,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
 [Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...v1.0.0
-[1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...v1.0.0-beta.2
+[1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.1...v1.0.0-beta.2
+[1.0.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.4...v1.0.0-beta.1
 [0.9.0-beta.4]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.3...v0.9.0-beta.4
 [0.9.0-beta.3]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.2...v0.9.0-beta.3
 [0.9.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v0.9.0-beta.1...v0.9.0-beta.2

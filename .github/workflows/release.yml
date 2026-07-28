@@ -3,10 +3,11 @@ name: Release
 # Fires when the release script pushes a version tag (e.g. v0.7.0-beta.1). This
 # workflow does NOT publish to npm - that stays in scripts/release.mjs, which
 # handles the lockstep bump, dist-tags, and 2FA locally. Its job is to (1) prove
-# the tagged commit builds and its tests pass on a clean checkout, (2) create
-# a GitHub Release with auto-generated, categorised notes (see .github/release.yml),
-# and (3) build BOTH editor plugins from the tagged code and attach them to the
-# release, so every release ships installable editor artifacts.
+# the tagged commit builds and its tests pass on a clean checkout, (2) create a
+# GitHub Release whose body is the hand-written CHANGELOG.md section for the version
+# (scripts/release-notes.mjs) followed by GitHub's own categorised PR notes (see
+# .github/release.yml), and (3) build BOTH editor plugins from the tagged code and
+# attach them to the release, so every release ships installable editor artifacts.
 on:
     push:
         tags:
@@ -72,6 +73,14 @@ jobs:
             -   run: ./gradlew buildPlugin --console=plain
                 working-directory: editors/jetbrains
 
+            -   name: Compose release notes from CHANGELOG.md
+                env:
+                    TAG: ${{ github.ref_name }}
+                shell: bash
+                # The hand-written changelog section becomes the release body; the step
+                # never fails the run (a missing section degrades to the install block).
+                run: node scripts/release-notes.mjs "$TAG" --out "$RUNNER_TEMP/release-notes.md"
+
             -   name: Create GitHub Release
                 env:
                     GH_TOKEN: ${{ github.token }}
@@ -84,12 +93,18 @@ jobs:
                     case "$TAG" in
                       *-*) prerelease="--prerelease" ;;
                     esac
-                    # Idempotent: if a release already exists for this tag (e.g. the tag was
-                    # re-pushed), skip rather than fail the run.
+                    # --notes-file carries the curated changelog; --generate-notes appends
+                    # GitHub's own "What's Changed" PR list and compare link underneath (the
+                    # API pre-pends a supplied body to the generated notes).
+                    # Idempotent: a re-pushed tag REFRESHES the notes rather than skipping,
+                    # so an edited changelog can be corrected by re-running this workflow.
                     if gh release view "$TAG" >/dev/null 2>&1; then
-                      echo "Release $TAG already exists - skipping."
+                      echo "Release $TAG exists - refreshing its notes."
+                      gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
                     else
-                      gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag $prerelease
+                      gh release create "$TAG" --title "$TAG" \
+                        --notes-file "$RUNNER_TEMP/release-notes.md" \
+                        --generate-notes --verify-tag $prerelease
                     fi
 
             -   name: Attach editor artifacts

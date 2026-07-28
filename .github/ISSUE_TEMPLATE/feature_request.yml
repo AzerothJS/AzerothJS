@@ -17,10 +17,9 @@ body:
                 What problem are you trying to solve? What can you not do today, or what is unreasonably
                 difficult? Be specific - a concrete pain point makes the proposal easier to evaluate.
             placeholder: |
-                Large route components all load in the initial bundle: the router's `component` takes a
-                resolved component, so there is no idiomatic way to code-split a route. Today I wrap
-                everything in a hand-rolled lazy() + Suspense combination per route, which every app
-                reinvents slightly differently.
+                Disposing a root or a served app is a manual `dispose()` call, so an early return or a
+                throw between creation and teardown leaks it. Every call site reinvents the same
+                try/finally to stay correct.
         validations:
             required: true
 
@@ -34,13 +33,12 @@ body:
                 strongly encouraged.
             render: tsx
             placeholder: |
-                // Proposed: a lazy route - the router loads the module on first match
-                const router = createRouter({
-                    routes: [
-                        { path: '/', component: Home },
-                        { path: '/admin', lazy: () => import('./admin.page') }
-                    ]
-                });
+                // Proposed: public disposables implement Symbol.dispose, so `using` tears
+                // them down at the end of scope even on an early return or a throw.
+                {
+                    using served = await serve(app, { port: 3000 });
+                    await runMigrations();
+                }   // served.close() runs here, however the block exits
         validations:
             required: true
 
@@ -51,18 +49,21 @@ body:
             description: Which package(s) would this feature primarily touch?
             multiple: true
             options:
-                - "@azerothjs/reactivity"
-                - "@azerothjs/renderer"
-                - "@azerothjs/component"
-                - "@azerothjs/compiler (.azeroth syntax / IR / emitter)"
-                - "@azerothjs/router"
-                - "@azerothjs/store"
-                - "@azerothjs/form"
-                - "@azerothjs/server"
-                - "azerothjs (entry package)"
+                - "azerothjs (reactivity, renderer, control flow, router, forms, SSR)"
+                - "@azerothjs/compiler (.azeroth syntax / IR / emitter / Vite plugin)"
+                - "@azerothjs/kit (SSR, prerendering, hydration, production builds)"
+                - "@azerothjs/http (server kernel; contracts at @azerothjs/http/api)"
+                - "@azerothjs/schema (validation)"
+                - "@azerothjs/ws (WebSockets)"
+                - "@azerothjs/cron (scheduling)"
+                - "@azerothjs/logger (logging)"
+                - "@azerothjs/cli (the azeroth command)"
+                - "create-azeroth (the scaffolder and its templates)"
                 - "@azerothjs/testing"
                 - "@azerothjs/devtools"
-                - "Editor tooling (language-service / language-server / typescript-plugin / eslint-plugin)"
+                - "@azerothjs/language-server (LSP + azeroth-tsc)"
+                - "@azerothjs/typescript-plugin"
+                - "@azerothjs/eslint-plugin"
                 - "VS Code extension"
                 - "JetBrains plugin"
                 - "Cross-cutting / not sure"

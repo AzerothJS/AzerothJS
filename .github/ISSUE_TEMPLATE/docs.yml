@@ -1,0 +1,53 @@
+name: Documentation issue
+description: Report something wrong, missing, or confusing in the docs
+labels: [ documentation ]
+body:
+    -   type: markdown
+        attributes:
+            value: |
+                Documentation lives in the package READMEs, CONTRIBUTING.md, and the doc comments the
+                editor shows on hover - a fix to any of them belongs here. If code behaves differently
+                from what the docs promise, prefer the bug report: that is a defect, not a doc gap.
+
+    -   type: dropdown
+        id: kind
+        attributes:
+            label: What kind of problem is it?
+            options:
+                - "Wrong - the docs describe behaviour the code does not have"
+                - "Missing - something is undocumented"
+                - "Confusing - technically correct but hard to follow"
+                - "Outdated - describes an older version"
+                - "Typo / formatting"
+        validations:
+            required: true
+
+    -   type: input
+        id: where
+        attributes:
+            label: Where
+            description: >
+                The file, URL, or hover text. A path with a heading is ideal.
+            placeholder: "e.g. packages/http/README.md, 'Typed contracts' section"
+        validations:
+            required: true
+
+    -   type: textarea
+        id: problem
+        attributes:
+            label: What is wrong
+            description: >
+                Quote the passage if you can, and say what it led you to expect versus what is
+                actually true.
+        validations:
+            required: true
+
+    -   type: textarea
+        id: suggestion
+        attributes:
+            label: Suggested wording
+            description: >
+                Optional. If you already know what it should say, write it here - a concrete
+                sentence is the fastest path to a merged fix.
+        validations:
+            required: false

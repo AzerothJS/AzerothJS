@@ -17,8 +17,9 @@ concurrency:
     group: ci-${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
 
-# The project targets Node >= 24 (see root package.json `engines`); every job runs
-# on that floor so tooling (e.g. lint-staged, which requires a recent Node) installs.
+# The published floor is Node >= 22 (root package.json `engines`), but CI runs 24: the
+# repo's own tooling (lint-staged, the native TypeScript runner) needs a newer Node than
+# the packages themselves require, and testing above the floor catches forward breakage.
 env:
     NODE_VERSION: 24
 
@@ -67,7 +68,7 @@ jobs:
             # full cross-OS picture from a single run.
             fail-fast: false
             matrix:
-                # Node 24 is the supported floor (engines: ">=24"). Linux plus a Windows
+                # Node 24, one above the published floor (engines: ">=22"). Linux plus a Windows
                 # cell: Windows is the maintainer's primary dev platform, and the compiler
                 # does path / line-ending work where POSIX-vs-Windows differences surface.
                 os: [ ubuntu-latest ]
