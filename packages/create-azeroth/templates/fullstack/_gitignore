@@ -1,5 +1,7 @@
 node_modules/
 dist/
-.azeroth-types/
+dist-server/
+.azeroth/
+logs/
 .env
 *.local

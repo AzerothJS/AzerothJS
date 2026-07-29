@@ -67,11 +67,13 @@ npm create azeroth@latest my-app -- --template fullstack --tailwind
 | Template | What it scaffolds |
 | --- | --- |
 | `frontend` | A vite app in `.azeroth` components: the compiler plugin wired, eslint with the azeroth rules, `azeroth-tsc` as the typecheck gate. |
-| `backend` | An `@azerothjs/http` server with **no build step** - Node >= 22 runs the TypeScript source directly, and `azeroth dev` is `node --watch`. |
+| `backend` | An `@azerothjs/http` server with **no build step** - Node >= 24 runs the TypeScript source directly, and `azeroth dev` is `node --watch`. |
 | `fullstack` | `application/` + `server/` as npm workspaces under one root; one `npm run dev` runs both halves under one banner, with the vite proxy line in plain sight in `vite.config.ts`. |
 
 Every template ships the [`azeroth`](https://www.npmjs.com/package/@azerothjs/cli) verbs
-as its scripts - `dev`, `check`, `build` - and nothing else to configure.
+as its scripts - `dev`, `check`, `build`, `test` - and nothing else to configure. The
+two shapes that run TypeScript with no build step (`backend`, `fullstack`) require
+Node >= 24; `frontend` compiles through vite and runs on Node >= 22.
 
 ## 🧩 Options
 

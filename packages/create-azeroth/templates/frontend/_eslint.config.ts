@@ -48,11 +48,18 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
             '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'separate-type-imports', disallowTypeAnnotations: false }],
             '@typescript-eslint/explicit-member-accessibility': ['error', { accessibility: 'explicit', overrides: { constructors: 'no-public' } }],
             '@typescript-eslint/parameter-properties': ['error', { prefer: 'class-property' }],
-            // Both TS `private` and native `#private` are allowed in a starter app. Only enums
-            // and namespaces are steered away (union literals and ES modules cover them).
+            // Native #private members over the erased `private`/`protected`; union literals over enums; ES modules over namespaces.
             'no-restricted-syntax':
             [
                 'error',
+                {
+                    selector: ':matches(PropertyDefinition, MethodDefinition, TSAbstractPropertyDefinition, TSAbstractMethodDefinition)[accessibility=private]',
+                    message: 'Use a native #private member - TypeScript `private` is erased and stays reachable at runtime.'
+                },
+                {
+                    selector: ':matches(PropertyDefinition, MethodDefinition)[accessibility=protected]',
+                    message: 'No `protected` members - prefer composition over inheritance-facing state.'
+                },
                 {
                     selector: 'TSEnumDeclaration',
                     message: 'Use a union of literal types instead of an enum.'

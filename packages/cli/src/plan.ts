@@ -332,7 +332,7 @@ function buildServerPlan(server: BackendProject): Plan
         return {
             command: 'build',
             steps: [],
-            notes: ['api: no build step - Node >= 22 runs the TypeScript source natively; deploy src/ as-is']
+            notes: ['api: no build step - Node >= 24 runs the TypeScript source natively; deploy src/ as-is']
         };
     }
     const tsc = need(server.dir, TSC, 'typescript');

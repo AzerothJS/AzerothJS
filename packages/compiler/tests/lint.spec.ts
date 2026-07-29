@@ -281,3 +281,66 @@ describe('lintMarkup - interpolation-spacing (needs the source text)', () =>
         expect(spacing(out)).toEqual([]);
     });
 });
+
+describe('markup-indent - the tag indentation ESLint cannot see', () =>
+{
+    const indent = (source: string, step = 4): LintWarning[] =>
+        lintSource(source, { markupIndent: step }).filter((w) => w.code === 'azeroth/markup-indent');
+
+    it('is off unless a step is given - it rewrites whitespace, so it opts in', () =>
+    {
+        const source = '<div>\n<span>a</span>\n</div>';
+        expect(lintSource(source)).toEqual([]);
+        expect(indent(source, 0)).toEqual([]);
+    });
+
+    it('measures a child against its parent, not against column zero', () =>
+    {
+        // The root sits at column 4, so its child belongs at 8 - exactly how a component's
+        // markup sits inside a function body.
+        expect(indent('    <div>\n        <span>a</span>\n    </div>')).toEqual([]);
+        const [warning] = indent('    <div>\n    <span>a</span>\n    </div>');
+        expect(warning?.message).toBe('Expected an indent of 8 spaces, found 4.');
+    });
+
+    it('counts every level of nesting', () =>
+    {
+        expect(indent('<a>\n    <b>\n        <c>x</c>\n    </b>\n</a>')).toEqual([]);
+        expect(indent('<a>\n    <b>\n    <c>x</c>\n    </b>\n</a>')).toHaveLength(1);
+    });
+
+    it('leaves tags that share a line alone - that is an authoring choice', () =>
+    {
+        expect(indent('<div>\n    <b>a</b><i>b</i>\n</div>')).toEqual([]);
+    });
+
+    it('never looks inside an expression hole - its contents are TypeScript', () =>
+    {
+        const source = '<ul>\n    { rows.map((r) =>\n<li>{ r }</li>) }\n</ul>';
+        expect(indent(source)).toEqual([]);
+    });
+
+    it('says nothing when the root shares its line with code', () =>
+    {
+        // No baseline to measure against, so the whole region is left alone.
+        expect(indent('const view = <div>\n<span>a</span>\n</div>;')).toEqual([]);
+    });
+
+    it('honours a step other than four', () =>
+    {
+        expect(indent('<a>\n  <b>x</b>\n</a>', 2)).toEqual([]);
+        expect(indent('<a>\n    <b>x</b>\n</a>', 2)).toHaveLength(1);
+    });
+
+    it('its fix lands on the leading whitespace and settles in one pass', () =>
+    {
+        const src = '<div>\n  <span>a</span>\n      <em>b</em>\n</div>';
+        let out = src;
+        for (const w of indent(src).sort((a, b) => b.fix!.range[0] - a.fix!.range[0]))
+        {
+            out = out.slice(0, w.fix!.range[0]) + w.fix!.text + out.slice(w.fix!.range[1]);
+        }
+        expect(out).toBe('<div>\n    <span>a</span>\n    <em>b</em>\n</div>');
+        expect(indent(out)).toEqual([]);
+    });
+});

@@ -3,7 +3,7 @@
  *
  * Every check here is traceable to a real incident that cost real debugging hours:
  * strip-only Node meeting a decorator ORM, the TS2591 flood from a missing @types/node,
- * editor extensions running a stale compiler, a stale .azeroth-types mirror, version
+ * editor extensions running a stale compiler, a stale .azeroth/types mirror, version
  * skew between the halves of a fullstack app. Doctor diagnoses; it never mutates.
  * Checks are best-effort by design - an unreadable file is a skip, not a crash - and
  * only 'fail' results make the exit code non-zero.
@@ -206,22 +206,25 @@ function newestMtime(dir: string, matches: (name: string) => boolean, depth: num
 
 function checkAzerothTypesMirror(app: FrontendProject): DoctorResult
 {
-    const mirror = join(app.dir, '.azeroth-types');
+    // `.azeroth/types`, not `.azeroth-types`: the compiler's DECLARATIONS_DIR
+    // (packages/compiler/src/vite.ts). This check looked at the old path and so could
+    // only ever report "no mirror in use" - it never once ran against a real project.
+    const mirror = join(app.dir, '.azeroth', 'types');
     if (!existsSync(mirror))
     {
-        return { name: '.azeroth-types mirror', status: 'skip', detail: 'no mirror in use' };
+        return { name: '.azeroth/types mirror', status: 'skip', detail: 'no mirror in use' };
     }
     const newestSource = newestMtime(join(app.dir, 'src'), (name) => name.endsWith('.azeroth'), 8);
     const newestMirror = newestMtime(mirror, () => true, 8);
     if (newestSource > newestMirror)
     {
         return {
-            name: '.azeroth-types mirror',
+            name: '.azeroth/types mirror',
             status: 'warn',
             detail: 'stale: a .azeroth source is newer than every mirrored declaration - run the dev server (or build) to regenerate, or editors resolve outdated types'
         };
     }
-    return { name: '.azeroth-types mirror', status: 'ok', detail: 'mirror is at least as new as the sources' };
+    return { name: '.azeroth/types mirror', status: 'ok', detail: 'mirror is at least as new as the sources' };
 }
 
 function checkEditorSkew(anyProjectDir: string): DoctorResult

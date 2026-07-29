@@ -28,7 +28,6 @@ export const entry = object({
     at: string()
 });
 
-export type EntryInput = Infer<typeof entryInput>;
 export type Entry = Infer<typeof entry>;
 
 export const contract = defineContract({

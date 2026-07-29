@@ -71,6 +71,16 @@ export interface LintOptions
      * the ecosystem convention keeps them tight.
      */
     interpolationSpacing?: 'always' | 'never' | 'off';
+
+    /**
+     * Spaces per nesting level for markup TAGS. `0` (the default) disables the rule.
+     *
+     * This is the markup counterpart of ESLint's `indent`, which cannot do the job: the
+     * eslint-plugin lints the PROJECTION, whose whitespace the compiler re-flows, so an
+     * indent report there would point at a column the author never wrote. This rule reads
+     * the original source, so its positions and its fix are the author's own text.
+     */
+    markupIndent?: number;
 }
 
 /**
@@ -111,7 +121,120 @@ export function lintMarkup(node: MarkupElement | MarkupFragment, source: string,
     const warnings: LintWarning[] = [];
     const spacing = options?.interpolationSpacing ?? 'always';
     visit(node, warnings, source, spacing);
+    const step = options?.markupIndent ?? 0;
+    if (step > 0)
+    {
+        lintIndent(node, source, step, warnings);
+    }
     return warnings;
+}
+
+/** @internal The column of `offset` when it is the first non-whitespace on its line; -1 otherwise. */
+function ownLineColumn(source: string, offset: number): number
+{
+    const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+    for (let i = lineStart; i < offset; i += 1)
+    {
+        const ch = source[i];
+        if (ch !== ' ' && ch !== '\t')
+        {
+            return -1;
+        }
+    }
+    return offset - lineStart;
+}
+
+/** @internal Reports `offset`'s line if it opens one and sits at the wrong column. */
+function checkColumn(source: string, offset: number, expected: number, warnings: LintWarning[]): void
+{
+    const column = ownLineColumn(source, offset);
+    if (column < 0 || column === expected)
+    {
+        return;
+    }
+    warnings.push({
+        code: 'azeroth/markup-indent',
+        message: `Expected an indent of ${ expected } spaces, found ${ column }.`,
+        start: offset - column,
+        end: offset,
+        fix: { range: [offset - column, offset], text: ' '.repeat(expected) }
+    });
+}
+
+/**
+ * Checks that every tag which OPENS a line sits at `depth * step` past the region's root.
+ *
+ * An element is judged as a WHOLE - its opening tag, each attribute that starts a line, the
+ * `>` that closes a multi-line opening tag, and its closing tag. Moving the opening tag alone
+ * is how an indentation autofix leaves a file worse than it found it.
+ *
+ * Deliberately narrow otherwise, because this rewrites whitespace the author owns:
+ *
+ * - only lines a tag OPENS are judged - `<b>a</b><i>b</i>` on one line is an authoring
+ *   choice, not an indentation error;
+ * - expression holes are skipped ENTIRELY, children and all. Their contents are TypeScript,
+ *   the projection re-flows them, and the interpolation rule already lets multiline holes
+ *   indent freely;
+ * - text is skipped. Reflowing prose is a formatter's job and a lossy one;
+ * - the baseline is the root tag's own column, so a component indented four spaces inside a
+ *   function body is measured relative to itself rather than to column zero.
+ *
+ * @internal
+ */
+function lintIndent(root: MarkupElement | MarkupFragment, source: string, step: number, warnings: LintWarning[]): void
+{
+    const base = ownLineColumn(source, root.start);
+    if (base < 0)
+    {
+        // The root shares its line with code (`return <div>...`); there is no baseline to
+        // measure the children against, so the whole region is left alone.
+        return;
+    }
+
+    const walk = (node: MarkupChild | MarkupElement | MarkupFragment, column: number, depth: number): void =>
+    {
+        if (node.kind === 'expression' || node.kind === 'text')
+        {
+            return;
+        }
+
+        if (node.kind === 'element')
+        {
+            for (const attribute of node.attributes)
+            {
+                checkColumn(source, attribute.start, column + step, warnings);
+            }
+            // A tag whose attributes wrapped ends on its own line; that `>` belongs under the
+            // tag it closes, not under the attributes it follows.
+            const openEnd = source.lastIndexOf('>', node.children[0]?.start ?? node.end);
+            if (openEnd > node.start && node.attributes.length > 0)
+            {
+                checkColumn(source, openEnd, column, warnings);
+            }
+        }
+
+        for (const child of node.children)
+        {
+            const childColumn = base + (depth + 1) * step;
+            if (child.kind === 'element' || child.kind === 'fragment')
+            {
+                checkColumn(source, child.start, childColumn, warnings);
+            }
+            walk(child, childColumn, depth + 1);
+        }
+
+        // `</tag>` / `</>` - back at the opening tag's column.
+        if (!source.startsWith('/>', node.end - 2))
+        {
+            const closeStart = source.lastIndexOf('</', node.end);
+            if (closeStart > node.start)
+            {
+                checkColumn(source, closeStart, column, warnings);
+            }
+        }
+    };
+
+    walk(root, base, 0);
 }
 
 /** @internal */

@@ -58,6 +58,17 @@ export interface AzerothPluginOptions
     typeCheck?: boolean;
 
     /**
+     * Spaces per nesting level for markup TAGS, warned about at build time. `0` disables the
+     * rule. **Default: `4`.**
+     *
+     * ESLint's own `indent` cannot cover markup: the eslint-plugin lints the PROJECTION, whose
+     * whitespace the compiler re-flows, so a report there would name a column the author never
+     * wrote. This rule reads the original source instead. It judges only tags that OPEN a line,
+     * and never looks inside an expression hole - what is in there is TypeScript.
+     */
+    markupIndent?: number;
+
+    /**
      * Emit a TypeScript projection of every `.azeroth` file so `.ts`/`.js` files that import them
      * resolve and type-check WITHOUT any editor plugin - in WebStorm/JetBrains as well as plain `tsc`.
      * **Default: `false`.**
@@ -263,6 +274,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
     const extension = options.extension ?? '.azeroth';
     const typeCheck = options.typeCheck ?? true;
     const emitDecls = options.emitDeclarations ?? false;
+    const markupIndent = options.markupIndent ?? 4;
     // ONE incremental type-checker for the whole build: it binds lib.d.ts once and reuses it across
     // every `.azeroth` file (lazily created on first use), instead of building a fresh ts.Program per
     // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
@@ -407,7 +419,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             // system can't (onClick={save()}, duplicate attributes), and a
             // build is where they reliably reach every contributor.
             const lineStarts = buildLineStarts(code);
-            for (const finding of lintSource(code))
+            for (const finding of lintSource(code, { markupIndent }))
             {
                 const loc = locationFor(finding.start, lineStarts);
                 // Optional call: vite always binds the plugin context, but

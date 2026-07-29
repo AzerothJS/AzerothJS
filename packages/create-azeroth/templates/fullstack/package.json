@@ -4,7 +4,7 @@
     "version": "0.0.0",
     "type": "module",
     "engines": {
-        "node": ">=22"
+        "node": ">=24"
     },
     "workspaces": [
         "application",
@@ -14,7 +14,7 @@
         "dev": "azeroth dev",
         "check": "azeroth check",
         "build": "azeroth build",
-        "test": "npm test --workspaces --if-present",
+        "test": "azeroth test",
         "start": "npm start --workspace server"
     },
     "devDependencies": {

@@ -90,7 +90,7 @@ describe('options: overlays compose over the base', () =>
         expect(readFileSync(join(dir, 'src/App.azeroth'), 'utf8')).toContain('RouterProvider');
         const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { devDependencies: Record<string, string> };
         expect(pkg.devDependencies['tailwindcss']).toBeUndefined();
-        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Router');
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('Router (applied)');
         expect(detectProject(dir).kind).toBe('frontend');
     });
 
@@ -104,7 +104,7 @@ describe('options: overlays compose over the base', () =>
         expect(pkg.devDependencies['tailwindcss']).toBe('^4.0.0');
         expect(pkg.devDependencies['@tailwindcss/vite']).toBe('^4.0.0');
         expect(Object.keys(pkg.devDependencies)).toEqual([...Object.keys(pkg.devDependencies)].sort((a, b) => a.localeCompare(b)));
-        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Tailwind CSS');
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('Tailwind CSS (applied)');
         expect(detectProject(dir).kind).toBe('frontend');
     });
 
@@ -118,8 +118,8 @@ describe('options: overlays compose over the base', () =>
         expect(readFileSync(join(dir, 'src/pages/home.azeroth'), 'utf8')).toContain('bg-panel');
         expect(readFileSync(join(dir, 'src/styles.css'), 'utf8')).toContain("@import 'tailwindcss'");
         const readme = readFileSync(join(dir, 'README.md'), 'utf8');
-        expect(readme).toContain('## Router');
-        expect(readme).toContain('## Tailwind CSS');
+        expect(readme).toContain('Router (applied)');
+        expect(readme).toContain('Tailwind CSS (applied)');
         expect(detectProject(dir).kind).toBe('frontend');
     });
 
@@ -132,7 +132,7 @@ describe('options: overlays compose over the base', () =>
         expect(readFileSync(join(dir, 'application/vite.config.ts'), 'utf8')).toContain("'/api': 'http://localhost:3000'");
         const pkg = JSON.parse(readFileSync(join(dir, 'application/package.json'), 'utf8')) as { devDependencies: Record<string, string> };
         expect(pkg.devDependencies['@tailwindcss/vite']).toBe('^4.0.0');
-        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('## Tailwind CSS');
+        expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('Tailwind CSS (applied)');
         expect(detectProject(dir).kind).toBe('fullstack');
     });
 
@@ -216,8 +216,10 @@ describe('production shape: the hour-three files are already waiting', () =>
             expect(existsSync(join(dir, file)), file).toBe(true);
         }
         const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { scripts: Record<string, string>; engines: Record<string, string> };
-        expect(pkg.scripts['test']).toBe('vitest run');
-        expect(pkg.engines['node']).toBe('>=22');
+        expect(pkg.scripts['test']).toBe('azeroth test');
+        // The shape that runs TypeScript with no build step needs the Node that strips
+        // types unflagged - the same one its Dockerfile and CI pin.
+        expect(pkg.engines['node']).toBe('>=24');
     });
 
     it('frontend ships a component test, a favicon slot, and its own README', () =>
@@ -289,9 +291,144 @@ describe('production shape: the hour-three files are already waiting', () =>
         const jsonStart = raw.indexOf('[');
         const [report] = (jsonStart >= 0 ? JSON.parse(raw.slice(jsonStart)) : []) as Array<{ files: Array<{ path: string }> }>;
         const shipped = new Set((report?.files ?? []).map((file) => file.path.replaceAll('\\', '/')));
-        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/frontend/public/favicon-32.png', 'overlays/frontend/router/src/routes.ts', 'overlays/fullstack/tailwind/application/_package.merge.json'])
+        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/fullstack/.dockerignore', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/backend/.github/workflows/ci.yml', 'templates/frontend/.github/workflows/ci.yml', 'templates/frontend/public/favicon-32.png', 'overlays/frontend/router/src/routes.ts', 'overlays/fullstack/tailwind/application/_package.merge.json'])
         {
             expect(shipped.has(mustShip), mustShip).toBe(true);
+        }
+    });
+});
+
+/**
+ * Packages a template needs INSTALLED but never names in a source file, so the
+ * "is it used?" sweep below cannot see them. Each one earns its place here:
+ * removing it breaks a command, not an import.
+ */
+const IMPLICIT_DEPENDENCIES: Record<string, string> =
+{
+    'jiti': 'ESLint loads eslint.config.ts through it - without it the flat config does not parse',
+    '@azerothjs/language-server': 'ships the azeroth-tsc binary `azeroth check` runs on a frontend',
+    '@azerothjs/cli': 'ships the `azeroth` binary every script in the template invokes',
+    'typescript': 'the tsc binary `azeroth check` runs on a backend, and a peer of the compiler and typescript-eslint',
+    '@types/node': 'reached through tsconfig "types": ["node"], which never spells the package name'
+};
+
+/**
+ * Every file a template ships that could plausibly carry an import or a package name.
+ * `skip` holds the workspace directories, so a fullstack root is judged on its own
+ * files rather than on its halves'.
+ */
+function sourceFiles(dir: string, skip: readonly string[] = []): string[]
+{
+    const found: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true }))
+    {
+        if (entry.name === 'node_modules' || skip.includes(entry.name))
+        {
+            continue;
+        }
+        const path = join(dir, entry.name);
+        if (entry.isDirectory())
+        {
+            found.push(...sourceFiles(path));
+        }
+        else if (/\.(ts|mts|cts|js|mjs|cjs|azeroth|json|html|css|yml)$/.test(entry.name))
+        {
+            found.push(path);
+        }
+    }
+    return found;
+}
+
+/** Bare package specifiers imported by a file - `@scope/name/sub` folded back to `@scope/name`. */
+function importedPackages(text: string): Set<string>
+{
+    const names = new Set<string>();
+    for (const match of text.matchAll(/(?:from|import)\s+'([^']+)'/g))
+    {
+        const specifier = match[1] ?? '';
+        if (specifier === '' || specifier.startsWith('.') || specifier.startsWith('node:'))
+        {
+            continue;
+        }
+        const parts = specifier.split('/');
+        names.add(specifier.startsWith('@') ? parts.slice(0, 2).join('/') : (parts[0] ?? specifier));
+    }
+    return names;
+}
+
+/**
+ * The manifests a scaffolded project ends up with, paired with the files they are
+ * responsible for. A workspace root owns only its own - not its halves'.
+ */
+function manifestsOf(dir: string): Array<{ label: string; dir: string; files: string[] }>
+{
+    const root = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { workspaces?: string[] };
+    const workspaces = root.workspaces ?? [];
+    return [
+        { label: 'root', dir, files: sourceFiles(dir, workspaces) },
+        ...workspaces.map((workspace) => ({
+            label: workspace,
+            dir: join(dir, workspace),
+            files: sourceFiles(join(dir, workspace))
+        }))
+    ];
+}
+
+describe('manifests: every import declared, every declaration used', () =>
+{
+    // The failure this catches: `application/src/api.ts` imported @azerothjs/http and
+    // @azerothjs/schema while declaring neither, resolving only through workspace
+    // hoisting. It worked until the app was extracted from the workspace.
+    it('every package a template imports is declared in the manifest that owns it', () =>
+    {
+        for (const template of TEMPLATES)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, template, dir, 'deps', '^1.0.0');
+
+            for (const { label, dir: half, files } of manifestsOf(dir))
+            {
+                const pkg = JSON.parse(readFileSync(join(half, 'package.json'), 'utf8')) as Record<string, Record<string, string>>;
+                const declared = new Set([...Object.keys(pkg['dependencies'] ?? {}), ...Object.keys(pkg['devDependencies'] ?? {})]);
+                for (const file of files)
+                {
+                    for (const name of importedPackages(readFileSync(file, 'utf8')))
+                    {
+                        expect(declared.has(name), `${ template }/${ label } imports ${ name } in ${ file.slice(half.length + 1) } without declaring it`).toBe(true);
+                    }
+                }
+            }
+        }
+    });
+
+    it('every declared dependency is imported, or documented as an implicit one', () =>
+    {
+        for (const template of TEMPLATES)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, template, dir, 'deps', '^1.0.0');
+
+            for (const { label, dir: half, files } of manifestsOf(dir))
+            {
+                const pkg = JSON.parse(readFileSync(join(half, 'package.json'), 'utf8')) as Record<string, Record<string, string>>;
+                // "Used" is wider than "imported": a package can be named by a tsconfig
+                // plugin entry, a vitest `environment`, or a script, and that counts.
+                const text = files.map((file) => readFileSync(file, 'utf8')).join('\n');
+                const imported = importedPackages(text);
+                for (const name of [...Object.keys(pkg['dependencies'] ?? {}), ...Object.keys(pkg['devDependencies'] ?? {})])
+                {
+                    // Declared so npm does not have to auto-install it: a required peer of
+                    // @azerothjs/http and @azerothjs/kit that a server half never imports.
+                    if (name === 'azerothjs' && !imported.has(name))
+                    {
+                        continue;
+                    }
+                    expect(
+                        imported.has(name) || text.includes(name) || name in IMPLICIT_DEPENDENCIES,
+                        `${ template }/${ label } declares ${ name } but nothing uses it - delete it, or add it to IMPLICIT_DEPENDENCIES with the reason`
+                    ).toBe(true);
+                }
+            }
         }
     });
 });

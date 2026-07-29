@@ -1,0 +1,15 @@
+# Docker reads .dockerignore from the BUILD CONTEXT ROOT, and the documented build is
+# `docker build -f server/Dockerfile .` from here - so this file has to live at the
+# root, not beside the Dockerfile. Patterns are `**/`-prefixed because a bare
+# `node_modules` would only match the root one, and this is a workspace.
+.git
+**/node_modules
+**/logs
+**/tests
+# Built on the host; stage 1 builds its own inside the image, and a stale copy from
+# here would silently win.
+**/dist
+**/dist-server
+**/.azeroth
+.env
+**/*.local

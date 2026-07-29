@@ -11,8 +11,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
     globalIgnores([
         '**/dist/**',
         '**/node_modules/**',
-        '**/build/**',
-        '**/.azeroth/**'
+        '**/build/**'
     ]),
     js.configs.recommended,
     tseslint.configs.recommended,
@@ -29,9 +28,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
             'key-spacing': 'error',
             'semi-spacing': 'error',
             'curly': ['error', 'all'],
-            // No core `indent` rule: it mis-handles nested `=> ({ ... })` returns (its
-            // autofix mangles them). Indentation stays consistent by convention + the brace
-            // and spacing rules below; swap in @stylistic/indent if you want it enforced.
+            'indent': ['error', 4, { SwitchCase: 1 }],
             'semi': ['error', 'always'],
             'brace-style': ['error', 'allman'],
             'block-spacing': ['error', 'always'],
@@ -80,12 +77,10 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
         files: ['**/*.spec.ts', '**/tests/**/*.ts'],
         rules: { '@typescript-eslint/explicit-function-return-type': 'off' }
     },
-    ...azeroth.configs.recommended,
-    {
-        // A .azeroth component's return type is owned by the compiler, not the author.
-        files: ['**/*.azeroth/*.ts'],
-        rules: { '@typescript-eslint/explicit-function-return-type': 'off' }
-    }
+    // Only the first entry of this preset applies here: it carries no `files` filter, so
+    // the reactivity rules reach plain .ts. The `.azeroth` processor entries are inert in
+    // a server app - there are no components to process.
+    ...azeroth.configs.recommended
 ]);
 
 export default config;

@@ -33,9 +33,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
             'key-spacing': 'error',
             'semi-spacing': 'error',
             'curly': ['error', 'all'],
-            // No core `indent` rule: it mis-handles nested `=> ({ ... })` returns (its
-            // autofix mangles them). Indentation stays consistent by convention + the brace
-            // and spacing rules below; swap in @stylistic/indent if you want it enforced.
+            'indent': ['error', 4, { SwitchCase: 1 }],
             'semi': ['error', 'always'],
             'brace-style': ['error', 'allman'],
             'block-spacing': ['error', 'always'],

@@ -292,7 +292,10 @@ function markupLint(projection: Projection): Linter.LintMessage[]
     let findings;
     try
     {
-        findings = lintSource(projection.source);
+        // 4-space markup indent, matching the house style every template ships. ESLint's own
+        // `indent` is off on `.azeroth` (it would be measuring the re-flowed projection), so
+        // this is the only rule that can report - and fix - a mis-indented tag.
+        findings = lintSource(projection.source, { markupIndent: 4 });
     }
     catch
     {

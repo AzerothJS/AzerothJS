@@ -19,12 +19,101 @@ follow [Semantic Versioning](https://semver.org).
   the international call prefix before national normalisation runs, so `00989170459330` and
   `+989170459330` are the same number, and `0014155551234` is correctly judged as `+1`.
 
+### Added (compiler)
+
+- **`azeroth/markup-indent` lints the indentation of markup tags.** ESLint's own `indent`
+  cannot: the ESLint plugin lints the PROJECTION, whose whitespace the compiler re-flows, so
+  a report there would name a column the author never wrote - which is why the whole layout
+  rule family is off on `.azeroth`. This rule reads the original source instead, so its
+  positions and its fix are the author's own text. It judges each element as a WHOLE - the
+  opening tag, every attribute that starts a line, the `>` that closes a wrapped tag, and the
+  closing tag - because moving the opening tag alone is how an indentation autofix leaves a
+  file worse than it found it. Expression holes are skipped entirely (their contents are
+  TypeScript) and so is text, and only lines a tag OPENS are judged, so `<b>a</b><i>b</i>` on
+  one line stays an authoring choice. Configure it with the `markupIndent` plugin option
+  (spaces per level, `0` disables, default `4`); the ESLint processor reports it as
+  `azeroth/markup-indent` and `eslint --fix` applies it. Measured against every `.azeroth`
+  file in the repo and a real production app before it was allowed near a fix: zero false
+  positives, and it found one genuine defect.
+
+### Added (create-azeroth)
+
+- **The template READMEs are a proper first page.** Each scaffolded app now opens with a
+  centered header and badges, then walks the reader from `npm install` to deploy: a "start
+  here" block that says what they will SEE, the scripts and structure as tables, a worked
+  example of the thing that template teaches (writing a component, adding a route, the
+  fullstack canon tour), and a "next" section that names the one-line change for adding a
+  page, an endpoint, or a loader. The `--router` and `--tailwind` overlays append matching
+  sections instead of a bare paragraph. Every backticked path in every README is checked to
+  exist in the scaffolded tree.
+- **CI ships with every shape**, not only `fullstack`. The `frontend` and `backend`
+  templates both advertise `npm run check` as their gate and had no workflow to run it.
+- **The templates use the `azeroth test` verb**, closing the last gap in the README's promise
+  that "every template ships the `azeroth` verbs as its scripts".
+- **The shipped tests are typechecked.** All four `tsconfig.json` files scoped `include` to
+  `src`, so the `tests/app.spec.ts` every template ships was in no program: a broken test type
+  passed `npm run check` and only failed at `npm test`.
+- **A test asserts the dependency contract in both directions** - every package a template
+  imports is declared in the manifest that owns it, and every declared dependency is used or
+  named on an allowlist of bin/loader packages that carry their reason inline (`jiti` loads
+  the ESLint TS config, `@azerothjs/language-server` ships `azeroth-tsc`), so a future depcheck
+  cannot prune them.
+
 ### Fixed (create-azeroth)
 
 - **The fullstack template linted its own build output.** `dist-server/` - the SSR bundle
   from `vite build --ssr` - was missing from the ESLint ignore list, so running
   `azeroth check` after `azeroth build` reported thousands of style errors in generated
   code.
+- **Four dependencies were used but never declared**, resolving only through npm's workspace
+  hoisting and auto-peer-install. `fullstack/application` imports `@azerothjs/http` directly
+  and pulls `@azerothjs/schema` into the BROWSER bundle through the shared contract while
+  declaring neither; `backend` and `fullstack/server` never declared `azerothjs`, a required
+  peer of both `@azerothjs/http` and `@azerothjs/kit`; and `fullstack/application` ran
+  `azeroth` in three of its own scripts without declaring the CLI. Each worked until the half
+  was extracted from its workspace or an upstream package dropped a dependency.
+- **The fullstack `.dockerignore` was never read.** Docker reads it from the build-context
+  ROOT, and the documented build is `docker build -f server/Dockerfile .` from the project
+  root - so the file sitting beside the Dockerfile did nothing, and `COPY application
+  ./application` shipped `application/node_modules` into the image. It now lives at the root
+  with `**/`-prefixed patterns, because a bare `node_modules` matches only the top level and
+  this is a workspace.
+- **A fullstack scaffold offered to commit its request logs.** The server writes NDJSON to
+  `logs/` from its first boot; the root `.gitignore` never mentioned it, and the server half
+  shipped no `.gitignore` of its own. The `backend` template had this right all along.
+- **`.gitignore` ignored a directory that does not exist.** Three templates listed
+  `.azeroth-types/` while the compiler writes its declaration mirror to `.azeroth/types` - so
+  the entry was dead AND the real mirror was left untracked-but-unignored. The ESLint configs
+  had the correct path all along.
+- **`engines` promised a Node that cannot run the code.** The `backend` and `fullstack`
+  templates run TypeScript with no build step, and their Dockerfiles (`node:24-slim`), their
+  CI, and their own source comments all say Node 24 - while `engines` said `>=22`, which
+  cannot strip types unflagged before 22.18. They now say `>=24`; `frontend` stays at `>=22`
+  because vite compiles it.
+- **One house style, not two.** The four ESLint configs had drifted into pairs: `frontend`
+  and `backend` kept the core `indent` rule and allowed TypeScript `private`, while both
+  `fullstack` halves dropped `indent` and banned `private`/`protected` in favour of native
+  `#private`. Which rules you got depended on which template you picked. They are unified, and
+  `indent` is enforced everywhere - the `=> ({ ... })` autofix problem cited when it was
+  removed does not reproduce on any template source.
+- **`.azeroth`-only ESLint config in templates with no components.** Both server templates
+  carried the `.azeroth` ignore and the `**/*.azeroth/*.ts` return-type override, copied from
+  the frontend config. The `azeroth.configs.recommended` spread stays: its first entry has no
+  `files` filter, so the reactivity rules genuinely reach server `.ts`.
+- **The fullstack `preview` script served a broken app.** Carried over from the `frontend`
+  template, where it is legitimate, it serves `application/dist` with no API - the exact
+  first-click 404 the repo's own scaffold test guards against, and it was never in the
+  fullstack README's script table.
+- **Prose that described features the starter does not demonstrate.** The README, the SSR
+  entry and the app shell all spoke of guards and loaders, but no route declares one, so the
+  loader handoff is always `undefined`. The wiring stays (adding a loader is then a one-line
+  change) and the comments now say so. An unused `EntryInput` export went with it.
+
+### Fixed (cli)
+
+- **`azeroth doctor`'s mirror-staleness check could never fire.** It looked for
+  `.azeroth-types` while the compiler writes `.azeroth/types`, so every run reported "no
+  mirror in use" - the check had never once executed against a real project.
 
 ### Added (release + contribution infrastructure)
 

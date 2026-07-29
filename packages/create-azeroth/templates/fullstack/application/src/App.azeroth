@@ -3,6 +3,9 @@
 // server-side; `handoff` seeds loader data so the hydrating client never refetches
 // what the server just loaded. The browser omits both and the router reads the
 // address bar.
+//
+// `handoff` is `undefined` in this starter because no route declares a `loader` yet.
+// The wiring is here so that adding one is a one-line change to src/routes.ts.
 import { RouterProvider, Routes, Link, createRouter, createMemoryHistory } from 'azerothjs';
 import type { LoaderHandoff } from 'azerothjs';
 import { routes } from './routes.ts';

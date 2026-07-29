@@ -4,9 +4,10 @@
     "version": "0.0.0",
     "type": "module",
     "engines": {
-        "node": ">=22"
+        "node": ">=24"
     },
     "scripts": {
+        "dev": "azeroth dev",
         "check": "azeroth check",
         "test": "vitest run",
         "start": "node src/main.ts"
@@ -15,18 +16,19 @@
         "@azerothjs/http": "{{version}}",
         "@azerothjs/kit": "{{version}}",
         "@azerothjs/logger": "{{version}}",
-        "@azerothjs/schema": "{{version}}"
+        "@azerothjs/schema": "{{version}}",
+        "azerothjs": "{{version}}"
     },
     "devDependencies": {
         "@azerothjs/cli": "{{version}}",
         "@azerothjs/eslint-plugin": "{{version}}",
         "@eslint/js": "^10.0.1",
-        "@types/node": "^24.0.0",
+        "@types/node": "^26.1.0",
         "eslint": "^10.7.0",
         "globals": "^17.7.0",
         "jiti": "^2.7.0",
-        "typescript": "~6.0.2",
-        "typescript-eslint": "^8.63.0",
-        "vitest": "^4.0.0"
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.64.0",
+        "vitest": "^4.1.9"
     }
 }

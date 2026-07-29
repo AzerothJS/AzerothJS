@@ -140,7 +140,7 @@ when you are debugging the tools themselves.
 Each check is a distilled real-world failure: an unsupported Node version for the backend
 stack, a decorator ORM without `emitDecoratorMetadata` (strip-only Node cannot run it), a
 missing `@types/node` (the TS2591 flood), a stale editor extension against the installed
-compiler, a stale `.azeroth-types` mirror, `@azerothjs/*` version skew across a fullstack
+compiler, a stale `.azeroth/types` mirror, `@azerothjs/*` version skew across a fullstack
 app's halves, and `shell: true` spawns in project scripts (the Windows argument-splitting
 trap). Diagnosis only - doctor never mutates anything.
 
