@@ -9,6 +9,23 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed (schema)
+
+- **`phone()` accepted a malformed number built from the `00` international prefix.** With a
+  default country, `00989170459330` was normalised by stripping a single leading zero and
+  prepending the calling code, producing `+980989170459330` - fifteen digits beginning with
+  the Iranian calling code, so it passed both the digit-count bound and the country filter.
+  A silently accepted wrong number is worse than a rejected right one: `00` is now read as
+  the international call prefix before national normalisation runs, so `00989170459330` and
+  `+989170459330` are the same number, and `0014155551234` is correctly judged as `+1`.
+
+### Fixed (create-azeroth)
+
+- **The fullstack template linted its own build output.** `dist-server/` - the SSR bundle
+  from `vite build --ssr` - was missing from the ESLint ignore list, so running
+  `azeroth check` after `azeroth build` reported thousands of style errors in generated
+  code.
+
 ### Added (release + contribution infrastructure)
 
 - **GitHub Releases carry the changelog.** `scripts/release-notes.mjs` extracts the

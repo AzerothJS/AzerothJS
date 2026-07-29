@@ -8,6 +8,8 @@
  * WHAT IT DOES:
  *   - Strips human punctuation (spaces, hyphens, dots, parentheses) so `+1 (415) 555-1234` and
  *     `+14155551234` are treated identically.
+ *   - Reads a leading `00` as the international call prefix, so `00989170459330` is the same number
+ *     as `+989170459330` - the form a landline dials.
  *   - Requires the leading `+` (strict E.164) UNLESS defaultCountry is set, in which case national
  *     input (no `+`, optional leading trunk `0`) is normalized to E.164 first - `09170459330`
  *     validates like `+989170459330`.
@@ -55,6 +57,7 @@ export interface PhoneOptions
      *
      *   '09170459330'    -> '+989170459330'   (trunk 0 dropped)
      *   '9170459330'     -> '+989170459330'   (no trunk 0)
+     *   '00989170459330' -> '+989170459330'   (00 is the international prefix)
      *   '+989170459330'  -> unchanged         (already E.164)
      *
      * If omitted but exactly one country is listed in `countries`, that country
@@ -184,6 +187,16 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
         // parentheses, and Unicode soft-hyphens (U+00AD, escaped below because
         // the character itself is invisible) all go. Keep `+` and digits only.
         let cleaned = value.replace(/[\s\-().\u00AD]/g, '');
+
+        // Step 1a: `00` is the international call prefix in most of the world, so
+        // `00989170459330` is `+989170459330` written the way a landline dials it.
+        // This runs BEFORE national normalization, which would otherwise strip only the
+        // first zero and build a bogus number (`+98` + `0989170459330`) that then passes
+        // both the length and the country check - a false ACCEPT, the worst kind.
+        if (cleaned.startsWith('00') && /^\d+$/.test(cleaned))
+        {
+            cleaned = `+${ cleaned.slice(2) }`;
+        }
 
         // Step 1b (optional): national-format normalization. If the input is
         // all digits with no `+` and a default country is configured, convert it

@@ -149,6 +149,31 @@ describe('phone - national-format normalization', () =>
     });
 });
 
+describe('phone - the 00 international prefix', () =>
+{
+    it('reads 00 as +, with or without a default country', () =>
+    {
+        expect(phone()('0014155551234')).toBeNull();
+        expect(phone({ countries: ['IR'] })('00989170459330')).toBeNull();
+        expect(phone({ defaultCountry: 'IR' })('0098 917 045 9330')).toBeNull();
+    });
+
+    it('does not turn 00 input into a bogus number that passes every check', () =>
+    {
+        // Without this rule, national normalization strips ONE zero and builds
+        // '+98' + '0989170459330' - 15 digits starting with the Iranian calling code, so
+        // it passes both the length bound and the country filter while being nonsense.
+        // The country filter must judge the REAL country code, +1, and reject it.
+        expect(phone({ countries: ['IR'] })('0014155551234')).toBe('Phone must be from one of: IR');
+    });
+
+    it('leaves a single leading zero to the national rule', () =>
+    {
+        // One zero is a national trunk prefix, not an international one.
+        expect(phone({ countries: ['IR'] })('09170459330')).toBeNull();
+    });
+});
+
 describe('phone - skip-empty and message override', () =>
 {
     it('skips empty values (skip-empty convention)', () =>
