@@ -30,10 +30,14 @@ export const contract = defineContract({
 ```
 
 A route is `<method>(path, { input?, query?, output?, responses?, docs? })`. The method is
-the function you call - `get`, `post`, `put`, `patch`, `del`, `query` - so a route reads as
-one line, and the bodyless methods have no `input` field at all: `get('/x', { input })` does
-not compile. `route({ method, path, ... })` is the general form underneath, for a method
-those six do not cover.
+the function you call - `get`, `post`, `put`, `patch`, `del`, `query`, one per `ApiMethod` -
+so a route reads as one line, and the bodyless methods have no `input` field at all:
+`get('/x', { input })` does not compile.
+
+`route({ method, path, ... })` is the primitive those six are built on, the same relationship
+`app.route` has to `app.get`. Prefer the helpers; reach for `route` when the method is not a
+literal, because a contract is being assembled from configuration. It narrows the same way a
+helper does when the method IS a literal - `route({ method: 'GET', input })` is refused too.
 
 The key path is the call path: `users.get` above is `client.users.get(...)` below.
 

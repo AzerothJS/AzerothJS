@@ -31,10 +31,9 @@ export const entry = object({
 export type Entry = Infer<typeof entry>;
 
 /**
- * The routes, grouped. `get`/`post`/`put`/`patch`/`del`/`query` name the method in the call,
- * so a route reads as one line - and a GET cannot declare an `input`, because the helper's
- * definition has no such field. (`route({ method, path, ... })` is the general form
- * underneath; reach for it only for a method these six do not cover.)
+ * The routes, grouped. `get`/`post`/`put`/`patch`/`del`/`query` - one per method - name the
+ * method in the call, so a route reads as one line, and a GET cannot declare an `input`
+ * because the helper's definition has no such field.
  *
  * The key path is the client's call path: `guestbook.sign` here is
  * `client.guestbook.sign({ input })` in the browser.

@@ -281,20 +281,37 @@ export interface Contract
     [key: string]: AnyRoute | Contract;
 }
 
-/** Declares one route. Identity at runtime; the generics carry the wire types. */
-export function route<Path extends string, In = undefined, Out = unknown, Query = undefined, Responses extends Record<number, unknown> = Record<never, never>>(
-    definition: {
-        method: ApiMethod;
-        path: Path;
-        input?: RouteSchema<In>;
-        query?: RouteSchema<Query>;
-        output?: RouteSchema<Out>;
-        responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
-        docs?: RouteDocs;
-    }
-): Route<Path, In, Out, Query, Responses>
+/** @internal The methods that carry no request body - the ones `input` is meaningless on. */
+type BodylessMethod = 'GET' | 'DELETE';
+
+/**
+ * Declares one route from a method value. Identity at runtime; the generics carry the wire
+ * types.
+ *
+ * PREFER THE VERB HELPERS - `get`, `post`, `put`, `patch`, `del`, `query` - which name the
+ * method in the call and cover every {@link ApiMethod}. This is the primitive they are built
+ * on (the same relationship `app.route` has to `app.get`), and it earns its place for the one
+ * thing they cannot do: taking a method that is not a literal, when a contract is assembled
+ * from configuration rather than written out.
+ *
+ * A literal bodyless method is still narrowed here - `route({ method: 'GET', input })` does
+ * not compile, exactly as `get('/x', { input })` does not. Only a widened `ApiMethod` falls
+ * through to the permissive overload, because at that point the body-ness is unknowable.
+ */
+export function route<
+    Method extends ApiMethod,
+    Path extends string,
+    In = undefined,
+    Out = unknown,
+    Query = undefined,
+    Responses extends Record<number, unknown> = Record<never, never>
+>(
+    definition: { method: Method; path: Path } & (Method extends BodylessMethod
+        ? BodylessDefinition<Out, Query, Responses>
+        : BodyDefinition<In, Out, Query, Responses>)
+): Route<Path, Method extends BodylessMethod ? undefined : In, Out, Query, Responses>
 {
-    return { kind: 'route', ...definition };
+    return { kind: 'route', ...definition } as Route<Path, Method extends BodylessMethod ? undefined : In, Out, Query, Responses>;
 }
 
 /**

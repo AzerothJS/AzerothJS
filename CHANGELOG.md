@@ -36,6 +36,17 @@ follow [Semantic Versioning](https://semver.org).
   file in the repo and a real production app before it was allowed near a fix: zero false
   positives, and it found one genuine defect.
 
+### Fixed (http)
+
+- **`route()` let a GET declare a request body.** The six verb helpers cover every
+  `ApiMethod`, and `get`/`del` take a definition type with no `input` field - but `route`,
+  the primitive they are built on, accepted `{ method: 'GET', input }` and produced a
+  contract whose client would send a body no GET should carry. Its definition type is now
+  conditional on the method, so a literal bodyless method narrows exactly as the helper does
+  while a widened `ApiMethod` still type-checks - which is the one thing `route` is for, and
+  why it stays: assembling a contract from configuration, where the method is not a literal.
+  It is the same primitive-plus-sugar pairing `app.route` has with `app.get`.
+
 ### Changed (http)
 
 - **The contract docs lead with the verb helpers.** `get`, `post`, `put`, `patch`, `del` and
@@ -43,8 +54,7 @@ follow [Semantic Versioning](https://semver.org).
   instead - the general form, three tokens longer, with the method buried in a property. The
   verb form is also strictly SAFER: `get`/`del` take a definition with no `input` field at all,
   so `get('/x', { input })` does not compile, while `route({ method: 'GET', input })` happily
-  declares a body on a GET. `route` remains the documented escape hatch for a method the six
-  helpers do not cover.
+  declares a body on a GET.
 
   Worth knowing when converting: `del` and `get` being bodyless is what surfaces a DELETE
   that carries a request body. The portable replacement is usually the QUERY STRING rather
