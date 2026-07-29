@@ -6,7 +6,7 @@
 // isomorphic schema package, so bundling it into the application drags in zero
 // server code. It lives in server/src so the production Docker image (which copies
 // server/src verbatim) carries it without extra wiring.
-import { defineContract, route } from '@azerothjs/http/api/client';
+import { defineContract, get, post } from '@azerothjs/http/api/client';
 import { array, number, object, string, type Infer } from '@azerothjs/schema';
 
 /**
@@ -30,9 +30,18 @@ export const entry = object({
 
 export type Entry = Infer<typeof entry>;
 
+/**
+ * The routes, grouped. `get`/`post`/`put`/`patch`/`del`/`query` name the method in the call,
+ * so a route reads as one line - and a GET cannot declare an `input`, because the helper's
+ * definition has no such field. (`route({ method, path, ... })` is the general form
+ * underneath; reach for it only for a method these six do not cover.)
+ *
+ * The key path is the client's call path: `guestbook.sign` here is
+ * `client.guestbook.sign({ input })` in the browser.
+ */
 export const contract = defineContract({
     guestbook: {
-        list: route({ method: 'GET', path: '/guestbook', output: array(entry) }),
-        sign: route({ method: 'POST', path: '/guestbook', input: entryInput, output: entry })
+        list: get('/guestbook', { output: array(entry) }),
+        sign: post('/guestbook', { input: entryInput, output: entry })
     }
 });

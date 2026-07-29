@@ -36,6 +36,22 @@ follow [Semantic Versioning](https://semver.org).
   file in the repo and a real production app before it was allowed near a fix: zero false
   positives, and it found one genuine defect.
 
+### Changed (http)
+
+- **The contract docs lead with the verb helpers.** `get`, `post`, `put`, `patch`, `del` and
+  `query` have always shipped, but every example taught `route({ method: 'GET', path: '...' })`
+  instead - the general form, three tokens longer, with the method buried in a property. The
+  verb form is also strictly SAFER: `get`/`del` take a definition with no `input` field at all,
+  so `get('/x', { input })` does not compile, while `route({ method: 'GET', input })` happily
+  declares a body on a GET. `route` remains the documented escape hatch for a method the six
+  helpers do not cover.
+
+  Worth knowing when converting: `del` and `get` being bodyless is what surfaces a DELETE
+  that carries a request body. The portable replacement is usually the QUERY STRING rather
+  than a path param - `del('/things', { query })` keeps the schema at the boundary, while
+  `/things/:id` moves the identifier into a raw `string` with no schema behind it (there is
+  no `params` validator by design; a path param is matched, not parsed).
+
 ### Added (create-azeroth)
 
 - **The template READMEs are a proper first page.** Each scaffolded app now opens with a

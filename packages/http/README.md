@@ -245,7 +245,7 @@ handler MUST NOT mutate state. In a typed contract it is a first-class method wh
 query body:
 
 ```ts
-search: route({ method: 'QUERY', path: '/products/search', input: FilterSchema, output: ResultsSchema })
+search: query('/products/search', { input: FilterSchema, output: ResultsSchema })
 ```
 
 QUERY is new, so some intermediaries (older proxies, CDNs, browsers) may not pass it yet - verify

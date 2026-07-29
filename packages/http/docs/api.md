@@ -17,17 +17,25 @@ npm install @azerothjs/http
 ## One declaration, both sides
 
 ```ts
-// shared/contract.ts - imported by browser AND server (no handler code lives here)
-import { defineContract, route } from '@azerothjs/http/api/client';
+// contract.ts - imported by browser AND server (no handler code lives here)
+import { defineContract, get, post } from '@azerothjs/http/api/client';
 import { object, string, number } from '@azerothjs/schema';
 
 export const contract = defineContract({
     users: {
-        get: route({ method: 'GET', path: '/users/:id', output: object({ id: number(), name: string() }) }),
-        create: route({ method: 'POST', path: '/users', input: object({ name: string({ min: 2 }) }) })
+        get: get('/users/:id', { output: object({ id: number(), name: string() }) }),
+        create: post('/users', { input: object({ name: string({ min: 2 }) }) })
     }
 });
 ```
+
+A route is `<method>(path, { input?, query?, output?, responses?, docs? })`. The method is
+the function you call - `get`, `post`, `put`, `patch`, `del`, `query` - so a route reads as
+one line, and the bodyless methods have no `input` field at all: `get('/x', { input })` does
+not compile. `route({ method, path, ... })` is the general form underneath, for a method
+those six do not cover.
+
+The key path is the call path: `users.get` above is `client.users.get(...)` below.
 
 ```ts
 // server
@@ -103,8 +111,7 @@ A route declares its non-default responses per status, and a handler speaks them
 each status becomes its own entry in the OpenAPI document:
 
 ```ts
-create: route({
-    method: 'POST', path: '/users',
+create: post('/users', {
     input: CreateUser, output: User,
     responses: { 201: User, 409: Problem }
 }),
@@ -125,8 +132,7 @@ A route declares a multipart/form-data input at the contract level; the handler 
 validated text fields plus the files, fully typed:
 
 ```ts
-upload: route({
-    method: 'POST', path: '/files',
+upload: post('/files', {
     input: multipart({ fields: object({ title: string() }), maxFileSize: 20 * 1024 * 1024 }),
     output: FileRecord
 }),
@@ -143,7 +149,7 @@ such a route through the client is a loud error), and beyond-memory uploads keep
 
 ## Bring your own validator
 
-`route({ input })` accepts any [Standard Schema](https://standardschema.dev) validator
+A route's `input` accepts any [Standard Schema](https://standardschema.dev) validator
 (Zod, Valibot, ArkType) alongside native `@azerothjs/schema` - so a team keeps its
 existing schemas. A foreign schema validates the boundary; its OpenAPI entry degrades to
 the permissive shape (native schemas keep full self-description).
@@ -160,7 +166,7 @@ exactly as a POST's; the inferred client sends the QUERY request, and the handle
 mutate state (that contract is what lets responses be cached and requests retried).
 
 ```ts
-search: route({ method: 'QUERY', path: '/products/search', input: FilterSchema, output: ResultsSchema })
+search: query('/products/search', { input: FilterSchema, output: ResultsSchema })
 ```
 
 ## OpenAPI: the contract's third exporter
