@@ -32,11 +32,11 @@ or `test/` directory - each package owns its own `src/` and `tests/`.
 | --- | --- |
 | `packages/azerothjs` | THE frontend framework, one real package (`npm i azerothjs`): `src/reactivity` (signals/memos/effects/owner), `src/component` (teardown, ErrorBoundary), `src/renderer` (DOM + control flow), `src/ssr`, `src/router`, `src/form`. |
 | `packages/schema` | Validation shared by both halves (forms client-side, request boundaries server-side). |
-| `packages/http` `packages/api` `packages/ws` `packages/cron` `packages/logger` | The backend stack: HTTP kernel, typed contracts + OpenAPI, WebSockets, scheduling, logging. |
+| `packages/http` `packages/ws` `packages/cron` `packages/logger` | The backend stack: HTTP kernel (with the typed contracts + OpenAPI at `src/api`), WebSockets, scheduling, logging. |
 | `packages/compiler` | The `.azeroth` single-file-component compiler and the Vite plugin. |
 | `packages/cli` `packages/create-azeroth` | The `azeroth` command and the `npm create azeroth` scaffolder. |
 | `packages/testing` | Test helpers (`renderTest`, `cleanup`, `leakGuard`, `fire`). |
-| `packages/language-service` `packages/language-server` `packages/typescript-plugin` `packages/eslint-plugin` | Editor tooling. |
+| `packages/language-server` `packages/typescript-plugin` `packages/eslint-plugin` | Editor tooling (the language service itself is `language-server/src/language-service`). |
 | `packages/devtools` | Browser devtools panel/agent. |
 | `editors/vscode` `editors/jetbrains` | Editor extensions. |
 

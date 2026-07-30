@@ -85,7 +85,7 @@ jobs:
             -   run: npm ci
             # Most of the suite runs against src via the workspace aliases in
             # vitest.config.ts, but the control-flow type-check tests resolve the REAL
-            # `@azerothjs/core` types through node_modules (its `types` points at dist),
+            # `azerothjs` types through node_modules (its `types` points at dist),
             # so the packages must be built first.
             -   run: npm run build
             # Linux runs the suite WITH coverage (measured overhead: +6s over the plain
@@ -138,5 +138,5 @@ jobs:
             # which the src-aliased test suite never exercises. Requires the build above.
             -   run: npm run lint:publish
             # Deterministic reactive-graph leak gate (build output is required: the gate
-            # imports @azerothjs/reactivity from its published dist).
+            # imports azerothjs from its published dist).
             -   run: npm run leak

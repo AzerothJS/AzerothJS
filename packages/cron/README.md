@@ -60,7 +60,9 @@ await scheduler.stop();          // disarm + drain in-flight runs (pair with the
 - **Crashes.** A throwing job reports to `onError` and keeps its schedule; the observer's own
   throws are swallowed.
 - **Shutdown.** `stop({ drain: true })` disarms every timer and awaits in-flight runs up to a
-  grace period - fold it into `@azerothjs/http`'s `shutdown()` and deploys stop cleanly.
+  grace period - fold it into `@azerothjs/http`'s `shutdown()` and deploys stop cleanly. Do
+  not await it from inside a job: the drain set includes the caller, so the job would wait on
+  itself until the grace expires. From a job, use `stop({ drain: false })`.
 - **Loud registration.** A malformed expression, unknown timezone, duplicate name, or an
   expression that can never match (`0 0 31 2 *`) throws AT `schedule()`, not at 3am.
 

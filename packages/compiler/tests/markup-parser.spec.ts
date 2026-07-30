@@ -50,6 +50,17 @@ describe('parseMarkup - elements', () =>
         expect((e.children[0] as MarkupText).value).toBe('it\'s me');
     });
 
+    it('decodes HTML entities in text - named, decimal, and hex', () =>
+    {
+        // GRAMMAR.md 6.4 promises exactly this. It went untested long enough for the
+        // document to claim the opposite ("no entity decoding") while the parser decoded.
+        expect((el('<p>a &amp; b</p>').children[0] as MarkupText).value).toBe('a & b');
+        expect((el('<p>&#65;&#x42;</p>').children[0] as MarkupText).value).toBe('AB');
+        expect((el('<p>a&nbsp;b</p>').children[0] as MarkupText).value).toBe('a b');
+        // An unrecognized reference is not a reference; it stays literal.
+        expect((el('<p>&notanentity; x</p>').children[0] as MarkupText).value).toContain('&notanentity;');
+    });
+
     it('collapses whitespace runs containing a newline to a single space', () =>
     {
         const e = el('<p>a\n   b</p>');

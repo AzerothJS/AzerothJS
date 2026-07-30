@@ -39,7 +39,7 @@ import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
-import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem } from './keyword-spec.ts';
+import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } from './keyword-spec.ts';
 import { rewriteReactive, setterName } from './rewrite.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
@@ -61,6 +61,13 @@ export const EMITTED_CONTRACT_VERSION = 1;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
+
+/**
+ * Pre-filter for module-scope lowering, derived from the keyword table so a new keyword is
+ * covered by declaring it there. Built from the surface words rather than hand-listed: a
+ * region matching none of them holds no lowerable construct and stays verbatim.
+ */
+const LOWERABLE_WORD_RE = new RegExp(`\\b(?:${ [...LOWERABLE_WORDS].join('|') })\\b`);
 
 /**
  * Renders a keyword's trailing options argument. In dev emission the declared identifier is
@@ -264,7 +271,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
             // A module-level "composable" (a plain function using the keywords) lowers here too.
             // Guard on a keyword token so keyword-free module code (imports, types, helpers) stays
             // byte-identical for clean source maps.
-            if (/\b(?:state|derived|effect)\b/.test(projected))
+            if (LOWERABLE_WORD_RE.test(projected))
             {
                 const { code, used } = lowerStatements(projected, NO_SOURCES, item.start);
                 for (const name of used)

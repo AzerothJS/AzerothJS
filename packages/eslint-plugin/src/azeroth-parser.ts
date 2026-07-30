@@ -15,6 +15,7 @@ import tsParser from '@typescript-eslint/parser';
 import { posix } from 'node:path';
 import { toVirtualFile } from '@azerothjs/language-server/language-service';
 import { projectFor, normalize } from './project-pool.ts';
+import { packageVersion } from './version.ts';
 
 interface ParserOptions
 {
@@ -50,6 +51,6 @@ export function parseForESLint(code: string, options: ParserOptions = {}): Retur
 /** The parser object for `languageOptions.parser`. */
 export const azerothParser: { meta: { name: string; version: string }; parseForESLint: typeof parseForESLint } =
 {
-    meta: { name: '@azerothjs/eslint-plugin/parser', version: '0.6.0-beta.1' },
+    meta: { name: '@azerothjs/eslint-plugin/parser', version: packageVersion },
     parseForESLint
 };

@@ -202,8 +202,14 @@ Spread          := `{` `...` TS expression `}`
   `Dynamic`, `Suspense`, `ErrorBoundary`, `Transition`, `Outlet`) are auto-imported.
 - **Void elements** (`br`, `img`, `input`, ...) may be written self-closed
   (`<br/>`) or HTML-style (`<br>`); both are childless.
-- **Text** is verbatim - no HTML entity decoding, no whitespace collapsing beyond
-  the renderer's rules. An apostrophe in text is text.
+- **Text** carries no expression syntax - an apostrophe in text is text - and is
+  normalized in exactly two ways, both HTML's own:
+  - **Entities are decoded**: the named set (`&amp;`, `&nbsp;`, ...) plus numeric
+    decimal and hex refs (`&#65;`, `&#x42;`). An unrecognized `&foo;` stays literal.
+  - **Newline whitespace collapses**: a whitespace-only run containing a newline is
+    dropped (so indentation between tags emits no text node), and inside a run that
+    has real text each `\s*\n\s*` sequence becomes a single space. Same-line spacing
+    is authored spacing and is preserved - `a <b>x</b> c` keeps both spaces.
 - **Holes** capture their interior as a RAW TypeScript span; nested markup inside a
   hole is compiled recursively. A hole containing only comments/whitespace is
   dropped.
@@ -249,8 +255,9 @@ Imperative, non-reactive features are never keywords.
   belong to TypeScript. The compiler will never fork expression syntax.
 - **No syntax plugins.** The grammar is closed; there is no compiler plugin API and
   no user-extensible syntax.
-- **No HTML compatibility promises** beyond §6: no entity decoding, no doctype, no
-  comments-in-markup (`<!-- -->`) - a hole with a TS comment serves that need.
+- **No HTML compatibility promises** beyond §6: no doctype, no comments-in-markup
+  (`<!-- -->`) - a hole with a TS comment serves that need. Entity decoding and
+  newline-whitespace collapsing are in §6.4 and are the whole of it.
 - **No angle-bracket casts, no comma-less generic arrows in body positions** (§3.3).
 - **No new keywords without the §7 rubric** - and the current keyword set is
   settled; additions follow the syntax-stability policy, not ad-hoc need.

@@ -65,7 +65,7 @@ npm create azeroth@latest my-app
 
 | Flag | Effect |
 | --- | --- |
-| `--print` | Print the exact child invocations and exit (`dev` / `check` / `build`). |
+| `--print` | Print the exact child invocations and exit (`dev` / `check` / `build` / `test`; on `upgrade`, the pin table). |
 | `--raw` | Verbatim child output in `dev` - no rewriting, no color propagation. |
 | `--app <dir>` | Explicit frontend half of a fullstack root. |
 | `--server <dir>` | Explicit backend half of a fullstack root. |

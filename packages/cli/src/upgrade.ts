@@ -10,7 +10,8 @@
  *
  * `target` is a version (`1.0.0-beta.3`) or a dist-tag (`latest`, `beta`); tags
  * resolve through `npm view azerothjs@<tag> version` so the pins always end up
- * concrete.
+ * concrete. The spec is validated before it is used and npm is spawned with an
+ * argument array, never a shell string - see {@link npm}.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -105,12 +106,18 @@ export function collectManifests(rootDir: string): string[]
     return out;
 }
 
-/** @internal npm invocations go through the shell - npm is npm.cmd on Windows. */
-function npm(args: string, cwd: string, capture: boolean): { status: number; stdout: string }
+/**
+ * @internal Runs npm with an ARGUMENT ARRAY and no shell, like every other child this CLI
+ * spawns. Windows needs `npm.cmd`, which is why this once went through `shell: true` - but
+ * that put a caller-supplied spec (`azeroth upgrade <target>`) inside a shell string, so
+ * `upgrade "latest; <command>"` ran `<command>`. The extension is chosen explicitly here
+ * instead; nothing this function receives is ever parsed by a shell.
+ */
+function npm(args: readonly string[], cwd: string, capture: boolean): { status: number; stdout: string }
 {
-    const result = spawnSync(`npm ${ args }`, {
+    const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
         cwd,
-        shell: true,
+        shell: false,
         stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
         encoding: 'utf8'
     });
@@ -119,10 +126,21 @@ function npm(args: string, cwd: string, capture: boolean): { status: number; std
     return { status: result.status ?? 1, stdout: ((result.stdout as string | null) ?? '').trim() };
 }
 
+/**
+ * A publishable version or dist-tag, the only shapes `upgrade` accepts. Anything else is
+ * refused before it reaches npm: the value is caller-supplied, and a name that cannot be a
+ * package specifier has no business being resolved.
+ */
+const SPEC_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+-]*$/;
+
 /** Resolves a dist-tag (or verifies a version) to the concrete version string. */
 function resolveTarget(spec: string, cwd: string): string | null
 {
-    const { status, stdout } = npm(`view azerothjs@${ spec } version`, cwd, true);
+    if (!SPEC_PATTERN.test(spec))
+    {
+        return null;
+    }
+    const { status, stdout } = npm(['view', `azerothjs@${ spec }`, 'version'], cwd, true);
     if (status !== 0 || stdout === '')
     {
         return null;
@@ -184,7 +202,7 @@ export function runUpgrade(cwd: string, spec: string, options: { dryRun: boolean
         writeFileSync(write.file, write.text);
     }
     print(dim('  installing...'));
-    const install = npm('install', cwd, false);
+    const install = npm(['install'], cwd, false);
     if (install.status !== 0)
     {
         fail('npm install failed - the pins are rewritten; fix the install and re-run `azeroth doctor`');

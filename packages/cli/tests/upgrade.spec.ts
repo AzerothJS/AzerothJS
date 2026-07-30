@@ -2,12 +2,12 @@
 // survives byte-for-byte outside the touched versions) and workspace manifest
 // collection. The npm/network side stays behind injected effects and is not
 // exercised here.
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { collectManifests, rewritePins } from '../src/upgrade.ts';
+import { collectManifests, rewritePins, runUpgrade } from '../src/upgrade.ts';
 import { planTest } from '../src/plan.ts';
 import { detectProject } from '../src/detect.ts';
 
@@ -70,6 +70,42 @@ describe('collectManifests', () =>
 
         const found = collectManifests(root).map((f) => f.slice(root.length + 1).replace(/\\/g, '/'));
         expect(found).toEqual(['package.json', 'application/package.json', 'packages/one/package.json']);
+    });
+});
+
+describe('runUpgrade - the target spec is validated before it reaches npm', () =>
+{
+    // The spec is caller-supplied (`azeroth upgrade <target>`). It once landed inside a
+    // `shell: true` command string, so a shell metacharacter in it executed. npm now takes
+    // an argument array, and a spec that could not be a package specifier is refused here -
+    // before any child runs. A refusal must therefore never touch the manifests.
+    const shellish = ['latest; echo pwned', 'latest && echo pwned', 'latest`echo pwned`', 'latest | echo pwned', '$(echo pwned)'];
+
+    it('refuses a spec carrying shell metacharacters, writing nothing', () =>
+    {
+        const root = mkdtempSync(join(tmpdir(), 'az-spec-'));
+        try
+        {
+            const manifest = '{\n    "dependencies": {\n        "azerothjs": "^1.0.0"\n    }\n}\n';
+            writeFileSync(join(root, 'package.json'), manifest);
+            for (const spec of shellish)
+            {
+                let doctorRan = false;
+                const doctor = (): number =>
+                {
+                    doctorRan = true;
+                    return 0;
+                };
+                const code = runUpgrade(root, spec, { dryRun: false, doctor });
+                expect(code).toBe(1);        // could not resolve
+                expect(doctorRan).toBe(false);
+                expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(manifest); // untouched
+            }
+        }
+        finally
+        {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 

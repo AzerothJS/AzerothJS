@@ -117,6 +117,21 @@ export const DECLARATION_KEYWORDS: ReadonlySet<string> = new Set<string>(
     [...SOURCE_KINDS, ...FACTORY_KINDS, 'form']
 );
 
+/**
+ * The SURFACE words the nested lowerer actually TRANSFORMS: the reactive sources, `effect`
+ * (both the plain and the `(deps)` form), and the wrapper keywords. Unlike {@link LOWERABLE},
+ * which holds AST kinds, these are the words as written - so a cheap text pre-filter can tell
+ * a region needing no lowering (left byte-identical, for clean source maps) from one that
+ * does. A transformed word missing here is emitted VERBATIM, which is not valid JavaScript.
+ *
+ * The factories and `form` are deliberately absent: the nested lowerer detects but does not
+ * transform them (see {@link LOWERABLE}), so listing them would only cost the verbatim
+ * mapping of any module that uses `form` or `store` as an ordinary identifier.
+ */
+export const LOWERABLE_WORDS: ReadonlySet<string> = new Set<string>(
+    [...SOURCE_KINDS, 'effect', ...Object.keys(WRAPPER_FN)]
+);
+
 /** Narrows a body item to a factory declaration (the sugar read explicitly via its api). */
 export function isFactoryItem<T extends { kind: string }>(item: T): item is Extract<T, { kind: FactoryKind }>
 {

@@ -106,7 +106,14 @@ export interface Scheduler
     /** Re-arms every job after a stop(). Jobs auto-arm at registration; this is the restart. */
     start(): void;
 
-    /** Disarms every timer; with `drain` (default true) awaits in-flight runs up to the grace. */
+    /**
+     * Disarms every timer; with `drain` (default true) awaits in-flight runs up to the grace.
+     *
+     * Do NOT await this from inside a job: draining waits on the in-flight set, which
+     * includes the caller, so the job awaits itself and only the grace timer ends it. A job
+     * that needs to end the schedule should call `stop({ drain: false })`, or hand the stop
+     * to the shutdown path that owns the scheduler.
+     */
     stop(options?: { drain?: boolean; gracePeriodMs?: number }): Promise<void>;
 }
 

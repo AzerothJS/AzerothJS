@@ -36,6 +36,20 @@ follow [Semantic Versioning](https://semver.org).
   file in the repo and a real production app before it was allowed near a fix: zero false
   positives, and it found one genuine defect.
 
+### Fixed (compiler)
+
+- **A `deferred` or a wrapper block inside a module-level composable compiled to invalid
+  JavaScript.** Module-scope regions are pre-filtered for a keyword before the nested lowerer
+  runs, so keyword-free code stays byte-identical and keeps a clean source map - but that
+  filter hand-listed `state|derived|effect`, three of the ten words that can start a lowerable
+  construct. A `deferred slow = heavy;` or a `cleanup { ... }` in a composable therefore fell
+  through and was emitted VERBATIM, which is not valid JavaScript. The projection lowered the
+  same code correctly, so the editor and `azeroth check` were green and the failure only
+  appeared when the bundle ran. The filter is now derived from the keyword table
+  (`LOWERABLE_WORDS`), so a keyword is covered by declaring it there. The factories and `form`
+  stay out of it deliberately: the nested lowerer does not transform them, and listing them
+  would cost the verbatim mapping of any module that uses `form` or `store` as a plain name.
+
 ### Fixed (http)
 
 - **`route()` let a GET declare a request body.** The six verb helpers cover every
@@ -149,6 +163,14 @@ follow [Semantic Versioning](https://semver.org).
   change) and the comments now say so. An unused `EntryInput` export went with it.
 
 ### Fixed (cli)
+
+- **`azeroth upgrade` passed its target through a shell.** npm was spawned as one command
+  STRING with `shell: true` (npm is `npm.cmd` on Windows), and the target came straight from
+  the command line - so `azeroth upgrade "latest; <command>"` ran `<command>`. It is the one
+  place the CLI broke its own rule that children are spawned as an argument array with no
+  shell, which is exactly the hazard `azeroth doctor` flags in a project's own scripts. npm
+  now takes an argument array with the platform's executable name chosen explicitly, and a
+  target that could not be a version or a dist-tag is refused before any child runs.
 
 - **`azeroth doctor`'s mirror-staleness check could never fire.** It looked for
   `.azeroth-types` while the compiler writes `.azeroth/types`, so every run reported "no

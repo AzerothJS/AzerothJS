@@ -380,6 +380,37 @@ describe('generateModule - nested-scope keywords (composables)', () =>
         const code = gen('component C { <ul>{items.map(i => { const active = i.id; return <li>{active}</li>; })}</ul> }');
         expect(code).not.toMatch(/active\(\)/);
     });
+
+    it('lowers EVERY transformed keyword in a composable, not just state/derived/effect', () =>
+    {
+        // The module-scope pre-filter is derived from LOWERABLE_WORDS. When it hand-listed
+        // state|derived|effect, a `deferred` or a wrapper block in a composable fell through
+        // and was emitted VERBATIM - invalid JavaScript that the projection type-checked
+        // happily, so the editor was green and the build shipped broken output.
+        for (const [source, expected] of [
+            ['deferred slow = heavy;', 'createDeferred(() => (heavy))'],
+            ['batch { a(); }', 'batch(() => { a(); })'],
+            ['untrack { b(); }', 'untrack(() => { b(); })'],
+            ['cleanup { c(); }', 'onCleanup(() => { c(); })'],
+            ['dispose { d(); }', 'onRootDispose(() => { d(); })'],
+            ['mount { e(); }', 'onMount(() => { e(); })']
+        ] as const)
+        {
+            const code = gen(`function useThing() { ${ source } }\ncomponent C { <p>x</p> }`);
+            expect(code).toContain(expected);
+            // The surface keyword must not survive as a statement head.
+            expect(code).not.toMatch(new RegExp(`^\\s*${ source.split(/[ {]/)[0] as string }\\s`, 'm'));
+        }
+    });
+
+    it('leaves a module-scope identifier named after a non-transformed keyword verbatim', () =>
+    {
+        // `form`/`store` and the other factories are component-body sugar the nested lowerer
+        // does not transform, so they stay OUT of the pre-filter: a module using `form` as an
+        // ordinary name keeps its byte-identical emit (and its fine-grained source map).
+        const code = gen('const form = document.querySelector("form");\ncomponent C { <p>x</p> }');
+        expect(code).toContain('const form = document.querySelector("form");');
+    });
 });
 
 describe('generateModule - keyword options (`with { ... }` clause)', () =>

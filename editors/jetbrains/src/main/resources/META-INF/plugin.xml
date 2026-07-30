@@ -33,13 +33,15 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <p><b>1.0.0-beta</b> - the framework's first 1.0 beta, and the plugin grows with it:</p>
+        <p><b>1.1.0</b> - in lockstep with the framework:</p>
         <ul>
             <li>The AzerothJS file icon for <code>.azeroth</code> files (light and dark).</li>
-            <li>Find Usages and unused-symbol analysis now see component usages of
+            <li>Find Usages and unused-symbol analysis see component usages of
                 <code>.ts</code> exports.</li>
-            <li>Language server updated to the 1.0 compiler: keyword hover docs,
-                auto-imports, cross-file rename hardened.</li>
+            <li>Language server on the current compiler: keyword hover docs, the
+                <code>with { ... }</code> option docs, auto-imports, and cross-file rename
+                that remaps every span back to the real source.</li>
+            <li>Themeable reactive highlighting: a distinct color for reactive names.</li>
         </ul>
     ]]></change-notes>
 
