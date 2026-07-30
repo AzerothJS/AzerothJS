@@ -158,6 +158,19 @@ follow [Semantic Versioning](https://semver.org).
   demo. The template's own test grew from three cases to five, and now covers the middleware
   veto and the field map.
 
+- **The fullstack template's server boots from two files instead of three, and a page no
+  longer climbs out of its own half.** `server/src/config.ts` held twenty lines read by exactly
+  one importer, so the environment moved to the top of `server/src/main.ts` beside the logger,
+  the pipeline, `serve` and shutdown - the same fold the backend template got, for the same
+  reason, and `server/src/app.ts` stays a separate pure module so `app.handle(new Request(...))`
+  remains a socket-free test. Separately, `application/src/pages/guest-book.azeroth` reached the
+  shared schema through `../../../server/src/contract.ts`: three levels up, out of the page
+  directory, out of `src`, and across into the other half, which broke the moment a page moved.
+  `application/src/api.ts` is now the one seam that crosses halves - it already owned the
+  contract-derived client, so it re-exports the shapes pages need and a page imports client and
+  schema from one place. The cross-half relative import stays visible in that file, because
+  compile-time coupling to the server's declaration is the point.
+
 - **The backend template boots from one file instead of three.** `src/config.ts` held twenty
   lines read by exactly one importer, so the environment now lives at the top of
   `src/main.ts`, where the values are used: `.env` first, then the typed `loadConfig` block,

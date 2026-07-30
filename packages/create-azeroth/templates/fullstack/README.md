@@ -66,14 +66,13 @@ application/          the browser half - vite + the azeroth compiler
   src/routes.ts       the one route table (path, component, render mode)
   src/App.azeroth     the shell: nav + the <Routes> outlet
   src/pages/          one component per route
-  src/api.ts          the typed client, built from the server's contract
+  src/api.ts          the seam to the shared contract: the typed client + its shapes
   src/entry.server.ts the SSR bundle's entry - exports routes + renderPage
 
 server/               the API half - @azerothjs/http, no build step
   src/contract.ts     THE shared contract; the application imports this file
   src/app.ts          routes in, App out - pure, and what tests exercise
-  src/main.ts         bootstrap: config, logging, edge pipeline, serve
-  src/config.ts       the typed environment, read once
+  src/main.ts         the environment, logging, edge pipeline, serve, shutdown
 ```
 
 ---
@@ -112,9 +111,9 @@ graph carries live application values - treat the bridge like a debugger port.
 
 ## 🔧 Environment
 
-Copy `server/.env.example` to `server/.env` and adjust; `server/src/config.ts`
-reads it into a typed object, and a bad value fails boot with one error naming
-every problem.
+Copy `server/.env.example` to `server/.env` and adjust; `server/src/main.ts` reads it
+into a typed object before anything else runs, and a bad value fails boot with one
+error naming every problem.
 
 ---
 

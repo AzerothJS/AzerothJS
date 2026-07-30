@@ -1,7 +1,5 @@
-// The one route table. The client router mounts it, the SSR entry renders through
-// it, and the kit's server half reads the per-route `render` mode from it - there
-// is no second manifest. Adding a page is one row plus its component; choosing HOW
-// it ships is the one field.
+// The one route table: the client router, the SSR entry, and the kit's server half all read
+// it, so there is no second manifest. A page is one row; `render` is how it ships.
 import type { PageRoute } from '@azerothjs/kit';
 
 import Home from './pages/home.azeroth';

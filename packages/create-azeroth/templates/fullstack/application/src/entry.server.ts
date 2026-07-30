@@ -1,9 +1,7 @@
-// The SSR bundle: `vite build --ssr src/entry.server.ts` compiles the SAME App the
-// browser runs into one self-contained file. `renderPage` renders one url through the
-// route table into the built shell (hashed asset tags kept) - running any guards and
-// loaders those routes declare; the production server SSRs `render: 'server'` pages
-// with it per request (server/src/main.ts imports THIS file's two exports), and
-// `azeroth-kit-prerender` writes `render: 'static'` pages through it at build time.
+// The SSR bundle's entry: `vite build --ssr` compiles the SAME App the browser runs into one
+// self-contained file. These two exports are the contract with both consumers - the server
+// SSRs `render: 'server'` pages per request, and azeroth-kit-prerender writes the static ones
+// at build time. Renaming either breaks both.
 import { createPageRenderer } from '@azerothjs/kit/ssr';
 
 import App from './App.azeroth';

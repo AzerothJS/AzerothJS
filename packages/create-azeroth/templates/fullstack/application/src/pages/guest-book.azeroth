@@ -1,10 +1,7 @@
-// The contract page: the SAME schema (server/src/contract.ts) validates the form
-// in the browser, the typed client call before the wire, and the server boundary -
-// one declaration, three enforcement points. `mount { }` loads the list once the
-// page is connected; the `form` keyword owns fields, errors, and the submit
-// lifecycle.
-import { client } from '../api.ts';
-import { entryInput, type Entry } from '../../../server/src/contract.ts';
+// One schema, three enforcement points: it validates this form in the browser, the typed
+// client call before the wire, and the server boundary. `mount { }` loads the list once the
+// page is connected; `form` owns the fields, the errors, and the submit lifecycle.
+import { client, entryInput, type Entry } from '../api.ts';
 
 export default component GuestBook()
 {
