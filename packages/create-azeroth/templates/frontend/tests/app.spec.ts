@@ -1,5 +1,3 @@
-// Component tests run against real DOM (happy-dom) through the compiler - the same
-// pipeline that serves the app. renderTest mounts, cleanup unmounts between tests.
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderTest, cleanup, fire } from '@azerothjs/testing';
 

@@ -48,8 +48,7 @@ CI runs the same gates on every push - see `.github/workflows/ci.yml`.
 | Path | Role |
 | --- | --- |
 | `src/app.ts` | The app, built PURE - routes in, `App` out. No serving, no environment, no side effects. This is what tests exercise. |
-| `src/main.ts` | Bootstrap: logging, the edge pipeline (request id, security headers, CORS, rate limit), serve, graceful shutdown. |
-| `src/config.ts` | The typed environment, read once - one boot error names every problem. `.env.example` documents every variable. |
+| `src/main.ts` | Everything that reaches outside the process: the typed environment (read once - one boot error names every problem), logging, the edge pipeline (request id, security headers, CORS, rate limit), serve, graceful shutdown. |
 | `tests/` | `app.handle()` integration tests. |
 
 That split is the point: because `buildApp` takes its dependencies as arguments and
@@ -60,8 +59,8 @@ never touches the environment, a test can drive the entire app with a plain
 
 ## 🔧 Environment
 
-Copy `.env.example` to `.env` and adjust; `src/config.ts` reads it into a typed
-object. Production reads the real environment instead.
+Copy `.env.example` to `.env` and adjust; `src/main.ts` reads it into a typed object
+before anything else runs. Production reads the real environment instead.
 
 `NODE_ENV=production` locks CORS down to nothing (add your real origins in
 `src/main.ts` before going live) and switches request logs to NDJSON under `logs/`.
@@ -81,6 +80,16 @@ Then assert it in `tests/app.spec.ts` - no server needed:
 const response = await buildApp({ dev: true }).handle(new Request('http://x/widgets/7'));
 expect(response.status).toBe(200);
 ```
+
+Routes that need a signed-in caller go on the `authed` fork instead of `app`. `with`
+returns a fork carrying that middleware, so registering there is the whole opt-in:
+
+```ts
+authed.get('/me', (context) => json({ id: context.userId }));   // context.userId is typed
+```
+
+A middleware returns an object to add typed fields to every later context, or throws to
+reject the request before any handler runs.
 
 For a typed contract shared with a browser client, see the `fullstack` template.
 

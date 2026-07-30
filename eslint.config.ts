@@ -19,14 +19,8 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
         '**/build/**',
         '**/out/**',
         '**/.intellijPlatform/**',
-        // Generated .azeroth type mirrors (the Vite plugin's emitDeclarations output).
         '**/.azeroth/**',
-        // Test fixtures import `.azeroth` modules; resolving those is the plugin's
-        // own job at test runtime, so they live outside every TS project (mirrors
-        // the exclude in the package's tsconfig.build.json).
         'packages/typescript-plugin/tests/fixtures/**',
-        // Scaffolding templates and option overlays reference dependencies that exist
-        // only in a scaffolded app (and carry {{placeholders}}) - they are data, not code.
         'packages/create-azeroth/templates/**',
         'packages/create-azeroth/overlays/**'
     ]),

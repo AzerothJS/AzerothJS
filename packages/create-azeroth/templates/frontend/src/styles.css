@@ -1,6 +1,3 @@
-/* The starter's design tokens. One accent (the framework's ice blue), paired
-   backgrounds via light-dark(), and a monospace display voice - the audience is
-   a developer, so the terminal is the typography. */
 :root
 {
     color-scheme: light dark;
@@ -77,8 +74,6 @@ body
     margin: 0 0 2.5rem;
 }
 
-/* The signal strip: this component's reactive graph, laid out as the fan-out it
-   is - both derived cells read `count`, so both arrows leave the state cell. */
 .signals
 {
     display: grid;

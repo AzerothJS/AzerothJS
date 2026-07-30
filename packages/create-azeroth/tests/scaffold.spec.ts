@@ -211,7 +211,7 @@ describe('production shape: the hour-three files are already waiting', () =>
     {
         const dir = target();
         scaffold(TEMPLATES_ROOT, 'backend', dir, 'prod', '^1.0.0');
-        for (const file of ['src/config.ts', 'src/app.ts', 'src/main.ts', 'tests/app.spec.ts', 'Dockerfile', '.dockerignore', '.env.example', 'README.md'])
+        for (const file of ['src/app.ts', 'src/main.ts', 'tests/app.spec.ts', 'Dockerfile', '.dockerignore', '.env.example', 'README.md'])
         {
             expect(existsSync(join(dir, file)), file).toBe(true);
         }
@@ -291,7 +291,9 @@ describe('production shape: the hour-three files are already waiting', () =>
         const jsonStart = raw.indexOf('[');
         const [report] = (jsonStart >= 0 ? JSON.parse(raw.slice(jsonStart)) : []) as Array<{ files: Array<{ path: string }> }>;
         const shipped = new Set((report?.files ?? []).map((file) => file.path.replaceAll('\\', '/')));
-        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/fullstack/.dockerignore', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/backend/.github/workflows/ci.yml', 'templates/frontend/.github/workflows/ci.yml', 'templates/frontend/public/favicon-32.png', 'overlays/frontend/router/src/routes.ts', 'overlays/fullstack/tailwind/application/_package.merge.json'])
+        // .editorconfig ships under its real name: unlike .gitignore (which npm would read as
+        // nested pack-ignore rules, hence _gitignore), npm has no special handling for it.
+        for (const mustShip of ['templates/fullstack/.github/workflows/ci.yml', 'templates/fullstack/.dockerignore', 'templates/backend/.dockerignore', 'templates/backend/.env.example', 'templates/backend/Dockerfile', 'templates/backend/.github/workflows/ci.yml', 'templates/frontend/.github/workflows/ci.yml', 'templates/frontend/public/favicon-32.png', 'overlays/frontend/router/src/routes.ts', 'overlays/fullstack/tailwind/application/_package.merge.json', 'templates/backend/.editorconfig', 'templates/frontend/.editorconfig', 'templates/fullstack/.editorconfig'])
         {
             expect(shipped.has(mustShip), mustShip).toBe(true);
         }

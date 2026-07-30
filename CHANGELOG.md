@@ -91,6 +91,14 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added (create-azeroth)
 
+- **Every template ships an `.editorconfig`.** The same one the framework itself uses: UTF-8,
+  4-space indent, final newline, trimmed trailing whitespace, and single quotes for
+  TypeScript (including the JetBrains key that actually enforces it). A scaffolded app
+  therefore formats the way its own source is written from the first keystroke, in any editor,
+  with no extension to install. It ships under its real name rather than the `_`-prefixed form
+  `.gitignore` needs, because npm reads a nested `.gitignore` as pack-ignore rules and has no
+  such handling for this file - the pack test asserts all three arrive.
+
 - **The template READMEs are a proper first page.** Each scaffolded app now opens with a
   centered header and badges, then walks the reader from `npm install` to deploy: a "start
   here" block that says what they will SEE, the scripts and structure as tables, a worked
@@ -111,6 +119,32 @@ follow [Semantic Versioning](https://semver.org).
   named on an allowlist of bin/loader packages that carry their reason inline (`jiti` loads
   the ESLint TS config, `@azerothjs/language-server` ships `azeroth-tsc`), so a future depcheck
   cannot prune them.
+
+### Changed (create-azeroth)
+
+- **The backend template teaches middleware instead of three toy routes.** `app.use` and
+  `app.with` appeared in NO template, so the one thing every real backend needs on its first
+  day - a middleware that authenticates a request and attaches something to the context - was
+  the one thing a reader never saw. `/hello/:name` and `/echo` are replaced by a single route
+  on an `app.with` fork that covers everything they did (a typed path param, `readJson` with
+  its body limit and Content-Type check, a `ValidationError` landing in the envelope's
+  `error.fields`, a 201 with a shaped body) plus three things they did not: scoped middleware,
+  typed context additions read with no cast (`context.userId`), and rejecting a request before
+  the handler runs. `/healthz` stays: it is infrastructure every orchestrator probes, not a
+  demo. The template's own test grew from three cases to five, and now covers the middleware
+  veto and the field map.
+
+- **The backend template boots from one file instead of three.** `src/config.ts` held twenty
+  lines read by exactly one importer, so the environment now lives at the top of
+  `src/main.ts`, where the values are used: `.env` first, then the typed `loadConfig` block,
+  then the logger, the edge pipeline, `serve`, and shutdown - the whole outside world in the
+  order it happens. `src/app.ts` is untouched and stays a separate module on purpose. That
+  boundary is not stylistic: because `buildApp` cannot see the config, it cannot accidentally
+  read the environment, which is what keeps `app.handle(new Request(...))` a socket-free test
+  with no fixtures. Merging all three into a single file would have needed an
+  `import.meta.main` guard to keep the test from booting a real server, and that is Node
+  24.2+ while the template's floor is `>=24` - on 24.0 the guard is `undefined` and the
+  server silently never starts.
 
 ### Fixed (create-azeroth)
 
