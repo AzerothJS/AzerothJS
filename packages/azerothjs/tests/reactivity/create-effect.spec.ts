@@ -4,8 +4,10 @@
 // dependency tracking, the return-value cleanup contract, onCleanup, manual dispose,
 // and ownership by the enclosing root.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, createMemo, createRoot, onCleanup } from 'azerothjs';
+import { createSignal, createEffect, createMemo, createRoot, onCleanup, catchError, onUncaughtError } from 'azerothjs';
 import { subscriberCount } from 'azerothjs/internal';
+
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('createEffect - execution', () =>
 {
@@ -222,5 +224,62 @@ describe('createEffect - auto-tracking only (no explicit deps/defer)', () =>
             expect(subscriberCount(n)).toBe(1);
             dispose();
         });
+    });
+});
+
+describe('createEffect - async body rejection routing', () =>
+{
+    it('routes a rejected async body to onUncaughtError, not an unhandled rejection', async () =>
+    {
+        const seen: unknown[] = [];
+        const uninstall = onUncaughtError((err) => seen.push(err));
+        let dispose!: () => void;
+        try
+        {
+            createRoot((d) =>
+            {
+                dispose = d;
+                createEffect(async () =>
+                {
+                    await Promise.resolve();
+                    throw new Error('async-boom');
+                });
+            });
+            await flush();
+        }
+        finally
+        {
+            uninstall();
+            dispose();
+        }
+        expect(seen).toHaveLength(1);
+        expect((seen[0] as Error).message).toBe('async-boom');
+    });
+
+    it('routes a rejected async body to the enclosing catchError handler', async () =>
+    {
+        let caught: unknown = null;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            catchError(
+                () =>
+                {
+                    createEffect(async () =>
+                    {
+                        await Promise.resolve();
+                        throw new Error('scoped-async');
+                    });
+                },
+                (err) =>
+                {
+                    caught = err;
+                }
+            );
+        });
+        await flush();
+        dispose();
+        expect((caught as Error).message).toBe('scoped-async');
     });
 });

@@ -2,9 +2,9 @@
     <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
-# @azerothjs/form
+# azerothjs / form
 
-[![npm](https://img.shields.io/npm/v/%40azerothjs%2Fform?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/form)
+[![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
@@ -48,7 +48,7 @@ export default component SignIn
 The same engine is available as a plain runtime API for `.ts` code:
 
 ```ts
-import { createForm, required, email, minLength, combine } from '@azerothjs/form';
+import { createForm, required, email, minLength, combine } from 'azerothjs';
 
 const form = createForm({
     initial: { email: '', password: '' },
@@ -60,7 +60,7 @@ const form = createForm({
 ## Install
 
 ```sh
-npm install @azerothjs/form
+npm install azerothjs
 ```
 
 (Or just `npm install azerothjs`, which re-exports everything here.)

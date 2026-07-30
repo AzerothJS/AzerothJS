@@ -29,6 +29,15 @@ export interface ServerSocketOptions
     /** Cap for one ASSEMBLED message (default 16 MiB) - fragment sums included. */
     maxMessage?: number;
 
+    /**
+     * Cap for ONE FRAME's declared payload, enforced from the header before a byte is buffered
+     * (default: `maxMessage`). This is the cap that bounds per-connection memory, because
+     * `maxMessage` can only be checked once a frame has already been assembled: an app that sets
+     * `maxMessage: 1024` and nothing else would still let each connection pin a frame buffer, so
+     * a few hundred idle sockets is a memory-exhaustion attack with no message ever completed.
+     */
+    maxPayload?: number;
+
     /** How long close() waits for the peer's echo before destroying (default 5000 ms). */
     closeTimeoutMs?: number;
 
@@ -47,6 +56,18 @@ export interface ServerSocketOptions
 const DEFAULT_MAX_MESSAGE = 16 * 1024 * 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_PONG_TIMEOUT_MS = 10_000;
+
+/**
+ * Fragments one message may arrive in. A legitimate sender splits by buffer size, not into
+ * thousands of slivers, so this only ever trips on an assembler attack.
+ */
+const MAX_FRAGMENTS = 4096;
+
+/**
+ * Unflushed bytes past which an automatic pong is dropped rather than queued. RFC 6455 section
+ * 5.5.3 requires only that the most recent ping be answered.
+ */
+const PONG_BACKLOG_BYTES = 64 * 1024;
 
 /** One server-side WebSocket connection. */
 export class ServerSocket
@@ -86,6 +107,9 @@ export class ServerSocket
 
     #partsLength = 0;
 
+    /** Fragments in the message being assembled; bounded apart from the byte total. */
+    #partsCount = 0;
+
     /** Incremental UTF-8 validation for the open text message. */
     #decoder: TextDecoder | null = null;
 
@@ -98,8 +122,8 @@ export class ServerSocket
     constructor(socket: Socket, options: ServerSocketOptions = {})
     {
         this.#socket = socket;
-        this.#parser = new FrameParser({ role: 'server' });
         this.#maxMessage = options.maxMessage ?? DEFAULT_MAX_MESSAGE;
+        this.#parser = new FrameParser({ role: 'server', maxPayload: options.maxPayload ?? this.#maxMessage });
         this.#closeTimeoutMs = options.closeTimeoutMs ?? 5000;
         this.#heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
         this.#pongTimeoutMs = options.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
@@ -107,7 +131,7 @@ export class ServerSocket
         socket.on('data', (chunk: Buffer) => this.#receive(chunk));
         socket.on('error', (error: Error) =>
         {
-            this.onError?.(error);
+            this.#report(error);
             this.#finish(1006, 'Socket error');
         });
         socket.on('close', () => this.#finish(1006, 'Connection closed abnormally'));
@@ -144,14 +168,34 @@ export class ServerSocket
         return this.#socket.write(serializeFrame(isText ? OPCODE.text : OPCODE.binary, payload));
     }
 
-    /** Resolves when the socket buffer has flushed (immediately if it is not backed up). */
+    /**
+     * Resolves when the socket buffer has flushed (immediately if it is not backed up), and also
+     * when the connection ENDS. A destroyed socket never emits 'drain', so waiting on that event
+     * alone would never settle for the one case that matters: the documented backpressure loop
+     * (`if (!ws.send(x)) await ws.drain()`) meeting a slow consumer that then disconnects, which
+     * on a market feed is the most ordinary event there is. The producer loop would be abandoned
+     * mid-iteration with its `finally` never running, leaking whatever it held - a cursor, an
+     * advisory lock, a reserved sequence number - for the process lifetime.
+     */
     public drain(): Promise<void>
     {
         if (this.#closed || !this.#socket.writableNeedDrain)
         {
             return Promise.resolve();
         }
-        return new Promise((resolve) => this.#socket.once('drain', () => resolve()));
+        return new Promise((resolve) =>
+        {
+            const settle = (): void =>
+            {
+                this.#socket.off('drain', settle);
+                this.#socket.off('close', settle);
+                this.#socket.off('error', settle);
+                resolve();
+            };
+            this.#socket.once('drain', settle);
+            this.#socket.once('close', settle);
+            this.#socket.once('error', settle);
+        });
     }
 
     /** Sends a ping (the liveness probe; the peer must answer with a pong). */
@@ -163,7 +207,12 @@ export class ServerSocket
         }
     }
 
-    /** Starts the closing handshake; the socket ends when the echo arrives or the timeout fires. */
+    /**
+     * Starts the closing handshake; the socket ends when the echo arrives or the timeout fires.
+     * An oversized reason is truncated by the codec, and a code that RFC 6455 forbids on the wire
+     * is replaced with 1000 rather than throwing: this is a TEARDOWN path, and a connection that
+     * stayed open because its close code was wrong would be a worse outcome than a normalised one.
+     */
     public close(code = 1000, reason = ''): void
     {
         if (this.#closeSent || this.#closed)
@@ -171,7 +220,16 @@ export class ServerSocket
             return;
         }
         this.#closeSent = true;
-        this.#socket.write(serializeFrame(OPCODE.close, closePayload(code, reason)));
+        let payload: Uint8Array;
+        try
+        {
+            payload = closePayload(code, reason);
+        }
+        catch
+        {
+            payload = closePayload(1000, reason);
+        }
+        this.#socket.write(serializeFrame(OPCODE.close, payload));
         const deadline = setTimeout(() => this.#finish(code, reason), this.#closeTimeoutMs);
         (deadline as { unref?: () => void }).unref?.();
     }
@@ -185,6 +243,15 @@ export class ServerSocket
             frames = this.#parser.push(chunk);
             for (const frame of frames)
             {
+                // One TCP segment can carry `[close][text]`. Handling the close fires onClose and
+                // tears the app's state down, so anything after it in the same chunk must not be
+                // delivered: the contract says onClose fires when the connection is over, and an
+                // exchange acting on a message after releasing the session is how an order runs
+                // against a closed account.
+                if (this.#closed)
+                {
+                    return;
+                }
                 this.#handleFrame(frame.fin, frame.opcode, frame.payload);
             }
         }
@@ -200,7 +267,13 @@ export class ServerSocket
         switch (opcode)
         {
             case OPCODE.ping:
-                if (!this.#closeSent)
+                // RFC 6455 section 5.5.3 allows answering only the MOST RECENT ping, which is
+                // what makes this safe to drop: a peer that floods pings while refusing to read
+                // would otherwise queue one userland write per ping forever. Measured 13.7 MiB of
+                // pings against an unreading client growing the process to 751 MiB, and
+                // bufferedAmount under-reports it by two orders of magnitude because the
+                // per-write bookkeeping dominates, so an app watching that number sees nothing.
+                if (!this.#closeSent && this.#socket.writableLength <= PONG_BACKLOG_BYTES)
                 {
                     this.#socket.write(serializeFrame(OPCODE.pong, payload));
                 }
@@ -258,6 +331,16 @@ export class ServerSocket
         {
             throw new ProtocolError(1009, `Message exceeds the ${ this.#maxMessage }-byte limit.`);
         }
+        // The byte cap alone cannot bound this. RFC 6455 permits a zero-length fragment, so an
+        // endless stream of them adds nothing to #partsLength while #parts grows forever: measured
+        // 34.9x wire-to-heap amplification, and 12 MB of traffic reaching a 512 MB heap ceiling
+        // with maxMessage set to 1024. Each retained fragment also costs far more than its
+        // payload, so the count is capped independently of the size.
+        this.#partsCount++;
+        if (this.#partsCount > MAX_FRAGMENTS)
+        {
+            throw new ProtocolError(1009, `Message exceeds the ${ MAX_FRAGMENTS }-fragment limit.`);
+        }
 
         if (this.#messageOpcode === OPCODE.text)
         {
@@ -290,6 +373,7 @@ export class ServerSocket
         const opcode = this.#messageOpcode;
         this.#messageOpcode = 0;
         this.#partsLength = 0;
+        this.#partsCount = 0;
 
         if (opcode === OPCODE.text)
         {
@@ -344,6 +428,15 @@ export class ServerSocket
         {
             return;
         }
+        // A probe already outstanding means the deadline is armed and must be left alone.
+        // Re-arming it every tick is how `pongTimeoutMs >= heartbeatMs` silently disabled
+        // half-open reclamation entirely: the timeout could never fire, so a peer that vanished
+        // without a FIN was never terminated and its socket, parser buffer and registry entry
+        // stayed for the process lifetime.
+        if (this.#awaitingPong)
+        {
+            return;
+        }
         this.#awaitingPong = true;
         this.#socket.write(serializeFrame(OPCODE.ping, new Uint8Array(0)));
 
@@ -355,7 +448,7 @@ export class ServerSocket
         {
             if (this.#awaitingPong && !this.#closed)
             {
-                this.onError?.(new Error('WebSocket heartbeat: no pong within the timeout.'));
+                this.#report(new Error('WebSocket heartbeat: no pong within the timeout.'));
                 this.#socket.destroy();
                 this.#finish(1006, 'Heartbeat timeout');
             }
@@ -363,14 +456,32 @@ export class ServerSocket
         (this.#pongDeadline as { unref?: () => void }).unref?.();
     }
 
+    /**
+     * @internal Hands an error to the app's reporter. Guarded: `onError` is the handler meant to
+     * CONTAIN failures, so a throw from inside it escaping into the socket's event emitter (an
+     * uncaught exception, taking every other live connection with it) would defeat its purpose.
+     * onMessage and onClose throws were already contained; this closes the inconsistency.
+     */
+    #report(error: Error): void
+    {
+        try
+        {
+            this.onError?.(error);
+        }
+        catch
+        {
+            // A reporter that fails cannot be reported to.
+        }
+    }
+
     /** @internal A protocol failure: report, send the mandated close code, end. */
     #fail(error: ProtocolError): void
     {
-        this.onError?.(error);
+        this.#report(error);
         if (!this.#closeSent && !this.#closed)
         {
             this.#closeSent = true;
-            this.#socket.write(serializeFrame(OPCODE.close, closePayload(error.code, error.message.slice(0, 120))));
+            this.#socket.write(serializeFrame(OPCODE.close, closePayload(error.code, error.message)));
         }
         this.#finish(error.code, error.message);
     }
@@ -395,6 +506,13 @@ export class ServerSocket
         }
         const handler = this.onClose;
         this.onClose = null;
+        // Dropped alongside onClose: the app's teardown has run, so there is no one left who can
+        // safely receive a message, and the parser holds no partial state worth delivering.
+        this.onMessage = null;
+        this.#socket.removeAllListeners('data');
+        this.#parts = [];
+        this.#partsLength = 0;
+        this.#partsCount = 0;
         this.#socket.end();
         // A peer that never FINs would pin the socket; force the teardown shortly after end.
         const hardStop = setTimeout(() => this.#socket.destroy(), 1000);

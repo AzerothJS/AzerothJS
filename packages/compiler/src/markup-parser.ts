@@ -83,6 +83,14 @@ export class CompileError extends Error
      */
     public committed = false;
 
+    /**
+     * True only for the depth-cap failure ({@link markupDepthError}). A walker that DEGRADES on a parse
+     * error - half-typed markup is the normal editor state - must RETHROW this one: it is raised by the
+     * walker's own recursion, so swallowing it would emit the raw markup text as if it were code, and
+     * the next level up would swallow it again all the way to a silently corrupt module.
+     */
+    public depthExceeded = false;
+
     public readonly offset: number;
 
     constructor(message: string, offset: number)
@@ -98,7 +106,24 @@ export class CompileError extends Error
  * pathological or adversarial input (thousands of unclosed `<div>`s) fails with a located
  * {@link CompileError} instead of overflowing the recursive parser's stack.
  */
-const MAX_MARKUP_DEPTH = 500;
+export const MAX_MARKUP_DEPTH = 500;
+
+/**
+ * The located failure the depth cap raises. Exported because the cap is per {@link parseMarkup} call
+ * and nesting through an expression hole re-enters the parser at depth 0 - so the hole walkers
+ * (codegen's and the projection's) count their own recursion against the same cap and raise the same
+ * error, instead of letting the stack overflow with an unlocated RangeError.
+ */
+export function markupDepthError(offset: number): CompileError
+{
+    const error = new CompileError(
+        `Markup nested deeper than ${ MAX_MARKUP_DEPTH } levels. This is almost ` +
+        'always an unclosed tag; check that every element has a matching closing tag.',
+        offset
+    );
+    error.depthExceeded = true;
+    return error;
+}
 
 class MarkupParser
 {
@@ -421,7 +446,11 @@ class MarkupParser
             else if (valueChar === '"' || valueChar === '\'')
             {
                 const end = skipString(this.#src, this.pos);
-                const value = this.#src.slice(this.pos + 1, end - 1);
+                // Decoded like text content (HTML decodes references in both places), so
+                // `title="Tom &amp; Jerry"` carries the `&` the author meant instead of reaching the
+                // emitter as literal entity text and being escaped a second time. NOT normalised:
+                // whitespace collapse is text-node-specific, an attribute value keeps its spacing.
+                const value = MarkupParser.#decodeEntities(this.#src.slice(this.pos + 1, end - 1));
                 this.pos = end;
                 attrs.push({
                     kind: 'attribute',
@@ -487,11 +516,7 @@ class MarkupParser
                 this.#depth++;
                 if (this.#depth > MAX_MARKUP_DEPTH)
                 {
-                    throw new CompileError(
-                        `Markup nested deeper than ${ MAX_MARKUP_DEPTH } levels. This is almost ` +
-                        'always an unclosed tag; check that every element has a matching closing tag.',
-                        this.pos
-                    );
+                    throw markupDepthError(this.pos);
                 }
                 children.push(this.#parseElement());
                 this.#depth--;
@@ -568,7 +593,12 @@ class MarkupParser
             // survive as a single-space text node, or the neighbours render fused.
             return raw.includes('\n') ? '' : ' ';
         }
-        return MarkupParser.#decodeEntities(raw.replace(/\s*\n\s*/g, ' '));
+        // The newline test runs in JS, not in the pattern: a `\s*\n\s*` (or `[^\S\n]*\n[^\S\n]*`)
+        // shape makes a newline-free whitespace run quadratic - the leading quantifier consumes the
+        // whole run at every start offset and hands it back one character at a time. Measured at
+        // 160000 spaces: 4.6s for the pattern form, 0.2ms for this one. It matters because lintSource
+        // and generateVirtualCode re-normalise the region on every keystroke.
+        return MarkupParser.#decodeEntities(raw.replace(/\s+/g, run => run.includes('\n') ? ' ' : run));
     }
 
     /**

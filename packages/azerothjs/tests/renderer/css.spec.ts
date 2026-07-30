@@ -79,6 +79,36 @@ describe('css', () =>
         expect(sheet).toContain('div { margin: 0; }');
         expect(sheet).toContain('#main { color: red; }');
     });
+
+    it('does not rewrite dotted tokens inside url() bodies (asset paths stay intact)', () =>
+    {
+        css('.logo { background: url(./logo.png); }');
+        css('.font { src: url("/fonts/Inter.woff2"); }');
+        const sheet = collectStyleSheet();
+        // The class selector IS scoped, but the asset path is copied verbatim - a suffix
+        // here (`logo.png_<scope>`) would 404 the asset while the class still worked.
+        expect(sheet).toContain('url(./logo.png)');
+        expect(sheet).toContain('url("/fonts/Inter.woff2")');
+        expect(sheet).not.toMatch(/logo\.png_/);
+        expect(sheet).not.toMatch(/Inter\.woff2_/);
+    });
+
+    it('does not rewrite a dotted token inside a quoted string value', () =>
+    {
+        const s = css('.done::after { content: ".done"; }');
+        const sheet = collectStyleSheet();
+        // The selector is scoped; the string literal is not.
+        expect(sheet).toContain(`.${ s.done }`);
+        expect(sheet).toContain('content: ".done";');
+        expect(sheet).not.toMatch(/"\.done_/);
+    });
+
+    it('still scopes a class selector that sits next to a url()', () =>
+    {
+        const s = css('.hero { background: url(./bg.jpg) no-repeat; }');
+        expect(s.hero).toMatch(/^hero_[0-9a-z]+$/);
+        expect(collectStyleSheet()).toContain(`.${ s.hero }`);
+    });
 });
 
 describe('collectStyleSheet / resetStyleSheet', () =>
@@ -113,5 +143,19 @@ describe('collectStyleSheet / resetStyleSheet', () =>
         expect(collectStyleSheet()).not.toBe('');
         resetStyleSheet();
         expect(collectStyleSheet()).toBe('');
+    });
+});
+
+describe('collectStyleSheet cannot close the style element it is embedded in', () =>
+{
+    it('an interpolated value carrying </style> is neutralised, losslessly for CSS', () =>
+    {
+        // css() is a tagged template, so an interpolated per-tenant value is the invited use.
+        css('.brand::after { content: "</style><script>globalThis.__CSSPWNED__=1</script>"; }');
+        const sheet = collectStyleSheet();
+
+        expect(sheet).not.toMatch(/<\/style/i);
+        // `\3c` inside a CSS string is still `<`, so the declaration keeps its meaning.
+        expect(sheet).toContain('\\3c/style>');
     });
 });

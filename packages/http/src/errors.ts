@@ -249,18 +249,70 @@ export interface ErrorSerializerContext
  */
 export type ErrorSerializer = (context: ErrorSerializerContext) => unknown;
 
+/**
+ * @internal A description of any thrown value. `String(x)` throws for a value with no primitive
+ * conversion (`Object.create(null)`, a Symbol-keyed proxy), and this runs on the path that must
+ * never fail.
+ */
+function describeThrown(error: unknown): string
+{
+    if (error instanceof Error)
+    {
+        return error.message;
+    }
+    try
+    {
+        return String(error);
+    }
+    catch
+    {
+        return 'Unknown error';
+    }
+}
+
 /** @internal Encodes a JSON error body into a PayloadResponse, merging the error's mandated headers. */
 function encodeError(body: unknown, status: number, headers: Record<string, string>): Response
 {
-    const bytes = ENCODER.encode(JSON.stringify(body));
-    const record: Record<string, string> = {
-        'content-type': 'application/json; charset=utf-8',
-        'content-length': String(bytes.byteLength)
-    };
+    // `details` is the documented channel for structured payloads, so it carries whatever the
+    // app put there: a BigInt column, or a row with a back-reference. JSON.stringify throws on
+    // both, and this runs inside the last-resort path, so an unserializable body must degrade to
+    // the envelope rather than escape as a rejection the adapter cannot answer.
+    let bytes: Uint8Array<ArrayBuffer>;
+    try
+    {
+        bytes = ENCODER.encode(JSON.stringify(body));
+    }
+    catch
+    {
+        const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+        bytes = ENCODER.encode(JSON.stringify({
+            error: { code: typeof code === 'string' ? code : 'internal', message: 'Internal server error' }
+        }));
+    }
+
+    // The framing headers are asserted LAST, after the error's own: a `content-length` among
+    // them would otherwise declare a length the body does not have, which desynchronises a
+    // keep-alive connection. Every name and value goes through real `Headers`, which rejects
+    // CRLF and NUL - writeHead would throw on those, after this response is already committed.
+    const merged = new Headers();
     for (const [name, value] of Object.entries(headers))
     {
-        record[name.toLowerCase()] = value;
+        try
+        {
+            merged.set(name, value);
+        }
+        catch
+        {
+            // A header the platform refuses is dropped: the error response still has to go out.
+        }
     }
+    const record: Record<string, string> = {};
+    for (const [name, value] of merged)
+    {
+        record[name] = value;
+    }
+    record['content-type'] = 'application/json; charset=utf-8';
+    record['content-length'] = String(bytes.byteLength);
     return new PayloadResponse(bytes, status, record);
 }
 
@@ -287,7 +339,7 @@ export function errorResponse(
 {
     const mapped = error instanceof HttpError
         ? error
-        : new HttpError(500, error instanceof Error ? error.message : String(error), { cause: error });
+        : new HttpError(500, describeThrown(error), { cause: error });
 
     if (options.observe !== undefined)
     {
@@ -335,7 +387,11 @@ export function errorResponse(
             message: exposeMessage ? mapped.message : 'Internal server error'
         }
     };
-    if (mapped.details !== undefined)
+    // `details` follows the MESSAGE rule, not its own: a 4xx is the app telling the client what
+    // to fix (a validation field map), while a 5xx is an internal failure whose diagnostics
+    // routinely carry a DSN, a query, or an internal hostname. Publishing those on a 500 while
+    // hiding the message would defeat the point of hiding the message.
+    if (mapped.details !== undefined && exposeMessage)
     {
         body.error.details = mapped.details;
     }

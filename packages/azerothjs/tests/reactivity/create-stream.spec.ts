@@ -9,6 +9,8 @@ import {
     createStream,
     createRoot,
     createSignal,
+    createEffect,
+    catchError,
     type Stream
 } from 'azerothjs';
 
@@ -179,5 +181,43 @@ describe('createStream - error and cancellation', () =>
         expect(stream.partial()).toBe('partial-data');
         expect(stream.error()).toBeNull();
         dispose();
+    });
+});
+
+describe('createStream - settle error routing', () =>
+{
+    it('routes a subscriber that throws during settle to the enclosing catchError, not an unhandled rejection', async () =>
+    {
+        // The completion/error arms write signals (setDone / the error batch); a subscriber that
+        // throws during that flush rethrows into a promise reaction. It must instead route to the
+        // handler captured when the stream was created.
+        let caught: unknown = null;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            let stream!: Stream;
+            catchError(
+                () =>
+                {
+                    stream = createStream({ fetcher: async () => responseOf(['tok']) });
+                },
+                (err) =>
+                {
+                    caught = err;
+                }
+            );
+            createEffect(() =>
+            {
+                if (stream.done() && stream.partial().includes('tok'))
+                {
+                    throw new Error('stream-subscriber-boom');
+                }
+            });
+        });
+
+        await until(() => caught !== null);
+        dispose();
+        expect((caught as Error).message).toBe('stream-subscriber-boom');
     });
 });

@@ -226,25 +226,28 @@ describe('the docs page', () =>
 {
     const contract = defineContract({ health: route({ method: 'GET', path: '/healthz' }) });
 
-    it('defaults to the Scalar shell: tiny page, viewer from the CDN, spec URL wired', async () =>
+    it('defaults to the self-contained house explorer: no third-party code on the page', async () =>
     {
         const app = new App().register(openapiPlugin({ contract, info: INFO }));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('text/html');
         const html = await response.text();
-        expect(html).toContain('cdn.jsdelivr.net/npm/@scalar/api-reference');
-        expect(html).toContain("url: '/openapi.json'");
-    });
-
-    it("viewer: 'azeroth' serves the fully self-contained house explorer", async () =>
-    {
-        const app = new App().register(openapiPlugin({ contract, info: INFO, viewer: 'azeroth' }));
-        const html = await (await app.handle(new Request('http://local/docs'))).text();
         expect(html).toContain('Test API');
         expect(html).toContain('/openapi.json');
         // Self-contained: no external resource may be referenced.
         expect(html).not.toMatch(/src="http|href="http|https:\/\//);
+        // The default IS the house explorer, byte for byte.
+        const explicit = new App().register(openapiPlugin({ contract, info: INFO, viewer: 'azeroth' }));
+        expect(await (await explicit.handle(new Request('http://local/docs'))).text()).toBe(html);
+    });
+
+    it("viewer: 'scalar' opts in to the CDN shell", async () =>
+    {
+        const app = new App().register(openapiPlugin({ contract, info: INFO, viewer: 'scalar' }));
+        const html = await (await app.handle(new Request('http://local/docs'))).text();
+        expect(html).toContain('cdn.jsdelivr.net/npm/@scalar/api-reference');
+        expect(html).toContain("url: '/openapi.json'");
     });
 
     it('docs: false keeps the plugin spec-only', async () =>
@@ -252,6 +255,33 @@ describe('the docs page', () =>
         const app = new App().register(openapiPlugin({ contract, info: INFO, docs: false }));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(404);
+    });
+
+    it('registers NOTHING in production unless the app asks for it', async () =>
+    {
+        const previous = process.env.NODE_ENV;
+        process.env.NODE_ENV = 'production';
+        try
+        {
+            const gated = new App().register(openapiPlugin({ contract, info: INFO }));
+            expect((await gated.handle(new Request('http://local/openapi.json'))).status).toBe(404);
+            expect((await gated.handle(new Request('http://local/docs'))).status).toBe(404);
+
+            const opted = new App().register(openapiPlugin({ contract, info: INFO, public: true }));
+            expect((await opted.handle(new Request('http://local/openapi.json'))).status).toBe(200);
+            expect((await opted.handle(new Request('http://local/docs'))).status).toBe(200);
+        }
+        finally
+        {
+            if (previous === undefined)
+            {
+                delete process.env.NODE_ENV;
+            }
+            else
+            {
+                process.env.NODE_ENV = previous;
+            }
+        }
     });
 
     it('escapes a hostile title in both viewers', async () =>
@@ -263,6 +293,52 @@ describe('the docs page', () =>
             expect(html).not.toContain('<script>alert');
             expect(html).toContain('&lt;script&gt;');
         }
+    });
+});
+
+describe('component names disambiguate instead of colliding', () =>
+{
+    // The grouped path `user.profile` and the flat key `user_profile` pascal to the same
+    // name. Each schema instance is used twice by its own route, so both hoist to
+    // components - and two DIFFERENT shapes under one name would document each route with
+    // the other's body.
+    const dotted = object({ a: string() });
+    const underscored = object({ b: number() });
+    const contract = defineContract({
+        user: { profile: post('/dotted', { input: dotted, output: dotted }) },
+        user_profile: post('/underscored', { input: underscored, output: underscored })
+    });
+    const document = toOpenApi(contract, { info: INFO });
+    const components = (document.components as Record<string, Record<string, Record<string, unknown>>>).schemas!;
+    const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
+
+    const refOf = (path: string): string =>
+    {
+        const body = paths[path]!.post!.requestBody as { content: Record<string, { schema: { $ref?: string } }> };
+        return body.content['application/json']!.schema.$ref ?? '';
+    };
+
+    it('two distinct schemas never share one $ref', () =>
+    {
+        expect(refOf('/api/dotted')).not.toBe('');
+        expect(refOf('/api/underscored')).not.toBe('');
+        expect(refOf('/api/underscored')).not.toBe(refOf('/api/dotted'));
+    });
+
+    it('each ref resolves to its OWN shape', () =>
+    {
+        const first = components[refOf('/api/dotted').split('/').pop()!]!;
+        const second = components[refOf('/api/underscored').split('/').pop()!]!;
+        expect(Object.keys(first.properties as object)).toEqual(['a']);
+        expect(Object.keys(second.properties as object)).toEqual(['b']);
+    });
+
+    it('disambiguation is deterministic and stays valid OpenAPI 3.1', async () =>
+    {
+        expect(JSON.stringify(toOpenApi(contract, { info: INFO }))).toBe(JSON.stringify(document));
+        const result = await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>);
+        expect(result.errors ?? []).toEqual([]);
+        expect(result.valid).toBe(true);
     });
 });
 
@@ -433,5 +509,23 @@ describe('multipart routes in the document', () =>
     it('the document with multipart routes is valid OpenAPI 3.1', async () =>
     {
         expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
+    });
+
+    it('one multipart spec shared by two routes emits no orphan component', () =>
+    {
+        const shared = multipart({ fields: object({ title: string() }) });
+        const built = toOpenApi(defineContract({
+            first: post('/first', { input: shared }),
+            second: post('/second', { input: shared })
+        }), { info: INFO });
+        const json = JSON.stringify(built);
+        const names = Object.keys((built.components as Record<string, Record<string, unknown>>).schemas!);
+        for (const name of names)
+        {
+            expect(json).toContain(`#/components/schemas/${ name }`);
+        }
+        // The spec is a branded object, not a schema: hoisting it would emit the permissive
+        // fallback shape under a name the operation never references.
+        expect(json).not.toContain('custom rule');
     });
 });

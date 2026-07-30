@@ -9,8 +9,9 @@
  * route is display-only by contract.
  *
  * Determinism is a tested promise: paths in contract-declaration order, canonical key
- * order inside every object, component names taken from the first tree-path use - two
- * builds of the same contract are byte-identical, so specs diff cleanly in CI.
+ * order inside every object, component names taken from the first tree-path use and
+ * disambiguated in tree order when two paths collapse to one name - two builds of the
+ * same contract are byte-identical, so specs diff cleanly in CI.
  *
  * Honest degradations: a refinement cannot be expressed as JSON Schema, so it becomes a
  * description note; a QUERY route (RFC 10008)
@@ -23,7 +24,7 @@
 import type { Schema, SchemaMeta, StringOptions, NumberOptions, ArrayOptions } from '@azerothjs/schema';
 import type { App, AzerothPlugin } from '../index.ts';
 
-import { isRoute, isMultipartSpec, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
+import { isRoute, isMultipartSpec, responseSchemaFor, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
 import { renderExplorerHtml, renderScalarHtml } from './explorer.ts';
 
 /** @internal Reason phrases for the per-status response descriptions. */
@@ -134,6 +135,26 @@ function convertPath(pattern: string): { path: string; params: Array<{ name: str
 function pascal(name: string): string
 {
     return name.split(/[.\-_]/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+}
+
+/**
+ * @internal Claims a component name, mutating the taken set. `user.profile`, `user_profile`
+ * and `userProfile` all pascal to one name; letting two DIFFERENT schemas share it would
+ * give both routes the same `$ref` - a structurally valid document describing the wrong
+ * body. The separator-preserving tree path disambiguates first (it is unique per route),
+ * a counter after that; both follow declaration order, so rebuilds stay byte-identical.
+ */
+function claimName(preferred: string, fallback: string, taken: Set<string>): string
+{
+    let name = taken.has(preferred) ? fallback : preferred;
+    let counter = 2;
+    while (taken.has(name))
+    {
+        name = `${ preferred }${ counter }`;
+        counter += 1;
+    }
+    taken.add(name);
+    return name;
 }
 
 /**
@@ -266,12 +287,15 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
     // deterministic (declaration order) and meaningful across services that share a
     // schema value. Single-use schemas stay inline; query schemas explode into per-field
     // parameters and never hoist.
-    const uses = new Map<Schema<unknown>, { count: number; name: string }>();
+    const uses = new Map<Schema<unknown>, { count: number; name: string; path: string }>();
     for (const { name, route } of flat)
     {
         for (const [role, node] of [['Input', route.input], ['Output', route.output]] as const)
         {
-            if (node === undefined)
+            // A multipart spec is a branded plain object, not a schema: the operation refs its
+            // `fields` schema instead, so hoisting the spec would emit a component nothing
+            // ever references.
+            if (node === undefined || isMultipartSpec(node))
             {
                 continue;
             }
@@ -279,7 +303,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
             const seen = uses.get(schema);
             if (seen === undefined)
             {
-                uses.set(schema, { count: 1, name: pascal(name) + role });
+                uses.set(schema, { count: 1, name: pascal(name) + role, path: name + role });
             }
             else
             {
@@ -291,12 +315,14 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         ErrorResponse: options.errorSchema !== undefined ? toJsonSchema(options.errorSchema) : ERROR_ENVELOPE
     };
     const refs = new Map<Schema<unknown>, Record<string, unknown>>();
+    const taken = new Set(Object.keys(componentSchemas));
     for (const [schema, use] of uses)
     {
         if (use.count >= 2)
         {
-            componentSchemas[use.name] = toJsonSchema(schema);
-            refs.set(schema, { $ref: `#/components/schemas/${ use.name }` });
+            const name = claimName(use.name, use.path, taken);
+            componentSchemas[name] = toJsonSchema(schema);
+            refs.set(schema, { $ref: `#/components/schemas/${ name }` });
         }
     }
     const resolve = (schema: Schema<unknown>): Record<string, unknown> => refs.get(schema) ?? toJsonSchema(schema);
@@ -386,7 +412,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         // One response concept: `responses[200]` and `output` are the same slot (`output`
         // is the declared shorthand), so the 200 entry derives from either and the loop
         // below skips it.
-        const okSchema = (route.responses as Record<string, unknown> | undefined)?.['200'] ?? route.output;
+        const okSchema = responseSchemaFor(route, 200);
         responses['200'] = okSchema !== undefined
             ? { description: 'OK', content: { 'application/json': { schema: resolve(okSchema as Schema<unknown>) } } }
             : { description: 'OK (response shape not declared by the contract)' };
@@ -455,6 +481,12 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
     return document;
 }
 
+/** @internal `NODE_ENV` where a `process` exists - api/ also runs on runtimes without one. */
+function nodeEnv(): string | undefined
+{
+    return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NODE_ENV;
+}
+
 /** Options for {@link openapiPlugin}: the export options plus the contract and routes. */
 export interface OpenApiPluginOptions extends ToOpenApiOptions
 {
@@ -470,11 +502,21 @@ export interface OpenApiPluginOptions extends ToOpenApiOptions
     docs?: string | false;
 
     /**
-     * Which viewer the docs page carries. Default `'scalar'`: a tiny shell that loads
-     * the Scalar reference from a CDN in the browser - best-in-class UI, needs internet
-     * while viewing. `'azeroth'`: the house explorer - one fully self-contained page
-     * (inline styles/script, zero external requests, works offline) in the AzerothJS
-     * design language, try-it included.
+     * Register both routes even in production. Off by default: the document enumerates
+     * every contracted route's shape and constraints, and the docs page carries a try-it
+     * panel a developer pastes a real token into - so an app that wants that surface on
+     * the public internet says so in one word, and an app that forgets leaks nothing.
+     * Without it, `NODE_ENV=production` installs the plugin as a no-op.
+     */
+    public?: boolean;
+
+    /**
+     * Which viewer the docs page carries. Default `'azeroth'`: the house explorer - one
+     * fully self-contained page (inline styles/script, zero external requests, works
+     * offline) in the AzerothJS design language, try-it included. `'scalar'`: a tiny shell
+     * that loads the Scalar reference from a CDN in the browser - best-in-class UI, at the
+     * price of internet while viewing and third-party code your browser runs on the page
+     * you paste tokens into.
      */
     viewer?: 'scalar' | 'azeroth';
 }
@@ -484,6 +526,9 @@ export interface OpenApiPluginOptions extends ToOpenApiOptions
  * immutable values), served from cached bytes - and, unless `docs: false`, the house
  * explorer page beside it. An ordinary plugin: two GET routes, nothing else. External
  * viewers (Scalar, Redoc, Swagger UI) read the document route directly.
+ *
+ * Both routes are development surfaces: under `NODE_ENV=production` the plugin registers
+ * nothing unless `public: true` says otherwise.
  */
 export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
 {
@@ -491,6 +536,10 @@ export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
         name: 'azerothjs-openapi',
         install(app: App): App
         {
+            if (options.public !== true && nodeEnv() === 'production')
+            {
+                return app;
+            }
             // Generated once, served as cached bytes - a contract is an immutable value.
             const specRoute = options.route ?? '/openapi.json';
             const payload = JSON.stringify(toOpenApi(options.contract, options));
@@ -498,9 +547,9 @@ export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
                 new Response(payload, { headers: { 'content-type': 'application/json; charset=utf-8' } }));
             if (options.docs !== false)
             {
-                const page = options.viewer === 'azeroth'
-                    ? renderExplorerHtml(specRoute, options.info.title)
-                    : renderScalarHtml(specRoute, options.info.title);
+                const page = options.viewer === 'scalar'
+                    ? renderScalarHtml(specRoute, options.info.title)
+                    : renderExplorerHtml(specRoute, options.info.title);
                 app.get(options.docs ?? '/docs', () =>
                     new Response(page, { headers: { 'content-type': 'text/html; charset=utf-8' } }));
             }

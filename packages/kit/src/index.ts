@@ -86,14 +86,37 @@ export function prerenderFileFor(path: string): string
 }
 
 /**
+ * @internal The client shell, read once at mount and awaited per request. The rejection
+ * handler is attached HERE, at creation: nothing awaits this promise until a request
+ * arrives, and an unhandled rejection in the turn it happens TERMINATES the process - a
+ * wrong clientDir was a crash loop reporting a bare ENOENT that named neither the
+ * directory nor the kit. The requesting handler awaits the same promise and gets this
+ * error instead.
+ */
+function loadShell(clientDir: string): Promise<string>
+{
+    const shell = readFile(join(clientDir, 'shell.html'), 'utf8')
+        .catch(() => readFile(join(clientDir, 'index.html'), 'utf8'))
+        .catch((cause: unknown) =>
+        {
+            throw new Error(`kit mountPages: no client shell in ${ clientDir } - looked for shell.html and index.html. `
+                + 'Point clientDir at the built client (vite build output), or run the build first.', { cause });
+        });
+    shell.catch(() =>
+    {
+        // Handled here so the rejection is never unhandled; every reader awaits `shell` itself.
+    });
+    return shell;
+}
+
+/**
  * Registers every page route plus asset serving on the app. API routes registered
  * BEFORE this call keep priority for their exact paths; register `mountPages`
  * LAST so `/*path` asset fallback cannot shadow anything.
  */
 export function mountPages(app: App, options: KitOptions): void
 {
-    const shellPromise = readFile(join(options.clientDir, 'shell.html'), 'utf8')
-        .catch(() => readFile(join(options.clientDir, 'index.html'), 'utf8'));
+    const shellPromise = loadShell(options.clientDir);
 
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';

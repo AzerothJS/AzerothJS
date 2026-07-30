@@ -2,9 +2,9 @@
     <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
-# @azerothjs/component
+# azerothjs / component
 
-[![npm](https://img.shields.io/npm/v/%40azerothjs%2Fcomponent?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/component)
+[![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
@@ -23,7 +23,7 @@ on:
   components (`Show`, `For`, `Switch`, ...) use to mark and update where they insert content.
 
 ```ts
-import { ErrorBoundary } from '@azerothjs/component';
+import { ErrorBoundary } from 'azerothjs';
 ```
 
 ```azeroth
@@ -40,7 +40,7 @@ component App
 ## Install
 
 ```sh
-npm install @azerothjs/component
+npm install azerothjs
 ```
 
 ## Architecture

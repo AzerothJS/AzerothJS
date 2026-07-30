@@ -26,7 +26,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Http2ServerRequest } from 'node:http2';
 import { Readable } from 'node:stream';
-import { PayloadTooLargeError } from './errors.ts';
+import { BadRequestError, PayloadTooLargeError } from './errors.ts';
 import { fastHeaderLookup, fastRawBody, socketAddress, type FastCapabilities } from './body.ts';
 
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
@@ -79,6 +79,9 @@ class AdapterRequest implements Request
 
     #body: ReadableStream<Uint8Array<ArrayBuffer>> | null | undefined = undefined;
 
+    /** The fast lane consumed the raw stream; `#body` stays undefined, so this is the only record. */
+    #rawRead = false;
+
     #real: Request | null = null;
 
     constructor(incoming: AnyIncoming, scheme: 'http' | 'https', trust: ForwardedTrust = {})
@@ -99,7 +102,13 @@ class AdapterRequest implements Request
         {
             const headers = this.#incoming.headers;
             let scheme: string = this.#scheme;
-            let authority = (headers[':authority'] as string | undefined) ?? (headers.host) ?? 'localhost';
+            // The authority is validated even when it comes from `Host`, which is NOT a trusted
+            // header: a `/`, `?` or `#` inside it moves the authority/path boundary of the
+            // composed URL, so `Host: h/admin` on a request for `/` routes to `/admin` while
+            // `context.url.pathname` reports something else again. An unparseable authority also
+            // makes `new URL(request.url)` throw in any observer that builds one.
+            const claimed = (headers[':authority'] as string | undefined) ?? headers.host;
+            let authority = claimed !== undefined && FORWARDED_HOST.test(claimed) ? claimed : 'localhost';
             if (this.#trust.proto === true)
             {
                 const forwarded = firstForwarded(headers['x-forwarded-proto'])?.toLowerCase();
@@ -192,7 +201,11 @@ class AdapterRequest implements Request
         {
             return this.#real.bodyUsed;
         }
-        return this.#body !== undefined && this.#body !== null && (this.#body.locked || this.#incoming.readableEnded);
+        // The fast lane leaves `#body` undefined, so without `#rawRead` this would report false
+        // after the body was fully consumed and every guard built on it would wave a second read
+        // through.
+        return this.#rawRead
+            || (this.#body !== undefined && this.#body !== null && (this.#body.locked || this.#incoming.readableEnded));
     }
 
     /** The peer's remote address as the TCP socket reports it - the pre-proxy client IP. */
@@ -220,11 +233,22 @@ class AdapterRequest implements Request
      */
     public [fastRawBody](limit: number): Promise<Uint8Array>
     {
+        // A DRAINED stream never emits 'end' again, so a second read would attach listeners to a
+        // finished stream and wait forever - and because the body was fully received, the
+        // request timeout is already cleared and nothing reclaims the socket. That is a wedged
+        // connection and a leaked request root per attempt, invisible in tests because the
+        // portable path throws instead. Fail with the message body.ts uses, so the two lanes are
+        // indistinguishable to a caller.
+        if (this.#rawRead || this.#incoming.readableEnded || this.bodyUsed)
+        {
+            return Promise.reject(new TypeError('Invalid state: the request body has already been read.'));
+        }
         const declared = this[fastHeaderLookup]('content-length');
         if (declared !== null && Number(declared) > limit)
         {
             return Promise.reject(new PayloadTooLargeError(`Body of ${ declared } bytes exceeds the ${ limit }-byte limit.`));
         }
+        this.#rawRead = true;
         const incoming = this.#incoming;
         return new Promise((resolve, reject) =>
         {
@@ -243,6 +267,9 @@ class AdapterRequest implements Request
             });
             incoming.once('end', () => resolve(chunks[0] !== undefined && chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total)));
             incoming.once('error', reject);
+            // A client that vanishes mid-upload must settle this promise too: 'end' never comes,
+            // and without a terminal event the read would hang for the process lifetime.
+            incoming.once('aborted', () => reject(new BadRequestError('The request body was not fully received.')));
         });
     }
 

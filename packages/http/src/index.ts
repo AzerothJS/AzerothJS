@@ -61,7 +61,7 @@ export type { SecurityHeadersOptions, HstsOptions } from './security.ts';
 export { cors } from './cors.ts';
 export type { CorsOptions, CorsOrigin } from './cors.ts';
 
-export { clientIp } from './client-ip.ts';
+export { clientIp, ipBucket } from './client-ip.ts';
 export type { ClientIpOptions } from './client-ip.ts';
 
 export { rateLimit, MemoryRateStore } from './rate-limit.ts';

@@ -41,4 +41,17 @@ describe('{{name}} api', () =>
     {
         expect((await get('/nope')).status).toBe(404);
     });
+
+    it('streams the raw route as server-sent events, terminator included', async () =>
+    {
+        // The raw half: no contract, so the handler owns the Response. Reading it here is the
+        // same story as any other route - app.handle, no sockets.
+        const response = await get('/api/assistant?q=hello');
+        expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+        const body = await response.text();
+        expect(body).toContain('data: You asked: hello');
+        expect(body).toContain('data: Streaming');
+        expect(body).toContain('data: [DONE]');
+    });
 });

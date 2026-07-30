@@ -65,3 +65,80 @@ export function clientIp(request: Request, options: ClientIpOptions = {}): strin
     }
     return chain[index];
 }
+
+/** The longest key {@link ipBucket} emits; forwarded-header garbage is truncated to this. */
+const MAX_BUCKET_KEY = 64;
+
+/** @internal The 8 hextets of an IPv6 address, or null when it does not parse. */
+function ipv6Hextets(address: string): number[] | null
+{
+    const doubleColon = address.indexOf('::');
+    if (doubleColon !== address.lastIndexOf('::'))
+    {
+        return null;
+    }
+    const parse = (part: string): number[] | null =>
+    {
+        if (part === '')
+        {
+            return [];
+        }
+        const hextets: number[] = [];
+        for (const piece of part.split(':'))
+        {
+            if (!/^[0-9A-Fa-f]{1,4}$/.test(piece))
+            {
+                return null;
+            }
+            hextets.push(parseInt(piece, 16));
+        }
+        return hextets;
+    };
+    if (doubleColon === -1)
+    {
+        const hextets = parse(address);
+        return hextets !== null && hextets.length === 8 ? hextets : null;
+    }
+    const head = parse(address.slice(0, doubleColon));
+    const tail = parse(address.slice(doubleColon + 2));
+    if (head === null || tail === null || head.length + tail.length > 7)
+    {
+        return null;
+    }
+    return [...head, ...new Array<number>(8 - head.length - tail.length).fill(0), ...tail];
+}
+
+/**
+ * Normalizes an address into a rate-limit bucket key. IPv4 buckets per host, but IPv6 is
+ * truncated to `prefixBits` (default 64): a /64 is the standard single-customer allocation,
+ * inside which one host can hop across 2^64 addresses for free - keying on the full /128
+ * hands every such host an unlimited supply of fresh buckets. IPv4-mapped IPv6 collapses to
+ * its IPv4 form, and anything unparseable becomes its own bucket, length-capped so a
+ * forwarded-header key cannot bloat the store.
+ */
+export function ipBucket(address: string, prefixBits = 64): string
+{
+    const zone = address.indexOf('%');
+    const bare = zone === -1 ? address : address.slice(0, zone);
+    if (!bare.includes(':'))
+    {
+        return bare.slice(0, MAX_BUCKET_KEY);
+    }
+    const mapped = /^::[Ff]{4}:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(bare);
+    if (mapped?.[1] !== undefined)
+    {
+        return mapped[1];
+    }
+    const hextets = ipv6Hextets(bare);
+    if (hextets === null)
+    {
+        return bare.slice(0, MAX_BUCKET_KEY);
+    }
+    const bits = Math.min(Math.max(Math.trunc(prefixBits), 0), 128);
+    const masked = hextets.map((hextet, index) =>
+    {
+        const keep = Math.min(16, Math.max(0, bits - index * 16));
+        return ((hextet >> (16 - keep)) << (16 - keep)) & 0xffff;
+    });
+    return `${ masked.map((hextet) => hextet.toString(16)).join(':') }/${ bits }`;
+}

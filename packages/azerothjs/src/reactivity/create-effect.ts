@@ -47,6 +47,52 @@ import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
 const MAX_SELF_RERUNS = 1000;
 
 /**
+ * Routes an error that escaped through an ASYNC seam - a rejected effect-body promise, or
+ * a throwing subscriber during a resource/stream settle - down the same ladder a
+ * synchronous effect error takes: the handler captured at construction, then the global
+ * uncaught handler, then a rethrow. The rethrow happens in a microtask so it surfaces as
+ * a genuine uncaught error the host reports at top level, not as an unhandled promise
+ * rejection nothing downstream can observe (which on Node terminates the process from
+ * inside a promise reaction the app never sees).
+ *
+ * @internal Shared by createEffect, createResource, and createStream.
+ */
+export function routeAsyncError(
+    error: unknown,
+    handler: ((error: unknown) => void) | null,
+    name: string | undefined
+): void
+{
+    if (handler)
+    {
+        handler(error);
+        return;
+    }
+    if (uncaughtErrorHandler)
+    {
+        uncaughtErrorHandler(error, { source: 'effect', name });
+        return;
+    }
+    queueMicrotask(() =>
+    {
+        throw error;
+    });
+}
+
+/**
+ * A promise-shaped effect return: an `async` body. Checked structurally (thenable), the
+ * same duck-typing `await` itself applies.
+ *
+ * @internal
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown>
+{
+    return value !== null
+        && typeof value === 'object'
+        && typeof (value as { then?: unknown }).then === 'function';
+}
+
+/**
  * createEffect
  *
  * PURPOSE:
@@ -99,6 +145,10 @@ const MAX_SELF_RERUNS = 1000;
  *   before the throw propagates, so a half-subscribed effect never lingers.
  * - Returning a cleanup is optional; most effects never register one, so the cleanup
  *   array is not reallocated when empty.
+ * - An ASYNC body's rejection routes through the same error ladder as a synchronous
+ *   throw (catchError handler, then onUncaughtError) instead of escaping as an
+ *   unhandled rejection. Note reads after the first `await` are not tracked, and an
+ *   async body cannot register a cleanup (its return is a promise, not a function).
  * - In string mode the function returns a disposer immediately without running fn.
  *
  * PERFORMANCE NOTES:
@@ -288,6 +338,16 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
             if (typeof returned === 'function')
             {
                 cleanups.push(returned as CleanupFn);
+            }
+            else if (isThenable(returned))
+            {
+                // An async body: dropping the promise would turn `await x` throwing into an
+                // unhandled rejection invisible to this effect's error handling. Route a
+                // rejection down the same ladder the synchronous catch below uses.
+                void returned.then(undefined, (err: unknown) =>
+                {
+                    routeAsyncError(err, subscriber.errorHandler, subscriber.name);
+                });
             }
         }
         catch (err)

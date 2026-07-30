@@ -102,7 +102,9 @@ describe('every section-5 rule, by close code', () =>
 
     it('a control frame over 125 bytes: 1002', () =>
     {
-        expectViolation(serializeFrame(OPCODE.ping, new Uint8Array(126), { mask: true }), 1002);
+        // Hand-crafted: a masked ping whose length field is the 16-bit escape. The serializer
+        // refuses to build this frame at all (see hardening-frames.spec.ts).
+        expectViolation(new Uint8Array([0x89, 0xfe, 0x00, 0x7e]), 1002);
     });
 
     it('an unmasked client frame: 1002 (and a masked server frame the other way)', () =>
@@ -146,9 +148,11 @@ describe('close payloads', () =>
     it('a 1-byte payload, wire-invalid codes, and non-UTF-8 reasons are violations', () =>
     {
         expect(() => parseClosePayload(new Uint8Array([3]))).toThrow(ProtocolError);
+        // Hand-crafted codes: closePayload refuses to put any of these on the wire.
         for (const code of [999, 1004, 1005, 1006, 1015, 2999, 5000])
         {
-            expect(() => parseClosePayload(closePayload(code)), `code ${ code }`).toThrow(ProtocolError);
+            const wire = new Uint8Array([code >>> 8, code & 0xff]);
+            expect(() => parseClosePayload(wire), `code ${ code }`).toThrow(ProtocolError);
         }
         const badReason = new Uint8Array([0x03, 0xe8, 0xff, 0xfe]);
         expect(() => parseClosePayload(badReason)).toThrow(/UTF-8/);

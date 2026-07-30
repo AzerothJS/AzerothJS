@@ -57,6 +57,19 @@ export interface FileStreamOptions
 
     /** Time source for file naming and the drop notice - injectable for tests. */
     clock?: (() => number) | undefined;
+
+    /**
+     * POSIX mode for a log file this stream CREATES; default 0o600 (owner only). Log lines
+     * carry whatever the application logged - request context, tokens a redact list missed -
+     * so the default is not the umask's 0o666. Ignored on Windows and for existing files.
+     */
+    mode?: number | undefined;
+
+    /**
+     * POSIX mode for a log directory this stream CREATES; default 0o700 (owner only), for
+     * the same reason as {@link FileStreamOptions.mode}.
+     */
+    dirMode?: number | undefined;
 }
 
 /** A buffered file writer that satisfies WritableLike (usable as a logger `stream`). */
@@ -120,6 +133,10 @@ class BufferedFileStream implements FileStream
 
     readonly #clock: () => number;
 
+    readonly #mode: number;
+
+    readonly #dirMode: number;
+
     #pending: string[] = [];
 
     #pendingBytes = 0;
@@ -157,6 +174,8 @@ class BufferedFileStream implements FileStream
         this.#name = options.name ?? 'app';
         this.#maxPendingBytes = options.maxPendingBytes ?? 8 * 1024 * 1024;
         this.#clock = options.clock ?? Date.now;
+        this.#mode = options.mode ?? 0o600;
+        this.#dirMode = options.dirMode ?? 0o700;
         liveStreams.add(this);
         installExitHook();
     }
@@ -246,7 +265,7 @@ class BufferedFileStream implements FileStream
         {
             if (this.#fd === null)
             {
-                mkdirSync(dirname(this.#target), { recursive: true });
+                mkdirSync(dirname(this.#target), { recursive: true, mode: this.#dirMode });
                 this.#openAppend(this.#target);
             }
             return;
@@ -255,7 +274,7 @@ class BufferedFileStream implements FileStream
         const day = new Date(this.#clock()).toISOString().slice(0, DAY_STAMP_LENGTH);
         if (this.#fd === null || day !== this.#dayStamp)
         {
-            mkdirSync(this.#target, { recursive: true });
+            mkdirSync(this.#target, { recursive: true, mode: this.#dirMode });
             this.#dayStamp = day;
             this.#sequence = 1;
             this.#openAppend(this.#filePath());
@@ -280,7 +299,7 @@ class BufferedFileStream implements FileStream
     #openAppend(path: string): void
     {
         this.#closeQuietly();
-        this.#fd = openSync(path, 'a');
+        this.#fd = openSync(path, 'a', this.#mode);
         this.#currentPath = path;
         this.#fileBytes = existsSync(path) ? statSync(path).size : 0;
     }

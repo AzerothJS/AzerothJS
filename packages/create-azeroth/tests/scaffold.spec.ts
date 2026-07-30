@@ -11,8 +11,9 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scaffold, isEmptyTarget, TEMPLATES } from '../src/scaffold.ts';
+import { scaffold, isEmptyTarget, resolveProjectTarget, TEMPLATES } from '../src/scaffold.ts';
 import { detectProject } from '../../cli/src/detect.ts';
+import { npmCli } from '../../cli/src/upgrade.ts';
 
 const TEMPLATES_ROOT = fileURLToPath(new URL('../templates', import.meta.url));
 
@@ -66,6 +67,37 @@ describe('the copy engine', () =>
         expect(() => scaffold(TEMPLATES_ROOT, 'backend', dir, 'x', '^1.0.0')).toThrow(/never overwrites/);
         writeFileSync(join(dir, 'extra.txt'), '');
         expect(isEmptyTarget(dir)).toBe(false);
+    });
+});
+
+// The name doubles as the target DIRECTORY, so the old character-class check (which allowed
+// both `.` and `/`) let a name resolve anywhere: `../escaped` and `a/../../b` scaffolded
+// outside the working directory, and `/name` landed at the drive root on Windows.
+describe('the project name is one path segment inside the cwd', () =>
+{
+    const cwd = join(tmpdir(), 'create-azeroth-cwd');
+
+    it('refuses every name that resolves outside the working directory', () =>
+    {
+        for (const name of ['.', '..', '../escaped', 'a/../../b-marker', '/az-root-marker', '//server/share', 'a/b', '\\\\server\\share', 'C:/anywhere', 'x/..'])
+        {
+            expect(resolveProjectTarget(cwd, name), name).toBeNull();
+        }
+    });
+
+    it('accepts npm\'s own package-name shape, scaffolding under the cwd', () =>
+    {
+        expect(resolveProjectTarget(cwd, 'my-app')).toBe(join(cwd, 'my-app'));
+        expect(resolveProjectTarget(cwd, 'app.v2_final~1')).toBe(join(cwd, 'app.v2_final~1'));
+        expect(resolveProjectTarget(cwd, '@acme/web')).toBe(join(cwd, '@acme', 'web'));
+    });
+
+    it('refuses names npm itself would refuse', () =>
+    {
+        for (const name of ['', 'MyApp', '.hidden', '_leading', 'has space', 'ünïcode'])
+        {
+            expect(resolveProjectTarget(cwd, name), name).toBeNull();
+        }
     });
 });
 
@@ -344,10 +376,19 @@ describe('production shape: the hour-three files are already waiting', () =>
         // corrupting stdout with an update notice; the JSON is sliced from its first `[` for the same reason.
         const cache = mkdtempSync(join(tmpdir(), 'create-azeroth-npm-cache-'));
         roots.push(cache);
-        const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
-            cwd: join(TEMPLATES_ROOT, '..'),
+        // npm is reached through its entry SCRIPT, never `npm.cmd` and never a shell: spawning a
+        // `.cmd` needs `shell: true`, which concatenates the argument array without quoting
+        // (DEP0190) - the same hazard `azeroth doctor` reports, and it has no business being in
+        // this repo's own suite.
+        const packageRoot = join(TEMPLATES_ROOT, '..');
+        const cli = npmCli(packageRoot);
+        if (cli === null)
+        {
+            throw new Error('npm could not be resolved, so the packed file list cannot be checked');
+        }
+        const raw = execFileSync(process.execPath, [cli, 'pack', '--dry-run', '--json'], {
+            cwd: packageRoot,
             encoding: 'utf8',
-            shell: process.platform === 'win32',
             env: { ...process.env, npm_config_cache: cache, npm_config_update_notifier: 'false', npm_config_fund: 'false', npm_config_audit: 'false' }
         });
         const jsonStart = raw.indexOf('[');

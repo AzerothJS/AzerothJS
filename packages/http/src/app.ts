@@ -23,7 +23,7 @@
  */
 
 import type { PathParams } from './router.ts';
-import { RadixRouter } from './router.ts';
+import { RadixRouter, segmentsOf } from './router.ts';
 import { HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { runInRequestRoot } from './request-root.ts';
 
@@ -43,6 +43,15 @@ export interface RequestContext<Params extends Record<string, string> = Record<s
 
     /** The parsed request URL (parsed lazily, once, shared by everyone). */
     url: URL;
+
+    /**
+     * The path the ROUTER matched: decoded per segment, duplicate and trailing slashes
+     * collapsed. Use THIS, not `url.pathname`, for any policy decision (an auth prefix check,
+     * a CSRF exemption list, a rate-limit bucket, an audit line): `url.pathname` preserves the
+     * client's spelling, so `/%61dmin` and `//admin` read as something other than `/admin`
+     * there while still reaching the `/admin` handler.
+     */
+    path: string;
 }
 
 /** A route handler: one context in, exactly one Response out. Ctx is what middleware added. */
@@ -60,6 +69,10 @@ export interface RequestObserver
     onComplete(request: Request, response: Response, durationMs: number): void;
 }
 
+/**
+ * One app's policy: what an error reveals, who watches a request, and whether each dispatch
+ * gets a request root. Decided once at construction - a {@link App.with} fork shares it.
+ */
 export interface AppOptions
 {
     /**
@@ -94,7 +107,7 @@ export interface AppOptions
  * @internal The pathname of an absolute-form URL by string scan - no URL allocation on the
  * hot path. The path starts at the first '/' after the authority and ends at '?' or '#'.
  */
-function pathnameOf(url: string): string
+export function pathnameOf(url: string): string
 {
     const schemeEnd = url.indexOf('://');
     const pathStart = url.indexOf('/', schemeEnd === -1 ? 0 : schemeEnd + 3);
@@ -145,6 +158,8 @@ class DispatchContext implements RequestContext
 
     #url: URL | null = null;
 
+    #path: string | null = null;
+
     constructor(params: Record<string, string>, request: Request)
     {
         this.request = request;
@@ -155,6 +170,32 @@ class DispatchContext implements RequestContext
     {
         this.#url ??= new URL(this.request.url);
         return this.#url;
+    }
+
+    public get path(): string
+    {
+        // The path the ROUTER matched: percent-decoded per segment and slash-collapsed, so
+        // `/%61dmin`, `//admin` and `/admin//` all read as `/admin`. `url.pathname` keeps the
+        // raw spelling, which means a prefix check written on it can be bypassed by re-spelling
+        // the path while the router still reaches the protected handler.
+        if (this.#path === null)
+        {
+            const segments = segmentsOf(pathnameOf(this.request.url));
+            const decoded: string[] = [];
+            for (const segment of segments)
+            {
+                try
+                {
+                    decoded.push(decodeURIComponent(segment));
+                }
+                catch
+                {
+                    decoded.push(segment);
+                }
+            }
+            this.#path = `/${ decoded.join('/') }`;
+        }
+        return this.#path;
     }
 }
 
@@ -217,6 +258,34 @@ interface AppInternals
     installed: Array<{ name: string; version?: string | undefined }>;
 }
 
+/**
+ * The application: one route table, the middleware stacked above it, and {@link handle} below.
+ *
+ * `new App().get('/x', handler)` is already a complete server - no plugin, no adapter, and no
+ * socket is required to exercise it. Registration is LEXICAL: {@link use} applies to every route
+ * registered after it, {@link with} only to the routes registered through the view it returns,
+ * and each route snapshots its chain at registration, so nothing added later reaches back into a
+ * route already on the table.
+ *
+ * `Ctx` is what middleware and plugins have added to the handler context, accumulated by the type
+ * system as they are registered: it starts empty, every {@link use} / {@link with} /
+ * {@link register} widens it, and a handler therefore reads `context.accountId` with no cast -
+ * while one registered ABOVE the middleware that supplies it fails to compile.
+ *
+ * There are no sub-applications: {@link with} and {@link register} return views onto the SAME
+ * table, so a request is matched once, no mount prefix has to be composed by hand, and
+ * {@link routes} prints the entire surface.
+ *
+ * @example
+ * ```ts
+ * const app = new App({ dev: process.env.NODE_ENV !== 'production' });
+ *
+ * app.get('/healthz', () => json({ ok: true }));
+ * app.with(requireAuth).get('/account/me', (context) => json({ id: context.accountId }));
+ *
+ * const response = await app.handle(new Request('http://local/healthz')); // the whole test story
+ * ```
+ */
 export class App<Ctx extends object = object>
 {
     readonly #router: RadixRouter<Handler>;
@@ -229,6 +298,10 @@ export class App<Ctx extends object = object>
     /** Installed named plugins, in registration order (introspected via {@link plugins}). */
     readonly #installed: Array<{ name: string; version?: string | undefined }>;
 
+    /**
+     * @param options Error, observability, and request-root policy for every route on this app.
+     * @param internals @internal What a {@link with} fork inherits; never passed by application code.
+     */
     constructor(options: AppOptions = {}, internals?: AppInternals)
     {
         this.#options = options;
@@ -312,7 +385,18 @@ export class App<Ctx extends object = object>
             }
             if (result !== undefined && result !== null)
             {
-                Object.assign(ctx, result);
+                // `request`, `params` and `url` are readonly to TypeScript and writable at
+                // runtime, so a middleware that returns parsed request data as its additions
+                // (`app.use((c) => readJson(c.request))`) would let a body of
+                // `{"params":{"id":"admin"}}` replace the path params a handler authorises on.
+                // Own keys only: an addition must never arrive from a polluted prototype.
+                for (const key of Object.keys(result))
+                {
+                    if (key !== 'request' && key !== 'params' && key !== 'url')
+                    {
+                        (ctx as Record<string, unknown>)[key] = (result as Record<string, unknown>)[key];
+                    }
+                }
             }
             return null;
         };
@@ -347,26 +431,39 @@ export class App<Ctx extends object = object>
         return this;
     }
 
+    /**
+     * Registers a GET route. HEAD on the same pattern is answered from this handler with the body
+     * stripped and the entity headers kept, so a HEAD route is never written by hand.
+     *
+     * @example
+     * ```ts
+     * app.get('/users/:id', (context) => json({ id: context.params.id })); // params typed from the pattern
+     * ```
+     */
     public get<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('GET', pattern, handler);
     }
 
+    /** Registers a POST route: the write that is NOT idempotent - a creation, or an action. */
     public post<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('POST', pattern, handler);
     }
 
+    /** Registers a PUT route: a whole-resource write, sent twice for the same end state. */
     public put<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('PUT', pattern, handler);
     }
 
+    /** Registers a PATCH route: a partial update, the body carrying only what changes. */
     public patch<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('PATCH', pattern, handler);
     }
 
+    /** Registers a DELETE route. The name is `delete`, not `del`: it is a method, not a bare word. */
     public delete<P extends string>(pattern: P, handler: Handler<PathParams<P> & Record<string, string>, Ctx>): this
     {
         return this.route('DELETE', pattern, handler);

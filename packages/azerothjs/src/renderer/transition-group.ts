@@ -25,6 +25,7 @@ import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, is
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, resolveReactive } from './h.ts';
+import { LEAVING_ATTR, ensureLeavingStyle } from './transition.ts';
 
 /** Props for the `<TransitionGroup>` component. */
 export interface TransitionGroupProps<T>
@@ -231,6 +232,11 @@ function driveGroup<T>(props: TransitionGroupProps<T>, target: CoTarget, hydrate
             return;
         }
         leaving.set(el, entry);
+        // A leaving ROW is exactly as clickable as a leaving element: it stays in the DOM with its
+        // handlers and reactive scope alive for the whole animation, so a delete button in a list
+        // can be pressed twice. Same marker and same single overridable rule as `Transition`.
+        ensureLeavingStyle();
+        el.setAttribute(LEAVING_ATTR, '');
         el.classList.add(cls.from, cls.active);
         void el.offsetHeight;
         requestAnimationFrame(() =>

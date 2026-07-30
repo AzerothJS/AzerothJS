@@ -64,6 +64,12 @@ before anything else runs. Production reads the real environment instead.
 
 `NODE_ENV=production` locks CORS down to nothing (add your real origins in
 `src/main.ts` before going live) and switches request logs to NDJSON under `logs/`.
+Origins are always a NAMED list: `cors` refuses to reflect an arbitrary origin while
+credentials are on, because that combination lets any site read an authenticated reply.
+
+Behind a proxy, declare it on the limiter too (`rateLimit({ trustProxy: true, trustedHops })`).
+Its default key is the connecting address, which behind a proxy is the PROXY, so every client
+would share one bucket and the limit would be a global budget rather than a per-client one.
 
 ---
 
@@ -115,7 +121,8 @@ answers orchestrator probes, and `SIGTERM` drains in-flight responses before exi
 - **Inspect the reactive graph** - the devtools panel is a page, and this template
   serves none, so it ships without one. To watch this server's request roots and
   stores, install `@azerothjs/devtools` and `@azerothjs/ws`, call
-  `attachDevtools(served.server)` in `src/main.ts` behind a non-production check,
-  and point another app's devtools Server tab at `http://localhost:3000`.
+  `attachDevtools(served.server, { token })` in `src/main.ts` under an
+  `NODE_ENV === 'development'` check, and point another app's devtools Server tab at
+  the printed `ws://localhost:3000/__azeroth/devtools?token=...` URL.
 - **[The AzerothJS repository](https://github.com/AzerothJS/AzerothJS)** for the
   full documentation.

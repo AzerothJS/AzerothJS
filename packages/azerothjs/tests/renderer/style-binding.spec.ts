@@ -41,6 +41,31 @@ describe('styleMap - getter output', () =>
         size = 20;
         expect(getter()).toBe('width: 20px');
     });
+
+    it('rejects a value carrying a ";" that would open a second declaration', () =>
+    {
+        const getter = styleMap({ color: 'red; background: url(//evil)' });
+        expect(() => getter()).toThrow(/invalid style value/);
+    });
+
+    it('allows a ";" inside a quoted string or url() body (real content)', () =>
+    {
+        expect(styleMap({ content: '"a;b"' })()).toBe('content: "a;b"');
+        expect(styleMap({ background: 'url("data:image/svg+xml;base64,AAAA")' })())
+            .toBe('background: url("data:image/svg+xml;base64,AAAA")');
+    });
+
+    it('rejects a data-driven property name that is not a CSS identifier', () =>
+    {
+        const getter = styleMap({ 'color: red; background': 'url(//evil)' });
+        expect(() => getter()).toThrow(/invalid style property name/);
+    });
+
+    it('allows custom-property (--var) and vendor-prefixed names', () =>
+    {
+        expect(styleMap({ '--brand': 'blue' })()).toBe('--brand: blue');
+        expect(styleMap({ WebkitBoxShadow: 'none' })()).toBe('-webkit-box-shadow: none');
+    });
 });
 
 describe('styleMap - reactive binding in h()', () =>

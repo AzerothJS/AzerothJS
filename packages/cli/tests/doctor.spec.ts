@@ -121,6 +121,45 @@ describe('fullstack version skew', () =>
     });
 });
 
+describe('spawn hazards', () =>
+{
+    function project(dir: string, script: string): void
+    {
+        write(dir, 'package.json', packageJson({ '@azerothjs/http': '^1.0.0' }));
+        write(dir, 'src/main.ts', '');
+        write(dir, 'scripts/build.mjs', script);
+    }
+
+    it('a file that only NAMES the hazard in a comment is not one', () =>
+    {
+        const dir = root();
+        // The repo's own release script reads exactly like this: it explains shell: true
+        // in prose and then spawns without a shell.
+        project(dir, [
+            '// Never pass shell: true with an args array - DEP0190 concatenates without quoting.',
+            'execFileSync(\'git\', [\'status\'], { shell: false });'
+        ].join('\n'));
+        const result = resultFor(runDoctor(detectProject(dir)), 'spawn hazards');
+        expect(result?.status).toBe('ok');
+    });
+
+    it('shell: true in a spawn call\'s own options warns', () =>
+    {
+        const dir = root();
+        project(dir, 'spawnSync(\'npm\', [\'run\', \'build\'], {\n    cwd,\n    shell: true\n});');
+        const result = resultFor(runDoctor(detectProject(dir)), 'spawn hazards');
+        expect(result?.status).toBe('warn');
+        expect(result?.detail).toContain('build.mjs');
+    });
+
+    it('the async spawners count too - the hazard is the call, not the name', () =>
+    {
+        const dir = root();
+        project(dir, 'execFile(process.execPath, [script], { shell: true }, done);');
+        expect(resultFor(runDoctor(detectProject(dir)), 'spawn hazards')?.status).toBe('warn');
+    });
+});
+
 describe('general behavior', () =>
 {
     it('the node version check passes on the running node (>= 22.18 native-TS floor)', () =>

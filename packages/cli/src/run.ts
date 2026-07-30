@@ -124,6 +124,23 @@ function prefixStream(stream: NodeJS.ReadableStream, prefix: string, onLine: (li
     });
 }
 
+/**
+ * The mode `azeroth dev` declares to its children. `dev` IS the development command, so it says
+ * so where the runtime can read it.
+ *
+ * Framework gates that must not open by accident - the devtools bridge - check
+ * `NODE_ENV === 'development'` POSITIVELY, because an unset variable has to mean "not
+ * development" or a production deploy that forgot it would open them. That leaves a freshly
+ * scaffolded app, which ships no `.env`, with nothing set: its own config defaults an unset value
+ * to 'development' while the runtime still sees `undefined`, and the two disagree about what mode
+ * the app is in. Declaring it here makes them the same fact. A mode the developer chose is never
+ * overridden.
+ */
+export function devModeEnv(command: Plan['command']): Record<string, string>
+{
+    return command === 'dev' && process.env.NODE_ENV === undefined ? { NODE_ENV: 'development' } : {};
+}
+
 /** How `runDev` presents the session; `raw` = verbatim lines, no env propagation. */
 export interface DevOptions
 {
@@ -145,7 +162,7 @@ export async function runDev(plan: Plan, options: DevOptions = {}): Promise<numb
     }
     const paint = stdoutPaint();
     const startedAt = Date.now();
-    const childEnv = raw ? process.env : { ...process.env, ...childPresentationEnv() };
+    const childEnv = raw ? process.env : { ...process.env, ...childPresentationEnv(), ...devModeEnv(plan.command) };
     const badgeWidth = Math.max(0, ...plan.steps.map((step) => step.label.length));
 
     const children: ChildProcess[] = [];

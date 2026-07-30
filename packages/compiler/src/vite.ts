@@ -17,7 +17,7 @@
  */
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, type Dirent } from 'node:fs';
-import { join, relative, dirname, basename } from 'node:path';
+import { join, relative, dirname, basename, isAbsolute, sep } from 'node:path';
 
 import type { Plugin } from 'vite';
 
@@ -99,9 +99,25 @@ export interface AzerothPluginOptions
     ssr?: boolean;
 }
 
-/** Writes `content` to `dtsPath` only when it differs, so the dev-server watcher does not churn. */
-function writeIfChanged(dtsPath: string, content: string): void
+/** True when `path` is `dir` itself or sits under it (no `..` escape, no other root/drive). */
+function contains(dir: string, path: string): boolean
 {
+    const rel = relative(dir, path);
+    return rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+}
+
+/**
+ * Writes `content` to `dtsPath` only when it differs, so the dev-server watcher does not churn.
+ * `mirrorRoot` is re-checked here because this is the only place the compiler writes into a user's
+ * tree: every derived name (both import forms, each `.d.ts` and its `.d.ts.map`) passes through it, so
+ * a path that escaped the mirror can never reach writeFileSync.
+ */
+function writeIfChanged(dtsPath: string, content: string, mirrorRoot: string): void
+{
+    if (!contains(mirrorRoot, dtsPath))
+    {
+        return;
+    }
     let prev: string | null;
     try
     {
@@ -140,8 +156,17 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
     {
         return;
     }
+    const mirrorRoot = join(root, DECLARATIONS_DIR);
     const rel = relative(root, azerothFile);
-    const mirrorStem = join(root, DECLARATIONS_DIR, rel.slice(0, -extension.length));
+    const mirrorStem = join(mirrorRoot, rel.slice(0, -extension.length));
+    // A module resolved OUTSIDE the root (a monorepo sibling, a linked workspace, a hoisted
+    // node_modules copy) makes `rel` start with `..` segments, which join() normalises away - eating
+    // `.azeroth/types` and then climbing past the root, where the write would land on a real file of the
+    // user's. Emit only what stays inside the mirror; anything else has no mirror path and is skipped.
+    if (!contains(mirrorRoot, mirrorStem))
+    {
+        return;
+    }
     mkdirSync(dirname(mirrorStem), { recursive: true });
     // The map's `sources` must be relative to the map's own directory (the mirror folder).
     const sourceRel = relative(dirname(mirrorStem), azerothFile).replace(/\\/g, '/');
@@ -150,11 +175,11 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
         const dtsName = basename(stem) + '.d.ts';
         if (output.map === null)
         {
-            writeIfChanged(stem + '.d.ts', output.dts);
+            writeIfChanged(stem + '.d.ts', output.dts, mirrorRoot);
             continue;
         }
-        writeIfChanged(stem + '.d.ts', `${ output.dts }//# sourceMappingURL=${ dtsName }.map\n`);
-        writeIfChanged(stem + '.d.ts.map', JSON.stringify({ ...output.map, file: dtsName, sources: [sourceRel] }));
+        writeIfChanged(stem + '.d.ts', `${ output.dts }//# sourceMappingURL=${ dtsName }.map\n`, mirrorRoot);
+        writeIfChanged(stem + '.d.ts.map', JSON.stringify({ ...output.map, file: dtsName, sources: [sourceRel] }), mirrorRoot);
     }
 }
 

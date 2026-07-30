@@ -99,12 +99,29 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
 
     if (res.destroyed)
     {
-        // The client vanished before the handler finished; there is nothing to write to.
+        // The client vanished before the handler finished; there is nothing to write to. The
+        // body is still cancelled: it is what settles the request root, so dropping it silently
+        // would leave every onRequestCleanup (a pooled connection, an open transaction, an
+        // advisory lock) unreleased for the process lifetime.
+        if (response.body !== null)
+        {
+            await response.body.cancel().catch(() =>
+            {});
+        }
         return;
     }
-    // The union's writeHead overloads are mutually incompatible to TypeScript, but both
-    // protocols accept (status, headers); http1's extra statusMessage overload is unused.
-    (res as ServerResponse).writeHead(response.status, headers);
+    // The union's writeHead overloads are mutually incompatible to TypeScript, but both accept
+    // (status, headers). A non-empty statusText takes the http1 three-argument form so a
+    // handler's reason phrase reaches the wire instead of being replaced by Node's default;
+    // h2 has no reason phrase at all, and passing one there is harmless.
+    if (response.statusText !== '')
+    {
+        (res as ServerResponse).writeHead(response.status, response.statusText, headers);
+    }
+    else
+    {
+        (res as ServerResponse).writeHead(response.status, headers);
+    }
 
     if (response.body === null)
     {
@@ -212,7 +229,26 @@ function manage<S extends Server | Http2Server>(
         res.once('close', () => inFlight.delete(res));
         const dispatch = (): void =>
         {
-            void app.handle(createAdapterRequest(req, 'http', trust)).then((response) => writeResponse(res, response));
+            // The LAST line of defence for the process. `App.handle` cannot reject, but a
+            // `WebHandler` composed by `pipeline()` can (a throwing middleware), and
+            // `writeResponse` runs after handle() resolved, outside the kernel's error path -
+            // an invalid status or a header value Node refuses throws from writeHead. Without
+            // this catch either becomes an unhandled rejection, and Node's default policy for
+            // one is to terminate: a single request would take down every live connection.
+            app.handle(createAdapterRequest(req, 'http', trust))
+                .then((response) => writeResponse(res, response))
+                .catch(() =>
+                {
+                    if (!res.destroyed && !res.headersSent)
+                    {
+                        (res as ServerResponse).writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+                        res.end('Internal Server Error');
+                        return;
+                    }
+                    // Headers are already on the wire, so the framing cannot be corrected;
+                    // dropping the connection is the only honest end to the message.
+                    res.destroy();
+                });
         };
         if (before !== undefined)
         {

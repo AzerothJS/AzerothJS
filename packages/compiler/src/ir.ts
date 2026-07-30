@@ -129,6 +129,7 @@ export interface TemplateSlot
 export type Binding =
     | TextBinding
     | AttributeBinding
+    | PropertyBinding
     | EventBinding
     | BindBinding
     | ClassBinding
@@ -154,6 +155,21 @@ export interface AttributeBinding
     /** Set as a DOM property (`el.value = ...`) rather than an attribute. */
     property: boolean;
     expr: ReactiveExpr;
+}
+
+/**
+ * A CONSTANT DOM-property write (`innerHTML="<b>x</b>"`, `textContent="hi"`). It carries a literal
+ * value, not an expression, because it comes from a STATIC attribute - one that cannot be baked into
+ * the template: a content property written as an HTML attribute is inert in the clone, while the h()
+ * path writes the element's content, so one artifact would render two different DOMs. Routing it here
+ * puts both render modes on the same property write.
+ */
+export interface PropertyBinding
+{
+    kind: 'property';
+    target: number;
+    name: string;
+    value: string | true;
 }
 
 /** An event handler on an element. Handlers are values, never reactive. */

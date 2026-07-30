@@ -132,7 +132,7 @@ The API-contract system lives in this package as the `./api` subpath: declare a
 contract once (routes + schemas, no handlers), mount it with `mountApi` (typed
 guards, boundary validation, the typed reply channel, contract-level file routes),
 export OpenAPI from the same declaration, and consume it in the browser through the
-fully inferred client at `@azerothjs/http/api/client` (client-safe: it never drags
+fully inferred client at `@azerothjs/http/api/shared` (client-safe: it never drags
 server code into a bundle). The full guide: [docs/api.md](./docs/api.md).
 
 ---
@@ -207,6 +207,16 @@ is the seam for a Redis-backed limiter across a fleet. The same boundary covers 
 `X-Forwarded-Proto`/`-Host` from a declared terminating proxy, so `context.url` carries the
 client's real scheme and host - redirects, absolute links, and secure-cookie decisions stop
 seeing the internal hop. Off by default: without a proxy those headers are caller-forgeable.
+
+One rule matters more than the rest when you write a policy check by hand: decide on
+`context.path`, not `context.url.pathname`. The router matches decoded, slash-collapsed segments,
+so `/%61dmin`, `//admin` and `/admin//` are all the route `/admin`, while `url.pathname` keeps the
+client's spelling. `context.path` is the path the router actually matched, which is what an auth
+prefix check, a CSRF exemption list, a rate-limit bucket, and an audit line all need in order to
+agree with the route that ran. Behind a proxy also declare `trustProxy`/`trustedHops` on
+`rateLimit`, or its default key is the proxy's address and every client on earth shares one
+bucket; on a fetch-hosted runtime there is no socket at all, so give the limiter an explicit
+`key`.
 
 For a full deployment: `timeouts` also takes `requestMs` (whole-request bound for slow bodies)
 and `checkIntervalMs` (how promptly a slow connection is reclaimed); `new App({ observe:

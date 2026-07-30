@@ -33,6 +33,19 @@ jobs:
         name: Verify and publish ${{ inputs.version }}
         runs-on: ubuntu-latest
         steps:
+            # The input reaches a `run:` script below, and Actions expands `${{ }}` TEXTUALLY
+            # into the shell before bash parses it - inside the job holding the npm publishing
+            # identity. Refuse anything that is not a bare version before that happens.
+            -   name: Validate the requested version
+                env:
+                    VERSION: ${{ inputs.version }}
+                run: |
+                    case "$VERSION" in
+                        *[!0-9A-Za-z.+-]*) echo "Refusing version with unexpected characters: $VERSION" >&2; exit 1 ;;
+                    esac
+                    printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
+                        || { echo "Not a semantic version: $VERSION" >&2; exit 1; }
+
             -   uses: actions/checkout@v7
                 with:
                     # Publish the exact tagged code, not the branch head.
@@ -58,5 +71,10 @@ jobs:
 
             # Publish-only: --skip-checks because the gate above already ran (and is
             # stricter); --provenance attaches the attestation via the id-token above.
+            # The version rides in through `env` and is referenced QUOTED: an expression
+            # interpolated straight into `run:` would execute as shell in the job that holds the
+            # OIDC publishing identity for every package.
             -   name: Publish to npm with provenance
-                run: node scripts/release.mjs ${{ inputs.version }} --no-bump --no-push --no-promote-latest --skip-checks --provenance -y
+                env:
+                    VERSION: ${{ inputs.version }}
+                run: node scripts/release.mjs "$VERSION" --no-bump --no-push --no-promote-latest --skip-checks --provenance -y

@@ -35,18 +35,16 @@ describe('typed guards - additions flow into the handler context, no cast', () =
             guards: { 'account.*': [requireAuth] },
             handlers: {
                 health: () => ({ ok: 'yes' }),
-                account: {
-                    me: (context) =>
-                    {
-                        expectTypeOf(context.accountId).toEqualTypeOf<number>(); // TYPED, no cast
-                        return { id: context.accountId };
-                    },
-                    update: (context) =>
-                    {
-                        expectTypeOf(context.accountId).toEqualTypeOf<number>();
-                        expectTypeOf(context.input).toEqualTypeOf<{ name: string }>();
-                        return { id: context.accountId };
-                    }
+                'account.me': (context) =>
+                {
+                    expectTypeOf(context.accountId).toEqualTypeOf<number>(); // TYPED, no cast
+                    return { id: context.accountId };
+                },
+                'account.update': (context) =>
+                {
+                    expectTypeOf(context.accountId).toEqualTypeOf<number>();
+                    expectTypeOf(context.input).toEqualTypeOf<{ name: string }>();
+                    return { id: context.accountId };
                 }
             }
         });
@@ -63,7 +61,7 @@ describe('typed guards - additions flow into the handler context, no cast', () =
         type HealthCtx = Parameters<HandlersWithGuards<typeof contract, Guards>['health']>[0];
         // 'account.*' does not match 'health', so accountId is absent from its context.
         expectTypeOf<HealthCtx>().not.toHaveProperty('accountId');
-        type MeCtx = Parameters<HandlersWithGuards<typeof contract, Guards>['account']['me']>[0];
+        type MeCtx = Parameters<HandlersWithGuards<typeof contract, Guards>['account.me']>[0];
         expectTypeOf<MeCtx>().toHaveProperty('accountId');
         expect(true).toBe(true);
     });
@@ -92,20 +90,18 @@ describe('typed guards - additions flow into the handler context, no cast', () =
                     expectTypeOf(context.tag).toEqualTypeOf<'v1'>(); // global reaches every route
                     return { ok: context.tag };
                 },
-                account: {
-                    me: (context) =>
-                    {
-                        expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
-                        expectTypeOf(context.accountId).toEqualTypeOf<number>(); // exact + global
-                        return { id: context.accountId };
-                    },
-                    update: (context) =>
-                    {
-                        expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
-                        // update is NOT 'account.me' - only the global tag reaches it, no accountId.
-                        expectTypeOf(context).not.toHaveProperty('accountId');
-                        return { id: 1 };
-                    }
+                'account.me': (context) =>
+                {
+                    expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
+                    expectTypeOf(context.accountId).toEqualTypeOf<number>(); // exact + global
+                    return { id: context.accountId };
+                },
+                'account.update': (context) =>
+                {
+                    expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
+                    // update is NOT 'account.me' - only the global tag reaches it, no accountId.
+                    expectTypeOf(context).not.toHaveProperty('accountId');
+                    return { id: 1 };
                 }
             }
         });

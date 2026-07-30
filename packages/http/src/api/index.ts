@@ -6,14 +6,15 @@
  * the boundary, and call it through a fully inferred client whose failures land in the
  * browser form's own error shape. One declaration, no codegen, no drift.
  *
- * Browser bundles import from '@azerothjs/http/api/client' (contract + client + errors, zero
- * server code); this root entry adds the server half (the unified mountApi + guard).
+ * The declaration is SHARED: a contract file (and a browser bundle) imports from
+ * '@azerothjs/http/api/shared' - the declaration, the typed client, and the error type, with
+ * zero server code. This root entry adds the server half (mountApi + guard + implement).
  */
 
-export { defineContract, route, get, post, put, patch, del, query, guard, reply, multipart } from './define.ts';
+export { defineContract, route, get, post, put, patch, del, query, group, merge, guard, only, reply, multipart, implement } from './define.ts';
 export type {
     Contract, AnyRoute, Route, RouteDocs, ApiMethod, PathParams, HandlerContext, StatusReply, ReplyOf, MultipartInput, MultipartConfig, ContractFile,
-    Guard, GuardContext, GuardKey, GuardMap, HandlersWithGuards
+    Guard, ExactGuard, GuardContext, GuardEntry, GuardKey, GuardMap, OnlyGuards, HandlersWithGuards, HandlersOf
 } from './define.ts';
 
 export { mountApi } from './mount.ts';

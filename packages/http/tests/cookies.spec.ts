@@ -40,6 +40,18 @@ describe('parseCookies', () =>
         expect(parseCookies(requestWithCookie('justnoise; ok=1'))).toEqual({ ok: '1' });
         expect(parseCookies(requestWithCookie('raw=100%'))).toEqual({ raw: '100%' });
     });
+
+    it('delivers cookies named after Object.prototype members instead of dropping them', () =>
+    {
+        const cookies = parseCookies(requestWithCookie('toString=a; constructor=b; __proto__=c'));
+        expect(Object.entries(cookies)).toEqual([['toString', 'a'], ['constructor', 'b'], ['__proto__', 'c']]);
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined(); // the record is data, never a prototype
+    });
+
+    it('a lone double-quote survives as itself, not an empty value', () =>
+    {
+        expect(parseCookies(requestWithCookie('q="'))).toEqual({ q: '"' });
+    });
 });
 
 describe('serializeCookie', () =>
@@ -78,6 +90,24 @@ describe('serializeCookie', () =>
     {
         expect(() => serializeCookie('sid', 'x', { sameSite: 'none' })).toThrow(/requires Secure/);
         expect(serializeCookie('sid', 'x', { sameSite: 'none', secure: true })).toContain('SameSite=None');
+    });
+
+    it('rejects Path and Domain values that would smuggle extra attributes or split the header', () =>
+    {
+        // RFC 6265 5.2 parses duplicate attributes last-wins, so a ';' inside Path or Domain
+        // rewrites the cookie's scope; a raw CR LF is header injection outright.
+        expect(() => serializeCookie('sid', 'x', { path: '/; Domain=.example.com' })).toThrow(/not a valid cookie path/);
+        expect(() => serializeCookie('sid', 'x', { path: '/\r\nSet-Cookie: e=1' })).toThrow(/not a valid cookie path/);
+        expect(() => serializeCookie('sid', 'x', { path: '/a,b' })).toThrow(/not a valid cookie path/);
+        expect(() => serializeCookie('sid', 'x', { domain: 'app.example.com; Path=/' })).toThrow(/not a valid cookie domain/);
+        expect(() => serializeCookie('sid', 'x', { domain: 'ex\r\nample.com' })).toThrow(/not a valid cookie domain/);
+        expect(() => expireCookie('sid', { path: '/; Domain=.example.com' })).toThrow(/not a valid cookie path/);
+    });
+
+    it('rejects a non-finite Max-Age instead of emitting Max-Age=NaN', () =>
+    {
+        expect(() => serializeCookie('sid', 'x', { maxAge: Number.NaN })).toThrow(/finite/);
+        expect(() => serializeCookie('sid', 'x', { maxAge: Infinity })).toThrow(/finite/);
     });
 
     it('enforces the __Secure- and __Host- prefix contracts', () =>

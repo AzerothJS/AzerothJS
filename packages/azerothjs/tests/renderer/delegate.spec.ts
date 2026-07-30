@@ -6,7 +6,7 @@
 // chain, stopPropagation halts the walk, and non-bubbling events keep
 // per-element listeners.
 import { describe, it, expect } from 'vitest';
-import { h } from 'azerothjs';
+import { h, destroyComponent } from 'azerothjs';
 import { bindProps } from 'azerothjs/internal';
 
 function attach(el: HTMLElement): HTMLElement
@@ -130,5 +130,80 @@ describe('event delegation via bindProps', () =>
         input.dispatchEvent(new Event('input', { bubbles: true }));
         expect(seen).toEqual(['input']);
         input.remove();
+    });
+
+    it('snapshots the ancestor chain so a handler removing its node does not truncate the walk', () =>
+    {
+        const order: string[] = [];
+        const list = h('ul', {});
+        const row = h('li', {});
+        const button = h('button', {});
+        row.appendChild(button);
+        list.appendChild(row);
+        bindProps(list, { onClick: () =>
+        {
+            order.push('list');
+        } });
+        // The row handler removes its own node mid-dispatch. Native dispatch computed the
+        // path up front, so the list handler still fires; reading parentNode after the fact
+        // would find null and skip every ancestor.
+        bindProps(row, { onClick: () =>
+        {
+            order.push('row'); row.remove();
+        } });
+        bindProps(button, { onClick: () =>
+        {
+            order.push('button');
+        } });
+        attach(list);
+
+        button.click();
+        expect(order).toEqual(['button', 'row', 'list']);
+        list.remove();
+    });
+
+    it('stopImmediatePropagation halts the walk (even where cancelBubble is not set for it)', () =>
+    {
+        const order: string[] = [];
+        const child = h('span', {});
+        const parent = h('div', {});
+        parent.appendChild(child);
+        bindProps(parent, { onClick: () =>
+        {
+            order.push('parent');
+        } });
+        bindProps(child, { onClick: (e: Event) =>
+        {
+            order.push('child'); e.stopImmediatePropagation();
+        } });
+        attach(parent);
+
+        child.click();
+        expect(order).toEqual(['child']);
+        parent.remove();
+    });
+
+    it('clears the delegated handler on destroyComponent so a re-inserted node does not fire the old one', () =>
+    {
+        let calls = 0;
+        const button = h('button', {});
+        bindProps(button, { onClick: () =>
+        {
+            calls++;
+        } });
+        attach(button);
+
+        button.click();
+        expect(calls).toBe(1);
+
+        // Teardown + re-insert: without clearing the type Symbol, the document listener would
+        // fire the stale handler (with its old captured scope) again.
+        button.remove();
+        destroyComponent(button);
+        attach(button);
+
+        button.click();
+        expect(calls).toBe(1);
+        button.remove();
     });
 });

@@ -366,6 +366,15 @@ describe('createRouter - href()', () =>
         const href = withRouter('/', (r) => r.href('mailto:me@x.com'));
         expect(href).toBe('mailto:me@x.com');
     });
+
+    it('classifies a control-char scheme as external so the base is not prefixed onto it', () =>
+    {
+        // `java\tscript:` reaches the browser as a real `javascript:` scheme (browsers strip
+        // control chars from an href). The classifier must strip them too, or it calls this
+        // internal, applies the base, and pushes a scheme URL as if it were an app path.
+        const href = withRouter('/app', (r) => r.href('java\tscript:alert(1)'), { base: '/app' });
+        expect(href).toBe('java\tscript:alert(1)');
+    });
 });
 
 describe('createRouter - base path', () =>

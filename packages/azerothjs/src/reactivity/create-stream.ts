@@ -32,9 +32,10 @@
 
 import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
-import { createEffect } from './create-effect.ts';
+import { createEffect, routeAsyncError } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
+import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
@@ -561,6 +562,11 @@ export function createStream<S = void>(
     const source = options.source;
     const hasSource = source !== undefined;
 
+    // Captured at construction, matching how an effect captures its catchError scope: a
+    // subscriber that throws while a settle propagates (the batch flush rethrows it) is
+    // otherwise an unhandled rejection, since the settle runs in a promise reaction.
+    const settleErrorHandler = currentErrorHandler;
+
     const frame = dtEnterPrimitive('stream', options.name);
     const [partial, setPartial] = createSignal(initial, { name: 'partial' });
     const [done, setDone] = createSignal(true, { name: 'done' });  // true until first fetch starts
@@ -727,7 +733,16 @@ export function createStream<S = void>(
                         setDone(true);
                     });
                 }
-            );
+            )
+            .catch((err: unknown) =>
+            {
+                // Both settle arms write signals (setDone / the error batch), and a
+                // SUBSCRIBER throwing during that flush rethrows here - a promise
+                // reaction with nothing downstream. Route it through the effect error
+                // ladder; a FETCHER failure never reaches this (captured in error()
+                // by the arm above).
+                routeAsyncError(err, settleErrorHandler, options.name);
+            });
     }
 
     /**

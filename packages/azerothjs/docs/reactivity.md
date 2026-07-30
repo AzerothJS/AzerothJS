@@ -2,9 +2,9 @@
     <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
-# @azerothjs/reactivity
+# azerothjs / reactivity
 
-[![npm](https://img.shields.io/npm/v/%40azerothjs%2Freactivity?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/reactivity)
+[![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
@@ -21,7 +21,7 @@ re-runs only the computations that actually read it. There is no virtual DOM and
 no component-level re-render.
 
 ```ts
-import { createSignal, createEffect, createMemo } from '@azerothjs/reactivity';
+import { createSignal, createEffect, createMemo } from 'azerothjs';
 
 const [count, setCount] = createSignal(0);
 const doubled = createMemo(() => count() * 2);
@@ -33,7 +33,7 @@ setCount(c => c + 1);                                 // logs 1 2
 ## Install
 
 ```sh
-npm install @azerothjs/reactivity
+npm install azerothjs
 ```
 
 ## Architecture
@@ -84,7 +84,7 @@ A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is
 ## Examples
 
 ```ts
-import { createSignal, createEffect, batch, onCleanup, createRoot } from '@azerothjs/reactivity';
+import { createSignal, createEffect, batch, onCleanup, createRoot } from 'azerothjs';
 
 createRoot(dispose => {
     const [first, setFirst] = createSignal('Ada');

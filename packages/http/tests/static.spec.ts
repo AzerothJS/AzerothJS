@@ -8,6 +8,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { App } from '../src/app.ts';
 import { staticFiles, contentTypeFor } from '../src/static.ts';
@@ -92,6 +94,39 @@ describe('conditional requests', () =>
     it('a stale validator gets the full body again', async () =>
     {
         const response = await get(appWith(), '/assets/styles.css', { headers: { 'if-none-match': '"0-0"' } });
+        expect(response.status).toBe(200);
+    });
+
+    it('If-Modified-Since answers 304 - every conforming cache and `curl -z` sends one', async () =>
+    {
+        const app = appWith();
+        const probe = await get(app, '/assets/styles.css');
+        const lastModified = probe.headers.get('last-modified')!;
+
+        const unchanged = await get(app, '/assets/styles.css', { headers: { 'if-modified-since': lastModified } });
+        expect(unchanged.status).toBe(304);
+        expect(unchanged.body).toBeNull();
+
+        const later = await get(app, '/assets/styles.css', { headers: { 'if-modified-since': new Date(Date.now() + 60_000).toUTCString() } });
+        expect(later.status).toBe(304);
+    });
+
+    it('a date OLDER than the file, or an unparseable one, gets the full body', async () =>
+    {
+        const stale = await get(appWith(), '/assets/styles.css', { headers: { 'if-modified-since': new Date(0).toUTCString() } });
+        expect(stale.status).toBe(200);
+
+        const garbage = await get(appWith(), '/assets/styles.css', { headers: { 'if-modified-since': 'not a date' } });
+        expect(garbage.status).toBe(200);
+    });
+
+    it('If-None-Match keeps precedence: a stale tag beats a fresh date', async () =>
+    {
+        const app = appWith();
+        const lastModified = (await get(app, '/assets/styles.css')).headers.get('last-modified')!;
+        const response = await get(app, '/assets/styles.css', {
+            headers: { 'if-none-match': '"0-0"', 'if-modified-since': lastModified }
+        });
         expect(response.status).toBe(200);
     });
 });
@@ -216,6 +251,62 @@ describe('traversal safety: secret.txt sits one level ABOVE the root', () =>
         const missing = await get(appWith(), '/assets/never-existed.txt');
         expect(traversal.status).toBe(missing.status);
         expect(((await traversal.json()) as { error: { code: string; message: string } }).error.code).toBe(((await missing.json()) as { error: { code: string; message: string } }).error.code);
+    });
+});
+
+describe('hidden files stay hidden under every spelling the filesystem answers to', () =>
+{
+    /** A throwaway root holding what a leak actually costs: a .env and a .git. */
+    async function secretRoot(): Promise<string>
+    {
+        const root = await mkdtemp(path.join(tmpdir(), 'azeroth-static-'));
+        await writeFile(path.join(root, '.env'), 'DB_PASSWORD=hunter2');
+        await mkdir(path.join(root, '.git'));
+        await writeFile(path.join(root, '.git', 'config'), '[remote "origin"]');
+        await writeFile(path.join(root, 'public.txt'), 'nothing secret');
+        return root;
+    }
+
+    function appAt(root: string, options: Parameters<typeof staticFiles>[1] = {}): App
+    {
+        const app = new App();
+        app.get('/assets/*path', staticFiles(root, options));
+        return app;
+    }
+
+    it('a Windows 8.3 short name is not a way around the dotfile rule', async (context) =>
+    {
+        const root = await secretRoot();
+        // 8.3 alias generation is a per-volume Windows setting: where it is off there is no
+        // alias to attack, and nothing here to assert.
+        if (await realpath(path.join(root, 'ENV~1')).catch(() => null) === null)
+        {
+            context.skip();
+        }
+
+        const app = appAt(root);
+        // Case-insensitive and encoding-agnostic: the router decodes the segment, the
+        // filesystem resolves the alias, and stat/createReadStream honor both.
+        for (const spelling of ['.env', 'ENV~1', 'env~1', '%45NV~1'])
+        {
+            const response = await get(app, `/assets/${ spelling }`);
+            expect(response.status, spelling).toBe(404);
+        }
+        expect((await get(app, '/assets/GIT~1/config')).status).toBe(404);
+        expect((await get(app, '/assets/public.txt')).status).toBe(200);
+    });
+
+    it('dotfiles: true opts back in, alias and all', async (context) =>
+    {
+        const root = await secretRoot();
+        if (await realpath(path.join(root, 'ENV~1')).catch(() => null) === null)
+        {
+            context.skip();
+        }
+
+        const app = appAt(root, { dotfiles: true });
+        expect(await (await get(app, '/assets/.env')).text()).toContain('hunter2');
+        expect(await (await get(app, '/assets/ENV~1')).text()).toContain('hunter2');
     });
 });
 

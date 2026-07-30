@@ -10,6 +10,16 @@ export default component Home()
     state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
     state latency = 0;
 
+    // The raw half of the API: /api/assistant is a token stream, not a JSON value, so it is a
+    // plain server route rather than a contract one. `stream` is idle while its source is
+    // falsy, restarts when the source changes, and accumulates chunks into one reactive
+    // string - `parse: 'sse'` unframes the events and stops at the [DONE] terminator.
+    // `source` takes the reactive expression itself; the compiler wraps it in the getter.
+    state asked: string | false = false;
+    stream reply = (question: string, signal: AbortSignal) =>
+        fetch(`/api/assistant?q=${ encodeURIComponent(question) }`, { signal })
+        with { source: asked, parse: 'sse' };
+
     const ping = async (): Promise<void> =>
     {
         status = 'checking';
@@ -66,6 +76,24 @@ export default component Home()
                     <p class="error">No answer. <code>npm run dev</code> from the project root starts both halves.</p>
                 </Match>
             </Switch>
+        </div>
+
+        <div class="api">
+            <div class="api-head">
+                <code>GET /api/assistant</code>
+                <Show when={ asked !== false && !reply.done() }>
+                    <button onClick={ () => reply.cancel() }>Stop</button>
+                </Show>
+                <Show when={ asked === false || reply.done() }>
+                    <button onClick={ () => asked = `hello #${ count + 1 }` }>Stream</button>
+                </Show>
+            </div>
+            <Show when={ asked === false }>
+                <p class="muted">A server-sent token stream, arriving one word at a time.</p>
+            </Show>
+            <Show when={ asked !== false }>
+                <p>{ reply.partial() }</p>
+            </Show>
         </div>
     </section>
 }

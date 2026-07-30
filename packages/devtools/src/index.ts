@@ -161,8 +161,9 @@ export interface InstallOptions
 {
     /**
      * The backend to inspect in the Server tab: an http(s) API base
-     * (`import.meta.env.VITE_API_URL`) or a full ws URL. The tab connects to the
-     * `attachDevtools` bridge there on first open; a URL entered in the tab wins over this.
+     * (`import.meta.env.VITE_API_URL`) or a full ws URL, including the bridge's
+     * `?token=...` - `attachDevtools` refuses an upgrade without it. The tab connects on
+     * first open; a URL entered in the tab wins over this.
      */
     server?: string;
 }
@@ -446,7 +447,7 @@ export function installDevtools(options: InstallOptions = {}): () => void
 
         const bar = el('div', 'az-toolbar');
         const url = el('input', 'az-search az-mono');
-        url.placeholder = 'ws://localhost:5200/__azeroth/devtools';
+        url.placeholder = 'ws://localhost:5200/__azeroth/devtools?token=...';
         url.value = serverLink.url() || savedServerUrl() || (options.server !== undefined ? bridgeUrl(options.server) : '');
         url.addEventListener('pointerdown', (e) => e.stopPropagation());
         const connect = (): void =>

@@ -21,7 +21,7 @@ import type { LogLevel, LogRecord, LogSink } from './record.ts';
 import type { ColorTier, Palette, Style, TtyLike } from './color.ts';
 import { colorTier, palette, supportsUnicode } from './color.ts';
 import type { ErrorShape } from './serialize.ts';
-import { ndjsonLine } from './serialize.ts';
+import { MAX_CAUSE_DEPTH, jsonText, ndjsonLine } from './serialize.ts';
 
 /** The subset of a writable stream sinks need. */
 export interface WritableLike extends TtyLike
@@ -105,15 +105,33 @@ function requestShape(fields: Record<string, unknown>): RequestShape | null
 const REQUEST_KEYS = ['method', 'path', 'status', 'durationMs'] as const;
 
 /**
+ * @internal Terminal control bytes. The NDJSON face escapes them by construction; the pretty
+ * face writes straight to a terminal, where a cursor/clear-screen escape in a logged value
+ * repaints the operator screen - forgery against the human reading the log, from data they
+ * never typed.
+ */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what the guard must detect
+const HAS_CONTROL = /[\u0000-\u001f\u007f]/;
+
+// eslint-disable-next-line no-control-regex -- as above
+const CONTROL_BYTES = /[\u0000-\u001f\u007f]/g;
+
+/** @internal One rendered fragment with its control bytes removed (the guard keeps it cheap). */
+function plain(text: string): string
+{
+    return HAS_CONTROL.test(text) ? text.replace(CONTROL_BYTES, '') : text;
+}
+
+/**
  * @internal Semantic value styling: a fact gets the one style its MEANING earns.
  * A URL is a destination (brand - the same fact the ready frame paints brand); a
  * status code is a verdict (2xx green, 3xx cyan, 4xx yellow, 5xx red). Everything
- * else stays plain - restraint is what keeps the styled facts readable. Styling
- * only: the value's bytes are never altered.
+ * else stays plain - restraint is what keeps the styled facts readable. Styling and
+ * control-byte stripping only: no value's meaning is ever altered.
  */
 function styleValue(key: string, value: unknown, paint: Palette): string
 {
-    const text = String(value);
+    const text = plain(String(value));
     if (key === 'url' || (typeof value === 'string' && /^https?:\/\//.test(value)))
     {
         return paint.brand(text);
@@ -157,29 +175,41 @@ function inlineFields(fields: Record<string, unknown>, paint: Palette, hidden: R
     return out;
 }
 
-/** @internal The error block under a line: dim stack, cause chain walked. */
+/**
+ * @internal The error block under a line: dim stack, cause chain walked. The walk is bounded
+ * by the serializer's own depth AND by the nodes already seen: a real Error arrives
+ * depth-capped from errorShape, but `isErrorShape` also accepts a PLAIN object a caller put
+ * in a field, and `err.cause = err` on one of those is an unbounded string concatenation -
+ * an out-of-memory kill with no exception to catch.
+ */
 function errorBlock(shape: ErrorShape, paint: Palette, indent: string): string
 {
     let out = '';
     if (shape.stack !== undefined)
     {
         // The stack's first line repeats name+message; keep the frames only.
-        const frames = shape.stack.split('\n').slice(1).join('\n' + indent);
+        const frames = shape.stack.split('\n').slice(1).map(plain).join('\n' + indent);
         out += '\n' + indent + paint.dim(frames);
     }
     else
     {
-        out += '\n' + indent + paint.red(shape.name + ': ' + shape.message);
+        out += '\n' + indent + paint.red(plain(shape.name) + ': ' + plain(shape.message));
     }
+    const seen = new Set<ErrorShape>([shape]);
     let cause = shape.cause;
-    while (cause !== undefined)
+    for (let depth = 0; cause !== undefined && depth < MAX_CAUSE_DEPTH; depth++)
     {
         if (typeof cause === 'string')
         {
-            out += '\n' + indent + paint.dim('caused by: ' + cause);
+            out += '\n' + indent + paint.dim('caused by: ' + plain(cause));
             break;
         }
-        out += '\n' + indent + paint.dim('caused by: ' + cause.name + ': ' + cause.message);
+        if (seen.has(cause) || !isErrorShape(cause))
+        {
+            break;
+        }
+        seen.add(cause);
+        out += '\n' + indent + paint.dim('caused by: ' + plain(cause.name) + ': ' + plain(cause.message));
         cause = cause.cause;
     }
     return out;
@@ -223,9 +253,12 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
         let consumed = hidden;
         if (request === null)
         {
+            // The message is data too - `log.error(err.message)` carries whatever the failure
+            // carried, and a single-line face has no honest rendering for a control byte.
+            const message = plain(record.message);
             const tinted = record.level === 'warn'
-                ? paint.yellow(record.message)
-                : record.level === 'error' || record.level === 'fatal' ? paint.red(record.message) : record.message;
+                ? paint.yellow(message)
+                : record.level === 'error' || record.level === 'fatal' ? paint.red(message) : message;
             headline = paint.bold(tinted);
         }
         else
@@ -236,7 +269,9 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
                 : request.method === 'POST' ? paint.green
                     : request.method === 'PUT' || request.method === 'PATCH' ? paint.yellow
                         : request.method === 'DELETE' ? paint.red : (text: string): string => text;
-            headline = verb(request.method) + ' ' + request.path
+            // The request line is the client's bytes: the method and the path both come off
+            // the wire, so neither reaches the terminal unsanitized.
+            headline = verb(plain(request.method)) + ' ' + plain(request.path)
                 + ' ' + paint.dim(unicode ? '→' : '->')
                 + ' ' + styleValue('status', request.status, paint)
                 + ' ' + paint.dim(unicode ? '·' : '-')
@@ -269,7 +304,7 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
             }
             else
             {
-                line += joint + paint.dim(key + '=') + JSON.stringify(value);
+                line += joint + paint.dim(key + '=') + (jsonText(value) ?? '[unserializable]');
             }
         }
 
@@ -278,10 +313,16 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
     };
 }
 
-/** @internal Recognizes the shape errorShape() produces (fields are pre-shaped). */
+/**
+ * @internal Recognizes the shape errorShape() produces (fields are pre-shaped). Each part must
+ * be the TYPE the block renderer assumes: a caller-built object with a numeric `name` renders
+ * as JSON rather than throwing inside the formatter.
+ */
 function isErrorShape(value: object): value is ErrorShape
 {
-    return 'name' in value && 'message' in value && ('stack' in value || 'cause' in value);
+    const shape = value as Partial<ErrorShape>;
+    return typeof shape.name === 'string' && typeof shape.message === 'string'
+        && (typeof shape.stack === 'string' || shape.cause !== undefined);
 }
 
 /**

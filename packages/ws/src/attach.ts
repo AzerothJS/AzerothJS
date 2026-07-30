@@ -24,13 +24,25 @@ export interface AttachOptions extends ServerSocketOptions
     path?: string;
 
     /**
-     * Gate the upgrade on the request's Origin BEFORE the socket exists (default: allow any).
-     * A browser cannot forge Origin, so an allowlist here is the defense against cross-site
-     * WebSocket hijacking - a page on another site opening a socket to your server with the
-     * visitor's cookies. Return false to refuse with 403; the value is null for non-browser
-     * clients that send no Origin.
+     * Gate the upgrade on the request's Origin BEFORE the socket exists. A browser cannot
+     * forge Origin, so this is the defense against cross-site WebSocket hijacking - a page on
+     * another site opening a socket to your server with the visitor's cookies, which the
+     * same-origin policy does NOT prevent (WebSockets are exempt from CORS).
+     *
+     * The default requires an Origin that names the same host:port the request was aimed at,
+     * and refuses anything else with 403. A request with NO Origin is allowed: that is a
+     * non-browser client, which carries no ambient cookies to steal. Supply this callback to
+     * widen the set (an allowlist of trusted sites) or to narrow it; the value is null when
+     * the request sends no Origin. Return false to refuse with 403.
      */
     verifyOrigin?: (origin: string | null, request: IncomingMessage) => boolean;
+
+    /**
+     * Maximum simultaneous connections on this endpoint (default: unlimited); further upgrades
+     * are refused with 503. Every live connection can retain a frame buffer up to `maxPayload`,
+     * so an unbounded endpoint lets a slow attacker exhaust memory with idle sockets.
+     */
+    maxConnections?: number;
 
     /** The connection handler: wire onMessage/onClose and start talking. */
     onConnection: (socket: ServerSocket, request: IncomingMessage) => void;
@@ -48,6 +60,35 @@ function refuse(socket: Socket, status: number, reason: string): void
 {
     socket.write(`HTTP/1.1 ${ status } ${ reason }\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     socket.destroy();
+}
+
+/**
+ * @internal Does `origin` name the same host:port the request was addressed to? The Host
+ * header is parsed through URL so an IPv6 literal and a port keep their meaning, and an
+ * opaque origin (the literal `null` a sandboxed frame sends) is never same-origin.
+ */
+function isSameOrigin(origin: string, host: string | undefined): boolean
+{
+    if (host === undefined)
+    {
+        return false;
+    }
+    let source: URL;
+    let target: URL;
+    try
+    {
+        source = new URL(origin);
+        target = new URL(`http://${ host }`);
+    }
+    catch
+    {
+        return false;
+    }
+    // The Host header carries no scheme, so the origin's scheme decides the implied port.
+    const implied = source.protocol === 'https:' || source.protocol === 'wss:' ? '443' : '80';
+    const sourcePort = source.port === '' ? implied : source.port;
+    const targetPort = target.port === '' ? implied : target.port;
+    return source.hostname === target.hostname && sourcePort === targetPort;
 }
 
 /**
@@ -101,14 +142,32 @@ export function attachWebSockets(server: Server, options: AttachOptions): () => 
             return;
         }
 
-        if (options.verifyOrigin !== undefined)
+        if (options.maxConnections !== undefined && live.size >= options.maxConnections)
         {
-            const origin = request.headers.origin ?? null;
-            if (!options.verifyOrigin(origin, request))
-            {
-                refuse(socket, 403, 'Forbidden');
-                return;
-            }
+            refuse(socket, 503, 'Service Unavailable');
+            return;
+        }
+
+        const origin = request.headers.origin ?? null;
+        let allowed: boolean;
+        try
+        {
+            allowed = options.verifyOrigin !== undefined
+                ? options.verifyOrigin(origin, request)
+                : origin === null || isSameOrigin(origin, request.headers.host);
+        }
+        catch (error)
+        {
+            // This runs inside the server's 'upgrade' listener, where a throw is an
+            // uncaughtException that takes the process down, not a failed handshake.
+            options.logger?.debug('ws origin gate threw', { error });
+            refuse(socket, 500, 'Internal Server Error');
+            return;
+        }
+        if (!allowed)
+        {
+            refuse(socket, 403, 'Forbidden');
+            return;
         }
 
         const outcome = validateHandshake(request);
@@ -129,7 +188,18 @@ export function attachWebSockets(server: Server, options: AttachOptions): () => 
 
         socket.write(upgradeResponse(outcome.key));
         const connection = new ServerSocket(socket, options);
-        options.onConnection(connection, request);
+        try
+        {
+            options.onConnection(connection, request);
+        }
+        catch (error)
+        {
+            // The same uncaughtException hazard as the origin gate, but the 101 is already on
+            // the wire: the only refusal a peer can still read is the closing handshake.
+            options.logger?.debug('ws connection handler threw', { error });
+            connection.close(1011, 'Connection handler failed');
+            return;
+        }
         if (head.byteLength > 0)
         {
             socket.emit('data', head); // frames that raced the handshake re-enter the parser

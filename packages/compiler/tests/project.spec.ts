@@ -9,7 +9,7 @@
 // - props is a DEFAULTED parameter (optional for callers, typed `P` in the body);
 // - a render-callback child is passed bare to `__azRender`, an IIFE child is wrapped.
 import { describe, it, expect } from 'vitest';
-import { generateVirtualCode } from '@azerothjs/compiler';
+import { generateVirtualCode, CompileError } from '@azerothjs/compiler';
 
 /** The projected TypeScript for an `.azeroth` source. */
 function code(src: string): string
@@ -243,5 +243,30 @@ describe('generateVirtualCode - totality (never throws on incomplete source)', (
     {
         const vc = generateVirtualCode('export default component App() { return <h1>hi</h1>; }');
         expect(vc.code).toContain('h(');
+    });
+
+    it('fails a pathologically hole-nested module with a LOCATED CompileError, not a RangeError', () =>
+    {
+        // MAX_MARKUP_DEPTH is enforced per parseMarkup call, and the projection re-enters the parser at
+        // depth 0 for every `{ ... }` hole, so nesting through holes used to overflow this mutual
+        // recursion (emitMarkup -> emitNode -> emitChild -> emitDynamic -> emitCode). A RangeError out
+        // of the ONE projection is an internal crash in every tool that runs it.
+        let inner = 'x';
+        for (let i = 0; i < 700; i++)
+        {
+            inner = `<div>{${ inner }}</div>`;
+        }
+        let err: unknown = null;
+        try
+        {
+            generateVirtualCode(`component C { ${ inner } }`);
+        }
+        catch (error)
+        {
+            err = error;
+        }
+        expect(err).toBeInstanceOf(CompileError);
+        expect((err as CompileError).message).toContain('nested deeper than 500 levels');
+        expect((err as CompileError).offset).toBeGreaterThan(0);
     });
 });

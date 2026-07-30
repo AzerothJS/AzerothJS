@@ -115,18 +115,27 @@ import { serve } from '@azerothjs/http/node';
 import { attachDevtools } from '@azerothjs/devtools/server';
 
 const served = await serve(handler, { port: 5200 });
-if (process.env.NODE_ENV !== 'production')
+if (process.env.NODE_ENV === 'development')
 {
-    attachDevtools(served.server); // ws endpoint at /__azeroth/devtools
+    const token = crypto.randomUUID();
+    attachDevtools(served.server, { token });
+    console.log(`devtools: ws://localhost:5200/__azeroth/devtools?token=${ token }`);
 }
 ```
 
 The panel's Server tab connects to it (`installDevtools({ server })` seeds the URL; the tab
 remembers whatever you enter) and mirrors the server's components view live: request roots,
-their per-request state and effects, and long-lived server stores. `attachDevtools` throws
-under `NODE_ENV=production` so it cannot ship by accident, and by default only accepts
-browser connections from localhost origins - the graph carries live values, so treat the
-bridge like a debugger port. Logs and traces stay [`@azerothjs/logger`](../logger)'s job.
+their per-request state and effects, and long-lived server stores.
+
+Treat that stream as the debugger port it is: a request on this framework IS a reactive root, so
+the graph carries whatever the request carries, tokens and account rows included. The bridge is
+gated four ways, and every one of them has to pass: it attaches only under
+`NODE_ENV=development` (a positive check, not "anything but production", so an unset or
+misspelled value refuses rather than opens), every upgrade must present the shared `token`, the
+peer must be loopback, and a browser's `Origin` must be localhost - a MISSING Origin, which is
+what a non-browser client sends, is refused too. `allowNonDevelopment` and `allowRemoteClients`
+exist for a container or a remote box, and each one is a deliberate sentence you have to write.
+Logs and traces stay [`@azerothjs/logger`](../logger)'s job.
 
 ---
 

@@ -19,7 +19,8 @@ import type { LevelThreshold, Logger, LogLevel, LogRecord, LogSink } from './rec
 import { LEVEL_RANK } from './record.ts';
 import type { WritableLike } from './sinks.ts';
 import { consoleSink, prettySink } from './sinks.ts';
-import { fieldsFragment, quotedString, shapeFields } from './serialize.ts';
+import type { Redactor } from './serialize.ts';
+import { createRedactor, fieldsFragment, quotedString, shapeFields } from './serialize.ts';
 
 /** Which face renders records; `auto` picks by TTY/NODE_ENV/runtime. */
 export type LoggerFace = 'auto' | 'pretty' | 'ndjson' | 'console';
@@ -39,7 +40,12 @@ export interface LoggerOptions
     /** Fields bound to every record (service name, environment). */
     fields?: Record<string, unknown> | undefined;
 
-    /** Top-level field names whose VALUES never reach a sink (replaced with '[redacted]'). */
+    /**
+     * Field paths whose VALUES never reach a sink (replaced with '[redacted]'). Matching is
+     * case-insensitive, a bare name matches that key at ANY depth (`authorization` covers
+     * `{ headers: req.headers }`), a dotted path matches exactly that position
+     * (`user.password`), and an array is transparent (`items.token` covers every element).
+     */
     redact?: readonly string[] | undefined;
 
     /** Target stream for the built-in faces; default stdout/stderr. */
@@ -100,7 +106,7 @@ export function createLogger(options: LoggerOptions = {}): Logger
 {
     const override = envOverride();
     const threshold = LEVEL_RANK[override.level ?? options.level ?? 'info'];
-    const redact = options.redact === undefined ? undefined : new Set(options.redact);
+    const redact = options.redact === undefined ? undefined : createRedactor(options.redact);
 
     const bound = shapeFields(options.fields ?? {}, redact);
 
@@ -142,7 +148,7 @@ function buildFused(
     stream: { write(chunk: string): unknown } | undefined,
     threshold: number,
     bound: Record<string, unknown>,
-    redact: ReadonlySet<string> | undefined
+    redact: Redactor | undefined
 ): Logger
 {
     const boundFragment = fieldsFragment(bound);
@@ -170,7 +176,7 @@ function buildFused(
 }
 
 /** @internal The recursive core: one closure set per logger/child. */
-function build(sink: LogSink, threshold: number, bound: Record<string, unknown>, redact: ReadonlySet<string> | undefined): Logger
+function build(sink: LogSink, threshold: number, bound: Record<string, unknown>, redact: Redactor | undefined): Logger
 {
     const hasBound = Object.keys(bound).length > 0;
 
@@ -192,7 +198,15 @@ function build(sink: LogSink, threshold: number, bound: Record<string, unknown>,
             // merge that brought NEW call fields needs shaping here.
             fields: merged === bound ? merged : shapeFields(merged, redact)
         };
-        sink(record);
+        try
+        {
+            sink(record);
+        }
+        catch
+        {
+            // Logging must never break the system: a broken destination is the sink's
+            // problem, not the caller's. teeSink isolates each destination the same way.
+        }
     }
 
     return {

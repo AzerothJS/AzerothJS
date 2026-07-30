@@ -155,9 +155,16 @@ export type Signal<T> = [Getter<T>, Setter<T>];
 /**
  * The function passed to createEffect. May return a {@link CleanupFn} that runs before
  * the next run and on dispose.
+ *
+ * An `async` body is accepted and its rejection is routed to the enclosing error handler
+ * (`catchError`, an ErrorBoundary, else `onUncaughtError`), so it cannot escape as an unhandled
+ * rejection. It still tracks only the reads that happen SYNCHRONOUSLY: anything read after the
+ * first `await` is invisible to the graph, so the effect will not re-run when it changes. An
+ * async body also cannot register a cleanup, because the returned promise is not a
+ * {@link CleanupFn}. Prefer `createResource` for async data.
  */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- the void union IS the contract: a plain void-bodied arrow must remain assignable, which `undefined | CleanupFn` would forbid
-export type EffectFn = () => void | CleanupFn;
+export type EffectFn = () => void | CleanupFn | Promise<void>;
 
 /**
  * Disposes an effect: stops it running and unsubscribes it from every source.

@@ -101,9 +101,9 @@ describe('the fetch-standard kernel', () =>
         expect(violations).toEqual([]);
     });
 
-    it('the ./api/client browser entry never reaches server code', () =>
+    it('the ./api/shared entry never reaches server code', () =>
     {
-        const { seen, violations } = walkGraph('api/client-entry.ts');
+        const { seen, violations } = walkGraph('api/shared-entry.ts');
         expect(violations).toEqual([]);
         for (const serverOnly of ['api/mount.ts', 'api/openapi.ts', 'api/explorer.ts'])
         {

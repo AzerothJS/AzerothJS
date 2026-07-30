@@ -4,7 +4,8 @@
  * `parseExpression` turns `minute hour day-of-month month day-of-week` (ranges, steps, lists,
  * month/day names, and the @daily-style aliases) into sets of allowed values, VALIDATING at
  * parse time - a malformed expression throws with the exact field and token, so a bad job
- * fails the boot instead of silently never running.
+ * fails the boot instead of silently never running. A calendar-impossible day/month pair
+ * (`0 0 30 2 *`) is caught by arithmetic there too, never by exhausting the scan below.
  *
  * `nextOccurrence` finds the next wall-clock match in a given IANA timezone (via Intl - zero
  * dependencies). It scans the epoch FORWARD, minute-aligned, reading each candidate's LOCAL
@@ -161,6 +162,37 @@ function parseField(field: string, spec: FieldSpec, expression: string): Set<num
     return out;
 }
 
+/** @internal The longest each month ever runs (February counts its leap day). */
+const MONTH_LENGTHS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/**
+ * @internal Refuses a calendar-impossible day/month pair ARITHMETICALLY, in ~370 comparisons,
+ * so `0 0 30 2 *` fails instantly instead of costing a 400000-candidate scan with an Intl
+ * formatToParts per candidate (~0.9 s of blocked event loop per call). Only day-of-month
+ * restriction can be impossible: with day-of-week also restricted the vixie OR-rule means a
+ * weekday match still fires.
+ */
+function assertMatchable(fields: CronFields): void
+{
+    if (!fields.domRestricted || fields.dowRestricted)
+    {
+        return;
+    }
+    for (const month of fields.months)
+    {
+        for (const day of fields.daysOfMonth)
+        {
+            if (day <= (MONTH_LENGTHS[month - 1] ?? 31))
+            {
+                return;
+            }
+        }
+    }
+    const days = [...fields.daysOfMonth].join(', ');
+    const months = [...fields.months].map((month) => MONTH_NAMES[month - 1] ?? String(month)).join(', ');
+    throw new Error(`Cron "${ fields.source }" never matches a real date: day-of-month ${ days } never occurs in ${ months }.`);
+}
+
 /** Parses a 5-field cron expression (or an @alias). Throws with the exact problem on any error. */
 export function parseExpression(expression: string): CronFields
 {
@@ -183,7 +215,7 @@ export function parseExpression(expression: string): CronFields
         throw new Error(`Cron "${ expression }": expected 5 fields (minute hour day-of-month month day-of-week), got ${ trimmed.split(/\s+/).length }.`);
     }
 
-    return {
+    const fields: CronFields = {
         minutes: parseField(minuteField, FIELD_SPECS[0], trimmed),
         hours: parseField(hourField, FIELD_SPECS[1], trimmed),
         daysOfMonth: parseField(domField, FIELD_SPECS[2], trimmed),
@@ -193,6 +225,8 @@ export function parseExpression(expression: string): CronFields
         dowRestricted: dowField !== '*',
         source: trimmed
     };
+    assertMatchable(fields);
+    return fields;
 }
 
 /** @internal The local wall-clock parts of an epoch instant in a timezone. */
@@ -280,6 +314,10 @@ export function nextOccurrence(
     skipLocalKey?: string
 ): number
 {
+    // Cheap and eager: parseExpression already refuses these, but hand-built fields reach
+    // here too, and the alternative is the full scan before the same verdict.
+    assertMatchable(fields);
+
     let t = Math.floor(afterEpoch / MINUTE) * MINUTE + MINUTE;
 
     // The scan only ever moves FORWARD and tests the real local parts of every candidate it

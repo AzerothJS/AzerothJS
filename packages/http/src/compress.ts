@@ -8,16 +8,18 @@
  *   - non-compressible types (images, video, fonts, archives - already entropy-coded;
  *     recompressing burns CPU to make them larger);
  *   - bodies under the threshold (headers dwarf the saving; default 1 KiB);
- *   - already-encoded responses, 204/304s, and HEAD-stripped bodies.
+ *   - already-encoded responses, 204/304s, and HEAD-stripped bodies;
+ *   - responses that carry `Cache-Control: no-transform`.
  *
  * Compression STREAMS: the body pipes through the zlib transform, so a large SSR document
  * compresses as it is produced. Content-Length is dropped (the encoded size is unknown ahead
  * of time) and `Vary: Accept-Encoding` is appended so caches key correctly - forgetting Vary
- * is how one client's gzip lands on another's curl.
+ * is how one client's gzip lands on another's curl. The encoded body is a DIFFERENT
+ * representation, so it gets its own ETag and drops Accept-Ranges.
  */
 
 import { constants, createBrotliCompress, createDeflate, createGzip } from 'node:zlib';
-import { Readable, type Transform } from 'node:stream';
+import { Readable, pipeline, type Transform } from 'node:stream';
 
 /** Media types worth compressing: text in any costume, plus the text-like applications. */
 function isCompressible(contentType: string): boolean
@@ -39,23 +41,77 @@ function isCompressible(contentType: string): boolean
         || type.endsWith('+xml');
 }
 
-/** @internal The client's pick among what we implement, by the Accept-Encoding header. */
+/** @internal The `q` weight of one Accept-Encoding entry, from its parameters (default 1). */
+function qualityOf(parameters: string[]): number
+{
+    for (const parameter of parameters)
+    {
+        const equals = parameter.indexOf('=');
+        if (parameter.slice(0, equals === -1 ? undefined : equals).trim().toLowerCase() !== 'q')
+        {
+            continue;
+        }
+        const quality = Number(parameter.slice(equals + 1).trim());
+        // An unparseable weight counts as a refusal: identity is always acceptable, so
+        // guessing "acceptable" is the only reading that can put an undecodable body on the wire.
+        return Number.isFinite(quality) ? Math.min(Math.max(quality, 0), 1) : 0;
+    }
+    return 1;
+}
+
+/**
+ * @internal The client's pick among what we implement, by the Accept-Encoding header.
+ * `q=0` is a REFUSAL, not a listing (RFC 9110 12.5.3), so a coding named only to reject it is
+ * never used. `*` stands for the codings the client did not name and authorizes gzip - the
+ * universally safe pick - never brotli, which a client that wanted it would have named.
+ */
 function negotiate(acceptEncoding: string): 'br' | 'gzip' | 'deflate' | null
 {
-    const accepted = new Set(acceptEncoding.split(',').map((part) => (part.split(';')[0] ?? '').trim().toLowerCase()));
-    if (accepted.has('br'))
+    const quality = new Map<string, number>();
+    for (const entry of acceptEncoding.split(','))
     {
-        return 'br';
+        const semicolon = entry.indexOf(';');
+        const coding = entry.slice(0, semicolon === -1 ? undefined : semicolon).trim().toLowerCase();
+        if (coding === '')
+        {
+            continue;
+        }
+        const weight = semicolon === -1 ? 1 : qualityOf(entry.slice(semicolon + 1).split(';'));
+        // A coding listed twice keeps its LOWEST weight: a refusal anywhere in the field is
+        // still a refusal.
+        const previous = quality.get(coding);
+        quality.set(coding, previous === undefined ? weight : Math.min(previous, weight));
     }
-    if (accepted.has('gzip') || accepted.has('*'))
+
+    const wildcard = quality.get('*') ?? 0;
+    let best: 'br' | 'gzip' | 'deflate' | null = null;
+    let bestQuality = 0;
+    for (const candidate of ['br', 'gzip', 'deflate'] as const)
     {
-        return 'gzip';
+        const offered = quality.get(candidate) ?? (candidate === 'gzip' ? wildcard : 0);
+        if (offered > bestQuality)
+        {
+            best = candidate;
+            bestQuality = offered;
+        }
     }
-    if (accepted.has('deflate'))
+    return best;
+}
+
+/**
+ * @internal The encoded representation's validator. RFC 9110 8.8.3: representations whose
+ * bytes differ must not share a strong ETag, or a cache revalidates its stored gzip body
+ * against the identity tag and then serves gzip bytes as plain text.
+ */
+function encodedEtag(etag: string, encoding: string): string
+{
+    const weak = etag.startsWith('W/');
+    const value = weak ? etag.slice(2) : etag;
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"'))
     {
-        return 'deflate';
+        return `${ weak ? 'W/' : '' }"${ value.slice(1, -1) }-${ encoding }"`;
     }
-    return null;
+    return `${ etag }-${ encoding }`;
 }
 
 export interface CompressOptions
@@ -81,6 +137,13 @@ export function compressResponse(request: Request, response: Response, options: 
         return response;
     }
     if (!isCompressible(response.headers.get('content-type') ?? ''))
+    {
+        return response;
+    }
+    // `no-transform` forbids exactly this (RFC 9110 5.2.2.6): whoever set it needs the bytes
+    // delivered as written - a signed payload, a byte-exact contract.
+    const cacheControl = (response.headers.get('cache-control') ?? '').toLowerCase();
+    if (cacheControl.split(',').some((directive) => directive.trim() === 'no-transform'))
     {
         return response;
     }
@@ -113,14 +176,26 @@ export function compressResponse(request: Request, response: Response, options: 
         transform = createDeflate();
     }
 
-    const compressed = Readable.toWeb(
-        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]).pipe(transform)
-    ) as ReadableStream<Uint8Array>;
+    const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
+    // pipeline(), never source.pipe(transform): pipe forwards NEITHER direction's failure. A
+    // source error would re-emit with no listener attached (an unhandled 'error' event kills
+    // the process), and a reader cancel would never reach the source (one leaked fd per
+    // aborted download). The callback is what keeps pipeline from throwing on error - both
+    // ends already carry the failure, and the web reader is where it surfaces.
+    pipeline(source, transform, () => undefined);
+    const compressed = Readable.toWeb(transform) as ReadableStream<Uint8Array>;
 
     const headers = new Headers(response.headers);
     headers.set('content-encoding', encoding);
     headers.delete('content-length');
+    // Range offsets name bytes of the IDENTITY representation; the encoded stream has none.
+    headers.delete('accept-ranges');
     headers.append('vary', 'accept-encoding');
+    const etag = response.headers.get('etag');
+    if (etag !== null)
+    {
+        headers.set('etag', encodedEtag(etag, encoding));
+    }
 
     return new Response(compressed, { status: response.status, statusText: response.statusText, headers });
 }

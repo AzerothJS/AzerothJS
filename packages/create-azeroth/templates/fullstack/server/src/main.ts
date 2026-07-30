@@ -50,13 +50,21 @@ const handler = pipeline(
 const served = await serve(handler, { port: config.port });
 handleShutdownSignals(served);
 
-// The panel's Server tab connects here and mirrors the server's reactive graph: request
-// roots, their per-request state, and long-lived stores. `attachDevtools` throws under
-// NODE_ENV=production so it cannot ship by accident, and accepts only localhost origins.
-if (!isProduction)
+// The panel's Server tab connects here and mirrors the server's reactive graph: request roots,
+// their per-request state, and long-lived stores. That is live application data, so the bridge
+// attaches ONLY under NODE_ENV=development and every upgrade must present the token below from a
+// loopback peer. The token is minted per boot: it is never written to disk and never committed.
+// Reads the RAW variable, not `config.env`. `loadConfig` defaults an unset NODE_ENV to
+// 'development' for this app's own purposes, but the bridge refuses anything that is not
+// literally development - so guarding on the defaulted value would call it in a scaffold where
+// nothing is set, and the boot would die on a bridge that was never going to attach.
+// `azeroth dev` sets NODE_ENV=development, so `npm run dev` gets the panel.
+if (process.env.NODE_ENV === 'development')
 {
     const { attachDevtools } = await import('@azerothjs/devtools/server');
-    attachDevtools(served.server);
+    const token = crypto.randomUUID();
+    attachDevtools(served.server, { token });
+    log.info('devtools bridge', { url: `ws://localhost:${ served.port }/__azeroth/devtools?token=${ token }` });
 }
 
 log.info('Listening', { port: served.port, env: config.env });

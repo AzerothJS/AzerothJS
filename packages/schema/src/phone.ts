@@ -183,6 +183,14 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
             return null;
         }
 
+        // A form's `validate` map can route a NUMERIC field here (its values are not typed at
+        // runtime), and every sibling validator answers such input with a message rather than
+        // throwing a TypeError out of the form's validate pass.
+        if (typeof (value as unknown) !== 'string')
+        {
+            return message ?? 'Phone must be in E.164 format (e.g. +14155551234)';
+        }
+
         // Step 1: strip human punctuation. Whitespace, hyphens, dots,
         // parentheses, and Unicode soft-hyphens (U+00AD, escaped below because
         // the character itself is invisible) all go. Keep `+` and digits only.

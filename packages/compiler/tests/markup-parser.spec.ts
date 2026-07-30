@@ -130,6 +130,63 @@ describe('parseMarkup - attributes', () =>
         const e = el('<div data-id="7" aria-label="go">x</div>');
         expect(e.attributes.map(a => a.name)).toEqual(['data-id', 'aria-label']);
     });
+
+    it('decodes character references in a STATIC attribute value, like text content', () =>
+    {
+        // HTML decodes references in attribute values too. Left encoded, the author's `&` reached
+        // codegen as literal entity text and escapeAttr escaped it a second time, so the page rendered
+        // `Tom &amp; Jerry`.
+        const e = el('<div title="Tom &amp; Jerry" alt="&#65;&#x42;" data-q="&quot;q&quot;">x</div>');
+        expect(e.attributes[0]!.value).toEqual({ kind: 'static', value: 'Tom & Jerry' });
+        expect(e.attributes[1]!.value).toEqual({ kind: 'static', value: 'AB' });
+        expect(e.attributes[2]!.value).toEqual({ kind: 'static', value: '"q"' });
+    });
+
+    it('does NOT collapse whitespace in an attribute value (that is text-node-specific)', () =>
+    {
+        const e = el('<div title="a  b" alt="c\n  d">x</div>');
+        expect(e.attributes[0]!.value).toEqual({ kind: 'static', value: 'a  b' });
+        expect(e.attributes[1]!.value).toEqual({ kind: 'static', value: 'c\n  d' });
+    });
+});
+
+describe('parseMarkup - whitespace collapse cost', () =>
+{
+    /** Milliseconds to parse a text node holding one newline-free run of `spaces` spaces. */
+    function timeParse(spaces: number): number
+    {
+        const src = `<p>a${ ' '.repeat(spaces) }b</p>`;
+        const started = performance.now();
+        parseMarkup(src, 0);
+        return performance.now() - started;
+    }
+
+    it('is linear in the run length, not quadratic', () =>
+    {
+        // A `\s*\n\s*` collapse (and the `[^\S\n]*\n[^\S\n]*` variant) puts a quantifier on each side
+        // of the newline, so a run with NO newline costs O(run^2): measured 286ms / 1142ms / 4584ms at
+        // these three sizes, a clean 4x per doubling, and ~19s through generateModule. The region is
+        // re-normalised by lintSource and generateVirtualCode, which the language server and the ESLint
+        // processor run on EVERY keystroke, so one such file made the editor unresponsive. The bound is
+        // deliberately loose - it is two orders of magnitude under the quadratic form, not a tight fit.
+        for (const spaces of [40000, 80000, 160000])
+        {
+            expect(timeParse(spaces)).toBeLessThan(150);
+        }
+    });
+
+    it('collapses exactly as it did before: one space per formatting run, same-line spacing kept', () =>
+    {
+        const value = (src: string): string => (el(src).children[0] as MarkupText).value;
+        expect(value('<p>a\n   b</p>')).toBe('a b');
+        // Several newlines in ONE run still collapse to a single space.
+        expect(value('<p>a\n\n   b</p>')).toBe('a b');
+        expect(value('<p>a \n\n\n b</p>')).toBe('a b');
+        expect(value('<p>a \r\n b</p>')).toBe('a b');
+        // No newline in the run: authored spacing, preserved verbatim.
+        expect(value('<p>a   b</p>')).toBe('a   b');
+        expect(value('<p>Count: </p>')).toBe('Count: ');
+    });
 });
 
 describe('parseMarkup - holes, fragments, components', () =>

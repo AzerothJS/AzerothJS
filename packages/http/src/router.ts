@@ -85,7 +85,7 @@ function createNode<T>(): RadixNode<T>
  * Splits a path into segments, collapsing duplicate slashes and one trailing slash so
  * `/a//b/` and `/a/b` are the same route. The empty path and `/` both yield [].
  */
-function segmentsOf(path: string): string[]
+export function segmentsOf(path: string): string[]
 {
     const segments: string[] = [];
     let start = 0;
@@ -102,6 +102,9 @@ function segmentsOf(path: string): string[]
     }
     return segments;
 }
+
+/** @internal A percent escape in a pattern segment: unreachable, since requests decode first. */
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/;
 
 /**
  * A radix-tree router mapping (method, pattern) to a value of the caller's choosing.
@@ -185,6 +188,17 @@ export class RadixRouter<T>
                 continue;
             }
 
+            // A request segment is percent-DECODED before it is matched, so a pattern carrying an
+            // escape can never be reached by the URL it appears to describe: `/my%20page` only
+            // matches a request for `/my%2520page`. The route would sit in the table looking
+            // served. Write the decoded character instead.
+            if (PERCENT_ESCAPE.test(segment))
+            {
+                throw new Error(`The route pattern "${ pattern }" contains a percent escape in the segment `
+                    + `"${ segment }". Request paths are decoded before matching, so this route could only be `
+                    + 'reached by a double-encoded URL. Write the decoded character in the pattern.');
+            }
+
             let child = node.staticChildren.get(segment);
             if (child === undefined)
             {
@@ -229,10 +243,16 @@ export class RadixRouter<T>
 
         const verb = method.toUpperCase();
         const pairs: string[] = [];
-        const terminal = this.#walk(this.#root, segments, 0, pairs);
+        // The verb is part of the match, not a lookup after it: a terminal that holds only OTHER
+        // methods is a dead end the walk must keep backtracking past, or `app.get('/users/me')`
+        // makes `app.post('/users/:id')` answer 405 for that one id with no warning at boot.
+        // `allowed` accumulates every method seen on the paths that did match structurally, so
+        // the 405 still reports the full set.
+        const allowed = new Set<string>();
+        const terminal = this.#walk(this.#root, segments, 0, pairs, verb, allowed);
         if (terminal === null)
         {
-            return { kind: 'miss' };
+            return allowed.size > 0 ? { kind: 'method-mismatch', allowed: [...allowed].sort() } : { kind: 'miss' };
         }
 
         const value = terminal.get(verb) ?? (verb === 'HEAD' ? terminal.get('GET') : undefined);
@@ -265,14 +285,25 @@ export class RadixRouter<T>
         node: RadixNode<T>,
         segments: string[],
         index: number,
-        pairs: string[]
+        pairs: string[],
+        verb: string,
+        allowed: Set<string>
     ): Map<string, T> | null
     {
         if (index === segments.length)
         {
             if (node.handlers.size > 0)
             {
-                return node.handlers;
+                if (node.handlers.has(verb) || (verb === 'HEAD' && node.handlers.has('GET')))
+                {
+                    return node.handlers;
+                }
+                // Structurally a match, but not for this method: record what IS allowed here and
+                // dead-end so a sibling param or wildcard branch can still serve the verb.
+                for (const method of node.handlers.keys())
+                {
+                    allowed.add(method);
+                }
             }
             // An exhausted path can still be served by a wildcard matching the empty remainder?
             // No: a wildcard requires at least one segment (matching Fastify/find-my-way), so
@@ -289,7 +320,7 @@ export class RadixRouter<T>
         const staticChild = node.staticChildren.get(segment);
         if (staticChild !== undefined)
         {
-            const result = this.#walk(staticChild, segments, index + 1, pairs);
+            const result = this.#walk(staticChild, segments, index + 1, pairs, verb, allowed);
             if (result !== null)
             {
                 return result;
@@ -299,7 +330,7 @@ export class RadixRouter<T>
         if (node.param !== null)
         {
             pairs.push(node.param.name, segment);
-            const result = this.#walk(node.param.node, segments, index + 1, pairs);
+            const result = this.#walk(node.param.node, segments, index + 1, pairs, verb, allowed);
             if (result !== null)
             {
                 return result;
@@ -309,8 +340,15 @@ export class RadixRouter<T>
 
         if (node.wildcard !== null)
         {
-            pairs.push(node.wildcard.name, segments.slice(index).join('/'));
-            return node.wildcard.handlers;
+            if (node.wildcard.handlers.has(verb) || (verb === 'HEAD' && node.wildcard.handlers.has('GET')))
+            {
+                pairs.push(node.wildcard.name, segments.slice(index).join('/'));
+                return node.wildcard.handlers;
+            }
+            for (const method of node.wildcard.handlers.keys())
+            {
+                allowed.add(method);
+            }
         }
 
         return null;

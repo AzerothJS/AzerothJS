@@ -185,6 +185,17 @@ describe('phone - skip-empty and message override', () =>
         expect(validate(undefined as unknown as string)).toBeNull();
     });
 
+    it('answers a non-string with a message, the way every sibling validator does', () =>
+    {
+        // A form's validate map can route a numeric field here; a TypeError out of the
+        // validate pass would take the whole form down.
+        const validate = phone();
+        expect(validate(14155551234 as unknown as string)).toBe('Phone must be in E.164 format (e.g. +14155551234)');
+        expect(validate(true as unknown as string)).toBe('Phone must be in E.164 format (e.g. +14155551234)');
+        expect(validate({} as unknown as string)).toBe('Phone must be in E.164 format (e.g. +14155551234)');
+        expect(phone({ message: 'Bad phone' })(42 as unknown as string)).toBe('Bad phone');
+    });
+
     it('uses the custom message for the missing-+ failure', () =>
     {
         // No defaultCountry, so digits-only input is not normalised and fails.

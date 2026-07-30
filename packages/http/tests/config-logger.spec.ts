@@ -6,7 +6,7 @@
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { loadConfig, str, num, flag, oneOf } from '../src/config.ts';
-import { createMinimalLogger, logRequests, type LogRecord } from '../src/logger.ts';
+import { createMinimalLogger, logRequests, prettySink, type LogRecord } from '../src/logger.ts';
 import { App } from '../src/app.ts';
 import { json, noContent } from '../src/respond.ts';
 
@@ -65,6 +65,29 @@ describe('loadConfig: typed, loud, all-at-once', () =>
         expect(logged).not.toContain('sk-super-secret');
         expect(logged).toContain('[redacted]');
         expect(logged).toContain('example.com');
+    });
+
+    it('a secret parse failure names the variable without echoing the raw value', () =>
+    {
+        const attempt = (): unknown => loadConfig({
+            key: num('PAYMENT_API_KEY', { secret: true })
+        }, { PAYMENT_API_KEY: 'sk_live_51H8Zq' });
+
+        expect(attempt).toThrow(/PAYMENT_API_KEY is invalid/);
+        expect(attempt).not.toThrow(/sk_live_51H8Zq/);
+    });
+
+    it('flag and oneOf accept secret and redact like str/num', () =>
+    {
+        const config = loadConfig({
+            beta: flag('BETA', { secret: true }),
+            tier: oneOf('TIER', ['gold', 'free'] as const, { secret: true })
+        }, { BETA: 'yes', TIER: 'gold' });
+
+        expect(config.beta).toBe(true);
+        const logged = JSON.stringify(config);
+        expect(logged).not.toContain('gold');
+        expect(logged).toContain('[redacted]');
     });
 
     it('redacts secrets on the console.log / util.inspect path, not only JSON', async () =>
@@ -144,6 +167,39 @@ describe('createMinimalLogger: the record contract', () =>
         } } });
         app.get('/x', () => noContent());
         expect((await app.handle(new Request('http://local/x'))).status).toBe(204);
+    });
+
+    it('logRequests still emits a record when the request URL cannot be parsed', () =>
+    {
+        const { records, sink } = capture();
+        const observer = logRequests(createMinimalLogger({ sink }));
+        // The adapter composes the URL from the client's Host header; 'a b' makes new URL
+        // throw, and App.handle swallows observer throws - a request served with no audit
+        // line would be silent log evasion.
+        const request = { method: 'GET', url: 'http://a b/secret-admin-probe' } as unknown as Request;
+        observer.onComplete(request, new Response(null, { status: 200 }), 1);
+
+        expect(records).toHaveLength(1);
+        expect(records[0]?.fields).toMatchObject({ path: '/secret-admin-probe', status: 200 });
+    });
+
+    it('prettySink cannot be line-forged by a newline in a field or the message', () =>
+    {
+        const lines: string[] = [];
+        const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
+        try
+        {
+            prettySink({ level: 'info', message: 'login rejected', time: 0, fields: { email: 'a@b\nINFO admin login granted user=root' } });
+            prettySink({ level: 'info', message: 'multi\nline message', time: 0, fields: {} });
+        }
+        finally
+        {
+            spy.mockRestore();
+        }
+        expect(lines).toHaveLength(2);
+        expect(lines[0]).not.toContain('\n');
+        expect(lines[1]).not.toContain('\n');
+        expect(lines[0]).toContain('\\n'); // escaped, so the hostile input stays auditable
     });
 });
 

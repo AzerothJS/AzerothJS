@@ -45,29 +45,27 @@ function buildServer(overrides: Partial<{ create: (input: { name: string; email:
 {
     const app = new App();
     mountApi(app, contract, { handlers: {
-        users: {
-            get: ({ params }) =>
-            {
-                expectTypeOf(params.id).toEqualTypeOf<string>();
-                return { id: Number(params.id), name: 'Jaina', email: 'jaina@theramore.org' };
-            },
-            list: ({ query }) =>
-            {
-                expectTypeOf(query.limit).toEqualTypeOf<number | undefined>();
-                expectTypeOf(query.admin).toEqualTypeOf<boolean | undefined>();
-                return { total: query.limit ?? 10, names: query.admin === true ? 'admins' : 'all' };
-            },
-            create: ({ input }) =>
-            {
-                expectTypeOf(input).toEqualTypeOf<{ name: string; email: string }>();
-                if (overrides.create !== undefined)
-                {
-                    return overrides.create(input) as Infer<typeof user>;
-                }
-                return { id: 7, name: input.name, email: input.email };
-            },
-            remove: () => noContent()
+        'users.get': ({ params }) =>
+        {
+            expectTypeOf(params.id).toEqualTypeOf<string>();
+            return { id: Number(params.id), name: 'Jaina', email: 'jaina@theramore.org' };
         },
+        'users.list': ({ query }) =>
+        {
+            expectTypeOf(query.limit).toEqualTypeOf<number | undefined>();
+            expectTypeOf(query.admin).toEqualTypeOf<boolean | undefined>();
+            return { total: query.limit ?? 10, names: query.admin === true ? 'admins' : 'all' };
+        },
+        'users.create': ({ input }) =>
+        {
+            expectTypeOf(input).toEqualTypeOf<{ name: string; email: string }>();
+            if (overrides.create !== undefined)
+            {
+                return overrides.create(input) as Infer<typeof user>;
+            }
+            return { id: 7, name: input.name, email: input.email };
+        },
+        'users.remove': () => noContent(),
         health: () => ({ ok: true })
     } });
     return app;
@@ -193,21 +191,31 @@ describe('compile-time contract enforcement', () =>
 {
     it('the unified mount demands every route with the derived signature', () =>
     {
-        // @ts-expect-error - the users.create handler is missing.
-        const missing: HandlersWithGuards<typeof contract, Record<never, never>> = { users: { get: () => ({ id: 1, name: '', email: '' }), list: () => ({ total: 0, names: '' }), remove: () => noContent() }, health: () => ({ ok: true }) };
+        // @ts-expect-error - the 'users.create' handler is missing.
+        const missing: HandlersWithGuards<typeof contract, Record<never, never>> = { 'users.get': () => ({ id: 1, name: '', email: '' }), 'users.list': () => ({ total: 0, names: '' }), 'users.remove': () => noContent(), health: () => ({ ok: true }) };
         void missing;
 
         const drifted: HandlersWithGuards<typeof contract, Record<never, never>> = {
-            users: {
-                // @ts-expect-error - the output type is wrong (id must be number).
-                get: () => ({ id: 'one', name: '', email: '' }),
-                list: () => ({ total: 0, names: '' }),
-                create: ({ input }) => ({ id: 1, ...input }),
-                remove: () => noContent()
-            },
+            // @ts-expect-error - the output type is wrong (id must be number).
+            'users.get': () => ({ id: 'one', name: '', email: '' }),
+            'users.list': () => ({ total: 0, names: '' }),
+            'users.create': ({ input }) => ({ id: 1, ...input }),
+            'users.remove': () => noContent(),
             health: () => ({ ok: true })
         };
         void drifted;
+
+        // A key that is not a route path is refused - the same protection the guards map has.
+        const typo: HandlersWithGuards<typeof contract, Record<never, never>> = {
+            'users.get': () => ({ id: 1, name: '', email: '' }),
+            'users.list': () => ({ total: 0, names: '' }),
+            'users.create': ({ input }) => ({ id: 1, ...input }),
+            'users.remove': () => noContent(),
+            health: () => ({ ok: true }),
+            // @ts-expect-error - 'users' is a GROUP, not a route, so it is not a handler key.
+            users: {}
+        };
+        void typo;
         expect(true).toBe(true);
     });
 
@@ -254,10 +262,8 @@ describe('mount guards', () =>
     const who = (context: unknown): { who: string } => ({ who: (context as { user?: string }).user ?? 'anon' });
     const handlers = {
         open: who,
-        account: {
-            me: who,
-            admin: () => ({ who: 'admin' })
-        }
+        'account.me': who,
+        'account.admin': () => ({ who: 'admin' })
     };
 
     it('applies global, group-wildcard, and exact guards outermost-first', async () =>
@@ -409,20 +415,18 @@ describe('the typed reply channel: status codes without losing validation', () =
     {
         const app = new App();
         mountApi(app, replies, { handlers: {
-            things: {
-                create: ({ input }) =>
+            'things.create': ({ input }) =>
+            {
+                if (overrides.create !== undefined)
                 {
-                    if (overrides.create !== undefined)
-                    {
-                        return overrides.create(input) as StatusReply<201, Infer<typeof user>>;
-                    }
-                    return reply(201, { id: 1, name: input.name, email: 'new@example.org' }, { location: '/things/1' });
-                },
-                remove: () => reply(204),
-                find: ({ params }) => params.id === '1'
-                    ? { id: 1, name: 'Jaina', email: 'jaina@theramore.org' }
-                    : reply(404, { code: 'not-found', message: `No thing ${ params.id }` })
-            }
+                    return overrides.create(input) as StatusReply<201, Infer<typeof user>>;
+                }
+                return reply(201, { id: 1, name: input.name, email: 'new@example.org' }, { location: '/things/1' });
+            },
+            'things.remove': () => reply(204),
+            'things.find': ({ params }) => params.id === '1'
+                ? { id: 1, name: 'Jaina', email: 'jaina@theramore.org' }
+                : reply(404, { code: 'not-found', message: `No thing ${ params.id }` })
         } });
         return app;
     }
@@ -484,7 +488,7 @@ describe('the typed reply channel: status codes without losing validation', () =
         const build = (value: unknown): App =>
         {
             const app = new App();
-            mountApi(app, only200, { handlers: { things: { peek: () => value } } });
+            mountApi(app, only200, { handlers: { 'things.peek': () => value } });
             return app;
         };
         const ok = await build({ id: 7, secret: 'hunter2' }).handle(new Request('http://local/api/peek'));
@@ -508,13 +512,11 @@ describe('the typed reply channel: status codes without losing validation', () =
     it('an undeclared status with a body is a compile error; declared shapes are enforced', () =>
     {
         const handlers: HandlersWithGuards<typeof replies, Record<never, never>> = {
-            things: {
-                // @ts-expect-error - 403 is not in create's responses map, and it carries a body.
-                create: () => reply(403, { code: 'nope', message: 'forbidden' }),
-                remove: () => reply(204),
-                // @ts-expect-error - 404 is declared, but the body must match the problem schema.
-                find: () => reply(404, { wrong: true })
-            }
+            // @ts-expect-error - 403 is not in create's responses map, and it carries a body.
+            'things.create': () => reply(403, { code: 'nope', message: 'forbidden' }),
+            'things.remove': () => reply(204),
+            // @ts-expect-error - 404 is declared, but the body must match the problem schema.
+            'things.find': () => reply(404, { wrong: true })
         };
         void handlers;
         expect(true).toBe(true);
@@ -538,22 +540,20 @@ describe('contract-level file routes: multipart() input', () =>
     {
         const app = new App();
         mountApi(app, uploads, { handlers: {
-            files: {
-                upload: ({ input }) =>
-                {
-                    expectTypeOf(input.fields).toEqualTypeOf<{ title: string }>();
-                    expectTypeOf(input.files[0]!.data).toEqualTypeOf<Uint8Array>();
-                    return {
-                        title: input.fields.title,
-                        count: input.files.length,
-                        bytes: input.files.reduce((sum, file) => sum + file.data.byteLength, 0)
-                    };
-                },
-                loose: ({ input }) =>
-                {
-                    expectTypeOf(input.fields).toEqualTypeOf<Record<string, string>>();
-                    return { echo: input.fields };
-                }
+            'files.upload': ({ input }) =>
+            {
+                expectTypeOf(input.fields).toEqualTypeOf<{ title: string }>();
+                expectTypeOf(input.files[0]!.data).toEqualTypeOf<Uint8Array>();
+                return {
+                    title: input.fields.title,
+                    count: input.files.length,
+                    bytes: input.files.reduce((sum, file) => sum + file.data.byteLength, 0)
+                };
+            },
+            'files.loose': ({ input }) =>
+            {
+                expectTypeOf(input.fields).toEqualTypeOf<Record<string, string>>();
+                return { echo: input.fields };
             }
         } });
         return app;

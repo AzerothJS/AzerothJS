@@ -83,6 +83,24 @@ describe('parseQuery', () =>
         expect(result).toEqual({ a: ['1', '3'], b: '2' });
         expect(Object.keys(result)).toEqual(['a', 'b']);
     });
+
+    it('a repeated __proto__ key cannot rewrite the result prototype', () =>
+    {
+        // On a plain {} the (array) value would be assigned through the prototype setter,
+        // replacing Object.getPrototypeOf(result) with an attacker array. A null-prototype
+        // object has no such setter: __proto__ is a plain own key.
+        const result = parseQuery('?__proto__=a&__proto__=b') as Record<string, unknown>;
+        expect(Array.isArray(Object.getPrototypeOf(result))).toBe(false);
+        expect(result.__proto__).toEqual(['a', 'b']);
+        expect(Object.keys(result)).toEqual(['__proto__']);
+    });
+
+    it('a single __proto__ key is a visible own property, not silently dropped', () =>
+    {
+        const result = parseQuery('?__proto__=x') as Record<string, unknown>;
+        expect(result.__proto__).toBe('x');
+        expect(Object.keys(result)).toEqual(['__proto__']);
+    });
 });
 
 describe('stringifyQuery', () =>

@@ -4,7 +4,7 @@
 // wrong content types rejected before parsing, malformed input mapped to typed kernel errors.
 
 import { describe, it, expect } from 'vitest';
-import { readRaw, readText, readJson, readForm, DEFAULT_BODY_LIMIT } from '../src/body.ts';
+import { readRaw, readText, readJson, readForm, DEFAULT_BODY_LIMIT, fastRawBody } from '../src/body.ts';
 import { BadRequestError, PayloadTooLargeError, UnsupportedMediaTypeError } from '../src/errors.ts';
 
 function post(body: BodyInit | null, headers: Record<string, string> = {}): Request
@@ -63,6 +63,56 @@ describe('readRaw: the limited streaming primitive', () =>
     {
         const raw = await readRaw(post('x'.repeat(64)), { limit: 64 });
         expect(raw.byteLength).toBe(64);
+    });
+});
+
+describe('reading a body TWICE fails loudly, never silently forever', () =>
+{
+    /**
+     * A Request carrying the Node adapter's raw-body fast lane over a stream that drains once.
+     * A drained socket never fires 'end' again, so the second read's promise would sit pending
+     * for the life of the process: the request root is never disposed and the socket is never
+     * reclaimed (the body arrived, so requestTimeout has already been cleared).
+     */
+    function fastLaneRequest(): { request: Request; fastCalls: () => number }
+    {
+        const request = post('hello');
+        let drained = false;
+        let calls = 0;
+        Object.defineProperty(request, fastRawBody, {
+            value: (): Promise<Uint8Array> =>
+            {
+                calls++;
+                if (drained)
+                {
+                    return new Promise<Uint8Array>(() => undefined);
+                }
+                drained = true;
+                return Promise.resolve(new TextEncoder().encode('hello'));
+            }
+        });
+        Object.defineProperty(request, 'bodyUsed', { get: () => drained });
+        return { request, fastCalls: () => calls };
+    }
+
+    it('the adapter fast lane rejects instead of hanging', async () =>
+    {
+        const { request, fastCalls } = fastLaneRequest();
+        expect(new TextDecoder().decode(await readRaw(request))).toBe('hello');
+
+        const outcome = await Promise.race([
+            readRaw(request).then(() => 'resolved' as const, (error: unknown) => error),
+            new Promise((resolve) => setTimeout(() => resolve('hung'), 250))
+        ]);
+        expect(outcome).toBeInstanceOf(TypeError);
+        expect(fastCalls()).toBe(1); // the second read never reached the drained stream
+    });
+
+    it('the portable path fails the same way', async () =>
+    {
+        const request = post('hello');
+        await readRaw(request);
+        await expect(readRaw(request)).rejects.toBeInstanceOf(TypeError);
     });
 });
 

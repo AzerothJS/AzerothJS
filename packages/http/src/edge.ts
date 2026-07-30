@@ -21,6 +21,7 @@ export interface WebHandler
     handle(request: Request): Promise<Response>;
 }
 import { PayloadResponse } from './payload.ts';
+import { errorResponse } from './errors.ts';
 
 /**
  * A decorator over a request handler. Wrap `next`, returning a handler that may inspect the
@@ -45,7 +46,25 @@ export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebH
             handler = wrap(handler);
         }
     }
-    return handler;
+
+    // The composed handler must keep the kernel's contract - never throws, never rejects - or the
+    // adapter has nothing to write and the rejection escapes to the process. Middleware run
+    // OUTSIDE App.handle's error path, so a throwing origin predicate, a rate-limit store that
+    // rejects, or any user middleware would otherwise be a one-request process kill.
+    const composed = handler;
+    return {
+        handle: async (request: Request): Promise<Response> =>
+        {
+            try
+            {
+                return await composed.handle(request);
+            }
+            catch (error)
+            {
+                return errorResponse(error, { request });
+            }
+        }
+    };
 }
 
 /**

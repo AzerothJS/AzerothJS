@@ -2,9 +2,9 @@
     <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
-# @azerothjs/renderer
+# azerothjs / renderer
 
-[![npm](https://img.shields.io/npm/v/%40azerothjs%2Frenderer?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/renderer)
+[![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
@@ -16,8 +16,7 @@ attributes, text nodes, and children that actually depend on a changed signal ar
 updated. There is no virtual DOM and no diffing.
 
 ```ts
-import { h, render } from '@azerothjs/renderer';
-import { createSignal } from '@azerothjs/reactivity';
+import { createSignal, h, render } from 'azerothjs';
 
 function Counter() {
     const [n, setN] = createSignal(0);
@@ -30,7 +29,7 @@ render(Counter, document.getElementById('app')!);
 ## Install
 
 ```sh
-npm install @azerothjs/renderer
+npm install azerothjs
 ```
 
 ## Architecture
@@ -52,7 +51,7 @@ disposal of the reactive scope for the content it mounts and unmounts, so
 removing an element also tears down its effects.
 
 The renderer shares the render-mode flag and SSR/hydration primitives with
-`@azerothjs/reactivity`, so `hydrate` can adopt server-rendered markup by walking
+`azerothjs`, so `hydrate` can adopt server-rendered markup by walking
 it with a hydration cursor instead of creating new nodes.
 
 ## Components
@@ -85,8 +84,7 @@ Control-flow components take their content as a `children` prop (a thunk for
 `Show`, a render function for `For`), matching how the markup forms compile:
 
 ```ts
-import { h, Show, For, classList } from '@azerothjs/renderer';
-import { createSignal } from '@azerothjs/reactivity';
+import { classList, createSignal, For, h, Show } from 'azerothjs';
 
 const [items] = createSignal<string[]>(['a', 'b']);
 const [open] = createSignal(true);

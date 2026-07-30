@@ -20,7 +20,7 @@ import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../r
 import { createEffect, createRoot, isStringMode, isHydrating } from '../reactivity/index.ts';
 import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
-import { serializeElement } from './ssr.ts';
+import { serializeElement, assertSafeAttribute, assertSafeTag, isEventAttribute } from './ssr.ts';
 import { delegateEvent, isDelegatedEvent } from './delegate.ts';
 
 /**
@@ -174,20 +174,25 @@ function createElementByTag(tag: string): HTMLElement
  */
 export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 {
+    // Ahead of the mode dispatch, so an executable tag is refused identically whether it would
+    // be serialized, adopted, or built. Returns the concrete name (an unsafeTag() marker is not
+    // a string), which is what every mode below builds with.
+    const tagName = assertSafeTag(tag, props);
+
     // Server-side rendering: in string mode there is no document, so emit HTML
     // directly. The SSRNode is cast to HTMLElement so it flows through
     // composition (parent h() calls, control-flow children) exactly like a real
     // element would in the DOM path.
     if (isStringMode())
     {
-        return serializeElement(tag, props, children) as unknown as HTMLElement;
+        return serializeElement(tagName, props, children) as unknown as HTMLElement;
     }
 
     // Hydration: don't build DOM. Return a descriptor that, when walked by
     // hydrate(), adopts the matching server-rendered element in place.
     if (isHydrating())
     {
-        return createHydrationNode(tag, props, children) as unknown as HTMLElement;
+        return createHydrationNode(tagName, props, children) as unknown as HTMLElement;
     }
 
     // DOM-build path (not the compiled hot path - that clones tmpl()). A missing `document` here
@@ -196,12 +201,12 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
     // before string mode was active. Name that instead of the raw "document is not defined".
     if (typeof document === 'undefined')
     {
-        throw new ReferenceError(`h(<${ tag }>) needs a DOM, but \`document\` is undefined. On the server, `
+        throw new ReferenceError(`h(<${ tagName }>) needs a DOM, but \`document\` is undefined. On the server, `
             + 'render with a THUNK - renderToString(() => App(props)) - so the tree builds in string mode; '
             + 'building it eagerly (renderToString(App())) runs h() against a missing DOM.');
     }
 
-    const el = createElementByTag(tag);
+    const el = createElementByTag(tagName);
 
     applyProps(el, props);
 
@@ -226,6 +231,14 @@ function applyProps(el: HTMLElement, props: Props, delegate = false): void
     // entries() allocates an array of [key, value] tuples each call.
     for (const key in props)
     {
+        // for...in also walks INHERITED enumerable keys, so a single prototype-pollution
+        // gadget (`Object.prototype.onclick = '...'`) would inject its attribute onto every
+        // element ever created. Own properties only, matching the serializer's Object.entries.
+        if (!Object.hasOwn(props, key))
+        {
+            continue;
+        }
+
         const value = props[key];
         // `ref` is never a DOM attribute: it hands the freshly-created element
         // back to the caller. Must run before the reactive-function branch
@@ -329,6 +342,14 @@ function applyRef(el: HTMLElement, ref: unknown): void
  *   - true -> set empty attribute (disabled="")
  *   - everything else -> setAttribute(key, String(value))
  *
+ * Every attribute write is gated by the same {@link assertSafeAttribute} policy the SSR
+ * serializer enforces: an invalid NAME throws the framework's error instead of letting
+ * setAttribute abort the render with a bare InvalidCharacterError, and a non-function
+ * `on*` VALUE throws instead of being written as a live inline handler. The throw is
+ * deliberate (not a drop-and-warn): the serializer already fails loud for the identical
+ * input, and a divergence between the two paths would let the same props render on one
+ * side and vanish on the other.
+ *
  * @param el - The DOM element
  * @param key - The property/attribute name
  * @param value - The value to set
@@ -342,6 +363,8 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
         (el as unknown as Record<string, unknown>)[key] = value;
         return;
     }
+
+    assertSafeAttribute(key, value);
 
     if (value === false || value === null || value === undefined)
     {
@@ -1071,6 +1094,29 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
 // Hydration: adopt server-rendered DOM instead of creating it.
 
 /**
+ * Removes every `on*` ATTRIBUTE from an element adopted from server markup. Adoption writes
+ * the client's props over the server's node and keeps everything else, so an attribute the
+ * server HTML carried and the client does not re-write survives onto the live page - and an
+ * `on*` attribute is a live handler. The client never legitimately sets one (a function handler
+ * goes through addEventListener; a string one is refused by {@link assertSafeAttribute}), so an
+ * `on*` attribute on a server node was injected into the markup, never rendered by this
+ * framework. Hydration only: a freshly created element cannot carry an attribute nobody set.
+ *
+ * @internal
+ */
+function stripEventAttributes(el: HTMLElement): void
+{
+    // getAttributeNames() returns a snapshot array, so removing during the walk is safe.
+    for (const name of el.getAttributeNames())
+    {
+        if (isEventAttribute(name))
+        {
+            el.removeAttribute(name);
+        }
+    }
+}
+
+/**
  * Builds the hydration descriptor for an element. When walked by hydrate(),
  * it claims the matching server element, attaches its props (event listeners,
  * reactive-attribute effects, refs - via the same {@link applyProps} the DOM
@@ -1085,6 +1131,8 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
     const node = hydrationNode((cursor: HydrationCursorType): void =>
     {
         const el = cursor.takeElement(tag);
+
+        stripEventAttributes(el);
 
         applyProps(el, props);
 

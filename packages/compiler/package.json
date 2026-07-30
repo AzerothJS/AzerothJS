@@ -30,7 +30,8 @@
         "dist",
         "syntaxes",
         "GRAMMAR.md",
-        "STABILITY.md"
+        "STABILITY.md",
+        "!dist/**/*.map"
     ],
     "sideEffects": false,
     "dependencies": {

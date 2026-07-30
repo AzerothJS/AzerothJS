@@ -51,6 +51,8 @@ import type { Query } from './types.ts';
  * EDGE CASES:
  * - '' / '?' -> {}. '?flag' and '?flag=' both -> { flag: '' }.
  * - Order is preserved by first appearance of each key.
+ * - The result has a NULL prototype, so a URL key like `__proto__` is plain data - it can
+ *   neither rewrite the object's prototype nor vanish from the parse.
  *
  * PERFORMANCE NOTES:
  * O(query length); one URLSearchParams pass plus a getAll per distinct key.
@@ -75,13 +77,17 @@ export function parseQuery(search: string): Query
     {
         raw = raw.slice(1);
     }
+    // Null-prototype result: assigning onto `{}` lets a `?__proto__=a&__proto__=b` URL
+    // REPLACE the object's prototype (the repeated key parses to an array, which the
+    // setter accepts) and silently drop a single `?__proto__=x` key. With no prototype
+    // there is no setter: every parsed key becomes an own, enumerable property.
     if (raw.length === 0)
     {
-        return {};
+        return Object.create(null) as Query;
     }
 
     const params = new URLSearchParams(raw);
-    const result: Query = {};
+    const result: Query = Object.create(null) as Query;
 
     // Collapse repeated keys into arrays. new Set(params.keys()) dedupes while preserving the
     // insertion order of first appearance, matching user expectations on display/re-serialize.

@@ -113,17 +113,42 @@ console.log('import OK:', Object.keys(azerothjs).length, 'azerothjs exports,', O
     writeFileSync(path.join(consumer, 'probe.mjs'), probe);
     run('node probe.mjs', consumer);
 
-    // The bin targets must actually ship - a wrong path in "bin" is invisible
-    // until a user runs the CLI.
-    const lsDir = path.join(consumer, 'node_modules', '@azerothjs', 'language-server');
-    const lsManifest = JSON.parse(readFileSync(path.join(lsDir, 'package.json'), 'utf8'));
-    for (const [binName, rel] of Object.entries(lsManifest.bin ?? {}))
+    // Every installed package's bin targets must actually ship - a wrong path in "bin" is
+    // invisible until a user runs the CLI. Walked over the whole consumer install rather
+    // than one named package: `azeroth`, `create-azeroth` and `azeroth-kit-prerender` went
+    // unchecked for as long as this only looked at @azerothjs/language-server.
+    const scopeDir = path.join(consumer, 'node_modules', '@azerothjs');
+    const installed = [
+        ...(existsSync(scopeDir) ? readdirSync(scopeDir).map((name) => path.join(scopeDir, name)) : []),
+        path.join(consumer, 'node_modules', 'azerothjs'),
+        path.join(consumer, 'node_modules', 'create-azeroth')
+    ];
+    let checkedBins = 0;
+    for (const dir of installed)
     {
-        if (!existsSync(path.join(lsDir, rel)))
+        const manifestPath = path.join(dir, 'package.json');
+        if (!existsSync(manifestPath))
         {
-            throw new Error(`bin "${ binName }" points to a missing file: ${ rel }`);
+            continue;
+        }
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        // npm accepts a bare string bin (named after the package) as well as a map.
+        const bins = typeof manifest.bin === 'string' ? { [manifest.name]: manifest.bin } : (manifest.bin ?? {});
+        for (const [binName, rel] of Object.entries(bins))
+        {
+            if (!existsSync(path.join(dir, rel)))
+            {
+                throw new Error(`${ manifest.name }: bin "${ binName }" points to a missing file: ${ rel }`);
+            }
+            checkedBins++;
         }
     }
+    // Zero checked bins means the walk found nothing, not that every bin is fine.
+    if (checkedBins === 0)
+    {
+        throw new Error('no bin targets were checked - the installed package walk found none');
+    }
+    console.log(`bin targets OK: ${ checkedBins } across the installed packages`);
 
     console.log('\nsmoke: published artifacts install, resolve, and import correctly.');
 }

@@ -33,15 +33,16 @@
             "import": "./dist/api/index.js",
             "default": "./dist/api/index.js"
         },
-        "./api/client": {
-            "types": "./dist/api/client-entry.d.ts",
-            "import": "./dist/api/client-entry.js",
-            "default": "./dist/api/client-entry.js"
+        "./api/shared": {
+            "types": "./dist/api/shared-entry.d.ts",
+            "import": "./dist/api/shared-entry.js",
+            "default": "./dist/api/shared-entry.js"
         },
         "./package.json": "./package.json"
     },
     "files": [
-        "dist"
+        "dist",
+        "!dist/**/*.map"
     ],
     "sideEffects": false,
     "scripts": {

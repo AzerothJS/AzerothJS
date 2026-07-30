@@ -61,6 +61,9 @@ export type StyleObject = Record<string, StyleValue>;
  * EDGE CASES:
  * - null/undefined value omits the property entirely (used to conditionally remove one).
  * - Numeric values are stringified as-is (no unit is added - write `() => `${ n() }px``).
+ * - A property name outside the CSS identifier shape, or a value carrying a `;`/`}`
+ *   outside a string or url() body, throws: either would open a second declaration
+ *   inside the style attribute.
  *
  * PERFORMANCE NOTES:
  * O(number of properties) per evaluation; runs only when a value signal changes (one
@@ -79,6 +82,40 @@ export type StyleObject = Record<string, StyleValue>;
  *   style: styleMap({ color, 'font-size': () => `${ size() }px`, display: () => hidden() ? 'none' : null })
  * }, 'Styled');
  */
+/**
+ * A CSS property name after kebab-case conversion: an optional `-`/`--` prefix (vendor or
+ * custom property) then a letter-led identifier. A name outside this shape (spaces, `;`,
+ * `:`) came from data and would open its own declaration inside the style attribute.
+ *
+ * @internal
+ */
+const CSS_PROPERTY_NAME = /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/;
+
+/**
+ * Rejects a style VALUE whose text could terminate its declaration and start another
+ * (`10px; background: url(//evil)` is an exfiltration primitive). `;` is legal INSIDE a
+ * quoted string or a url() body (data: URIs carry them), so those regions are blanked
+ * before the test rather than banning the character outright.
+ *
+ * @internal
+ */
+function assertSafeStyleValue(property: string, resolved: string | number): void
+{
+    if (typeof resolved === 'number')
+    {
+        return;
+    }
+
+    const bare = resolved
+        .replace(/(['"])(?:\\.|(?!\1).)*\1/g, '""')
+        .replace(/url\([^)]*\)/gi, 'url()');
+    if (/[;}]/.test(bare))
+    {
+        throw new Error(`azeroth: invalid style value for "${ property }" - a ';' or '}' outside a string or url() `
+            + 'would start a new declaration inside the style attribute.');
+    }
+}
+
 export function styleMap(styles: StyleObject): () => string
 {
     return (): string =>
@@ -100,6 +137,16 @@ export function styleMap(styles: StyleObject): () => string
                 /[A-Z]/g,
                 (match) => `-${ match.toLowerCase() }`
             );
+
+            // A data-driven property name is a declaration injection: reject it the same
+            // way an invalid attribute name is rejected, identically on server and client.
+            if (!CSS_PROPERTY_NAME.test(cssProperty))
+            {
+                throw new Error(`azeroth: invalid style property name ${ JSON.stringify(property) } - names must be `
+                    + 'a letter-led identifier with an optional -/-- prefix.');
+            }
+
+            assertSafeStyleValue(cssProperty, resolved);
 
             parts.push(`${ cssProperty }: ${ resolved }`);
         }

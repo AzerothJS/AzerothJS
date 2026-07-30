@@ -21,9 +21,10 @@
 
 import type { Getter } from './types.ts';
 import { createSignal } from './create-signal.ts';
-import { createEffect } from './create-effect.ts';
+import { createEffect, routeAsyncError } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
+import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
 /**
@@ -170,6 +171,11 @@ export function createResource<T, S>(
     // ResourceOptions doc for the exact semantics.
     let pendingInitial = options !== undefined && 'initialValue' in options;
 
+    // Captured at construction, matching how an effect captures its catchError scope: a
+    // subscriber that throws while this resource's settle propagates has nowhere else to
+    // send the error (the settle runs in a promise reaction, outside any effect's stack).
+    const settleErrorHandler = currentErrorHandler;
+
     const frame = dtEnterPrimitive('resource', options?.name);
     const [data, setData] = createSignal<T | undefined>(options?.initialValue, { name: 'data' });
     const [loading, setLoading] = createSignal<boolean>(false, { name: 'loading' });
@@ -215,6 +221,11 @@ export function createResource<T, S>(
             pending = Promise.reject(error);
         }
 
+        // The terminal catch is load-bearing: both settle arms run batch(), whose flush
+        // rethrows the FIRST error a queued subscriber threw - here that lands in a promise
+        // reaction with nothing downstream, i.e. an unhandled rejection (a process kill on
+        // Node). Route it through the effect error ladder instead. This never swallows a
+        // FETCHER failure - a rejection is already captured in error() by the arm above.
         pending.then(
             (result) =>
             {
@@ -244,7 +255,10 @@ export function createResource<T, S>(
                     setLoading(false);
                 });
             }
-        );
+        ).catch((err: unknown) =>
+        {
+            routeAsyncError(err, settleErrorHandler, options?.name);
+        });
     }
 
     // The reactive heart: reads `tick` and `source`; on either change the previous run's

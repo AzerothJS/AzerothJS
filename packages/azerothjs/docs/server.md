@@ -2,9 +2,9 @@
     <img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/tile-dark.png" alt="AzerothJS" width="120" />
 </p>
 
-# @azerothjs/server
+# azerothjs / server
 
-[![npm](https://img.shields.io/npm/v/%40azerothjs%2Fserver?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/server)
+[![npm](https://img.shields.io/npm/v/azerothjs?color=2ea44f)](https://www.npmjs.com/package/azerothjs)
 
 Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. Applications usually install [`azerothjs`](https://www.npmjs.com/package/azerothjs); depend on this package directly for a narrower surface.
 
@@ -13,10 +13,10 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 Server-side rendering. It renders a component tree to an HTML string without a
 DOM shim: components run in string render mode and emit HTML directly. The output
 carries hydration markers so the client can adopt it with `hydrate()` from
-`@azerothjs/renderer`.
+`azerothjs`.
 
 ```ts
-import { renderToDocument } from '@azerothjs/server';
+import { renderToDocument } from 'azerothjs';
 
 const html = renderToDocument(() => App({}), { title: 'Home' });
 ```
@@ -24,7 +24,7 @@ const html = renderToDocument(() => App({}), { title: 'Home' });
 ## Install
 
 ```sh
-npm install @azerothjs/server
+npm install azerothjs
 ```
 
 ## Architecture
@@ -101,7 +101,7 @@ render, so the app always boots.
 Render a document and flush collected styles:
 
 ```ts
-import { renderToDocument, collectStyleSheet, resetStyleSheet } from '@azerothjs/server';
+import { renderToDocument, collectStyleSheet, resetStyleSheet } from 'azerothjs';
 
 resetStyleSheet();
 const body = renderToDocument(() => App({}), {
@@ -114,7 +114,7 @@ const body = renderToDocument(() => App({}), {
 On the client, mount the same component with `hydrate` to adopt this markup:
 
 ```ts
-import { hydrate } from '@azerothjs/renderer';
+import { hydrate } from 'azerothjs';
 
 hydrate(() => App({}), document.getElementById('app')!);
 ```

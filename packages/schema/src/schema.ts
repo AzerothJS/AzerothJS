@@ -25,9 +25,11 @@
  *     nowhere else - a JSON body that sends "42" for a number is a client bug worth a 422.
  *
  * Parsing collects EVERY error in one pass by default (a form with three bad fields hears
- * about all three); `{ mode: 'first' }` stops at the first issue in field-declaration order
- * (the stop-at-first-error style, and a fast path). `parse` throws SchemaError; `safeParse`
- * returns a discriminated result for callers that prefer no exceptions.
+ * about all three), up to a fixed ceiling - past it the result is marked `truncated` rather
+ * than letting a bulk body's element-times-field issue count become the response's size and
+ * the event loop's stall. `{ mode: 'first' }` stops at the first issue in field-declaration
+ * order (the stop-at-first-error style, and a fast path). `parse` throws SchemaError;
+ * `safeParse` returns a discriminated result for callers that prefer no exceptions.
  *
  * String checks run in a documented, stable order: required -> type -> normalization
  * (trim/lowercase, whose result is what parses OUT) -> nonempty -> min -> max -> pattern ->
@@ -80,10 +82,45 @@ export interface RefineOptions
     message?: string;
 }
 
-/** The discriminated result of a non-throwing parse. */
+/**
+ * The discriminated result of a non-throwing parse. `truncated` is present when the parse
+ * reached the issue ceiling, so failures past it were never collected.
+ */
 export type ParseResult<T> =
     | { ok: true; value: T }
-    | { ok: false; errors: FieldErrors; issues: Issue[] };
+    | { ok: false; errors: FieldErrors; issues: Issue[]; truncated?: boolean };
+
+/**
+ * @internal Hard ceiling on the issues one parse collects. A bulk endpoint's array of
+ * objects emits one issue PER DECLARED FIELD per element, so an uncapped collector turns a
+ * body that passed the transport's size limit into millions of issues, a blocked event loop,
+ * and a response far larger than the request. 100 issues is more than any client can act on.
+ */
+const MAX_ISSUES = 100;
+
+/** @internal How many field paths a {@link SchemaError} message names before it counts the rest. */
+const MESSAGE_PATH_LIMIT = 5;
+
+/** @internal Longest path text one message entry repeats. */
+const MAX_PATH_TEXT = 64;
+
+/** @internal Everything a path may NOT contribute to a message: keys are attacker-controlled. */
+const UNSAFE_PATH_TEXT = /[^\w.$[\]-]/g;
+
+/**
+ * @internal One field path as message text. The message's `path: message` grammar is
+ * spoofable with a key like `x: injected; y`, so the separators (and anything else exotic)
+ * never survive into it - the `fields` map carries the real key.
+ */
+function safePath(path: string): string
+{
+    if (path === '')
+    {
+        return '(value)';
+    }
+    const text = path.replace(UNSAFE_PATH_TEXT, '?');
+    return text.length > MAX_PATH_TEXT ? `${ text.slice(0, MAX_PATH_TEXT) }...` : text;
+}
 
 /** A validation failure as an exception, carrying the field-path map and the ordered issues. */
 export class SchemaError extends Error
@@ -92,14 +129,22 @@ export class SchemaError extends Error
 
     public readonly issues: Issue[];
 
-    constructor(fields: FieldErrors, issues?: Issue[])
+    /** True when the parse reached the issue ceiling, so further failures were never collected. */
+    public readonly truncated: boolean;
+
+    constructor(fields: FieldErrors, issues?: Issue[], truncated = false)
     {
         const entries = Object.entries(fields);
-        super(`Validation failed for ${ entries.length } field${ entries.length === 1 ? '' : 's' }: `
-            + entries.map(([path, message]) => `${ path || '(value)' }: ${ message }`).join('; '));
+        const listed = entries.slice(0, MESSAGE_PATH_LIMIT)
+            .map(([path, message]) => `${ safePath(path) }: ${ message }`)
+            .join('; ');
+        const rest = entries.length - Math.min(entries.length, MESSAGE_PATH_LIMIT);
+        super(`Validation failed for ${ entries.length }${ truncated ? '+' : '' } field${ entries.length === 1 ? '' : 's' }: `
+            + listed + (rest > 0 ? ` (+${ rest } more)` : ''));
         this.name = 'SchemaError';
         this.fields = fields;
         this.issues = issues ?? entries.map(([path, message]) => ({ path, code: 'invalid', message }));
+        this.truncated = truncated;
     }
 }
 
@@ -110,6 +155,9 @@ interface Collector
 
     /** First-error mode: once one issue exists, nothing further is recorded. */
     first: boolean;
+
+    /** Set when the ceiling stopped collection, so the result can say so. */
+    truncated: boolean;
 }
 
 /**
@@ -221,12 +269,29 @@ function propagateOptional(source: unknown, derived: object): void
 /** @internal The flat first-message-per-path projection of an issue list. */
 function toFieldErrors(issues: Issue[]): FieldErrors
 {
-    const errors: FieldErrors = {};
+    // A null prototype plus defineProperty, not `errors[path] = message`: the paths are
+    // ATTACKER-controlled, and on a plain literal `__proto__` hits the prototype setter (the
+    // issue vanishes) while `constructor`/`toString` read back an inherited FUNCTION that a
+    // first-wins `??` then keeps - a FieldErrors typed Record<string, string> holding a
+    // function crashes every consumer that calls a string method on it.
+    const errors = Object.create(null) as FieldErrors;
     for (const issue of issues)
     {
-        errors[issue.path] = errors[issue.path] ?? issue.message;
+        if (!Object.hasOwn(errors, issue.path))
+        {
+            Object.defineProperty(errors, issue.path, { value: issue.message, enumerable: true, writable: true, configurable: true });
+        }
     }
     return errors;
+}
+
+/** @internal The failure branch of a parse; `truncated` appears only when the ceiling fired. */
+function toFailure<T>(collector: Collector): ParseResult<T>
+{
+    const errors = toFieldErrors(collector.issues);
+    return collector.truncated
+        ? { ok: false, errors, issues: collector.issues, truncated: true }
+        : { ok: false, errors, issues: collector.issues };
 }
 
 /** @internal Shared plumbing: parse/safeParse/optional/refine derive from run(). */
@@ -236,21 +301,21 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
         run,
         parse(value: unknown, options: ParseOptions = {}): T
         {
-            const collector: Collector = { issues: [], first: options.mode === 'first' };
+            const collector: Collector = { issues: [], first: options.mode === 'first', truncated: false };
             const parsed = run(value, '', collector);
             if (collector.issues.length > 0)
             {
-                throw new SchemaError(toFieldErrors(collector.issues), collector.issues);
+                throw new SchemaError(toFieldErrors(collector.issues), collector.issues, collector.truncated);
             }
             return parsed as T;
         },
         safeParse(value: unknown, options: ParseOptions = {}): ParseResult<T>
         {
-            const collector: Collector = { issues: [], first: options.mode === 'first' };
+            const collector: Collector = { issues: [], first: options.mode === 'first', truncated: false };
             const parsed = run(value, '', collector);
             if (collector.issues.length > 0)
             {
-                return { ok: false, errors: toFieldErrors(collector.issues), issues: collector.issues };
+                return toFailure<T>(collector);
             }
             return { ok: true, value: parsed as T };
         },
@@ -335,10 +400,32 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
     return schema;
 }
 
-/** @internal Records one issue (respecting first-error mode); returns undefined for the run. */
+/**
+ * @internal True once the collector takes nothing further: first-error mode has its issue, or
+ * the ceiling is reached - and then the result is marked truncated, because input that would
+ * have failed is no longer being described.
+ */
+function stopCollecting(collector: Collector): boolean
+{
+    if (collector.first)
+    {
+        return collector.issues.length > 0;
+    }
+    if (collector.issues.length < MAX_ISSUES)
+    {
+        return false;
+    }
+    collector.truncated = true;
+    return true;
+}
+
+/**
+ * @internal Records one issue (respecting first-error mode and the ceiling); returns undefined
+ * for the run. Every combinator funnels through here, so ONE guard bounds them all.
+ */
 function fail(collector: Collector, path: string, code: string, message: string): undefined
 {
-    if (collector.first && collector.issues.length > 0)
+    if (stopCollecting(collector))
     {
         return undefined;
     }
@@ -625,7 +712,9 @@ export function array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[
         for (let index = 0; index < value.length; index++)
         {
             out.push(item.run(value[index], path === '' ? String(index) : `${ path }.${ index }`, collector));
-            if (collector.first && collector.issues.length > 0)
+            // An exhausted collector cannot describe the rest of the array, and the parse has
+            // already failed - walking the remaining elements only burns the event loop.
+            if (stopCollecting(collector))
             {
                 break;
             }
@@ -662,7 +751,11 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
         for (const [key, fieldSchema] of Object.entries(shape))
         {
             const fieldPath = path === '' ? key : `${ path }.${ key }`;
-            const fieldValue = record[key];
+            // An OWN-property read, never `record[key]`: a plain member read walks the
+            // prototype chain, so a `role`/`isAdmin` polluted onto Object.prototype anywhere
+            // in the process would be validated and delivered as if the client had sent it -
+            // mass assignment fabricated by the layer that exists to prevent it.
+            const fieldValue = Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
             if (fieldValue === undefined && (fieldSchema as { [IS_OPTIONAL]?: boolean })[IS_OPTIONAL] === true)
             {
                 continue;
@@ -672,7 +765,7 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
             {
                 out[key] = parsed;
             }
-            if (collector.first && collector.issues.length > 0)
+            if (stopCollecting(collector))
             {
                 break;
             }
@@ -681,7 +774,7 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
     }, { kind: 'object', shape: shape });
 }
 
-/** A dictionary of arbitrary string keys to `value`-schema values. */
+/** A dictionary of arbitrary string keys to `value`-schema values; `__proto__` is stripped. */
 export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<Record<string, T>>
 {
     return base((input, path, collector) =>
@@ -698,6 +791,14 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
         const before = collector.issues.length;
         for (const [key, element] of Object.entries(input as Record<string, unknown>))
         {
+            // `__proto__` is dropped like an unknown key in object(): JSON.parse creates it as
+            // an OWN property, so preserving it would hand the handler a pollution primitive -
+            // `Object.assign(target, validatedBody)` then gives the target an attacker-chosen
+            // prototype, with nothing to signal that validated input is unsafe to merge.
+            if (key === '__proto__')
+            {
+                continue;
+            }
             const parsed = value.run(element, path === '' ? key : `${ path }.${ key }`, collector);
             if (parsed !== undefined)
             {
@@ -706,7 +807,7 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
                 // object with attacker-supplied inherited properties) instead of adding an own key.
                 Object.defineProperty(out, key, { value: parsed, enumerable: true, writable: true, configurable: true });
             }
-            if (collector.first && collector.issues.length > 0)
+            if (stopCollecting(collector))
             {
                 break;
             }
@@ -740,7 +841,7 @@ export function union<Schemas extends ReadonlyArray<Schema<unknown>>>(
         for (const option of options)
         {
             // Probes short-circuit: only "did it match" matters, never the probe's issues.
-            const probe: Collector = { issues: [], first: true };
+            const probe: Collector = { issues: [], first: true, truncated: false };
             const parsed = option.run(value, path, probe);
             if (probe.issues.length === 0)
             {

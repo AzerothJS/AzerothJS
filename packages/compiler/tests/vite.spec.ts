@@ -6,7 +6,7 @@
 // transform is invoked directly with a mock plugin context (the real Rollup/Vite context's
 // error() throws; warn() reports) - the error path short-circuits before any vite import.
 import { describe, it, expect, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { azeroth } from '@azerothjs/compiler';
@@ -144,6 +144,36 @@ describe('azeroth() plugin - emitDeclarations mirror', () =>
         finally
         {
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('writes nothing outside the mirror for a module resolved outside the root', async () =>
+    {
+        const base = mkdtempSync(join(tmpdir(), 'az-dts-'));
+        try
+        {
+            // A `.azeroth` module outside the Vite root (a monorepo sibling, a linked workspace, a
+            // hoisted node_modules copy) makes `relative(root, file)` start with `..` segments, which
+            // join() normalises away - eating `.azeroth/types` and then climbing PAST the root. This is
+            // where the escaped write landed, and it overwrote whatever file already had that name.
+            const root = join(base, 'p', 'q', 'root');
+            mkdirSync(root, { recursive: true });
+            const outside = join(base, 'Shared.azeroth');
+            writeFileSync(outside, source);
+            const victim = join(base, 'p', 'q', 'Shared.d.ts');
+            writeFileSync(victim, 'export const mine = 1;\n');
+
+            const plugin = azeroth({ emitDeclarations: true, typeCheck: false });
+            (plugin.configResolved as (r: { root?: string }) => void)({ root });
+            await (plugin.transform as unknown as TransformFn).call(ctx, source, outside);
+
+            expect(readFileSync(victim, 'utf8')).toBe('export const mine = 1;\n');
+            // No mirror is created either: the module has no path inside it.
+            expect(existsSync(join(root, '.azeroth'))).toBe(false);
+        }
+        finally
+        {
+            rmSync(base, { recursive: true, force: true });
         }
     });
 

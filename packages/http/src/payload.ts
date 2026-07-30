@@ -78,6 +78,29 @@ export class PayloadResponse implements Response
      */
     public raw(): { status: number; headers: Record<string, string | string[]>; payload: Uint8Array | string }
     {
+        // When the `headers` VIEW was materialised it becomes the truth: a caller writing
+        // `response.headers.set(...)` - the web-standard way, and what middleware naturally does -
+        // must reach the wire. Reading the record instead would report the header through
+        // app.handle() (so a test passes) while the socket never carries it, which silently drops
+        // a Set-Cookie or a Cache-Control: no-store in production only.
+        if (this.#headers !== null)
+        {
+            const headers: Record<string, string | string[]> = {};
+            for (const [name, value] of this.#headers)
+            {
+                if (name !== 'set-cookie')
+                {
+                    headers[name] = value;
+                }
+            }
+            const cookies = this.#headers.getSetCookie();
+            if (cookies.length > 0)
+            {
+                headers['set-cookie'] = cookies;
+            }
+            return { status: this.#status, headers, payload: this.#payload };
+        }
+
         // A multi-cookie response re-joins the array under `set-cookie`; Node's writeHead
         // accepts a string[] value and emits one header line per entry.
         const headers: Record<string, string | string[]> = this.#setCookies.length > 0

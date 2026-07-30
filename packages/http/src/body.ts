@@ -59,10 +59,20 @@ export interface ReadOptions
  * Reads the raw body into one Uint8Array, enforcing the limit while streaming. The shared
  * primitive under every other reader. A declared Content-Length above the limit fails fast
  * WITHOUT reading; an undeclared or lying length is caught by the running count.
+ *
+ * A body can only be read ONCE (the web standard's rule, and the reason a raw-body HMAC check
+ * must hand its bytes on rather than let the handler read again). A second read throws
+ * TypeError - the same shape the standard reader produces on a disturbed stream - because the
+ * alternative on a drained socket is a promise that never settles and a request that never ends.
  */
 export async function readRaw(request: Request, options: ReadOptions = {}): Promise<Uint8Array>
 {
     const limit = options.limit ?? DEFAULT_BODY_LIMIT;
+
+    if (request.bodyUsed)
+    {
+        throw new TypeError('Invalid state: the request body has already been read.');
+    }
 
     const fast = (request as FastCapabilities)[fastRawBody];
     if (fast !== undefined)

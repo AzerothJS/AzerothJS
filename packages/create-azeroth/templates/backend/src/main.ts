@@ -26,7 +26,12 @@ const handler = pipeline(
     buildApp({ dev: !isProduction, observe: logRequests(log) }),
     requestId(),
     securityHeaders(),
-    cors({ origin: isProduction ? [] : true, credentials: true }),
+    // Origins are named, never reflected: `origin: true` with credentials would echo whatever
+    // Origin the caller sent and honour cookies with it, which any website could then read.
+    // Add your deployed frontends to the production list.
+    cors({ origin: isProduction ? [] : ['http://localhost:3000'], credentials: true }),
+    // The default key is the TCP peer, so behind a proxy every client shares one bucket. Declare
+    // the proxy (`trustProxy`, plus `trustedHops` for a chain) or the limit is a global budget.
     rateLimit({ limit: 100, windowMs: 60_000 })
 );
 

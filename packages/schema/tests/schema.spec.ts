@@ -371,3 +371,43 @@ describe('nullable', () =>
         expect(schema.meta?.constraints).toEqual({ format: 'email' });
     });
 });
+
+describe('composition: the SHAPE is the reusable unit', () =>
+{
+    // An input schema and the stored shape it grows into share fields. There is deliberately
+    // no extend/pick/omit API for that: `object()` takes a plain literal, so spreading and
+    // destructuring already compose schemas with exact inference. Adding three functions to
+    // re-express what the language does would be surface for nothing.
+    const entryFields = { name: string({ min: 2 }), message: string({ min: 1 }) };
+
+    it('spread extends a shape, and the constraints come with it', () =>
+    {
+        const entry = object({ ...entryFields, id: number({ int: true }) });
+        expect(entry.parse({ name: 'Jaina', message: 'hi', id: 1 })).toEqual({ name: 'Jaina', message: 'hi', id: 1 });
+
+        // The shared field keeps the rule it was declared with, in BOTH schemas.
+        expect(object(entryFields).safeParse({ name: 'J', message: 'hi' }).ok).toBe(false);
+        expect(entry.safeParse({ name: 'J', message: 'hi', id: 1 }).ok).toBe(false);
+
+        expectTypeOf<Infer<typeof entry>>().toEqualTypeOf<{ name: string; message: string; id: number }>();
+    });
+
+    it('destructuring omits, and selection picks', () =>
+    {
+        const { message: _omitted, ...withoutMessage } = entryFields;
+        const nameOnly = object(withoutMessage);
+        expect(nameOnly.parse({ name: 'Jaina' })).toEqual({ name: 'Jaina' });
+        expectTypeOf<Infer<typeof nameOnly>>().toEqualTypeOf<{ name: string }>();
+
+        const justMessage = object({ message: entryFields.message });
+        expectTypeOf<Infer<typeof justMessage>>().toEqualTypeOf<{ message: string }>();
+        expect(justMessage.safeParse({ message: '' }).ok).toBe(false);
+    });
+
+    it('a derived shape still self-describes for the OpenAPI exporter', () =>
+    {
+        const entry = object({ ...entryFields, id: number({ int: true }) });
+        expect(Object.keys(entry.meta?.shape ?? {})).toEqual(['name', 'message', 'id']);
+        expect(entry.meta?.shape?.['name']?.meta?.constraints).toEqual({ min: 2 });
+    });
+});

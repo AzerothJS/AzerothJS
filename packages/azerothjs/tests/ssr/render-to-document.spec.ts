@@ -145,4 +145,26 @@ describe('renderToDocument - scoped CSS collection during SSR', () =>
         resetStyleSheet();
         expect(collectStyleSheet()).toBe('');
     });
+
+    it('does NOT leak one render\'s per-render CSS into a later render\'s document', () =>
+    {
+        // css() interpolating request-specific data DURING a render must belong to that
+        // render alone. A process-global registry served request A's rule (an IBAN, here a
+        // marker) to every later request and grew without bound; the render frame confines it.
+        const docA = renderToDocument(() => h('div', { class: css`.acct { --iban: "${ 'SECRET-A' }"; }`.acct }, 'A'));
+        const docB = renderToDocument(() => h('div', { class: css`.acct { --iban: "${ 'SECRET-B' }"; }`.acct }, 'B'));
+
+        expect(docA).toContain('SECRET-A');
+        expect(docB).toContain('SECRET-B');
+        // The crux: request B's document carries none of request A's per-render CSS.
+        expect(docB).not.toContain('SECRET-A');
+    });
+
+    it('a render with no css() emits no <style> even after an earlier render used one', () =>
+    {
+        renderToDocument(() => h('div', { class: css`.leak { color: "${ 'ONCE' }"; }`.leak }, 'x'));
+        const clean = renderToDocument(() => h('main', {}, 'no styles here'));
+        expect(clean).not.toContain('ONCE');
+        expect(clean).not.toContain('<style');
+    });
 });

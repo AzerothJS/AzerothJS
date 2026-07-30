@@ -22,6 +22,16 @@
  * AsyncLocalStorage (node:async_hooks) - implemented by Bun, Deno, and workerd
  * (Cloudflare's nodejs_compat). On a runtime without it, construct the app with
  * `new App({ requestRoot: false })`.
+ *
+ * NOTE on client identity: a fetch-hosted request carries no socket, so `clientIp()` has
+ * nothing to read and `rateLimit()` REFUSES rather than silently keying every request in the
+ * world to one bucket. Give the limiter an explicit key drawn from whatever header the platform
+ * itself sets and guarantees - `CF-Connecting-IP` on Cloudflare, the platform's own forwarded
+ * header elsewhere - because on this transport that header is the only identity available, and
+ * it is trustworthy only because the platform, not the caller, wrote it:
+ *
+ *   rateLimit({ limit: 100, windowMs: 60_000,
+ *       key: (request) => request.headers.get('cf-connecting-ip') ?? 'anonymous' })
  */
 
 import type { WebHandler } from './edge.ts';

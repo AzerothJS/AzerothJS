@@ -431,20 +431,44 @@ export function targetToFullPath(target: NavigateTarget): string
  * Matches a string starting with a URL scheme (`https:`, `mailto:`, `tel:`,
  * ...) or a protocol-relative URL (`//host`). Such targets are external: the
  * base prefix must not be applied to them, and `<Link>` does not intercept
- * their clicks.
+ * their clicks. Callers classify through {@link isExternalUrl}, which
+ * normalizes the candidate the way a browser normalizes an href first.
  *
- * Lives here (rather than in link.ts) so both the router's base-resolution and
- * the link's click logic share one definition.
+ * @internal
+ */
+const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+
+/**
+ * ASCII whitespace and C0 controls (plus space), which browsers STRIP when resolving an
+ * href: `java\tscript:` and a leading-newline scheme both reach the browser as a real
+ * scheme. The classifier must strip them too, or it disagrees with the browser - calling
+ * such a string internal, intercepting the click, and pushing a scheme URL into history
+ * as if it were an app path.
+ *
+ * @internal
+ */
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point: browsers remove them from an href before resolving its scheme
+const URL_CONTROL_CHARS = /[\x00-\x20]/g;
+
+/**
+ * Whether a navigation target is EXTERNAL (scheme or protocol-relative), judged on the
+ * string a browser would actually resolve: control characters and whitespace are stripped
+ * before the scheme test, so the classifier and the rendered `href` can never disagree.
+ *
+ * Lives here (rather than in link.ts) so the router's base-resolution and the link's
+ * click logic share one definition.
  *
  * @example
  * ```ts
- * EXTERNAL_URL.test('https://example.com'); // -> true
- * EXTERNAL_URL.test('mailto:me@x.com');     // -> true
- * EXTERNAL_URL.test('//cdn.example.com');   // -> true
- * EXTERNAL_URL.test('/users/42');           // -> false (internal app path)
+ * isExternalUrl('https://example.com'); // -> true
+ * isExternalUrl('java\tscript:x');      // -> true (the browser sees a scheme; so do we)
+ * isExternalUrl('/users/42');           // -> false (internal app path)
  * ```
  */
-export const EXTERNAL_URL: RegExp = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+export function isExternalUrl(candidate: string): boolean
+{
+    return EXTERNAL_URL.test(candidate.replace(URL_CONTROL_CHARS, ''));
+}
 
 /**
  * Normalizes a configured base path into a canonical prefix:
@@ -634,7 +658,7 @@ export function createRouter(config: RouterConfig): Router
     function resolve(target: NavigateTarget): string
     {
         const full = targetToFullPath(target);
-        return EXTERNAL_URL.test(full) ? full : applyBase(full);
+        return isExternalUrl(full) ? full : applyBase(full);
     }
 
     function matchPathname(pathname: string): RouteMatch | null

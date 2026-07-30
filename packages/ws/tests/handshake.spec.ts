@@ -11,13 +11,14 @@ import { acceptValueFor, validateHandshake, upgradeResponse } from '@azerothjs/w
 function upgradeRequest(overrides: Record<string, string | undefined> = {}, method = 'GET'): IncomingMessage
 {
     const headers: Record<string, string | undefined> = {
+        host: 'local',
         upgrade: 'websocket',
         connection: 'keep-alive, Upgrade',
         'sec-websocket-version': '13',
         'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
         ...overrides
     };
-    return { method, headers } as unknown as IncomingMessage;
+    return { method, headers, httpVersionMajor: 1, httpVersionMinor: 1 } as unknown as IncomingMessage;
 }
 
 describe('the RFC 6455 vector', () =>

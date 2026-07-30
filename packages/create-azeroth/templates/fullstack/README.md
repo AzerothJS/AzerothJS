@@ -71,6 +71,7 @@ application/          the browser half - vite + the azeroth compiler
 
 server/               the API half - @azerothjs/http, no build step
   src/contract.ts     THE shared contract; the application imports this file
+  src/stream.ts       the RAW routes - not JSON, so not the contract's job
   src/app.ts          routes in, App out - pure, and what tests exercise
   src/main.ts         the environment, logging, edge pipeline, serve, shutdown
 ```
@@ -88,6 +89,31 @@ server/               the API half - @azerothjs/http, no build step
 The contract is imported by relative path, not over the network: change a route's
 shape in `server/src/contract.ts` and the client stops typechecking immediately.
 
+### Two kinds of route, on purpose
+
+The contract owns a route's **response** always, and its **request** when the body is a JSON
+value worth validating. Those routes get the typed client, boundary validation, and the 422
+field map the form displays. Everything else is a plain route that owns its own `Response`:
+
+| Kind | Where | Examples |
+| --- | --- | --- |
+| Contract | `src/contract.ts` + the `mountApi` handlers | the guest book, auth, catalogue, admin |
+| Raw | `src/stream.ts` | the token stream here, plus uploads (`streamMultipart`), webhooks, redirects, downloads |
+| Infra | one line in `src/app.ts` | `/api/healthz` |
+
+Do not force the second kind into the first. A streaming response has no JSON body to validate,
+and a large upload should not be buffered to hand a handler one value. `GET /api/assistant` is
+the worked example: a server-sent token stream consumed on the home page by the `stream`
+keyword, which accumulates the events into one reactive string and cancels the request when you
+press Stop - which is where a real handler stops paying a model provider.
+
+The middle case is worth knowing. A **form with files** (a title plus an avatar) can stay in the
+contract via `multipart()`: the text fields are validated like any JSON body and the files
+arrive within declared caps, so you keep the 422 field map and the validated response. What you
+give up is the typed client for that one route, which refuses multipart and says so - a browser
+posts `FormData` with `fetch`. Beyond form scale, use `streamMultipart` in a raw route and write
+each part straight to storage.
+
 ---
 
 ## 🔬 Devtools
@@ -103,9 +129,11 @@ request, the state and effects inside it, and the long-lived stores beside them.
 `await`, visible rather than asserted.
 
 Both sides are dev-only by construction. The client is behind `import.meta.env.DEV`, which a
-build replaces with `false`, so the branch and its import are eliminated. `attachDevtools`
-throws outright under `NODE_ENV=production` and accepts only localhost origins, because the
-graph carries live application values - treat the bridge like a debugger port.
+build replaces with `false`, so the branch and its import are eliminated. The server bridge
+attaches only under `NODE_ENV=development` and refuses every upgrade that does not present the
+per-boot token from a loopback peer with a localhost `Origin`. That graph carries live
+application values, tokens and account rows included, so treat the bridge like the debugger port
+it is: the token is printed at boot and minted fresh each time, never written to disk.
 
 ---
 

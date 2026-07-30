@@ -116,10 +116,22 @@ export function boundaryOf(contentType: string): string | null
 /** @internal First index of `needle` in `haystack` at or after `from`, or -1. Byte-exact. */
 function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from: number): number
 {
+    const first = needle[0];
+    if (first === undefined)
+    {
+        return from;
+    }
+    // The first-byte test guards the compare loop. Every needle here starts with a byte the
+    // client does not choose (CR), so no boundary-plus-payload pair it picks can keep the
+    // inner loop running at every offset - which is what turns this scan quadratic.
     const limit = haystack.length - needle.length;
     outer: for (let i = from; i <= limit; i++)
     {
-        for (let j = 0; j < needle.length; j++)
+        if (haystack[i] !== first)
+        {
+            continue;
+        }
+        for (let j = 1; j < needle.length; j++)
         {
             if (haystack[i + j] !== needle[j])
             {
@@ -129,6 +141,23 @@ function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from: number): n
         return i;
     }
     return -1;
+}
+
+/** @internal Does `needle` sit at exactly `at` in `haystack`? */
+function matchesAt(haystack: Uint8Array, needle: Uint8Array, at: number): boolean
+{
+    if (at + needle.length > haystack.length)
+    {
+        return false;
+    }
+    for (let i = 0; i < needle.length; i++)
+    {
+        if (haystack[at + i] !== needle[i])
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 /** @internal The buffered parsing core; pure and byte-exact ({@link streamMultipart} is the incremental twin). */
@@ -141,25 +170,35 @@ function parseMultipart(
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
-    // Between parts every boundary appears as CRLF + "--" + boundary; the FIRST boundary has
-    // no preceding CRLF (nothing precedes it but optional preamble). Searching for the
-    // un-prefixed form and then consuming the line keeps one search covering both cases.
-    const delimiter = encoder.encode(`--${ boundary }`);
+    // Every boundary but the first appears as CRLF + "--" + boundary, and the CRLF stays IN
+    // the delimiter: a client picks the boundary AND the payload bytes, and an un-prefixed
+    // needle (`--` + 70 dashes) against a body of dashes makes every single offset compare the
+    // whole boundary - seconds of blocked event loop per request. The first boundary, which has
+    // nothing but optional preamble before it, is matched once against the un-prefixed form.
+    const delimiter = encoder.encode(`\r\n--${ boundary }`);
+    const opening = delimiter.subarray(CRLF.length);
 
     const fields = new URLSearchParams();
     const files: UploadedFile[] = [];
 
-    let cursor = indexOfBytes(body, delimiter, 0);
-    if (cursor === -1)
+    let cursor: number;
+    if (matchesAt(body, opening, 0))
     {
-        throw new BadRequestError('The multipart body contains no boundary.', { code: 'malformed-multipart' });
+        cursor = opening.length;
+    }
+    else
+    {
+        const first = indexOfBytes(body, delimiter, 0);
+        if (first === -1)
+        {
+            throw new BadRequestError('The multipart body contains no boundary.', { code: 'malformed-multipart' });
+        }
+        cursor = first + delimiter.length;
     }
 
     let parts = 0;
     for (;;)
     {
-        cursor += delimiter.length;
-
         // "--" after the boundary marks the terminal delimiter; anything after is epilogue.
         if (body[cursor] === 45 && body[cursor + 1] === 45)
         {
@@ -188,18 +227,13 @@ function parseMultipart(
         const headers = parsePartHeaders(headerText);
         cursor = headerEnd + HEADER_END.length;
 
-        // Payload: everything up to the CRLF that precedes the next delimiter.
+        // Payload: everything up to the next delimiter, whose leading CRLF closes it.
         const nextDelimiter = indexOfBytes(body, delimiter, cursor);
         if (nextDelimiter === -1)
         {
             throw new BadRequestError('The multipart body is missing its closing boundary.', { code: 'malformed-multipart' });
         }
-        const payloadEnd = nextDelimiter - CRLF.length;
-        if (payloadEnd < cursor || indexOfBytes(body, CRLF, payloadEnd) !== payloadEnd)
-        {
-            throw new BadRequestError('A multipart payload is not CRLF-delimited from its boundary.', { code: 'malformed-multipart' });
-        }
-        const payload = body.subarray(cursor, payloadEnd);
+        const payload = body.subarray(cursor, nextDelimiter);
 
         if (headers.filename !== null)
         {
@@ -220,7 +254,7 @@ function parseMultipart(
             fields.append(headers.name, decoder.decode(payload));
         }
 
-        cursor = nextDelimiter;
+        cursor = nextDelimiter + delimiter.length;
     }
 }
 
@@ -252,8 +286,12 @@ function parsePartHeaders(block: string): { name: string; filename: string | nul
                 throw new BadRequestError(
                     'A multipart part is not form-data.', { code: 'malformed-multipart' });
             }
-            name = dispositionParam(value, 'name');
-            filename = dispositionParam(value, 'filename');
+            const params = dispositionParams(value);
+            name = params.get('name') ?? null;
+            // RFC 8187 gives `filename*` precedence over `filename`, and its mere PRESENCE
+            // makes the part a file: classified as a text field it would face neither the
+            // per-file cap nor byte preservation.
+            filename = extendedFilename(params.get('filename*')) ?? params.get('filename') ?? null;
         }
     }
 
@@ -266,19 +304,84 @@ function parsePartHeaders(block: string): { name: string; filename: string | nul
 }
 
 /**
- * @internal One Content-Disposition parameter. Browsers percent-escape quotes and newlines
- * inside quoted strings (the WHATWG multipart serialization), so a simple quoted scan is
- * exact for real clients; the unquoted token form is accepted for non-browser peers.
+ * @internal Every Content-Disposition parameter, keyed by lowercased name. The split happens
+ * on semicolons OUTSIDE quoted strings only: a scan that ignores the quotes lets
+ * `name="note; filename=evil.exe"` smuggle a filename (and with it the file classification)
+ * out of a value that is entirely one field NAME. Browsers percent-escape quotes and newlines
+ * inside quoted strings (the WHATWG multipart serialization), so the value is taken verbatim;
+ * the unquoted token form is accepted for non-browser peers.
  */
-function dispositionParam(disposition: string, param: string): string | null
+function dispositionParams(disposition: string): Map<string, string>
 {
-    const pattern = new RegExp(`;\\s*${ param }=(?:"([^"]*)"|([^;\\s]+))`, 'i');
-    const match = pattern.exec(disposition);
-    if (match === null)
+    const params = new Map<string, string>();
+    let start = 0;
+    let quoted = false;
+    let first = true;
+    for (let i = 0; i <= disposition.length; i++)
+    {
+        const char = disposition[i];
+        if (char === '"')
+        {
+            quoted = !quoted;
+            continue;
+        }
+        if (char !== undefined && (char !== ';' || quoted))
+        {
+            continue;
+        }
+        const segment = disposition.slice(start, i);
+        start = i + 1;
+        if (first)
+        {
+            first = false; // the disposition type itself ("form-data"), not a parameter
+            continue;
+        }
+        const equals = segment.indexOf('=');
+        if (equals === -1)
+        {
+            continue;
+        }
+        const key = segment.slice(0, equals).trim().toLowerCase();
+        const raw = segment.slice(equals + 1).trim();
+        const value = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+        if (!params.has(key))
+        {
+            params.set(key, value);
+        }
+    }
+    return params;
+}
+
+/**
+ * @internal The RFC 8187 extended value: `charset'language'percent-encoded`. Undecodable input
+ * still returns a string rather than null - the part is a FILE either way, and demoting it to a
+ * text field is what skips the per-file cap and mangles binary through a UTF-8 decode.
+ */
+function extendedFilename(value: string | undefined): string | null
+{
+    if (value === undefined)
     {
         return null;
     }
-    return match[1] ?? match[2] ?? null;
+    const match = /^([^']*)'[^']*'(.*)$/.exec(value);
+    if (match === null)
+    {
+        return value;
+    }
+    const [, charset, encoded] = match;
+    try
+    {
+        if ((charset ?? '').toLowerCase() === 'iso-8859-1')
+        {
+            return (encoded ?? '').replace(/%([0-9A-Fa-f]{2})/g,
+                (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+        }
+        return decodeURIComponent(encoded ?? '');
+    }
+    catch
+    {
+        return encoded ?? value;
+    }
 }
 
 /** One part of a multipart body, delivered incrementally by {@link streamMultipart}. */

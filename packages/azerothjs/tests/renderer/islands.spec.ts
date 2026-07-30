@@ -81,6 +81,68 @@ describe('hydrateIslands', () =>
         root.remove();
     });
 
+    it('one island failing to load leaves the others revived (allSettled, not all)', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const root = pageInto(() => h('main', {},
+            island('/islands/ok', Counter, { start: 1 }),
+            island('/islands/bad', Counter, { start: 2 })));
+        const registry: IslandRegistry = {
+            '/islands/ok': async () => Counter,
+            '/islands/bad': async () =>
+            {
+                throw new Error('chunk 500');
+            }
+        };
+        const revived = await hydrateIslands(registry, root);
+        // The good island still came up; the failed one is left static with a warning.
+        expect(revived).toBe(1);
+        expect(warn).toHaveBeenCalled();
+        const buttons = Array.from(root.querySelectorAll('button'));
+        buttons[0]?.click();
+        expect(buttons[0]?.textContent).toBe('2');
+        warn.mockRestore();
+        root.remove();
+    });
+
+    it('malformed props JSON leaves that island static instead of aborting the pass', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const root = pageInto(() => h('main', {},
+            island('/islands/a', Counter, { start: 7 }),
+            island('/islands/b', Counter, { start: 9 })));
+        // Corrupt one anchor's serialized props.
+        const anchors = Array.from(root.querySelectorAll('[data-azeroth-island]'));
+        anchors[0]?.setAttribute('data-azeroth-props', '{not valid json');
+        const registry: IslandRegistry = {
+            '/islands/a': async () => Counter,
+            '/islands/b': async () => Counter
+        };
+        const revived = await hydrateIslands(registry, root);
+        expect(revived).toBe(1);
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+        root.remove();
+    });
+
+    it('an inherited registry key (constructor/toString) degrades to the no-loader warning', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const root = pageInto(() => h('main', {}, island('/islands/x', Counter, { start: 0 })));
+        // registry['constructor'] on a plain object is truthy (Object.prototype.constructor); a
+        // plain index would call it as a loader and crash. Object.hasOwn rejects it.
+        const anchors = Array.from(root.querySelectorAll('[data-azeroth-island]'));
+        anchors[0]?.setAttribute('data-azeroth-island', 'constructor');
+        const revived = await hydrateIslands({}, root);
+        expect(revived).toBe(0);
+        expect(warn.mock.calls[0]?.[0]).toContain('no loader registered');
+        warn.mockRestore();
+        root.remove();
+    });
+
     it('revives multiple independent islands in one pass', async () =>
     {
         const root = pageInto(() => h('main', {},

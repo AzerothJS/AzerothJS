@@ -16,11 +16,18 @@
 /** RFC 6265 token: the characters a cookie NAME may contain. */
 const NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
+/** RFC 6265 path-value minus ','; a ';' or ',' in Path rewrites sibling attributes (last-wins parsing). */
+const PATH_PATTERN = /^[\x20-\x2b\x2d-\x3a\x3c-\x7e]*$/;
+
+/** RFC 6265 domain-value: dot-separated LDH labels, with the ignored leading dot tolerated. */
+const DOMAIN_PATTERN = /^\.?[0-9A-Za-z]([0-9A-Za-z-]*[0-9A-Za-z])?(\.[0-9A-Za-z]([0-9A-Za-z-]*[0-9A-Za-z])?)*$/;
+
 /** Reads the request's cookies. Malformed pairs are skipped, never thrown - inbound is hostile. */
 export function parseCookies(request: Request): Record<string, string>
 {
     const header = request.headers.get('cookie');
-    const cookies: Record<string, string> = {};
+    // Null prototype: a cookie named toString or __proto__ is data, not an inherited member.
+    const cookies: Record<string, string> = Object.create(null) as Record<string, string>;
     if (header === null)
     {
         return cookies;
@@ -33,12 +40,12 @@ export function parseCookies(request: Request): Record<string, string>
             continue;
         }
         const name = pair.slice(0, equals).trim();
-        if (name === '' || name in cookies)
+        if (name === '' || Object.hasOwn(cookies, name))
         {
             continue; // first value wins; empty names are noise
         }
         let value = pair.slice(equals + 1).trim();
-        if (value.startsWith('"') && value.endsWith('"'))
+        if (value.length >= 2 && value.startsWith('"') && value.endsWith('"'))
         {
             value = value.slice(1, -1); // the optional RFC 6265 quoted form
         }
@@ -81,15 +88,30 @@ export interface CookieOptions
 /**
  * Builds one Set-Cookie header value with safe defaults: Path=/, HttpOnly, SameSite=Lax.
  * Throws on anything that would silently emit a different cookie than the code says:
- * invalid names, unencodable attribute values, SameSite=None without Secure, and the
- * __Secure-/__Host- prefix contracts (the browser ENFORCES those; emitting a violating
- * cookie means it is silently dropped client-side).
+ * invalid names, Path/Domain values outside the RFC 6265 attribute grammar (a ';' smuggles
+ * a second attribute in via last-wins parsing; a CR LF is a header injection), a non-finite
+ * Max-Age, SameSite=None without Secure, and the __Secure-/__Host- prefix contracts (the
+ * browser ENFORCES those; emitting a violating cookie means it is silently dropped
+ * client-side).
  */
 export function serializeCookie(name: string, value: string, options: CookieOptions = {}): string
 {
     if (!NAME_PATTERN.test(name))
     {
         throw new Error(`"${ name }" is not a valid cookie name.`);
+    }
+    const path = options.path ?? '/';
+    if (!PATH_PATTERN.test(path))
+    {
+        throw new Error(`"${ path }" is not a valid cookie path.`);
+    }
+    if (options.domain !== undefined && !DOMAIN_PATTERN.test(options.domain))
+    {
+        throw new Error(`"${ options.domain }" is not a valid cookie domain.`);
+    }
+    if (options.maxAge !== undefined && !Number.isFinite(options.maxAge))
+    {
+        throw new Error(`Max-Age must be a finite number, got ${ options.maxAge }.`);
     }
 
     const secure = options.secure ?? false;
@@ -105,14 +127,14 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
     }
     if (name.startsWith('__Host-'))
     {
-        if (!secure || options.domain !== undefined || (options.path ?? '/') !== '/')
+        if (!secure || options.domain !== undefined || path !== '/')
         {
             throw new Error('A __Host- cookie must set Secure, no Domain, and Path=/.');
         }
     }
 
     const parts = [`${ name }=${ encodeURIComponent(value) }`];
-    parts.push(`Path=${ options.path ?? '/' }`);
+    parts.push(`Path=${ path }`);
     if (options.domain !== undefined)
     {
         parts.push(`Domain=${ options.domain }`);

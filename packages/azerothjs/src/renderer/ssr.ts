@@ -8,6 +8,10 @@
  * child serialization, the SSRNode wrapper) live in azerothjs's ssr; this file owns
  * the HTML-element specifics (tag names, void elements, attribute-vs-property rules). These
  * serializers are package-internal (consumed by h.ts in string mode), not public API.
+ *
+ * It also owns the render-safety gate - assertSafeTag / assertSafeAttribute - which BOTH
+ * render modes call, so a tag or a value one mode refuses can never be written by the other.
+ * The only public symbols here are the two escape hatches that opt a single value out of it.
  */
 
 import type { Props, Child } from './types.ts';
@@ -46,13 +50,44 @@ export const VOID_ELEMENTS: ReadonlySet<string> = new Set
 ]);
 
 /**
- * HTML raw-text elements: their content is CDATA. `<script>`/`<style>` text is emitted VERBATIM,
- * never HTML-escaped - a browser does not decode entities inside them (raw text), so escaping `&`/`<`
- * would render `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD. Mirrors the compiler's set.
+ * HTML raw-text elements: their content is CDATA. `<script>`/`<style>` text is emitted
+ * without HTML-escaping - a browser does not decode entities inside them (raw text), so
+ * escaping `&`/`<` would render `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD.
+ * Mirrors the compiler's set. The element-terminating sequences are the one exception:
+ * see {@link neutralizeRawText}.
  *
  * @internal
  */
 const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
+
+/**
+ * Raw-text content is CDATA, but CDATA is closed by the element's own end tag: a child
+ * containing `</script>` terminates the element mid-content and everything after it is
+ * parsed as MARKUP - `h('script', {}, JSON.stringify(data))` becomes an injection the
+ * moment `data` holds `'</script><img onerror=...>'`. The DOM path appends an inert Text
+ * node for the same call, so without this transform the same component is safe
+ * client-rendered and live server-rendered.
+ *
+ * The `<` opening a sequence the HTML tokenizer acts on inside script data (`</script`,
+ * `<script`, `<!--`) becomes the six-character JS unicode escape for `<`; inside style
+ * data, the `<` opening `</style` becomes the CSS hex escape `\3c`. Both decode back to
+ * `<` in every context
+ * that can legitimately carry the sequence (JSON/JS strings, template literals, regexes,
+ * CSS strings), so real content round-trips losslessly - only in raw code position do
+ * they differ, where the original sequence already terminated the element.
+ *
+ * @internal
+ */
+const SCRIPT_BREAKOUT = /<(?=\/script|script|!--)/gi;
+export const STYLE_BREAKOUT: RegExp = /<(?=\/style)/gi;
+
+/** Applies the raw-text breakout transform for one element. @internal */
+function neutralizeRawText(tagName: string, content: string): string
+{
+    return tagName === 'script'
+        ? content.replace(SCRIPT_BREAKOUT, '\\u003c')
+        : content.replace(STYLE_BREAKOUT, '\\3c');
+}
 
 /**
  * Props that h()'s DOM path sets as content rather than attributes
@@ -77,6 +112,380 @@ const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
  */
 // eslint-disable-next-line no-control-regex -- matching control characters is the POINT: a control char in an attribute name is invalid HTML and an injection vector
 const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'>/=]/;
+
+/**
+ * The event-handler attribute namespace, case-insensitive because HTML attribute names
+ * are: `ONERROR="..."` parses (and `setAttribute` lowercases) to the same live handler
+ * as `onerror="..."`. The framework claims the whole `on*` prefix for function handlers,
+ * so any other value under it is rejected rather than written as an attribute.
+ *
+ * @internal
+ */
+const EVENT_ATTR_NAME = /^on/i;
+
+/**
+ * Whether `name` belongs to the `on*` event-handler namespace, judged case-insensitively
+ * because HTML attribute names are. The ONE definition of that namespace, shared by the
+ * prop gate below and hydration's attribute strip in h.ts.
+ *
+ * @internal
+ */
+export function isEventAttribute(name: string): boolean
+{
+    return EVENT_ATTR_NAME.test(name);
+}
+
+/**
+ * Attributes the browser resolves as a URL and then FETCHES or NAVIGATES to. A scheme it
+ * treats as code (`javascript:`, `vbscript:`) or as a document it will run script from
+ * (`data:text/html`, `data:image/svg+xml`) turns a rendered value into execution - which is
+ * what every "user-supplied link" injection reduces to. Names are matched lowercased, as
+ * HTML attribute names are case-insensitive.
+ *
+ * @internal
+ */
+const URL_ATTRIBUTES: ReadonlySet<string> = new Set
+([
+    'href',
+    'src',
+    'action',
+    'formaction',
+    'poster',
+    'xlink:href',
+    'data'
+]);
+
+/**
+ * ASCII whitespace and C0 controls, which browsers STRIP before resolving a URL: `java\tscript:`
+ * and a leading-newline scheme both reach the parser as a real `javascript:` scheme. Testing the
+ * raw string instead of the normalized one is exactly how a scheme classifier gets bypassed, so
+ * the candidate is normalized the way the browser normalizes it first.
+ *
+ * @internal
+ */
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point: browsers remove them from a URL before resolving its scheme
+const URL_CONTROL_CHARS = /[\x00-\x20]/g;
+
+/** The scheme of a URL candidate, or no match for a relative URL. @internal */
+const URL_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+/**
+ * A `data:` URL carrying a non-SVG image. Inline images are legitimate and common, so they
+ * stay allowed; `image/svg+xml` does NOT, because an SVG document carries script and runs it
+ * when navigated to - a `data:image/svg+xml` href is a same-document XSS with an image's name.
+ *
+ * @internal
+ */
+const DATA_IMAGE_URL = /^data:image\/(?!svg)[a-z0-9.+-]+[;,]/i;
+
+/**
+ * Tags refused outright: `<base>` rewrites where every relative URL on the page resolves to
+ * (one injected tag re-points every link, form and script), and `<object>`/`<embed>` load a
+ * document that runs script in this origin. `<iframe>` is deliberately NOT here - every video
+ * and payment embed is one, and it is sandboxable and origin-isolated.
+ *
+ * @internal
+ */
+const REFUSED_TAGS: ReadonlySet<string> = new Set(['base', 'object', 'embed']);
+
+/**
+ * The `type` values a `<script>` can carry and still EXECUTE: the HTML JavaScript-MIME set,
+ * plus `module` and the empty value (both mean "run this"). Any OTHER type is a data block the
+ * browser never runs - `application/ld+json` is the documented case, and this serializer has
+ * dedicated escaping for its content.
+ *
+ * @internal
+ */
+const JAVASCRIPT_MIME_TYPES: ReadonlySet<string> = new Set
+([
+    '',
+    'module',
+    'text/javascript',
+    'application/javascript',
+    'text/ecmascript',
+    'application/ecmascript',
+    'text/jscript',
+    'text/livescript',
+    'text/x-javascript',
+    'text/x-ecmascript',
+    'application/x-javascript',
+    'application/x-ecmascript'
+]);
+
+/** The two things an author can take responsibility for: a URL's scheme, or a tag name. @internal */
+type UnsafeKind = 'url' | 'tag';
+
+/**
+ * The opt-out marker {@link unsafeUrl} / {@link unsafeTag} return. It is an OBJECT, not a
+ * string, so the gate's permission can never be forged by data: no JSON payload, form field or
+ * database column deserializes into one - only a literal call in the author's own source does.
+ * It stringifies to the original value, so every writer downstream (escapeAttr, setAttribute,
+ * createElement) sees exactly the string that was passed in.
+ *
+ * @internal
+ */
+class UnsafeValue
+{
+    readonly #value: string;
+    readonly #kind: UnsafeKind;
+
+    constructor(value: string, kind: UnsafeKind)
+    {
+        this.#value = value;
+        this.#kind = kind;
+    }
+
+    public get kind(): UnsafeKind
+    {
+        return this.#kind;
+    }
+
+    public toString(): string
+    {
+        return this.#value;
+    }
+}
+
+/**
+ * The string behind an {@link UnsafeValue} of `kind`, or null when `value` is not one. The kind
+ * is part of the match so a URL the author vetted cannot also authorize a tag, or the reverse.
+ *
+ * @internal
+ */
+function unbrand(value: unknown, kind: UnsafeKind): string | null
+{
+    return value instanceof UnsafeValue && value.kind === kind ? value.toString() : null;
+}
+
+/**
+ * unsafeUrl
+ *
+ * PURPOSE:
+ * Marks one URL string as author-vetted, so the render-safety gate writes it verbatim into a
+ * URL attribute (`href`, `src`, `action`, `formaction`, `poster`, `xlink:href`, `data`) even
+ * when its scheme is one the framework otherwise refuses, and into `srcdoc`, which is refused
+ * outright.
+ *
+ * WHY IT EXISTS:
+ * The gate refuses `javascript:`, `vbscript:` and non-image `data:` URLs because a value that
+ * reaches them is almost always user data that was never meant to be code. "Almost always" is
+ * not "always": a bookmarklet builder, a generated SVG document, a legacy `javascript:void(0)`
+ * anchor are real. Those get an explicit, greppable opt-in at the ONE call site that needs it,
+ * instead of a global switch that turns the gate off for the whole app.
+ *
+ * WHEN TO USE:
+ * When the URL is a literal in your own source, or you built it yourself from values you
+ * validated.
+ *
+ * WHEN NOT TO USE:
+ * On anything that came from a request, a database, a file, or a user - there is no vetting
+ * left in the call, so this simply reinstates the vulnerability the gate exists to stop.
+ *
+ * @param value - The URL to write verbatim.
+ * @returns An opaque marker that stringifies to `value`, typed as `string` so it drops into a
+ *          prop unchanged.
+ * @see {@link unsafeTag}
+ * @example
+ * h('a', { href: unsafeUrl('javascript:void(0)') }, 'legacy anchor');
+ * h('img', { src: unsafeUrl(`data:image/svg+xml,${ encodeURIComponent(chart) }`) });
+ */
+export function unsafeUrl(value: string): string
+{
+    return new UnsafeValue(value, 'url') as unknown as string;
+}
+
+/**
+ * unsafeTag
+ *
+ * PURPOSE:
+ * Marks one tag name as author-vetted, so h() creates it even when it is a tag the
+ * render-safety gate refuses: an executing `<script>`, or `<base>` / `<object>` / `<embed>`.
+ *
+ * WHY IT EXISTS:
+ * Those four tags are how injected markup gets from "content" to "code", so h() refuses them by
+ * default. An app that genuinely needs one - injecting a third-party loader, an analytics
+ * snippet - names itself at the call site rather than the framework leaving the door open for
+ * everyone. A NON-executing script (`type="application/ld+json"` and any other data block) is
+ * allowed without this.
+ *
+ * WHEN TO USE:
+ * With a literal tag name for content you control.
+ *
+ * WHEN NOT TO USE:
+ * With a tag name that came from data. A `<script>` whose content is also data is remote code
+ * execution in the visitor's session, no matter how the tag name was spelled.
+ *
+ * @param name - The tag name to create.
+ * @returns An opaque marker that stringifies to `name`, typed as `string` so it drops into h()
+ *          unchanged.
+ * @see {@link unsafeUrl}
+ * @example
+ * h(unsafeTag('script'), { src: 'https://cdn.example.com/widget.js', async: true });
+ */
+export function unsafeTag(name: string): string
+{
+    return new UnsafeValue(name, 'tag') as unknown as string;
+}
+
+/**
+ * Rejects a prop that cannot be written as an HTML attribute without becoming an
+ * injection, with ONE policy shared by the serializer and the DOM path (h.ts):
+ *
+ *   - a NAME containing whitespace, quotes, `>`, `/`, or `=` breaks out of the
+ *     attribute context (`setAttribute` throws InvalidCharacterError for the same input);
+ *   - an `on*` prop whose VALUE is not a function would be written as a LIVE inline
+ *     event handler (`onerror="fetch(...)"` executes) - the classic string-handler XSS.
+ *     null/undefined/false pass so a conditional handler can be omitted;
+ *   - a URL attribute whose VALUE carries an executable scheme, and `srcdoc`
+ *     (see {@link assertSafeUrl}).
+ *
+ * Emitting any of them raw is the XSS. Fail loud, identically on server and client.
+ *
+ * @internal
+ */
+export function assertSafeAttribute(key: string, value: unknown): void
+{
+    if (key === '' || INVALID_ATTR_NAME.test(key))
+    {
+        throw new Error(`azeroth: invalid attribute name ${ JSON.stringify(key) } - names may not contain whitespace, quotes, '>', '/', or '='.`);
+    }
+
+    if (EVENT_ATTR_NAME.test(key)
+        && typeof value !== 'function'
+        && value !== false && value !== null && value !== undefined)
+    {
+        throw new Error(`azeroth: invalid event prop ${ JSON.stringify(key) } - an on* prop must be a function handler `
+            + '(or null/undefined/false to omit it); any other value would be written as a live inline event handler.');
+    }
+
+    assertSafeUrl(key, value);
+}
+
+/**
+ * Rejects a URL-bearing attribute whose value the browser would run instead of fetch, and
+ * `srcdoc` in every form - an inline document, not a URL, and the one attribute whose value IS
+ * markup. The value is normalized before its scheme is read (see {@link URL_CONTROL_CHARS}).
+ * {@link unsafeUrl} opts a single value out.
+ *
+ * @internal
+ */
+function assertSafeUrl(key: string, value: unknown): void
+{
+    if (value === false || value === null || value === undefined || unbrand(value, 'url') !== null)
+    {
+        return;
+    }
+
+    const name = key.toLowerCase();
+    // A tag marker is not a url marker: an opt-in authorizes exactly the one thing it names, so
+    // the wrong brand is judged as the string it would be written as.
+    const candidate: unknown = unbrand(value, 'tag') ?? value;
+
+    if (name === 'srcdoc')
+    {
+        throw new Error(`azeroth: refusing the ${ JSON.stringify(key) } attribute - srcdoc is an inline DOCUMENT, `
+            + 'so its value is markup that runs with the embedding page\'s privileges. Point the frame at a real URL, '
+            + 'or pass unsafeUrl(...) if the content is yours.');
+    }
+
+    if (typeof candidate === 'string' && URL_ATTRIBUTES.has(name) && isExecutableUrl(candidate))
+    {
+        throw new Error(`azeroth: refusing ${ JSON.stringify(key) }=${ JSON.stringify(candidate) } - the browser would `
+            + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image). '
+            + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.');
+    }
+}
+
+/**
+ * Whether a URL hands the browser CODE rather than a resource, judged on the string the
+ * browser would actually resolve.
+ *
+ * @internal
+ */
+function isExecutableUrl(value: string): boolean
+{
+    const candidate = value.replace(URL_CONTROL_CHARS, '');
+    const scheme = URL_SCHEME.exec(candidate)?.[1]?.toLowerCase();
+
+    if (scheme === undefined)
+    {
+        return false;
+    }
+
+    // Every data: URL is same-origin-ish content the browser parses; only a real (non-SVG)
+    // image is inert, so the allowance is stated positively.
+    if (scheme === 'data')
+    {
+        return !DATA_IMAGE_URL.test(candidate);
+    }
+
+    return scheme === 'javascript' || scheme === 'vbscript';
+}
+
+/**
+ * Validates the tag h() was handed, in every render mode, and returns the concrete tag name to
+ * build with (unwrapping an {@link unsafeTag} marker). The refused set is the markup that turns
+ * content into execution - see {@link REFUSED_TAGS} for why `<iframe>` is not in it, and
+ * {@link JAVASCRIPT_MIME_TYPES} for why a data-block `<script>` is allowed.
+ *
+ * The original casing is returned, not the lowercased name: `foreignObject` and the other
+ * camelCase SVG tags must reach createElementNS spelled exactly as given.
+ *
+ * @internal
+ */
+export function assertSafeTag(tag: string, props: Props): string
+{
+    const vetted = unbrand(tag, 'tag');
+    if (vetted !== null)
+    {
+        return vetted;
+    }
+
+    // A url marker is not a tag marker (see assertSafeUrl for the mirror case).
+    const raw = unbrand(tag, 'url') ?? tag;
+    const name = raw.toLowerCase();
+
+    if (REFUSED_TAGS.has(name))
+    {
+        throw new Error(`azeroth: refusing to render <${ name }> - it loads a document that runs script in this origin `
+            + '(or, for <base>, silently re-targets every relative URL on the page). Use <iframe> for an embed, '
+            + `or unsafeTag('${ name }') if it is deliberate.`);
+    }
+
+    if (name === 'script' && scriptExecutes(props))
+    {
+        throw new Error('azeroth: refusing to render an executable <script> - its content would run with the page\'s '
+            + 'privileges. A data block (type="application/ld+json" or any other non-JavaScript type) renders as-is; '
+            + 'pass unsafeTag(\'script\') if the execution is deliberate.');
+    }
+
+    return raw;
+}
+
+/**
+ * Whether a `<script>` with these props would RUN. A missing `type`, a non-string one (a
+ * reactive `type` cannot be proven inert at creation), and a JavaScript MIME all count as
+ * executing - the gate fails closed, since the cost of guessing wrong is code execution.
+ *
+ * @internal
+ */
+function scriptExecutes(props: Props): boolean
+{
+    if (!Object.hasOwn(props, 'type'))
+    {
+        return true;
+    }
+
+    const type = resolveValue(props.type);
+
+    if (typeof type !== 'string')
+    {
+        return true;
+    }
+
+    // A MIME's parameters (`;charset=utf-8`) do not change what it is.
+    return JAVASCRIPT_MIME_TYPES.has(type.trim().toLowerCase().split(';')[0] ?? '');
+}
 
 /**
  * Resolves a possibly-reactive prop value to a concrete value, reading getters
@@ -142,17 +551,12 @@ function serializeAttrs(props: Props): string
             continue;
         }
 
-        // Reject an attribute name that cannot be safely written - mirroring the
-        // DOM path's setAttribute, which throws InvalidCharacterError. A prop key
-        // carrying a quote/space/`>` is either a bug or an injection attempt to
-        // break out of the attribute context and inject a live handler; emitting
-        // it raw is the XSS. Fail loud, identically on server and client.
-        if (key === '' || INVALID_ATTR_NAME.test(key))
-        {
-            throw new Error(`azeroth: invalid attribute name ${ JSON.stringify(key) } - names may not contain whitespace, quotes, '>', '/', or '='.`);
-        }
-
         const value = resolveValue(rawValue);
+
+        // Gated on the RESOLVED value, exactly as the DOM path gates the value its effect
+        // resolved: a reactive `href={() => url()}` must meet the same policy as a literal one,
+        // and checking the raw thunk here would see a function and wave every reactive prop past.
+        assertSafeAttribute(key, value);
 
         if (value === false || value === null || value === undefined)
         {
@@ -230,9 +634,11 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
         return ssr(`<${ tagName }${ attrs }>`);
     }
 
-    // Raw-text element (`<script>`/`<style>`): content is CDATA, emitted verbatim (same trust model
-    // as innerHTML). The compiler feeds a single literal string here; escaping it would corrupt the
-    // CSS/JSON-LD, since a browser does not decode entities inside these elements.
+    // Raw-text element (`<script>`/`<style>`): content is CDATA, emitted without HTML-escaping.
+    // The compiler feeds a single literal string here; entity-escaping it would corrupt the
+    // CSS/JSON-LD, since a browser does not decode entities inside these elements. Only the
+    // sequences that could TERMINATE the element are neutralized (see neutralizeRawText), so a
+    // child value can never close the tag and continue as live markup.
     if (RAW_TEXT_ELEMENTS.has(tagName))
     {
         let raw = '';
@@ -245,7 +651,7 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
             // eslint-disable-next-line @typescript-eslint/no-base-to-string -- raw-text content is caller-trusted CDATA; a reactive value is resolved, any non-string is coerced like the DOM path
             raw += String(typeof child === 'function' ? resolveValue(child) ?? '' : child);
         }
-        return ssr(`<${ tagName }${ attrs }>${ raw }</${ tagName }>`);
+        return ssr(`<${ tagName }${ attrs }>${ neutralizeRawText(tagName, raw) }</${ tagName }>`);
     }
 
     let inner: string;

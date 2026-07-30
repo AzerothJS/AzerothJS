@@ -199,6 +199,24 @@ export async function runInRequestRoot<T, A>(
     // the hot path (no cleanups) returns the result untouched.
     if (scope.cleanups !== null && isStreamingResponse(result))
     {
+        // The stream is the PRIMARY settle signal, but it is not the only one: an adapter that
+        // finds the socket already destroyed has nothing to read the body with, so nothing would
+        // ever pull or cancel it and the cleanups would never run. An abort therefore also
+        // settles the root. `runCleanups` nulls the list before awaiting, so whichever signal
+        // arrives first wins and the other is a no-op.
+        const signal = arg instanceof Request ? arg.signal : undefined;
+        if (signal !== undefined)
+        {
+            if (signal.aborted)
+            {
+                await runCleanups(scope, options);
+                return result;
+            }
+            signal.addEventListener('abort', () =>
+            {
+                void runCleanups(scope, options);
+            }, { once: true });
+        }
         return deferCleanupsToBody(result, scope, options) as T;
     }
 

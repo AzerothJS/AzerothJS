@@ -18,7 +18,7 @@ npm install @azerothjs/http
 
 ```ts
 // contract.ts - imported by browser AND server (no handler code lives here)
-import { defineContract, get, post } from '@azerothjs/http/api/client';
+import { defineContract, get, post } from '@azerothjs/http/api/shared';
 import { object, string, number } from '@azerothjs/schema';
 
 export const contract = defineContract({
@@ -47,21 +47,71 @@ import { mountApi } from '@azerothjs/http/api';
 
 mountApi(app, contract, {
     handlers: {
-        users: {
-            get: ({ params }) => ({ id: Number(params.id), name: 'Jaina' }), // signature DERIVED - drift fails to compile
-            create: ({ input }) => ({ created: input.name })
-        }
+        'users.get': ({ params }) => ({ id: Number(params.id), name: 'Jaina' }), // signature DERIVED - drift fails to compile
+        'users.create': ({ input }) => ({ created: input.name })
     }
 }); // validation at the boundary; 422s carry the form-compatible field map
 ```
 
+Handlers are keyed by the contract's DOTTED ROUTE PATH - the same key space the `guards` map uses,
+so there is one way to name a route and no tree to mirror. A key that is not a route path, or a
+missing, extra, or wrongly-typed handler, is a compile error.
+
+Mount a GROUP to make those keys relative to it, which is how a large API stays readable: each
+service is one mount, and `'*'` in its guards means "everything in this service".
+
+```ts
+mountApi(app, contract.admin, {
+    guards:   { '*': [requireAdmin], signIn: only([throttle(10, 60_000)]) },
+    handlers: { ...consoleHandlers(deps), ...catalogueHandlers(deps) }   // plain spread, no nesting
+});
+```
+
 ```ts
 // browser
-import { createClient } from '@azerothjs/http/api/client';
+import { createClient } from '@azerothjs/http/api/shared';
 
 const client = createClient(contract, { baseUrl: '/api' });
 const user = await client.users.get({ params: { id: '42' } }); // fully inferred
 ```
+
+## Assembling a big contract: `group` and `merge`
+
+```ts
+// One base path per service, written once. Paths stay explicit - a key and its path
+// legitimately differ (`signIn` answers `/session`).
+export const consoleRoutes = group('/admin', {
+    signIn:   post('/session', { input: adminKeyInput }),
+    overview: get('/overview', { output: adminOverview })
+});
+
+// Combining feature groups: `merge` THROWS on a duplicate key. Object spread is last-wins, so
+// two features that happened to pick the same key would drop a route out of the API with
+// nothing failing - the router only notices if the two also share a method and path.
+export const contract = defineContract({ admin: merge(consoleRoutes, catalogueRoutes) });
+```
+
+`implement` is what a handler file needs and a handler literal does not: written inline at the
+mount, the handlers are already checked against the contract, so `implement` earns its keystrokes
+only once they move to their own file. Each feature then types its own handlers against its own
+routes, so no feature file imports the assembled contract and none of them states which group it
+lands under:
+
+```ts
+export const consoleHandlers = (deps: Deps) => implement(consoleRoutes, {
+    signIn:   (context) => …,   // context.input typed from consoleRoutes
+    overview: () => …
+});
+```
+
+Pass the guards' additions as a second type argument when the group runs behind one:
+`implement<typeof consoleRoutes, Authed>(consoleRoutes, { … })`.
+
+## Adopting incrementally: `uncontracted`
+
+Moving an existing app onto contracts one route at a time, `uncontracted(app, contract)` returns
+every route registered on the app that the contract does not cover - an honest burndown list to
+print in CI, never a guess. Call it after all registration.
 
 ## Why a shared contract value (not a type-only import)
 
@@ -71,14 +121,14 @@ reintroduce a second source of truth. The contract is a plain value carrying not
 browser must not see, and shipping the schemas buys client-side pre-validation with the
 SAME rules the browser form runs: a bad input is rejected before the request leaves.
 
-The `@azerothjs/http/api/client` subpath contains only the contract declaration, the client, and
+The `@azerothjs/http/api/shared` subpath contains only the contract declaration, the client, and
 `ApiError` - importing it can never drag the server half into a bundle.
 
 ## The enforcement points
 
 - **Client, pre-wire** - inputs validated locally; failures throw with the field-path map.
 - **Server, inbound** - forged requests hit the same schemas; failures are 422s whose
-  `details.fields` is exactly what `@azerothjs/form`'s `setError` consumes.
+  `details.fields` is exactly what a form's `setError` consumes (`azerothjs`).
 - **Server, outbound** - declared outputs are validated too: an off-contract return is a
   hidden 500 (`contract-violation`), and undeclared fields are STRIPPED - an accidental
   `passwordHash` in a handler's return never crosses the wire.
@@ -88,25 +138,66 @@ trip runs in process with zero sockets and full types.
 
 ## Typed guards - additions flow into the handler, no cast
 
-Mount the contract with a `guards` map. A guard built with `guard()` carries its context
-additions into the TYPE of every handler it protects, and the map's keys are checked
-against the contract tree - a typo is a compile error, not a silently-unguarded route:
+Mount the contract with a `guards` map. A guard carries its context additions into the TYPE of
+every handler it protects, and the map's keys are checked against the contract tree - a typo is a
+compile error, not a silently-unguarded route:
 
 ```ts
 const requireAuth = guard((context) => ({ accountId: verify(context.request) }));
 
 mountApi(app, contract, {
-    guards: { 'account.*': [requireAuth] },   // 'accont.*' -> compile error
-    handlers: {
-        account: {
-            me: (context) => ({ id: context.accountId })   // accountId: number, no cast
-        }
-    }
+    guards:   { 'account.*': [requireAuth] },              // 'accont.*' -> compile error
+    handlers: { 'account.me': (context) => ({ id: context.accountId }) }   // accountId: number, no cast
 });
 ```
 
-Handlers organized in separate factory files stay cast-free by sharing the guards map:
-a factory returns `HandlersWithGuards<typeof contract, typeof guards>['branch']`.
+A guard is any `(context) => void | Response | additions`. `guard()` is only needed when it ADDS
+to the context and that addition must be inferred - a rate limiter that just throws goes in bare:
+`{ 'pay.start': [throttle(8, 60_000)] }`.
+
+A guard promises exactly what it attaches. One that returns its additions on EVERY path types them
+as present; one with a conditional `return;` types them OPTIONAL, because on that path nothing was
+assigned onto the context:
+
+```ts
+const optionalSession = guard((context) =>
+{
+    const token = context.request.headers.get('authorization');
+    if (token === null) { return; }            // anonymous: adds nothing
+    return { accountId: verify(token) };
+});
+
+// context.accountId is `number | undefined` here, so the anonymous path has to be handled.
+handlers: { 'orders.list': (context) => list(context.accountId) }
+```
+
+That is the runtime truth stated in the type. Reading such a field as definitely-present is how a
+handler ends up dereferencing `undefined` on exactly the requests that carried no credential.
+A guard that reads the request BODY must hand the bytes on by replacing `context.request` with a
+new `Request` built from them, or the route cannot validate its own input - the mount says so by
+name rather than failing with a locked-stream error.
+
+A group wildcard is the point: guard the group, then name the exceptions with `only()`, which
+declares a route's COMPLETE chain and replaces everything it would inherit.
+
+```ts
+guards: {
+    'admin.*': [requireAdmin],                             // guarded by DEFAULT
+    'admin.signIn': only([throttle(10, 60_000)]),           // it IS the way past requireAdmin
+    'admin.signOut': only([])                              // clearing a cookie cannot require it
+}
+```
+
+That inverts the failure mode: a route added to the group later is guarded because it is in the
+group, not because someone remembered a line. `only()` resets the TYPE as well as the chain, so an
+opted-out handler cannot read a field no guard attached. The opt-out is exact-path only - a
+wildcard cancelling another wildcard would make a route's real chain depend on declaration order.
+
+`only()` returns a wrapper, not an array, so it cannot be widened into a `ReadonlyArray<Guard>`.
+That is deliberate: a brand carried on an array survives at runtime but is erased by any such
+annotation, and an erased brand means the mount drops the inherited chain while the handler is
+still typed with the additions of guards that never ran - the exact bug `only()` exists to
+prevent. Not being an array makes the disagreement a compile error instead.
 
 ## Status codes without losing validation - `reply()`
 
@@ -201,15 +292,19 @@ create: route({
 })
 ```
 
-The plugin also serves a docs page at `/docs` (disable with `docs: false`). Two
-viewers, one option:
+**Neither route registers under `NODE_ENV=production` unless you pass `public: true`.** A spec
+describes every internal route, its input shape and its constraints, which is a reconnaissance
+document you should have to publish on purpose. Say `public: true` when the API really is public.
 
-- **`viewer: 'scalar'` (default)** - a ~10-line shell; the browser loads the Scalar
-  reference from a CDN. Best-in-class UI for free; needs internet while viewing.
-- **`viewer: 'azeroth'`** - the house explorer: one fully self-contained page (inline
-  styles and script, zero external requests, works offline) in the AzerothJS design
-  language - REST-colored methods, verdict-colored statuses, schema trees, and a
-  same-origin try-it panel. For locked-down networks and air-gapped environments.
+The plugin also serves a docs page at `/docs` (disable with `docs: false`). Two viewers, one
+option:
+
+- **`viewer: 'azeroth'` (default)** - the house explorer: one fully self-contained page (inline
+  styles and script, zero external requests, works offline) in the AzerothJS design language -
+  REST-colored methods, verdict-colored statuses, schema trees, and a same-origin try-it panel.
+- **`viewer: 'scalar'`** - a ~10-line shell; the browser loads the Scalar reference from a CDN.
+  Best-in-class UI for free, at the price of third-party code running on the page you paste
+  tokens into, so it is opt-in rather than the default.
 
 External viewers can always read `/openapi.json` directly instead.
 

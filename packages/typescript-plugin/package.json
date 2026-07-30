@@ -5,7 +5,8 @@
     "type": "commonjs",
     "main": "./dist/index.js",
     "files": [
-        "dist"
+        "dist",
+        "!dist/**/*.map"
     ],
     "scripts": {
         "build": "node esbuild.mjs",

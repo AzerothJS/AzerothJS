@@ -22,7 +22,7 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 /** The shapes a scaffold can produce, in the order the prompt offers them. */
 export const TEMPLATES = ['frontend', 'backend', 'fullstack'] as const;
@@ -45,6 +45,30 @@ export type OptionName = 'router' | 'tailwind';
 export function isTemplateName(value: string): value is TemplateName
 {
     return (TEMPLATES as readonly string[]).includes(value);
+}
+
+/**
+ * npm's own package-name shape. The name also becomes the DIRECTORY, and a project name is
+ * one path segment: `.`, `..`, `a/../b`, `/foo` and `//server/share` are all names a prompt
+ * would happily accept and every one of them scaffolds somewhere the user never named. The
+ * leading character class is what rejects `.` and `..`; the only `/` allowed opens a scope.
+ */
+const PROJECT_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+
+/**
+ * The directory a project name scaffolds into, or null when the name is not usable: the
+ * shape is checked first, then the RESOLVED path is required to stay under `cwd` - on
+ * Windows a leading separator is drive-relative, so `/name` lands at the drive root.
+ */
+export function resolveProjectTarget(cwd: string, name: string): string | null
+{
+    if (!PROJECT_NAME.test(name))
+    {
+        return null;
+    }
+    const root = resolve(cwd);
+    const target = resolve(root, name);
+    return target.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`) ? target : null;
 }
 
 /**

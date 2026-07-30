@@ -292,7 +292,7 @@ The canon is one rule per side of the wire:
 | Anything client-side or SSR - components, signals, control flow, the router, forms, `renderToString` | `azerothjs` (this package - the whole frontend is ONE real package) |
 | Schemas / validation shared by both halves | `@azerothjs/schema` |
 | The server - routes, middleware, contracts | `@azerothjs/http` (contracts at `@azerothjs/http/api`) (+ `@azerothjs/ws`, `@azerothjs/cron`, `@azerothjs/logger`) |
-| The browser half of a typed API contract | `@azerothjs/http/api/client` (client-safe; never drags server code into a bundle) |
+| The browser half of a typed API contract | `@azerothjs/http/api/shared` (client-safe; never drags server code into a bundle) |
 | Tests / dev tooling | `@azerothjs/testing`, `@azerothjs/devtools`; dev-deps: `@azerothjs/compiler`, `@azerothjs/cli`, the editor tooling |
 
 Two things are deliberately NOT application API: `azerothjs/internal` (the compiled-output

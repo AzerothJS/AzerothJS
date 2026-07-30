@@ -1,19 +1,16 @@
-// The client entry: one call. A page that arrived WITH markup (the prerendered
-// home, an SSR'd /guestbook) is ADOPTED in place - hydration - with the server's
-// loader handoff read back so nothing refetches; an empty shell (the dev server,
-// a `render: 'client'` page) renders normally.
 import { bootClient } from '@azerothjs/kit/client';
 
 import App from './App.azeroth';
 
-// Before the app boots: the panel only sees primitives constructed after its hook is
-// installed. `import.meta.env.DEV` is replaced with false in a build, so this branch - and
-// the import inside it - is eliminated and never reaches production. The `server` URL is
-// where the Server tab looks for the bridge: the port vite's /api proxy targets.
+// Before the app boots, or the panel misses every primitive built during the first render.
+// `import.meta.env.DEV` is replaced with false in a build, so this branch and its import are
+// eliminated; `server` is where the Server tab finds the bridge.
 if (import.meta.env.DEV)
 {
     const { installDevtools } = await import('@azerothjs/devtools');
     installDevtools({ server: 'http://localhost:3000' });
 }
 
+// Markup already on the page is ADOPTED (hydration, loader handoff read back); an empty shell
+// renders normally.
 bootClient(App);

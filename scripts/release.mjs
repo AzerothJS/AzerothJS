@@ -92,13 +92,24 @@
 //   --promote-only  Only move `latest` to an already-published version (no
 //                   bump/push/publish). Fixes a `latest` left on an older beta:
 //                     node scripts/release.mjs 0.4.0-beta.2 --promote-only -y
-//   --otp <code>    npm one-time password (2FA), forwarded to every publish.
+//   --otp <code>    npm one-time password (2FA). The value travels to npm in the child
+//                   ENVIRONMENT (NPM_CONFIG_OTP, which npm reads itself), never on an
+//                   argv and never in a printed command line. Export that variable
+//                   directly to keep the code out of the shell history as well.
+//   --allow-branch  Release from a branch other than the repository's default one.
 //   -y, --yes       Don't pause for the confirmation prompt.
 //
 // Publishing is IDEMPOTENT: versions already on the registry are skipped, so an
 // interrupted run can simply be re-run. The bump also promotes CHANGELOG.md's
 // [Unreleased] section and keeps the bug-report template's version placeholder
 // current (see DOC_VERSION_ANCHORS - docs are rewritten only at named anchors).
+//
+// `--no-bump` RESUMES a release whose bump was already committed and tagged, so it
+// verifies what it does not recreate: the root manifest must already carry the
+// version being published, the tag must exist AND point at HEAD, and the tree must be
+// clean - `npm publish` packs the WORKING TREE, not the tag, so an uncommitted edit
+// would ship. Publishing also happens BEFORE the push, which is why a missing or
+// misplaced tag has to be caught here rather than after the registry is mutated.
 //
 // The npm dist-tag is derived from the version: a prerelease (1.2.0-beta.3) is
 // published under its prerelease id (`beta`); a stable version under `latest`.
@@ -151,11 +162,9 @@ const PUBLISH_ORDER =
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 // A real npm OTP is digits (TOTP) or an alphanumeric recovery code - never shell
-// metacharacters. `--otp` is the one CLI value that reaches `act()`'s shell string
-// unvalidated (the version is checked against VERSION_PATTERN before use, and every other
-// interpolated value is an internal package/tag name); rejecting anything else here means
-// the exec call sites downstream (query/act) never receive an unvalidated value to begin
-// with, rather than trying to escape it after the fact.
+// metacharacters. The code reaches npm as an environment value rather than an argument,
+// but a value that cannot be an OTP is a mistyped flag (the next flag swallowed as its
+// value, say), and a release is the wrong place to find that out from npm.
 const OTP_PATTERN = /^[A-Za-z0-9]+$/;
 
 function fail(message)
@@ -291,7 +300,8 @@ Options:
   --no-promote-latest  Don't move 'latest' to a pre-release.
   --promote-only       Only move 'latest' to an already-published version.
   --provenance         Attach an npm provenance attestation (CI/OIDC only).
-  --otp <code>         npm 2FA one-time password, forwarded to each publish.
+  --otp <code>         npm 2FA code; handed to npm via NPM_CONFIG_OTP, never argv.
+  --allow-branch       Release from a branch other than the default one.
   -y, --yes            Skip the confirmation prompt.
   -h, --help           Show this help.`);
 }
@@ -306,10 +316,10 @@ Options:
 //   - npm / npx on Windows only: these resolve to `.cmd` shims that cmd.exe must
 //     interpret, so a shell is unavoidable. Pass ONE pre-quoted command STRING via
 //     execSync (a string, not an args array) - that does not trip DEP0190. Safe
-//     here because every npm arg is an internal package name / static flag /
-//     dist-tag / OTP already validated against OTP_PATTERN: no spaces, no
-//     metacharacters. On macOS/Linux npm is a normal executable, so it takes the
-//     shell-free path like everything else.
+//     here because every npm arg is an internal package name, a static flag or a
+//     dist-tag: no spaces, no metacharacters, and no secret (the OTP reaches npm
+//     through the child environment, never an argument). On macOS/Linux npm is a
+//     normal executable, so it takes the shell-free path like everything else.
 const winShellShim = (file) => process.platform === 'win32' && (file === 'npm' || file === 'npx');
 const winQuote = (arg) => `"${ String(arg).replace(/"/g, '\\"') }"`;
 
@@ -325,10 +335,34 @@ function query(file, args)
 
 let dryRun = false;
 
+/**
+ * The printable form of an argv: an `--otp` value is replaced with `***`. A release
+ * prints every command it runs, once per package, into a terminal and into CI logs
+ * that outlive the code - and npm accepts long-lived reusable RECOVERY codes, not
+ * just 30-second TOTPs. Nothing here passes `--otp` today (the code travels in the
+ * child environment); this keeps a future call site from turning the log into a leak.
+ */
+function redactArgs(args)
+{
+    const printable = [];
+    for (let i = 0; i < args.length; i++)
+    {
+        const arg = String(args[i]);
+        if (arg === '--otp')
+        {
+            printable.push(arg, '***');
+            i++;
+            continue;
+        }
+        printable.push(arg.startsWith('--otp=') ? '--otp=***' : arg);
+    }
+    return printable;
+}
+
 /** Runs a state-changing command, honouring --dry-run and forwarding stdio. */
 function act(file, args, extra)
 {
-    log('  $ ' + [file, ...args].join(' '));
+    log('  $ ' + [file, ...redactArgs(args)].join(' '));
     if (dryRun)
     {
         return;
@@ -659,6 +693,52 @@ function alreadyPublished(name, version)
     }
 }
 
+/** The branch HEAD is on, or null in a detached HEAD. */
+function currentBranch()
+{
+    try
+    {
+        const name = query('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+        return name === 'HEAD' ? null : name;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+/** The repository's default branch: whatever `origin/HEAD` resolves to, else `main`. */
+function defaultBranch()
+{
+    try
+    {
+        const name = query('git', ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])
+            .replace(/^refs\/remotes\/origin\//, '');
+        if (name !== '')
+        {
+            return name;
+        }
+    }
+    catch
+    {
+        // No origin/HEAD (a clone that never fetched it) - fall through to the convention.
+    }
+    return 'main';
+}
+
+/** The commit a ref points at, or null when the ref does not exist. */
+function revisionOf(ref)
+{
+    try
+    {
+        return query('git', ['rev-parse', '--verify', `${ ref }^{commit}`]);
+    }
+    catch
+    {
+        return null;
+    }
+}
+
 function confirm(question)
 {
     if (process.argv.includes('-y') || process.argv.includes('--yes') || dryRun || !process.stdin.isTTY)
@@ -679,7 +759,7 @@ function confirm(question)
 function parseArgs()
 {
     const argv = process.argv.slice(2);
-    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, version: null, channel: undefined, changelog: true };
+    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, allowBranch: false, version: null, channel: undefined, changelog: true };
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
@@ -741,6 +821,10 @@ function parseArgs()
         {
             options.otp = arg.slice('--otp='.length);
         }
+        else if (arg === '--allow-branch')
+        {
+            options.allowBranch = true;
+        }
         else if (arg === '--channel')
         {
             options.channel = argv[++i];
@@ -790,6 +874,15 @@ if (options.otp !== null && !OTP_PATTERN.test(options.otp))
     fail('--otp must be alphanumeric (a TOTP code or recovery code) - got a value with other characters.');
 }
 
+// npm reads `otp` from NPM_CONFIG_OTP itself, so the code is handed over in the child
+// environment rather than on each publish's argv: an argument is visible in the printed
+// command line, in CI scrollback, and in a process listing to any user on the box.
+if (options.otp !== null)
+{
+    process.env.NPM_CONFIG_OTP = options.otp;
+}
+const otpSource = options.otp !== null ? '--otp' : (process.env.NPM_CONFIG_OTP ? 'NPM_CONFIG_OTP' : null);
+
 const currentForResolve = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const next = resolveVersion(options.version, currentForResolve);
 
@@ -832,6 +925,8 @@ if (
         + 'Pre-releases normally advance alpha -> beta -> rc -> stable.');
 }
 const tagExists = query('git', ['tag', '-l', tag]) === tag;
+const branch = currentBranch();
+const expectedBranch = defaultBranch();
 
 // A previous run can bump the version files and then die before committing or
 // tagging (a failed verify, an interrupted push), leaving the files already at
@@ -854,27 +949,73 @@ log(`  latest:    ${ willPromoteLatest ? 'promote -> ' + next : (distTag(next) =
 log(`  bump:      ${ options.noBump ? 'no' : (resuming ? `resume (files already at ${ next })` : 'yes') }`);
 log(`  push:      ${ options.noPush ? 'no' : 'yes' }`);
 log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' packages' }`);
+log(`  branch:    ${ branch ?? '(detached HEAD)' }${ branch === expectedBranch ? '' : ' (not the default ' + expectedBranch + ')' }`);
+log(`  otp:       ${ otpSource === null ? 'none (npm will ask if 2FA is required)' : `from ${ otpSource }, forwarded through NPM_CONFIG_OTP (never argv)` }`);
 if (dryRun)
 {
     log('  (dry run: nothing will be changed)');
 }
 
-if (!options.noBump)
+// A run that CREATES history - a bump's commit and tag, a push - must come off the default
+// branch: publishing happens BEFORE the push, so a release cut from a feature branch reaches
+// npm while the commit behind it may never be merged, and nothing undoes a published version.
+// A publish that neither bumps nor pushes is exempt: the tag checks below prove HEAD IS the
+// release tag's commit, which says more than a branch name, and checking out a tag leaves a
+// detached HEAD by definition (that is exactly what the publish workflow does).
+if ((!options.noBump || !options.noPush) && branch !== expectedBranch && !options.allowBranch)
 {
-    if (tagExists)
+    fail(`on branch ${ branch ?? '(detached HEAD)' }, not the default branch ${ expectedBranch }`
+        + ' - release from it, or pass --allow-branch if that is deliberate');
+}
+
+if (!options.noBump && tagExists)
+{
+    fail(`tag ${ tag } already exists; use --no-bump to push and publish it`);
+}
+
+// A dirty tree is a hazard in both directions: a fresh bump's commit must contain only the
+// bump, and `npm publish` packs the WORKING TREE, so anything uncommitted ships as if it
+// were the tagged code. A resuming tree is expected to be dirty - that dirt IS the bump a
+// prior run left behind, which this run is about to commit and tag.
+if (!resuming && (!options.noBump || !options.noPublish))
+{
+    const status = query('git', ['status', '--porcelain']);
+    if (status)
     {
-        fail(`tag ${ tag } already exists; use --no-bump to push and publish it`);
-    }
-    // A fresh bump must start from a clean tree so the release commit is just
-    // the bump. A resuming tree is expected to be dirty - that dirt IS the bump
-    // a prior run left behind, which this run is about to commit and tag.
-    if (!resuming)
-    {
-        const status = query('git', ['status', '--porcelain']);
-        if (status && !dryRun)
+        const message = 'working tree is not clean; commit or stash first'
+            + ' (npm publish packs the working tree, not the tag)';
+        if (dryRun)
         {
-            fail('working tree is not clean; commit or stash first');
+            log(`\n  ! ${ message }`);
         }
+        else
+        {
+            fail(message);
+        }
+    }
+}
+
+// `--no-bump` publishes a bump some EARLIER run made, so the three facts it inherits are
+// checked instead of assumed: without them the version on the registry, the version in the
+// `--tag`/`dist-tag` calls, and the version the tag names can all be different.
+if (options.noBump && !options.noPublish)
+{
+    if (current !== next)
+    {
+        fail(`--no-bump publishes what the tree already carries, but package.json says ${ current }, not ${ next }`
+            + ' - drop --no-bump to bump, or name the version the tree has');
+    }
+    const tagRevision = revisionOf(tag);
+    if (tagRevision === null)
+    {
+        fail(`--no-bump needs the release tag to exist already, but ${ tag } does not`
+            + ' - drop --no-bump so this run creates it');
+    }
+    const headRevision = revisionOf('HEAD');
+    if (tagRevision !== headRevision)
+    {
+        fail(`${ tag } points at ${ String(tagRevision).slice(0, 9) }, not HEAD (${ String(headRevision).slice(0, 9) })`
+            + ' - check out the tagged commit; publish packs the tree, not the tag');
     }
 }
 
@@ -920,6 +1061,13 @@ if (!options.skipChecks)
     act('npm', ['run', 'leak']);
     act('npm', ['run', 'smoke']);
 }
+else if (!options.noPublish)
+{
+    // `npm run build`'s prebuild is the only thing that clears dist/, so skipping the gate
+    // publishes whatever each dist/ holds right now - including output from an older commit
+    // or a hand edit. Legitimate only to resume a run whose gate already passed.
+    log('\n  ! --skip-checks: nothing is rebuilt, so every dist/ on disk is published AS IS');
+}
 
 if (!options.noBump)
 {
@@ -938,7 +1086,6 @@ if (!options.noBump)
 if (!options.noPublish)
 {
     log('\nPublishing to npm');
-    const otpArgs = options.otp ? ['--otp', options.otp] : [];
     const provenanceArgs = options.provenance ? ['--provenance'] : [];
     const tagName = distTag(next);
     for (const name of PUBLISH_ORDER)
@@ -950,7 +1097,7 @@ if (!options.noPublish)
             log(`  ${ name }@${ next } already on the registry - skipping`);
             continue;
         }
-        act('npm', ['publish', '-w', name, '--access', 'public', '--tag', tagName, ...provenanceArgs, ...otpArgs]);
+        act('npm', ['publish', '-w', name, '--access', 'public', '--tag', tagName, ...provenanceArgs]);
     }
 
     // Registry-readiness gate: `npm publish` returning is NOT the same as the version being
@@ -1042,10 +1189,9 @@ if (!options.noPush)
 if (willPromoteLatest)
 {
     log(`\nPromoting 'latest' -> ${ next } (newest release; pass --no-promote-latest to skip)`);
-    const otpArgs = options.otp ? ['--otp', options.otp] : [];
     for (const name of PUBLISH_ORDER)
     {
-        act('npm', ['dist-tag', 'add', `${ name }@${ next }`, 'latest', ...otpArgs]);
+        act('npm', ['dist-tag', 'add', `${ name }@${ next }`, 'latest']);
     }
 }
 

@@ -14,6 +14,10 @@
  */
 
 import { requestIdOf } from './edge.ts';
+// The kernel's own scan, not `new URL`: a malformed authority (a forged Host header) makes URL
+// parsing throw, App.handle swallows an observer throw, and a request served with no audit line
+// is exactly the failure this observer exists to prevent.
+import { pathnameOf } from './app.ts';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -71,13 +75,21 @@ export function jsonSink(record: LogRecord): void
     }));
 }
 
+/** @internal A string carrying control characters is quote-escaped before it prints: a raw CR
+ * or LF ends the line and forges a second record - the guarantee jsonSink already gives. */
+function safeText(value: string): string
+{
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what must never print raw
+    return /[\x00-\x1f\x7f]/.test(value) ? JSON.stringify(value) : value;
+}
+
 /** A development sink: level-tagged single lines with inline fields. */
 export function prettySink(record: LogRecord): void
 {
     const fields = Object.entries(serializable(record.fields))
-        .map(([key, value]) => `${ key }=${ typeof value === 'string' ? value : JSON.stringify(value) }`)
+        .map(([key, value]) => `${ key }=${ typeof value === 'string' ? safeText(value) : JSON.stringify(value) }`)
         .join(' ');
-    console.log(`${ new Date(record.time).toISOString() } ${ record.level.toUpperCase().padEnd(5) } ${ record.message }${ fields === '' ? '' : '  ' + fields }`);
+    console.log(`${ new Date(record.time).toISOString() } ${ record.level.toUpperCase().padEnd(5) } ${ safeText(record.message) }${ fields === '' ? '' : '  ' + fields }`);
 }
 
 /**
@@ -123,7 +135,7 @@ export function logRequests(logger: Logger): { onComplete(request: Request, resp
         {
             const fields: Record<string, unknown> = {
                 method: request.method,
-                path: new URL(request.url).pathname,
+                path: pathnameOf(request.url),
                 status: response.status,
                 durationMs: Math.round(durationMs * 100) / 100
             };

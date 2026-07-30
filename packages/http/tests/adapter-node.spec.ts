@@ -118,6 +118,16 @@ describe('the disconnect AbortSignal', () =>
             release = resolve;
         });
 
+        // Signalled by the handler itself. A fixed sleep here was flaky under a loaded suite: it
+        // assumed the request had reached the handler, and when it had not, the abort fired
+        // before there was a signal to observe and the assertion failed for a timing reason
+        // rather than a real one.
+        let arrived: () => void;
+        const reached = new Promise<void>((resolve) =>
+        {
+            arrived = resolve;
+        });
+
         const app = new App();
         app.get('/slow', async ({ request }) =>
         {
@@ -126,6 +136,7 @@ describe('the disconnect AbortSignal', () =>
                 aborted();
                 release();
             });
+            arrived();
             await gate; // hold the response open until the abort proves itself
             return text('finally');
         });
@@ -134,7 +145,7 @@ describe('the disconnect AbortSignal', () =>
         {
             const client = new AbortController();
             const attempt = fetch(`${ base }/slow`, { signal: client.signal }).catch(() => null);
-            await new Promise((r) => setTimeout(r, 50)); // let the request reach the handler
+            await reached;
             client.abort();
             await attempt;
             await gate;
@@ -147,9 +158,16 @@ describe('graceful shutdown', () =>
 {
     it('lets an in-flight response finish before closing', async () =>
     {
+        let arrived: () => void;
+        const reached = new Promise<void>((resolve) =>
+        {
+            arrived = resolve;
+        });
+
         const app = new App();
         app.get('/work', async () =>
         {
+            arrived();
             await new Promise((r) => setTimeout(r, 120));
             return text('done');
         });
@@ -157,7 +175,9 @@ describe('graceful shutdown', () =>
         const base = `http://127.0.0.1:${ served.port }`;
 
         const inFlight = fetch(`${ base }/work`);
-        await new Promise((r) => setTimeout(r, 30)); // the request is on the server now
+        // Waited on rather than slept for: shutting down before the request is actually in flight
+        // tests nothing, and under a loaded suite a fixed 30ms was not always enough.
+        await reached;
         const closing = served.shutdown({ gracePeriodMs: 2000 });
 
         const response = await inFlight;
@@ -170,13 +190,25 @@ describe('graceful shutdown', () =>
 
     it('the grace deadline caps how long a stuck response can hold shutdown', async () =>
     {
+        let arrived: () => void;
+        const reached = new Promise<void>((resolve) =>
+        {
+            arrived = resolve;
+        });
+
         const app = new App();
-        app.get('/stuck', () => new Promise<Response>(() => undefined)); // never resolves
+        app.get('/stuck', () =>
+        {
+            arrived();
+            return new Promise<Response>(() => undefined); // never resolves
+        });
         const served = await serve(app);
         const base = `http://127.0.0.1:${ served.port }`;
 
         void fetch(`${ base }/stuck`).catch(() => null);
-        await new Promise((r) => setTimeout(r, 30));
+        // The whole point is that a STUCK response holds shutdown to its deadline. If the request
+        // had not arrived yet, shutdown would find nothing in flight and return immediately.
+        await reached;
 
         const started = Date.now();
         await served.shutdown({ gracePeriodMs: 150 });

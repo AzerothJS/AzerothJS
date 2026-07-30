@@ -60,7 +60,7 @@ export function num(name: string, options: { default?: number; secret?: boolean 
 }
 
 /** A boolean flag: true/false/1/0/yes/no (case-insensitive) - anything else is a boot error. */
-export function flag(name: string, options: { default?: boolean } = {}): ConfigVar<boolean>
+export function flag(name: string, options: { default?: boolean; secret?: boolean } = {}): ConfigVar<boolean>
 {
     return {
         name,
@@ -77,7 +77,8 @@ export function flag(name: string, options: { default?: boolean } = {}): ConfigV
             }
             throw new Error(`expected true/false/1/0/yes/no, got "${ raw }"`);
         },
-        defaultValue: options.default
+        defaultValue: options.default,
+        secret: options.secret
     };
 }
 
@@ -85,7 +86,7 @@ export function flag(name: string, options: { default?: boolean } = {}): ConfigV
 export function oneOf<const V extends readonly string[]>(
     name: string,
     values: V,
-    options: { default?: V[number] } = {}
+    options: { default?: V[number]; secret?: boolean } = {}
 ): ConfigVar<V[number]>
 {
     return {
@@ -98,7 +99,8 @@ export function oneOf<const V extends readonly string[]>(
             }
             return raw;
         },
-        defaultValue: options.default
+        defaultValue: options.default,
+        secret: options.secret
     };
 }
 
@@ -143,7 +145,11 @@ export function loadConfig<Shape extends Record<string, ConfigVar<unknown>>>(
             }
             catch (error)
             {
-                problems.push(`${ variable.name }: ${ error instanceof Error ? error.message : String(error) }`);
+                // Parser messages echo the raw value; a secret's must not ride the failure
+                // path into stderr, CI logs, and crash reporters.
+                problems.push(variable.secret === true
+                    ? `${ variable.name } is invalid`
+                    : `${ variable.name }: ${ error instanceof Error ? error.message : String(error) }`);
             }
         }
         if (variable.secret === true)

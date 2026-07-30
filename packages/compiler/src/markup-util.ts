@@ -15,6 +15,8 @@
  *   - alreadyImports - whether a module already names-imports a symbol (used by both emitters before they
  *                     inject runtime imports);
  *   - FACTORY_ATTRS - the lazy-factory prop set (`fallback`);
+ *   - CONTENT_PROPERTIES - the DOM properties that own an element's content, which no path may bake
+ *                     into the static template;
  *   - walkComponentTags - walk a markup tree's component tags.
  *
  * All of these are compiler-internal EXCEPT {@link walkComponentTags}, which is re-exported from the
@@ -31,6 +33,16 @@ import type {
 // so a branch isn't built until needed. (`fallback` for Show/Switch/Suspense;
 // structural `children` is handled separately and is already a thunk.)
 export const FACTORY_ATTRS: ReadonlySet<string> = new Set(['fallback']);
+
+/**
+ * The DOM properties that OWN an element's content. Unlike the rest of h()'s property set
+ * (`value`/`checked`/`selected`, whose server representation is the matching attribute, so an
+ * attribute in the clone template and the h() property write agree), these two have no attribute
+ * form: as an attribute the browser stores an inert lowercased string and the element stays empty,
+ * while h() writes the content. So neither the lowerer nor the constant folder may put one in the
+ * static template - both paths go through the property write instead.
+ */
+export const CONTENT_PROPERTIES: ReadonlySet<string> = new Set(['innerHTML', 'textContent']);
 
 /**
  * True when `code` is an arrow/function literal - pass it through unwrapped.
@@ -114,6 +126,23 @@ export function wrapDynamic(code: string, isEventHandler: boolean): string
 }
 
 /**
+ * Escape for every character that cannot appear RAW inside an emitted single-quoted literal. The four
+ * line terminators are the load-bearing ones: a raw CR reaches the emitter from `<style>`/`<script>`
+ * CDATA, a static attribute value, a folded constant, and `&#13;`, and a CRLF checkout puts one in
+ * front of every newline - unescaped, each terminates the literal and the emitted module is a syntax
+ * error attributed to the author's markup.
+ */
+const LITERAL_ESCAPES: Readonly<Record<string, string>> =
+{
+    '\\': '\\\\',
+    '\'': '\\\'',
+    '\n': '\\n',
+    '\r': '\\r',
+    '\u2028': '\\u2028',
+    '\u2029': '\\u2029'
+};
+
+/**
  * Escapes a literal string for emission inside single quotes.
  *
  * @example
@@ -123,7 +152,7 @@ export function wrapDynamic(code: string, isEventHandler: boolean): string
  */
 export function quoteString(value: string): string
 {
-    return `'${ value.replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/\n/g, '\\n') }'`;
+    return `'${ value.replace(/[\\'\n\r\u2028\u2029]/g, ch => LITERAL_ESCAPES[ch] ?? ch) }'`;
 }
 
 /**

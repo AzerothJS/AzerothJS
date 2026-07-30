@@ -20,7 +20,7 @@
  */
 
 import { SchemaError } from '@azerothjs/schema';
-import { isRoute, isMultipartSpec, type AnyRoute, type Contract, type PathParams, type Route } from './define.ts';
+import { isRoute, isMultipartSpec, responseSchemaFor, type AnyRoute, type Contract, type PathParams, type Route } from './define.ts';
 import { parseAny } from './validate.ts';
 
 /** The error a failed call throws: the wire shape, typed. */
@@ -58,14 +58,15 @@ export type CallArgs<Path extends string, In, Query> =
     & (undefined extends In ? unknown : { input: In })
     & (undefined extends Query ? unknown : { query: Query });
 
-/** One route as a client call; routes declaring nothing take no argument at all. */
+/**
+ * One route as a client call. A route that declared no params, input or query takes NO argument -
+ * so `client.health()` rather than `client.health({})` - and every other route takes exactly the
+ * parts it declared, which is what makes a forgotten `input` a compile error.
+ */
 export type Call<Path extends string, In, Out, Query> =
-    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- deliberate always-true distribution guard: the real branch test is the IsEmpty below
-    CallArgs<Path, In, Query> extends Record<string, never> | unknown
-        ? IsEmpty<CallArgs<Path, In, Query> & object> extends true
-            ? () => Promise<Out>
-            : (args: CallArgs<Path, In, Query>) => Promise<Out>
-        : never;
+    IsEmpty<CallArgs<Path, In, Query> & object> extends true
+        ? () => Promise<Out>
+        : (args: CallArgs<Path, In, Query>) => Promise<Out>;
 
 /** The whole contract as a typed client surface. */
 export type ClientOf<Shape extends Contract> =
@@ -87,6 +88,66 @@ export interface ClientOptions
 
     /** Headers added to every call (auth tokens live here). */
     headers?: Record<string, string>;
+
+    /**
+     * Check a 2xx body against the route's declared response schema before returning it
+     * (default true). The contract's response half is otherwise a compile-time promise only, so a
+     * proxied, cached, MITM'd or legacy upstream's body would be handed to the caller as
+     * contract-shaped data with nothing having checked it. Set false when the contract describes
+     * a server you do not control, which is the one case where a mismatch is expected rather
+     * than a bug.
+     */
+    validateResponses?: boolean;
+
+    /**
+     * Largest response body to read, in bytes (default 1 MiB, matching the server's own default).
+     * An unbounded `response.json()` is a memory-exhaustion primitive handed to whatever answered.
+     */
+    maxResponseBytes?: number;
+}
+
+/** @internal The client's default response cap, matching the server's own body limit. */
+const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+
+/**
+ * @internal Reads a JSON body with a byte ceiling. `response.json()` is unbounded, so a hostile
+ * or broken upstream can exhaust the caller's memory on a path that has no other check.
+ */
+async function readJsonBounded(response: Response, maxBytes: number): Promise<unknown>
+{
+    const declared = response.headers.get('content-length');
+    if (declared !== null && Number(declared) > maxBytes)
+    {
+        throw new ApiError(response.status, 'response-too-large',
+            `The response declares ${ declared } bytes, over the ${ maxBytes }-byte limit.`, undefined);
+    }
+    const text = await response.text();
+    // The declared length can lie or be absent, so the real size decides.
+    if (text.length > maxBytes)
+    {
+        throw new ApiError(response.status, 'response-too-large',
+            `The response exceeds the ${ maxBytes }-byte limit.`, undefined);
+    }
+    return text === '' ? undefined : JSON.parse(text);
+}
+
+/**
+ * @internal A wildcard path segment, encoded per segment so the value cannot leave the route it
+ * was called on. `/` survives because a wildcard is legitimately multi-segment; `.` and `..` do
+ * not, because `new Request` resolves them and the call would silently execute a DIFFERENT route
+ * with this client's auth headers attached, returning that route's body under this route's type.
+ */
+function encodeWildcard(value: string): string
+{
+    return value.split('/').map((segment) =>
+    {
+        if (segment === '.' || segment === '..')
+        {
+            throw new TypeError(`A wildcard path parameter may not contain a "${ segment }" segment: `
+                + 'it would resolve to a different route than the one being called.');
+        }
+        return encodeURIComponent(segment);
+    }).join('/');
 }
 
 /** @internal The untyped runtime view of call arguments (typing is ClientOf's job). */
@@ -102,6 +163,8 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
 {
     const transport = options.fetch ?? ((request: Request): Promise<Response> => fetch(request));
     const baseUrl = options.baseUrl.endsWith('/') ? options.baseUrl.slice(0, -1) : options.baseUrl;
+    const validate = options.validateResponses !== false;
+    const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 
     const build = (node: Contract): Record<string, unknown> =>
     {
@@ -148,7 +211,7 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
             const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             path = path
                 .replace(new RegExp(`:${ escaped }(?![A-Za-z0-9_])`), encodeURIComponent(value))
-                .replace(new RegExp(`\\*${ escaped }(?![A-Za-z0-9_])`), value);
+                .replace(new RegExp(`\\*${ escaped }(?![A-Za-z0-9_])`), encodeWildcard(value));
         }
 
         let queryString = '';
@@ -166,7 +229,12 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
             queryString = search.size > 0 ? `?${ search.toString() }` : '';
         }
 
-        const init: RequestInit = { method: routeDef.method, headers: { ...options.headers } };
+        // `redirect: 'error'` because a contract route never legitimately answers with a redirect
+        // the typed client should follow. The fetch default is 'follow', which carries the
+        // headers configured above - an API key, not just the Authorization the spec strips - to
+        // whatever origin the Location names, and then resolves with that origin's body typed as
+        // this route's declared output.
+        const init: RequestInit = { method: routeDef.method, headers: { ...options.headers }, redirect: 'error' };
         if (body !== undefined)
         {
             init.body = JSON.stringify(body);
@@ -181,12 +249,12 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
 
         if (!response.ok)
         {
-            const wire = await response.json().catch(() => null) as
+            const wire = await readJsonBounded(response, maxBytes).catch(() => null) as
                 { error?: { code?: string; message?: string; details?: unknown } } | null;
             throw new ApiError(
                 response.status,
-                wire?.error?.code ?? 'unknown',
-                wire?.error?.message ?? `Request failed with status ${ response.status }`,
+                typeof wire?.error?.code === 'string' ? wire.error.code : 'unknown',
+                typeof wire?.error?.message === 'string' ? wire.error.message : `Request failed with status ${ response.status }`,
                 wire?.error?.details
             );
         }
@@ -194,7 +262,20 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
         {
             return undefined;
         }
-        return response.json();
+
+        const value = await readJsonBounded(response, maxBytes);
+        const schema = responseSchemaFor(routeDef, response.status);
+        if (validate && schema !== undefined)
+        {
+            const checked = await parseAny(schema, value);
+            if (!checked.ok)
+            {
+                throw new ApiError(response.status, 'response-contract-violation',
+                    'The response does not match the shape this route declares.', { issues: checked.issues });
+            }
+            return checked.value;
+        }
+        return value;
     };
 
     return build(contract) as ClientOf<Shape>;

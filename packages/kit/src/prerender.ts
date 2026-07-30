@@ -9,7 +9,7 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import type { PageRenderer } from './ssr.ts';
@@ -72,7 +72,13 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             throw new Error(`kit prerender: "${ page.path }" did not match any route during prerender - `
                 + 'remove it from the static set or fix the route table.');
         }
-        const file = join(options.clientDir, prerenderFileFor(page.path));
+        const file = resolve(options.clientDir, prerenderFileFor(page.path));
+        const root = resolve(options.clientDir);
+        if (!file.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`))
+        {
+            throw new Error(`kit prerender: "${ page.path }" resolves to ${ file }, outside the client dir - `
+                + 'a page path cannot contain \'..\'; fix the route table.');
+        }
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, result.html);
         written.push(page.path);

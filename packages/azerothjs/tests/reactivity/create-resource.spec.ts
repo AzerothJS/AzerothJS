@@ -7,7 +7,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     createSignal,
     createResource,
+    createEffect,
     createRoot,
+    catchError,
     type Resource
 } from 'azerothjs';
 
@@ -240,5 +242,45 @@ describe('initialValue: the SSR/hydration adoption seam', () =>
         await Promise.resolve();
         expect(resource.data()).toBe('seeded');
         expect(fetcher).not.toHaveBeenCalled();
+    });
+});
+
+describe('createResource - settle error routing', () =>
+{
+    it('routes a subscriber that throws during settle to the enclosing catchError, not an unhandled rejection', async () =>
+    {
+        // A resolve/reject arm runs batch(), whose flush rethrows a subscriber's error AFTER the
+        // drain - a promise reaction with nothing downstream (an unhandled rejection that kills the
+        // process on Node). It must instead route to the handler captured when the resource was made.
+        let caught: unknown = null;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            let resource!: Resource<string>;
+            catchError(
+                () =>
+                {
+                    resource = createResource(async () => 'ok');
+                },
+                (err) =>
+                {
+                    caught = err;
+                }
+            );
+            // A subscriber (outside the catchError, so it has no handler of its own) that throws
+            // the moment the resource settles - the throw travels the settle batch's rethrow.
+            createEffect(() =>
+            {
+                if (resource.data() !== undefined)
+                {
+                    throw new Error('subscriber-boom');
+                }
+            });
+        });
+
+        await flush();
+        dispose();
+        expect((caught as Error).message).toBe('subscriber-boom');
     });
 });

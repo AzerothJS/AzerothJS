@@ -14,10 +14,15 @@
  *   - lengths MUST use the minimal encoding (a 16-bit field holding
  *     a value under 126 is an attack fingerprint, not sloppiness)   -> 1002
  *   - 64-bit lengths with the high bit set                          -> 1002
+ *   - 64-bit lengths beyond the addressable range                   -> 1009
  *   - payloads above the configured cap                             -> 1009
  *
  * The parser retains at most one partial frame of buffered bytes; masked payloads are
  * unmasked in place on a copy, never mutating caller memory.
+ *
+ * The serializer is held to the same rules on the way OUT: an illegal frame this server
+ * emits is worse than one it receives, since a compliant peer answers it by killing the
+ * connection with 1002 and the application's own close code is lost.
  */
 
 /** RFC 6455 opcodes. */
@@ -64,10 +69,17 @@ export interface ParserOptions
 
 const DEFAULT_MAX_PAYLOAD = 16 * 1024 * 1024;
 
+const EMPTY = new Uint8Array(0);
+
 /**
  * Incremental frame parser: feed it the TCP stream in whatever chunks arrive; it yields
  * complete frames and buffers the remainder. Throws {@link ProtocolError} - after which the
  * parser must be discarded along with the connection.
+ *
+ * Buffering is a window (`#read`..`#write`) into a growable buffer, never a concatenation
+ * per push: reconcatenating made a frame of n bytes arriving in k chunks cost O(n*k) - a
+ * 16 MiB upload over 64 KiB reads copied 2 GiB, and over 1400-byte segments blocked the
+ * event loop for 30 seconds, starving every other connection on the process.
  */
 export class FrameParser
 {
@@ -75,7 +87,19 @@ export class FrameParser
 
     readonly #maxPayload: number;
 
-    #buffer: Uint8Array = new Uint8Array(0);
+    #buffer: Uint8Array = EMPTY;
+
+    /** Start of the unconsumed window; bytes below it are parsed frames awaiting reclaim. */
+    #read = 0;
+
+    /** End of the unconsumed window; bytes above it are spare capacity. */
+    #write = 0;
+
+    /** False while #buffer is a caller's chunk adopted verbatim - never written into. */
+    #owned = false;
+
+    /** Window bytes the frame at #read still needs, or 0 when no header has been read yet. */
+    #required = 0;
 
     constructor(options: ParserOptions = {})
     {
@@ -86,19 +110,7 @@ export class FrameParser
     /** Feeds bytes; returns every frame completed by them. */
     public push(chunk: Uint8Array): Frame[]
     {
-        // One concatenation per push keeps the hot path simple; a parser holding a partial
-        // frame holds only that frame's bytes.
-        if (this.#buffer.byteLength === 0)
-        {
-            this.#buffer = chunk;
-        }
-        else
-        {
-            const merged = new Uint8Array(this.#buffer.byteLength + chunk.byteLength);
-            merged.set(this.#buffer, 0);
-            merged.set(chunk, this.#buffer.byteLength);
-            this.#buffer = merged;
-        }
+        this.#append(chunk);
 
         const frames: Frame[] = [];
         for (;;)
@@ -106,25 +118,94 @@ export class FrameParser
             const frame = this.#tryParseOne();
             if (frame === null)
             {
-                return frames;
+                break;
             }
             frames.push(frame);
         }
+
+        if (this.#read === this.#write)
+        {
+            // Nothing partial: release the buffer so an idle connection retains no bytes.
+            this.#buffer = EMPTY;
+            this.#owned = false;
+            this.#read = 0;
+            this.#write = 0;
+        }
+        else if (this.#owned && this.#read > this.#buffer.byteLength >>> 1)
+        {
+            this.#buffer.copyWithin(0, this.#read, this.#write);
+            this.#write -= this.#read;
+            this.#read = 0;
+        }
+        return frames;
     }
 
-    /** @internal One frame off the front of the buffer, or null while incomplete. */
+    /**
+     * @internal Adds a chunk to the window: appended in place while capacity allows, else
+     * copied into a buffer grown by doubling but never past what the pending frame needs -
+     * so a declared-but-unsent length cannot make the parser preallocate for it.
+     */
+    #append(chunk: Uint8Array): void
+    {
+        if (chunk.byteLength === 0)
+        {
+            return;
+        }
+
+        const unread = this.#write - this.#read;
+        if (unread === 0)
+        {
+            this.#buffer = chunk;
+            this.#owned = false;
+            this.#read = 0;
+            this.#write = chunk.byteLength;
+            return;
+        }
+
+        const need = unread + chunk.byteLength;
+        if (this.#owned && need <= this.#buffer.byteLength)
+        {
+            if (this.#write + chunk.byteLength > this.#buffer.byteLength)
+            {
+                this.#buffer.copyWithin(0, this.#read, this.#write);
+                this.#read = 0;
+                this.#write = unread;
+            }
+            this.#buffer.set(chunk, this.#write);
+            this.#write += chunk.byteLength;
+            return;
+        }
+
+        let capacity = Math.max(need, this.#buffer.byteLength * 2);
+        if (this.#required > 0 && this.#required < capacity)
+        {
+            capacity = Math.max(need, this.#required);
+        }
+        const grown = new Uint8Array(capacity);
+        grown.set(this.#buffer.subarray(this.#read, this.#write), 0);
+        grown.set(chunk, unread);
+        this.#buffer = grown;
+        this.#owned = true;
+        this.#read = 0;
+        this.#write = need;
+    }
+
+    /** @internal One frame off the front of the window, or null while incomplete. */
     #tryParseOne(): Frame | null
     {
         const buffer = this.#buffer;
-        if (buffer.byteLength < 2)
+        const base = this.#read;
+        const available = this.#write - base;
+        if (available < 2)
         {
+            this.#required = 2;
             return null;
         }
 
-        // ?? 0 arms are unreachable (byteLength >= 2 was just checked); they satisfy the
+        // ?? 0 arms are unreachable (available >= 2 was just checked); they satisfy the
         // indexed-access check without a branch in the parser hot path.
-        const first = buffer[0] ?? 0;
-        const second = buffer[1] ?? 0;
+        const first = buffer[base] ?? 0;
+        const second = buffer[base + 1] ?? 0;
         const fin = (first & 0x80) !== 0;
         const rsv = first & 0x70;
         const opcode = first & 0x0f;
@@ -161,11 +242,12 @@ export class FrameParser
         let payloadLength = lengthField;
         if (lengthField === 126)
         {
-            if (buffer.byteLength < offset + 2)
+            if (available < offset + 2)
             {
+                this.#required = offset + 2;
                 return null;
             }
-            payloadLength = ((buffer[offset] ?? 0) << 8) | (buffer[offset + 1] ?? 0);
+            payloadLength = ((buffer[base + offset] ?? 0) << 8) | (buffer[base + offset + 1] ?? 0);
             if (payloadLength < 126)
             {
                 throw new ProtocolError(1002, 'Length not minimally encoded.');
@@ -174,12 +256,17 @@ export class FrameParser
         }
         else if (lengthField === 127)
         {
-            if (buffer.byteLength < offset + 8)
+            if (available < offset + 8)
             {
+                this.#required = offset + 8;
                 return null;
             }
-            const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 8);
+            const view = new DataView(buffer.buffer, buffer.byteOffset + base + offset, 8);
             const big = view.getBigUint64(0);
+            if ((big & 0x8000_0000_0000_0000n) !== 0n)
+            {
+                throw new ProtocolError(1002, 'A 64-bit payload length must have its high bit clear.');
+            }
             if (big > BigInt(Number.MAX_SAFE_INTEGER))
             {
                 throw new ProtocolError(1009, 'Payload length beyond addressable range.');
@@ -200,22 +287,24 @@ export class FrameParser
         let maskKey: Uint8Array | null = null;
         if (masked)
         {
-            if (buffer.byteLength < offset + 4)
+            if (available < offset + 4)
             {
+                this.#required = offset + 4;
                 return null;
             }
-            maskKey = buffer.subarray(offset, offset + 4);
+            maskKey = buffer.subarray(base + offset, base + offset + 4);
             offset += 4;
         }
 
-        if (buffer.byteLength < offset + payloadLength)
+        if (available < offset + payloadLength)
         {
+            this.#required = offset + payloadLength;
             return null;
         }
 
-        // Copy the payload out (unmasking into the copy), then release the consumed bytes.
+        // Copy the payload out (unmasking into the copy), then advance past the consumed bytes.
         const payload = new Uint8Array(payloadLength);
-        payload.set(buffer.subarray(offset, offset + payloadLength));
+        payload.set(buffer.subarray(base + offset, base + offset + payloadLength));
         if (maskKey !== null)
         {
             for (let i = 0; i < payloadLength; i++)
@@ -223,17 +312,22 @@ export class FrameParser
                 payload[i] = (payload[i] ?? 0) ^ (maskKey[i & 3] ?? 0);
             }
         }
-        this.#buffer = buffer.byteLength === offset + payloadLength
-            ? new Uint8Array(0)
-            : buffer.slice(offset + payloadLength);
+        this.#read = base + offset + payloadLength;
+        this.#required = 0;
 
         return { fin, opcode, payload };
     }
 }
 
+/** The longest reason a close frame can carry: 125 control-frame bytes minus the 2-byte code. */
+const MAX_CLOSE_REASON = 123;
+
 /**
  * Serializes one frame. Servers never mask (the RFC forbids it); `mask: true` is the client
  * role, used by tests to speak valid client frames at the parser.
+ *
+ * An oversized control payload is a RangeError, not a frame: it is this server's own bug,
+ * and putting it on the wire would make the peer kill the connection with 1002.
  */
 export function serializeFrame(
     opcode: number,
@@ -244,6 +338,11 @@ export function serializeFrame(
     const fin = options.fin ?? true;
     const mask = options.mask ?? false;
     const length = payload.byteLength;
+
+    if (opcode >= 0x8 && length > 125)
+    {
+        throw new RangeError(`A control frame carries at most 125 payload bytes, not ${ length }.`);
+    }
 
     const extended = length > 65_535 ? 8 : length > 125 ? 2 : 0;
     const header = 2 + extended + (mask ? 4 : 0);
@@ -283,15 +382,42 @@ export function serializeFrame(
     return out;
 }
 
-/** Serializes a close frame's payload: a 2-byte code plus an optional UTF-8 reason. */
+/**
+ * Close codes RFC 6455 section 7.4.1 and the IANA registry permit on the wire, in either
+ * direction: 1004 is reserved, and 1005/1006 name the ABSENCE of a code, so an endpoint
+ * that reads or writes them is describing something the protocol cannot carry.
+ */
+function isWireCloseCode(code: number): boolean
+{
+    return (code >= 1000 && code <= 1014 && code !== 1004 && code !== 1005 && code !== 1006)
+        || (code >= 3000 && code <= 4999);
+}
+
+/**
+ * Serializes a close frame's payload: a 2-byte code plus an optional UTF-8 reason, truncated
+ * on a codepoint boundary to what a control frame can hold. Reasons commonly embed user
+ * input, so the length is attacker-influenced and cannot be trusted to fit.
+ *
+ * 1005/1006 become the empty payload (their meaning, and all the wire can express); any
+ * other unsendable code is a RangeError rather than a silent 16-bit truncation - `1000 +
+ * 69000` used to reach the peer as 4464.
+ */
 export function closePayload(code: number, reason = ''): Uint8Array
 {
-    const reasonBytes = new TextEncoder().encode(reason);
-    const out = new Uint8Array(2 + reasonBytes.byteLength);
+    if (code === 1005 || code === 1006)
+    {
+        return EMPTY;
+    }
+    if (!isWireCloseCode(code))
+    {
+        throw new RangeError(`Close code ${ code } cannot be sent (RFC 6455 section 7.4.1).`);
+    }
+    const out = new Uint8Array(2 + MAX_CLOSE_REASON);
     out[0] = code >>> 8;
     out[1] = code & 0xff;
-    out.set(reasonBytes, 2);
-    return out;
+    // encodeInto never emits a partial codepoint, so its cut is already character-aligned.
+    const { written } = new TextEncoder().encodeInto(reason, out.subarray(2));
+    return out.subarray(0, 2 + written);
 }
 
 /**
@@ -309,10 +435,7 @@ export function parseClosePayload(payload: Uint8Array): { code: number; reason: 
         throw new ProtocolError(1002, 'A close payload cannot be a single byte.');
     }
     const code = ((payload[0] ?? 0) << 8) | (payload[1] ?? 0);
-    const valid = (code >= 1000 && code <= 1003)
-        || (code >= 1007 && code <= 1011)
-        || (code >= 3000 && code <= 4999);
-    if (!valid)
+    if (!isWireCloseCode(code))
     {
         throw new ProtocolError(1002, `Invalid close code ${ code } on the wire.`);
     }

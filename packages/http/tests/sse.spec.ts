@@ -79,7 +79,7 @@ describe('the wire format', () =>
         expect((wire.match(/: hb\n\n/g) ?? []).length).toBeGreaterThanOrEqual(2);
     });
 
-    it('sends after close are silent no-ops; a throwing producer ends the stream', async () =>
+    it('sends after close are silent no-ops', async () =>
     {
         const late = sse(request(), (connection) =>
         {
@@ -87,13 +87,99 @@ describe('the wire format', () =>
             connection.send('after'); // must not throw, must not appear
         }, { heartbeatMs: 0 });
         expect(await bodyText(late)).not.toContain('after');
+    });
+});
 
-        const throwing = sse(request(), () =>
+describe('a producer that fails', () =>
+{
+    it('ends the stream WITHOUT the terminator and reports the error', async () =>
+    {
+        // [DONE] is the client's proof it read the whole stream. Emitting it after a failure
+        // sells page 1 of 3 as the complete ledger, and the operator hears nothing at all.
+        const failures: unknown[] = [];
+        const throwing = sse(request(), (connection) =>
         {
-            throw new Error('producer exploded');
-        }, { heartbeatMs: 0 });
+            connection.send('page-1');
+            throw new Error('the ledger cursor died');
+        }, { heartbeatMs: 0, onError: (error) => failures.push(error) });
+
         const wire = await bodyText(throwing); // resolves - the stream ENDED instead of hanging
-        expect(wire).toContain('[DONE]');
+        expect(wire).toContain('data: page-1');
+        expect(wire).not.toContain('[DONE]');
+        expect(failures).toHaveLength(1);
+        expect((failures[0] as Error).message).toBe('the ledger cursor died');
+    });
+
+    it('an async producer rejection reports the same way', async () =>
+    {
+        const failures: unknown[] = [];
+        const throwing = sse(request(), async () =>
+        {
+            await Promise.resolve();
+            throw new Error('page 2 timed out');
+        }, { heartbeatMs: 0, onError: (error) => failures.push(error) });
+
+        expect(await bodyText(throwing)).not.toContain('[DONE]');
+        expect(failures).toHaveLength(1);
+    });
+});
+
+describe('relayed text cannot forge events', () =>
+{
+    it('a lone CR inside a payload frames as data, not as a new field', async () =>
+    {
+        // The event-stream grammar ends a line on CRLF, LF *or a bare CR*: splitting on '\n'
+        // alone lets one send() of user text synthesize a whole event on somebody's client.
+        const response = sse(request(), (connection) =>
+        {
+            connection.send('hi\revent: transfer\rdata: {"to":"attacker","amount":9999}\r');
+            connection.close();
+        }, { heartbeatMs: 0 });
+
+        const wire = await bodyText(response);
+        expect(wire).toContain('data: hi\ndata: event: transfer\n');
+        for (const line of wire.split('\n'))
+        {
+            expect(line === '' || line.startsWith('data: ') || line.startsWith(': ')).toBe(true);
+        }
+    });
+
+    it('event, id and comment values are single lines whatever they are handed', async () =>
+    {
+        const response = sse(request(), (connection) =>
+        {
+            connection.send('payload', { event: 'ok\nevent: transfer', id: '1\rdata: forged' });
+            connection.comment('note\n\ndata: forged');
+            connection.close();
+        }, { heartbeatMs: 0 });
+
+        const wire = await bodyText(response);
+        expect(wire).toContain('event: ok event: transfer\n');
+        expect(wire).toContain('id: 1 data: forged\n');
+        expect(wire).not.toContain('\ndata: forged');
+        expect((wire.match(/^event: /gm) ?? []).length).toBe(1);
+    });
+});
+
+describe('a client that is already gone', () =>
+{
+    it('never starts the producer or the heartbeat', async () =>
+    {
+        // A disconnect while the handler awaited auth hands sse() a signal that has ALREADY
+        // fired, and a listener added to one of those never runs: every teardown path would
+        // be dead code and the heartbeat would tick into a closed socket forever.
+        const gone = request();
+        Object.defineProperty(gone, 'signal', { value: AbortSignal.abort() });
+
+        let producerRan = false;
+        const response = sse(gone, () =>
+        {
+            producerRan = true;
+        }, { heartbeatMs: 5 });
+
+        await new Promise((resolve) => setTimeout(resolve, 60)); // a dozen heartbeat ticks
+        expect(await bodyText(response)).toBe('');               // resolves: the stream was closed, not left armed
+        expect(producerRan).toBe(false);
     });
 });
 

@@ -12,7 +12,7 @@
  *   - SHUTDOWN. `stop({ drain: true })` disarms every timer and awaits in-flight runs up to
  *     a grace period - built to sit next to @azerothjs/http's shutdown().
  *   - CRASHES. A throwing job reports to the scheduler's onError observer and KEEPS its
- *     schedule; the observer's own throws are swallowed.
+ *     schedule; the observer's and the logger's own throws are swallowed.
  *
  * Registration is loud: a malformed expression, an unknown timezone, a duplicate name, or an
  * expression that can never match throws AT schedule() time, not at 3am. Missed occurrences
@@ -76,6 +76,7 @@ export interface SchedulerOptions
     /**
      * Lifecycle visibility: runs at debug, overlap skips at warn, failures at error
      * (in addition to onError - the observer is programmatic, this is for humans).
+     * Its own throws are swallowed, like the observer's.
      */
     logger?: SchedulerLogger;
 
@@ -179,6 +180,24 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
         }
     }
 
+    /**
+     * Visibility, isolated exactly like {@link report}. A logger call runs SYNCHRONOUSLY inside
+     * a timer callback or a promise handler here, so an unguarded throw is an uncaughtException
+     * or an unhandled rejection - the process dies for a log line, and the failure it was
+     * describing is never reported.
+     */
+    function tell(level: 'debug' | 'warn' | 'error', message: string, fields: Record<string, unknown>): void
+    {
+        try
+        {
+            options.logger?.[level](message, fields);
+        }
+        catch
+        {
+            // Watching must never break the scheduler.
+        }
+    }
+
     /** Computes the job's next occurrence from the current wall clock. */
     function computeNext(job: Job): number
     {
@@ -232,7 +251,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
         if (job.running > 0 && job.overlap === 'skip')
         {
             job.overlapsSkipped++;
-            options.logger?.warn('cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
+            tell('warn', 'cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
         }
         else
         {
@@ -249,20 +268,22 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
         job.running++;
         job.lastRun = new Date();
         const startedAt = performance.now();
-        options.logger?.debug('cron run', { job: job.name });
+        tell('debug', 'cron run', { job: job.name });
         const promise = Promise.resolve()
             .then(() => job.fn())
             .then(
                 () =>
                 {
                     job.lastOutcome = 'ok';
-                    options.logger?.debug('cron ok', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 });
+                    tell('debug', 'cron ok', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 });
                 },
                 (error: unknown) =>
                 {
                     job.lastOutcome = 'error';
-                    options.logger?.error('cron failed', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100, error });
+                    // The observer runs BEFORE the log line: reporting a failure is the
+                    // scheduler's contract, describing it is a convenience.
                     report(error, job.name);
+                    tell('error', 'cron failed', { job: job.name, durationMs: Math.round((performance.now() - startedAt) * 100) / 100, error });
                 }
             )
             .finally(() =>
@@ -358,7 +379,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
             if (job.running > 0 && job.overlap === 'skip')
             {
                 job.overlapsSkipped++;
-                options.logger?.warn('cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
+                tell('warn', 'cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
                 return;
             }
             await run(job);

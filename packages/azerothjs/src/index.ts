@@ -24,6 +24,10 @@
 export * from './reactivity/index.ts';
 export * from './component/index.ts';
 export * from './renderer/index.ts';
+// The render-safety gate's escape hatches. They live beside the gate itself (renderer/ssr.ts,
+// which both render modes call) rather than in the renderer's own barrel, whose exports are all
+// element-building API.
+export { unsafeUrl, unsafeTag } from './renderer/ssr.ts';
 export * from './ssr/index.ts';
 export * from './router/index.ts';
 export * from './form/index.ts';

@@ -14,7 +14,7 @@ import { connect } from 'node:net';
 import { once } from 'node:events';
 import { App, text as textResponse } from '@azerothjs/http';
 import { serve, type Served } from '@azerothjs/http/node';
-import { attachWebSockets, serializeFrame, FrameParser, OPCODE, closePayload, type ServerSocket } from '@azerothjs/ws';
+import { attachWebSockets, serializeFrame, FrameParser, OPCODE, type ServerSocket } from '@azerothjs/ws';
 
 const encode = (value: string): Uint8Array => new TextEncoder().encode(value);
 
@@ -279,9 +279,9 @@ describe('the raw-socket protocol matrix', () =>
         await withServer(() => undefined, async (port) =>
         {
             const { socket, frames } = await rawClient(port);
-            // 1006 must never appear on the wire; hand-craft it (closePayload would refuse? it
-            // does not validate on WRITE - validation is the receiver's job per the RFC).
-            socket.write(serializeFrame(OPCODE.close, closePayload(1006, ''), { mask: true }));
+            // 1006 must never appear on the wire, so closePayload refuses to encode it - the
+            // two bytes are hand-crafted here to test the RECEIVING half of the rule.
+            socket.write(serializeFrame(OPCODE.close, new Uint8Array([0x03, 0xee]), { mask: true }));
             const close = await frames();
             expect(((close.payload[0] ?? 0) << 8) | (close.payload[1] ?? 0)).toBe(1002);
             socket.destroy();

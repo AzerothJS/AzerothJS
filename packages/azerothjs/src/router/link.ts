@@ -26,7 +26,7 @@ import type { Child } from '../renderer/index.ts';
 import type { NavigateTarget } from './types.ts';
 import { resolveRouter } from './provider.ts';
 import type { Router } from './router.ts';
-import { EXTERNAL_URL } from './router.ts';
+import { isExternalUrl } from './router.ts';
 
 /**
  * Props for the `<Link>` component.
@@ -187,7 +187,7 @@ export function Link(props: LinkProps): HTMLElement
     // leaves external URLs untouched), so the rendered anchor points at the real
     // URL even when the app is served under a sub-path.
     const href = reactiveTo ? (): string => router.href(target()) : router.href(target());
-    const isExternal = (): boolean => EXTERNAL_URL.test(typeof href === 'function' ? href() : href);
+    const isExternal = (): boolean => isExternalUrl(typeof href === 'function' ? href() : href);
     const linkPathname = (): string => targetPathname(target());
 
     // Runs the user's onClick first (if any), then applies the bail-out table

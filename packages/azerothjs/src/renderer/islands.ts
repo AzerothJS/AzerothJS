@@ -59,12 +59,14 @@ export type IslandRegistry = Record<string, () => Promise<{ default: IslandCompo
  *
  * EDGE CASES:
  * - A src with no registered loader warns and leaves that island static.
+ * - A loader rejection or malformed props JSON warns and leaves THAT island static; the
+ *   remaining islands still revive.
  * - Nested island anchors are skipped (islands do not nest).
  * - Props are read from the anchor's data attribute and JSON-parsed (defaulting to {}).
  *
  * PERFORMANCE NOTES:
- * Islands load and hydrate in parallel (Promise.all). Cost scales with the number/size of
- * islands, not the page; each island is its own code-split chunk.
+ * Islands load and hydrate in parallel (Promise.allSettled). Cost scales with the number/size
+ * of islands, not the page; each island is its own code-split chunk.
  *
  * DEVELOPER WARNING:
  * Use a bundler-visible registry (import.meta.glob), not raw dynamic-import strings, or chunks
@@ -84,7 +86,10 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
     const anchors = Array.from(root.querySelectorAll('[data-azeroth-island]'));
     let revived = 0;
 
-    await Promise.all(anchors.map(async (anchor) =>
+    // allSettled + a per-anchor catch: the module contract is that one island failing to
+    // load does not break the others, and anchor attributes come from server HTML - one
+    // serialization bug must degrade to one static island, not a whole-page outage.
+    await Promise.allSettled(anchors.map(async (anchor) =>
     {
         // Islands do not nest: an anchor inside another island's subtree belongs to markup only
         // its parent could own.
@@ -95,19 +100,28 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
         }
 
         const src = anchor.getAttribute('data-azeroth-island') ?? '';
-        const load = registry[src];
+        // Object.hasOwn: a plain index would treat an inherited key (`constructor`,
+        // `toString`) as a loader and call it, crashing instead of degrading.
+        const load = Object.hasOwn(registry, src) ? registry[src] : undefined;
         if (!load)
         {
             console.warn(`hydrateIslands: no loader registered for "${ src }" - island left static.`);
             return;
         }
 
-        const loaded = await load();
-        const component = typeof loaded === 'function' ? loaded : loaded.default;
-        const props = JSON.parse(anchor.getAttribute('data-azeroth-props') ?? '{}') as Record<string, unknown>;
+        try
+        {
+            const loaded = await load();
+            const component = typeof loaded === 'function' ? loaded : loaded.default;
+            const props = JSON.parse(anchor.getAttribute('data-azeroth-props') ?? '{}') as Record<string, unknown>;
 
-        hydrateIslandRoot(() => component(props), anchor as HTMLElement);
-        revived++;
+            hydrateIslandRoot(() => component(props), anchor as HTMLElement);
+            revived++;
+        }
+        catch (error)
+        {
+            console.warn(`hydrateIslands: island "${ src }" failed to revive - left static.`, error);
+        }
     }));
 
     return revived;

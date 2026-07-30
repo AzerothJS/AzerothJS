@@ -53,6 +53,26 @@ describe('quoteString', () =>
         expect(quoteString('a\\b')).toBe('\'a\\\\b\'');
         expect(quoteString('a\nb')).toBe('\'a\\nb\'');
     });
+
+    it('escapes EVERY line terminator, not just \\n', () =>
+    {
+        // A CR is a LineTerminator too: raw, it ends the literal, and the emitted module is a syntax
+        // error. `<style>` CDATA, static attribute values, folded constants and `&#13;` all deliver
+        // one - and a CRLF checkout (Git for Windows' default) puts one in front of every newline.
+        expect(quoteString('a\rb')).toBe('\'a\\rb\'');
+        expect(quoteString('a\r\nb')).toBe('\'a\\r\\nb\'');
+        expect(quoteString('a\u2028b')).toBe('\'a\\u2028b\'');
+        expect(quoteString('a\u2029b')).toBe('\'a\\u2029b\'');
+    });
+
+    it('produces a literal that PARSES and evaluates back to its input', () =>
+    {
+        for (const value of ['hi', 'a\'b', 'a\\b', 'a\nb', 'a\rb', '\r\n', 'a\u2028b', 'a\u2029b', '.a { color: red; }'])
+        {
+            // eslint-disable-next-line @typescript-eslint/no-implied-eval -- the claim under test IS that the emitted literal parses as JS
+            expect((new Function(`return ${ quoteString(value) };`) as () => string)()).toBe(value);
+        }
+    });
 });
 
 describe('objectKey', () =>

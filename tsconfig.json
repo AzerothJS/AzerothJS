@@ -76,7 +76,7 @@
             "@azerothjs/kit/prerender": ["./packages/kit/src/prerender.ts"],
             "@azerothjs/kit/client": ["./packages/kit/src/client.ts"],
             "@azerothjs/http/api": ["./packages/http/src/api/index.ts"],
-            "@azerothjs/http/api/client": ["./packages/http/src/api/client-entry.ts"],
+            "@azerothjs/http/api/shared": ["./packages/http/src/api/shared-entry.ts"],
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"

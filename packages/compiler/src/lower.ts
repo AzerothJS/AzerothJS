@@ -32,7 +32,7 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { isEventName, isFunctionLiteral } from './markup-util.ts';
+import { isEventName, isFunctionLiteral, CONTENT_PROPERTIES } from './markup-util.ts';
 import { BUILTIN_SET as BUILTINS } from './builtins.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -300,13 +300,19 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
                 }
                 continue;
             }
-            if (attr.value.kind === 'static')
+            if (attr.value.kind === 'static' || attr.value.kind === 'none')
             {
-                attrs.push({ name, value: attr.value.value });
-            }
-            else if (attr.value.kind === 'none')
-            {
-                attrs.push({ name, value: true });
+                const value = attr.value.kind === 'static' ? attr.value.value : true;
+                // A content property has no attribute form (see CONTENT_PROPERTIES), so it goes to the
+                // binding list even though its value is a literal; everything else bakes into the template.
+                if (CONTENT_PROPERTIES.has(name))
+                {
+                    ctx.bindings.push({ kind: 'property', target: id, name, value });
+                }
+                else
+                {
+                    attrs.push({ name, value });
+                }
             }
             else if (name === 'ref')
             {

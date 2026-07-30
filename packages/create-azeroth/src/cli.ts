@@ -16,14 +16,14 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { colorTier, palette } from '@azerothjs/logger';
 import { intro, outro, select, textInput } from '@azerothjs/logger/node';
 
-import { TEMPLATES, TEMPLATE_OPTIONS, isTemplateName, scaffold, type OptionName, type TemplateName } from './scaffold.ts';
+import { TEMPLATES, TEMPLATE_OPTIONS, isTemplateName, resolveProjectTarget, scaffold, type OptionName, type TemplateName } from './scaffold.ts';
 
 // The scaffolder's user interface writes to stdout/stderr directly (stderr for errors,
 // so stdout stays pipe-clean). The runtime logger records are telemetry; none of this is.
@@ -133,9 +133,11 @@ async function main(): Promise<number>
         }
         name = answer === '' ? 'azeroth-app' : answer;
     }
-    if (!/^[a-z0-9@/_.-]+$/i.test(name))
+    const target = resolveProjectTarget(process.cwd(), name);
+    if (target === null)
     {
-        fail(`'${ name }' is not a usable directory/package name`);
+        fail(`'${ name }' is not a usable directory/package name - one path segment of lowercase `
+            + 'letters, digits, - . _ ~ (optionally under an @scope/), scaffolded inside this directory');
         return 2;
     }
 
@@ -194,7 +196,6 @@ async function main(): Promise<number>
         }
     }
 
-    const target = resolve(process.cwd(), name);
     const templatesRoot = fileURLToPath(new URL('../templates', import.meta.url));
     try
     {

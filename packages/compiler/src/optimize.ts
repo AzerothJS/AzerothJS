@@ -18,6 +18,7 @@ import * as ts from 'typescript';
 
 import type { RenderPlan, TemplateNode, StaticAttr, Binding } from './ir.ts';
 
+import { CONTENT_PROPERTIES } from './markup-util.ts';
 import { parseExpressionSlice } from './ts-slice.ts';
 
 /**
@@ -108,6 +109,13 @@ export function foldConstants(source: string, plan: RenderPlan): RenderPlan
         }
         else if (binding.kind === 'attribute')
         {
+            // A content property (`innerHTML={'<b>x</b>'}`) folds to a template ATTRIBUTE, which is
+            // inert in the clone while the h() path writes content - the fold would re-open the very
+            // divergence the lowerer routes static content properties around. Leave it a binding.
+            if (CONTENT_PROPERTIES.has(binding.name))
+            {
+                continue;
+            }
             const value = evalConstant(source.slice(binding.expr.span.start, binding.expr.span.end));
             if (value !== null)
             {

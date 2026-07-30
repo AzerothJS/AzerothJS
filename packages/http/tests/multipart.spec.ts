@@ -138,6 +138,58 @@ describe('preamble, epilogue, and quoted params', () =>
     });
 });
 
+describe('what counts as a FILE part', () =>
+{
+    /** A raw part whose payload is arbitrary bytes: text framing, binary body, byte-exact. */
+    function binaryPart(disposition: string, payload: Uint8Array): Request
+    {
+        const head = new TextEncoder().encode(`--xyz\r\ncontent-disposition: ${ disposition }\r\n\r\n`);
+        const tail = new TextEncoder().encode('\r\n--xyz--');
+        const body = new Uint8Array(head.byteLength + payload.byteLength + tail.byteLength);
+        body.set(head, 0);
+        body.set(payload, head.byteLength);
+        body.set(tail, head.byteLength + payload.byteLength);
+        return rawRequest(body);
+    }
+
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00, 0x01]);
+
+    it('an RFC 8187 filename* part is a file: byte-exact and under maxFileSize', async () =>
+    {
+        // Classified as a text field it would face neither the per-file cap nor byte
+        // preservation - the payload would come back UTF-8 mangled (0x89 -> 0xefbfbd).
+        const request = binaryPart('form-data; name="shot"; filename*=UTF-8\'\'na%C3%AFve.png', PNG);
+        const parsed = await readMultipart(request);
+        expect(parsed.fields.getAll('shot')).toEqual([]);
+        expect(parsed.files).toHaveLength(1);
+        expect(parsed.files[0]!.filename).toBe('naïve.png');
+        expect([...parsed.files[0]!.data]).toEqual([...PNG]);
+
+        await expect(readMultipart(
+            binaryPart('form-data; name="shot"; filename*=UTF-8\'\'big.bin', new Uint8Array(2048)),
+            { maxFileSize: 1024 })).rejects.toBeInstanceOf(PayloadTooLargeError);
+    });
+
+    it('filename* wins over filename, and an undecodable one is still a file', async () =>
+    {
+        const both = await readMultipart(binaryPart(
+            'form-data; name="f"; filename="legacy.bin"; filename*=UTF-8\'\'real.bin', PNG));
+        expect(both.files[0]!.filename).toBe('real.bin');
+
+        const broken = await readMultipart(binaryPart('form-data; name="f"; filename*=%%%', PNG));
+        expect(broken.files).toHaveLength(1);
+        expect([...broken.files[0]!.data]).toEqual([...PNG]);
+    });
+
+    it('a semicolon inside the quoted NAME cannot forge a filename', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="note; filename=evil.exe"\r\n\r\nhi\r\n--xyz--';
+        const parsed = await readMultipart(rawRequest(body));
+        expect(parsed.files).toEqual([]);
+        expect(parsed.fields.get('note; filename=evil.exe')).toBe('hi');
+    });
+});
+
 describe('limits', () =>
 {
     it('caps the part count', async () =>
@@ -162,4 +214,35 @@ describe('limits', () =>
         await expect(readMultipart(rawRequest(body), { limit: 64 }))
             .rejects.toBeInstanceOf(PayloadTooLargeError);
     });
+});
+
+describe('the boundary scan cannot be made quadratic', () =>
+{
+    const PAYLOAD_BYTES = 2 * 1024 * 1024;
+
+    /** How long readMultipart takes on a dash payload framed by `boundary` (best of 3 runs). */
+    async function fastest(boundary: string): Promise<number>
+    {
+        const body = `--${ boundary }\r\ncontent-disposition: form-data; name="f"\r\n\r\n`
+            + '-'.repeat(PAYLOAD_BYTES) + `\r\n--${ boundary }--`;
+        let best = Infinity;
+        for (let run = 0; run < 3; run++)
+        {
+            const started = performance.now();
+            const parsed = await readMultipart(rawRequest(body, boundary));
+            best = Math.min(best, performance.now() - started);
+            expect(parsed.fields.get('f')!.length).toBe(PAYLOAD_BYTES);
+        }
+        return best;
+    }
+
+    it('a hostile boundary costs what a benign one costs', async () =>
+    {
+        // The client picks the boundary AND the payload. An un-prefixed `--`-leading delimiter
+        // against a body of dashes compares the whole 70-byte boundary at EVERY offset, before
+        // maxParts has any say: 40 ms of blocked event loop per MiB, against 2 ms benign.
+        const benign = await fastest('xyz');
+        const hostile = await fastest(`${ '-'.repeat(67) }X`);
+        expect(hostile).toBeLessThan(benign * 3 + 15);
+    }, 30_000);
 });

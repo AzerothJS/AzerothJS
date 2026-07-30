@@ -241,11 +241,22 @@ th { color: var(--dim); font-weight: 500; font-size: 12px; }
             sec.append(table); content.append(sec);
         }
 
+        // A request body carries whatever media type the contract declared - JSON for a
+        // schema input, multipart/form-data for a file route - so nothing here may assume one.
+        const bodyContent = (op.requestBody && op.requestBody.content) || {};
+        const bodyType = Object.keys(bodyContent)[0] || null;
+        const bodyMedia = bodyType ? bodyContent[bodyType] : null;
+        const jsonBody = bodyType === 'application/json' || (bodyType !== null && bodyType.endsWith('+json'));
         if (op.requestBody) {
-            const sec = el('div', 'sec'); sec.append(el('h2', null, 'Request body'));
-            const box = el('div', 'schema');
-            schemaRows(op.requestBody.content['application/json'].schema, box, 0, new Set());
-            sec.append(box); content.append(sec);
+            const sec = el('div', 'sec');
+            sec.append(el('h2', null, bodyType ? 'Request body · ' + bodyType : 'Request body'));
+            if (op.requestBody.description) sec.append(el('p', 'desc', op.requestBody.description));
+            if (bodyMedia && bodyMedia.schema) {
+                const box = el('div', 'schema');
+                schemaRows(bodyMedia.schema, box, 0, new Set());
+                sec.append(box);
+            }
+            content.append(sec);
         }
 
         const responses = el('div', 'sec'); responses.append(el('h2', null, 'Responses'));
@@ -272,11 +283,16 @@ th { color: var(--dim); font-weight: 500; font-size: 12px; }
             inputs.token = panel.appendChild(el('input'));
             inputs.token.placeholder = 'paste an access token';
         }
+        // The panel speaks JSON only: offering an editor for a multipart body would send a
+        // request the route answers with 415.
         let bodyInput = null;
-        if (op.requestBody) {
+        if (op.requestBody && jsonBody) {
             panel.append(el('label', null, 'Body (JSON)'));
             bodyInput = panel.appendChild(el('textarea'));
             bodyInput.value = '{\\n  \\n}';
+        } else if (op.requestBody) {
+            panel.append(el('label', null, 'Body (' + (bodyType || 'unknown media type') + ')'));
+            panel.append(el('p', 'desc', 'Try it sends JSON only - issue this request from your own client.'));
         }
         const send = el('button', 'send', 'Send request');
         const result = el('div', 'result');

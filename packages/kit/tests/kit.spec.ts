@@ -137,6 +137,40 @@ describe('mountPages', () =>
         const html = await (await fetch(app, '/users/42')).text();
         expect(html).toContain('SSR:/users/42');
     });
+
+    // The shell promise is created at mount and awaited per REQUEST, so its rejection had no
+    // handler in the turn it happened and node's default policy killed the process: a wrong
+    // CLIENT_DIR in a container was a crash loop reporting a bare ENOENT.
+    it('a clientDir with no shell fails the request with a kit error, never an unhandled rejection', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-kit-noshell-'));
+        dirs.push(dir);
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown): void =>
+        {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandled);
+        try
+        {
+            const observed: unknown[] = [];
+            const app = new App({ onError: (error) => void observed.push(error) });
+            mountPages(app, { routes: [{ path: '/', component }], clientDir: dir, renderer: fakeRenderer });
+            // Two macrotask turns: long past the turn the readFile rejection settles in.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(unhandled).toEqual([]);
+
+            const response = await fetch(app, '/');
+            expect(response.status).toBe(500);
+            expect(String((observed[0] as Error | undefined)?.message)).toContain('kit mountPages: no client shell');
+            expect(String((observed[0] as Error | undefined)?.message)).toContain(dir);
+        }
+        finally
+        {
+            process.off('unhandledRejection', onUnhandled);
+        }
+    });
 });
 
 describe('prerender', () =>
@@ -172,5 +206,19 @@ describe('prerender', () =>
             clientDir: dir,
             renderer: fakeRenderer
         })).rejects.toThrow(/parameters/);
+    });
+
+    // `..` in a route path used to escape the build output entirely: the write landed two
+    // levels above dist, in whatever the parent directory happened to be.
+    it('a route path that resolves outside the client dir is a BUILD error, not a write', async () =>
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+        await expect(prerender({
+            routes: [{ path: '/../../ESCAPED-PRERENDER', component, render: 'static' }],
+            clientDir: dir,
+            renderer: fakeRenderer
+        })).rejects.toThrow(/outside the client dir/);
+        expect(existsSync(join(dir, '..', '..', 'ESCAPED-PRERENDER'))).toBe(false);
     });
 });

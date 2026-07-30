@@ -2,6 +2,7 @@ import { App, json, type RequestObserver } from '@azerothjs/http';
 import { mountApi } from '@azerothjs/http/api';
 import { mountPages, type KitOptions } from '@azerothjs/kit';
 import { contract, type Entry } from './contract.ts';
+import { mountStream } from './stream.ts';
 
 export interface AppOptions
 {
@@ -21,21 +22,26 @@ export function buildApp(options: AppOptions): App
     const entries: Entry[] = [];
     let nextId = 1;
 
+    // Handlers are keyed by the contract's dotted route path - the same keys a `guards` map uses,
+    // so there is one key space and no tree to mirror. Validation happens at the boundary, so
+    // `input` is already the schema's type; swap this array for a database and nothing else moves.
     mountApi(app, contract, {
         handlers:
         {
-            guestbook:
+            'guestbook.list': () => entries,
+            'guestbook.sign': ({ input }) =>
             {
-                list: () => entries,
-                sign: ({ input }) =>
-                {
-                    const created: Entry = { id: nextId++, ...input, at: new Date().toISOString() };
-                    entries.unshift(created);
-                    return created;
-                }
+                const created: Entry = { id: nextId++, ...input, at: new Date().toISOString() };
+                entries.unshift(created);
+                return created;
             }
         }
     });
+
+    // The raw half: routes whose request or response is not a JSON value, so the contract
+    // would have nothing to validate. A token stream here; uploads, webhooks and downloads
+    // belong beside it. This split is the rule, not an exception - see stream.ts.
+    mountStream(app);
 
     // Mounted LAST so nothing shadows /api: everything else is a page or an asset, and the
     // kit reads each route's `render` mode - the static home is served as a file, /guestbook

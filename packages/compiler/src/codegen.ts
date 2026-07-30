@@ -27,7 +27,7 @@
  */
 
 import { findMarkupStart } from './scanner.ts';
-import { parseMarkup, CompileError } from './markup-parser.ts';
+import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './scanner.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
@@ -129,6 +129,20 @@ interface Emit
      * projected expression once. The non-idempotent rewrite must not run twice.
      */
     raw: boolean;
+
+    /**
+     * How many expression holes deep the markup walk currently is. The parser's cap is per
+     * {@link parseMarkup} call and every hole re-enters it at depth 0, so nesting THROUGH holes is
+     * bounded here or nowhere - and unbounded, it overflows the stack with an unlocated RangeError.
+     */
+    holeDepth: number;
+
+    /**
+     * Absolute source offset of the OUTERMOST markup region currently being compiled. Nested levels
+     * compile a slice of it, so their own offsets are slice-relative and cannot locate anything in the
+     * file; this is the one absolute anchor a depth failure inside that recursion can be reported at.
+     */
+    regionStart: number;
 }
 
 /** Interns a template HTML string, returning its hoisted const name. */
@@ -246,7 +260,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
     }
 
     const module = parseModule(source);
-    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false };
+    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0 };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -267,7 +281,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
             // applies here, so reads stay verbatim (NO_SOURCES). Regions with no markup are unchanged
             // and stay verbatim for clean source maps.
             const raw = source.slice(item.start, item.end);
-            const projected = projectMarkup(raw, emit, NO_SOURCES);
+            const projected = projectMarkup(raw, emit, NO_SOURCES, item.start);
             // A module-level "composable" (a plain function using the keywords) lowers here too.
             // Guard on a keyword token so keyword-free module code (imports, types, helpers) stays
             // byte-identical for clean source maps.
@@ -357,6 +371,7 @@ function validatePlan(plan: RenderPlan): void
     {
         text: 'hole',
         attribute: 'element',
+        property: 'element',
         event: 'element',
         bind: 'element',
         class: 'element',
@@ -698,6 +713,13 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                     binds.push(`setProp(${ nodeVar(target) }, ${ quoteString(binding.name) }, ${ value });`);
                 }
             }
+            else if (binding.kind === 'property')
+            {
+                // A literal content property: one set-once property write, the same one the h() path
+                // performs, so the clone and SSR/hydrate renders of this artifact agree.
+                emit.used.add('setProp');
+                binds.push(`setProp(${ nodeVar(target) }, ${ quoteString(binding.name) }, ${ binding.value === true ? 'true' : quoteString(binding.value) });`);
+            }
             else if (binding.kind === 'event')
             {
                 // bindEvent delegates bubbling event types to one document-level
@@ -973,7 +995,7 @@ function maybeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset
 /** The rewritten source of a binding expression (nested markup projected, R2-rewritten). */
 function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
-    return maybeRewrite(emit, projectMarkup(source.slice(expr.span.start, expr.span.end), emit, sources), sources, expr.span.start);
+    return maybeRewrite(emit, projectMarkup(source.slice(expr.span.start, expr.span.end), emit, sources, expr.span.start), sources, expr.span.start);
 }
 
 /**
@@ -985,7 +1007,7 @@ function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSource
  */
 function rewriteBody(source: string, start: number, end: number, sources: ReactiveSources, emit: Emit): string
 {
-    const projected = projectMarkup(source.slice(start, end), emit, sources);
+    const projected = projectMarkup(source.slice(start, end), emit, sources, start);
     if (emit.raw)
     {
         return projected;
@@ -1101,6 +1123,10 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     {
         return `${ objectKey(binding.name) }: ${ exprValue(source, binding.expr, sources, emit) }`;
     }
+    if (binding.kind === 'property')
+    {
+        return `${ objectKey(binding.name) }: ${ binding.value === true ? 'true' : quoteString(binding.value) }`;
+    }
     if (binding.kind === 'event')
     {
         return `on${ binding.event }: ${ maybeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) }`;
@@ -1122,7 +1148,7 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     }
     if (binding.kind === 'spread')
     {
-        return `...${ maybeRewrite(emit, projectMarkup(source.slice(binding.expr.span.start, binding.expr.span.end), emit, sources), sources) }`;
+        return `...${ maybeRewrite(emit, projectMarkup(source.slice(binding.expr.span.start, binding.expr.span.end), emit, sources, binding.expr.span.start), sources) }`;
     }
     if (binding.kind === 'ref')
     {
@@ -1281,7 +1307,7 @@ function hasFragment(node: TemplateNode): boolean
  * ONE unified emitter: each markup region is lowered to a RenderPlan and emitted
  * by {@link emitNode}. No separate markup->h() emitter.
  */
-function projectMarkup(code: string, emit: Emit, sources: ReactiveSources): string
+function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base = 0): string
 {
     let out = '';
     let j = 0;
@@ -1293,14 +1319,28 @@ function projectMarkup(code: string, emit: Emit, sources: ReactiveSources): stri
             return out + code.slice(j);
         }
         out += code.slice(j, start);
+        // `base + start` is absolute only at hole depth 0 (a nested level compiles a slice), which is
+        // exactly why the anchor is recorded there and reused by any depth failure further down.
+        if (emit.holeDepth === 0)
+        {
+            emit.regionStart = base + start;
+        }
+        if (emit.holeDepth >= MAX_MARKUP_DEPTH)
+        {
+            throw markupDepthError(emit.regionStart);
+        }
         try
         {
             const { node, end } = parseMarkup(code, start);
             out += emitMarkupExpr(code, node, sources, emit);
             j = end;
         }
-        catch
+        catch (err)
         {
+            if (err instanceof CompileError && err.depthExceeded)
+            {
+                throw err;
+            }
             return out + code.slice(start);
         }
     }
@@ -1317,6 +1357,7 @@ function emitMarkupExpr(source: string, node: MarkupElement | MarkupFragment, so
     const plan = lowerMarkup(source, node);
     const previous = emit.raw;
     emit.raw = true;
+    emit.holeDepth++;
     try
     {
         return emitNode(source, plan.template, plan, sources, emit);
@@ -1324,6 +1365,7 @@ function emitMarkupExpr(source: string, node: MarkupElement | MarkupFragment, so
     finally
     {
         emit.raw = previous;
+        emit.holeDepth--;
     }
 }
 

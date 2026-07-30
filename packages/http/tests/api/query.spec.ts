@@ -24,9 +24,7 @@ function server(): App
 {
     const app = new App();
     mountApi(app, contract, { handlers: {
-        products: {
-            search: ({ input }) => ({ ids: input.term === 'sword' ? [1, 2] : [] })
-        }
+        'products.search': ({ input }) => ({ ids: input.term === 'sword' ? [1, 2] : [] })
     } });
     return app;
 }

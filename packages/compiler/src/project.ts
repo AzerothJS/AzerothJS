@@ -26,7 +26,7 @@ import type { ComponentDecl, BodyItem } from './ast.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 
 import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scanner.ts';
-import { CompileError, parseMarkup } from './markup-parser.ts';
+import { CompileError, parseMarkup, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import {
     walkComponentTags,
     isEventName,
@@ -160,6 +160,9 @@ export function generateVirtualCode(source: string): VirtualCode
     let usedHandler = false;
     let usedChildren = false;
     let usedRender = false;
+    /** Expression-hole nesting depth of the markup walk, and the offset of the region it is inside. */
+    let holeDepth = 0;
+    let lastMarkupStart = 0;
 
     const collect = (node: MarkupElement | MarkupFragment): void =>
         walkComponentTags(node, (tag) =>
@@ -210,20 +213,35 @@ export function generateVirtualCode(source: string): VirtualCode
                 break;
             }
             builder.copy(j, m, kind);
+            // The parser's cap is per parseMarkup call and every hole re-enters it at depth 0, so
+            // markup nested THROUGH holes is bounded here or nowhere. Unbounded, this mutual recursion
+            // (emitMarkup -> emitNode -> emitChild -> emitDynamic -> emitCode) overflows the stack, and
+            // an unlocated RangeError out of the ONE projection takes down every tool that runs it.
+            lastMarkupStart = m;
+            if (holeDepth >= MAX_MARKUP_DEPTH)
+            {
+                throw markupDepthError(m);
+            }
             let parsed: { node: MarkupElement | MarkupFragment; end: number };
             try
             {
                 parsed = parseMarkup(source, m);
             }
-            catch
+            catch (error)
             {
+                if (error instanceof CompileError && error.depthExceeded)
+                {
+                    throw error;
+                }
                 // Incomplete markup mid-edit: copy the remainder verbatim so the rest of the module stays
                 // analysable (the diagnostics provider surfaces the markup error from the parser separately).
                 builder.copy(m, end, kind);
                 break;
             }
             collect(parsed.node);
+            holeDepth++;
             emitNode(parsed.node);
+            holeDepth--;
             j = parsed.end;
         }
     };
@@ -869,16 +887,31 @@ export function generateVirtualCode(source: string): VirtualCode
     // them expanded); components are projected to functions. The leading `export` / `export default` lives
     // in the preceding opaque region, so it glues onto the emitted `function Name` and the export form
     // carries through.
-    for (const item of module.items)
+    try
     {
-        if (item.kind === 'opaque')
+        for (const item of module.items)
         {
-            emitCode(item.start, item.end);
+            if (item.kind === 'opaque')
+            {
+                emitCode(item.start, item.end);
+            }
+            else
+            {
+                projectComponent(item);
+            }
         }
-        else
+    }
+    catch (error)
+    {
+        // Last line of defence for the recursion depth: every walker this projection drives is
+        // depth-capped, but a RangeError carries no position, and raw it escapes as an internal crash
+        // out of the ONE lowering the language service, the ts-plugin, the ESLint processor, the type
+        // checker and the declaration emitter all run. Report it where the deepest region started.
+        if (error instanceof RangeError)
         {
-            projectComponent(item);
+            throw markupDepthError(lastMarkupStart);
         }
+        throw error;
     }
 
     return finalize(builder, source, usedRuntime, usedHandler, usedChildren, usedRender);

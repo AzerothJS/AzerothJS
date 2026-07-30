@@ -251,6 +251,23 @@ describe('Link - click interception', () =>
         dispose();
     });
 
+    it('a control-char scheme URL is treated external, NOT intercepted and NOT pushed as a path', () =>
+    {
+        // The classifier and the rendered href must agree: `http\ts:` is a scheme once a
+        // browser strips the tab, so the click must pass through rather than pushing the
+        // string into history as an app path. An EXECUTABLE control-char scheme never gets
+        // this far - the renderer's URL gate refuses to write the href at all (see
+        // renderer/render-safety.spec.ts), so the classifier is exercised with a fetchable one.
+        const { router, dispose } = makeRouter('/');
+        const { anchor, container } = mountLink(() =>
+            Link({ to: 'http\ts://example.com', router, children: 'X' }));
+        const intercepted = dispatchClick(anchor, leftClick());
+        expect(intercepted).toBe(false);
+        expect(router.location().fullPath).toBe('/');
+        container.remove();
+        dispose();
+    });
+
     it('the user onClick runs before interception and can cancel navigation', () =>
     {
         const { router, dispose } = makeRouter('/');

@@ -7,11 +7,42 @@
 // (bindSlot), attributes (setProp), events, spreads/refs (bindProps), constant
 // folding, fragment roots, opaque passthrough, and source-map emission.
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { generateModule } from '../src/codegen.ts';
+import { CompileError } from '../src/markup-parser.ts';
 
 function gen(src: string): string
 {
     return generateModule(src).code;
+}
+
+/**
+ * Parses the emitted module as real JavaScript (`node --check`, ESM), returning null when it parses
+ * and the reported syntax error otherwise. Asserting on the emitted TEXT cannot catch a literal that
+ * silently fails to parse, which is exactly how a raw CR shipped.
+ */
+function syntaxErrorOf(code: string): string | null
+{
+    const dir = mkdtempSync(join(tmpdir(), 'az-emit-'));
+    try
+    {
+        const file = join(dir, 'emitted.mjs');
+        writeFileSync(file, code);
+        execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
+        return null;
+    }
+    catch (err)
+    {
+        const stderr = (err as { stderr?: Buffer }).stderr;
+        return stderr ? stderr.toString() : String(err);
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true });
+    }
 }
 
 describe('generateModule - module shape and imports', () =>
@@ -656,5 +687,131 @@ describe('generateModule - regex and apostrophes in holes / markup (scanner regr
         const compile = (): string => gen('component C(props: { ok: boolean }) { <div>{ props.ok ? <span>Don\'t</span> : <span>Do</span> }</div> }');
         expect(compile).not.toThrow();
         expect(compile()).toContain('span');
+    });
+});
+
+describe('generateModule - carriage returns in emitted literals', () =>
+{
+    // A CRLF checkout is the DEFAULT on Windows (core.autocrlf=true), so this is what every
+    // multi-line `<style>` looked like: the raw CR landed inside a single-quoted literal, which
+    // ends it, and the build failed with `[PARSE_ERROR] Unterminated string` pointed at the
+    // author's markup.
+    const CRLF_STYLE = 'component Card {\r\n    <div>\r\n        <style>\r\n            .a { color: red; }\r\n        </style>\r\n    </div>\r\n}\r\n';
+
+    it('emits parseable JavaScript for a CRLF <style> (raw-text CDATA path)', () =>
+    {
+        const code = gen(CRLF_STYLE);
+        expect(syntaxErrorOf(code)).toBeNull();
+        // Escaped, in both the hoisted template and the h() branch.
+        expect(code).toContain('\\r\\n            .a { color: red; }');
+        expect(code).not.toMatch(/'[^'\n]*\r/);
+    });
+
+    it('escapes a CR that reaches a static attribute value through &#13;', () =>
+    {
+        const code = gen('component C { <div title="a&#13;b">x</div> }');
+        expect(syntaxErrorOf(code)).toBeNull();
+        expect(code).toContain('title="a\\rb"');
+        expect(code).toContain('title: \'a\\rb\'');
+    });
+
+    it('escapes a CR that reaches static text through constant folding', () =>
+    {
+        // The folder evaluates the literal via TypeScript's DECODED node.text, so `\\r` in the source
+        // becomes a real CR in the template text.
+        const code = gen('component C { <p>{"a\\r\\nb"}</p> }');
+        expect(syntaxErrorOf(code)).toBeNull();
+        expect(code).toContain('a\\r\\nb');
+    });
+
+    it('escapes an authored lone CR in markup text', () =>
+    {
+        const code = gen('component C { <p>a\rb</p> }');
+        expect(syntaxErrorOf(code)).toBeNull();
+    });
+});
+
+describe('generateModule - static content properties (innerHTML / textContent)', () =>
+{
+    it('routes a static innerHTML through the SAME property write in both render modes', () =>
+    {
+        const code = gen('component C { <div innerHTML="<b>bold</b>"></div> }');
+        // Baked into the template it is an inert (lowercased) HTML attribute and the element stays
+        // EMPTY, while the h() branch writes raw content - one artifact rendering two different DOMs.
+        expect(code).toContain('tmpl(\'<div></div>\')');
+        expect(code).not.toMatch(/tmpl\('[^']*innerhtml/i);
+        expect(code).toContain('setProp(_n0, \'innerHTML\', \'<b>bold</b>\')');
+        expect(code).toContain('h(\'div\', { innerHTML: \'<b>bold</b>\' })');
+    });
+
+    it('routes a static textContent the same way', () =>
+    {
+        const code = gen('component C { <div textContent="hi"></div> }');
+        expect(code).toContain('tmpl(\'<div></div>\')');
+        expect(code).toContain('setProp(_n0, \'textContent\', \'hi\')');
+        expect(code).toContain('h(\'div\', { textContent: \'hi\' })');
+    });
+
+    it('does not let constant folding put a content property back into the template', () =>
+    {
+        const code = gen('component C { <div innerHTML={\'<b>x</b>\'}></div> }');
+        expect(code).toContain('tmpl(\'<div></div>\')');
+        expect(code).toContain('\'innerHTML\', \'<b>x</b>\'');
+    });
+
+    it('still bakes value/checked into the template (their server form IS that attribute)', () =>
+    {
+        const code = gen('component C { <input value="a" checked /> }');
+        expect(code).toContain('tmpl(\'<input value="a" checked>\')');
+        expect(code).not.toContain('setProp');
+    });
+});
+
+describe('generateModule - character references in attribute values', () =>
+{
+    it('escapes an author-written &amp; exactly once, and agrees across render modes', () =>
+    {
+        const code = gen('component C { <div title="Tom &amp; Jerry">x</div> }');
+        expect(code).toContain('title="Tom &amp; Jerry"');
+        expect(code).not.toContain('&amp;amp;');
+        expect(code).toContain('title: \'Tom & Jerry\'');
+    });
+});
+
+describe('generateModule - markup nested through expression holes', () =>
+{
+    /** `<div>{<div>{ ... }</div>}</div>` to `levels` deep - nesting the parser's per-call cap misses. */
+    function nested(levels: number): string
+    {
+        let inner = 'x';
+        for (let i = 0; i < levels; i++)
+        {
+            inner = `<div>{${ inner }}</div>`;
+        }
+        return `component C { ${ inner } }`;
+    }
+
+    it('raises a LOCATED CompileError past the depth cap, not a RangeError', () =>
+    {
+        // The cap is per parseMarkup call and every hole re-enters it at depth 0, so this nesting used
+        // to overflow the shared recursion's stack: an unlocated RangeError instead of the located
+        // error the cap exists to guarantee.
+        let err: unknown = null;
+        try
+        {
+            gen(nested(700));
+        }
+        catch (error)
+        {
+            err = error;
+        }
+        expect(err).toBeInstanceOf(CompileError);
+        expect((err as CompileError).message).toContain('nested deeper than 500 levels');
+        expect((err as CompileError).offset).toBeGreaterThan(0);
+    });
+
+    it('still compiles nesting under the cap', () =>
+    {
+        expect(gen(nested(50))).toContain('h(\'div\'');
     });
 });

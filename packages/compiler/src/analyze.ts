@@ -28,7 +28,7 @@ import type { RenderPlan } from './ir.ts';
 import type { Dep, ReactiveSources } from './dep.ts';
 
 import { findMarkupStart } from './scanner.ts';
-import { parseMarkup } from './markup-parser.ts';
+import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { lowerMarkup } from './lower.ts';
 import { parseDeclarationSlice, parseStatementsSlice, parseExpressionSlice, parsePropsPattern, parseComponentParam, formFieldKeys } from './ts-slice.ts';
 import { collectReads } from './resolve.ts';
@@ -310,9 +310,9 @@ function parsedExpression(code: string): ts.Expression | undefined
 }
 
 /** Analyzes one expression's source (projecting any nested markup first). */
-function analyzeExpression(code: string, reactive: ReactiveSources): { deps: Dep[]; pure: boolean }
+function analyzeExpression(code: string, reactive: ReactiveSources, anchor = 0): { deps: Dep[]; pure: boolean }
 {
-    const { sourceFile } = parseExpressionSlice(projectMarkup(code), 0);
+    const { sourceFile } = parseExpressionSlice(projectMarkup(code, 0, anchor), 0);
     return { deps: collectReads(sourceFile, reactive), pure: isPure(sourceFile) };
 }
 
@@ -327,7 +327,7 @@ function collectMarkupBindings(node: MarkupElement | MarkupFragment, reactive: R
         }
         if (child.kind === 'expression')
         {
-            const { deps, pure } = analyzeExpression(child.code, reactive);
+            const { deps, pure } = analyzeExpression(child.code, reactive, child.start);
             scopes.push({ origin: 'text', span: { start: child.start, end: child.end }, deps, pure });
             return;
         }
@@ -342,7 +342,7 @@ function collectMarkupBindings(node: MarkupElement | MarkupFragment, reactive: R
             {
                 if (attr.value.kind === 'expression')
                 {
-                    const { deps, pure } = analyzeExpression(attr.value.code, reactive);
+                    const { deps, pure } = analyzeExpression(attr.value.code, reactive, attr.start);
                     scopes.push({ origin: 'attribute', span: { start: attr.start, end: attr.end }, deps, pure });
                 }
             }
@@ -368,7 +368,7 @@ function collectMarkupBindings(node: MarkupElement | MarkupFragment, reactive: R
  *
  * @internal
  */
-const projectMarkup = (code: string): string =>
+const projectMarkup = (code: string, holeDepth = 0, anchor = 0): string =>
 {
     let out = '';
     let j = 0;
@@ -380,14 +380,24 @@ const projectMarkup = (code: string): string =>
             return out + code.slice(j);
         }
         out += code.slice(j, start);
+        // The parser's cap is per parseMarkup call and every hole re-enters it at depth 0, so nesting
+        // THROUGH holes is bounded here or nowhere - unbounded it overflows this recursion's stack.
+        if (holeDepth >= MAX_MARKUP_DEPTH)
+        {
+            throw markupDepthError(anchor);
+        }
         try
         {
             const { node, end } = parseMarkup(code, start);
-            out += `[${ collectExprs(code, lowerMarkup(code, node)).join(', ') }]`;
+            out += `[${ collectExprs(code, lowerMarkup(code, node), holeDepth + 1, anchor).join(', ') }]`;
             j = end;
         }
-        catch
+        catch (err)
         {
+            if (err instanceof CompileError && err.depthExceeded)
+            {
+                throw err;
+            }
             // Not parseable markup here; keep the rest verbatim.
             return out + code.slice(start);
         }
@@ -401,12 +411,12 @@ const projectMarkup = (code: string): string =>
  *
  * @internal
  */
-function collectExprs(code: string, plan: RenderPlan): string[]
+function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0): string[]
 {
     const out: string[] = [];
     const add = (span: Span): void =>
     {
-        out.push(projectMarkup(code.slice(span.start, span.end)));
+        out.push(projectMarkup(code.slice(span.start, span.end), holeDepth, anchor));
     };
     for (const binding of plan.bindings)
     {
@@ -442,7 +452,7 @@ function collectExprs(code: string, plan: RenderPlan): string[]
             }
             if (children.kind === 'markup')
             {
-                out.push(...collectExprs(code, children.plan));
+                out.push(...collectExprs(code, children.plan, holeDepth, anchor));
             }
             else if (children.kind === 'dynamic')
             {
@@ -450,7 +460,7 @@ function collectExprs(code: string, plan: RenderPlan): string[]
             }
             else if ('template' in children.body)
             {
-                out.push(...collectExprs(code, children.body));
+                out.push(...collectExprs(code, children.body, holeDepth, anchor));
             }
             else
             {

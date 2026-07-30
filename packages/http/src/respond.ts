@@ -52,7 +52,17 @@ export function payloadResponse(body: string, contentType: string, init: Respons
         delete record['set-cookie'];
         record['content-length'] = String(length);
     }
-    return new PayloadResponse(body, init.status ?? 200, record, setCookies);
+    const status = init.status ?? 200;
+    // RFC 9112 section 6.2: a 204/205/304 MUST NOT carry Content-Length, and the payload cannot
+    // be sent at all. Declaring a length with no body on a keep-alive connection is the shape a
+    // framing desync is built from, so the body and the length both go.
+    if (status === 204 || status === 205 || status === 304)
+    {
+        delete record['content-length'];
+        delete record['content-type'];
+        return new PayloadResponse('', status, record, setCookies);
+    }
+    return new PayloadResponse(body, status, record, setCookies);
 }
 
 /** A JSON response; the default for API handlers. */

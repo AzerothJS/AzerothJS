@@ -8,7 +8,7 @@
 // real CSS transition. We DO NOT assert frame-precise intermediate class state
 // (non-deterministic across rAF scheduling); we assert end states only.
 import { describe, it, expect } from 'vitest';
-import { createSignal, createRoot, h, render, Transition } from 'azerothjs';
+import { createSignal, createRoot, h, render, Transition, TransitionGroup } from 'azerothjs';
 
 // Wait long enough for rAF + the fallback duration timeout to fully drive a
 // leave/enter cycle to completion.
@@ -255,5 +255,128 @@ describe('Transition - mid-flight cancellation', () =>
             expect(el?.classList.contains('fade-' + suffix)).toBe(false);
         }
         container.remove();
+    });
+});
+
+describe('Transition - a leaving element stops being interactive', () =>
+{
+    const LEAVING = 'data-azeroth-transition-leaving';
+
+    it('marks the leaving element and injects one overridable pointer-events rule', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(true);
+        let clicks = 0;
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 60,
+            children: () => h('button', { class: 'box', onClick: () => (clicks++) }, 'Confirm payment')
+        })), container);
+        const box = container.querySelector('.box')!;
+
+        setOn(false);
+        // The element stays mounted for the whole leave, with its handler still attached -
+        // so the marker has to be on it from the first frame, not once the animation ends.
+        expect(container.querySelector('.box')).toBe(box);
+        expect(box.hasAttribute(LEAVING)).toBe(true);
+
+        const styleEl = document.querySelector(`style[${ LEAVING }]`);
+        expect(styleEl).not.toBeNull();
+        expect(styleEl!.textContent).toBe(`[${ LEAVING }]{pointer-events:none}`);
+        // Author-level, so an app can override it, and the element's own styles are untouched.
+        expect(styleEl!.textContent).not.toContain('!important');
+        expect(box.getAttribute('style')).toBeNull();
+        // The handler is still bound (the marker is what stops the click, not a teardown).
+        expect(clicks).toBe(0);
+
+        await settle(120);
+        expect(container.querySelector('.box')).toBeNull();
+        container.remove();
+    });
+
+    it('injects the rule exactly once per document', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(true);
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 5,
+            children: () => h('p', { class: 'box' }, 'sheet')
+        })), container);
+
+        setOn(false);
+        await settle();
+        setOn(true);
+        await settle();
+        setOn(false);
+        await settle();
+
+        expect(document.querySelectorAll(`style[${ LEAVING }]`).length).toBe(1);
+        container.remove();
+    });
+
+    it('unmarks the element when a mid-flight leave is reversed back into an enter', async () =>
+    {
+        const container = makeContainer();
+        const [on, setOn] = createSignal(true);
+        render(() => h('div', {}, Transition({
+            when: on,
+            name: 'fade',
+            duration: 60,
+            children: () => h('p', { class: 'box' }, 'sheet')
+        })), container);
+        const box = container.querySelector('.box')!;
+
+        setOn(false);
+        await settle(5);
+        expect(box.hasAttribute(LEAVING)).toBe(true);
+
+        setOn(true);            // reversal: the same element re-enters and stays mounted
+        expect(box.hasAttribute(LEAVING)).toBe(false);
+        await settle(120);
+        expect(container.querySelector('.box')).toBe(box);
+        expect(box.hasAttribute(LEAVING)).toBe(false);
+        container.remove();
+    });
+});
+
+describe('TransitionGroup - a leaving row stops being interactive too', () =>
+{
+    it('marks a departing row with the same attribute Transition uses', async () =>
+    {
+        const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+
+        const dispose = createRoot((d) =>
+        {
+            host.appendChild(TransitionGroup({
+                each: items,
+                key: (item: { id: string }) => item.id,
+                name: 'row',
+                children: (item: { id: string }) =>
+                {
+                    const button = document.createElement('button');
+                    button.textContent = item.id;
+                    return button;
+                }
+            }));
+            return d;
+        });
+
+        setItems([{ id: 'a' }]);
+        await Promise.resolve();
+
+        // The row is still in the DOM playing its exit. A delete button inside it must not be
+        // pressable a second time while it animates away.
+        const leaving = host.querySelector('[data-azeroth-transition-leaving]');
+        expect(leaving).not.toBeNull();
+        expect(leaving?.textContent).toBe('b');
+        expect((leaving as HTMLElement | null)?.style.pointerEvents ?? '').toBe('');
+
+        dispose();
+        host.remove();
     });
 });

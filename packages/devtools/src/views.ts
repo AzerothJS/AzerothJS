@@ -826,7 +826,7 @@ export function renderServer(ctx: PanelCtx, main: HTMLElement): void
     main.onscroll = null;
     ctx.navOrder = [];
     emptyState(main, 'Server inspection',
-        'Call attachDevtools(served.server) from @azerothjs/devtools/server on your backend (dev only), then connect above - this tab streams the server\'s reactive graph, where every request is a reactive root.');
+        'Call attachDevtools(served.server, { token }) from @azerothjs/devtools/server on your backend (dev only), then connect above with that token in the URL query - this tab streams the server\'s reactive graph, where every request is a reactive root.');
 }
 
 // --- Inspector -----------------------------------------------------------------------------

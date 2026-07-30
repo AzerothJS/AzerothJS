@@ -20,7 +20,8 @@
     "files": [
         "dist",
         "templates",
-        "overlays"
+        "overlays",
+        "!dist/**/*.map"
     ],
     "dependencies": {
         "@azerothjs/logger": "^1.1.0"

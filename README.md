@@ -202,7 +202,8 @@ const served = await serve(app, { port: 3000 });
 ```
 
 > [!NOTE]
-> There is no build step - Node >= 22 runs the TypeScript source directly, and
+> There is no build step - Node >= 24 runs the TypeScript source directly (type stripping is
+> unflagged from 22.18, and the backend templates pin `>=24`), and
 > `app.handle(new Request(...))` is the entire integration-testing story.
 
 One error path (shape it with `serializeError`), scoped middleware (`app.with(requireAuth)`), typed env

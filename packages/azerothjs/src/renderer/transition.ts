@@ -19,7 +19,10 @@
  * opposite 'from' class, so a half-entered sheet animates back from exactly where it is - no
  * finish-then-reverse). A transitionend that never fires
  * (missing CSS transition) is backstopped by a `duration` timeout (default 1000ms) so the state
- * machine cannot wedge. The phase-machine internals below carry their own comments.
+ * machine cannot wedge. A LEAVING element is still mounted with its handlers live, so it is
+ * marked `data-azeroth-transition-leaving` and made `pointer-events:none` by one injected,
+ * overridable rule - an element on its way out must not take another click. The phase-machine
+ * internals below carry their own comments.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -76,6 +79,37 @@ type Phase = 'idle' | 'entering' | 'leaving';
 const FALLBACK_TIMEOUT_MS = 1000;
 
 /**
+ * Attribute marking the element of an IN-FLIGHT LEAVE. The leave keeps the element mounted -
+ * handlers attached, scope alive - until the animation ends or the fallback timeout fires, so
+ * without this a "Confirm payment" button stays clickable for the whole second it spends
+ * animating away, and the second click is a real double-submit.
+ *
+ * @internal
+ */
+export const LEAVING_ATTR = 'data-azeroth-transition-leaving';
+
+/**
+ * Injects, once per document, the single overridable rule that makes a leaving element inert.
+ * Author-level (no `!important`) so an app can override it, and scoped to the framework-owned
+ * attribute so it touches nothing else. The framework never mutates the element's inline
+ * styles: presentation stays declarative and app-overridable, and the animating CSS keeps
+ * full ownership of the element's `style` attribute.
+ *
+ * @internal
+ */
+export function ensureLeavingStyle(): void
+{
+    if (typeof document === 'undefined' || document.querySelector(`style[${ LEAVING_ATTR }]`))
+    {
+        return;
+    }
+    const styleEl = document.createElement('style');
+    styleEl.setAttribute(LEAVING_ATTR, '');
+    styleEl.textContent = `[${ LEAVING_ATTR }]{pointer-events:none}`;
+    document.head.appendChild(styleEl);
+}
+
+/**
  * Transition
  *
  * PURPOSE:
@@ -118,6 +152,8 @@ const FALLBACK_TIMEOUT_MS = 1000;
  * - No `name`: instant swap (Show semantics).
  * - First mount never animates; a mid-flight toggle cancels and reverses from the current visual state.
  * - Missing CSS transition still completes via the duration timeout.
+ * - A leaving element stops accepting pointer input for the length of its leave; a reversed
+ *   leave is interactive again.
  *
  * PERFORMANCE NOTES:
  * One child at a time; one transitionend listener + timeout per phase; one forced reflow per
@@ -414,6 +450,8 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
         const el = currentEl;
         const dispose = currentDispose;
         phase = 'leaving';
+        ensureLeavingStyle();
+        el.setAttribute(LEAVING_ATTR, '');
         if (fromCurrent)
         {
             el.classList.add(cls.active);
@@ -459,10 +497,19 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
     function cancelInFlight(direction: 'enter' | 'leave'): void
     {
         cancelPendingWait?.();
+        if (!currentEl)
+        {
+            return;
+        }
         const cls = classFamily(direction);
-        if (cls && currentEl)
+        if (cls)
         {
             currentEl.classList.remove(cls.from, cls.active, cls.to);
+        }
+        // A cancelled leave re-enters and stays mounted: it must be interactive again.
+        if (direction === 'leave')
+        {
+            currentEl.removeAttribute(LEAVING_ATTR);
         }
     }
 

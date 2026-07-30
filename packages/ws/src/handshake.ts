@@ -27,10 +27,17 @@ export interface HandshakeRejection
     reason: string;
 }
 
+/** @internal A comma-separated header field as its lowercased token set (RFC 7230 section 7). */
+function tokens(field: string | undefined): string[]
+{
+    return (field ?? '').toLowerCase().split(',').map((token) => token.trim());
+}
+
 /**
  * Validates an upgrade request. Returns the client key on success, or the rejection to
- * answer with. `Connection: upgrade` is a token LIST (browsers send `keep-alive, Upgrade`),
- * so membership - not equality - is the test.
+ * answer with. `Upgrade` and `Connection` are both token LISTS (browsers send
+ * `keep-alive, Upgrade`, and a client offering more than one protocol sends
+ * `websocket, h2c`), so membership - not equality - is the test.
  */
 export function validateHandshake(request: IncomingMessage): { key: string } | HandshakeRejection
 {
@@ -38,12 +45,20 @@ export function validateHandshake(request: IncomingMessage): { key: string } | H
     {
         return { status: 405, reason: 'WebSocket handshakes are GET requests.' };
     }
-    if ((request.headers.upgrade ?? '').toLowerCase() !== 'websocket')
+    // RFC 6455 section 4.1: the handshake is an HTTP/1.1-or-later request carrying a Host.
+    if (request.httpVersionMajor < 1 || (request.httpVersionMajor === 1 && request.httpVersionMinor < 1))
+    {
+        return { status: 505, reason: 'WebSocket handshakes require HTTP/1.1 or later.' };
+    }
+    if ((request.headers.host ?? '') === '')
+    {
+        return { status: 400, reason: 'A WebSocket handshake must carry a Host header.' };
+    }
+    if (!tokens(request.headers.upgrade).includes('websocket'))
     {
         return { status: 426, reason: 'Expected an Upgrade: websocket request.' };
     }
-    const connection = (request.headers.connection ?? '').toLowerCase().split(',').map((token) => token.trim());
-    if (!connection.includes('upgrade'))
+    if (!tokens(request.headers.connection).includes('upgrade'))
     {
         return { status: 400, reason: 'The Connection header must include "upgrade".' };
     }

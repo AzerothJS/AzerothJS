@@ -18,7 +18,8 @@
  *     is itself an information leak.
  *   - CONDITIONAL REQUESTS. Every file gets a strong ETag derived from (size, mtime) - cheap,
  *     stable, and correct for whole-file responses. An If-None-Match hit returns 304 with
- *     the body never opened.
+ *     the body never opened, and If-Modified-Since answers the same way (second precision,
+ *     which is all an HTTP-date carries) when no entity tag was offered.
  *   - STREAMING. Files stream to the response (no full-file buffering), riding the adapter's
  *     backpressure loop.
  *
@@ -115,6 +116,10 @@ export interface StaticOptions
      * `/.env`, `/.git/config`, or any hidden file is a 404. `.well-known/` is ALWAYS served
      * regardless (RFC 8615 reserves it as a public path for ACME, security.txt, etc.). Set
      * `true` only when the root deliberately contains servable hidden files.
+     *
+     * The rule is enforced on the RESOLVED path, not just the requested one: a filesystem
+     * alias that spells a hidden name differently (a Windows 8.3 short name such as `ENV~1`
+     * for `.env`, an in-root symlink) is denied the same way.
      */
     dotfiles?: boolean;
 }
@@ -183,6 +188,16 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             throw new NotFoundError();
         }
 
+        // The dotfile rule belongs to the path the filesystem RESOLVED, not the one the client
+        // spelled: Windows hands out 8.3 aliases (`.env` is also `ENV~1`, case-insensitively
+        // and through any encoding) that stat and createReadStream honor, and a symlink is
+        // another spelling of the same file. Re-deriving the segments here is what makes
+        // "hidden" mean hidden.
+        if (!allowDotfiles && hasDotSegment(realTarget.slice(realRoot.length)))
+        {
+            throw new NotFoundError();
+        }
+
         // A strong validator from (size, mtime): whole-file responses cannot differ without
         // one of the two changing on any sane filesystem.
         const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }"`;
@@ -195,9 +210,23 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             etag
         });
 
-        if (context.request.headers.get('if-none-match') === etag)
+        const ifNoneMatch = context.request.headers.get('if-none-match');
+        if (ifNoneMatch !== null && matchesEntity(ifNoneMatch, etag, context.request))
         {
             return new Response(null, { status: 304, headers });
+        }
+
+        // An HTTP-date is the weaker validator, so it only speaks when the client offered no
+        // entity tag (RFC 9110 13.1.3). Dates carry whole seconds, which is why the file's
+        // mtime is truncated to seconds before the comparison.
+        const ifModifiedSince = ifNoneMatch === null ? context.request.headers.get('if-modified-since') : null;
+        if (ifModifiedSince !== null)
+        {
+            const since = Date.parse(ifModifiedSince);
+            if (!Number.isNaN(since) && Math.trunc(info.mtimeMs / 1000) <= Math.trunc(since / 1000))
+            {
+                return new Response(null, { status: 304, headers });
+            }
         }
 
         const range = rangeFor(context.request, info.size, etag, lastModified);
@@ -225,6 +254,33 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
  * `'unsatisfiable'` for a 416. Only the single-range form is honored (see the module doc);
  * a syntactically invalid or multi-range header is IGNORED per RFC 9110, never an error.
  */
+/**
+ * @internal Does `If-None-Match` identify the file we would serve? An exact match is the plain
+ * case. A tag carrying an encoding suffix is the COMPRESSED variant of the same file
+ * (`compressResponse` appends one so the two representations cannot share a validator), and it
+ * revalidates only while the client still accepts that coding - honouring it unconditionally is
+ * how a cache ends up serving gzip bytes to a request that asked for identity.
+ */
+function matchesEntity(ifNoneMatch: string, etag: string, request: Request): boolean
+{
+    if (ifNoneMatch === etag)
+    {
+        return true;
+    }
+    const inner = etag.slice(0, -1);
+    if (!ifNoneMatch.startsWith(inner) || !ifNoneMatch.endsWith('"'))
+    {
+        return false;
+    }
+    const suffix = ifNoneMatch.slice(inner.length, -1);
+    if (!suffix.startsWith('-'))
+    {
+        return false;
+    }
+    const accepted = request.headers.get('accept-encoding') ?? '';
+    return accepted.toLowerCase().includes(suffix.slice(1).toLowerCase());
+}
+
 function rangeFor(
     request: Request, size: number, etag: string, lastModified: string
 ): { start: number; end: number } | 'unsatisfiable' | null

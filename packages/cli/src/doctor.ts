@@ -283,6 +283,20 @@ function checkViteRange(app: FrontendProject): DoctorResult
     };
 }
 
+/**
+ * `shell: true` inside ONE spawn call's options - the two facts have to meet at the same
+ * call site. Testing them separately flagged any file that so much as named the hazard in a
+ * prose comment while spawning safely, and missed a real one in a file whose spawn call this
+ * CLI's alternation did not list. A `;` ends the search: an options object never contains one.
+ */
+const SHELL_TRUE_SPAWN = /(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\([^;]*?shell\s*:\s*true/;
+
+/** Comments removed, so a file that merely NAMES a hazard is not diagnosed as having one. */
+function stripComments(source: string): string
+{
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 function checkSpawnHazards(dir: string): DoctorResult
 {
     const scriptsDir = join(dir, 'scripts');
@@ -299,8 +313,7 @@ function checkSpawnHazards(dir: string): DoctorResult
     {
         try
         {
-            const source = readFileSync(join(scriptsDir, name), 'utf8');
-            return /shell:\s*true/.test(source) && /(execFileSync|spawnSync?|spawn)\s*\(/.test(source);
+            return SHELL_TRUE_SPAWN.test(stripComments(readFileSync(join(scriptsDir, name), 'utf8')));
         }
         catch
         {

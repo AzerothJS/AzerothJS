@@ -21,7 +21,7 @@ const alias = readdirSync(packagesDir)
         // Subpath aliases FIRST: a bare string `find` prefix-matches, so `pkg/internal`
         // must resolve before the bare package name grabs it.
         for (const [sub, file] of [
-            ['api/client', 'api/client-entry.ts'],
+            ['api/shared', 'api/shared-entry.ts'],
             ['language-service', 'language-service/index.ts'],
             ['ssr', 'ssr.ts'],
             ['client', 'client.ts'],
