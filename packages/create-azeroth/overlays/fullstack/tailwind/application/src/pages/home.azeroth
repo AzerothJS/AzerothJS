@@ -1,7 +1,3 @@
-// The `render: 'static'` route (src/routes.ts): prerendered at BUILD time
-// (azeroth-kit-prerender renders it through the same compiled component) and the
-// browser ADOPTS that markup instead of rebuilding it - view-source on / shows
-// real content. Everything below stays fully reactive after hydration.
 export default component Home()
 {
     state count = 0;

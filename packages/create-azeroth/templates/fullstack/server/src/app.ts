@@ -21,8 +21,7 @@ export function buildApp(options: AppOptions): App
     const entries: Entry[] = [];
     let nextId = 1;
 
-    mountApi(app, contract,
-    {
+    mountApi(app, contract, {
         handlers:
         {
             guestbook:

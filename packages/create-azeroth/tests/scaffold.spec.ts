@@ -161,6 +161,42 @@ describe('options: overlays compose over the base', () =>
         }
     });
 
+    it('no scaffolded file climbs more than one directory, except the one cross-half seam', () =>
+    {
+        // Path depth is a design constraint, not taste. A page that reaches
+        // `../../../server/src/contract.ts` breaks the moment it moves, and an alias cannot
+        // rescue it: the zero-build server halves run under plain `node`, which does not read
+        // tsconfig `paths` at all, and the compiler's build-time gate for `.azeroth` files uses
+        // fixed options with no `paths` either - so an aliased import there resolves to
+        // nothing and silently types as `any`. One seam owns the crossing instead.
+        const combos: Array<['frontend' | 'fullstack' | 'backend', Array<'router' | 'tailwind'>]> =
+            [['backend', []], ['frontend', []], ['frontend', ['router']], ['frontend', ['tailwind']],
+                ['frontend', ['router', 'tailwind']], ['fullstack', []], ['fullstack', ['tailwind']]];
+        for (const [template, options] of combos)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, template, dir, 'depth', '^1.0.0', options);
+            for (const file of walk(dir))
+            {
+                if (!/\.(ts|azeroth)$/.test(file.path))
+                {
+                    continue;
+                }
+                for (const [, prefix] of file.text.matchAll(/from '((?:\.\.\/)+)[^']*'/g))
+                {
+                    const depth = (prefix as string).length / 3;
+                    const where = `${ template }${ options.length > 0 ? `+${ options.join('+') }` : '' } ${ file.path }`;
+                    expect(depth, `${ where } climbs ${ depth } levels`).toBeLessThanOrEqual(2);
+                    if (depth === 2)
+                    {
+                        // The application's single seam to the server's contract, and only it.
+                        expect(file.path.replaceAll('\\', '/'), where).toMatch(/src\/api\.ts$/);
+                    }
+                }
+            }
+        }
+    });
+
     it('an overlay vite config keeps what the base one declared', () =>
     {
         // A tailwind overlay REPLACES vite.config.ts wholesale rather than merging, so

@@ -1,4 +1,3 @@
-// `app.handle(new Request(...))` is the whole integration story - no server needed.
 import { describe, it, expect } from 'vitest';
 
 import { buildApp } from '../src/app.ts';

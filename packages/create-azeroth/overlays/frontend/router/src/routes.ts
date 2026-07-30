@@ -6,7 +6,8 @@ import type { Route } from 'azerothjs';
 import Home from './pages/home.azeroth';
 import About from './pages/about.azeroth';
 
-export const routes: Route[] = [
+export const routes: Route[] =
+[
     { path: '/', component: Home },
     { path: '/about', component: About }
 ];

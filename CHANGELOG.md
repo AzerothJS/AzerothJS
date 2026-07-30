@@ -158,6 +158,16 @@ follow [Semantic Versioning](https://semver.org).
   demo. The template's own test grew from three cases to five, and now covers the middleware
   veto and the field map.
 
+- **Import depth is now a tested constraint.** The tailwind overlay ships its own copy of the
+  guest-book page, so fixing the base template's deep import left the overlay's behind - a
+  `--tailwind` app still got `../../../server/src/contract.ts`. Both are fixed, and a test now
+  scaffolds every template and option combination and rejects any import climbing more than one
+  directory, with `application/src/api.ts` whitelisted as the single cross-half seam. Path
+  aliases are deliberately NOT the answer here: the zero-build server halves run under plain
+  `node`, which does not read tsconfig `paths`, and the compiler's build-time gate for
+  `.azeroth` files uses fixed options with no `paths` either - so an aliased import would
+  resolve to nothing and silently type as `any` in the one place that is supposed to catch it.
+
 - **The fullstack template's server boots from two files instead of three, and a page no
   longer climbs out of its own half.** `server/src/config.ts` held twenty lines read by exactly
   one importer, so the environment moved to the top of `server/src/main.ts` beside the logger,

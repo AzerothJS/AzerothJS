@@ -1,8 +1,5 @@
 @import 'tailwindcss';
 
-/* The starter's design tokens, exposed to Tailwind: the custom properties adapt
-   via light-dark(), and `@theme inline` maps them to real utilities (bg-panel,
-   text-ice, border-line, font-mono, animate-rise). */
 :root
 {
     color-scheme: light dark;

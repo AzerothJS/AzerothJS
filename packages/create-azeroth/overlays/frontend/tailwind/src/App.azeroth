@@ -1,8 +1,3 @@
-// Your root component. `state` declares a signal; each `derived` recomputes from
-// it; the markup compiles to direct DOM updates. The cells below are this
-// component's real reactive graph - click the state cell and only the three value
-// text nodes change. Styling is Tailwind utilities over the tokens in
-// src/styles.css; the `cell`/`is-state` marker classes are hooks for tests.
 export default component App()
 {
     state count = 0;

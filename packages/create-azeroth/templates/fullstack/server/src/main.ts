@@ -17,8 +17,7 @@ catch
     // No .env file - the ambient environment is the configuration.
 }
 
-const config = loadConfig
-({
+const config = loadConfig({
     port: num('PORT', { default: 3000 }),
     env: oneOf('NODE_ENV', ['development', 'production', 'test'], { default: 'development' }),
     clientDir: str('CLIENT_DIR', { default: '../application/dist' }),
@@ -35,17 +34,13 @@ const ssr = isProduction
     ? await import(pathToFileURL(config.ssrEntry).href) as { routes: PageRoute[]; renderPage: PageRenderer }
     : undefined;
 
-const app = buildApp
-({
+const app = buildApp({
     dev: !isProduction,
     observe: logRequests(log),
-    pages: ssr === undefined
-        ? undefined
-        : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage }
+    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage }
 });
 
-const handler = pipeline
-(
+const handler = pipeline(
     app,
     requestId(),
     securityHeaders(),

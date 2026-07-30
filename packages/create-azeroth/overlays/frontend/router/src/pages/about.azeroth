@@ -1,6 +1,3 @@
-// The second route - it exists to prove the router: the nav swap that brought
-// you here changed the URL without a reload. Routing is three pieces, all in
-// this folder's parent.
 export default component About()
 {
     <section class="page">

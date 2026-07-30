@@ -1,7 +1,3 @@
-// The landing route. `state` declares a signal; each `derived` recomputes from
-// it; the markup compiles to direct DOM updates. The cells below are this
-// component's real reactive graph - click the state cell and only the three value
-// text nodes change. Edit this file and save: the change is live.
 export default component Home()
 {
     state count = 0;
