@@ -48,7 +48,7 @@ describe('router fuzz: arbitrary paths against a real route table', () =>
             }
             const method = ['GET', 'POST', 'PUT', 'weird', ''][Math.floor(random() * 5)] ?? 'GET';
             const result = router.match(method, path);
-            expect(['match', 'method-mismatch', 'miss']).toContain(result.kind);
+            expect(['match', 'method-mismatch', 'miss', 'decode-error']).toContain(result.kind);
             if (result.kind === 'match')
             {
                 expect(typeof result.value).toBe('string');

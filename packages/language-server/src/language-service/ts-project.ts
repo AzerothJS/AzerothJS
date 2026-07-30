@@ -18,6 +18,7 @@
 import ts from 'typescript';
 import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
 import { StyleIndex } from './style-index.ts';
+import { containedPath } from './containment.ts';
 import { createNativeLsBackend, type NativeLsBackend, type RawTsDiagnostic } from './native-project.ts';
 
 /** Suffix that marks a synthetic virtual file backing a `.azeroth` module. */
@@ -188,6 +189,12 @@ export class AzerothProject
                 azerothSource: (azerothPath) => this.#readAzeroth(azerothPath)
             });
         }
+    }
+
+    /** The directory this project is rooted at - the boundary nothing may resolve outside of. */
+    public get root(): string
+    {
+        return this.#currentDirectory;
     }
 
     /**
@@ -580,11 +587,14 @@ export class AzerothProject
             const text = literal.text;
             const relative = text.startsWith('.') || text.startsWith('/');
 
-            // Explicit `./x.azeroth`.
+            // Explicit `./x.azeroth`. Contained against the project root: the specifier comes
+            // out of a `.azeroth` file, so in an untrusted repo it is attacker-chosen, and
+            // without the check `'../../../../secret.azeroth'` was read, compiled, and rendered
+            // into a hover tooltip.
             if (relative && text.endsWith('.azeroth'))
             {
-                const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }`));
-                if (this.#hostFileExists(toVirtualFile(candidate)))
+                const candidate = containedPath(this.#currentDirectory, toSlashes(ts.sys.resolvePath(`${ dir }/${ text }`)));
+                if (candidate !== null && this.#hostFileExists(toVirtualFile(candidate)))
                 {
                     return asAzeroth(candidate);
                 }
@@ -597,8 +607,8 @@ export class AzerothProject
             // resolution runs first, so a real `.ts` of the same name wins.
             if (!base.resolvedModule && relative && !text.endsWith('.azeroth'))
             {
-                const candidate = toSlashes(ts.sys.resolvePath(`${ dir }/${ text }.azeroth`));
-                if (this.#hostFileExists(toVirtualFile(candidate)))
+                const candidate = containedPath(this.#currentDirectory, toSlashes(ts.sys.resolvePath(`${ dir }/${ text }.azeroth`)));
+                if (candidate !== null && this.#hostFileExists(toVirtualFile(candidate)))
                 {
                     return asAzeroth(candidate);
                 }

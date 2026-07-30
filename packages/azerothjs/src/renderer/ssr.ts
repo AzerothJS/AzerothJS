@@ -110,8 +110,12 @@ const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
  *
  * @internal
  */
+// `<` and a backtick are in the set for the same reason as the rest: the name is written straight
+// into the tag. Neither is exploitable alone - a spec tokenizer keeps `a<b` as one attribute name
+// - but a serializer interpolating attacker text should not be the thing deciding which
+// delimiters happen not to matter today.
 // eslint-disable-next-line no-control-regex -- matching control characters is the POINT: a control char in an attribute name is invalid HTML and an injection vector
-const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'>/=]/;
+const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'`<>/=]/;
 
 /**
  * The event-handler attribute namespace, case-insensitive because HTML attribute names
@@ -388,11 +392,43 @@ function assertSafeUrl(key: string, value: unknown): void
             + 'or pass unsafeUrl(...) if the content is yours.');
     }
 
-    if (typeof candidate === 'string' && URL_ATTRIBUTES.has(name) && isExecutableUrl(candidate))
+    // Judged on the COERCED value, because that is what both writers put in the document:
+    // serializeAttrs and setProperty each end in String(value). Testing `typeof === 'string'`
+    // let every other carrier of the same text through - an array most realistically, since a
+    // repeated query parameter yields one from every mainstream parser.
+    if (URL_ATTRIBUTES.has(name))
     {
-        throw new Error(`azeroth: refusing ${ JSON.stringify(key) }=${ JSON.stringify(candidate) } - the browser would `
-            + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image). '
-            + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.');
+        const written = asWritten(candidate);
+        if (written !== null && isExecutableUrl(written))
+        {
+            throw new Error(`azeroth: refusing ${ JSON.stringify(key) }=${ JSON.stringify(written) } - the browser would `
+                + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image). '
+                + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.');
+        }
+    }
+}
+
+/**
+ * The text a value becomes in the document, or null when it has no string form. An
+ * unconvertible value (a null-prototype object, a Symbol under template coercion) is left to
+ * the writer, which throws on it for its own reasons - the gate must not turn that into a
+ * different error.
+ *
+ * @internal
+ */
+function asWritten(value: unknown): string | null
+{
+    if (value === true)
+    {
+        return null; // a boolean attribute is written as "", never as a URL
+    }
+    try
+    {
+        return String(value);
+    }
+    catch
+    {
+        return null;
     }
 }
 
@@ -438,11 +474,15 @@ export function assertSafeTag(tag: string, props: Props): string
     const vetted = unbrand(tag, 'tag');
     if (vetted !== null)
     {
-        return vetted;
+        // The name production is checked even here. unsafeTag() authorizes a refused TAG
+        // (`script`, `base`); it was never meant to authorize arbitrary markup, and the string
+        // is interpolated straight into `<...>` by serializeElement. Every legal tag passes,
+        // so the opt-out loses nothing it was for.
+        return assertTagName(vetted);
     }
 
     // A url marker is not a tag marker (see assertSafeUrl for the mirror case).
-    const raw = unbrand(tag, 'url') ?? tag;
+    const raw = assertTagName(unbrand(tag, 'url') ?? tag);
     const name = raw.toLowerCase();
 
     if (REFUSED_TAGS.has(name))
@@ -460,6 +500,35 @@ export function assertSafeTag(tag: string, props: Props): string
     }
 
     return raw;
+}
+
+/**
+ * A legal HTML/SVG tag name: a letter, then letters, digits, `-`, `_`, `.` or `:`. Covers
+ * custom elements (`my-widget`) and the camelCase SVG names (`foreignObject`, `clipPath`),
+ * and admits nothing that can carry an attribute, close a tag, or open one.
+ *
+ * @internal
+ */
+const TAG_NAME = /^[A-Za-z][A-Za-z0-9._:-]*$/;
+
+/**
+ * Rejects a tag name the serializer would write into `<...>` as something other than a name.
+ * The refused-name set alone was not enough: a name is not markup, and `img src=x onerror=...`
+ * is not in any refused set, so it used to be interpolated verbatim and reparsed as attributes.
+ * The DOM path never had this hole - createElement refuses the same names - so checking here is
+ * what makes the two modes agree.
+ *
+ * @internal
+ */
+function assertTagName(tag: string): string
+{
+    if (!TAG_NAME.test(tag))
+    {
+        throw new Error(`azeroth: refusing to render <${ JSON.stringify(tag) }> - a tag name must start with a letter `
+            + 'and contain only letters, digits, "-", "_", "." or ":". A name carrying anything else would be written '
+            + 'into the markup as attributes or a second tag. Pass the attributes as props instead.');
+    }
+    return tag;
 }
 
 /**
@@ -541,7 +610,10 @@ function serializeAttrs(props: Props): string
             continue;
         }
 
-        if (key.startsWith('on') && typeof rawValue === 'function')
+        // Case-INSENSITIVE, matching the gate below. A case-sensitive skip missed `ONCLICK`,
+        // so resolveValue then CALLED the handler to see what it returned - running a click
+        // handler on the server, once per render.
+        if (isEventAttribute(key) && typeof rawValue === 'function')
         {
             continue;
         }

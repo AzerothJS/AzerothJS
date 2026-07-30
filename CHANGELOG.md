@@ -9,6 +9,144 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Security (second adversarial pass: fuzzing, differential testing, editor tooling)
+
+A second audit attacked the framework by RUNNING it rather than reading it: 16 million seeded
+fuzz cases against invariance oracles, and behavioural comparison against React, Express,
+Fastify, Hono and Koa on identical input. It also opened the packages the first pass never did.
+Two things stand out. The fixes from the first pass were themselves the largest unreviewed
+surface, and the renderer's safety gate - written in that pass - had the two worst holes found
+here. And where a guarantee was judged by a value's declared TYPE rather than by the bytes that
+actually get written, the gate could be walked around.
+
+- **Any prop carrying a `javascript:` URL rendered live unless it was a string.** `assertSafeUrl`
+  tested `typeof candidate === 'string'`, while both writers end in `String(value)`. A
+  one-element array, a `String` object, or anything with a `toString` walked past every URL
+  attribute - `href`, `src`, `action`, `formaction`, `poster`, `data`, `xlink:href`. An array is
+  the realistic carrier: `?next=javascript:alert(1)&next=x` yields one from every mainstream
+  query parser. The string form threw, so the policy was never in doubt, only its reach. The gate
+  now judges the coerced value. React neutralizes the same input; AzerothJS was the looser of the
+  two, which is what made it a defect rather than a difference.
+
+- **Tag names were never validated, only checked against a refused-name set.** `serializeElement`
+  interpolates the name straight into `<...>`, so `h('img src=x onerror=alert(1)', {})` emitted
+  that verbatim and the browser parsed the attributes back out. Confirmed executing in Chromium.
+  `document.createElement` rejects the same name, so the DOM path failed safe and only SSR
+  injected - precisely the server/client split the gate exists to prevent. Tag names now have to
+  be tag names, including through `unsafeTag()`, which authorizes a refused TAG and was never
+  meant to authorize arbitrary markup.
+
+- **An `on*` prop was skipped case-sensitively but gated case-insensitively.** `ONCLICK` or
+  `OnClick` carrying a real handler missed the skip, so the renderer CALLED it to see what it
+  returned - running a click handler on the server, once per render - and then reported that an
+  `on*` prop must be a function, which it was.
+
+- **`//admin` reached the `/admin` handler.** The router dropped every empty path segment, so
+  `//admin`, `/admin//panel` and `/admin/panel//` all resolved to the protected route.
+  Differential testing put AzerothJS alone in this: Express, Fastify, Hono and Koa all 404, and
+  RFC 3986 6.2.2 does not list empty-segment removal among the normalizations that preserve
+  equivalence. Being the permissive outlier is what made it exploitable, in two directions: a
+  proxy or WAF rule keyed on `^/admin` does not match `//admin` and forwards it, and an in-app
+  guard on `context.url.pathname` - the standard accessor, not the framework-specific
+  `context.path` - sees a string that fails `startsWith('/admin')` while the handler still runs.
+  Empty segments are no longer collapsed. Trailing-slash equivalence is unchanged; it cannot
+  shift a prefix. **This is a breaking routing change**: a client that spells a path with a
+  doubled slash now gets a 404.
+
+- **An absolute-form request target was concatenated onto our own authority.**
+  `GET http://evil.com/admin HTTP/1.1` became `http://thttp://evil.com/admin`, whose path is
+  `//evil.com/admin` and whose host is a fabricated `thttp`. RFC 9112 3.2.2 requires a server to
+  accept absolute-form and 3.3 says the target IS the request-target. Three consequences, all
+  live: the request routed to the wrong resource, `request.url` was not a legal URL, and
+  `context.url.host` reported an authority no client sent, so a host check written on it compared
+  against garbage. The path is now taken from the target; the authority deliberately is not,
+  because letting the request line choose the origin is worse than the bug.
+
+- **`App.handle` could resolve with something that is not a Response.** Its docblock promises
+  that it "cannot throw and cannot reject; every failure becomes an error Response", and its
+  signature says `Promise<Response>`. The throw path honoured that; the return path did not. An
+  async handler that forgets to `return` on one branch resolved the request with `undefined` -
+  the most common handler mistake there is. Nothing rejected, so `onError` never fired and an
+  observer recorded a success.
+
+- **The editor tooling had no path containment at all.** A `.azeroth` file in a repository
+  someone cloned is untrusted input, and both module resolvers handed
+  `path.resolve(dirname(importer), specifier)` straight to the filesystem, with no containment
+  check of any kind (the specifier test also admits a root-relative `/...`, which resolves outside
+  the workspace; a Windows drive-letter path was never admitted, so `..` is the escape that
+  matters). `import x from '../../../../secret.azeroth'` was resolved,
+  read, compiled, and its string literals rendered into a hover tooltip; `document-links` probed
+  arbitrary paths with `fileExists` and emitted a link only when one existed, which is an
+  existence oracle with a clickable `file://` target. The check that was missing is the one
+  `@azerothjs/http`'s static handler already applies to a request path, and it is now shared:
+  containment on the resolved path, then on what the filesystem really resolved, so an in-tree
+  symlink cannot point out of the tree.
+
+- **A 405 advertised an `Allow` set missing a method the server answers.** The router serves HEAD
+  off a GET registration, but the set was built from raw handler keys, which never contain HEAD.
+  RFC 9110 10.2.1 defines `Allow` as the methods the resource supports; clients act on it.
+
+- **A render could be driven into unbounded recursion from data.** `resolveThunks` bounds its
+  unwrap specifically to survive a getter that returns a getter forever, and at the bound returns
+  the value still as a function - whereupon `serializeChild` called itself on it, landed back in
+  the same branch, and resolved to a function again. The cap was real; its caller undid it. The
+  child-array branch had no bound of its own, so an array containing itself did the same. Both
+  came out of the render entry point as an uncaught `RangeError`, killing the request.
+
+- **A malformed percent-escape answered 404 where the router's own comment promised 400.** A `%`
+  not followed by two hex digits is not a valid URI (RFC 3986 2.1), so the target is malformed
+  rather than unknown, and RFC 9110 15.5.1 makes that a 400 - which Express and Fastify both
+  return. The router reported it as a routing miss and the app layer turned every miss into a
+  404. `RouteResult` gains a `decode-error` kind, which is what the comment described all along.
+
+- **Editor projects and caches grew without bound.** One `ts.LanguageService`, program and lib
+  set materializes per nearest-tsconfig directory touched - roughly 48 MB resident each - and the
+  only eviction was workspace-folder REMOVAL, which a session never performs. Browsing a
+  repository with a few dozen package directories drove the extension host past a gigabyte. The
+  same shape existed with no eviction at all in the ESLint project pool and the tsserver plugin's
+  compiled-file cache. All three are now bounded, least-recently-used first.
+
+- **`tsconfig.json` discovery walked to the filesystem root.** A config placed ABOVE the folder
+  the editor opened was found and obeyed, and a tsconfig is not inert: `files`/`include` pull
+  arbitrary `.ts` into the program - whose contents come back quoted verbatim in type errors -
+  and `paths` redirects module resolution, so go-to-definition lands wherever the config chose.
+  The walk now stops at the opened workspace folder, which is the line Workspace Trust draws.
+
+- **Which frames an application saw before a protocol violation depended on TCP segmentation.**
+  `push()` accumulated frames in a local array and threw on reaching the bad one, so everything
+  parsed earlier in that call was discarded with the array - while the same bytes arriving in
+  separate segments had already been returned and delivered. The peer chooses the segmentation.
+  Fuzzing put it at 6,204 of 50,000 cases. No capability is gained by an attacker, since they
+  decide whether to send the malformed frame at all, so this is a determinism defect rather than
+  an exploit - but it contradicted the rule `socket.ts` already states for `[close][text]`:
+  everything up to the terminating event is delivered, nothing after. A frame that completed
+  before the violation arrived while the connection was healthy, and is now delivered either way.
+  `ProtocolError` carries them on a new `frames` field.
+
+- **`<` and a backtick were missing from the invalid-attribute-name set.** Not exploitable alone -
+  a spec tokenizer keeps `a<b` as a single attribute name - but the name is written straight into
+  the tag, and a serializer interpolating attacker text should not be the thing deciding which
+  delimiters happen not to matter today.
+
+- **The language server's document gate ignored the URI scheme.** `uri.endsWith('.azeroth')`
+  admitted `http://evil/x.azeroth`, which then keyed a language service on whatever the path
+  conversion made of it. `uriToPath` also applied a single `decodeURIComponent` with no
+  normalization afterwards, so `%2e%2e` reached the filesystem as a live `..` - the one point in
+  the pipeline where an encoded traversal is visible as one. Both are closed.
+
+### Fixed (templates)
+
+- **Every scaffolded app was born failing its own `azeroth check`.** The shipped ESLint config
+  sets `brace-style: allman` and also pulls in `js/recommended`, which carries
+  `no-unexpected-multiline` - and Allman puts a multi-line call's opening paren on its own line,
+  which that rule reads as two statements. The two cannot both hold. The fullstack template's own
+  `createRouter` call tripped it, so `npm run check` failed on a freshly created project before a
+  line of user code existed. There is no ASI hazard in the pattern (a parenthesis there can only
+  continue the call), so the rule is off and the house style stands. The monorepo's own config had
+  the same latent conflict and got the same treatment. Only booting a scaffolded app surfaces
+  this: the monorepo's linter ignores `templates/`, and the template specs are not collected by
+  the monorepo's test runner.
+
 ### Security (http kernel)
 
 An adversarial audit across every package reproduced each of the following against real sockets

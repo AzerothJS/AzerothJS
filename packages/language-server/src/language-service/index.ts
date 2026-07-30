@@ -70,6 +70,7 @@ export {
 
 export { LineIndex } from './text.ts';
 export { uriToPath, pathToUri } from './uri.ts';
+export { containedPath, containedSibling } from './containment.ts';
 
 export {
     CompletionItemKind,

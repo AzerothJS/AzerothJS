@@ -12,6 +12,7 @@ import ts from 'typescript';
 import type { DocumentLink } from '../protocol.ts';
 import { type RequestContext } from '../request.ts';
 import { pathToUri } from '../uri.ts';
+import { containedPath } from '../containment.ts';
 
 /** Extensions tried (in order) when a relative specifier has none of its own. */
 const PROBE_EXTENSIONS = ['.ts', '.azeroth'];
@@ -43,7 +44,7 @@ export function getDocumentLinks(ctx: RequestContext): DocumentLink[]
             {
                 continue;
             }
-            const resolved = resolve(dir, spec.text);
+            const resolved = resolve(ctx.project.root, dir, spec.text);
             if (resolved === null)
             {
                 continue;
@@ -72,9 +73,17 @@ function isRelative(text: string): boolean
  * path as written first, then with each probe extension appended - mirroring the
  * project's resolver (`.ts`/`.azeroth`). Returns null when nothing exists.
  */
-function resolve(dir: string, text: string): string | null
+function resolve(root: string, dir: string, text: string): string | null
 {
-    const base = ts.sys.resolvePath(`${ dir }/${ text }`).replace(/\\/g, '/');
+    // Contained BEFORE any fileExists call. A link is emitted only when the target exists, so
+    // an uncontained probe is an existence oracle for the whole filesystem: the presence or
+    // absence of the link answers "does this path exist" for any `../..`-reachable target, and
+    // the link the editor renders is a clickable file:// URI to it.
+    const base = containedPath(root, ts.sys.resolvePath(`${ dir }/${ text }`).replace(/\\/g, '/'));
+    if (base === null)
+    {
+        return null;
+    }
     if (ts.sys.fileExists(base))
     {
         return base;

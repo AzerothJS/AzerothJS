@@ -209,6 +209,11 @@ export function startServer(connection: Connection = createConnection()): void
     const services = new Map<string, AzerothLanguageService>();
     let roots: string[] = [];
 
+    // How many projects stay resident at once. Each is its own TS program (~48 MB), so this is
+    // the ceiling on what a repository's directory count can cost the editor. Well past the
+    // number of packages anyone navigates in one session; an evicted one rebuilds on demand.
+    const MAX_SERVICES = 12;
+
     const norm = (path: string): string => path.replace(/\\/g, '/').replace(/\/+$/, '');
 
     // rootProjectFiles: the editor program must contain the project's real `.ts` files, not just
@@ -242,12 +247,28 @@ export function startServer(connection: Connection = createConnection()): void
      */
     const nearestProjectDir = (filePath: string): string | null =>
     {
+        const path = norm(filePath);
+        // The walk stops at the workspace folder the editor OPENED. It used to run to the
+        // filesystem root, so a `tsconfig.json` placed ABOVE the opened folder was discovered and
+        // obeyed - and a tsconfig is not inert: `files`/`include` pull arbitrary `.ts` into the
+        // program (whose contents come back quoted in type errors), and `paths` redirects module
+        // resolution, so go-to-definition lands on a file the config chose. Whoever opened the
+        // folder vouched for what is inside it and for nothing above it; that is the same line
+        // VS Code's Workspace Trust draws.
+        const boundary = roots
+            .filter((root) => path === root || path.startsWith(root + '/'))
+            .sort((a, b) => b.length - a.length)[0];
+
         let dir = norm(dirname(filePath));
         for (;;)
         {
             if (existsSync(join(dir, 'tsconfig.json')))
             {
                 return dir;
+            }
+            if (boundary !== undefined && dir === boundary)
+            {
+                return null;
             }
             const parent = norm(dirname(dir));
             if (parent === dir)
@@ -258,16 +279,40 @@ export function startServer(connection: Connection = createConnection()): void
         }
     };
 
-    /** Returns the service keyed by `key`, creating it anchored there if needed. */
+    /**
+     * Returns the service keyed by `key`, creating it anchored there if needed.
+     *
+     * Bounded, least-recently-used first. Each service owns a full `ts.LanguageService`, its
+     * program and its lib files - measured at roughly 48 MB resident - and the only eviction
+     * used to be workspace-folder REMOVAL, which a session never does. A repository with a few
+     * dozen package directories therefore drove the extension host past a gigabyte simply by
+     * being browsed, since one service materializes per nearest-tsconfig directory touched.
+     * Dropping the reference is the whole teardown: nothing else holds the program.
+     */
     const serviceAt = (key: string): AzerothLanguageService =>
     {
-        let svc = services.get(key);
-        if (!svc)
+        const existing = services.get(key);
+        if (existing !== undefined)
         {
-            svc = new AzerothLanguageService(key, undefined, SERVICE_OPTIONS);
-            services.set(key, svc);
+            // Map iterates in insertion order, so re-inserting is what makes this LRU rather
+            // than FIFO - the project being worked in never falls out from under the developer.
+            services.delete(key);
+            services.set(key, existing);
+            return existing;
         }
-        return svc;
+
+        const created = new AzerothLanguageService(key, undefined, SERVICE_OPTIONS);
+        services.set(key, created);
+        while (services.size > MAX_SERVICES)
+        {
+            const oldest = services.keys().next();
+            if (oldest.done === true)
+            {
+                break;
+            }
+            services.delete(oldest.value);
+        }
+        return created;
     };
 
     /**
@@ -297,7 +342,12 @@ export function startServer(connection: Connection = createConnection()): void
         return serviceAt(best ?? norm(dirname(filePath)));
     };
 
-    const isAzeroth = (uri: string): boolean => uri.endsWith(EXTENSION);
+    // The SCHEME is part of the gate, not just the extension. `uri.endsWith('.azeroth')` alone
+    // admitted `http://evil/x.azeroth` and `javascript:...//x.azeroth`, which then reached
+    // serviceFor() and keyed a language service on whatever uriToPath made of them. Only a real
+    // document can be one: a file on disk, or an unsaved buffer the client is holding.
+    const isAzeroth = (uri: string): boolean =>
+        uri.endsWith(EXTENSION) && (uri.startsWith('file://') || uri.startsWith('untitled:'));
 
     // An unexpected throw from the service must not reach the LSP client (it
     // wedges the feature for the session). Degrade to the handler's type-correct

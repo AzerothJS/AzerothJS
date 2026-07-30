@@ -73,7 +73,7 @@ describe('dispatch', () =>
         app.put('/thing', () => noContent());
         const response = await get(app, '/thing', { method: 'DELETE' });
         expect(response.status).toBe(405);
-        expect(response.headers.get('allow')).toBe('GET, PUT');
+        expect(response.headers.get('allow')).toBe('GET, HEAD, PUT');
     });
 
     it('a full round trip: POST body in, created() out', async () =>

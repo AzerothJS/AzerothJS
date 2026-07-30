@@ -56,7 +56,17 @@ export interface RouteMiss
     kind: 'miss';
 }
 
-export type RouteResult<T> = RouteMatch<T> | RouteMethodMismatch | RouteMiss;
+/**
+ * The path is not a valid URI - a percent escape without two hex digits after it. Distinct from
+ * a miss because the request-target is malformed rather than unknown; the app layer turns this
+ * into 400, not 404.
+ */
+export interface RouteDecodeError
+{
+    kind: 'decode-error';
+}
+
+export type RouteResult<T> = RouteMatch<T> | RouteMethodMismatch | RouteMiss | RouteDecodeError;
 
 /** One radix-tree node. Children are keyed by literal segment; param/wildcard are singular. */
 interface RadixNode<T>
@@ -101,6 +111,22 @@ export function segmentsOf(path: string): string[]
         }
     }
     return segments;
+}
+
+/**
+ * @internal The sorted method list for an `Allow` header. HEAD is added alongside GET because
+ * the router genuinely serves it off a GET registration - RFC 9110 10.2.1 says Allow lists the
+ * methods the resource supports, and advertising a set that omits one the server answers is a
+ * machine-readable lie clients act on.
+ */
+function allowedList(methods: Iterable<string>): string[]
+{
+    const set = new Set(methods);
+    if (set.has('GET'))
+    {
+        set.add('HEAD');
+    }
+    return [...set].sort();
 }
 
 /** @internal A percent escape in a pattern segment: unreachable, since requests decode first. */
@@ -224,6 +250,17 @@ export class RadixRouter<T>
      */
     public match(method: string, path: string): RouteResult<T>
     {
+        // An empty segment is a distinct, significant path component (RFC 3986 3.3), and 6.2.2
+        // does not list removing one among the equivalence-preserving normalizations. Collapsing
+        // made `//admin` reach `/admin`, which no other mainstream router does, and put this
+        // router at odds with every gate keyed on the spelling the client actually sent - a proxy
+        // ACL in front, or a prefix check on `url.pathname` above. Tested on the RAW path, before
+        // decoding, so an ENCODED `%2F%2F` inside one segment's value is untouched.
+        if (path.includes('//'))
+        {
+            return { kind: 'miss' };
+        }
+
         const segments = segmentsOf(path);
         for (let i = 0; i < segments.length; i++)
         {
@@ -236,7 +273,11 @@ export class RadixRouter<T>
                 }
                 catch
                 {
-                    return { kind: 'miss' };
+                    // Distinct from a miss: a `%` not followed by two hex digits is not a valid
+                    // URI at all (RFC 3986 2.1), so the request-target is malformed and the
+                    // answer is 400, not "no such resource" (RFC 9110 15.5.1). Reporting it as a
+                    // miss is what made this return a 404 while the comment above promised a 400.
+                    return { kind: 'decode-error' };
                 }
             }
         }
@@ -252,13 +293,13 @@ export class RadixRouter<T>
         const terminal = this.#walk(this.#root, segments, 0, pairs, verb, allowed);
         if (terminal === null)
         {
-            return allowed.size > 0 ? { kind: 'method-mismatch', allowed: [...allowed].sort() } : { kind: 'miss' };
+            return allowed.size > 0 ? { kind: 'method-mismatch', allowed: allowedList(allowed) } : { kind: 'miss' };
         }
 
         const value = terminal.get(verb) ?? (verb === 'HEAD' ? terminal.get('GET') : undefined);
         if (value === undefined)
         {
-            return { kind: 'method-mismatch', allowed: [...terminal.keys()].sort() };
+            return { kind: 'method-mismatch', allowed: allowedList(terminal.keys()) };
         }
         const params: Record<string, string> = {};
         for (let i = 0; i < pairs.length; i += 2)

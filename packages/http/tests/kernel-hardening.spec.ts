@@ -25,15 +25,25 @@ describe('routed path is not client-controlled', () =>
             return text('secret');
         });
 
-        for (const spelling of ['/admin', '/%61dmin', '//admin', '/admin/', '/admin//'])
+        // Percent-decoding and one trailing slash ARE equivalence-preserving (RFC 3986 6.2.2.2,
+        // and trailing-slash tolerance is deliberate policy), so these still reach the handler
+        // spelled differently - which is what context.path exists to normalize.
+        for (const spelling of ['/admin', '/%61dmin', '/admin/'])
         {
             const response = await app.handle(new Request(`http://x${ spelling }`));
-            expect(response.status).toBe(200);
+            expect(response.status, spelling).toBe(200);
         }
 
-        // Every spelling reaches the handler, so a guard written on url.pathname would see five
-        // different strings for one route. context.path collapses them to the matched path.
-        expect(seen.map((entry) => entry.path)).toEqual(['/admin', '/admin', '/admin', '/admin', '/admin']);
+        // An empty segment is NOT equivalence-preserving, so these never reach the handler at
+        // all - see empty-segments.spec.ts. Refusing them beats normalizing them afterwards:
+        // a guard on url.pathname is now safe even though it never learned about context.path.
+        for (const spelling of ['//admin', '/admin//'])
+        {
+            const response = await app.handle(new Request(`http://x${ spelling }`));
+            expect(response.status, spelling).toBe(404);
+        }
+
+        expect(seen.map((entry) => entry.path)).toEqual(['/admin', '/admin', '/admin']);
         expect(new Set(seen.map((entry) => entry.pathname)).size).toBeGreaterThan(1);
     });
 });
@@ -205,7 +215,7 @@ describe('a method mismatch is a backtracking dead end', () =>
         expect(router.match('GET', '/users/me')).toEqual({ kind: 'match', value: 'GET me', params: {} });
         // A verb nobody registered reports every method reachable at that path, across both the
         // static and the param branch, which the old single-terminal lookup could not see.
-        expect(router.match('DELETE', '/users/me')).toEqual({ kind: 'method-mismatch', allowed: ['GET', 'POST'] });
+        expect(router.match('DELETE', '/users/me')).toEqual({ kind: 'method-mismatch', allowed: ['GET', 'HEAD', 'POST'] });
     });
 
     it('a static GET route does not shadow a wildcard POST route', () =>

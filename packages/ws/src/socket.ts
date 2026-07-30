@@ -257,7 +257,24 @@ export class ServerSocket
         }
         catch (error)
         {
-            this.#fail(error instanceof ProtocolError ? error : new ProtocolError(1011, 'Internal frame error'));
+            if (error instanceof ProtocolError)
+            {
+                // Frames that completed BEFORE the violation arrived while the connection was
+                // still healthy, so they are delivered - the same rule the close-frame case above
+                // follows. Carrying them here is what makes the delivered set independent of how
+                // the peer split its segments; dropping them made it the peer's choice.
+                for (const frame of error.frames)
+                {
+                    if (this.#closed)
+                    {
+                        break;
+                    }
+                    this.#handleFrame(frame.fin, frame.opcode, frame.payload);
+                }
+                this.#fail(error);
+                return;
+            }
+            this.#fail(new ProtocolError(1011, 'Internal frame error'));
         }
     }
 

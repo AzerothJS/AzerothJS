@@ -26,8 +26,7 @@
 // a test) already provides.
 
 import type tsModule from 'typescript';
-import path from 'node:path';
-import { generateVirtualCode, type CodeMapping } from '@azerothjs/language-server/language-service';
+import { containedSibling, generateVirtualCode, type CodeMapping } from '@azerothjs/language-server/language-service';
 
 /**
  * Read access to the compiled view of `.azeroth` files, shared between the host decoration (which
@@ -42,6 +41,9 @@ export interface VirtualAzerothFiles
 
 /** Real `.azeroth` source extension. */
 const AZEROTH_EXT = '.azeroth';
+
+/** Resident compiled-file ceiling. Well past any open editor set; see virtualFor. */
+const MAX_CACHED_FILES = 256;
 
 /** True for a relative/absolute import specifier that points at a `.azeroth` file. */
 function isAzerothSpecifier(text: string): boolean
@@ -77,14 +79,17 @@ function scriptKindFromName(ts: typeof tsModule, fileName: string): tsModule.Scr
 }
 
 /**
- * Resolves a relative `.azeroth` specifier against its importer's directory to
- * an absolute path with forward slashes (the form TypeScript uses internally).
- * Delegates the `..`/`.`/drive/UNC handling to node:path rather than hand-rolling
- * it, then normalizes separators.
+ * Resolves a relative `.azeroth` specifier against its importer's directory, or null when the
+ * result leaves `root`.
+ *
+ * The specifier comes out of a `.azeroth` file, which in the threat model that matters - a repo
+ * someone cloned and opened - is attacker-controlled. Without containment,
+ * `import x from '../../../../secret.azeroth'` was resolved, read, compiled, and its contents
+ * surfaced to the editor as hover and completion text.
  */
-function resolveSibling(containingFile: string, specifier: string): string
+function resolveSibling(root: string, containingFile: string, specifier: string): string | null
 {
-    return path.resolve(path.dirname(containingFile), specifier).replace(/\\/g, '/');
+    return containedSibling(root, containingFile, specifier);
 }
 
 /**
@@ -103,6 +108,11 @@ export function decorateLanguageServiceHost(
 {
     const read = (azerothPath: string): string | undefined => ts.sys.readFile(azerothPath);
 
+    // The directory the editor opened. Every `.azeroth` specifier resolves against it and
+    // nothing outside it may be read - the file the resolver is handed comes from a repository,
+    // not from the developer.
+    const projectRoot = host.getCurrentDirectory().replace(/\\/g, '/');
+
     // Cache the compiled virtual module per source, so an unchanged file isn't
     // recompiled on every host query.
     const cache = new Map<string, { source: string; code: string; mapping: CodeMapping }>();
@@ -117,11 +127,25 @@ export function decorateLanguageServiceHost(
         const cached = cache.get(azerothPath);
         if (cached && cached.source === source)
         {
+            // Re-insert so Map order is recency order; see the bound below.
+            cache.delete(azerothPath);
+            cache.set(azerothPath, cached);
             return cached;
         }
         const { code, mapping } = generateVirtualCode(source);
         const entry = { source, code, mapping };
         cache.set(azerothPath, entry);
+        // Bounded LRU: this held the source, the compiled code AND the offset mapping for every
+        // `.azeroth` path ever resolved, with no eviction, for the life of the tsserver session.
+        while (cache.size > MAX_CACHED_FILES)
+        {
+            const oldest = cache.keys().next();
+            if (oldest.done === true)
+            {
+                break;
+            }
+            cache.delete(oldest.value);
+        }
         return entry;
     };
 
@@ -205,8 +229,8 @@ export function decorateLanguageServiceHost(
             // Explicit `./x.azeroth`.
             if (isAzerothSpecifier(text))
             {
-                const azerothPath = resolveSibling(containingFile, text);
-                if (read(azerothPath) !== undefined)
+                const azerothPath = resolveSibling(projectRoot, containingFile, text);
+                if (azerothPath !== null && read(azerothPath) !== undefined)
                 {
                     return asAzeroth(azerothPath);
                 }
@@ -218,8 +242,8 @@ export function decorateLanguageServiceHost(
             const relative = text.startsWith('.') || text.startsWith('/');
             if (resolved.resolvedModule === undefined && relative && !text.endsWith(AZEROTH_EXT))
             {
-                const azerothPath = resolveSibling(containingFile, text + AZEROTH_EXT);
-                if (read(azerothPath) !== undefined)
+                const azerothPath = resolveSibling(projectRoot, containingFile, text + AZEROTH_EXT);
+                if (azerothPath !== null && read(azerothPath) !== undefined)
                 {
                     return asAzeroth(azerothPath);
                 }

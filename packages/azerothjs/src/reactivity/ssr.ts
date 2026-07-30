@@ -26,6 +26,9 @@ import { untrack } from './untrack.ts';
 import { resolveThunks } from './resolve-thunks.ts';
 import { ssrMarkersActive } from './render-mode.ts';
 
+/** @internal Cycle bound for the child graph; see serializeChild. */
+const MAX_CHILD_DEPTH = 512;
+
 /**
  * A serialized node produced in 'string' render mode. `html` is fully serialized and
  * already HTML-escaped; the `__ssr` brand lets {@link isSSRNode} distinguish it from raw
@@ -135,7 +138,7 @@ export function escapeAttr(value: string): string
  * serializeChild(ssr('<b>x</b>')); // '<b>x</b>'
  * serializeChild(null);            // ''
  */
-export function serializeChild(child: unknown): string
+export function serializeChild(child: unknown, depth = 0): string
 {
     if (child === null || child === undefined || child === false)
     {
@@ -147,12 +150,21 @@ export function serializeChild(child: unknown): string
         return child.html;
     }
 
+    // Structural bound for the child GRAPH, which the array branch below walks. A child array
+    // that contains itself is a cycle, and nothing else here would ever stop. Element nesting
+    // does not pay this: a nested element is an SSRNode and returned above. 512 is far past any
+    // real array nesting and far below the stack.
+    if (depth >= MAX_CHILD_DEPTH)
+    {
+        return '';
+    }
+
     if (Array.isArray(child))
     {
         let out = '';
         for (const item of child)
         {
-            out += serializeChild(item);
+            out += serializeChild(item, depth + 1);
         }
         return out;
     }
@@ -166,7 +178,11 @@ export function serializeChild(child: unknown): string
         // Resolving here (not recursing) keeps a SINGLE `<!--[-->...<!--]-->` pair,
         // matching the one span the client hydrator adopts.
         const value = untrack(() => resolveThunks(child));
-        const inner = serializeChild(value);
+        // resolveThunks returns the value STILL AS A FUNCTION when its own depth bound is hit -
+        // a getter that returns a getter forever. Recursing on that lands straight back in this
+        // branch and resolves to a function again, so the bound guarded nothing. There is no
+        // value to serialize, and a function's source text must never reach the document.
+        const inner = typeof value === 'function' ? '' : serializeChild(value, depth + 1);
         return ssrMarkersActive() ? `<!--[-->${ inner }<!--]-->` : inner;
     }
 

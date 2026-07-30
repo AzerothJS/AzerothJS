@@ -24,7 +24,7 @@
 
 import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
-import { HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
+import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { runInRequestRoot } from './request-root.ts';
 
 /**
@@ -101,6 +101,24 @@ export interface AppOptions
 
     /** Observes every completed request (logging/metrics/tracing seam). */
     observe?: RequestObserver | undefined;
+}
+
+/**
+ * @internal Names the SHAPE of a handler's bad return value, never its contents - the text
+ * reaches logs and a dev-mode error body, and the value can hold application data.
+ */
+function describeResult(value: unknown): string
+{
+    if (value === null)
+    {
+        return 'null';
+    }
+    if (Array.isArray(value))
+    {
+        return 'an array';
+    }
+    const type = typeof value;
+    return type === 'object' ? 'a plain object' : type;
 }
 
 /**
@@ -566,6 +584,15 @@ export class App<Ctx extends object = object>
                 };
                 response = await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
             }
+
+            // A handler that RESOLVES with a non-Response is the one way a failure used to
+            // escape this contract: nothing threw, so the error path never ran, the observer
+            // recorded a success, and the value went back to a caller that expected a Response.
+            // An async handler missing a `return` on one branch is the common way in.
+            if (!(response instanceof Response))
+            {
+                throw new HttpError(500, `Handler for ${ request.method } ${ pathnameOf(request.url) } returned ${ describeResult(response) } instead of a Response.`, { code: 'invalid-handler-result' });
+            }
         }
         catch (error)
         {
@@ -623,6 +650,11 @@ export class App<Ctx extends object = object>
         if (result.kind === 'method-mismatch')
         {
             throw new MethodNotAllowedError(result.allowed);
+        }
+        if (result.kind === 'decode-error')
+        {
+            // The target is not a valid URI, so this is a syntax failure, not a missing resource.
+            throw new BadRequestError('The request target is not a valid URI.', { code: 'malformed-path' });
         }
 
         const out = result.value(new DispatchContext(result.params, request));

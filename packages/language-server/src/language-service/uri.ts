@@ -24,7 +24,39 @@ export function uriToPath(uri: string): string
     {
         path = path.slice(1);
     }
-    return path;
+    // Normalized AFTER decoding, because that is where a traversal appears: `%2e%2e` survives
+    // the encoded form untouched and only becomes `..` here. Callers hand the result to the
+    // filesystem, so a dot-segment left in it is one they would have to notice themselves.
+    return collapseDotSegments(path);
+}
+
+/**
+ * Resolves `.` and `..` segments against a path, without touching the filesystem. A `..` that
+ * would climb above the root is dropped, matching RFC 3986 5.2.4.
+ */
+function collapseDotSegments(path: string): string
+{
+    if (!path.includes('.'))
+    {
+        return path;
+    }
+    const leading = path.startsWith('/');
+    const out: string[] = [];
+    for (const segment of path.split('/'))
+    {
+        if (segment === '.' || segment === '')
+        {
+            continue;
+        }
+        if (segment === '..')
+        {
+            out.pop();
+            continue;
+        }
+        out.push(segment);
+    }
+    const joined = out.join('/');
+    return leading ? `/${ joined }` : joined;
 }
 
 /**

@@ -51,6 +51,36 @@ const NO_BODY_METHODS = new Set(['GET', 'HEAD']);
 /** @internal hostname[:port] or bracketed IPv6[:port] - anything else in X-Forwarded-Host is ignored. */
 const FORWARDED_HOST = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
 
+/** @internal scheme "://" - the start of an absolute-form request-target (RFC 9112 3.2.2). */
+const ABSOLUTE_FORM = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
+/**
+ * @internal The path-and-query half of a request-target. Node hands `req.url` the target
+ * VERBATIM, so for absolute-form it is the whole URI: appending that to an authority we
+ * composed yields `http://thttp://evil.com/x`, whose pathname is `//evil.com/x` and whose host
+ * is a fabrication. RFC 9112 3.3 says the absolute-form target IS the target URI, so its path is
+ * taken - but the authority is NOT, because letting the request line choose the origin would
+ * hand a client control of `context.url.host`.
+ */
+function targetPath(target: string | undefined): string
+{
+    if (target === undefined || target === '')
+    {
+        return '/';
+    }
+    if (target.charCodeAt(0) === 47) // '/' - origin-form, the overwhelmingly common case
+    {
+        return target;
+    }
+    const scheme = ABSOLUTE_FORM.exec(target);
+    if (scheme === null)
+    {
+        return '/'; // asterisk-form (`OPTIONS *`) and anything else without a path
+    }
+    const slash = target.indexOf('/', scheme[0].length);
+    return slash === -1 ? '/' : target.slice(slash);
+}
+
 /** @internal The first entry of a comma-joined forwarded header (each proxy appends). */
 function firstForwarded(value: string | string[] | undefined): string | undefined
 {
@@ -125,7 +155,7 @@ class AdapterRequest implements Request
                     authority = forwarded;
                 }
             }
-            this.#url = `${ scheme }://${ authority }${ this.#incoming.url ?? '/' }`;
+            this.#url = `${ scheme }://${ authority }${ targetPath(this.#incoming.url) }`;
         }
         return this.#url;
     }

@@ -100,11 +100,13 @@ describe('matching: statics, params, wildcards', () =>
 
 describe('path normalization and decoding', () =>
 {
-    it('collapses duplicate slashes and one trailing slash', () =>
+    it('collapses one trailing slash but not an empty segment', () =>
     {
         const router = build([['GET', '/a/b']]);
         expect(router.match('GET', '/a/b/').kind).toBe('match');
-        expect(router.match('GET', '//a//b').kind).toBe('match');
+        // `//a//b` is a DIFFERENT URI (RFC 3986 3.3) and must not reach `/a/b` - see
+        // empty-segments.spec.ts for why collapsing it was an authorization-bypass primitive.
+        expect(router.match('GET', '//a//b').kind).toBe('miss');
     });
 
     it('percent-decodes each segment', () =>
@@ -123,10 +125,12 @@ describe('path normalization and decoding', () =>
         expect(result).toEqual({ kind: 'match', value: 'GET /one/:a', params: { a: 'x/y' } });
     });
 
-    it('a malformed percent-escape is a miss, never a throw', () =>
+    it('a malformed percent-escape is a decode error, never a throw', () =>
     {
         const router = build([['GET', '/x/:v']]);
-        expect(router.match('GET', '/x/%ZZ').kind).toBe('miss');
+        // Not a miss: the target is not a valid URI, so the app layer answers 400 rather than
+        // 404 - see malformed-target.spec.ts.
+        expect(router.match('GET', '/x/%ZZ').kind).toBe('decode-error');
     });
 });
 
@@ -135,7 +139,7 @@ describe('methods: mismatch vs miss, HEAD fallback', () =>
     it('distinguishes method-mismatch (405 + Allow) from a miss (404)', () =>
     {
         const router = build([['GET', '/thing'], ['PUT', '/thing']]);
-        expect(router.match('DELETE', '/thing')).toEqual({ kind: 'method-mismatch', allowed: ['GET', 'PUT'] });
+        expect(router.match('DELETE', '/thing')).toEqual({ kind: 'method-mismatch', allowed: ['GET', 'HEAD', 'PUT'] });
         expect(router.match('DELETE', '/absent')).toEqual({ kind: 'miss' });
     });
 

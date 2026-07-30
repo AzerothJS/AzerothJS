@@ -77,7 +77,7 @@ describe('request/response translation over a real socket', () =>
 
             const mismatch = await fetch(`${ base }/only-get`, { method: 'DELETE' });
             expect(mismatch.status).toBe(405);
-            expect(mismatch.headers.get('allow')).toBe('GET');
+            expect(mismatch.headers.get('allow')).toBe('GET, HEAD');
         });
     });
 

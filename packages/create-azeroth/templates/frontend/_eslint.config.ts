@@ -33,6 +33,10 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
             'indent': ['error', 4, { SwitchCase: 1 }],
             'semi': ['error', 'always'],
             'brace-style': ['error', 'allman'],
+            // Allman puts a multi-line call's opening paren on its own line, which this rule reads
+            // as two statements. There is no ASI hazard - a parenthesis there can only continue the
+            // call - so the two rules cannot both hold, and the house style wins.
+            'no-unexpected-multiline': 'off',
             'block-spacing': ['error', 'always'],
             'object-curly-spacing': ['error', 'always'],
             'template-curly-spacing': ['error', 'always'],

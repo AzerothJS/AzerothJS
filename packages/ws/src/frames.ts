@@ -41,11 +41,23 @@ export class ProtocolError extends Error
 {
     public readonly code: number;
 
-    constructor(code: number, message: string)
+    /**
+     * Frames that were completely and validly parsed BEFORE the violation, in the same push.
+     *
+     * They are carried on the error rather than dropped because the alternative made delivery
+     * depend on the peer's TCP segmentation: the same bytes in one segment lost them with the
+     * local array this call was building, while in two segments an earlier push had already
+     * returned them. Whoever handles the error decides what to do with them; the point is that
+     * the set is the same either way.
+     */
+    public readonly frames: readonly Frame[];
+
+    constructor(code: number, message: string, frames: readonly Frame[] = [])
     {
         super(message);
         this.name = 'ProtocolError';
         this.code = code;
+        this.frames = frames;
     }
 }
 
@@ -115,7 +127,21 @@ export class FrameParser
         const frames: Frame[] = [];
         for (;;)
         {
-            const frame = this.#tryParseOne();
+            let frame;
+            try
+            {
+                frame = this.#tryParseOne();
+            }
+            catch (error)
+            {
+                // Hand the caller what already parsed cleanly. Losing it here is what made
+                // delivery depend on the peer's segmentation - see ProtocolError.frames.
+                if (error instanceof ProtocolError)
+                {
+                    throw new ProtocolError(error.code, error.message, frames);
+                }
+                throw error;
+            }
             if (frame === null)
             {
                 break;
