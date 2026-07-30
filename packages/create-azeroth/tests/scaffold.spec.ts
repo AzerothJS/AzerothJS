@@ -160,6 +160,32 @@ describe('options: overlays compose over the base', () =>
             }
         }
     });
+
+    it('an overlay vite config keeps what the base one declared', () =>
+    {
+        // A tailwind overlay REPLACES vite.config.ts wholesale rather than merging, so
+        // anything the base config declares has to be restated there. The dev port is the
+        // canary: the README names it and the fullstack devtools bridge is written against
+        // it, so an overlay that dropped it would move the app out from under both.
+        const combos: Array<[template: 'frontend' | 'fullstack', options: Array<'router' | 'tailwind'>, config: string]> = [
+            ['frontend', [], 'vite.config.ts'],
+            ['frontend', ['tailwind'], 'vite.config.ts'],
+            ['frontend', ['router', 'tailwind'], 'vite.config.ts'],
+            ['fullstack', [], 'application/vite.config.ts'],
+            ['fullstack', ['tailwind'], 'application/vite.config.ts']
+        ];
+        for (const [template, options, config] of combos)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, template, dir, 'ports', '^1.0.0', options);
+            const text = readFileSync(join(dir, config), 'utf8');
+            expect(text, `${ template } ${ options.join('+') || '(base)' }`).toContain('port: 5173');
+            if (template === 'fullstack')
+            {
+                expect(text, `${ template } ${ options.join('+') || '(base)' }`).toContain("'/api': 'http://localhost:3000'");
+            }
+        }
+    });
 });
 
 describe('closed loop: each template detects as the shape it claims', () =>
@@ -311,7 +337,8 @@ const IMPLICIT_DEPENDENCIES: Record<string, string> =
     '@azerothjs/language-server': 'ships the azeroth-tsc binary `azeroth check` runs on a frontend',
     '@azerothjs/cli': 'ships the `azeroth` binary every script in the template invokes',
     'typescript': 'the tsc binary `azeroth check` runs on a backend, and a peer of the compiler and typescript-eslint',
-    '@types/node': 'reached through tsconfig "types": ["node"], which never spells the package name'
+    '@types/node': 'reached through tsconfig "types": ["node"], which never spells the package name',
+    '@azerothjs/ws': 'the optional peer @azerothjs/devtools/server needs for its bridge socket; the template imports the bridge, never the socket'
 };
 
 /**

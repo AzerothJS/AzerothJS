@@ -91,6 +91,25 @@ shape in `server/src/contract.ts` and the client stops typechecking immediately.
 
 ---
 
+## 🔬 Devtools
+
+`npm run dev` mounts the inspector in the application: a launcher pill bottom-right with a
+live effect count, opening onto the reactive tree, the dependency graph, and a timeline of
+every run with the cause that triggered it.
+
+The **Server** tab is the one worth opening here. The server half attaches a bridge in
+`server/src/main.ts`, and the tab mirrors its reactive graph live: one root per in-flight
+request, the state and effects inside it, and the long-lived stores beside them. That is what
+"every request is a reactive root" looks like from the outside - request isolation across
+`await`, visible rather than asserted.
+
+Both sides are dev-only by construction. The client is behind `import.meta.env.DEV`, which a
+build replaces with `false`, so the branch and its import are eliminated. `attachDevtools`
+throws outright under `NODE_ENV=production` and accepts only localhost origins, because the
+graph carries live application values - treat the bridge like a debugger port.
+
+---
+
 ## 🔧 Environment
 
 Copy `server/.env.example` to `server/.env` and adjust; `server/src/config.ts`

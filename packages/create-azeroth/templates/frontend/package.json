@@ -19,6 +19,7 @@
     "devDependencies": {
         "@azerothjs/cli": "{{version}}",
         "@azerothjs/compiler": "{{version}}",
+        "@azerothjs/devtools": "{{version}}",
         "@azerothjs/eslint-plugin": "{{version}}",
         "@azerothjs/language-server": "{{version}}",
         "@azerothjs/testing": "{{version}}",

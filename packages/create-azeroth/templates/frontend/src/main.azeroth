@@ -2,4 +2,13 @@ import { render } from 'azerothjs';
 
 import App from './App.azeroth';
 
+// Before render: the panel only sees primitives constructed after its hook is installed.
+// `import.meta.env.DEV` is replaced with false in a build, so this branch - and the import
+// inside it - is eliminated and never reaches production.
+if (import.meta.env.DEV)
+{
+    const { installDevtools } = await import('@azerothjs/devtools');
+    installDevtools();
+}
+
 render(() => App(), document.getElementById('root')!);

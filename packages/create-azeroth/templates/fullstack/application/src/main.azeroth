@@ -6,4 +6,14 @@ import { bootClient } from '@azerothjs/kit/client';
 
 import App from './App.azeroth';
 
+// Before the app boots: the panel only sees primitives constructed after its hook is
+// installed. `import.meta.env.DEV` is replaced with false in a build, so this branch - and
+// the import inside it - is eliminated and never reaches production. The `server` URL is
+// where the Server tab looks for the bridge: the port vite's /api proxy targets.
+if (import.meta.env.DEV)
+{
+    const { installDevtools } = await import('@azerothjs/devtools');
+    installDevtools({ server: 'http://localhost:3000' });
+}
+
 bootClient(App);

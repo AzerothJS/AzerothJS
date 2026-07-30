@@ -42,4 +42,14 @@ const handler = pipeline(
 
 const served = await serve(handler, { port: config.port });
 handleShutdownSignals(served);
+
+// The panel's Server tab connects here and mirrors the server's reactive graph: request
+// roots, their per-request state, and long-lived stores. `attachDevtools` throws under
+// NODE_ENV=production so it cannot ship by accident, and accepts only localhost origins.
+if (!isProduction)
+{
+    const { attachDevtools } = await import('@azerothjs/devtools/server');
+    attachDevtools(served.server);
+}
+
 log.info('listening', { port: served.port, env: config.env });

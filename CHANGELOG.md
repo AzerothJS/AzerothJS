@@ -91,6 +91,30 @@ follow [Semantic Versioning](https://semver.org).
 
 ### Added (create-azeroth)
 
+- **The devtools panel is wired into the templates that can host it.** A framework whose pitch
+  is a visible reactive graph shipped starters that never showed it. `frontend` and the
+  fullstack `application` now mount the inspector in dev, and the fullstack `server` attaches
+  the bridge its Server tab reads, so "every request is a reactive root" is something you can
+  watch rather than something the README asserts. `backend` deliberately gets none: the panel
+  is a page and that template serves none, so it gets a README note on pointing another app's
+  Server tab at it instead. Dev-only by construction, not by convention - the client calls sit
+  behind `import.meta.env.DEV`, which a build replaces with `false` so the branch and its
+  dynamic import are eliminated entirely, and `attachDevtools` throws under
+  `NODE_ENV=production` and accepts only localhost origins. The call goes BEFORE
+  `render`/`bootClient`, because the runtime only registers primitives constructed after the
+  hook is installed; placed after, the panel opens on an empty graph.
+
+- **The dev port is declared, not inherited.** The fullstack README promised "vite on :5173"
+  twice while nothing in the project said so - it was vite's implicit default, so a busy 5173
+  moved the app to 5174 and the README quietly became wrong (and now the devtools bridge URL is
+  written against those ports too). Both client templates declare `server.port` explicitly, and
+  because a tailwind overlay REPLACES `vite.config.ts` wholesale rather than merging into it,
+  the overlay copies had to restate it - a new test scaffolds every option combination and
+  asserts the port and the `/api` proxy survive. Servers stay on 3000: it is the Node
+  convention and it is already baked into `.env.example`, `EXPOSE`, `docker run -p`, and the
+  `config.port` default. Vite still steps to the next free port rather than failing, so a busy
+  machine is still a working first run.
+
 - **Every template ships an `.editorconfig`.** The same one the framework itself uses: UTF-8,
   4-space indent, final newline, trimmed trailing whitespace, and single quotes for
   TypeScript (including the JetBrains key that actually enforces it). A scaffolded app

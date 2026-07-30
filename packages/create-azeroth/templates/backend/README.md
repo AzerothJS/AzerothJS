@@ -112,5 +112,10 @@ answers orchestrator probes, and `SIGTERM` drains in-flight responses before exi
 - **Add a browser half** - `npm create azeroth@latest` and pick `fullstack`: one
   shared typed contract across both halves, validated at the boundary and in the
   form, plus SSR and hydration.
+- **Inspect the reactive graph** - the devtools panel is a page, and this template
+  serves none, so it ships without one. To watch this server's request roots and
+  stores, install `@azerothjs/devtools` and `@azerothjs/ws`, call
+  `attachDevtools(served.server)` in `src/main.ts` behind a non-production check,
+  and point another app's devtools Server tab at `http://localhost:3000`.
 - **[The AzerothJS repository](https://github.com/AzerothJS/AzerothJS)** for the
   full documentation.

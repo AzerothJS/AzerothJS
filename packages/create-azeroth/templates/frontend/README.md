@@ -44,11 +44,26 @@ CI runs the same three gates on every push - see `.github/workflows/ci.yml`.
 
 | Path | Role |
 | --- | --- |
-| `src/main.azeroth` | Entry: `render(() => App(), ...)`. |
+| `src/main.azeroth` | Entry: `render(() => App(), ...)`, plus the dev-only devtools panel. |
 | `src/App.azeroth` | Your root component - `state`, markup, and plain TypeScript in one file. |
 | `src/styles.css` | Design tokens and component styles, loaded from `index.html`. |
 | `tests/` | `renderTest` component tests. |
 | `public/` | Static assets served as-is (replace the favicon PNGs with your own). |
+
+---
+
+## 🔬 Devtools
+
+`npm run dev` mounts the inspector: a launcher pill bottom-right with a live effect count.
+Click it for the reactive tree, the dependency graph, and a timeline of every run with the
+dependency that caused it. The signal strip on the page is a drawing of that graph; the panel
+is the real one.
+
+It is wired in `src/main.azeroth` behind `import.meta.env.DEV`, which a build replaces with
+`false` - so the branch and its import are eliminated and none of it reaches production. Two
+details worth keeping if you move the call: it must run **before** `render` (the panel only
+sees primitives constructed after its hook is installed), and the panel lives in a shadow
+root, so your CSS cannot reach it and its CSS cannot reach your app.
 
 ---
 
