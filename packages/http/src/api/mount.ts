@@ -16,17 +16,24 @@
  *     knowingly - the escape hatch is visible in the return type.
  */
 
-import type { App, RequestContext, UploadedFile, MultipartOptions } from '../index.ts';
+import type { App, RequestContext, UploadedFile, MultipartOptions, PathParams as RouterPathParams } from '../index.ts';
 import { ValidationError, HttpError, json, readJson, readMultipart } from '../index.ts';
-import { isRoute, isStatusReply, isMultipartSpec, type AnyRoute, type Contract, type ContractFile, type GuardMap, type HandlersWithGuards } from './define.ts';
+import { isRoute, isStatusReply, isMultipartSpec, type AnyRoute, type Contract, type ContractFile, type GuardMap, type HandlersWithGuards, type PathParams as ContractPathParams } from './define.ts';
+import { parseAny } from './validate.ts';
 
-// The contract's ContractFile is a client-safe duplicate of http's UploadedFile (define.ts
-// must not import server packages). These welds break the build if the two ever drift.
+// ContractFile is a client-safe duplicate of http's UploadedFile, and the contract's
+// PathParams of the router's pattern inference (define.ts must not import server
+// packages). These welds break the build if either pair ever drifts.
 type AssertExtends<T extends B, B> = T;
 /** @internal Type-only drift weld; never referenced. */
 export type UploadedFileMatchesContractFile = AssertExtends<UploadedFile, ContractFile>;
 /** @internal Type-only drift weld; never referenced. */
 export type ContractFileMatchesUploadedFile = AssertExtends<ContractFile, UploadedFile>;
+type WeldPattern = '/users/:id/files/*rest';
+/** @internal Type-only drift weld; never referenced. */
+export type ContractParamsMatchRouter = AssertExtends<ContractPathParams<WeldPattern>, RouterPathParams<WeldPattern>>;
+/** @internal Type-only drift weld; never referenced. */
+export type RouterParamsMatchContract = AssertExtends<RouterPathParams<WeldPattern>, ContractPathParams<WeldPattern>>;
 
 /**
  * A guard the `guards` map attaches to contract routes: the same shape as the app's
@@ -125,44 +132,15 @@ function walk(app: App, node: Contract, handlers: HandlerTree, prefix: string, t
     }
 }
 
-/** @internal A validation outcome unified across native and Standard Schema validators. */
-interface ParseOk { ok: true; value: unknown }
-interface ParseErr { ok: false; errors: Record<string, string>; issues?: ReadonlyArray<{ path: string; code: string; message: string }> }
-
-/**
- * @internal Validates `value` through a route schema, native OR Standard Schema. A native
- * schema keeps its one-pass `safeParse` (and its `meta` still feeds OpenAPI); a
- * `~standard` schema (Zod/Valibot/ArkType) runs `~standard.validate` and its issues map
- * to the same flat field-path errors the whole framework speaks.
- */
-async function parseAny(schema: unknown, value: unknown): Promise<ParseOk | ParseErr>
-{
-    const native = schema as { safeParse?: (v: unknown) => ParseOk | ParseErr };
-    if (typeof native.safeParse === 'function')
-    {
-        return native.safeParse(value);
-    }
-    const standard = (schema as { ['~standard']: { validate: (v: unknown) => unknown } })['~standard'];
-    const result = await standard.validate(value) as
-        { value: unknown; issues?: undefined } | { issues: ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> }> };
-    if (result.issues === undefined)
-    {
-        return { ok: true, value: result.value };
-    }
-    const errors: Record<string, string> = {};
-    const issues: Array<{ path: string; code: string; message: string }> = [];
-    for (const issue of result.issues)
-    {
-        const path = (issue.path ?? []).map((seg) => typeof seg === 'object' ? String(seg.key) : String(seg)).join('.') || 'root';
-        errors[path] = errors[path] ?? issue.message;
-        issues.push({ path, code: 'invalid', message: issue.message });
-    }
-    return { ok: false, errors, issues };
-}
-
 /** @internal One route -> one endpoint with the guard + validation pipeline around the handler. */
 function register(app: App, definition: AnyRoute, handler: (context: unknown) => unknown, prefix: string, guards: ReadonlyArray<AnyGuard>): void
 {
+    // The response contract per status: the `responses` map, with `output` as the
+    // declared shorthand for its 200 entry.
+    const responseSchema = (status: number): unknown =>
+        (definition.responses as Record<number, unknown> | undefined)?.[status]
+            ?? (status === 200 ? definition.output : undefined);
+
     app.route(definition.method, `${ prefix }${ definition.path }`, async (context) =>
     {
         // Guards mirror the app's own middleware composition: an object return adds
@@ -261,8 +239,7 @@ function register(app: App, definition: AnyRoute, handler: (context: unknown) =>
         // with the status and headers. A bodyless reply sends an empty response.
         if (isStatusReply(result))
         {
-            const schema = (definition.responses as Record<number, unknown> | undefined)?.[result.status]
-                ?? (result.status === 200 ? definition.output : undefined);
+            const schema = responseSchema(result.status);
             if (result.body === undefined)
             {
                 return new Response(null, { status: result.status, headers: result.headers ?? {} });
@@ -281,15 +258,16 @@ function register(app: App, definition: AnyRoute, handler: (context: unknown) =>
             return json(result.body, { status: result.status, headers: result.headers ?? {} });
         }
 
-        if (definition.output !== undefined)
+        const okSchema = responseSchema(200);
+        if (okSchema !== undefined)
         {
-            const parsed = await parseAny(definition.output, result);
+            const parsed = await parseAny(okSchema, result);
             if (!parsed.ok)
             {
                 // The handler broke its own declared contract - a server bug. The details
                 // stay OUT of the wire (a 500 hides internals); the message goes to the log.
                 throw new HttpError(500, `Endpoint ${ definition.method } ${ definition.path } returned a value `
-                    + `violating its output schema: ${ Object.keys(parsed.errors).join(', ') }`,
+                    + `violating its declared 200 schema: ${ Object.keys(parsed.errors).join(', ') }`,
                 { code: 'contract-violation' });
             }
             return json(parsed.value);

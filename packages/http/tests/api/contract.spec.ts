@@ -476,6 +476,25 @@ describe('the typed reply channel: status codes without losing validation', () =
         expect(JSON.stringify(await response.json())).not.toContain('hunter2');
     });
 
+    it('a PLAIN 200 return validates against a responses-only 200 schema (no output)', async () =>
+    {
+        const only200 = defineContract({
+            things: { peek: route({ method: 'GET', path: '/peek', responses: { 200: object({ id: number({ int: true }) }) } }) }
+        });
+        const build = (value: unknown): App =>
+        {
+            const app = new App();
+            mountApi(app, only200, { handlers: { things: { peek: () => value } } });
+            return app;
+        };
+        const ok = await build({ id: 7, secret: 'hunter2' }).handle(new Request('http://local/api/peek'));
+        expect(ok.status).toBe(200);
+        expect(JSON.stringify(await ok.json())).not.toContain('hunter2'); // responses[200] IS the 200 contract
+        const broken = await build({ id: 'not-a-number' }).handle(new Request('http://local/api/peek'));
+        expect(broken.status).toBe(500);
+        expect(((await broken.json()) as { error: { code: string } }).error.code).toBe('contract-violation');
+    });
+
     it('the client still speaks the success body through a responses-declaring route', async () =>
     {
         const client = createClient(replies, { baseUrl: '/api', fetch: (request) => buildReplyServer().handle(request) });

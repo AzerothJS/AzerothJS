@@ -62,6 +62,19 @@ follow [Semantic Versioning](https://semver.org).
   `/things/:id` moves the identifier into a raw `string` with no schema behind it (there is
   no `params` validator by design; a path param is matched, not parsed).
 
+- **The contract's response model is one concept.** A route's response contract is the
+  per-status `responses` map, and `output` is the declared shorthand for its 200 entry -
+  the docs said as much, but the mount only half-believed it: `reply(200, ...)` validated
+  against `responses[200]`, while a PLAIN 200 return only validated when `output` was
+  declared, so a route carrying `responses: { 200: shape }` alone sent plain returns to
+  the wire unchecked. Both paths now share one per-status lookup, and the OpenAPI exporter
+  derives the 200 entry and the contract-violation 500 from that same rule, so the
+  document matches what the mount enforces. Alongside it, the boundary's schema
+  unification (native `safeParse` when present, `~standard.validate` otherwise) now lives
+  in one module shared by the server mount and the client's pre-flight check, and
+  `RouteSchema<T>` names what was always structurally true: any Standard Schema validator,
+  with the native schema's extras discovered by capability, never required.
+
 ### Added (create-azeroth)
 
 - **The template READMEs are a proper first page.** Each scaffolded app now opens with a

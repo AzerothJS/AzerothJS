@@ -383,11 +383,19 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         // `responses` map (the reply() channel), then the framework-DERIVED error set -
         // each emitted only when mountApi actually produces it for this route's shape.
         const responses: Record<string, unknown> = {};
-        responses['200'] = route.output !== undefined
-            ? { description: 'OK', content: { 'application/json': { schema: resolve(route.output as Schema<unknown>) } } }
+        // One response concept: `responses[200]` and `output` are the same slot (`output`
+        // is the declared shorthand), so the 200 entry derives from either and the loop
+        // below skips it.
+        const okSchema = (route.responses as Record<string, unknown> | undefined)?.['200'] ?? route.output;
+        responses['200'] = okSchema !== undefined
+            ? { description: 'OK', content: { 'application/json': { schema: resolve(okSchema as Schema<unknown>) } } }
             : { description: 'OK (response shape not declared by the contract)' };
         for (const [status, statusSchema] of Object.entries((route.responses ?? {}) as Record<string, unknown>))
         {
+            if (status === '200')
+            {
+                continue;
+            }
             responses[status] = {
                 description: DEFAULT_STATUS_TEXT[status] ?? `Status ${ status }`,
                 content: { 'application/json': { schema: resolve(statusSchema as Schema<unknown>) } }
@@ -401,7 +409,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         {
             responses['415'] = { description: 'Unsupported content type (JSON required)', content: { 'application/json': { schema: ERROR_REF } } };
         }
-        if (route.output !== undefined)
+        if (route.output !== undefined || route.responses !== undefined)
         {
             responses['500'] = { description: 'Contract violation (response failed its declared schema)', content: { 'application/json': { schema: ERROR_REF } } };
         }

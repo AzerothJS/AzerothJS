@@ -21,6 +21,7 @@
 
 import { SchemaError } from '@azerothjs/schema';
 import { isRoute, isMultipartSpec, type AnyRoute, type Contract, type PathParams, type Route } from './define.ts';
+import { parseAny } from './validate.ts';
 
 /** The error a failed call throws: the wire shape, typed. */
 export class ApiError extends Error
@@ -116,10 +117,6 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
 
     const call = async (routeDef: AnyRoute, args: RawArgs): Promise<unknown> =>
     {
-        // Pre-validate locally: same rules as the server, but the failure costs no network.
-        // A native schema uses its one-pass safeParse; a FOREIGN Standard Schema validator
-        // (Zod/Valibot/ArkType) runs `~standard.validate` - awaited, since the call is
-        // already async - and its issues map to the same flat field-path SchemaError.
         if (routeDef.input !== undefined && isMultipartSpec(routeDef.input))
         {
             // A multipart route's input is FormData, not JSON - the typed client would
@@ -127,35 +124,18 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
             throw new Error(`The route ${ routeDef.method as string } ${ routeDef.path as string } takes multipart/form-data; `
                 + 'the typed client only speaks JSON. Post a FormData body with fetch directly.');
         }
+        // Pre-validate locally: the same schema unification the server boundary runs
+        // (validate.ts), but the failure costs no network - and it lands as the
+        // form-ready SchemaError.
         let body = args.input;
-        const nativeInput = routeDef.input as { safeParse?: (v: unknown) => { ok: true; value: unknown } | { ok: false; errors: Record<string, string>; issues?: Array<{ path: string; code: string; message: string }> } } | undefined;
-        if (nativeInput !== undefined && typeof nativeInput.safeParse === 'function')
+        if (routeDef.input !== undefined)
         {
-            const parsed = nativeInput.safeParse(body);
+            const parsed = await parseAny(routeDef.input, body);
             if (!parsed.ok)
             {
                 throw new SchemaError(parsed.errors, parsed.issues);
             }
             body = parsed.value;
-        }
-        else if (routeDef.input !== undefined)
-        {
-            const standard = (routeDef.input as { ['~standard']: { validate: (v: unknown) => unknown } })['~standard'];
-            const result = await standard.validate(body) as
-                { value: unknown; issues?: undefined } | { issues: ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> | undefined }> };
-            if (result.issues !== undefined)
-            {
-                const errors: Record<string, string> = {};
-                const issues: Array<{ path: string; code: string; message: string }> = [];
-                for (const issue of result.issues)
-                {
-                    const path = (issue.path ?? []).map((seg) => typeof seg === 'object' ? String(seg.key) : String(seg)).join('.') || 'root';
-                    errors[path] = errors[path] ?? issue.message;
-                    issues.push({ path, code: 'invalid', message: issue.message });
-                }
-                throw new SchemaError(errors, issues);
-            }
-            body = result.value;
         }
 
         // AnyRoute erases Path to any (see define.ts); the assertion restores the runtime truth.

@@ -23,17 +23,19 @@
  * so this module and the client depend on nothing but @azerothjs/schema.
  */
 
-import type { Schema, StandardSchemaV1 } from '@azerothjs/schema';
+import type { StandardSchemaV1 } from '@azerothjs/schema';
 
 // The Standard Schema v1 contract (https://standardschema.dev) - the `~standard` property
-// Zod, Valibot, ArkType (and the house schema itself) expose. A `route()` accepts EITHER a
-// native `@azerothjs/schema` Schema (which also self-describes for OpenAPI) OR any Standard
-// Schema validator, so a team keeps its existing schemas. A foreign schema validates the
-// boundary; its OpenAPI entry degrades to the permissive shape (no `meta` to walk).
+// Zod, Valibot, ArkType (and the house schema itself) expose. There is ONE schema concept
+// at a route boundary: any Standard Schema validator. The native `@azerothjs/schema` value
+// is one of them and additionally self-describes - consumers use its extras when present
+// (`safeParse`: one pass with issue codes; `meta`: the OpenAPI description) and never
+// require them. A foreign schema still validates the boundary; its OpenAPI entry degrades
+// to the permissive shape (no `meta` to walk).
 export type { StandardSchemaV1 } from '@azerothjs/schema';
 
-/** A route boundary schema: the native self-describing one, or any Standard Schema validator. */
-export type RouteSchema<T> = Schema<T> | StandardSchemaV1<T>;
+/** A route boundary schema: any Standard Schema validator (capability note above). */
+export type RouteSchema<T> = StandardSchemaV1<T>;
 
 /** Infers the param object type from a route pattern string (mirrors @azerothjs/http). */
 export type PathParams<Path extends string> =
@@ -249,13 +251,15 @@ export interface Route<Path extends string = string, In = undefined, Out = unkno
     input?: RouteSchema<In>;
     query?: RouteSchema<Query>;
 
-    /** The DEFAULT (200) response body schema. */
+    /** The 200 response body schema - shorthand for a `responses: { 200: ... }` entry. */
     output?: RouteSchema<Out>;
 
     /**
-     * Per-status response schemas beyond the 200 default: `{ 201: user, 404: problem }`.
-     * A handler speaks them through {@link reply} - validated exactly like `output`, and
-     * each becomes its own entry in the OpenAPI document.
+     * Response schemas by status: `{ 201: user, 404: problem }`. The route's whole
+     * response contract is this map; `output` is the declared shorthand for its 200
+     * entry. A handler speaks a non-default status through {@link reply} - validated
+     * exactly like a plain return, and each status becomes its own entry in the
+     * OpenAPI document.
      */
     responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
     docs?: RouteDocs;
