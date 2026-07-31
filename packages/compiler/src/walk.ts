@@ -22,7 +22,7 @@ import * as ts from 'typescript';
 
 import type { ReactiveSources } from './dep.ts';
 
-import { MARKER_MEMO, MARKER_SIGNAL, MARKER_DEFERRED } from './markers.ts';
+import { MARKER_MEMO, MARKER_SIGNAL, MARKER_DEFERRED, MARKER_ROW } from './markers.ts';
 
 /** Callbacks invoked as {@link traverseReactive} walks reactive references. */
 export interface ReactiveHooks
@@ -49,6 +49,11 @@ export interface ReactiveHooks
      * access not claimed by {@link rowFieldRead}. The rewrite appends the getter call.
      */
     rowItemRead?(node: ts.Identifier): void;
+    /**
+     * A `__azRow(fn)` row marker (a For render child emitted in raw mode). The walk scopes the
+     * wrapped arrow's params as row items; the rewrite consumer strips the wrapper call.
+     */
+    rowMarker?(call: ts.CallExpression): void;
 }
 
 /** True for an `=`/`+=`/`&&=`/... assignment operator. */
@@ -118,8 +123,15 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     // a function/block (a render callback, an IIFE, a composable) becomes a `__azMemo`/`__azSignal`
     // marker declaration; the walk treats it as a reactive SOURCE within its scope rather than a
     // shadowing local, so its bare reads gain `()` exactly like a top-level source.
-    interface Scope { shadows: Set<string>; scoped: Map<string, boolean> }
+    interface Scope { shadows: Set<string>; scoped: Map<string, boolean>; rows: Set<string> }
     const scopeStack: Scope[] = [];
+
+    // Arrows wrapped by a `__azRow(...)` marker in the walked text - For render children whose
+    // emission was RAW (markup embedded in an expression), so their row-param knowledge had to
+    // cross the text boundary. Their params are runtime getters and scope as row items. The
+    // marker is compiler-emitted only; a hand-written `For({ children: fn })` call carries no
+    // marker and is walked as the ordinary user code it is.
+    const rowMarkerArrows = new Set<ts.Node>();
 
     const top = (): Scope | undefined => scopeStack[scopeStack.length - 1];
 
@@ -143,10 +155,35 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     const rowFieldOf = (objName: string, fieldName: string): boolean =>
         !isShadowed(objName) && (sources.rowForms?.get(objName)?.has(fieldName) ?? false);
 
-    /** True when `name` is an unshadowed `<For>` row-item getter param. Same non-shadowing rule (and
-     *  the same trade) as {@link rowFieldOf}: the arrow's own param must not suppress the rewrite. */
+    /** True when `name` resolves (innermost-first) to a marker-scoped row param, with any
+     *  interposed plain local or keyword source winning over an outer row scope. */
+    const isRowParam = (name: string): boolean =>
+    {
+        for (let k = scopeStack.length - 1; k >= 0; k--)
+        {
+            const scope = scopeStack[k];
+            if (scope === undefined)
+            {
+                continue;
+            }
+            if (scope.shadows.has(name) || scope.scoped.has(name))
+            {
+                return false;
+            }
+            if (scope.rows.has(name))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    /** True when `name` is an unshadowed `<For>` row-item getter param - either threaded in via
+     *  `sources.rowItems` (codegen's IR path) or scoped from a `__azRow` marker in the walked
+     *  text (a raw-mode For render child). Same non-shadowing rule (and the same trade) as
+     *  {@link rowFieldOf}: the arrow's own param must not suppress the rewrite. */
     const rowItemOf = (name: string): boolean =>
-        !isShadowed(name) && (sources.rowItems?.has(name) ?? false);
+        (!isShadowed(name) && (sources.rowItems?.has(name) ?? false)) || isRowParam(name);
 
     /** Resolves a name innermost-first: a scoped marker source (with writability), a shadowing local, or
      *  finally the component's flat sources. Returns null when the name is not reactive here. */
@@ -287,6 +324,26 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         if (n.kind >= ts.SyntaxKind.FirstTypeNode && n.kind <= ts.SyntaxKind.LastTypeNode)
         {
             return;
+        }
+
+        // A `__azRow(fn)` row marker: the compiler's own raw-mode emission of a For render
+        // child (see MARKER_ROW). Register the wrapped arrow BEFORE traversal reaches it, so
+        // its params scope as row-item getters, and report the call so the rewrite strips the
+        // wrapper. An occurrence is either rewritten immediately with IR rowItems (non-raw, no
+        // marker emitted) or deferred behind this marker - never both, because both are chosen
+        // by the same `emit.raw` flag at the same emission site.
+        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === MARKER_ROW)
+        {
+            let wrapped: ts.Node | undefined = n.arguments[0];
+            while (wrapped !== undefined && ts.isParenthesizedExpression(wrapped))
+            {
+                wrapped = wrapped.expression;
+            }
+            if (wrapped !== undefined && (ts.isArrowFunction(wrapped) || ts.isFunctionExpression(wrapped)))
+            {
+                rowMarkerArrows.add(wrapped);
+                hooks.rowMarker?.(n);
+            }
         }
 
         // Assignment / update to a reactive source -> a write (not a read).
@@ -431,13 +488,25 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             {
                 bind(n.name.text);
             }
-            scopeStack.push({ shadows: new Set(), scoped: new Map() });
+            scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
             if (ts.isFunctionExpression(n) && n.name)
             {
                 bind(n.name.text);
             }
+            // A marker-wrapped render arrow's identifier params are row-item GETTERS, not
+            // plain locals - they join the scope's rows so reads inside gain the call.
+            const rowArrow = rowMarkerArrows.has(n);
             for (const parameter of n.parameters)
             {
+                if (rowArrow && ts.isIdentifier(parameter.name))
+                {
+                    top()?.rows.add(parameter.name.text);
+                    if (parameter.initializer)
+                    {
+                        visit(parameter.initializer);
+                    }
+                    continue;
+                }
                 visit(parameter);
             }
             if (n.body)
@@ -450,7 +519,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
 
         if (isBlockScope(n))
         {
-            scopeStack.push({ shadows: new Set(), scoped: new Map() });
+            scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
             ts.forEachChild(n, visit);
             scopeStack.pop();
             return;
@@ -459,7 +528,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
         ts.forEachChild(n, visit);
     };
 
-    scopeStack.push({ shadows: new Set(), scoped: new Map() });
+    scopeStack.push({ shadows: new Set(), scoped: new Map(), rows: new Set() });
     ts.forEachChild(root, visit);
     scopeStack.pop();
 }

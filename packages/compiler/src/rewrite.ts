@@ -360,6 +360,19 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
         rowItemRead: (node) =>
         {
             insert(node.getEnd(), '()');
+        },
+        // A `__azRow(fn)` row marker is transport, not output: the walk has already scoped the
+        // wrapped arrow's params, so the wrapper is deleted - callee + opening paren, and the
+        // closing paren - leaving the arrow in place. Markers never survive to emitted code.
+        rowMarker: (call) =>
+        {
+            const wrapped = call.arguments[0];
+            if (wrapped === undefined)
+            {
+                return;
+            }
+            edits.push({ start: call.getStart(sourceFile), end: wrapped.getStart(sourceFile), text: '' });
+            edits.push({ start: call.getEnd() - 1, end: call.getEnd(), text: '' });
         }
     });
 

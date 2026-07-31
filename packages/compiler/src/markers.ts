@@ -28,3 +28,14 @@ export const MARKER_SIGNAL = '__azSignal';
 
 /** Marker for a `deferred` lowered inside a nested scope (becomes `createDeferred`). */
 export const MARKER_DEFERRED = '__azDeferred';
+
+/**
+ * Marker wrapping a `<For>` render-fn child emitted in RAW mode (markup embedded in an
+ * expression), where the read/write rewrite is deferred to the enclosing pass. The wrap carries
+ * what the emitting IR knew - "this arrow's params are row-item getters read as values" -
+ * through the text boundary: the walk scopes the wrapped arrow's params as row items and the
+ * rewrite strips the wrapper. Recognition by this reserved name (never by `For`, which is
+ * PUBLIC manual API a user may legitimately call with getter-style reads) is what keeps the
+ * row rewrite from ever touching hand-written code.
+ */
+export const MARKER_ROW = '__azRow';

@@ -488,7 +488,11 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             const code = source.slice(span.start, span.end).trim();
             if (isFunctionLiteral(code))
             {
-                return tryLowerRenderClone(span) ?? { kind: 'render', param: null, body: expr };
+                // The param must be captured on the pass-through path too: a <For> row rooted
+                // at a COMPONENT (`(item) => <Card item={ item } />`) still reads its params as
+                // values, and codegen's rowItems rewrite keys off this span. Losing it here
+                // handed the raw row GETTER to the child component.
+                return tryLowerRenderClone(span) ?? { kind: 'render', param: renderParamSpan(source, span), body: expr };
             }
             return { kind: 'dynamic', expr };
         }
@@ -499,6 +503,23 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
     };
 
     return { lowerNode };
+}
+
+/**
+ * The param-list span of a render-child arrow (`(item)`, `(item, index)`, or a bare `item`),
+ * or null for a non-arrow function form. Mirrors {@link rowItemNames}'s reading of the span.
+ */
+function renderParamSpan(source: string, innerSpan: Span): Span | null
+{
+    const code = source.slice(innerSpan.start, innerSpan.end);
+    const arrow = /^\s*(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(code);
+    const paramText = arrow?.[1];
+    if (paramText === undefined)
+    {
+        return null;
+    }
+    const start = innerSpan.start + code.indexOf(paramText);
+    return { start, end: start + paramText.length };
 }
 
 /** The inner expression span of an attribute's `{ ... }` value (or spread arg). */

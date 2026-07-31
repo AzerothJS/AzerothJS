@@ -41,6 +41,7 @@ import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } from './keyword-spec.ts';
 import { rewriteReactive, setterName } from './rewrite.ts';
+import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -880,13 +881,20 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         // () => T and () => number) but read as VALUES in markup - thread them into the child's
         // rewrite as rowItems so `item.name` emits `item().name`. Scoped to THIS child's emission:
         // an identically named binding elsewhere in the component is untouched.
-        const childSources = binding.tag === 'For' && binding.children.kind === 'render' && binding.children.param !== null
-            ? { ...sources, rowItems: rowItemNames(source, binding.children.param, sources.rowItems) }
+        const renderChild = binding.tag === 'For' && binding.children.kind === 'render' ? binding.children : null;
+        const childSources = renderChild !== null && renderChild.param !== null
+            ? { ...sources, rowItems: rowItemNames(source, renderChild.param, sources.rowItems) }
             : sources;
+        const childValue = emitChildrenValue(source, binding.children, childSources, emit);
+        // In RAW mode the rewrite is deferred to the enclosing pass, which walks plain text with
+        // no IR - so the row-param knowledge crosses the boundary as a `__azRow(...)` marker the
+        // walk recognizes and the rewrite strips. Recognition is by this reserved marker, never
+        // by the `For` name: For is public manual API a user may call with getter-style reads.
+        const wrapped = emit.raw && renderChild !== null ? `${ MARKER_ROW }(${ childValue })` : childValue;
         // Parens are load-bearing: a children expression starting on the line after the
         // opening brace would otherwise emit `return` + newline, which ASI silently turns
         // into `return;` - children becomes undefined and <For> crashes at runtime.
-        parts.push(`get children() { return (${ emitChildrenValue(source, binding.children, childSources, emit) }); }`);
+        parts.push(`get children() { return (${ wrapped }); }`);
     }
 
     return parts.length === 0 ? `${ binding.tag }()` : `${ binding.tag }({ ${ parts.join(', ') } })`;

@@ -267,6 +267,57 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('const total = (row) => row.id');  // same param name outside the For - untouched
     });
 
+    it('a <For> EMBEDDED in a component prop expression keeps the row rewrite, marker-free output', () =>
+    {
+        // Regression (field report): a For inside a factory prop (`fallback={ <div><For ...>
+        // ... }`) lowers in raw mode, deferring the single rewrite to the enclosing pass -
+        // which had no IR to learn the row param from. The raw emission now wraps the render
+        // arrow in the reserved `__azRow(...)` marker; the walk scopes its params as rows and
+        // the rewrite strips the wrapper, so no marker ever reaches emitted code.
+        const code = gen('component C { state items = [{ id: 1, label: "x" }]; state on = true; <Show when={on} fallback={<ul><For each={items} key={(row) => row.id}>{(row) => <li title={`k-${ row.id }`}>{row.label}</li>}</For></ul>}><p>y</p></Show> }');
+        expect(code).toContain('row().label');                    // member read through the getter
+        expect(code).toContain('`k-${ row().id }`');              // template-literal read through the getter
+        expect(code).toContain('(row) => row.id');                // the key fn still receives the VALUE
+        expect(code).not.toContain('__azRow');                    // the marker is transport, not output
+    });
+
+    it('a HAND-WRITTEN For({ children }) call is untouched - For is public manual API', () =>
+    {
+        // The row rewrite must never key off the `For` NAME: the runtime For is public manual
+        // API, and a manual children callback receives getters the author already calls
+        // (`item()`). A name-based rewrite would emit `item()()`. Recognition rides the
+        // compiler-emitted `__azRow` marker instead, which hand-written code cannot carry.
+        const code = gen('import { For, h } from "azerothjs";\ncomponent C { state items = [1]; const manual = () => For({ each: () => items, key: (n) => n, children: (item) => h("li", {}, () => item()) }); <div>{ manual() }</div> }');
+        expect(code).toContain('() => item()');                   // the author getter call, exactly as written
+        expect(code).not.toContain('item()()');
+    });
+
+    it('a NESTED <For> inside a component-rooted row composes both row mechanisms', () =>
+    {
+        // The outer row is component-rooted (IR rowItems on the pass-through arrow); the inner
+        // For lowers inside that expression in raw mode (marker path). Both rewrites land, both
+        // key fns stay by-value, and the marker is stripped.
+        const code = gen('component C { state groups = [{ id: 1, members: [{ id: 2, name: "m" }] }]; <For each={groups} key={(g) => g.id}>{(g) => <Panel title={g.id}><For each={g.members} key={(m) => m.id}>{(m) => <Row name={m.name} /> }</For></Panel>}</For> }');
+        expect(code).toContain('g().id');                         // outer row read through the getter
+        expect(code).toContain('g().members');                    // inner each reads the OUTER row getter
+        expect(code).toContain('m().name');                       // inner row read through the getter
+        expect(code).toContain('(g) => g.id');                    // outer key by-value
+        expect(code).toContain('(m) => m.id');                    // inner key by-value
+        expect(code).not.toContain('__azRow');
+    });
+
+    it('a COMPONENT-rooted row keeps the getter rewrite (pass-through path)', () =>
+    {
+        // Regression (field report): a row rooted at a component takes the pass-through
+        // path (no clonable template), which used to drop the param span - rowItems was
+        // never built, `item={ row }` handed the child the raw GETTER, and a row var in a
+        // template literal stringified a function body into the page.
+        const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id}>{(row) => <Show when={row.id > 0}><li title={`n-${ row.id }`}>{row.id}</li></Show>}</For> }');
+        expect(code).toContain('row().id > 0');                   // bare prop expression through the getter
+        expect(code).toContain('`n-${ row().id }`');              // template-literal read through the getter
+        expect(code).toContain('(row) => row.id');                // the key fn still receives the VALUE
+    });
+
     it('form FIELD read rewrites to values(); a write (and bind:) to setValue; API access is untouched', () =>
     {
         const code = gen('import { createForm } from "azerothjs"; component C { form f = { a: "" }; <form onSubmit={f.handleSubmit}><input bind:value={f.a} /><p>{f.a}</p><span>{f.submitting()}</span></form> }');

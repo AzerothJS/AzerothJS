@@ -51,6 +51,42 @@ follow [Semantic Versioning](https://semver.org).
   fallback), living in one place. A zod/valibot/arktype schema handed to `readValidated` is a
   422 with the flat field map, exactly as a native schema is.
 
+### Fixed (compiler) - `<For>` rows, found by a real application
+
+- **A `<For>` row rooted at a COMPONENT keeps its getter rewrite.** `(item) => <Card
+  item={ item } />` takes the pass-through path - the row is not a clonable element
+  template - and that path dropped the captured param span, so `rowItems` was never
+  built for the child's emission. The visible failures were ugly in exactly the way a
+  silent type hole is: the child component received the raw row GETTER (every property
+  read `undefined`), and a row variable inside a template literal stringified the
+  getter's function body into the page. The param is now captured on the pass-through
+  path too (`renderParamSpan`, the same reading `rowItemNames` does), so `item={ item }`
+  emits `item()` and stays live per row.
+
+- **A `<For>` EMBEDDED in a component prop expression keeps the row rewrite.** Markup
+  inside a prop value (`fallback={ <ul><For ...>...</For></ul> }`) compiles in raw mode:
+  the single reactive rewrite is deferred to the enclosing pass, which walks plain
+  lowered text and had no IR to learn a row param from - so `row.label` inside such a
+  For stayed a value read of the getter object. The row-param knowledge now crosses the
+  text boundary the way nested keywords already do: the raw emission wraps the render
+  arrow in a reserved `__azRow(...)` marker (the `__azMemo`/`__azSignal` pattern), the
+  walk scopes the wrapped arrow's params as row items - innermost-first, so an interposed
+  local of the same name still wins - and the rewrite strips the wrapper. Markers never
+  reach emitted code.
+
+  Recognition deliberately rides the marker and NEVER the `For` name: the runtime `For`
+  is public manual API, and a hand-written `For({ children: (item) => ... })` callback
+  receives getters the author already calls - a name-based rewrite (the first attempt at
+  this fix) turned that legitimate `item()` into `item()()`. A negative spec now pins the
+  manual call untouched. The two mechanisms cannot double-fire on one occurrence: both
+  are chosen by the same raw-mode flag at the single children-emission site - immediate
+  IR rewrite when not raw, marker when raw.
+
+  Both bugs were found building a production-shaped application (a market UI whose cards
+  are component-rooted rows) and are pinned by codegen specs: component-rooted row,
+  embedded For (marker-free output), nested For composing both mechanisms, and the
+  hand-written `For({...})` negative.
+
 ### Fixed (http router + api) - found by the migration acceptance
 
 - **A route segment declaring two parameters now fails registration loudly.** `:base...:head`
