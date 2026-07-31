@@ -110,3 +110,25 @@ export { setStoreScopeResolver } from './reactivity/store-scope.ts';
 
 // Test probe: live subscriber count for leak assertions (@azerothjs/testing's leakGuard).
 export { subscriberCount } from './reactivity/create-signal.ts';
+
+// The devtools bridge: the stable, versioned runtime-debugging hook @azerothjs/devtools attaches
+// to. Framework infrastructure, not application API - which is why it lives on THIS entry and not
+// the root: `pokeNode` writes arbitrary values into any registered signal, and none of these five
+// belong in application autocomplete. Zero-cost until a hook is attached.
+export {
+    DEVTOOLS_PROTOCOL_VERSION,
+    setDevtoolsHook,
+    snapshotReactiveGraph,
+    peekNode,
+    pokeNode
+} from './reactivity/devtools.ts';
+export type {
+    DevtoolsHook,
+    DevtoolsNode,
+    DevtoolsNodeKind,
+    DevtoolsPrimitive,
+    GraphSnapshot,
+    GraphSnapshotNode,
+    GraphEdge,
+    PeekResult
+} from './reactivity/devtools.ts';

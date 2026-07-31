@@ -38,10 +38,10 @@ describe('integration - a reactive todo widget', () =>
         ]);
         const [filter, setFilter] = createSignal<'all' | 'active'>('all');
 
-        const remaining = createMemo(() => todos().filter((t) => !t.done()).length);
+        const remaining = createMemo(() => todos().filter((todo) => !todo.done()).length);
 
         const visible = createMemo(() =>
-            filter() === 'active' ? todos().filter((t) => !t.done()) : todos());
+            filter() === 'active' ? todos().filter((todo) => !todo.done()) : todos());
 
         const listRef = createRef<HTMLUListElement>();
 
@@ -55,22 +55,22 @@ describe('integration - a reactive todo widget', () =>
                 // Filter toggle button (delegated click).
                 h('button', {
                     class: classList({ btn: true, active: () => filter() === 'active' }),
-                    onClick: () => setFilter((f) => (f === 'all' ? 'active' : 'all'))
+                    onClick: () => setFilter((current) => (current === 'all' ? 'active' : 'all'))
                 }, () => `filter: ${ filter() }`),
 
                 // The list, keyed by id.
                 h('ul', { ref: listRef }, For({
                     each: visible,
-                    key: (t) => t.id,
-                    children: (t) => h('li', { 'data-id': String(t.id), class: classList({ done: t.done }) },
-                        h('span', {}, t.text),
+                    key: (todo) => todo.id,
+                    children: (todo) => h('li', { 'data-id': String(todo().id), class: classList({ done: todo().done }) },
+                        h('span', {}, todo().text),
                         h('button', {
                             class: 'toggle',
                             onClick: () =>
                             {
                                 // Toggle the row's own signal, then nudge the list memo so
                                 // the "active" filter re-derives visibility.
-                                t.setDone((d) => !d);
+                                todo().setDone((value) => !value);
                                 setTodos((list) => [...list]);
                             }
                         }, 'x'))
@@ -161,8 +161,8 @@ describe('integration - a reactive todo widget', () =>
                     h('p', {}, () => label()),
                     h('ul', {}, For({
                         each: rows,
-                        key: (r) => r.id,
-                        children: (r) => h('li', {}, () => `row ${ r.id } ${ label() }`)
+                        key: (row) => row.id,
+                        children: (row) => h('li', {}, () => `row ${ row().id } ${ label() }`)
                     })))
             })), container);
 

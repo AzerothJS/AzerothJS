@@ -20,6 +20,7 @@
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, resolveReactive } from './h.ts';
@@ -53,9 +54,17 @@ export interface ForProps<T>
     key: (item: T, index: number) => string | number;
 
     /**
-     * Per-item render function. Receives the item and a REACTIVE
-     * index getter (so a row's position updates live on reorder
-     * without rebuilding the element).
+     * Per-item render function. Receives REACTIVE getters for the item
+     * and the index: a row whose key survives while its item is REPLACED
+     * (the immutable-update pattern every store produces) updates in
+     * place, and a reorder updates `index()` - neither rebuilds the
+     * element.
+     *
+     * The getter is the load-bearing half of the keyed contract. Under
+     * the old by-value form, a stable key froze the row on the values it
+     * was built from - the single highest-frequency defect found across
+     * applications built on this framework. In `.azeroth` markup the
+     * compiler emits the call, so a row body still reads `item.name`.
      *
      * Named `children` and passed as a prop so the manual API
      * matches the compiled `.azeroth` form:
@@ -66,7 +75,7 @@ export interface ForProps<T>
      * element identity, and a DocumentFragment empties itself on
      * insertion, which would break both.
      */
-    children: (item: T, index: () => number) => HTMLElement;
+    children: (item: () => T, index: () => number) => HTMLElement;
 }
 
 /**
@@ -98,7 +107,7 @@ function asItemArray<T>(value: unknown): T[]
  *
  * @internal
  */
-interface KeyEntry
+interface KeyEntry<T>
 {
     el: HTMLElement;
     dispose: DisposeFn;
@@ -112,84 +121,30 @@ interface KeyEntry
     setIndex: (index: number) => void;
 
     /**
-     * The item this row was BUILT from. Kept only to detect the stale-row trap in dev: a key that
-     * stays the same while its item's contents change means the row is showing data the store no
-     * longer holds, because the row builder received the item by value and is never re-invoked.
+     * Pushes the item's current value into its reactive cell. Called when a
+     * reused key's item is REPLACED (new object, same key), so any binding
+     * reading `item()` updates without the element being rebuilt.
      */
-    item: unknown;
+    setItem: (item: T) => void;
 }
 
 /**
- * Warns when a reused row's item changed identity AND contents.
- *
- * A keyed row is built ONCE from the item it was handed; the builder is not re-invoked while the
- * key is stable. So a list whose keys are ids and whose rows display mutable fields renders the
- * values those fields had when the row appeared, and never updates them. The store is right, the
- * screen is wrong, and nothing is logged.
- *
- * This is the single highest-frequency defect found while building applications on this framework:
- * two unrelated products hit it independently, and the second time was AFTER the trap had been
- * documented - the author of the note fell into it anyway, because reading a field off the item
- * the row builder handed you is the natural way to write a row.
- *
- * Dev-only and shallow: one level of own enumerable keys, and only for plain objects. A row that
- * legitimately reads through a getter is untouched, because its item reference does not change.
+ * A row's reactive slot for its item or index, allocated lazily: many render
+ * functions never read one or the other, so the signal and its graph
+ * bookkeeping are only created on the first call. Until then (and for rows
+ * that never ask) a reconcile just updates the plain value, which the signal
+ * picks up as its initial value if a first read comes later.
  *
  * @internal
  */
-function warnIfStale(previous: unknown, next: unknown, key: string | number): void
-{
-    if (previous === next)
-    {
-        return;
-    }
-    // NODE_ENV off globalThis, matching hydrate.ts and islands.ts - no Node type dependency, and
-    // bundlers replace it so the whole check folds away in a production build.
-    const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
-    if (proc?.env?.NODE_ENV === 'production')
-    {
-        return;
-    }
-    if (typeof previous !== 'object' || previous === null || typeof next !== 'object' || next === null)
-    {
-        return;
-    }
-    if (Array.isArray(previous) || Array.isArray(next))
-    {
-        return;
-    }
-
-    const before = previous as Record<string, unknown>;
-    const after = next as Record<string, unknown>;
-    const changed = Object.keys(after).find((name) => !Object.is(before[name], after[name]));
-    if (changed === undefined)
-    {
-        return;
-    }
-
-    console.warn(`azeroth: <For> row "${ String(key) }" kept its key while its item's "${ changed }" changed. `
-        + 'The row was built from the OLD item and will not re-render, because a keyed row receives its '
-        + 'item by value once. Either include the changing field in the key, or pass a getter '
-        + '(`lookup={() => rows.find(r => r.id === id)}`) and read it through a `derived`.');
-}
-
-/**
- * A row's reactive index, allocated lazily: most render functions never read
- * `index`, so the signal and its graph bookkeeping are only created on the
- * first call. Until then (and for rows that never ask) a reorder just
- * updates the plain number, which the signal picks up as its initial value
- * if a first read comes later.
- *
- * @internal
- */
-function createRowIndex(initial: number): { get: () => number; set: (next: number) => void }
+function createRowCell<V>(initial: V): { get: () => V; set: (next: V) => void }
 {
     let current = initial;
-    let getter: (() => number) | null = null;
-    let setter: ((next: number) => void) | null = null;
+    let getter: (() => V) | null = null;
+    let setter: ((next: V) => void) | null = null;
 
     return {
-        get: (): number =>
+        get: (): V =>
         {
             if (getter === null)
             {
@@ -197,7 +152,7 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
             }
             return getter();
         },
-        set: (next: number): void =>
+        set: (next: V): void =>
         {
             current = next;
             if (setter !== null)
@@ -230,7 +185,9 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
  * INPUT CONTRACT:
  * - props.each: T[] or a getter; read reactively and the sole reconcile trigger.
  * - props.key: (item, index) => string|number; MUST be unique within the list.
- * - props.children: (item, indexGetter) => HTMLElement; the per-row builder.
+ * - props.children: (itemGetter, indexGetter) => HTMLElement; the per-row builder.
+ *   Both arguments are reactive getters: a replaced item (same key, new object)
+ *   and a reorder each update the live bindings without rebuilding the element.
  *
  * OUTPUT CONTRACT:
  * - Returns an HTMLElement-typed handle; on the client the rows sit between two comment
@@ -267,7 +224,7 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
  * DEVELOPER WARNING:
  * Keys MUST be unique and stable; a non-stable key (e.g. the array index) forces rebuilds
  * on reorder and loses row state - exactly what For prevents. Keep `children` a function
- * and read `index()` for position-dependent content rather than capturing the initial i.
+ * and read `item()`/`index()` inside reactive holes rather than capturing initial values.
  *
  * @typeParam T - The item type.
  * @param props - {@link ForProps}: `each`, `key`, `children`.
@@ -278,7 +235,7 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
  * For({
  *   each: items,
  *   key: (i) => i.id,
- *   children: (item, index) => h('li', {}, () => `${ index() + 1 }. ${ item.name }`)
+ *   children: (item, index) => h('li', {}, () => `${ index() + 1 }. ${ item().name }`)
  * });
  */
 export function For<T>(props: ForProps<T>): MountNode
@@ -298,7 +255,7 @@ export function For<T>(props: ForProps<T>): MountNode
         // includes undefined - a guard would silently skip such rows.
         for (const [index, item] of items.entries())
         {
-            inner += serializeChild(renderItem(item, () => index));
+            inner += serializeChild(renderItem(() => item, () => index));
         }
 
         return wrapContentsAnchored('for', inner) as unknown as MountNode;
@@ -343,13 +300,13 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
     let firstRun = hydrateFirstRun;
 
     // Map of key -> tracked entry (DOM element + per-item dispose).
-    let keyMap = new Map<string | number, KeyEntry>();
+    let keyMap = new Map<string | number, KeyEntry<T>>();
 
     // Entries displaced by a duplicate key. The duplicate's element stays in
     // the DOM until the next reconcile sweeps it out, so its root can only be
     // disposed then (or on unmount). Without this list a duplicated key's
     // first entry leaked its effects permanently.
-    let orphans: KeyEntry[] = [];
+    let orphans: Array<KeyEntry<T>> = [];
 
     // Warn once per <For> - a duplicate usually repeats every reconcile and
     // per-occurrence logging would flood the console.
@@ -373,26 +330,27 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
         {
             firstRun = false;
             const cursor = hydrationCursor as HydrationCursorType;
-            const adoptedMap = new Map<string | number, KeyEntry>();
+            const adoptedMap = new Map<string | number, KeyEntry<T>>();
 
             for (const [i, item] of items.entries())
             {
                 const key = props.key(item, i);
-                const index = createRowIndex(i);
+                const index = createRowCell(i);
+                const cell = createRowCell(item);
 
                 let el!: HTMLElement;
                 let dispose!: DisposeFn;
                 createRoot((d) =>
                 {
                     dispose = d;
-                    const rowDescriptor = renderItem(item, index.get);
+                    const rowDescriptor = renderItem(cell.get, index.get);
                     // The next element in the span IS this row; capture it
                     // before the descriptor's hydrate consumes it.
                     el = cursor.peekElement() as HTMLElement;
                     hydrateChild(rowDescriptor, cursor);
                 });
 
-                adoptedMap.set(key, { el, dispose, setIndex: index.set, item });
+                adoptedMap.set(key, { el, dispose, setIndex: index.set, setItem: cell.set });
             }
 
             // No server rows beyond the ones we adopted; a leftover means the
@@ -412,7 +370,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
         }
         orphans = [];
 
-        const newMap = new Map<string | number, KeyEntry>();
+        const newMap = new Map<string | number, KeyEntry<T>>();
         const newOrder: HTMLElement[] = new Array<HTMLElement>(items.length);
 
         // Pass 1: build the new key map. Reuse existing entries
@@ -425,13 +383,13 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
 
             if (existing)
             {
-                // Reused element - but its position may have changed.
-                // Push the new index into its reactive signal so
-                // `index()`-dependent bindings update on reorder
-                // (no-op when the index is unchanged, since the
-                // signal gates on equality).
+                // Reused element - but its position and its ITEM may have
+                // changed. Push both into their reactive cells so `index()`-
+                // and `item()`-dependent bindings update without a rebuild
+                // (each set is a no-op when the value is unchanged, since
+                // the signal gates on equality).
                 existing.setIndex(i);
-                warnIfStale(existing.item, item, key);
+                existing.setItem(item);
                 newOrder[i] = existing.el;
                 newMap.set(key, existing);
                 keyMap.delete(key);
@@ -441,16 +399,17 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
                 let el!: HTMLElement;
                 let dispose!: DisposeFn;
 
-                // Each item owns a (lazily allocated) reactive index.
-                // renderItem receives the getter, so a binding like
-                // `() => `${ index() + 1 }.`` stays correct across
-                // reorders without rebuilding the element.
-                const index = createRowIndex(i);
+                // Each row owns (lazily allocated) reactive cells for its
+                // index and its item. renderItem receives the getters, so
+                // bindings like `() => item().name` stay correct across
+                // replacements and reorders without rebuilding the element.
+                const index = createRowCell(i);
+                const cell = createRowCell(item);
 
                 createRoot((d) =>
                 {
                     dispose = d;
-                    el = renderItem(item, index.get);
+                    el = renderItem(cell.get, index.get);
                 });
                 newOrder[i] = el;
 
@@ -462,14 +421,14 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
                 const displaced = newMap.get(key);
                 if (displaced)
                 {
-                    if (!warnedDuplicateKey)
+                    if (DEV && !warnedDuplicateKey)
                     {
                         warnedDuplicateKey = true;
                         console.warn(`<For> received a duplicate key "${ String(key) }" - keys must be unique. The displaced row is torn down on the next update.`);
                     }
                     orphans.push(displaced);
                 }
-                newMap.set(key, { el, dispose, setIndex: index.set, item });
+                newMap.set(key, { el, dispose, setIndex: index.set, setItem: cell.set });
             }
         }
 

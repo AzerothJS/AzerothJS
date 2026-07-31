@@ -1,8 +1,53 @@
 import { App, json, type RequestObserver } from '@azerothjs/http';
-import { mountApi } from '@azerothjs/http/api';
+import { feature, manifestOf, register } from '@azerothjs/http/api';
 import { mountPages, type KitOptions } from '@azerothjs/kit';
-import { contract, type Entry } from './contract.ts';
-import { mountStream } from './stream.ts';
+import { array } from '@azerothjs/schema';
+import { entry, entryInput, type Entry } from './schemas.ts';
+
+const ASSISTANT_REPLY = 'Streaming works: each word arrived as its own server-sent event, appended to one reactive string.';
+
+const entries: Entry[] = [];
+let nextId = 1;
+
+// The whole API, declared once: routes, schemas, handlers, colocated. The route name is written
+// exactly once - it keys this object, the manifest, the browser's `client.guestbook.sign`, and
+// the OpenAPI operation. Validation happens at the boundary, so `input` is already the schema's
+// type; swap the array for a database and nothing else moves. The stream is a first-class route
+// kind, not a hand-mounted exception - it inherits any feature guard and appears in the manifest.
+export const api = {
+    guestbook: feature('/guestbook', (routes) => ({
+        list: routes.get('/', { output: array(entry) }, () => entries),
+        sign: routes.post('/', { input: entryInput, output: entry }, ({ input }) =>
+        {
+            const created: Entry = { id: nextId++, ...input, at: new Date().toISOString() };
+            entries.unshift(created);
+            return created;
+        })
+    })),
+    assistant: feature('/assistant', (routes) => ({
+        ask: routes.stream('/', {}, async (context, connection) =>
+        {
+            const question = context.url.searchParams.get('q')?.trim();
+            connection.send(`${ question === undefined || question === '' ? 'Ask me anything.' : `You asked: ${ question }.` } `);
+
+            for (const word of ASSISTANT_REPLY.split(' '))
+            {
+                // Where a real handler cancels its upstream model call: an abandoned tab must
+                // stop costing money.
+                if (connection.signal.aborted)
+                {
+                    return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 90));
+                // The separator rides IN the payload, as a tokenizer emits it: a trailing space
+                // survives SSE framing, a leading one is eaten.
+                connection.send(`${ word } `);
+            }
+            // Emits the [DONE] terminator the client's stream parser waits for.
+            connection.close();
+        })
+    }))
+};
 
 export interface AppOptions
 {
@@ -19,29 +64,11 @@ export function buildApp(options: AppOptions): App
 
     app.get('/api/healthz', () => json({ ok: true, at: new Date().toISOString() }));
 
-    const entries: Entry[] = [];
-    let nextId = 1;
+    register(app, api);
 
-    // Handlers are keyed by the contract's dotted route path - the same keys a `guards` map uses,
-    // so there is one key space and no tree to mirror. Validation happens at the boundary, so
-    // `input` is already the schema's type; swap this array for a database and nothing else moves.
-    mountApi(app, contract, {
-        handlers:
-        {
-            'guestbook.list': () => entries,
-            'guestbook.sign': ({ input }) =>
-            {
-                const created: Entry = { id: nextId++, ...input, at: new Date().toISOString() };
-                entries.unshift(created);
-                return created;
-            }
-        }
-    });
-
-    // The raw half: routes whose request or response is not a JSON value, so the contract
-    // would have nothing to validate. A token stream here; uploads, webhooks and downloads
-    // belong beside it. This split is the rule, not an exception - see stream.ts.
-    mountStream(app);
+    // The typed client's runtime half: method + path per route, projected from the SAME
+    // declaration register just installed. The browser fetches it once at boot.
+    app.get('/api/_manifest', () => json(manifestOf(api)));
 
     // Mounted LAST so nothing shadows /api: everything else is a page or an asset, and the
     // kit reads each route's `render` mode - the static home is served as a file, /guestbook

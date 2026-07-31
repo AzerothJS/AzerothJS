@@ -11,8 +11,7 @@
  * ever refused.
  */
 
-import type { HandlerWrapper } from './edge.ts';
-import { withResponseHeaders } from './edge.ts';
+import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 import { errorResponse, HttpError, TooManyRequestsError } from './errors.ts';
 import { clientIp, ipBucket } from './client-ip.ts';
 
@@ -161,7 +160,7 @@ export interface RateLimitOptions
  * key or store fails CLOSED (a refusal, never a rejection): request-derived input and a store
  * outage must not become an unmetered lane or a process kill.
  */
-export function rateLimit(options: RateLimitOptions): HandlerWrapper
+export function rateLimit(options: RateLimitOptions): EdgeMiddleware
 {
     const store = options.store ?? new MemoryRateStore();
     const keyOf = options.key ?? ((request: Request): string =>
@@ -178,7 +177,7 @@ export function rateLimit(options: RateLimitOptions): HandlerWrapper
         return ipBucket(ip, options.ipv6Prefix);
     });
 
-    return (next) => ({
+    return edge((next) => ({
         async handle(request: Request): Promise<Response>
         {
             let decision: RateLimitDecision;
@@ -212,5 +211,5 @@ export function rateLimit(options: RateLimitOptions): HandlerWrapper
             }
             return withResponseHeaders(await next.handle(request), headers);
         }
-    });
+    }));
 }

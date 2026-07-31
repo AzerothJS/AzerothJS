@@ -5,7 +5,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { object, string, number, boolean } from '@azerothjs/schema';
-import { defineContract, post, multipart, toOpenApi } from '@azerothjs/http/api';
+import { feature, toOpenApi } from '@azerothjs/http/api';
 
 import { renderExplorerHtml } from '../../src/api/explorer.ts';
 
@@ -42,11 +42,13 @@ describe('the explorer renders every declared media type', () =>
 {
     // The multipart route is FIRST on purpose: the page renders operations[0] on boot, so
     // a throw there means the page never boots at all.
-    const contract = defineContract({
-        upload: post('/files', { input: multipart({ fields: object({ title: string({ nonempty: true }) }) }), output: object({ ok: boolean() }) }),
-        create: post('/things', { input: object({ name: string() }), output: object({ id: number() }) })
-    });
-    const spec = toOpenApi(contract, { info: INFO });
+    const api = {
+        media: feature('/files', (routes) => ({
+            upload: routes.form('/', { fields: object({ title: string({ nonempty: true }) }), output: object({ ok: boolean() }) }, () => ({ ok: true })),
+            create: routes.post('/things', { input: object({ name: string() }), output: object({ id: number() }) }, () => ({ id: 1 }))
+        }))
+    };
+    const spec = toOpenApi(api, { info: INFO });
 
     it('boots on a multipart-first document and shows the declared media type', async () =>
     {

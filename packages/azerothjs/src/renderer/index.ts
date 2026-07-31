@@ -39,10 +39,6 @@ export { classList } from './class-binding.ts';
 export { styleMap } from './style-binding.ts';
 export { css, collectStyleSheet, resetStyleSheet, type ScopedClasses } from './css.ts';
 
-// Compiler-emitted runtime: imported by generated `.azeroth` output, NOT part of the
-// application API. Exported only so compiled modules resolve them; @internal, may change.
-export { playTransitionClasses } from './transition-classes.ts';
-
 // Public type contracts.
 export type { Props, Child } from './types.ts';
 export type { MountNode } from '../component/index.ts';

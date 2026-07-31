@@ -9,7 +9,7 @@
 // No mocks: real signals/effects, the real string emitter, the real DOM renderer, and the real
 // hydrate() walking real happy-dom nodes.
 import { describe, it, expect } from 'vitest';
-import { renderToString, renderToStaticMarkup, h, render, hydrate, Show, For, createSignal } from 'azerothjs';
+import { renderToString, h, render, hydrate, Show, For, createSignal } from 'azerothjs';
 
 function mount(component: () => HTMLElement): HTMLElement
 {
@@ -28,7 +28,7 @@ describe('SSR <-> CSR parity', () =>
                 h('h1', {}, 'Title'),
                 h('p', {}, 'Body text & more'));
 
-        const ssrHtml = renderToStaticMarkup(build);
+        const ssrHtml = renderToString(build, { markers: false });
         const container = mount(build);
 
         expect(ssrHtml).toBe(container.innerHTML);
@@ -42,7 +42,7 @@ describe('SSR <-> CSR parity', () =>
         const [name] = createSignal('Ada');
         const build = (): HTMLElement => h('span', {}, () => `Hello ${ name() }`);
 
-        const ssrStatic = renderToStaticMarkup(build);
+        const ssrStatic = renderToString(build, { markers: false });
         const container = mount(build);
 
         // The DOM renderer drives the hole into a bare text node; static SSR matches it exactly.
@@ -60,7 +60,7 @@ describe('SSR <-> CSR parity', () =>
                 children: () => h('strong', {}, 'on')
             }));
 
-        const ssrStatic = renderToStaticMarkup(build);
+        const ssrStatic = renderToString(build, { markers: false });
         const container = mount(build);
 
         expect(ssrStatic).toBe('<div><strong>on</strong></div>');
@@ -80,7 +80,7 @@ describe('SSR <-> CSR parity', () =>
                 children: (item) => h('li', {}, item)
             }));
 
-        const ssrStatic = renderToStaticMarkup(build);
+        const ssrStatic = renderToString(build, { markers: false });
         const container = mount(build);
 
         expect(ssrStatic).toBe('<ul><li>a</li><li>b</li><li>c</li></ul>');

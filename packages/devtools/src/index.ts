@@ -35,7 +35,6 @@ import {
 } from './views.ts';
 import { createServerLink, bridgeUrl } from './server-client.ts';
 
-export { createAgent, previewValue, detectLeakTrend } from './agent.ts';
 export type {
     Agent,
     AgentNode,

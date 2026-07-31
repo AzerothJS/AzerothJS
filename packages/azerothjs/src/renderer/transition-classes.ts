@@ -9,6 +9,8 @@
  * the framework's own animated components; not application API.
  */
 
+import { DEV } from '../reactivity/dev.ts';
+
 /** @internal Default transitionend backstop (ms). */
 const TRANSITION_FALLBACK_MS = 1000;
 
@@ -42,7 +44,9 @@ export function playTransitionClasses(
     // `display: contents` generates no box: transform/opacity never paint and
     // transitionend never fires, so the element SNAPS at the backstop instead of
     // animating - a silent "transition sometimes does nothing". Say so once.
-    if (el.isConnected && getComputedStyle(el).display === 'contents' && !warnedContents.has(el))
+    // Behind DEV as a whole: the getComputedStyle probe forces style resolution
+    // on every transition start, a production cost with no production output.
+    if (DEV && el.isConnected && getComputedStyle(el).display === 'contents' && !warnedContents.has(el))
     {
         warnedContents.add(el);
         console.warn(`transition "${ name }" targets an element with display: contents - it generates no box, so nothing can animate. Give the transition root a real display (e.g. a block wrapper).`);

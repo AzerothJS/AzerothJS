@@ -28,7 +28,7 @@ export type RenderMode = 'dom' | 'string' | 'hydrate';
 /**
  * One entry of the render-context stack: the mode plus the render-scoped flags that
  * ride with it. Markers are PART of the mode entry (renderToString = 'string' with
- * markers, renderToStaticMarkup = 'string' without) - not a separate mutable global,
+ * markers, `{ markers: false }` = 'string' without) - not a separate mutable global,
  * so a thrown render can never leak marker state into the next request, and backing
  * this stack with per-async-context storage later (streaming SSR) is a change to ONE
  * accessor, not a hunt for scattered globals.
@@ -62,7 +62,7 @@ export interface RunInModeOptions
 {
     /**
      * Emit hydration markers (hole anchors, control-flow ranges) while serializing.
-     * Meaningful with mode 'string': renderToString passes true, renderToStaticMarkup
+     * Meaningful with mode 'string': renderToString passes its `markers` option, which
      * false. Defaults to the ENCLOSING frame's setting (so nested mode switches inside
      * one render keep the render's choice), false at the top level.
      */

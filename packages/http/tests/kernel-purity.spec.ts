@@ -105,18 +105,19 @@ describe('the fetch-standard kernel', () =>
     {
         const { seen, violations } = walkGraph('api/shared-entry.ts');
         expect(violations).toEqual([]);
-        for (const serverOnly of ['api/mount.ts', 'api/openapi.ts', 'api/explorer.ts'])
+        for (const serverOnly of ['api/feature.ts', 'api/register.ts', 'api/openapi.ts', 'api/explorer.ts'])
         {
             expect(seen.has(serverOnly), `${ serverOnly } must never enter a browser bundle`).toBe(false);
         }
     });
 
-    it('toFetchHandler bridges an App to a bare WinterCG fetch function', async () =>
+    it('an App is a bare WinterCG fetch function by binding handle', async () =>
     {
-        const { App, json, toFetchHandler } = await import('../src/index.ts');
+        // `toFetchHandler(app)` was `app.handle.bind(app)` and nothing else, so it is gone.
+        const { App, json } = await import('../src/index.ts');
         const app = new App();
         app.get('/hello', () => json({ hi: true }));
-        const fetchFn = toFetchHandler(app);
+        const fetchFn = app.handle.bind(app);
         const response = await fetchFn(new Request('http://edge.local/hello'));
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ hi: true });

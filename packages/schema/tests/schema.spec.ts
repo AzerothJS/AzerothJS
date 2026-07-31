@@ -167,7 +167,7 @@ describe('string constraints and normalization', () =>
     it('trim and lowercase run first and their result is what parses out', () =>
     {
         const schema = string({ trim: true, lowercase: true });
-        expect(schema.parse('  Jaina@Theramore.ORG  ')).toBe('jaina@theramore.org');
+        expect(schema.parse('  IntelligentQuantum@Example.ORG  ')).toBe('intelligentquantum@example.org');
         expectTypeOf<Infer<typeof schema>>().toEqualTypeOf<string>();
     });
 
@@ -184,7 +184,7 @@ describe('string constraints and normalization', () =>
 
     it('formats: email (the form rule), url, uuid, datetime', () =>
     {
-        expect(string({ format: 'email' }).parse('jaina@theramore.org')).toBe('jaina@theramore.org');
+        expect(string({ format: 'email' }).parse('intelligentquantum@example.org')).toBe('intelligentquantum@example.org');
         expect(string({ format: 'email' }).safeParse('not-an-email').ok).toBe(false);
         expect(string({ format: 'url' }).parse('https://azerothjs.dev/docs')).toContain('https');
         expect(string({ format: 'url' }).safeParse('not a url').ok).toBe(false);
@@ -281,7 +281,7 @@ describe('refine: the browser form rules run at the server boundary', () =>
         expect(!bad.ok && bad.errors.email).toBe('Enter a valid email');
         expect(!bad.ok && bad.errors.password).toContain('8');
 
-        const good = signup.safeParse({ email: 'jaina@theramore.org', password: 'longenough' });
+        const good = signup.safeParse({ email: 'intelligentquantum@example.org', password: 'longenough' });
         expect(good.ok).toBe(true);
     });
 
@@ -399,7 +399,7 @@ describe('composition: the SHAPE is the reusable unit', () =>
     it('spread extends a shape, and the constraints come with it', () =>
     {
         const entry = object({ ...entryFields, id: number({ int: true }) });
-        expect(entry.parse({ name: 'Jaina', message: 'hi', id: 1 })).toEqual({ name: 'Jaina', message: 'hi', id: 1 });
+        expect(entry.parse({ name: 'IntelligentQuantum', message: 'hi', id: 1 })).toEqual({ name: 'IntelligentQuantum', message: 'hi', id: 1 });
 
         // The shared field keeps the rule it was declared with, in BOTH schemas.
         expect(object(entryFields).safeParse({ name: 'J', message: 'hi' }).ok).toBe(false);
@@ -412,7 +412,7 @@ describe('composition: the SHAPE is the reusable unit', () =>
     {
         const { message: _omitted, ...withoutMessage } = entryFields;
         const nameOnly = object(withoutMessage);
-        expect(nameOnly.parse({ name: 'Jaina' })).toEqual({ name: 'Jaina' });
+        expect(nameOnly.parse({ name: 'IntelligentQuantum' })).toEqual({ name: 'IntelligentQuantum' });
         expectTypeOf<Infer<typeof nameOnly>>().toEqualTypeOf<{ name: string }>();
 
         const justMessage = object({ message: entryFields.message });

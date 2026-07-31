@@ -95,7 +95,7 @@ describe('VirtualList', () =>
             itemHeight: 30,
             height: 300,
             overscan: 2,
-            children: (item) => h('span', { class: 'row' }, item.label)
+            children: (item) => h('span', { class: 'row' }, item().label)
         }), container);
 
         const rows = container.querySelectorAll('.row');
@@ -121,7 +121,7 @@ describe('VirtualList', () =>
             itemHeight: 30,
             height: 300,
             overscan: 0,
-            children: (item) => h('span', { class: 'row' }, item.label)
+            children: (item) => h('span', { class: 'row' }, item().label)
         }), container);
 
         const scroller = container.firstElementChild as HTMLElement;
@@ -143,7 +143,7 @@ describe('VirtualList', () =>
             itemHeight: 30,
             height: 300,
             overscan: 0,
-            children: (item) => h('span', { class: 'row' }, item.label)
+            children: (item) => h('span', { class: 'row' }, item().label)
         }), container);
 
         const before = container.querySelector('.row');

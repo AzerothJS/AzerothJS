@@ -112,7 +112,7 @@ export default component UserProfile()
     <article>
         <h1>{ user.data()?.name }</h1>
         <button onClick={ () => navigate(userRoute.to({ id: '7' }, { search: { tab: 'bio' } })) }>
-            Jaina's bio
+            IntelligentQuantum's bio
         </button>
     </article>
 }

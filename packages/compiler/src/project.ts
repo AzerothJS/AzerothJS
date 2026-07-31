@@ -160,6 +160,7 @@ export function generateVirtualCode(source: string): VirtualCode
     let usedHandler = false;
     let usedChildren = false;
     let usedRender = false;
+    let usedRow = false;
     /** Expression-hole nesting depth of the markup walk, and the offset of the region it is inside. */
     let holeDepth = 0;
     let lastMarkupStart = 0;
@@ -559,10 +560,39 @@ export function generateVirtualCode(source: string): VirtualCode
             const renderChild = hasChildren ? onlyRenderCallback(node.children) : null;
             if (renderChild)
             {
+                // <For>'s runtime children receives GETTERS ((item: () => T, index: () => number)),
+                // but markup reads the params as VALUES (codegen appends the calls). __azRow is the
+                // typed adapter that keeps the author's arrow value-typed while satisfying the
+                // getter-typed children prop - the row var hovers as T, not () => T. The `each`
+                // expression is passed THROUGH the adapter so T infers from a value argument
+                // (contextual-return inference through an adapter is not reliable); re-emitting a
+                // source span is precedented by the form initial's doubled emission.
+                const eachAttr = node.tag === 'For'
+                    ? node.attributes.find(a => !a.spread && a.name === 'each' && a.value.kind === 'expression')
+                    : undefined;
+                const isForRow = node.tag === 'For';
+                usedRow = usedRow || isForRow;
                 builder.copy(tagStart, tagStart + node.tag.length, 'tag');
                 builder.emit('(');
                 emitProps(node.attributes, () =>
                 {
+                    if (isForRow)
+                    {
+                        builder.emit('children: __azRow(');
+                        if (eachAttr !== undefined)
+                        {
+                            const span = attrExprSpan(source, eachAttr);
+                            emitCode(span.start, span.end);
+                        }
+                        else
+                        {
+                            builder.emit('undefined');
+                        }
+                        builder.emit(', ');
+                        emitCode(renderChild.start, renderChild.end);
+                        builder.emit(')');
+                        return;
+                    }
                     builder.emit('children: ');
                     emitCode(renderChild.start, renderChild.end);
                 }, false);
@@ -914,7 +944,7 @@ export function generateVirtualCode(source: string): VirtualCode
         throw error;
     }
 
-    return finalize(builder, source, usedRuntime, usedHandler, usedChildren, usedRender);
+    return finalize(builder, source, usedRuntime, usedHandler, usedChildren, usedRender, usedRow);
 }
 
 /** Re-bases every offset field of a {@link BodyItem} returned by a sub-region scan onto the full source. */
@@ -937,7 +967,7 @@ function shiftConstruct(c: BodyItem, delta: number): BodyItem
  * markup used - so the virtual module type-checks in any `ts.Program`. They are APPENDED (after all user
  * code) and ambient/module-scoped, so user offsets are unchanged and the segments map 1:1 with no shift.
  */
-function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedChildren: boolean, usedRender: boolean): VirtualCode
+function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedChildren: boolean, usedRender: boolean, usedRow: boolean): VirtualCode
 {
     const parts: string[] = [];
     if (usedHandler)
@@ -973,6 +1003,20 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
             `declare function __azRowForm<R extends object>(fa: import('${ RUNTIME_MODULE }').FieldArrayApi<R>): `
             + `Omit<import('${ RUNTIME_MODULE }').FieldArrayApi<R>, 'rows'> `
             + `& { rows: () => Array<import('${ RUNTIME_MODULE }').FieldArrayRow<R> & R> };`
+        );
+    }
+    if (usedRow)
+    {
+        // Projection-only adapter for <For> render callbacks: the author's arrow keeps VALUE-typed
+        // params (`item.name` type-checks, hover shows T) while the returned function satisfies the
+        // runtime's getter-typed children prop. Mirrors codegen's rewrite of row reads to `item()`.
+        // T infers from the passed-through `each` VALUE (argument inference is deterministic where
+        // contextual-return inference through an adapter is not); NoInfer keeps the untyped author
+        // lambda from polluting it.
+        parts.push(
+            'declare function __azRow<T, R>(each: readonly T[] | (() => readonly T[]) | undefined, '
+            + 'fn: (item: NoInfer<T>, index: number) => R): '
+            + '(item: () => T, index: () => number) => R;'
         );
     }
     if (parts.length === 0)

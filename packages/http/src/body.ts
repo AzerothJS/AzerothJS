@@ -15,6 +15,7 @@
  * focused code and fixtures, not a corner of this file.
  */
 
+import type { Issue } from '@azerothjs/schema';
 import { BadRequestError, PayloadTooLargeError, UnsupportedMediaTypeError, ValidationError } from './errors.ts';
 
 /**
@@ -182,45 +183,90 @@ export async function readForm(request: Request, options: ReadOptions = {}): Pro
     return new URLSearchParams(await readText(request, options));
 }
 
-/** One validation failure from a schema: a dot path, a stable machine code, a human message. */
-export interface ValidationIssue
-{
-    path: string;
-    code: string;
-    message: string;
-}
-
 /**
  * The STRUCTURAL shape of a validator this module accepts - `@azerothjs/schema`'s Schema
  * satisfies it, and so does anything else with a compatible safeParse. Structural on purpose:
- * the kernel stays dependency-free while validating with whatever schema library the app uses.
+ * the boundary accepts whatever schema library the app uses; the ISSUE shape is the one
+ * declaration the whole framework speaks (`@azerothjs/schema`'s Issue, imported type-only).
  */
 export interface SchemaLike<T>
 {
     safeParse(value: unknown, options?: { mode?: 'all' | 'first' }):
         | { ok: true; value: T }
-        | { ok: false; errors: Record<string, string>; issues?: ValidationIssue[] };
+        | { ok: false; errors: Record<string, string>; issues?: Issue[] };
+}
+
+/** The structural `~standard` half: any Standard Schema v1 validator (Zod, Valibot, ArkType). */
+export interface StandardSchemaLike<T>
+{
+    '~standard': {
+        validate(value: unknown):
+            | { value: T; issues?: undefined }
+            | { issues: ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> }> }
+            | Promise<
+                | { value: T; issues?: undefined }
+                | { issues: ReadonlyArray<{ message: string; path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> }> }>;
+    };
+}
+
+/** A validation success: the parsed (normalized) value. */
+export interface ParseOk { ok: true; value: unknown }
+
+/** A validation failure: the flat field-path map plus the ordered issue list. */
+export interface ParseErr { ok: false; errors: Record<string, string>; issues?: Issue[] }
+
+/**
+ * ONE schema unification for every boundary: a schema's capabilities are sniffed, never
+ * type-dispatched. A native `@azerothjs/schema` value keeps its one-pass `safeParse` (issue
+ * codes included); any other Standard Schema validator runs `~standard.validate`, its issues
+ * mapped to the flat field-path errors the whole framework speaks. Failures are returned,
+ * never thrown - each caller raises its own dialect. Consumed by {@link readValidated} and
+ * the api layer's `register`; module-exported, deliberately not on the package index.
+ */
+export async function parseAny(schema: unknown, value: unknown, mode?: 'all' | 'first'): Promise<ParseOk | ParseErr>
+{
+    const native = schema as { safeParse?: (v: unknown, o?: { mode?: 'all' | 'first' }) => ParseOk | ParseErr };
+    if (typeof native.safeParse === 'function')
+    {
+        return native.safeParse(value, mode !== undefined ? { mode } : undefined);
+    }
+    const standard = (schema as StandardSchemaLike<unknown>)['~standard'];
+    const result = await standard.validate(value);
+    if (result.issues === undefined)
+    {
+        return { ok: true, value: result.value };
+    }
+    const errors: Record<string, string> = {};
+    const issues: Issue[] = [];
+    for (const issue of result.issues)
+    {
+        const path = (issue.path ?? []).map((seg) => typeof seg === 'object' ? String(seg.key) : String(seg)).join('.') || 'root';
+        errors[path] = errors[path] ?? issue.message;
+        issues.push({ path, code: 'invalid', message: issue.message });
+    }
+    return { ok: false, errors, issues };
 }
 
 /**
  * Reads and validates a JSON body in one call: `readJson` (Content-Type + limits enforced)
- * then `schema.safeParse`. A failure throws {@link ValidationError} - the 422 whose
+ * then the schema - a native safeParse or any Standard Schema validator, unified by
+ * {@link parseAny}. A failure throws {@link ValidationError} - the 422 whose
  * `details.fields` the frontend form's setError consumes and whose `details.issues` carry
  * the stable codes. The happy path returns the schema's parsed (normalized) value, typed.
  */
 export async function readValidated<T>(
     request: Request,
-    schema: SchemaLike<T>,
+    schema: SchemaLike<T> | StandardSchemaLike<T>,
     options: ReadOptions & { mode?: 'all' | 'first' } = {}
 ): Promise<T>
 {
     const body = await readJson(request, options);
-    const parsed = schema.safeParse(body, options.mode !== undefined ? { mode: options.mode } : undefined);
+    const parsed = await parseAny(schema, body, options.mode);
     if (!parsed.ok)
     {
         throw new ValidationError(parsed.errors, 'Validation failed', parsed.issues);
     }
-    return parsed.value;
+    return parsed.value as T;
 }
 
 /** The media type of the request, lowercased, without parameters ("text/html;q=1" -> "text/html"). */

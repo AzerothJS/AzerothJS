@@ -10,8 +10,8 @@ export default component Home()
     state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
     state latency = 0;
 
-    // The raw half of the API: /api/assistant is a token stream, not a JSON value, so it is a
-    // plain server route rather than a contract one. `stream` is idle while its source is
+    // The stream half of the API: /api/assistant is a declared stream route (r.stream in the
+    // server's feature), not a JSON one. `stream` is idle while its source is
     // falsy, restarts when the source changes, and accumulates chunks into one reactive
     // string - `parse: 'sse'` unframes the events and stops at the [DONE] terminator.
     // `source` takes the reactive expression itself; the compiler wraps it in the getter.
@@ -42,7 +42,7 @@ export default component Home()
             application/ (compiled components on vite) + server/ (@azerothjs/http) -
             one <code>npm run dev</code> runs both. This page was rendered at build
             and hydrated live; the <a href="/guestbook">guest book</a> is SSR'd per
-            request through the shared typed contract.
+            request through the shared typed API.
         </p>
 
         <div class="signals">

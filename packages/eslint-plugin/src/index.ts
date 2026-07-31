@@ -136,5 +136,6 @@ plugin.configs.recommended = [
     }
 ];
 
+// The default export is the whole plugin, `rules` included (`plugin.rules`). A second named
+// export of the same object gave two ways to reach one thing; every consumer used the default.
 export default plugin;
-export { rules };

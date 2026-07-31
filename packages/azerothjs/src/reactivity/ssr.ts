@@ -19,7 +19,7 @@
  * When on (renderToString), reactive holes are wrapped in paired comment anchors
  * `<!--[-->...<!--]-->` and control-flow wrappers in `<!--azc:type-->...<!--/azc-->`,
  * so the client hydrator can locate the exact nodes a getter owns. When off
- * (renderToStaticMarkup) the output is clean HTML with no framework bookkeeping.
+ * (`{ markers: false }`) the output is clean HTML with no framework bookkeeping.
  */
 
 import { untrack } from './untrack.ts';

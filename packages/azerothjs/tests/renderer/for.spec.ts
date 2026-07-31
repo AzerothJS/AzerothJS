@@ -39,8 +39,8 @@ describe('For - initial render', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         expect(ids(container)).toEqual(['1', '2', '3']);
         expect(container.textContent).toBe('abc');
@@ -52,8 +52,8 @@ describe('For - initial render', () =>
         const [items] = createSignal<Row[]>([{ id: 1, name: 'x' }]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         expect(container.querySelector('ul > li')).not.toBeNull();
         container.remove();
@@ -70,8 +70,8 @@ describe('For - keyed reconciliation', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         const before = rowEls(container);
 
@@ -97,8 +97,8 @@ describe('For - keyed reconciliation', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         const before = rowEls(container);
         const rowA = before[0];
@@ -125,8 +125,8 @@ describe('For - keyed reconciliation', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         const before = rowEls(container);
         const map = new Map(before.map((el) => [el.getAttribute('data-id'), el]));
@@ -156,8 +156,8 @@ describe('For - keyed reconciliation', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         const before = rowEls(container);
         const rowA = before[0];
@@ -187,8 +187,8 @@ describe('For - keyed reconciliation', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, h('input', {}))
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, h('input', {}))
         })));
         const input1 = container.querySelector('li[data-id="1"] input') as HTMLInputElement;
         input1.value = 'typed-into-row-1';
@@ -217,8 +217,8 @@ describe('For - reactive index', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r, index) => h('li', { 'data-id': String(r.id) }, () => `${ index() }:${ r.name }`)
+            key: (row) => row.id,
+            children: (row, index) => h('li', { 'data-id': String(row().id) }, () => `${ index() }:${ row().name }`)
         })));
         const rowA = container.querySelector('li[data-id="1"]')!;
         expect(rowA.textContent).toBe('0:a');
@@ -245,8 +245,8 @@ describe('For - edge cases', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         expect(rowEls(container).length).toBe(2);
 
@@ -264,8 +264,8 @@ describe('For - edge cases', () =>
         const [items, setItems] = createSignal<Row[]>([{ id: 1, name: 'a' }]);
         const container = mount(() => h('ul', {}, For({
             each: () => items(),
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         expect(ids(container)).toEqual(['1']);
         setItems([{ id: 1, name: 'a' }, { id: 2, name: 'b' }]);
@@ -283,8 +283,8 @@ describe('For - edge cases', () =>
         ]);
         const container = mount(() => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         })));
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0]?.[0]).toContain('duplicate key');
@@ -307,8 +307,8 @@ describe('For - each guard', () =>
         const [data] = createSignal<Row[] | null>(null);
         const container = mount(() => h('ul', {}, For({
             each: data as unknown as Row[] | (() => Row[]),
-            key: (r) => r.id,
-            children: (r) => h('li', {}, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', {}, row().name)
         })));
         expect(rowEls(container)).toHaveLength(0);
         container.remove();
@@ -318,8 +318,8 @@ describe('For - each guard', () =>
     {
         expect(() => mount(() => h('ul', {}, For({
             each: { nope: true } as unknown as Row[],
-            key: (r) => r.id,
-            children: (r) => h('li', {}, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', {}, row().name)
         })))).toThrow(/<For each> expected an array/);
     });
 });

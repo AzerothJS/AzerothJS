@@ -42,7 +42,7 @@ describe('foreign Standard Schema validators in createForm', () =>
             expect(form.errors().email).toBe('Email must contain @');
             expect(form.errors().age).toBeNull();
 
-            form.setValue('email', 'jaina@theramore.org');
+            form.setValue('email', 'intelligentquantum@example.org');
             expect(form.errors().email).toBeNull(); // previously flagged, now cleared
             dispose();
         });

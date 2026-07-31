@@ -188,6 +188,7 @@ function createSseParser(): ParserStream
             const event = buffer.slice(0, eventEnd);
             buffer = buffer.slice(eventEnd + 2);
 
+            const lines: string[] = [];
             for (const line of event.split('\n'))
             {
                 if (line.startsWith(':'))
@@ -201,10 +202,10 @@ function createSseParser(): ParserStream
                     continue;
                 }
 
-                // Per spec, exactly one space after `data:` is
-                // optional and stripped; we use `trimStart` to
-                // also tolerate the rare extra-space producer.
-                const data = line.slice(5).trimStart();
+                // Per spec, exactly ONE optional space after `data:` is stripped - and no
+                // more: a payload's own leading space (a tokenizer's separator) must survive
+                // the frame, so trimming further would corrupt real token streams.
+                const data = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
 
                 if (data === '[DONE]')
                 {
@@ -212,8 +213,12 @@ function createSseParser(): ParserStream
                     break;
                 }
 
-                appended += data;
+                lines.push(data);
             }
+            // Spec: multiple data lines in ONE event reassemble joined by a single LF -
+            // that is how the server framer's multi-line payload round-trips byte-exact.
+            // Events themselves concatenate with nothing between them (token streaming).
+            appended += lines.join('\n');
             if (terminated)
             {
                 break;

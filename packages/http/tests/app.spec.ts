@@ -86,12 +86,12 @@ describe('dispatch', () =>
         });
         const response = await get(app, '/users', {
             method: 'POST',
-            body: JSON.stringify({ name: 'Jaina' }),
+            body: JSON.stringify({ name: 'IntelligentQuantum' }),
             headers: { 'content-type': 'application/json' }
         });
         expect(response.status).toBe(201);
         expect(response.headers.get('location')).toBe('/users/7');
-        expect(await response.json()).toEqual({ id: 7, name: 'Jaina' });
+        expect(await response.json()).toEqual({ id: 7, name: 'IntelligentQuantum' });
     });
 });
 

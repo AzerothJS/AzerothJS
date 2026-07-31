@@ -11,6 +11,7 @@
  */
 
 import { createRoot, runInMode } from '../reactivity/index.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
@@ -116,9 +117,8 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
 
         // Structural mismatch: dev-warn and fall back to a clean client render so the app
         // boots regardless. Dispose the partial hydrate root first; render() then clears the
-        // container and mounts fresh. Read NODE_ENV off globalThis (no Node type dependency).
-        const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
-        if (!proc || proc.env?.NODE_ENV !== 'production')
+        // container and mounts fresh.
+        if (DEV)
         {
             console.warn(`${ error.message } - falling back to full client render.`);
         }

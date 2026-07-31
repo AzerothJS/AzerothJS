@@ -1,12 +1,14 @@
-// The unification's proof: ONE schema declaration drives (a) the browser form, (b) the api
-// client's pre-wire validation, and (c) the server boundary - and the SAME invalid input
-// produces the SAME failure at all three. No rule is written twice anywhere in the triangle.
+// The unification's proof: ONE schema declaration drives (a) the browser form, (b) the server
+// boundary, and (c) the typed client's view of a refusal - and the SAME invalid input produces
+// the SAME failure at all three. No rule is written twice anywhere in the triangle. (The client
+// no longer pre-validates locally - input validation lives where input originates, in the form -
+// so its corner of the triangle is the server's 422 arriving as ApiError with identical issues.)
 
 import { describe, it, expect } from 'vitest';
 import { object, string, number, type Infer } from '@azerothjs/schema';
 import { createForm } from 'azerothjs';
 import { App, readValidated, json } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient, ApiError } from '@azerothjs/http/api';
+import { feature, register, manifestOf, createClient, ApiError } from '@azerothjs/http/api';
 
 const CODES = { required: 'NOT_EMPTY', nonempty: 'NOT_EMPTY', min: 'MIN_LENGTH', format: 'INVALID_EMAIL' };
 
@@ -19,7 +21,7 @@ const signUp = object({
 type SignUp = Infer<typeof signUp>;
 
 const INVALID = { name: 'x', email: 'not-an-email', age: 12 };
-const VALID: SignUp = { name: 'Jaina', email: 'jaina@theramore.org', age: 32 };
+const VALID: SignUp = { name: 'IntelligentQuantum', email: 'intelligentquantum@example.org', age: 32 };
 
 describe('one schema, three boundaries', () =>
 {
@@ -41,25 +43,23 @@ describe('one schema, three boundaries', () =>
         expect(form.isValid()).toBe(true);
     });
 
-    it('(b) the api client refuses the same input before it ever crosses the wire', async () =>
+    it('(b) the server refusal arrives in the typed client with the identical issues', async () =>
     {
-        const contract = defineContract({
-            signUp: route({ method: 'POST', path: '/sign-up', input: signUp })
-        });
-        let wireHit = false;
-        const client = createClient(contract, {
+        const api = {
+            account: feature('/sign-up', (routes) => ({
+                signUp: routes.post('/', { input: signUp }, ({ input }) => ({ created: input.name }))
+            }))
+        };
+        const app = new App();
+        register(app, api);
+        const client = createClient<typeof api>(manifestOf(api), {
             baseUrl: '/api',
-            fetch: () =>
-            {
-                wireHit = true;
-                return Promise.resolve(new Response('{}'));
-            }
+            fetch: (request) => app.handle(request)
         });
 
-        const failure: unknown = await client.signUp({ input: INVALID }).catch((error: unknown) => error);
-        // The client reports EVERY failure as ApiError now, local or server - one type, one catch.
-        // The issue detail this asserts is unchanged; it is a first-class field rather than a
-        // SchemaError-only one, so the same assertion holds for a server 422.
+        const failure: unknown = await client.account.signUp({ input: INVALID }).catch((error: unknown) => error);
+        // EVERY failure is ApiError - one type, one catch - and the issue detail that used to be
+        // asserted for the local check holds verbatim for the wire refusal: same schema, same codes.
         expect(failure).toBeInstanceOf(ApiError);
         expect((failure as ApiError).status).toBe(422);
         expect((failure as ApiError).issues.map((issue) => [issue.path, issue.code])).toEqual([
@@ -67,7 +67,6 @@ describe('one schema, three boundaries', () =>
             ['email', 'INVALID_EMAIL'],
             ['age', 'min']
         ]);
-        expect(wireHit).toBe(false); // rejected locally
     });
 
     it('(c) the server boundary rejects a forged request with the identical issues', async () =>
@@ -89,13 +88,14 @@ describe('one schema, three boundaries', () =>
         ]);
     });
 
-    it('mountApi enforces the same contract for the mounted route tree', async () =>
+    it('register enforces the same contract for the declared feature', async () =>
     {
-        const contract = defineContract({
-            signUp: route({ method: 'POST', path: '/sign-up', input: signUp })
-        });
         const app = new App();
-        mountApi(app, contract, { handlers: { signUp: ({ input }) => ({ created: input.name }) } });
+        register(app, {
+            account: feature('/sign-up', (routes) => ({
+                signUp: routes.post('/', { input: signUp }, ({ input }) => ({ created: input.name }))
+            }))
+        });
 
         const response = await app.handle(new Request('http://local/api/sign-up', {
             method: 'POST',

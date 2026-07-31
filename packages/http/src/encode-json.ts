@@ -16,12 +16,14 @@
  * shapes.
  */
 
+import type { SchemaMeta } from '@azerothjs/schema';
 import { payloadResponse } from './respond.ts';
 
 /** The structural metadata shape this module compiles from (@azerothjs/schema's SchemaMeta). */
 export interface EncoderMeta
 {
-    kind: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'literal' | 'enum' | 'record' | 'union';
+    /** The declaration kinds, imported from THE declaration so the two unions cannot drift. */
+    kind: SchemaMeta['kind'];
     shape?: Record<string, EncodableSchema<unknown>>;
     /** array: the item schema; record: the value schema. */
     item?: EncodableSchema<unknown>;
@@ -34,7 +36,8 @@ export interface EncoderMeta
 
 /**
  * The STRUCTURAL shape of a declaration this module accepts - `@azerothjs/schema`'s Schema
- * satisfies it; no runtime or type dependency between the packages.
+ * satisfies it. Structural for the SHAPE (any compatible declaration compiles); the kind union
+ * is imported from the declaration package so the two cannot drift.
  */
 export interface EncodableSchema<T>
 {

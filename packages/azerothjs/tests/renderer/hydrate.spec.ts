@@ -93,8 +93,8 @@ describe('hydrate - adoption', () =>
         const [items, setItems] = createSignal([{ id: 1, name: 'a' }, { id: 2, name: 'b' }]);
         const App = (): HTMLElement => h('ul', {}, For({
             each: items,
-            key: (r) => r.id,
-            children: (r) => h('li', { 'data-id': String(r.id) }, r.name)
+            key: (row) => row.id,
+            children: (row) => h('li', { 'data-id': String(row().id) }, row().name)
         }));
         const container = ssrInto(App);
         const serverRows = Array.from(container.querySelectorAll('li'));

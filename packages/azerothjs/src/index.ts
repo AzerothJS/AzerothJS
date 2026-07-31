@@ -8,7 +8,7 @@
  *   ./component   - ErrorBoundary, destroyComponent, the co-range contract
  *   ./renderer    - h(), render/hydrate, control flow (Show/For/Switch/Match/Dynamic/
  *                   Suspense/Transition/Portal), refs, css/class/style bindings
- *   ./ssr         - renderToString / renderToStaticMarkup / renderToDocument, islands
+ *   ./ssr         - renderToString / renderToDocument, islands
  *   ./router      - createRouter, Link/Routes/Outlet, the use* composables
  *   ./form        - createForm, field arrays, validators, phone/countries
  *
@@ -22,7 +22,10 @@
  */
 
 export * from './reactivity/index.ts';
-export * from './component/index.ts';
+// Named, not star: the component barrel also carries the co-range placement machinery the
+// renderer builds on, which is framework infrastructure, not application API.
+export { destroyComponent, ErrorBoundary } from './component/index.ts';
+export type { ErrorBoundaryProps } from './component/index.ts';
 export * from './renderer/index.ts';
 // The render-safety gate's escape hatches. They live beside the gate itself (renderer/ssr.ts,
 // which both render modes call) rather than in the renderer's own barrel, whose exports are all

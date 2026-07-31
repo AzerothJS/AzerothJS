@@ -6,7 +6,7 @@
 
 [![npm](https://img.shields.io/npm/v/%40azerothjs%2Fhttp?color=2ea44f)](https://www.npmjs.com/package/@azerothjs/http)
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. The typed contract between a server and its clients: declare an API once, get the server mount, the derived handler signatures, and a fully inferred client - no codegen, no drift.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. The typed API between a server and its clients: declare each feature once - routes, schemas, guards, handlers, colocated - and three consumers read the same declaration: the server registration, a fully inferred client, and the OpenAPI document. No codegen, no drift, and the route name written exactly once.
 
 ## Install
 
@@ -14,306 +14,188 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 npm install @azerothjs/http
 ```
 
-## One declaration, both sides
+## One declaration, three consumers
 
 ```ts
-// contract.ts - imported by browser AND server (no handler code lives here)
-import { defineContract, get, post } from '@azerothjs/http/api/shared';
-import { object, string, number } from '@azerothjs/schema';
+// server - the WHOLE feature in one place
+import { feature, guard, register } from '@azerothjs/http/api';
+import { object, string, number, array } from '@azerothjs/schema';
 
-export const contract = defineContract({
-    users: {
-        get: get('/users/:id', { output: object({ id: number(), name: string() }) }),
-        create: post('/users', { input: object({ name: string({ min: 2 }) }) })
-    }
+const requireAuth = guard((context) =>
+{
+    const account = verify(context.request);
+    return account === null ? new Response(null, { status: 401 }) : { accountId: account.id };
 });
+
+export const api = {
+    keys: feature('/keys', [requireAuth], (routes) => ({
+        list:   routes.get('/', { output: array(keyRecord) }, (context) => listKeys(context.accountId)),
+        create: routes.post('/', { input: keyInput, output: keyRecord }, (context) => mint(context.accountId, context.input)),
+        revoke: routes.del('/:keyId', {}, (context) => revoke(context.params.keyId))
+    }))
+};
+
+register(app, api);   // boundary validation in; 422s carry the form-compatible field map
 ```
 
-A route is `<method>(path, { input?, query?, output?, responses?, docs? })`. The method is
-the function you call - `get`, `post`, `put`, `patch`, `del`, `query`, one per `ApiMethod` -
-so a route reads as one line, and the bodyless methods have no `input` field at all:
-`get('/x', { input })` does not compile.
+A route is `routes.<verb>(path, spec, handler)` - the verb names the method, the spec carries the
+schemas and docs, and the handler sits right beside what it implements. `context.input` and
+`context.query` are exactly their schemas' types or the request never reaches the handler;
+`context.accountId` is there, typed, because the guard chain put it there. The bodyless verbs
+have no `input` field at all - `routes.get('/x', { input }, ...)` does not compile.
 
-`route({ method, path, ... })` is the primitive those six are built on, the same relationship
-`app.route` has to `app.get`. Prefer the helpers; reach for `route` when the method is not a
-literal, because a contract is being assembled from configuration. It narrows the same way a
-helper does when the method IS a literal - `route({ method: 'GET', input })` is refused too.
+The builder callback is not a style choice: a plain object literal cannot infer a feature
+guard's additions, because each route value would be constructed before the feature exists.
+The chain is in scope when the route is declared - that is what the callback provides.
 
-The key path is the call path: `users.get` above is `client.users.get(...)` below.
-
-```ts
-// server
-import { mountApi } from '@azerothjs/http/api';
-
-mountApi(app, contract, {
-    handlers: {
-        'users.get': ({ params }) => ({ id: Number(params.id), name: 'Jaina' }), // signature DERIVED - drift fails to compile
-        'users.create': ({ input }) => ({ created: input.name })
-    }
-}); // validation at the boundary; 422s carry the form-compatible field map
-```
-
-Handlers are keyed by the contract's DOTTED ROUTE PATH - the same key space the `guards` map uses,
-so there is one way to name a route and no tree to mirror. A key that is not a route path, or a
-missing, extra, or wrongly-typed handler, is a compile error.
-
-Mount a GROUP to make those keys relative to it, which is how a large API stays readable: each
-service is one mount, and `'*'` in its guards means "everything in this service".
-
-```ts
-mountApi(app, contract.admin, {
-    guards:   { '*': [requireAdmin], signIn: only([throttle(10, 60_000)]) },
-    handlers: { ...consoleHandlers(deps), ...catalogueHandlers(deps) }   // plain spread, no nesting
-});
-```
+The record key is the call path: `keys.create` above is `client.keys.create(...)` below, the
+OpenAPI tag, and the operation id prefix - written once.
 
 ```ts
 // browser
-import { createClient } from '@azerothjs/http/api/shared';
+import { createClient, type Manifest } from '@azerothjs/http/api/shared';
+import type { api } from '../server/app.ts';   // TYPE-ONLY - erased at build
 
-const client = createClient(contract, { baseUrl: '/api' });
-const user = await client.users.get({ params: { id: '42' } }); // fully inferred
+const manifest: Manifest = await fetch('/api/_manifest').then((response) => response.json());
+const client = createClient<typeof api>(manifest, { baseUrl: '/api' });
+
+const key = await client.keys.create({ input: { label: 'ci' } });   // fully inferred
 ```
 
-## Assembling a big contract: `group` and `merge`
+### Features that close over runtime state
+
+A feature factory is the everyday shape once handlers touch a store - and then there is no
+module-level `api` value to `typeof`. Hand-write the record type from the factories and
+surface what `register` returned:
 
 ```ts
-// One base path per service, written once. Paths stay explicit - a key and its path
-// legitimately differ (`signIn` answers `/session`).
-export const consoleRoutes = group('/admin', {
-    signIn:   post('/session', { input: adminKeyInput }),
-    overview: get('/overview', { output: adminOverview })
-});
+export function commentsFeature(store: Store) { return feature('/comments', [viewer], (routes) => ({ ... })); }
 
-// Combining feature groups: `merge` THROWS on a duplicate key. Object spread is last-wins, so
-// two features that happened to pick the same key would drop a route out of the API with
-// nothing failing - the router only notices if the two also share a method and path.
-export const contract = defineContract({ admin: merge(consoleRoutes, catalogueRoutes) });
+export type Api = {
+    comments: ReturnType<typeof commentsFeature>;
+    pages: ReturnType<typeof pagesFeature>;
+};
+// inside buildApp: const api = register(app, { comments: commentsFeature(store), ... });
 ```
 
-`implement` is what a handler file needs and a handler literal does not: written inline at the
-mount, the handlers are already checked against the contract, so `implement` earns its keystrokes
-only once they move to their own file. Each feature then types its own handlers against its own
-routes, so no feature file imports the assembled contract and none of them states which group it
-lands under:
+Use a `type` alias, not an `interface`: `manifestOf` and `createClient` constrain to
+`Record<string, Feature>`, and an interface has no implicit index signature to satisfy it.
+
+## The manifest: types erase, two fields per route do not
+
+The client needs two things: the TYPE of the server's features (`typeof api` - a type-only
+import, erased at build, so no handler, store, or driver can reach a browser bundle) and each
+route's method + path at runtime. The second is the **manifest**: `manifestOf(api)` projects it
+from the same declaration `register` installed - a plain JSON value, no schemas, no handlers, a
+few hundred bytes. Serve it (`app.get('/api/_manifest', () => json(manifestOf(api)))`), emit it
+at build time, or import it through a build-level module; it is a projection of the first
+source of truth, never a second one.
+
+Non-JSON routes carry a `kind` marker in the manifest: the typed client filters them from its
+surface at the type level and refuses them loudly at runtime - a browser posts `FormData` or
+opens an `EventSource` directly.
+
+## Guards: the chain is at the feature, the exception is at the route
+
+A guard reads the context and returns an object to ADD to it (typed - the additions flow into
+every handler behind it), a `Response` to short-circuit, or nothing. Any plain
+`(context) => void | Response` middleware is a guard; `guard()` is only needed when the
+addition has to be inferred.
 
 ```ts
-export const consoleHandlers = (deps: Deps) => implement(consoleRoutes, {
-    signIn:   (context) => …,   // context.input typed from consoleRoutes
-    overview: () => …
-});
+feature('/account', [requireAuth], (routes) => ({
+    me:      routes.get('/me', { output: profile }, (context) => load(context.accountId)),
+    // routes.with REPLACES the chain for one declaration - nearest wins, visible at the route:
+    signIn:  routes.with(throttle(10, 60_000)).post('/session', { input: keyInput }, signInHandler),
+    // routes.with() with no arguments is the deliberate opt-out - unguarded inside a guarded feature:
+    health:  routes.with().get('/healthz', {}, () => ({ ok: true }))
+}))
 ```
 
-Pass the guards' additions as a second type argument when the group runs behind one:
-`implement<typeof consoleRoutes, Authed>(consoleRoutes, { … })`.
+A guard whose every path attaches types its additions exactly; a guard with a conditional bare
+`return` (the everyday optional-session guard) types them OPTIONAL, because on the anonymous
+path nothing was assigned - the compiler makes the handler narrow, which is the runtime truth.
 
-## Adopting incrementally: `uncontracted`
+## Four route kinds, all inside the system
 
-Moving an existing app onto contracts one route at a time, `uncontracted(app, contract)` returns
-every route registered on the app that the contract does not cover - an honest burndown list to
-print in CI, never a guess. Call it after all registration.
+| Kind | Builder | What it is |
+| --- | --- | --- |
+| JSON | `r.get` / `r.post` / `r.put` / `r.patch` / `r.del` / `r.query` / `r.method` | Validated input/query in, validated JSON out - the typed-client routes. |
+| Form | `routes.form(path, { fields, limit, maxParts, maxFileSize }, handler)` | multipart/form-data: text fields validated like a JSON body (same 422 map), files buffered within declared caps; a JSON body posted to it is a 415. |
+| Raw | `routes.raw(method, path, spec, handler)` | The handler owns the whole exchange and returns a `Response`: uploads beyond form scale (`streamMultipart`), webhooks verifying raw bytes, downloads, `conditional()` 304s. |
+| Stream | `routes.stream(path, spec, open)` | Server-Sent Events; `open` receives the guarded context and the live connection. |
 
-## Why a shared contract value (not a type-only import)
-
-Types erase: a client built from `typeof api` alone cannot know methods and paths at
-runtime, and the workarounds - a manifest fetch, a codegen step, RPC-by-tree-path - all
-reintroduce a second source of truth. The contract is a plain value carrying nothing a
-browser must not see, and shipping the schemas buys client-side pre-validation with the
-SAME rules the browser form runs: a bad input is rejected before the request leaves.
-
-The `@azerothjs/http/api/shared` subpath contains only the contract declaration, the client, and
-`ApiError` - importing it can never drag the server half into a bundle.
+The last three exist so those routes stay INSIDE the feature: they inherit its guard chain and
+appear in the manifest and the OpenAPI document, instead of degrading to hand-mounted
+`app.get` calls that re-implement authorization and vanish from the spec. An unauthenticated
+request to the SSE route is refused by the SAME guard the JSON routes use.
 
 ## The enforcement points
 
-- **Client, pre-wire** - inputs validated locally; failures throw with the field-path map.
-- **Server, inbound** - forged requests hit the same schemas; failures are 422s whose
-  `details.fields` is exactly what a form's `setError` consumes (`azerothjs`).
-- **Server, outbound** - declared outputs are validated too: an off-contract return is a
-  hidden 500 (`contract-violation`), and undeclared fields are STRIPPED - an accidental
-  `passwordHash` in a handler's return never crosses the wire.
-
-For tests, pass an app's `handle` as the client's `fetch`: the whole client/server round
-trip runs in process with zero sockets and full types.
-
-## Typed guards - additions flow into the handler, no cast
-
-Mount the contract with a `guards` map. A guard carries its context additions into the TYPE of
-every handler it protects, and the map's keys are checked against the contract tree - a typo is a
-compile error, not a silently-unguarded route:
-
-```ts
-const requireAuth = guard((context) => ({ accountId: verify(context.request) }));
-
-mountApi(app, contract, {
-    guards:   { 'account.*': [requireAuth] },              // 'accont.*' -> compile error
-    handlers: { 'account.me': (context) => ({ id: context.accountId }) }   // accountId: number, no cast
-});
-```
-
-A guard is any `(context) => void | Response | additions`. `guard()` is only needed when it ADDS
-to the context and that addition must be inferred - a rate limiter that just throws goes in bare:
-`{ 'pay.start': [throttle(8, 60_000)] }`.
-
-A guard promises exactly what it attaches. One that returns its additions on EVERY path types them
-as present; one with a conditional `return;` types them OPTIONAL, because on that path nothing was
-assigned onto the context:
-
-```ts
-const optionalSession = guard((context) =>
-{
-    const token = context.request.headers.get('authorization');
-    if (token === null) { return; }            // anonymous: adds nothing
-    return { accountId: verify(token) };
-});
-
-// context.accountId is `number | undefined` here, so the anonymous path has to be handled.
-handlers: { 'orders.list': (context) => list(context.accountId) }
-```
-
-That is the runtime truth stated in the type. Reading such a field as definitely-present is how a
-handler ends up dereferencing `undefined` on exactly the requests that carried no credential.
-A guard that reads the request BODY must hand the bytes on by replacing `context.request` with a
-new `Request` built from them, or the route cannot validate its own input - the mount says so by
-name rather than failing with a locked-stream error.
-
-A group wildcard is the point: guard the group, then name the exceptions with `only()`, which
-declares a route's COMPLETE chain and replaces everything it would inherit.
-
-```ts
-guards: {
-    'admin.*': [requireAdmin],                             // guarded by DEFAULT
-    'admin.signIn': only([throttle(10, 60_000)]),           // it IS the way past requireAdmin
-    'admin.signOut': only([])                              // clearing a cookie cannot require it
-}
-```
-
-That inverts the failure mode: a route added to the group later is guarded because it is in the
-group, not because someone remembered a line. `only()` resets the TYPE as well as the chain, so an
-opted-out handler cannot read a field no guard attached. The opt-out is exact-path only - a
-wildcard cancelling another wildcard would make a route's real chain depend on declaration order.
-
-`only()` returns a wrapper, not an array, so it cannot be widened into a `ReadonlyArray<Guard>`.
-That is deliberate: a brand carried on an array survives at runtime but is erased by any such
-annotation, and an erased brand means the mount drops the inherited chain while the handler is
-still typed with the additions of guards that never ran - the exact bug `only()` exists to
-prevent. Not being an array makes the disagreement a compile error instead.
+- **Input and query** validate at the boundary; a failure is the 422 whose `details.fields` is
+  the flat field-path map the browser form's `setError` consumes. One schema, both sides: the
+  same rules that validated the form reject the forged request, in the same shape.
+- **Output** validates too, when declared - and STRIPS undeclared fields, so an accidental
+  `passwordHash` dies at the boundary. A handler returning off-declaration data is a hidden
+  500 (`contract-violation`), never a silently wrong payload.
+- **A raw `Response`** returned from any handler passes through untouched - the visible escape
+  hatch.
 
 ## Status codes without losing validation - `reply()`
 
-A route declares its non-default responses per status, and a handler speaks them through
-`reply()` - the body is validated against that status's schema exactly like `output`, and
-each status becomes its own entry in the OpenAPI document:
-
 ```ts
-create: post('/users', {
-    input: CreateUser, output: User,
-    responses: { 201: User, 409: Problem }
-}),
-
-// in the handler:
-create: ({ input }) => exists(input.email)
-    ? reply(409, { code: 'exists', message: 'Email taken' })
-    : reply(201, save(input), { location: `/users/${ id }` })
+create: routes.post('/', { input: thingInput, output: thing, responses: { 201: thing, 409: problem } },
+    (context) => reply(201, made(context.input), { location: `/things/${ id }` }))
 ```
 
-`reply(204)` sends an empty response; an undeclared status with a body is a compile
-error. A raw `Response` return remains the escape hatch for non-JSON answers (files,
-redirects, streams) - the ONLY return shape that bypasses output validation.
-
-## File routes - `multipart()`
-
-A route declares a multipart/form-data input at the contract level; the handler receives
-validated text fields plus the files, fully typed:
-
-```ts
-upload: post('/files', {
-    input: multipart({ fields: object({ title: string() }), maxFileSize: 20 * 1024 * 1024 }),
-    output: FileRecord
-}),
-
-// in the handler:
-upload: ({ input }) => save(input.fields.title, input.files)   // files: buffered, capped
-```
-
-Field failures are the same 422 map as JSON routes; a non-multipart POST is a 415; the
-OpenAPI document declares the `multipart/form-data` body with the fields schema. The
-typed client does not speak multipart (a browser posts `FormData` directly - calling
-such a route through the client is a loud error), and beyond-memory uploads keep using
-`streamMultipart(context.request)` from `@azerothjs/http` in the handler.
+`responses` declares each status's body schema; `output` is the shorthand for its 200 entry.
+`reply(status, body, headers?)` speaks a declared status with the body still validated;
+`reply(204)` sends an empty response. An undeclared status with a body is a compile error.
 
 ## Bring your own validator
 
-A route's `input` accepts any [Standard Schema](https://standardschema.dev) validator
-(Zod, Valibot, ArkType) alongside native `@azerothjs/schema` - so a team keeps its
-existing schemas. A foreign schema validates the boundary; its OpenAPI entry degrades to
-the permissive shape (native schemas keep full self-description).
+A route schema is any [Standard Schema v1](https://standardschema.dev) validator - Zod,
+Valibot, ArkType, or the house `@azerothjs/schema`. A foreign schema validates the boundary
+identically (the same 422 field map); its OpenAPI entry degrades to the permissive shape with
+an honest note, because there is no metadata to walk. The native schema self-describes, so its
+document entry carries the real constraints.
 
 ## The QUERY method
 
-> **Experimental.** RFC 10008 is not yet deployed internet reality - proxies, caches,
-> and tooling may not recognize QUERY. The API is stable within 1.x but flagged until
-> the RFC lands broadly.
+`routes.query(path, { input, output }, handler)` declares a QUERY route (RFC 10008): a safe,
+idempotent read whose parameters ride in a validated JSON body. OpenAPI has no such method, so
+these routes are excluded from `paths` and listed machine-readably under `x-azerothjs-query`.
 
-A route may use `method: 'QUERY'` (RFC 10008) - a safe, idempotent read that carries a body,
-for filters too large or structured for a URL. Its `input` schema is the query body, validated
-exactly as a POST's; the inferred client sends the QUERY request, and the handler MUST NOT
-mutate state (that contract is what lets responses be cached and requests retried).
+## OpenAPI: the third consumer
 
 ```ts
-search: query('/products/search', { input: FilterSchema, output: ResultsSchema })
+const api = register(app, { keys, orgs, webhooks });
+app.register(openapiPlugin({ features: api, info: { title: 'My API', version: '1.0.0' } }));
 ```
 
-## OpenAPI: the contract's third exporter
+`toOpenApi(features, options)` derives the 3.1 document from the same declarations: paths,
+parameters (path params from the pattern, query params from the query schema), request bodies,
+per-status responses, the framework's derived 422/415/500 envelope entries, operation ids and
+tags from the record keys. Deterministic by construction - two builds are byte-identical, so
+specs diff cleanly in CI. `docs` on a route adds only what a machine cannot know (summary,
+description, declared error prose, security schemes); it never affects runtime behavior.
 
-The same declaration that produces the server mount and the typed client produces the
-OpenAPI 3.1 document - three consumers, one truth, drift structurally impossible for
-everything derived. No decorators, no YAML, no annotations on schemas: paths, params,
-request bodies, response shapes, operation ids and tags (from the contract tree), and
-the framework's 422/415/500 envelope responses are all read from what already exists.
+`openapiPlugin` serves `/openapi.json` and a fully self-contained `/docs` explorer page
+(`viewer: 'scalar'` opts into the CDN shell instead). Both are development surfaces: under
+`NODE_ENV=production` the plugin registers nothing unless `public: true` says otherwise.
+
+`uncontracted(app, features)` lists every registered route the record does not cover - the
+honest burndown for incremental adoption, and form/raw/stream routes count as covered.
+
+## Testing: the whole round trip in process
 
 ```ts
-import { toOpenApi, openapiPlugin } from '@azerothjs/http/api';
-
-// Serve it (any external viewer - Scalar, Redoc, Swagger UI - reads the endpoint):
-app.register(openapiPlugin({ contract, info: { title: 'Shop API', version: '1.0.0' } }));
-
-// Or emit it for CI / SDK pipelines (deterministic: same contract, byte-identical spec):
-await writeFile('openapi.json', JSON.stringify(toOpenApi(contract, { info }), null, 2));
+const client = createClient<typeof api>(manifestOf(api), {
+    baseUrl: '/api',
+    fetch: (request) => app.handle(request)   // no sockets, full types
+});
 ```
-
-A route's `docs` field adds only what a machine cannot know - summary, tags,
-deprecation, extra error statuses, security requirements - and never affects runtime:
-
-```ts
-create: route({
-    method: 'POST', path: '/users', input: CreateUser, output: User,
-    docs: { summary: 'Create a user', errors: [{ status: 409, code: 'exists' }] }
-})
-```
-
-**Neither route registers under `NODE_ENV=production` unless you pass `public: true`.** A spec
-describes every internal route, its input shape and its constraints, which is a reconnaissance
-document you should have to publish on purpose. Say `public: true` when the API really is public.
-
-The plugin also serves a docs page at `/docs` (disable with `docs: false`). Two viewers, one
-option:
-
-- **`viewer: 'azeroth'` (default)** - the house explorer: one fully self-contained page (inline
-  styles and script, zero external requests, works offline) in the AzerothJS design language -
-  REST-colored methods, verdict-colored statuses, schema trees, and a same-origin try-it panel.
-- **`viewer: 'scalar'`** - a ~10-line shell; the browser loads the Scalar reference from a CDN.
-  Best-in-class UI for free, at the price of third-party code running on the page you paste
-  tokens into, so it is opt-in rather than the default.
-
-External viewers can always read `/openapi.json` directly instead.
-
-The schema-to-JSON-Schema rules degrade honestly - a `.refine()` becomes a description
-note, never an invented constraint; a foreign validator maps to the permissive shape.
-Known limits, stated up front: multipart uploads, WebSocket/SSE, and outbound webhooks
-are not expressible; QUERY routes have no OpenAPI method and are listed under the
-`x-azerothjs-query` extension instead of `paths`.
 
 ## License
 
-[MIT](https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE)
+MIT (c) AzerothJS contributors.

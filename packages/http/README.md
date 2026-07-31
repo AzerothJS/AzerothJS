@@ -126,14 +126,16 @@ metadata that strip-only execution does not emit. Then compile with `tsc` and ru
 
 ---
 
-## 🧩 The typed contract layer - `@azerothjs/http/api`
+## 🧩 The typed API layer - `@azerothjs/http/api`
 
-The API-contract system lives in this package as the `./api` subpath: declare a
-contract once (routes + schemas, no handlers), mount it with `mountApi` (typed
-guards, boundary validation, the typed reply channel, contract-level file routes),
-export OpenAPI from the same declaration, and consume it in the browser through the
-fully inferred client at `@azerothjs/http/api/shared` (client-safe: it never drags
-server code into a bundle). The full guide: [docs/api.md](./docs/api.md).
+The typed API system lives in this package as the `./api` subpath: declare each
+feature once with `feature()` - routes, schemas, guards, handlers, docs, colocated,
+with `routes.form`/`routes.raw`/`routes.stream` making uploads, webhooks and SSE first-class -
+`register` it (boundary validation, the typed reply channel), export OpenAPI from
+the same declaration, and consume it in the browser through the fully inferred
+client at `@azerothjs/http/api/shared` (`typeof` the server's features plus a
+two-fields-per-route manifest; client-safe: it never drags server code into a
+bundle). The full guide: [docs/api.md](./docs/api.md).
 
 ---
 
@@ -220,7 +222,8 @@ bucket; on a fetch-hosted runtime there is no socket at all, so give the limiter
 
 For a full deployment: `timeouts` also takes `requestMs` (whole-request bound for slow bodies)
 and `checkIntervalMs` (how promptly a slow connection is reclaimed); `new App({ observe:
-logRequests(createMinimalLogger()) })` emits one JSON log line per request with method, path, status,
+logRequests(createLogger()) })` - the logger is `@azerothjs/logger`'s - emits one JSON log line
+per request with method, path, status,
 duration, and the request id; expose a cheap `GET /healthz` returning 200 for orchestrator
 probes; and enable HSTS via `securityHeaders({ hsts })` only when TLS terminates in front - it
 is emitted only over a connection proven secure.

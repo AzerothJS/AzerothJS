@@ -15,7 +15,7 @@
 // reach the document, which is the entire reason resolve-thunks exists.
 import { describe, expect, it } from 'vitest';
 
-import { h, renderToStaticMarkup, type Child } from '../../src/index.ts';
+import { h, type Child, renderToString } from '../../src/index.ts';
 
 describe('a render cannot be driven into unbounded recursion', () =>
 {
@@ -26,7 +26,7 @@ describe('a render cannot be driven into unbounded recursion', () =>
             return self;
         };
 
-        expect(renderToStaticMarkup(() => h('div', {}, forever))).toBe('<div></div>');
+        expect(renderToString(() => h('div', {}, forever), { markers: false })).toBe('<div></div>');
     });
 
     it('never leaks a function body into the document', () =>
@@ -36,7 +36,7 @@ describe('a render cannot be driven into unbounded recursion', () =>
             return secretName;
         };
 
-        const html = renderToStaticMarkup(() => h('div', {}, forever));
+        const html = renderToString(() => h('div', {}, forever), { markers: false });
 
         expect(html).not.toContain('secretName');
         expect(html).not.toContain('function');
@@ -48,7 +48,7 @@ describe('a render cannot be driven into unbounded recursion', () =>
         const cycle: Child[] = ['a'];
         cycle.push(cycle);
 
-        expect(() => renderToStaticMarkup(() => h('div', {}, cycle))).not.toThrow();
+        expect(() => renderToString(() => h('div', {}, cycle), { markers: false })).not.toThrow();
     });
 
     it('survives mutually recursive child arrays', () =>
@@ -57,13 +57,13 @@ describe('a render cannot be driven into unbounded recursion', () =>
         const right: Child[] = [left];
         left.push(right);
 
-        expect(() => renderToStaticMarkup(() => h('div', {}, left))).not.toThrow();
+        expect(() => renderToString(() => h('div', {}, left), { markers: false })).not.toThrow();
     });
 
     it('still resolves the ordinary chains this exists to serve', () =>
     {
-        expect(renderToStaticMarkup(() => h('div', {}, () => 'once'))).toBe('<div>once</div>');
-        expect(renderToStaticMarkup(() => h('div', {}, () => () => 'twice'))).toBe('<div>twice</div>');
-        expect(renderToStaticMarkup(() => h('div', {}, ['a', ['b', ['c']]]))).toBe('<div>abc</div>');
+        expect(renderToString(() => h('div', {}, () => 'once'), { markers: false })).toBe('<div>once</div>');
+        expect(renderToString(() => h('div', {}, () => () => 'twice'), { markers: false })).toBe('<div>twice</div>');
+        expect(renderToString(() => h('div', {}, ['a', ['b', ['c']]]), { markers: false })).toBe('<div>abc</div>');
     });
 });

@@ -5,7 +5,7 @@
 # {{name}}
 
 **A fullstack app in one repo: compiled `.azeroth` components, an
-`@azerothjs/http` server, and ONE typed contract between them.**
+`@azerothjs/http` server, and ONE typed API declaration between them.**
 
 [![Built with AzerothJS](https://img.shields.io/badge/built%20with-AzerothJS-5fb3e8)](https://github.com/AzerothJS/AzerothJS)
 [![Node >= 24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
@@ -23,8 +23,8 @@ npm run dev
 
 Both halves come up under one banner: the server on **:3000**, vite on **:5173**
 with `/api` proxied to it. Open :5173, sign the guest book, and watch one schema
-validate the same input three times - in the form, in the client before the wire,
-and at the server boundary.
+validate the same input in the form AND at the server boundary - and the server's
+422 land back in the form's own error shape.
 
 ---
 
@@ -36,10 +36,10 @@ Everything this template teaches, and the file that teaches it.
 | --- | --- | --- |
 | **ONE route table** | `application/src/routes.ts` | The router's own table IS the manifest, plus one `render:` field per route (`'static'` / `'server'` / `'client'`). |
 | **Client routing** | `application/src/App.azeroth` | `<RouterProvider>` + `<Routes>` + `<Link activeClass>` over that table; composables need no router argument. |
-| **ONE shared contract** | `server/src/contract.ts` | Routes and schemas declared once, imported by BOTH halves, client-safe by construction. |
-| **Typed API client** | `application/src/api.ts` | `createClient(contract)` - calls fully inferred, inputs validated BEFORE the wire. |
-| **Schema-validated form** | `application/src/pages/guest-book.azeroth` | The `form` keyword with the SAME schema the server enforces: one declaration, three enforcement points. |
-| **Boundary validation** | `server/src/app.ts` | `mountApi` - a forged request gets the 422 whose field map the form displays directly. |
+| **ONE declared API** | `server/src/app.ts` | `feature()` - routes, schemas, handlers, streams, colocated; the route name written once. |
+| **Typed API client** | `application/src/api.ts` | `createClient<typeof api>(manifest)` - calls fully inferred from the server's own types; the runtime half is a served two-fields-per-route manifest. |
+| **Schema-validated form** | `application/src/pages/guest-book.azeroth` | The `form` keyword with the SAME schema the server enforces: one declaration, both boundaries. |
+| **Boundary validation** | `server/src/app.ts` | `register` - a forged request gets the 422 whose field map the form displays directly. |
 | **SSR, prerender, hydration** | `application/src/entry.server.ts` | `createPageRenderer` renders a url through the route table. The home is prerendered at build, `/guestbook` per request, and `bootClient` hydrates both. |
 | **One-origin deploy** | `server/src/main.ts` + `server/Dockerfile` | One container serves API, pages and assets. No CORS between your own halves, ever. |
 
@@ -66,13 +66,12 @@ application/          the browser half - vite + the azeroth compiler
   src/routes.ts       the one route table (path, component, render mode)
   src/App.azeroth     the shell: nav + the <Routes> outlet
   src/pages/          one component per route
-  src/api.ts          the seam to the shared contract: the typed client + its shapes
+  src/api.ts          the seam to the server: the typed client + its shapes
   src/entry.server.ts the SSR bundle's entry - exports routes + renderPage
 
 server/               the API half - @azerothjs/http, no build step
-  src/contract.ts     THE shared contract; the application imports this file
-  src/stream.ts       the RAW routes - not JSON, so not the contract's job
-  src/app.ts          routes in, App out - pure, and what tests exercise
+  src/schemas.ts      the client-safe schemas; the application imports this file
+  src/app.ts          THE declared API (feature + register) - pure, what tests exercise
   src/main.ts         the environment, logging, edge pipeline, serve, shutdown
 ```
 
@@ -86,33 +85,28 @@ server/               the API half - @azerothjs/http, no build step
   `render: 'server'` pages from the SSR bundle (`CLIENT_DIR` and `SSR_ENTRY` in
   `server/.env.example`). One origin, one container.
 
-The contract is imported by relative path, not over the network: change a route's
-shape in `server/src/contract.ts` and the client stops typechecking immediately.
+The API's TYPES cross by relative import (`typeof api` - erased at build, so no
+server code can reach the browser); its runtime half is the served manifest.
+Change a route's shape in `server/src/app.ts` and the client stops typechecking
+immediately.
 
-### Two kinds of route, on purpose
+### Four kinds of route, all declared
 
-The contract owns a route's **response** always, and its **request** when the body is a JSON
-value worth validating. Those routes get the typed client, boundary validation, and the 422
-field map the form displays. Everything else is a plain route that owns its own `Response`:
+Every route lives in the feature - the builder says HOW it speaks, and all four kinds inherit
+the feature's guard and appear in the manifest and the OpenAPI document:
 
-| Kind | Where | Examples |
+| Kind | Builder | Examples |
 | --- | --- | --- |
-| Contract | `src/contract.ts` + the `mountApi` handlers | the guest book, auth, catalogue, admin |
-| Raw | `src/stream.ts` | the token stream here, plus uploads (`streamMultipart`), webhooks, redirects, downloads |
-| Infra | one line in `src/app.ts` | `/api/healthz` |
+| JSON | `r.get` / `r.post` / ... | the guest book: validated input, validated output, the 422 field map |
+| Stream | `r.stream` | `GET /api/assistant` - a server-sent token stream, consumed on the home page by the `stream` keyword |
+| Form | `r.form` | a title plus an avatar: text fields validated like a JSON body, files buffered within declared caps |
+| Raw | `r.raw` | uploads beyond form scale (`streamMultipart`), webhooks over raw bytes, redirects, downloads, `conditional()` 304s |
 
-Do not force the second kind into the first. A streaming response has no JSON body to validate,
-and a large upload should not be buffered to hand a handler one value. `GET /api/assistant` is
-the worked example: a server-sent token stream consumed on the home page by the `stream`
-keyword, which accumulates the events into one reactive string and cancels the request when you
-press Stop - which is where a real handler stops paying a model provider.
-
-The middle case is worth knowing. A **form with files** (a title plus an avatar) can stay in the
-contract via `multipart()`: the text fields are validated like any JSON body and the files
-arrive within declared caps, so you keep the 422 field map and the validated response. What you
-give up is the typed client for that one route, which refuses multipart and says so - a browser
-posts `FormData` with `fetch`. Beyond form scale, use `streamMultipart` in a raw route and write
-each part straight to storage.
+The typed client speaks the JSON kind; form/raw/stream routes are filtered from its surface
+and refuse loudly if reached untyped - a browser posts `FormData` or opens an `EventSource`
+directly. The stream here is the worked example: the `stream` keyword accumulates the events
+into one reactive string and cancels the request when you press Stop - which is where a real
+handler stops paying a model provider.
 
 ---
 
@@ -165,8 +159,9 @@ out of the image. `/api/healthz` answers orchestrator probes.
 
 - **Add a page**: one row in `application/src/routes.ts` plus its component.
   Choosing how it ships is the `render:` field.
-- **Add an endpoint**: one `route()` in `server/src/contract.ts` and its handler
-  in `server/src/app.ts`. The client gains it, typed, with no other change.
+- **Add an endpoint**: one `r.get(...)` line inside the feature in
+  `server/src/app.ts` - path, schemas, and handler together. The client gains
+  it, typed, with no other change.
 - **Add a loader**: give a route a `loader` and the SSR seam carries its data to
   the browser - the handoff wiring in `App.azeroth` is already there.
 - **[The AzerothJS repository](https://github.com/AzerothJS/AzerothJS)** for the

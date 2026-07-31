@@ -14,7 +14,7 @@
 // buys. If someone later makes rendering async, the first test fails and points here.
 import { describe, expect, it } from 'vitest';
 
-import { collectStyleSheet, css, h, renderToStaticMarkup, renderToString, resetStyleSheet } from '../../src/index.ts';
+import { collectStyleSheet, css, h, renderToString, resetStyleSheet } from '../../src/index.ts';
 
 describe('a string render cannot interleave with another', () =>
 {
@@ -35,7 +35,7 @@ describe('a string render cannot interleave with another', () =>
             yielded = true;
         });
 
-        renderToStaticMarkup(() => h('div', {}, 'x'));
+        renderToString(() => h('div', {}, 'x'), { markers: false });
 
         expect(yielded).toBe(false);
         await Promise.resolve();
@@ -49,18 +49,18 @@ describe('scoped css does not bleed between renders', () =>
     {
         resetStyleSheet();
 
-        const first = renderToStaticMarkup(() =>
+        const first = renderToString(() =>
         {
             const scoped = css`.only-first { color: rgb(1, 1, 1); }`;
             return h('div', { class: scoped['only-first'] }, 'a');
-        });
+        }, { markers: false });
         const firstSheet = collectStyleSheet();
 
-        const second = renderToStaticMarkup(() =>
+        const second = renderToString(() =>
         {
             const scoped = css`.only-second { color: rgb(2, 2, 2); }`;
             return h('div', { class: scoped['only-second'] }, 'b');
-        });
+        }, { markers: false });
         const secondSheet = collectStyleSheet();
 
         expect(first).not.toBe(second);
@@ -76,21 +76,21 @@ describe('scoped css does not bleed between renders', () =>
 
         for (let i = 0; i < 5; i++)
         {
-            renderToStaticMarkup(() =>
+            renderToString(() =>
             {
                 const scoped = css`.row { color: rgb(${ i }, 0, 0); }`;
                 return h('div', { class: scoped.row }, `row ${ i }`);
-            });
+            }, { markers: false });
             collectStyleSheet();
         }
 
         // A sixth render must see its own scope and nothing from the five before it - otherwise
         // the module registry is growing by one entry per render, forever.
-        renderToStaticMarkup(() =>
+        renderToString(() =>
         {
             const scoped = css`.row { color: rgb(9, 9, 9); }`;
             return h('div', { class: scoped.row }, 'last');
-        });
+        }, { markers: false });
         const sheet = collectStyleSheet();
 
         expect(sheet).toContain('rgb(9, 9, 9)');
@@ -104,11 +104,11 @@ describe('scoped css does not bleed between renders', () =>
     {
         resetStyleSheet();
 
-        renderToStaticMarkup(() =>
+        renderToString(() =>
         {
             const scoped = css`.transient { color: rgb(7, 7, 7); }`;
             return h('div', { class: scoped.transient }, 'x');
-        });
+        }, { markers: false });
         expect(collectStyleSheet()).toContain('rgb(7, 7, 7)');
 
         // Draining is what stops one request's styles reaching the next.

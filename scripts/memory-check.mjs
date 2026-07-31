@@ -18,7 +18,7 @@
 
 import { App, json } from '@azerothjs/http';
 import { FrameParser, ProtocolError, serializeFrame } from '@azerothjs/ws';
-import { css, collectStyleSheet, h, renderToStaticMarkup } from 'azerothjs';
+import { css, collectStyleSheet, h, renderToString } from 'azerothjs';
 
 const gc = globalThis.gc;
 if (typeof gc !== 'function')
@@ -155,8 +155,8 @@ await trend('ssr render + scoped css', 9, 400, (n) =>
 {
     for (let i = 0; i < n; i++)
     {
-        renderToStaticMarkup(() => h('div', { class: styles.card, id: `n${ i }` },
-            h('span', { class: styles.card, title: `t${ i }` }, `row ${ i }`)));
+        renderToString(() => h('div', { class: styles.card, id: `n${ i }` },
+            h('span', { class: styles.card, title: `t${ i }` }, `row ${ i }`)), { markers: false });
         collectStyleSheet();
     }
 }, { heapMB: 4, rssMB: 24 });

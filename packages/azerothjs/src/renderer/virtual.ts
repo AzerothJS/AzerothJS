@@ -129,11 +129,12 @@ export interface VirtualListProps<T>
     class?: string;
 
     /**
-     * Per-item render function. Receives the item and its ABSOLUTE index getter.
-     * The returned element is positioned by the list; give it `height: 100%` or
-     * the row height itself.
+     * Per-item render function. Receives reactive getters for the item and its
+     * ABSOLUTE index, matching `<For>`'s row contract: a replaced item or a
+     * shifted position updates the row in place. The returned element is
+     * positioned by the list; give it `height: 100%` or the row height itself.
      */
-    children: (item: T, index: () => number) => HTMLElement;
+    children: (item: () => T, index: () => number) => HTMLElement;
 }
 
 /**
@@ -190,11 +191,14 @@ export function VirtualList<T>(props: VirtualListProps<T>): MountNode
             For({
                 each: windowed,
                 key: (row: { item: T; index: number }) => props.key(row.item, row.index),
-                children: (row: { item: T; index: number }) =>
+                children: (row: () => { item: T; index: number }) =>
                     h('div',
                         {
-                            style: `position:absolute;left:0;right:0;height:${ props.itemHeight }px;top:${ virtualizer.offsetOf(row.index) }px`
+                            // Reactive: a reused row whose absolute index shifted (an insertion
+                            // above it) repositions in place instead of keeping the top it was
+                            // built with.
+                            style: () => `position:absolute;left:0;right:0;height:${ props.itemHeight }px;top:${ virtualizer.offsetOf(row().index) }px`
                         },
-                        props.children(row.item, () => row.index))
+                        props.children(() => row().item, () => row().index))
             })));
 }

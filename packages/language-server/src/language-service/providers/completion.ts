@@ -60,43 +60,11 @@ export interface CompletionOptions
     componentSnippets?: boolean;
 }
 
-/**
- * An external contributor of completion items (an AI backend, a custom snippet
- * engine, ...). Registered sources run after the native items for the caret's
- * branch; the classified `context`, full `source`, and `offset` let a source
- * tailor its suggestions to where the caret is.
- */
-export interface CompletionSource
-{
-    provide(args: { source: string; offset: number; context: PositionContext }): CompletionItem[];
-}
-
-// Module-level registry. Empty by default, so registering nothing leaves native
-// completion behaviour untouched.
-const completionSources = new Set<CompletionSource>();
-
-/** Registers an external completion source. Returns a fn that unregisters it. */
-export function registerCompletionSource(source: CompletionSource): () => void
-{
-    completionSources.add(source);
-    return () =>
-    {
-        completionSources.delete(source);
-    };
-}
-
-/** Drops all registered completion sources (test isolation; explicit teardown). */
-export function clearCompletionSources(): void
-{
-    completionSources.clear();
-}
-
 /** Produces completion items for the caret at `offset`. */
 export function getCompletions(ctx: RequestContext, offset: number, options: CompletionOptions = {}): CompletionItem[]
 {
     const context = classifyPosition(ctx.source, offset);
-    const items = builtinCompletions(ctx, offset, options, context);
-    return withExternalSources(items, ctx.source, offset, context);
+    return builtinCompletions(ctx, offset, options, context);
 }
 
 /** Native completion items for the caret's branch, before external sources. */
@@ -191,27 +159,6 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
             return items;
         }
     }
-}
-
-/**
- * Appends items from every registered external source. Each call is isolated:
- * a source that throws (or is otherwise misbehaving) must never break native
- * completion, so its failure is swallowed and the native items still return.
- */
-function withExternalSources(items: CompletionItem[], source: string, offset: number, context: PositionContext): CompletionItem[]
-{
-    for (const provider of completionSources)
-    {
-        try
-        {
-            items.push(...provider.provide({ source, offset, context }));
-        }
-        catch
-        {
-            // A broken source is ignored, not propagated.
-        }
-    }
-    return items;
 }
 
 /** True for a component tag (PascalCase, dotted, or a known built-in). */

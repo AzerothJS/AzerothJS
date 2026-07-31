@@ -21,7 +21,7 @@
 // declared type.
 import { describe, expect, it, vi } from 'vitest';
 
-import { h, renderToStaticMarkup, unsafeTag, unsafeUrl } from '../../src/index.ts';
+import { h, unsafeTag, unsafeUrl, renderToString } from '../../src/index.ts';
 
 describe('the tag name is validated, not just checked against a refused set', () =>
 {
@@ -40,19 +40,19 @@ describe('the tag name is validated, not just checked against a refused set', ()
         '<'
     ])('refuses %j', (tag) =>
     {
-        expect(() => renderToStaticMarkup(() => h(tag, {}, 'inner'))).toThrow(/azeroth/);
+        expect(() => renderToString(() => h(tag, {}, 'inner'), { markers: false })).toThrow(/azeroth/);
     });
 
     it.each(['div', 'span', 'my-element', 'foreignObject', 'clipPath', 'linearGradient', 'h1', 'a'])('still renders the legal name %j', (tag) =>
     {
-        expect(() => renderToStaticMarkup(() => h(tag, {}, 'x'))).not.toThrow();
+        expect(() => renderToString(() => h(tag, {}, 'x'), { markers: false })).not.toThrow();
     });
 
     it('refuses a hostile name even through unsafeTag, which exists to allow refused TAGS not arbitrary markup', () =>
     {
-        expect(() => renderToStaticMarkup(() => h(unsafeTag('img src=x onerror=alert(1)'), {}, 'i'))).toThrow(/azeroth/);
+        expect(() => renderToString(() => h(unsafeTag('img src=x onerror=alert(1)'), {}, 'i'), { markers: false })).toThrow(/azeroth/);
         // The escape hatch keeps working for what it is actually for.
-        expect(renderToStaticMarkup(() => h(unsafeTag('base'), { href: '/x' }))).toContain('<base');
+        expect(renderToString(() => h(unsafeTag('base'), { href: '/x' }), { markers: false })).toContain('<base');
     });
 });
 
@@ -70,7 +70,7 @@ describe('the URL gate judges the value that gets written', () =>
     {
         it.each(carriers)(`refuses ${ attribute } carrying %s`, (_label, make) =>
         {
-            expect(() => renderToStaticMarkup(() => h('a', { [attribute]: make() }))).toThrow(/azeroth/);
+            expect(() => renderToString(() => h('a', { [attribute]: make() }), { markers: false })).toThrow(/azeroth/);
         });
     }
 
@@ -81,19 +81,19 @@ describe('the URL gate judges the value that gets written', () =>
         ['a data: document, in an array', ['data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==']]
     ])('refuses %s', (_label, value) =>
     {
-        expect(() => renderToStaticMarkup(() => h('a', { href: value }))).toThrow(/azeroth/);
+        expect(() => renderToString(() => h('a', { href: value }), { markers: false })).toThrow(/azeroth/);
     });
 
     it('leaves ordinary values alone', () =>
     {
-        expect(renderToStaticMarkup(() => h('a', { href: '/safe' }))).toBe('<a href="/safe"></a>');
-        expect(renderToStaticMarkup(() => h('a', { href: ['/a', '/b'] }))).toBe('<a href="/a,/b"></a>');
-        expect(renderToStaticMarkup(() => h('img', { src: 'https://example.com/x.png' }))).toContain('x.png');
+        expect(renderToString(() => h('a', { href: '/safe' }), { markers: false })).toBe('<a href="/safe"></a>');
+        expect(renderToString(() => h('a', { href: ['/a', '/b'] }), { markers: false })).toBe('<a href="/a,/b"></a>');
+        expect(renderToString(() => h('img', { src: 'https://example.com/x.png' }), { markers: false })).toContain('x.png');
     });
 
     it('still honours the unsafeUrl opt-out', () =>
     {
-        expect(renderToStaticMarkup(() => h('a', { href: unsafeUrl('javascript:alert(1)') }))).toContain('javascript:alert(1)');
+        expect(renderToString(() => h('a', { href: unsafeUrl('javascript:alert(1)') }), { markers: false })).toContain('javascript:alert(1)');
     });
 });
 
@@ -101,12 +101,12 @@ describe('an attribute name cannot carry a delimiter into the tag', () =>
 {
     it.each(['a<b', 'a`b', 'a>b', 'a=b', 'a b', 'a"b', "a'b", 'a/b'])('refuses %j', (name) =>
     {
-        expect(() => renderToStaticMarkup(() => h('div', { [name]: 'v' }))).toThrow(/azeroth/);
+        expect(() => renderToString(() => h('div', { [name]: 'v' }), { markers: false })).toThrow(/azeroth/);
     });
 
     it.each(['data-x', 'aria-label', 'id', 'xlink:href', 'my_attr', 'a.b'])('still allows %j', (name) =>
     {
-        expect(() => renderToStaticMarkup(() => h('div', { [name]: 'v' }))).not.toThrow();
+        expect(() => renderToString(() => h('div', { [name]: 'v' }), { markers: false })).not.toThrow();
     });
 });
 
@@ -116,7 +116,7 @@ describe('an on* prop is recognised regardless of case', () =>
     {
         const handler = vi.fn(() => 'SIDE EFFECT RAN');
 
-        const html = renderToStaticMarkup(() => h('div', { [key]: handler }, 'x'));
+        const html = renderToString(() => h('div', { [key]: handler }, 'x'), { markers: false });
 
         expect(handler).not.toHaveBeenCalled();
         expect(html).toBe('<div>x</div>');

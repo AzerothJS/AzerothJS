@@ -13,6 +13,7 @@
 
 import type { Getter } from '../reactivity/index.ts';
 import { createMemo, untrack } from '../reactivity/index.ts';
+import { DEV } from '../reactivity/dev.ts';
 import type { SearchSchemaLike } from './types.ts';
 import type { Router } from './router.ts';
 import type { RouteHandle } from './define-route.ts';
@@ -33,7 +34,7 @@ function parseWith(schema: SearchSchemaLike | undefined, location: { query: unkn
     {
         return parsed.value;
     }
-    if (warned.get(schema) !== location.search)
+    if (DEV && warned.get(schema) !== location.search)
     {
         warned.set(schema, location.search);
         console.warn(`[azerothjs/router] search params "${ location.search }" failed their schema; `

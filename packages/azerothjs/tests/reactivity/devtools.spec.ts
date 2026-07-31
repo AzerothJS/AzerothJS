@@ -7,10 +7,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
     createSignal, createMemo, createEffect, createRoot,
-    createResource, createStore, createDeferred, createForm,
+    createResource, createStore, createDeferred, createForm
+} from 'azerothjs';
+import {
     setDevtoolsHook, snapshotReactiveGraph, peekNode, pokeNode,
     DEVTOOLS_PROTOCOL_VERSION, type DevtoolsHook, type DevtoolsNode
-} from 'azerothjs';
+} from 'azerothjs/internal';
 
 interface Event { type: 'created' | 'disposed' | 'run' | 'write'; id: number; kind?: string; cause?: number; }
 

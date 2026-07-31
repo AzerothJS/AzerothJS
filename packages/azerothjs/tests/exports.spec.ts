@@ -106,7 +106,6 @@ const reExports: Array<[string, Record<string, unknown>]> = [
 
     // Server (SSR)
     ['renderToString', server],
-    ['renderToStaticMarkup', server],
     ['renderToDocument', server]
 ];
 

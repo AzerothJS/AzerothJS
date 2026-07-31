@@ -8,7 +8,7 @@
 
 import { collectStyleSheet } from '../renderer/index.ts';
 import { escapeText, escapeAttr } from '../reactivity/index.ts';
-import { renderToString, renderToStaticMarkup } from './render-to-string.ts';
+import { renderToString } from './render-to-string.ts';
 
 /**
  * Options for {@link renderToDocument}.
@@ -27,7 +27,7 @@ export interface RenderToDocumentOptions
     /** Raw attribute string for the <body> tag (e.g. class="dark"). */
     bodyAttrs?: string;
 
-    /** When true, render the body with {@link renderToStaticMarkup} (no hydration markers). Defaults to false. */
+    /** When true, render the body with no hydration markers. Defaults to false. */
     static?: boolean;
 }
 
@@ -46,7 +46,7 @@ export interface RenderToDocumentOptions
  *
  * COMPILER / RUNTIME ROLE:
  * Runtime, server; the top-level SSR entry that produces a whole page. Delegates the body to
- * {@link renderToString}/{@link renderToStaticMarkup} and the CSS flush to collectStyleSheet().
+ * {@link renderToString} and the CSS flush to collectStyleSheet().
  *
  * INPUT CONTRACT:
  * - component: a thunk building the root element.
@@ -95,7 +95,7 @@ export function renderToDocument(component: () => HTMLElement | DocumentFragment
     const lang = options.lang ?? 'en';
 
     // Render the body FIRST so css`` scopes register before we collect them.
-    const body = options.static ? renderToStaticMarkup(component) : renderToString(component);
+    const body = renderToString(component, { markers: options.static !== true });
     const styles = collectStyleSheet();
 
     let head = '<meta charset="utf-8">';

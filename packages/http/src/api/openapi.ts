@@ -1,30 +1,31 @@
 /**
- * MODULE: api/openapi - the contract's third exporter
+ * MODULE: api/openapi - the feature record's third exporter
  *
- * A contract already produces a server mount and a typed client from one declaration;
- * this module produces the OpenAPI 3.1 document from the same declaration - three
- * consumers, one truth, drift structurally impossible for everything derived. The
- * exporter is a PURE function: it reads the contract tree and each schema's
+ * A feature record already produces a server registration and a typed client from one
+ * declaration; this module produces the OpenAPI 3.1 document from the same declaration -
+ * three consumers, one truth, drift structurally impossible for everything derived. The
+ * exporter is a PURE function: it reads the declarations and each schema's
  * self-description (SchemaMeta) and never touches runtime behavior - `docs` on a
  * route is display-only by contract.
  *
- * Determinism is a tested promise: paths in contract-declaration order, canonical key
- * order inside every object, component names taken from the first tree-path use and
- * disambiguated in tree order when two paths collapse to one name - two builds of the
- * same contract are byte-identical, so specs diff cleanly in CI.
+ * Determinism is a tested promise: paths in declaration order (two insertion-ordered
+ * Object.entries walks), canonical key order inside every object, component names taken
+ * from the first use and disambiguated in declaration order when two names collapse -
+ * two builds of the same record are byte-identical, so specs diff cleanly in CI.
  *
  * Honest degradations: a refinement cannot be expressed as JSON Schema, so it becomes a
- * description note; a QUERY route (RFC 10008)
- * has no OpenAPI method, so it is excluded from `paths` and listed, machine-readably,
- * under the `x-azerothjs-query` extension; a schema without metadata maps to the
- * permissive `{}` with a note. The exporter never invents a constraint the validator
- * does not enforce.
+ * description note; a QUERY route (RFC 10008) has no OpenAPI method, so it is excluded
+ * from `paths` and listed, machine-readably, under the `x-azerothjs-query` extension; a
+ * schema without metadata maps to the permissive `{}` with a note; a `raw` route's body
+ * degrades to what its spec declared and never an invented schema. The exporter never
+ * claims a constraint the validator does not enforce.
  */
 
 import type { Schema, SchemaMeta, StringOptions, NumberOptions, ArrayOptions } from '@azerothjs/schema';
 import type { App, AzerothPlugin } from '../index.ts';
 
-import { isRoute, isMultipartSpec, responseSchemaFor, type AnyRoute, type Contract, type RouteDocs } from './define.ts';
+import type { AnyDecl, Feature, RouteDocs } from './declare.ts';
+import { pathOf, responseSchemaFor } from './declare.ts';
 import { renderExplorerHtml, renderScalarHtml } from './explorer.ts';
 
 /** @internal Reason phrases for the per-status response descriptions. */
@@ -84,27 +85,36 @@ const ERROR_ENVELOPE = {
 
 const ERROR_REF = { $ref: '#/components/schemas/ErrorResponse' } as const;
 
-/** @internal A walked route paired with its dotted tree path (`users.create`). */
+/** @internal A walked declaration paired with its `group.key` name and full path. */
 interface FlatRoute
 {
     name: string;
-    group: string | null;
-    route: AnyRoute;
+    group: string;
+    fullPath: string;
+    decl: AnyDecl;
 }
 
-/** @internal Flattens the contract tree in declaration order. */
-function flatten(contract: Contract, prefix = '', group: string | null = null, out: FlatRoute[] = []): FlatRoute[]
+/**
+ * @internal Flattens the feature record in declaration order. The uniqueness assert is the
+ * ONE residue of the old key-space machinery, and it lives here in the describer: a feature
+ * key containing a dot could compose the same `group.key` as a sibling, and two operations
+ * sharing one operationId is a structurally valid document describing the wrong route.
+ */
+function flatten(features: Record<string, Feature>): FlatRoute[]
 {
-    for (const [key, node] of Object.entries(contract))
+    const out: FlatRoute[] = [];
+    const names = new Set<string>();
+    for (const [group, built] of Object.entries(features))
     {
-        const name = prefix === '' ? key : `${ prefix }.${ key }`;
-        if (isRoute(node))
+        for (const [key, decl] of Object.entries(built.routes))
         {
-            out.push({ name, group: group ?? (prefix === '' ? null : prefix), route: node });
-        }
-        else
-        {
-            flatten(node, name, group ?? key, out);
+            const name = `${ group }.${ key }`;
+            if (names.has(name))
+            {
+                throw new Error(`Two routes compose the same operation id "${ name }" - rename one key.`);
+            }
+            names.add(name);
+            out.push({ name, group, fullPath: pathOf(built.prefix, decl.path as string), decl });
         }
     }
     return out;
@@ -172,7 +182,7 @@ function toJsonSchema(schema: Schema<unknown> | undefined): Record<string, unkno
     const out = fromMeta(meta);
     if (meta.refinements !== undefined && meta.refinements.length > 0)
     {
-        const names = meta.refinements.map((r) => r.code ?? 'refine').join(', ');
+        const names = meta.refinements.map((refinement) => refinement.code ?? 'refine').join(', ');
         out.description = typeof out.description === 'string'
             ? `${ out.description } Additionally validated: ${ names }.`
             : `Additionally validated: ${ names }.`;
@@ -269,33 +279,31 @@ function fromMeta(meta: SchemaMeta): Record<string, unknown>
 }
 
 /**
- * Derives the OpenAPI 3.1 document from a contract. Pure and deterministic: the same
- * contract always produces the byte-identical document. Everything derivable is derived
+ * Derives the OpenAPI 3.1 document from a feature record. Pure and deterministic: the same
+ * record always produces the byte-identical document. Everything derivable is derived
  * (paths, params, bodies, the framework's 422/415/500 envelope responses, operation ids
- * and tags from the tree); `docs` adds only what a machine cannot know; QUERY routes are
- * listed under `x-azerothjs-query` because OpenAPI has no such method.
+ * and tags from the record keys); `docs` adds only what a machine cannot know; QUERY routes
+ * are listed under `x-azerothjs-query` because OpenAPI has no such method; `raw` and
+ * `stream` routes appear in `paths` - the +N routes the old contract silently omitted.
  */
-export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenApiDocument
+export function toOpenApi(features: Record<string, Feature>, options: ToOpenApiOptions): OpenApiDocument
 {
     const prefix = options.prefix ?? '/api';
-    const flat = flatten(contract);
+    const flat = flatten(features);
     const paths: Record<string, Record<string, unknown>> = {};
     const queryRoutes: Array<Record<string, unknown>> = [];
 
     // Shared-schema identity: the SAME schema instance used by 2+ routes (as input or
-    // output) becomes one named component, named from its first tree-path use - both
-    // deterministic (declaration order) and meaningful across services that share a
-    // schema value. Single-use schemas stay inline; query schemas explode into per-field
-    // parameters and never hoist.
+    // output) becomes one named component, named from its first use - both deterministic
+    // (declaration order) and meaningful across services that share a schema value.
+    // Single-use schemas stay inline; query schemas explode into per-field parameters and
+    // never hoist.
     const uses = new Map<Schema<unknown>, { count: number; name: string; path: string }>();
-    for (const { name, route } of flat)
+    for (const { name, decl } of flat)
     {
-        for (const [role, node] of [['Input', route.input], ['Output', route.output]] as const)
+        for (const [role, node] of [['Input', decl.kind === 'json' ? decl.spec.input : undefined], ['Output', decl.spec.output]] as const)
         {
-            // A multipart spec is a branded plain object, not a schema: the operation refs its
-            // `fields` schema instead, so hoisting the spec would emit a component nothing
-            // ever references.
-            if (node === undefined || isMultipartSpec(node))
+            if (node === undefined)
             {
                 continue;
             }
@@ -327,25 +335,24 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
     }
     const resolve = (schema: Schema<unknown>): Record<string, unknown> => refs.get(schema) ?? toJsonSchema(schema);
 
-    for (const { name, group, route } of flat)
+    for (const { name, group, fullPath, decl } of flat)
     {
-        const docs: RouteDocs = route.docs ?? {};
-        const routePath = route.path as string;
-        if (route.method === 'QUERY')
+        const docs: RouteDocs = decl.spec.docs ?? {};
+        if (decl.method === 'QUERY')
         {
             queryRoutes.push({
                 name,
-                path: prefix + routePath,
+                path: prefix + fullPath,
                 ...docs.summary !== undefined ? { summary: docs.summary } : {},
-                ...route.input !== undefined ? { querySchema: toJsonSchema(route.input as Schema<unknown>) } : {}
+                ...decl.spec.input !== undefined ? { querySchema: toJsonSchema(decl.spec.input as Schema<unknown>) } : {}
             });
             continue;
         }
 
-        const { path, params } = convertPath(prefix + routePath);
+        const { path, params } = convertPath(prefix + fullPath);
         const operation: Record<string, unknown> = { operationId: name };
-        const tags = docs.tags ?? (group === null ? undefined : [group]);
-        if (tags !== undefined && tags.length > 0)
+        const tags = docs.tags ?? [group];
+        if (tags.length > 0)
         {
             operation.tags = [...tags];
         }
@@ -369,7 +376,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
             schema: { type: 'string' },
             ...param.wildcard ? { description: 'Wildcard segment - may span multiple path segments.' } : {}
         }));
-        const querySchema = route.query as Schema<unknown> | undefined;
+        const querySchema = decl.spec.query as Schema<unknown> | undefined;
         if (querySchema?.meta?.kind === 'object')
         {
             for (const [key, field] of Object.entries(querySchema.meta.shape ?? {}))
@@ -387,36 +394,66 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
             operation.parameters = parameters;
         }
 
-        if (route.input !== undefined)
+        if (decl.kind === 'form')
         {
-            operation.requestBody = isMultipartSpec(route.input)
-                ? {
-                    required: true,
-                    description: 'multipart/form-data: the schema describes the TEXT fields; file parts ride beside them (binary).',
-                    content: { 'multipart/form-data': {
-                        schema: route.input.fields !== undefined
-                            ? resolve(route.input.fields as Schema<unknown>)
-                            : { type: 'object', description: 'Text fields (undeclared) plus file parts.' }
-                    } }
-                }
-                : {
-                    required: true,
-                    content: { 'application/json': { schema: resolve(route.input as Schema<unknown>) } }
+            operation.requestBody = {
+                required: true,
+                description: 'multipart/form-data: the schema describes the TEXT fields; file parts ride beside them (binary).',
+                content: { 'multipart/form-data': {
+                    schema: decl.spec.fields !== undefined
+                        ? resolve(decl.spec.fields as Schema<unknown>)
+                        : { type: 'object', description: 'Text fields (undeclared) plus file parts.' }
+                } }
+            };
+        }
+        else if (decl.kind === 'raw')
+        {
+            // The +N win over the old contract: the route appears, with its params, docs,
+            // security, and derived errors. The body degrades HONESTLY - a declared media
+            // type with a binary format, never an invented schema.
+            if (decl.method !== 'GET' && decl.method !== 'DELETE')
+            {
+                operation.requestBody = {
+                    content: { [decl.spec.accepts ?? 'application/octet-stream']: { schema: { format: 'binary' } } }
                 };
+            }
+        }
+        else if (decl.spec.input !== undefined)
+        {
+            operation.requestBody = {
+                required: true,
+                content: { 'application/json': { schema: resolve(decl.spec.input as Schema<unknown>) } }
+            };
         }
 
         // Responses: the declared success shape, every per-status schema from the
         // `responses` map (the reply() channel), then the framework-DERIVED error set -
-        // each emitted only when mountApi actually produces it for this route's shape.
+        // each emitted only when register actually produces it for this route's shape.
         const responses: Record<string, unknown> = {};
         // One response concept: `responses[200]` and `output` are the same slot (`output`
         // is the declared shorthand), so the 200 entry derives from either and the loop
         // below skips it.
-        const okSchema = responseSchemaFor(route, 200);
-        responses['200'] = okSchema !== undefined
-            ? { description: 'OK', content: { 'application/json': { schema: resolve(okSchema as Schema<unknown>) } } }
-            : { description: 'OK (response shape not declared by the contract)' };
-        for (const [status, statusSchema] of Object.entries((route.responses ?? {}) as Record<string, unknown>))
+        const okSchema = responseSchemaFor(decl, 200);
+        if (decl.kind === 'stream')
+        {
+            responses['200'] = {
+                description: 'A Server-Sent-Events stream.',
+                content: { 'text/event-stream': { schema: { type: 'string' } } }
+            };
+        }
+        else if (decl.kind === 'raw')
+        {
+            responses['200'] = okSchema !== undefined
+                ? { description: 'OK', content: { 'application/json': { schema: resolve(okSchema as Schema<unknown>) } } }
+                : { description: 'Response shape not declared: this route answers with a raw Response.' };
+        }
+        else
+        {
+            responses['200'] = okSchema !== undefined
+                ? { description: 'OK', content: { 'application/json': { schema: resolve(okSchema as Schema<unknown>) } } }
+                : { description: 'OK (response shape not declared)' };
+        }
+        for (const [status, statusSchema] of Object.entries((decl.spec.responses ?? {}) as Record<string, unknown>))
         {
             if (status === '200')
             {
@@ -427,15 +464,19 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
                 content: { 'application/json': { schema: resolve(statusSchema as Schema<unknown>) } }
             };
         }
-        if (route.input !== undefined || route.query !== undefined)
+        const validatesBody = decl.kind === 'form' ? decl.spec.fields !== undefined : (decl.kind === 'json' && decl.spec.input !== undefined);
+        if (validatesBody || decl.spec.query !== undefined)
         {
             responses['422'] = { description: 'Validation failed', content: { 'application/json': { schema: ERROR_REF } } };
         }
-        if (route.input !== undefined)
+        if (decl.kind === 'form' || (decl.kind === 'json' && decl.spec.input !== undefined))
         {
-            responses['415'] = { description: 'Unsupported content type (JSON required)', content: { 'application/json': { schema: ERROR_REF } } };
+            responses['415'] = {
+                description: decl.kind === 'form' ? 'Unsupported content type (multipart/form-data required)' : 'Unsupported content type (JSON required)',
+                content: { 'application/json': { schema: ERROR_REF } }
+            };
         }
-        if (route.output !== undefined || route.responses !== undefined)
+        if (decl.spec.output !== undefined || decl.spec.responses !== undefined)
         {
             responses['500'] = { description: 'Contract violation (response failed its declared schema)', content: { 'application/json': { schema: ERROR_REF } } };
         }
@@ -443,7 +484,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         {
             // A status carried by the typed `responses` map keeps its REAL schema - the
             // prose-only docs.errors entry never downgrades it to the generic envelope.
-            if ((route.responses as Record<number, unknown> | undefined)?.[declared.status] !== undefined)
+            if (decl.spec.responses?.[declared.status] !== undefined)
             {
                 continue;
             }
@@ -451,6 +492,13 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
                 description: declared.description ?? (declared.code !== undefined ? `Error: ${ declared.code }` : 'Error'),
                 content: { 'application/json': { schema: ERROR_REF } }
             };
+        }
+        if (decl.kind === 'stream')
+        {
+            if (decl.spec.events !== undefined && decl.spec.events.length > 0)
+            {
+                operation['x-azerothjs-stream'] = { events: [...decl.spec.events] };
+            }
         }
         operation.responses = responses;
 
@@ -462,7 +510,7 @@ export function toOpenApi(contract: Contract, options: ToOpenApiOptions): OpenAp
         }
 
         const entry = paths[path] ?? (paths[path] = {});
-        entry[route.method.toLowerCase()] = operation;
+        entry[decl.method.toLowerCase()] = operation;
     }
 
     const document: OpenApiDocument = {
@@ -487,11 +535,11 @@ function nodeEnv(): string | undefined
     return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NODE_ENV;
 }
 
-/** Options for {@link openapiPlugin}: the export options plus the contract and routes. */
+/** Options for {@link openapiPlugin}: the export options plus the features and routes. */
 export interface OpenApiPluginOptions extends ToOpenApiOptions
 {
-    /** The contract the served document describes. */
-    contract: Contract;
+    /** The registered feature record the served document describes - pass what `register` returned. */
+    features: Record<string, Feature>;
 
     /** Where the document is served. Default '/openapi.json'. */
     route?: string;
@@ -540,9 +588,9 @@ export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
             {
                 return app;
             }
-            // Generated once, served as cached bytes - a contract is an immutable value.
+            // Generated once, served as cached bytes - a feature record is an immutable value.
             const specRoute = options.route ?? '/openapi.json';
-            const payload = JSON.stringify(toOpenApi(options.contract, options));
+            const payload = JSON.stringify(toOpenApi(options.features, options));
             app.get(specRoute, () =>
                 new Response(payload, { headers: { 'content-type': 'application/json; charset=utf-8' } }));
             if (options.docs !== false)
@@ -560,14 +608,15 @@ export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
 
 /**
  * The coverage report for partial adoption: every route registered on the app that the
- * contract does NOT cover (compared under `prefix`). Call it AFTER all registration -
- * an honest list for the migration burndown, never a guess.
+ * feature record does NOT cover (compared under `prefix`). Call it AFTER all registration -
+ * an honest list for the migration burndown, never a guess. raw/stream/form routes count as
+ * covered now, so the output shrinks to what is genuinely outside the system.
  */
-export function uncontracted(app: App, contract: Contract, prefix = '/api'): string[]
+export function uncontracted(app: App, features: Record<string, Feature>, prefix = '/api'): string[]
 {
     // Compare parsed (method, pattern) pairs, never formatted strings - the routes()
     // table's whitespace is presentation, and coupling to it would rot silently.
-    const covered = new Set(flatten(contract).map(({ route }) => `${ route.method } ${ prefix }${ route.path as string }`));
+    const covered = new Set(flatten(features).map(({ fullPath, decl }) => `${ decl.method } ${ pathOf('', fullPath, prefix) }`));
     return app.routes().filter((line) =>
     {
         const [method, ...rest] = line.trim().split(/\s+/);

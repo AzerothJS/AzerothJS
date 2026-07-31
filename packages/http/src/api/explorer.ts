@@ -174,7 +174,7 @@ th { color: var(--dim); font-weight: 500; font-size: 12px; }
 
     const schemaRows = (schema, box, depth, seen) => {
         const { name, schema: s } = resolve(schema);
-        if (name && seen.has(name)) { const r = el('div', 'row c', name + ' (see above)'); r.style.setProperty('--depth', depth); box.append(r); return; }
+        if (name && seen.has(name)) { const repeated = el('div', 'row c', name + ' (see above)'); repeated.style.setProperty('--depth', depth); box.append(repeated); return; }
         if (name) seen.add(name);
         if (s.type === 'object' && s.properties) {
             const required = new Set(s.required || []);

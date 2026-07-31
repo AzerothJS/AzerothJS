@@ -62,26 +62,6 @@ export type { SSRNode } from './ssr.ts';
 export type { Resource } from './create-resource.ts';
 export type { Stream, StreamOptions, StreamParseMode } from './create-stream.ts';
 
-// Devtools: the stable, versioned runtime-debugging hook. Consumed by @azerothjs/devtools (and any
-// external agent/extension); zero-cost until a hook is attached.
-export {
-    DEVTOOLS_PROTOCOL_VERSION,
-    setDevtoolsHook,
-    snapshotReactiveGraph,
-    peekNode,
-    pokeNode
-} from './devtools.ts';
-export type {
-    DevtoolsHook,
-    DevtoolsNode,
-    DevtoolsNodeKind,
-    DevtoolsPrimitive,
-    GraphSnapshot,
-    GraphSnapshotNode,
-    GraphEdge,
-    PeekResult
-} from './devtools.ts';
-
 // Core reactive type contracts.
 export type {
     CleanupFn,

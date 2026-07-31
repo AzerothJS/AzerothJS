@@ -1,40 +1,37 @@
 // @vitest-environment node
 //
-// QUERY (RFC 10008) in a typed contract: `input` is the query body, validated exactly as a
+// QUERY (RFC 10008) as a declared route: `input` is the query body, validated exactly as a
 // POST body. The client sends method QUERY with that body; the server reads and validates it,
 // enforces the Content-Type, and validates the output - all two-sided through fetch: app.handle.
-
 import { describe, it, expect } from 'vitest';
-import { App } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient } from '@azerothjs/http/api';
+import { App } from '../../src/app.ts';
+import { feature, manifestOf } from '../../src/api/feature.ts';
+import { register } from '../../src/api/register.ts';
+import { createClient } from '../../src/api/client.ts';
 import { object, string, number, array } from '@azerothjs/schema';
 
-const contract = defineContract({
-    products: {
-        search: route({
-            method: 'QUERY',
-            path: '/products/search',
-            input: object({ term: string(), tags: array(string()) }),
-            output: object({ ids: array(number()) })
-        })
-    }
-});
+const products = feature('/products', (routes) => ({
+    search: routes.query('/search', {
+        input: object({ term: string(), tags: array(string()) }),
+        output: object({ ids: array(number()) })
+    }, ({ input }) => ({ ids: input.term === 'sword' ? [1, 2] : [] }))
+}));
+
+const api = { products };
 
 function server(): App
 {
     const app = new App();
-    mountApi(app, contract, { handlers: {
-        'products.search': ({ input }) => ({ ids: input.term === 'sword' ? [1, 2] : [] })
-    } });
+    register(app, api);
     return app;
 }
 
-describe('QUERY in a typed contract', () =>
+describe('QUERY as a declared route', () =>
 {
     it('round-trips a QUERY through the inferred client and server', async () =>
     {
         const app = server();
-        const client = createClient(contract, { baseUrl: '/api', fetch: (request) => app.handle(request) });
+        const client = createClient<typeof api>(manifestOf(api), { baseUrl: '/api', fetch: (request) => app.handle(request) });
 
         const result = await client.products.search({ input: { term: 'sword', tags: ['weapon'] } });
         expect(result).toEqual({ ids: [1, 2] });
@@ -65,22 +62,5 @@ describe('QUERY in a typed contract', () =>
             duplex: 'half'
         } as RequestInit));
         expect(response.status).toBe(415);
-    });
-
-    it('pre-validates the query body on the client, before any request', async () =>
-    {
-        const app = server();
-        let hit = false;
-        const client = createClient(contract, {
-            baseUrl: '/api',
-            fetch: (request) =>
-            {
-                hit = true;
-                return app.handle(request);
-            }
-        });
-        // @ts-expect-error - tags must be a string array.
-        await expect(client.products.search({ input: { term: 'sword', tags: 'weapon' } })).rejects.toThrow();
-        expect(hit).toBe(false); // rejected locally; nothing crossed the wire
     });
 });

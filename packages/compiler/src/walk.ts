@@ -44,6 +44,11 @@ export interface ReactiveHooks
     rowFieldRead?(node: ts.PropertyAccessExpression): void;
     /** An assignment / `++` / `--` whose target is a ROW field (`rowName.field`). Always writable. */
     rowFieldWrite?(target: ts.PropertyAccessExpression, expression: ts.Node): void;
+    /**
+     * An unshadowed read of a `<For>` row-item getter param: a bare `item`, or the `item` of a member
+     * access not claimed by {@link rowFieldRead}. The rewrite appends the getter call.
+     */
+    rowItemRead?(node: ts.Identifier): void;
 }
 
 /** True for an `=`/`+=`/`&&=`/... assignment operator. */
@@ -137,6 +142,11 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
      *  as a shadowing local - the field access below it still resolves. */
     const rowFieldOf = (objName: string, fieldName: string): boolean =>
         !isShadowed(objName) && (sources.rowForms?.get(objName)?.has(fieldName) ?? false);
+
+    /** True when `name` is an unshadowed `<For>` row-item getter param. Same non-shadowing rule (and
+     *  the same trade) as {@link rowFieldOf}: the arrow's own param must not suppress the rewrite. */
+    const rowItemOf = (name: string): boolean =>
+        !isShadowed(name) && (sources.rowItems?.has(name) ?? false);
 
     /** Resolves a name innermost-first: a scoped marker source (with writability), a shadowing local, or
      *  finally the component's flat sources. Returns null when the name is not reactive here. */
@@ -248,6 +258,13 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             hooks.read?.(id);
             return;
         }
+        // A bare read of a row-item getter param (`{ item }` hole, `remove(item)`) - the rewrite
+        // appends the call so the CURRENT item flows, not the one the row was built from.
+        if (rowItemOf(name))
+        {
+            hooks.rowItemRead?.(id);
+            return;
+        }
         // A destructured-prop alias (`component Name({ a }: P)`) reads like `props.a` - a props dependency
         // for the collector, and a bare-identifier the rewrite replaces with the aliased expression.
         if (sources.propAliases?.has(name) && !isShadowed(name))
@@ -343,12 +360,19 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
                 hooks.formFieldRead?.(n);
                 return;
             }
-            // An array-form ROW FIELD read (`rowName.field`) - rewritten to `rowName.form.values().field`.
-            // `rowName.key` / `rowName.form` / FormApi access (`rowName.form.errors()`) are not fields and
-            // fall through unchanged.
+            // An array-form ROW FIELD read (`rowName.field`) - rewritten to `rowName.form.values().field`
+            // (through the getter call when the row var is also a rowItem). `rowName.key` / `rowName.form`
+            // / FormApi access (`rowName.form.errors()`) are not fields and fall to the rowItem check.
             if (ts.isIdentifier(object) && rowFieldOf(object.text, n.name.text))
             {
                 hooks.rowFieldRead?.(n);
+                return;
+            }
+            // Any other member access through a row-item getter param (`item.name`) - the rewrite
+            // appends the call: `item().name`.
+            if (ts.isIdentifier(object) && rowItemOf(object.text))
+            {
+                hooks.rowItemRead?.(object);
                 return;
             }
             visit(object);

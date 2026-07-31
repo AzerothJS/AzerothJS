@@ -22,6 +22,7 @@
  * error, and constructing a bare `new HttpError(500, ...)` follows it.
  */
 
+import type { Issue } from '@azerothjs/schema';
 import { PayloadResponse } from './payload.ts';
 
 /**
@@ -152,7 +153,7 @@ export class ValidationError extends HttpError
     constructor(
         fieldErrors: Record<string, string>,
         message = 'Validation failed',
-        issues?: ReadonlyArray<{ path: string; code: string; message: string }>
+        issues?: ReadonlyArray<Issue>
     )
     {
         super(422, message, {
@@ -199,11 +200,21 @@ function defaultCode(status: number): string
 
 const ENCODER = new TextEncoder();
 
+/**
+ * @internal The wire envelope, spelled in ONE place. Every path that emits it - the default
+ * serialization below, the unserializable-details fallback, and the pre-encoded 404 - builds
+ * through this function, so the shape cannot drift between the hot literal and the real path.
+ */
+function envelope(code: string, message: string): { error: { code: string; message: string; details?: unknown; stack?: string | undefined } }
+{
+    return { error: { code, message } };
+}
+
 // The router-miss 404 is the most-hammered error on any public server (scanners, favicons,
 // stale links, health probes). Its body never varies, so it is encoded ONCE and each response
 // is a cheap shell over the shared bytes - no per-request Error, stack capture, or JSON
 // serialization on a path a bot can flood.
-const NOT_FOUND_BODY = ENCODER.encode(JSON.stringify({ error: { code: 'not-found', message: 'Not found' } }));
+const NOT_FOUND_BODY = ENCODER.encode(JSON.stringify(envelope('not-found', 'Not found')));
 const NOT_FOUND_HEADERS: Record<string, string> = {
     'content-type': 'application/json; charset=utf-8',
     'content-length': String(NOT_FOUND_BODY.byteLength)
@@ -285,9 +296,7 @@ function encodeError(body: unknown, status: number, headers: Record<string, stri
     catch
     {
         const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
-        bytes = ENCODER.encode(JSON.stringify({
-            error: { code: typeof code === 'string' ? code : 'internal', message: 'Internal server error' }
-        }));
+        bytes = ENCODER.encode(JSON.stringify(envelope(typeof code === 'string' ? code : 'internal', 'Internal server error')));
     }
 
     // The framing headers are asserted LAST, after the error's own: a `content-length` among
@@ -379,14 +388,7 @@ export function errorResponse(
         }
     }
 
-    const body: { error: { code: string; message: string; details?: unknown; stack?: string | undefined } } =
-    {
-        error:
-        {
-            code: mapped.code,
-            message: exposeMessage ? mapped.message : 'Internal server error'
-        }
-    };
+    const body = envelope(mapped.code, exposeMessage ? mapped.message : 'Internal server error');
     // `details` follows the MESSAGE rule, not its own: a 4xx is the app telling the client what
     // to fix (a validation field map), while a 5xx is an internal failure whose diagnostics
     // routinely carry a DSN, a query, or an internal hostname. Publishing those on a 500 while

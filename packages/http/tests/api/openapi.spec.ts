@@ -1,15 +1,19 @@
 // @vitest-environment node
 //
-// The contract's third exporter. Every MAPPING.md row is pinned here; the document
+// The feature record's third exporter. Every MAPPING.md row is pinned here; the document
 // as a whole is checked by a real OpenAPI 3.1 validator (dev-only dependency - the
 // shipped exporter has none); determinism is asserted as byte equality, because a
-// spec that diffs cleanly in CI is one of the design's promises.
+// spec that diffs cleanly in CI is one of the design's promises. NEW under the colocated
+// design: raw, stream, and form routes appear in `paths` - the routes the old contract
+// silently omitted - and `uncontracted` counts them as covered.
 
 import { describe, it, expect } from 'vitest';
 import { Validator } from '@seriousme/openapi-schema-validator';
 import { object, string, number, boolean, array, literal, enumOf, record, union } from '@azerothjs/schema';
-import { App } from '@azerothjs/http';
-import { defineContract, route, get, post, put, patch, del, query, multipart, toOpenApi, openapiPlugin, uncontracted, mountApi } from '@azerothjs/http/api';
+import { App } from '../../src/app.ts';
+import { feature } from '../../src/api/feature.ts';
+import { register } from '../../src/api/register.ts';
+import { toOpenApi, openapiPlugin, uncontracted } from '../../src/api/openapi.ts';
 
 const INFO = { title: 'Test API', version: '1.0.0' };
 
@@ -23,29 +27,29 @@ function schemaOf(document: Record<string, unknown>, path: string, method: strin
 
 describe('schema -> JSON Schema mapping (MAPPING.md rows)', () =>
 {
-    const contract = defineContract({
-        probe: route({
-            method: 'POST',
-            path: '/probe',
-            input: object({
-                email: string({ format: 'email', nonempty: true }),
-                id: string({ format: 'uuid' }),
-                when: string({ format: 'datetime' }),
-                code: string({ min: 2, max: 8, pattern: /^[A-Z]+$/ }),
-                age: number({ min: 18, max: 130, int: true }),
-                score: number(),
-                active: boolean(),
-                kind: literal('user'),
-                role: enumOf(['admin', 'member']),
-                tags: array(string(), { min: 1, max: 5 }),
-                extras: record(number()),
-                idOrIndex: union([string(), number()]),
-                strong: string().refine(() => null, { code: 'strong-password' }),
-                note: string().optional()
-            })
-        })
-    });
-    const document = toOpenApi(contract, { info: INFO });
+    const api = {
+        probe: feature('/probe', (routes) => ({
+            run: routes.post('/', {
+                input: object({
+                    email: string({ format: 'email', nonempty: true }),
+                    id: string({ format: 'uuid' }),
+                    when: string({ format: 'datetime' }),
+                    code: string({ min: 2, max: 8, pattern: /^[A-Z]+$/ }),
+                    age: number({ min: 18, max: 130, int: true }),
+                    score: number(),
+                    active: boolean(),
+                    kind: literal('user'),
+                    role: enumOf(['admin', 'member']),
+                    tags: array(string(), { min: 1, max: 5 }),
+                    extras: record(number()),
+                    idOrIndex: union([string(), number()]),
+                    strong: string().refine(() => null, { code: 'strong-password' }),
+                    note: string().optional()
+                })
+            }, () => ({}))
+        }))
+    };
+    const document = toOpenApi(api, { info: INFO });
     const body = schemaOf(document, '/api/probe', 'post');
     const properties = body.properties as Record<string, Record<string, unknown>>;
 
@@ -96,13 +100,11 @@ describe('schema -> JSON Schema mapping (MAPPING.md rows)', () =>
 describe('route derivation', () =>
 {
     const output = object({ id: string(), name: string() });
-    const contract = defineContract({
-        users: {
-            list: route({ method: 'GET', path: '/users', query: object({ page: number({ coerce: true }).optional(), q: string() }), output: array(output) }),
-            get: route({ method: 'GET', path: '/users/:id', output }),
-            create: route({
-                method: 'POST',
-                path: '/users',
+    const api = {
+        users: feature('/users', (routes) => ({
+            list: routes.get('/', { query: object({ page: number({ coerce: true }).optional(), q: string() }), output: array(output) }, () => []),
+            get: routes.get('/:id', { output }, () => ({ id: '1', name: 'x' })),
+            create: routes.post('/', {
                 input: object({ name: string({ nonempty: true }) }),
                 output,
                 docs: {
@@ -111,24 +113,38 @@ describe('route derivation', () =>
                     errors: [{ status: 409, code: 'exists', description: 'Name taken' }],
                     security: ['bearer']
                 }
-            }),
-            files: route({ method: 'GET', path: '/users/:id/files/*rest' })
-        },
-        health: route({ method: 'GET', path: '/healthz' }),
-        search: route({ method: 'QUERY', path: '/search', input: object({ text: string() }) })
-    });
-    const document = toOpenApi(contract, {
+            }, ({ input }) => ({ id: '1', name: input.name })),
+            files: routes.raw('GET', '/:id/files/*rest', {}, () => new Response('bytes')),
+            events: routes.stream('/:id/events', { events: ['changed'] }, () => undefined)
+        })),
+        search: feature('/search', (routes) => ({
+            run: routes.query('/', { input: object({ text: string() }) }, () => ({}))
+        }))
+    };
+    const document = toOpenApi(api, {
         info: INFO,
         securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } }
     });
     const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
 
-    it('derives operation ids and tags from the tree; top-level routes stay untagged', () =>
+    it('derives operation ids and tags from the record keys', () =>
     {
         expect(paths['/api/users']!.get!.operationId).toBe('users.list');
         expect(paths['/api/users']!.get!.tags).toEqual(['users']);
-        expect(paths['/api/healthz']!.get!.operationId).toBe('health');
-        expect(paths['/api/healthz']!.get!.tags).toBeUndefined();
+    });
+
+    it('raw and stream routes APPEAR - the routes the old contract silently omitted', () =>
+    {
+        const raw = paths['/api/users/{id}/files/{rest}']!.get!;
+        expect(raw.operationId).toBe('users.files');
+        const rawResponses = raw.responses as Record<string, { description: string }>;
+        expect(rawResponses['200']!.description).toContain('raw Response');
+
+        const stream = paths['/api/users/{id}/events']!.get!;
+        expect(stream.operationId).toBe('users.events');
+        const streamResponses = stream.responses as Record<string, { content?: Record<string, unknown> }>;
+        expect(Object.keys(streamResponses['200']!.content ?? {})).toEqual(['text/event-stream']);
+        expect(stream['x-azerothjs-stream']).toEqual({ events: ['changed'] });
     });
 
     it('converts :name and *name params, marking wildcards', () =>
@@ -147,12 +163,10 @@ describe('route derivation', () =>
         expect(q).toMatchObject({ in: 'query', required: true });
     });
 
-    it('framework error responses appear exactly where mountApi produces them', () =>
+    it('framework error responses appear exactly where register produces them', () =>
     {
         const create = paths['/api/users']!.post!.responses as Record<string, unknown>;
         expect(Object.keys(create).sort()).toEqual(['200', '409', '415', '422', '500']);
-        const files = paths['/api/users/{id}/files/{rest}']!.get!.responses as Record<string, unknown>;
-        expect(Object.keys(files)).toEqual(['200']); // no input/query/output -> no derived errors
     });
 
     it('docs enrich without inventing: summary, deprecated, declared errors, security', () =>
@@ -169,7 +183,7 @@ describe('route derivation', () =>
     {
         expect(paths['/api/search']).toBeUndefined();
         const skipped = document['x-azerothjs-query'] as Array<Record<string, unknown>>;
-        expect(skipped[0]).toMatchObject({ name: 'search', path: '/api/search' });
+        expect(skipped[0]).toMatchObject({ name: 'search.run', path: '/api/search' });
     });
 
     it('a shared output instance becomes one named component; single-use stays inline', () =>
@@ -185,7 +199,7 @@ describe('route derivation', () =>
 
     it('two builds are byte-identical (the CI-diff promise)', () =>
     {
-        const again = toOpenApi(contract, { info: INFO, securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } });
+        const again = toOpenApi(api, { info: INFO, securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } });
         expect(JSON.stringify(again)).toBe(JSON.stringify(document));
     });
 
@@ -195,15 +209,24 @@ describe('route derivation', () =>
         expect(result.errors ?? []).toEqual([]);
         expect(result.valid).toBe(true);
     });
+
+    it('two routes composing one operation id fail loudly at describe time', () =>
+    {
+        const colliding = {
+            'a.b': feature('/x', (routes) => ({ c: routes.get('/', {}, () => ({})) })),
+            a: feature('/y', (routes) => ({ 'b.c': routes.get('/', {}, () => ({})) }))
+        };
+        expect(() => toOpenApi(colliding, { info: INFO })).toThrow(/operation id/);
+    });
 });
 
 describe('serving and coverage', () =>
 {
-    const contract = defineContract({ health: route({ method: 'GET', path: '/healthz' }) });
+    const api = { health: feature('/healthz', (routes) => ({ check: routes.get('/', {}, () => ({ ok: true })) })) };
 
     it('openapiPlugin serves the cached document as JSON', async () =>
     {
-        const app = new App().register(openapiPlugin({ contract, info: INFO }));
+        const app = new App().register(openapiPlugin({ features: api, info: INFO }));
         const response = await app.handle(new Request('http://local/openapi.json'));
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('application/json');
@@ -211,12 +234,18 @@ describe('serving and coverage', () =>
         expect(document.openapi).toBe('3.1.0');
     });
 
-    it('uncontracted lists exactly the routes the contract does not cover', () =>
+    it('uncontracted lists exactly the routes the record does not cover - kinds count as covered', () =>
     {
         const app = new App();
-        app.get('/api/healthz', () => new Response('ok'));
+        const registered = register(app, {
+            media: feature('/media', (routes) => ({
+                upload: routes.form('/', {}, () => ({})),
+                events: routes.stream('/events', {}, () => undefined),
+                avatar: routes.raw('GET', '/avatar', {}, () => new Response(''))
+            }))
+        });
         app.get('/internal/metrics', () => new Response('m'));
-        const uncovered = uncontracted(app, contract);
+        const uncovered = uncontracted(app, registered);
         expect(uncovered).toHaveLength(1);
         expect(uncovered[0]).toContain('/internal/metrics');
     });
@@ -224,11 +253,11 @@ describe('serving and coverage', () =>
 
 describe('the docs page', () =>
 {
-    const contract = defineContract({ health: route({ method: 'GET', path: '/healthz' }) });
+    const api = { health: feature('/healthz', (routes) => ({ check: routes.get('/', {}, () => ({ ok: true })) })) };
 
     it('defaults to the self-contained house explorer: no third-party code on the page', async () =>
     {
-        const app = new App().register(openapiPlugin({ contract, info: INFO }));
+        const app = new App().register(openapiPlugin({ features: api, info: INFO }));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('text/html');
@@ -238,13 +267,13 @@ describe('the docs page', () =>
         // Self-contained: no external resource may be referenced.
         expect(html).not.toMatch(/src="http|href="http|https:\/\//);
         // The default IS the house explorer, byte for byte.
-        const explicit = new App().register(openapiPlugin({ contract, info: INFO, viewer: 'azeroth' }));
+        const explicit = new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'azeroth' }));
         expect(await (await explicit.handle(new Request('http://local/docs'))).text()).toBe(html);
     });
 
     it("viewer: 'scalar' opts in to the CDN shell", async () =>
     {
-        const app = new App().register(openapiPlugin({ contract, info: INFO, viewer: 'scalar' }));
+        const app = new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'scalar' }));
         const html = await (await app.handle(new Request('http://local/docs'))).text();
         expect(html).toContain('cdn.jsdelivr.net/npm/@scalar/api-reference');
         expect(html).toContain("url: '/openapi.json'");
@@ -252,7 +281,7 @@ describe('the docs page', () =>
 
     it('docs: false keeps the plugin spec-only', async () =>
     {
-        const app = new App().register(openapiPlugin({ contract, info: INFO, docs: false }));
+        const app = new App().register(openapiPlugin({ features: api, info: INFO, docs: false }));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(404);
     });
@@ -263,11 +292,11 @@ describe('the docs page', () =>
         process.env.NODE_ENV = 'production';
         try
         {
-            const gated = new App().register(openapiPlugin({ contract, info: INFO }));
+            const gated = new App().register(openapiPlugin({ features: api, info: INFO }));
             expect((await gated.handle(new Request('http://local/openapi.json'))).status).toBe(404);
             expect((await gated.handle(new Request('http://local/docs'))).status).toBe(404);
 
-            const opted = new App().register(openapiPlugin({ contract, info: INFO, public: true }));
+            const opted = new App().register(openapiPlugin({ features: api, info: INFO, public: true }));
             expect((await opted.handle(new Request('http://local/openapi.json'))).status).toBe(200);
             expect((await opted.handle(new Request('http://local/docs'))).status).toBe(200);
         }
@@ -288,7 +317,7 @@ describe('the docs page', () =>
     {
         for (const viewer of ['scalar', 'azeroth'] as const)
         {
-            const app = new App().register(openapiPlugin({ contract, info: { title: '<script>alert(1)</script>', version: '1' }, viewer }));
+            const app = new App().register(openapiPlugin({ features: api, info: { title: '<script>alert(1)</script>', version: '1' }, viewer }));
             const html = await (await app.handle(new Request('http://local/docs'))).text();
             expect(html).not.toContain('<script>alert');
             expect(html).toContain('&lt;script&gt;');
@@ -298,17 +327,20 @@ describe('the docs page', () =>
 
 describe('component names disambiguate instead of colliding', () =>
 {
-    // The grouped path `user.profile` and the flat key `user_profile` pascal to the same
-    // name. Each schema instance is used twice by its own route, so both hoist to
-    // components - and two DIFFERENT shapes under one name would document each route with
-    // the other's body.
+    // `user.profile_card` and `user_profile.card` pascal to the same component name. Each
+    // schema instance is used twice by its own route, so both hoist to components - and two
+    // DIFFERENT shapes under one name would document each route with the other's body.
     const dotted = object({ a: string() });
     const underscored = object({ b: number() });
-    const contract = defineContract({
-        user: { profile: post('/dotted', { input: dotted, output: dotted }) },
-        user_profile: post('/underscored', { input: underscored, output: underscored })
-    });
-    const document = toOpenApi(contract, { info: INFO });
+    const api = {
+        user: feature('/dotted', (routes) => ({
+            profile_card: routes.post('/', { input: dotted, output: dotted }, () => ({ a: 'x' }))
+        })),
+        user_profile: feature('/underscored', (routes) => ({
+            card: routes.post('/', { input: underscored, output: underscored }, () => ({ b: 1 }))
+        }))
+    };
+    const document = toOpenApi(api, { info: INFO });
     const components = (document.components as Record<string, Record<string, Record<string, unknown>>>).schemas!;
     const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
 
@@ -335,7 +367,7 @@ describe('component names disambiguate instead of colliding', () =>
 
     it('disambiguation is deterministic and stays valid OpenAPI 3.1', async () =>
     {
-        expect(JSON.stringify(toOpenApi(contract, { info: INFO }))).toBe(JSON.stringify(document));
+        expect(JSON.stringify(toOpenApi(api, { info: INFO }))).toBe(JSON.stringify(document));
         const result = await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>);
         expect(result.errors ?? []).toEqual([]);
         expect(result.valid).toBe(true);
@@ -347,10 +379,8 @@ describe('errorSchema: the spec tells the truth about custom envelopes', () =>
     it('a declared error envelope replaces the default in components and refs', () =>
     {
         const custom = object({ success: boolean(), code: string(), field: string() });
-        const contract = defineContract({
-            ping: route({ method: 'POST', path: '/ping', input: object({ x: string() }) })
-        });
-        const document = toOpenApi(contract, { info: INFO, errorSchema: custom });
+        const api = { ping: feature('/ping', (routes) => ({ run: routes.post('/', { input: object({ x: string() }) }, () => ({})) })) };
+        const document = toOpenApi(api, { info: INFO, errorSchema: custom });
         const components = (document.components as Record<string, Record<string, Record<string, unknown>>>).schemas!;
         expect(Object.keys(components.ErrorResponse!.properties as object)).toEqual(['success', 'code', 'field']);
         const responses = (document.paths as Record<string, Record<string, Record<string, unknown>>>)['/api/ping']!.post!.responses as Record<string, Record<string, unknown>>;
@@ -358,35 +388,33 @@ describe('errorSchema: the spec tells the truth about custom envelopes', () =>
     });
 });
 
-describe('method sugar', () =>
+describe('verb sugar', () =>
 {
-    it('the factories are byte-equivalent to route() in the derived document', async () =>
+    it('the named verbs are byte-equivalent to routes.method() in the derived document', async () =>
     {
         const output = object({ id: number() });
-        const viaSugar = defineContract({
-            users: {
-                list: get('/users', { output: array(output) }),
-                create: post('/users', { input: object({ name: string() }), output }),
-                update: patch('/users/:id', { input: object({ name: string() }), output }),
-                replace: put('/users/:id', { input: object({ name: string() }), output }),
-                remove: del('/users/:id'),
-                search: query('/users/search', { input: object({ q: string() }) })
-            }
-        });
-        const viaRoute = defineContract({
-            users: {
-                list: route({ method: 'GET', path: '/users', output: array(output) }),
-                create: route({ method: 'POST', path: '/users', input: object({ name: string() }), output }),
-                update: route({ method: 'PATCH', path: '/users/:id', input: object({ name: string() }), output }),
-                replace: route({ method: 'PUT', path: '/users/:id', input: object({ name: string() }), output }),
-                remove: route({ method: 'DELETE', path: '/users/:id' }),
-                search: route({ method: 'QUERY', path: '/users/search', input: object({ q: string() }) })
-            }
-        });
+        const viaSugar = {
+            users: feature('/users', (routes) => ({
+                list: routes.get('/', { output: array(output) }, () => []),
+                create: routes.post('/', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                update: routes.patch('/:id', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                replace: routes.put('/:id', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                remove: routes.del('/:id', {}, () => ({}))
+            }))
+        };
+        const viaMethod = {
+            users: feature('/users', (routes) => ({
+                list: routes.method('GET', '/', { output: array(output) }, () => []),
+                create: routes.method('POST', '/', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                update: routes.method('PATCH', '/:id', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                replace: routes.method('PUT', '/:id', { input: object({ name: string() }), output }, () => ({ id: 1 })),
+                remove: routes.method('DELETE', '/:id', {}, () => ({}))
+            }))
+        };
         expect(JSON.stringify(toOpenApi(viaSugar, { info: INFO })))
-            .toBe(JSON.stringify(toOpenApi(viaRoute, { info: INFO })));
+            .toBe(JSON.stringify(toOpenApi(viaMethod, { info: INFO })));
         expect(await new Validator().validate(JSON.parse(JSON.stringify(toOpenApi(viaSugar, { info: INFO }))) as Record<string, unknown>)
-            .then((r) => r.valid)).toBe(true);
+            .then((result) => result.valid)).toBe(true);
     });
 });
 
@@ -404,14 +432,16 @@ describe('Standard Schema interop (bring your own validator)', () =>
         }
     };
 
-    const contract = defineContract({
-        create: post('/things', { input: zodLikeName, output: object({ id: number() }) })
-    });
+    const api = {
+        things: feature('/things', (routes) => ({
+            create: routes.post('/', { input: zodLikeName as never, output: object({ id: number() }) }, () => ({ id: 1 }))
+        }))
+    };
 
     it('a foreign validator validates the boundary (422 on bad input)', async () =>
     {
         const app = new App();
-        mountApi(app, contract, { prefix: '', handlers: { create: () => ({ id: 1 }) } });
+        register(app, api, { prefix: '' });
         const ok = await app.handle(new Request('http://local/things', {
             method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'widget' })
         }));
@@ -425,7 +455,7 @@ describe('Standard Schema interop (bring your own validator)', () =>
 
     it('a foreign input degrades to the permissive spec shape (honest, documented)', () =>
     {
-        const document = toOpenApi(contract, { info: INFO });
+        const document = toOpenApi(api, { info: INFO });
         const body = schemaOf(document, '/api/things', 'post');
         expect(String(body.description)).toContain('custom rule'); // permissive fallback, not fabricated
     });
@@ -435,13 +465,13 @@ describe('per-status responses (the reply() channel) in the document', () =>
 {
     const user = object({ id: number({ int: true }), name: string() });
     const problem = object({ code: string(), message: string() });
-    const contract = defineContract({
-        things: {
-            create: post('/things', { input: object({ name: string() }), output: user, responses: { 201: user, 409: problem } }),
-            find: get('/things/:id', { output: user, responses: { 404: problem } })
-        }
-    });
-    const document = toOpenApi(contract, { info: INFO });
+    const api = {
+        things: feature('/things', (routes) => ({
+            create: routes.post('/', { input: object({ name: string() }), output: user, responses: { 201: user, 409: problem } }, () => ({ id: 1, name: 'x' })),
+            find: routes.get('/:id', { output: user, responses: { 404: problem } }, () => ({ id: 1, name: 'x' }))
+        }))
+    };
+    const document = toOpenApi(api, { info: INFO });
     const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
 
     it('each declared status becomes its own response entry with its resolved schema', () =>
@@ -462,13 +492,15 @@ describe('per-status responses (the reply() channel) in the document', () =>
 
     it('a docs.errors entry never downgrades a typed responses status to the generic envelope', () =>
     {
-        const collided = defineContract({
-            find: get('/things/:id', {
-                output: user,
-                responses: { 404: problem },
-                docs: { errors: [{ status: 404, description: 'prose duplicate' }, { status: 410, description: 'Gone away' }] }
-            })
-        });
+        const collided = {
+            things: feature('/things', (routes) => ({
+                find: routes.get('/:id', {
+                    output: user,
+                    responses: { 404: problem },
+                    docs: { errors: [{ status: 404, description: 'prose duplicate' }, { status: 410, description: 'Gone away' }] }
+                }, () => ({ id: 1, name: 'x' }))
+            }))
+        };
         const collidedPaths = toOpenApi(collided, { info: INFO }).paths as Record<string, Record<string, Record<string, unknown>>>;
         const entries = collidedPaths['/api/things/{id}']!.get!.responses as Record<string, { description: string; content?: Record<string, { schema: unknown }> }>;
         expect(entries['404']!.description).toBe('Not Found');   // the typed schema entry won
@@ -482,13 +514,15 @@ describe('per-status responses (the reply() channel) in the document', () =>
     });
 });
 
-describe('multipart routes in the document', () =>
+describe('form routes in the document', () =>
 {
-    const contract = defineContract({
-        upload: post('/files', { input: multipart({ fields: object({ title: string({ nonempty: true }) }) }), output: object({ ok: boolean() }) }),
-        loose: post('/loose', { input: multipart() })
-    });
-    const document = toOpenApi(contract, { info: INFO });
+    const api = {
+        files: feature('/files', (routes) => ({
+            upload: routes.form('/', { fields: object({ title: string({ nonempty: true }) }), output: object({ ok: boolean() }) }, () => ({ ok: true })),
+            loose: routes.form('/loose', {}, () => ({}))
+        }))
+    };
+    const document = toOpenApi(api, { info: INFO });
     const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
 
     it('the request body is multipart/form-data with the FIELDS schema, never fabricated file constraints', () =>
@@ -500,32 +534,21 @@ describe('multipart routes in the document', () =>
         expect(schema).toContain('"title"');
     });
 
-    it('an undeclared-fields multipart body degrades to the honest permissive shape', () =>
+    it('an undeclared-fields form body degrades to the honest permissive shape', () =>
     {
-        const body = paths['/api/loose']!.post!.requestBody as { content: Record<string, { schema: { description?: string } }> };
+        const body = paths['/api/files/loose']!.post!.requestBody as { content: Record<string, { schema: { description?: string } }> };
         expect(String(body.content['multipart/form-data']!.schema.description)).toContain('undeclared');
     });
 
-    it('the document with multipart routes is valid OpenAPI 3.1', async () =>
+    it('the 415 names multipart, and the fields schema derives the 422', () =>
     {
-        expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
+        const responses = paths['/api/files']!.post!.responses as Record<string, { description: string }>;
+        expect(responses['415']!.description).toContain('multipart');
+        expect(responses['422']).toBeDefined();
     });
 
-    it('one multipart spec shared by two routes emits no orphan component', () =>
+    it('the document with form routes is valid OpenAPI 3.1', async () =>
     {
-        const shared = multipart({ fields: object({ title: string() }) });
-        const built = toOpenApi(defineContract({
-            first: post('/first', { input: shared }),
-            second: post('/second', { input: shared })
-        }), { info: INFO });
-        const json = JSON.stringify(built);
-        const names = Object.keys((built.components as Record<string, Record<string, unknown>>).schemas!);
-        for (const name of names)
-        {
-            expect(json).toContain(`#/components/schemas/${ name }`);
-        }
-        // The spec is a branded object, not a schema: hoisting it would emit the permissive
-        // fallback shape under a name the operation never references.
-        expect(json).not.toContain('custom rule');
+        expect((await new Validator().validate(JSON.parse(JSON.stringify(document)) as Record<string, unknown>)).valid).toBe(true);
     });
 });

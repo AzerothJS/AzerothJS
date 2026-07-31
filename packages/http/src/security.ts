@@ -17,8 +17,7 @@
  * boundary `clientIp` is built on.
  */
 
-import type { HandlerWrapper } from './edge.ts';
-import { withResponseHeaders } from './edge.ts';
+import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 
 export interface HstsOptions
 {
@@ -149,13 +148,13 @@ function hstsValue(hsts: HstsOptions): string
  * opt-in ones (HSTS, Permissions-Policy, CSP). HSTS is emitted only over a proven-secure
  * connection: TLS on the URL, or a forwarded-proto claim under `trustProxy`.
  */
-export function securityHeaders(options: SecurityHeadersOptions = {}): HandlerWrapper
+export function securityHeaders(options: SecurityHeadersOptions = {}): EdgeMiddleware
 {
     const { forced, defaults } = staticHeaders(options);
     const hsts = options.hsts;
     const trustProxy = options.trustProxy === true;
 
-    return (next) => ({
+    return edge((next) => ({
         async handle(request: Request): Promise<Response>
         {
             const response = await next.handle(request);
@@ -174,5 +173,5 @@ export function securityHeaders(options: SecurityHeadersOptions = {}): HandlerWr
             }
             return withResponseHeaders(response, headers);
         }
-    });
+    }));
 }

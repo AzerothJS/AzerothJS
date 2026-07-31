@@ -87,86 +87,53 @@ export function html(body: string, init: ResponseInit = {}): Response
  * A redirect. Defaults to 303 (See Other) rather than 302: after a POST, 303 is the one
  * status every client agrees turns the follow-up into a GET - the post/redirect/get idiom
  * working as intended. Pass 301/302/307/308 explicitly when semantics differ.
+ *
+ * `init` exists because a redirect routinely carries a cookie: sign-out is "expire the session
+ * AND redirect", and a logout that redirects without clearing the cookie leaves the user signed
+ * in. Built through the kernel's response so every `Set-Cookie` survives - header iteration
+ * collapses duplicates, and only `getSetCookie()` preserves a session and a CSRF cookie together.
+ *
+ * @param location - The `Location` header value.
+ * @param status - The redirect status; 303 by default.
+ * @param init - Extra headers, most often `Set-Cookie`.
+ * @returns A bodyless redirect response.
+ * @example
+ * app.post('/sign-out', () => redirect('/login', 303, {
+ *     headers: { 'set-cookie': expireCookie('session') }
+ * }));
  */
-export function redirect(location: string, status: 301 | 302 | 303 | 307 | 308 = 303): Response
+export function redirect(location: string, status: 301 | 302 | 303 | 307 | 308 = 303, init: ResponseInit = {}): Response
 {
-    return new Response(null, { status, headers: { location } });
+    const headers = new Headers(init.headers);
+    headers.set('location', location);
+    // 3xx is not in payloadResponse's bodyless set, so pass an empty body and let it declare a
+    // zero length - the shape a redirect has always had on the wire.
+    return payloadResponse('', 'text/plain; charset=utf-8', { ...init, status, headers });
 }
 
-/** 204: success with nothing to say (the correct DELETE response). */
+/**
+ * 204: success with nothing to say (the correct DELETE response).
+ *
+ * Built through the kernel's response like every other constructor, so it takes the adapter's
+ * writeHead+end fast path and can carry a `Set-Cookie`. `payloadResponse` drops the body,
+ * `Content-Length` and `Content-Type` for a 204 per RFC 9112 section 6.2 - declaring a length
+ * with no body on a keep-alive connection is the shape a framing desync is built from.
+ *
+ * @param init - Extra headers.
+ * @returns A 204 with no body.
+ */
 export function noContent(init: ResponseInit = {}): Response
 {
-    return new Response(null, { ...init, status: 204 });
+    return payloadResponse('', 'text/plain; charset=utf-8', { ...init, status: 204 });
 }
 
 /** 201 with a Location header; `data` (when given) is the created representation as JSON. */
 export function created(location: string, data?: unknown): Response
 {
-    if (data === undefined)
-    {
-        return new Response(null, { status: 201, headers: { location } });
-    }
-    return json(data, { status: 201, headers: { location } });
-}
-
-/** Options for {@link queryResult}. */
-export interface QueryResultOptions extends ResponseInit
-{
-    /**
-     * Content-Location: a URL where the SAME results can be fetched with a plain GET. Give this
-     * when the query has a stable GET-able representation, so a client can bookmark or share it.
-     */
-    contentLocation?: string;
-
-    /**
-     * Location: a URL identifying the QUERY itself, for replaying it without resending the body.
-     */
-    location?: string;
-
-    /**
-     * Cache-Control for the results. QUERY is safe and idempotent, so responses MAY be cached;
-     * this stays UNSET by default because results are often per-user - opt in deliberately
-     * (e.g. `private, max-age=30`) once you know the results are cacheable.
-     */
-    cacheControl?: string;
-}
-
-/**
- * A JSON response for a QUERY handler (RFC 10008). Same body encoding as {@link json}, plus the
- * QUERY-specific headers: `Content-Location` (a GET-able results resource), `Location` (the
- * replayable query), and an opt-in `Cache-Control`. Use it so a QUERY endpoint advertises the
- * result semantics the method promises instead of hand-assembling headers.
- * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
- * proxies, caches, and tooling may not recognize it. The surface is stable within the
- * 1.x train but carries an experimental flag until the RFC is.
- */
-export function queryResult(data: unknown, options: QueryResultOptions = {}): Response
-{
-    const { contentLocation, location, cacheControl, headers, ...init } = options;
-    const merged = new Headers(headers);
-    if (contentLocation !== undefined)
-    {
-        merged.set('content-location', contentLocation);
-    }
-    if (location !== undefined)
-    {
-        merged.set('location', location);
-    }
-    if (cacheControl !== undefined)
-    {
-        merged.set('cache-control', cacheControl);
-    }
-    return json(data, { ...init, headers: merged });
-}
-
-/**
- * The value for an `Accept-Query` response header - the query media types an endpoint accepts
- * (RFC 10008). Set it on OPTIONS or a 415 so a client discovers how to phrase its QUERY body.
- * @experimental The QUERY method (RFC 10008) is not yet deployed internet reality -
- * proxies, caches, and tooling may not recognize it. The surface is stable within the
- * 1.x train but carries an experimental flag until the RFC is.
- */
-export function acceptQuery(mediaTypes: string[]): Record<string, string>
-{
-    return { 'accept-query': mediaTypes.join(', ') };
+    // Both arms go through the kernel's response: the bodyless one used to be a plain `Response`,
+    // which meant a 201 with no representation lost the adapter fast path and could not carry a
+    // `Set-Cookie` - the same defect `redirect` and `noContent` had.
+    return data === undefined
+        ? payloadResponse('', 'text/plain; charset=utf-8', { status: 201, headers: { location } })
+        : json(data, { status: 201, headers: { location } });
 }

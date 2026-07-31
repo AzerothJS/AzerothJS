@@ -16,7 +16,7 @@ import {
     appendToCo,
     clearCo,
     adoptCoRange
-} from 'azerothjs';
+} from '../../src/component/index.ts';
 import { HydrationCursor } from 'azerothjs/internal';
 import { setDestroyHooks } from '../../src/component/destroy-hooks.ts';
 

@@ -195,6 +195,15 @@ describe('conflict detection fails registration loudly', () =>
         expect(() => build([['GET', '/x/*']])).toThrow(/needs a name/);
     });
 
+    it('rejects a segment declaring two params - it could only ever 404', () =>
+    {
+        // ":base...:head" (compound-segment compare syntax) registers as ONE param whose name is
+        // the whole text, so neither "base" nor "head" ever exists and every request misses.
+        // Found live in a real application, where it sat silently broken.
+        expect(() => build([['GET', '/compare/:base...:head']])).toThrow(/more than one parameter/);
+        expect(() => build([['GET', '/x/:a*b']])).toThrow(/more than one parameter/);
+    });
+
     it('normalized-equal patterns conflict even when spelled differently', () =>
     {
         expect(() => build([['GET', '/a/b'], ['GET', '/a/b/']])).toThrow(/already registered/);

@@ -9,6 +9,285 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed (http) - BREAKING
+
+- **`app.use` now takes edge middleware too, so applying a rate limit no longer costs you your
+  App.** `rateLimit`, `cors`, `securityHeaders` and `requestId` wrap the whole dispatch - they must,
+  because a limiter has to refuse before a route is matched and a preflight has to be answered for
+  paths that have no route. They were therefore un-passable to `use`, and an application wanting one
+  built `pipeline(app, ...)` and passed THAT around instead of its `App`, so anything downstream
+  needing `app.get` had to be wired first. Three independently-built applications hit this; the
+  error names a missing `handle` on `RequestContext`, which does not say "wrong middleware kind".
+
+  The four wrappers are now branded (`edge()`, `isEdge()`), so one verb takes both kinds and the
+  framework did not grow a third. An application's own wrapper opts in with `edge(...)`; an
+  unbranded one is still rejected, because the ambiguity the brand removes would come straight back.
+
+  Composition order matches `pipeline` exactly - first registered is outermost - and a test now
+  pins the two paths against each other, because they disagreed during development and a security
+  header's position must not depend on which API applied it.
+
+### Changed (http) - one concept per job, cross-package - BREAKING
+
+- **ONE logger in the framework.** `@azerothjs/http`'s `createMinimalLogger` redeclared the
+  entire logging contract beside `@azerothjs/logger` - `LogLevel`/`LogRecord`/`LogSink`/`Logger`
+  duplicated with DIFFERENT rank numbers, an error serializer without the real one's
+  cause-chain safety, and a default sink whose NDJSON disagreed with `ndjsonSink` on the key
+  name (`message` vs `msg`) and the time type (ISO vs epoch) - one process using both packages
+  emitted two log dialects. Every template and every application built on the framework already
+  used `createLogger`; the minimal twin's only consumer was its own test. It is gone, with its
+  four types. `logRequests` stays (nothing equivalent exists) and now demands only the
+  structural minimum it writes through (`RequestLogger`: `info` + `error`), which `createLogger`
+  and any five-line adapter satisfy. The kernel itself never logs - it observes.
+
+- **ONE issue shape.** `{ path, code, message }` was declared five times across http and the
+  api layer; `@azerothjs/schema`'s `Issue` is now the single declaration, imported type-only
+  everywhere else. `ValidationIssue` is gone from the http surface - it was `Issue` under a
+  second name. The wire envelope is likewise spelled in one function, so the pre-encoded 404
+  literal and the real serialization path cannot drift.
+
+- **`readValidated` accepts any Standard Schema validator.** The kernel's boundary reader and
+  the api layer's `register` now run the SAME unification (`safeParse` fast path, `~standard`
+  fallback), living in one place. A zod/valibot/arktype schema handed to `readValidated` is a
+  422 with the flat field map, exactly as a native schema is.
+
+### Fixed (http router + api) - found by the migration acceptance
+
+- **A route segment declaring two parameters now fails registration loudly.** `:base...:head`
+  (compound compare syntax) registered as ONE param named the whole text, so neither `base` nor
+  `head` ever existed and every request could only 404 - found sitting silently broken in a real
+  application. The boot error names both ways out (separate segments, or one param parsed in
+  the handler). A single param with a compound VALUE (`/compare/:range` split on `...`) keeps
+  the one-segment URL and actually works.
+
+- **`HandlerContext` carries `path`.** The router-matched path was on the runtime object all
+  along (a handler receives the SAME context a guard does) but the type hid it, forcing a cast
+  the moment a handler passed its context to any `RequestContext`-typed helper.
+
+### Fixed (azerothjs stream) - wire compatibility
+
+- **The SSE parser now reassembles multi-line payloads correctly, and stops eating leading
+  spaces.** A new weld spec pipes the server framer's output through
+  `createStream({ parse: 'sse' })` - both public surfaces, `fetch` swapped for `app.handle` -
+  and its FIRST run caught a real incompatibility: the framer splits a multi-line payload into
+  multiple `data:` lines per the SSE grammar, and the parser joined them back WITHOUT the
+  newline. Per the WHATWG spec (and EventSource), data lines in one event join with a single
+  LF - they do now. The parser also stripped ALL leading whitespace after `data:` where the
+  spec strips at most one space; a token stream whose separators ride as leading spaces was
+  silently reflowed. Payloads now round-trip byte-exact, and the weld spec pins it.
+
+### Changed (http api) - BREAKING
+
+- **The contract trio is ONE concept now: `feature()`.** `defineContract` + `implement` +
+  `mountApi` (plus the guards map, `only()`, `group`, `merge`, `route` and the six standalone
+  verb helpers) are replaced by a single colocated declaration:
+
+  ```ts
+  export const api = {
+      keys: feature('/keys', [requireAuth], (routes) => ({
+          list:   routes.get('/', { output: keyList }, (context) => listKeys(context.accountId)),
+          create: routes.post('/', { input: keyInput, output: keyRecord }, (context) => mint(context)),
+          revoke: routes.del('/:keyId', {}, (context) => revoke(context.params.keyId))
+      }))
+  };
+  register(app, api);
+  ```
+
+  The decision was measured, not aesthetic: building the same product both ways, colocation
+  halved the files and the imported symbols, wrote each route's name once instead of three
+  times, and collapsed seven concepts to three. What each deleted concept turned out to be:
+  `defineContract` was key-assertion then `return shape`; `implement` was a type device that
+  could not express per-route guards; the guards map was the third place a route's name was
+  written and the source of two recorded defects; only `mountApi` did real work, and it
+  survives as `register` - including the schema-failure -> 422 flat-field-map conversion and
+  the ~standard sniffing that keeps zod/valibot/arktype boundaries a 422 rather than a 500.
+
+  Guards move to where they read best: the feature chain covers every route; `routes.with(...)`
+  REPLACES the chain for one declaration (nearest wins - what `only()` did, now visible at the
+  route); `routes.with()` is the deliberate unguarded opt-out. Additions still flow typed into
+  handler contexts, maybe-returning guards still type Partial, and interface-typed additions
+  still survive - the proven inference machinery carried over.
+
+  **Four route kinds are first-class**: `routes.form` (multipart with validated fields and caps),
+  `routes.raw` (webhooks over raw bytes, downloads, `conditional()` 304s), and `routes.stream` (SSE)
+  declare beside the JSON verbs, inherit the feature guard, and appear in the manifest and the
+  OpenAPI document. Under the old contract these four were hand-mounted around the system,
+  re-implemented their own authorization, and were invisible to the spec - the measured build's
+  OpenAPI described 12 of its 16 routes and silently omitted the webhook and the stream.
+
+  **The client is typed from `typeof` plus a manifest, not a runtime contract value.** The old
+  design's justification - "types erase, so the client needs the contract value" - conflated
+  "a type is not enough" with "a type plus two runtime fields per route is not enough".
+  `manifestOf(features)` projects method + path per route (a few hundred bytes, no schemas, no
+  functions) from the same declaration the server registered; `createClient<typeof api>` infers
+  everything else. A browser bundle now imports server TYPES only - a feature holds handlers,
+  and handlers hold your database.
+
+  **Withdrawn, deliberately**: client-side pre-validation. The schemas no longer travel to the
+  browser, so a bad input is caught at the server boundary (same 422, same `ApiError.fields`
+  map into the form's `setError`) instead of before the wire. Input validation lives where
+  input originates: `createForm({ schema })` already validates the form with the same schema -
+  which is where it actually happened in real applications. Nothing fails to compile from this
+  change; the behavior moves one hop. `ClientOptions.validateResponses` is gone with it.
+
+  The old key-space failure (`implement` keying relative while `mountApi` keyed from the root -
+  it compiled and failed at boot, with a diagnostic error explaining the split) is structurally
+  impossible now: one set of names keys the routes object, the manifest, the client surface,
+  and the installed endpoints. The spec that pinned the diagnosis now pins the impossibility.
+
+### Removed - BREAKING
+
+- **Four exports that were one-liners over another export.** Each did nothing its target could not,
+  and each was a second name a reader had to learn, choose between, and hover to tell apart:
+
+  - `toFetchHandler(app)` was `app.handle.bind(app)`. Its whole module is gone.
+  - `acceptQuery(types)` was `{ 'accept-query': types.join(', ') }`.
+  - `queryResult(data, opts)` was `json(data, { headers })` with three optional headers moved from
+    the object literal into named options. QUERY routing itself is untouched - `app.query` and the
+    contract's `query()` still exist; only the response sugar went.
+  - `jsonSink` duplicated `@azerothjs/logger`'s `ndjsonSink` under a different name in a package
+    that ships alongside it. It had no importer anywhere. The function survives as the kernel
+    logger's private default, which is the only thing it was ever used for.
+
+- **`@azerothjs/language-server/language-service` publishes 18 symbols instead of 70.** The entry
+  exported the whole pipeline - `classifyPosition`, `collectMarkupNodes`, `LineIndex`, `StyleIndex`,
+  `BUILTIN_COMPONENT_MAP`, `DOM_EVENTS`, `Metrics`, `containedPath`, `isVirtualFile`,
+  `toAzerothPath`, and some thirty LSP protocol types - alongside the facade that uses them.
+
+  Measured across every file in the repo and the editors that import this subpath, exactly 17 of
+  those 70 were ever imported through it, and only five reach another package: `AzerothProject` and
+  `toVirtualFile` (the ESLint parser), `generateVirtualCode`, `CodeMapping` and `containedSibling`
+  (the TypeScript plugin). What remains is the facade, the options its methods take, the constants
+  an editor echoes in its capabilities, and those five. The stages are how the service is BUILT,
+  not how it is used; one that proves useful outside can be published on that evidence.
+
+- **A dead completion-source plugin API in the language server.** `registerCompletionSource`,
+  `clearCompletionSources` and the `CompletionSource` type were an extension point with no way to
+  reach it: nothing in the repo, the editors, the templates or the docs ever registered a source, so
+  the loop consuming the registry could never have a member. The internal fan-out that walked it went
+  with them.
+
+- **`setMetricsEnabled` and `getMetrics` module aliases**, which re-exported `perf.setEnabled` and
+  `perf.snapshot` under names the language service already had as real methods. Two ways to reach one
+  thing, one of them unreachable in practice; the class methods are unchanged.
+
+- **`@azerothjs/eslint-plugin`'s named `rules` export.** The default export IS the plugin and carries
+  `rules` on it. Every consumer, all three shipped templates included, imports the default.
+
+- **`prettySink` from `@azerothjs/http`.** `@azerothjs/logger` exports a `prettySink` too, and the
+  two were incompatible: that one is a FACTORY returning a sink, this one WAS a sink. Both packages
+  appear in the same server file, so `createMinimalLogger({ sink: prettySink })` was correct with one
+  import and silently installed a factory as the sink with the other.
+
+  The justification for a private copy - that the kernel is zero-dependency - was not true:
+  `@azerothjs/http` already declares `@azerothjs/logger` as a dependency and imports `printBanner`
+  from it. The sink had no consumer beyond its own test, so it is gone rather than renamed. Reach for
+  `@azerothjs/logger` when you want pretty output; `createMinimalLogger` keeps its private default.
+
+- **The co-range placement machinery no longer ships on the `azerothjs` root.** `createCoMarkers`,
+  `appendToCo`, `clearCo`, `adoptCoRange`, `resolveMountNode` and the `CoTarget` type are the
+  comment-marker infrastructure the renderer's control-flow components build on. Their own barrel
+  says outright "framework infrastructure consumed by the renderer, not app-facing API", but the
+  root entry star-exported that barrel, so all six sat in application autocomplete beside
+  `createSignal`. Nothing outside the package imports any of them; the root now names what it
+  takes from the component layer (`destroyComponent`, `ErrorBoundary`). Compiled `.azeroth` output
+  is unaffected - generated code imports from `azerothjs/internal`, which never carried them.
+
+- **`playTransitionClasses` left the renderer barrel.** Its export comment claimed generated
+  `.azeroth` output imports it; the compiler emits no such import - generated modules pull from
+  `azerothjs/internal`, whose export list never had it. Its one caller is the router's route
+  transition, inside the package. `<Transition>`, `<TransitionGroup>` and `Routes` transitions are
+  untouched.
+
+- **`@azerothjs/devtools` publishes `installDevtools`, not the parts it is assembled from.**
+  `createAgent`, `previewValue` and `detectLeakTrend` are how the panel is built; every consumer of
+  the three lives inside the package and imports the defining module directly. The agent's types
+  stay exported, because the surviving surface references them.
+
+### Fixed (http responses)
+
+- **`redirect`, `noContent` and the bodyless arm of `created` can carry a `Set-Cookie`, and take the
+  adapter's fast path.** All three built a plain `Response` instead of going through the kernel's
+  response constructor, with two consequences.
+
+  `redirect` had no `init` parameter at all, so a `Set-Cookie` could not be attached to a redirect
+  in any way. Sign-out is "expire the session cookie AND redirect": a logout that redirects without
+  clearing the cookie leaves the user signed in. `redirect(location, status, init)` now takes
+  headers, and every cookie survives - header iteration collapses duplicate `Set-Cookie`, so a
+  session and a CSRF cookie both reaching the socket depends on the `getSetCookie()` path the kernel
+  response already implements.
+
+  All three also lost the `PayloadResponse` fast path (`writeHead` + `end`, no web-stream), which
+  made the two most common bodyless replies the slowest ones to write. A 204 still declares no
+  `Content-Length` and no body, per RFC 9112 section 6.2.
+
+### Fixed (http contract)
+
+- **`query()` can declare a query-string schema, like every other verb.** Its definition type omitted
+  the `query` field the five other helpers carried, so a QUERY route declared through `query()` could
+  not describe its query string while the identical route declared through `route({ method: 'QUERY' })`
+  could. The six verb helpers were six independent copies of one object literal, which is how the
+  drift went unnoticed; they now delegate to `route()`, so a route object is built in exactly one
+  place. The doc claiming they already did this - "the same relationship `app.route` has to
+  `app.get`" - was aspirational: `App.get` does delegate, these did not.
+
+### Changed (azerothjs dev/prod separation) - BREAKING
+
+- **The devtools bridge moved off the root entry to `azerothjs/internal`.** `setDevtoolsHook`,
+  `snapshotReactiveGraph`, `peekNode`, `pokeNode`, `DEVTOOLS_PROTOCOL_VERSION` and their eight
+  types are framework infrastructure with exactly one consumer (`@azerothjs/devtools`, updated),
+  and `pokeNode` writes arbitrary values into any registered signal - none of it belongs in
+  application autocomplete. Import from `azerothjs/internal` if you are building an agent.
+
+- **One `DEV` gate, honestly documented.** The runtime's dev checks now flow through a single
+  module-level constant (computed once off `globalThis`), replacing three per-call probes - and
+  the comment claiming the check "folds away in a production build" is corrected: a bundler's
+  `define` of `process.env.NODE_ENV` matches the bare token, never a `globalThis` probe, so this
+  is a runtime behavior switch, stated as such.
+
+  Five advisory warnings that previously shipped ungated now run only in dev: the `<For>`
+  duplicate-key warning, the nested-island and no-loader island warnings, the router search-schema
+  degradation warning, and the transition `display: contents` probe - the last one also stops
+  calling `getComputedStyle` on EVERY transition start in production, a per-animation cost that
+  bought nothing outside dev.
+
+  Two sites deliberately stay in production, upgraded to `console.error`: an island that throws
+  while reviving and a route guard that throws (navigation vetoed). Both swallow an exception by
+  design - graceful degradation - and a production incident with zero signal is worse than one
+  log line.
+
+### Changed (azerothjs renderer) - BREAKING
+
+- **`<For>` hands the row builder GETTERS: `children: (item: () => T, index: () => number)`.** Under
+  the by-value form, a row whose key survived while its item was REPLACED - the immutable-update
+  pattern every store produces - kept rendering the values it was built from. The store was right,
+  the screen was wrong, and nothing was logged. Two applications hit this independently, the second
+  AFTER the trap was documented; it was the single highest-frequency defect found building real
+  products on this framework. A dev warning shipped in 1.2; this is the fix. A replaced item now
+  updates its row's live bindings in place - same element, no rebuild - verified in a real browser.
+
+  `.azeroth` markup does not change: a row body still reads `item.name`, and the compiler emits the
+  getter call (`item().name`), the same value-read idiom `state` and `form` fields already follow.
+  The index param joins the same rule. Manual TypeScript callers add the calls: `item.name` becomes
+  `item().name` in row builders; `key` still receives the value. The stale-row dev warning and the
+  per-row item retention that powered it are DELETED - the trap they watched for is structurally
+  impossible now.
+
+  `VirtualList.children` moves in lockstep - and the getter contract fixed a latent bug of its own:
+  a reused row's absolute `top` position was a static string, so an insertion above a visible row
+  left it misplaced until a scroll. The position binding is reactive now.
+
+### Changed (azerothjs SSR) - BREAKING
+
+- **`renderToStaticMarkup` is gone; `renderToString` takes `{ markers }`.** They were the same
+  private function called with `true` and `false`. Two names for one boolean is a choice a reader
+  can get wrong in both directions - marker-laden HTML into an email, or marker-free HTML into a
+  page that then fails to hydrate - and nothing but the name distinguished them at the call site.
+
+  `renderToStaticMarkup(c)` becomes `renderToString(c, { markers: false })`. The capability is
+  unchanged; `renderToDocument`'s `static` option still selects between them.
+
+
 ### Fixed (renderer events)
 
 - **`event.currentTarget` in a compiled component is the element again, not the document.**

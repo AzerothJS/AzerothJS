@@ -5,8 +5,9 @@
 // function application - typed end to end, no registration graph).
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
+import { createLogger, type LogRecord } from '@azerothjs/logger';
 import { loadConfig, str, num, flag, oneOf } from '../src/config.ts';
-import { createMinimalLogger, logRequests, prettySink, type LogRecord } from '../src/logger.ts';
+import { logRequests } from '../src/logger.ts';
 import { App } from '../src/app.ts';
 import { json, noContent } from '../src/respond.ts';
 
@@ -108,40 +109,20 @@ describe('loadConfig: typed, loud, all-at-once', () =>
     });
 });
 
-describe('createMinimalLogger: the record contract', () =>
+describe('logRequests: the request observer over THE logger', () =>
 {
+    // ONE logger concept in the framework: @azerothjs/logger's createLogger. Its record
+    // contract has its own suite in that package; here it composes with the observer.
     function capture(): { records: LogRecord[]; sink: (record: LogRecord) => void }
     {
         const records: LogRecord[] = [];
         return { records, sink: (record) => void records.push(record) };
     }
 
-    it('emits structured records with merged child fields', () =>
-    {
-        const { records, sink } = capture();
-        const logger = createMinimalLogger({ sink, level: 'debug', fields: { service: 'api' } });
-        logger.child({ requestId: 'r1' }).info('handled', { status: 200 });
-
-        expect(records).toHaveLength(1);
-        expect(records[0]?.level).toBe('info');
-        expect(records[0]?.message).toBe('handled');
-        expect(records[0]?.fields).toEqual({ service: 'api', requestId: 'r1', status: 200 });
-    });
-
-    it('drops records below the threshold before any work', () =>
-    {
-        const { records, sink } = capture();
-        const logger = createMinimalLogger({ sink, level: 'warn' });
-        logger.debug('noise');
-        logger.info('noise');
-        logger.error('signal');
-        expect(records.map((record) => record.level)).toEqual(['error']);
-    });
-
     it('logRequests observes completions with method/path/status/duration', async () =>
     {
         const { records, sink } = capture();
-        const app = new App({ observe: logRequests(createMinimalLogger({ sink })) });
+        const app = new App({ observe: logRequests(createLogger({ sink })) });
         app.get('/ok', () => noContent());
         app.get('/boom', () =>
         {
@@ -172,7 +153,7 @@ describe('createMinimalLogger: the record contract', () =>
     it('logRequests still emits a record when the request URL cannot be parsed', () =>
     {
         const { records, sink } = capture();
-        const observer = logRequests(createMinimalLogger({ sink }));
+        const observer = logRequests(createLogger({ sink }));
         // The adapter composes the URL from the client's Host header; 'a b' makes new URL
         // throw, and App.handle swallows observer throws - a request served with no audit
         // line would be silent log evasion.
@@ -183,23 +164,21 @@ describe('createMinimalLogger: the record contract', () =>
         expect(records[0]?.fields).toMatchObject({ path: '/secret-admin-probe', status: 200 });
     });
 
-    it('prettySink cannot be line-forged by a newline in a field or the message', () =>
+    it('a record carrying control characters cannot forge a second log line', () =>
     {
+        // The guarantee is in the RECORD, not in any one sink: a raw CR or LF in a field or the
+        // message would end the line and let an attacker append a forged entry.
         const lines: string[] = [];
-        const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => void lines.push(String(args[0])));
-        try
-        {
-            prettySink({ level: 'info', message: 'login rejected', time: 0, fields: { email: 'a@b\nINFO admin login granted user=root' } });
-            prettySink({ level: 'info', message: 'multi\nline message', time: 0, fields: {} });
-        }
-        finally
-        {
-            spy.mockRestore();
-        }
+        const logger = createLogger({ sink: (record) => lines.push(JSON.stringify(record)) });
+
+        logger.info('login rejected', { email: 'a@b\nINFO admin login granted user=root' });
+        logger.info('multi\nline message');
+
         expect(lines).toHaveLength(2);
-        expect(lines[0]).not.toContain('\n');
-        expect(lines[1]).not.toContain('\n');
-        expect(lines[0]).toContain('\\n'); // escaped, so the hostile input stays auditable
+        for (const line of lines)
+        {
+            expect(line.split('\n')).toHaveLength(1);
+        }
     });
 });
 

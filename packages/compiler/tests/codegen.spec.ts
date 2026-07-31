@@ -232,7 +232,7 @@ describe('generateModule - reactive desugaring', () =>
 
     it('array-form keyword (form NAME[]) lowers to createFieldArray({ blank, ...with })', () =>
     {
-        const code = gen('component C { form rows[] = { a: "" } with { validateArray: (r) => r.length ? null : "x" }; <button onClick={() => rows.append()}>Add</button> }');
+        const code = gen('component C { form rows[] = { a: "" } with { validateArray: (rows) => rows.length ? null : "x" }; <button onClick={() => rows.append()}>Add</button> }');
         expect(code).toContain('const rows = createFieldArray({ blank: () => ({ a: "" }), ...({');
         expect(code).toContain('validateArray');
         expect(code).toContain('import { createFieldArray');   // runtime import wired
@@ -246,10 +246,25 @@ describe('generateModule - reactive desugaring', () =>
 
     it('<For> over an array-form sugars the row field through .form (read + bind write)', () =>
     {
-        const code = gen('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(r) => r.key}>{(r) => <input bind:value={r.a} />}</For> }');
-        expect(code).toContain('r.form.values().a');          // row field read -> row.form.values()
-        expect(code).toContain('r.form.setValue("a"');        // bind: write -> row.form.setValue()
-        expect(code).toContain('(r) => r.key');               // row.key in the key fn stays literal
+        const code = gen('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(row) => row.key}>{(row) => <input bind:value={row.a} />}</For> }');
+        expect(code).toContain('row().form.values().a');        // row field read -> the getter call, then .form.values()
+        expect(code).toContain('row().form.setValue("a"');      // bind: write -> row().form.setValue()
+        expect(code).toContain('(row) => row.key');               // row.key in the key fn stays literal
+    });
+
+    it('<For> row reads gain the getter call: member, bare, and index - the key fn stays by-value', () =>
+    {
+        const code = gen('component C { state items = [{ id: 1, name: "a" }]; <For each={items} key={(row) => row.id}>{(row, index) => <li data-n={index} onClick={() => console.log(row)}>{row.name}</li>}</For> }');
+        expect(code).toContain('row().name');                   // member read through the getter
+        expect(code).toContain('console.log(row())');           // bare read through the getter
+        expect(code).toContain('index()');                        // the index param is a getter too
+        expect(code).toContain('(row) => row.id');                // the key fn receives the VALUE
+    });
+
+    it('a callback outside the row does not catch the row rewrite', () =>
+    {
+        const code = gen('component C { state items = [{ id: 1 }]; const total = (row) => row.id; <For each={items} key={(row) => row.id}>{(row) => <li>{row.id}</li>}</For> }');
+        expect(code).toContain('const total = (row) => row.id');  // same param name outside the For - untouched
     });
 
     it('form FIELD read rewrites to values(); a write (and bind:) to setValue; API access is untouched', () =>

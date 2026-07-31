@@ -8,7 +8,7 @@
 // No mocks: the real reactivity core (signals, memos, render-mode stack), the real renderer
 // (h, control-flow), and the real string emitter run end to end.
 import { describe, it, expect } from 'vitest';
-import { renderToString, renderToStaticMarkup, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag } from 'azerothjs';
+import { renderToString, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag } from 'azerothjs';
 
 describe('renderToString - the no-DOM contract', () =>
 {
@@ -224,7 +224,7 @@ describe('renderToString - control-flow string-mode paths (co-range comment mark
             h('ul', {}, For({
                 each: ['a', 'b', 'c'],
                 key: (i) => i,
-                children: (item) => h('li', {}, item)
+                children: (item) => h('li', {}, item())
             })));
         expect(html).toBe('<ul><!--azc:for--><li>a</li><li>b</li><li>c</li><!--/azc--></ul>');
     });
@@ -235,7 +235,7 @@ describe('renderToString - control-flow string-mode paths (co-range comment mark
             h('ol', {}, For({
                 each: ['x', 'y'],
                 key: (i) => i,
-                children: (item, index) => h('li', {}, () => `${ index() }:${ item }`)
+                children: (item, index) => h('li', {}, () => `${ index() }:${ item() }`)
             })));
         expect(html).toBe('<ol><!--azc:for--><li><!--[-->0:x<!--]--></li><li><!--[-->1:y<!--]--></li><!--/azc--></ol>');
     });
@@ -293,7 +293,7 @@ describe('renderToString - control-flow string-mode paths (co-range comment mark
             h('ul', {}, For({
                 each: [1, 2],
                 key: (n) => n,
-                children: (n) => h('li', {}, Show({ when: n === 2, children: () => h('b', {}, 'two') }))
+                children: (n) => h('li', {}, Show({ when: n() === 2, children: () => h('b', {}, 'two') }))
             })));
         expect(html).toBe(
             '<ul><!--azc:for-->' +
@@ -309,17 +309,17 @@ describe('renderToStaticMarkup - markers OFF', () =>
     it('emits a reactive hole with no anchor pair', () =>
     {
         const [name] = createSignal('Ada');
-        expect(renderToStaticMarkup(() => h('span', {}, () => name()))).toBe('<span>Ada</span>');
+        expect(renderToString(() => h('span', {}, () => name()), { markers: false })).toBe('<span>Ada</span>');
     });
 
     it('emits control-flow output with no co-range markers', () =>
     {
-        const html = renderToStaticMarkup(() =>
+        const html = renderToString(() =>
             h('ul', {}, For({
                 each: ['a', 'b'],
                 key: (i) => i,
                 children: (item) => h('li', {}, item)
-            })));
+            })), { markers: false });
         expect(html).toBe('<ul><li>a</li><li>b</li></ul>');
     });
 
@@ -330,7 +330,7 @@ describe('renderToStaticMarkup - markers OFF', () =>
                 Show({ when: true, children: () => h('p', {}, () => 'hi') }));
 
         const withMarkers = renderToString(build);
-        const withoutMarkers = renderToStaticMarkup(build);
+        const withoutMarkers = renderToString(build, { markers: false });
 
         expect(withMarkers).toBe('<div><!--azc:show--><p><!--[-->hi<!--]--></p><!--/azc--></div>');
         expect(withoutMarkers).toBe('<div><p>hi</p></div>');
@@ -395,7 +395,7 @@ describe('renderToString - escaping / XSS', () =>
             h('ul', {}, For({
                 each: ['<b>x</b>'],
                 key: (i) => i,
-                children: (item) => h('li', {}, item)
+                children: (item) => h('li', {}, item())
             })));
         expect(html).toBe('<ul><!--azc:for--><li>&lt;b&gt;x&lt;/b&gt;</li><!--/azc--></ul>');
     });
@@ -453,7 +453,7 @@ describe('renderToString / renderToStaticMarkup - marker-state isolation', () =>
     {
         const [v] = createSignal('x');
         const first = renderToString(() => h('span', {}, () => v()));
-        renderToStaticMarkup(() => h('span', {}, () => v()));
+        renderToString(() => h('span', {}, () => v()), { markers: false });
         const third = renderToString(() => h('span', {}, () => v()));
         // Both string renders still carry the anchor pair - the intervening static render
         // restored the marker flag in its finally block.

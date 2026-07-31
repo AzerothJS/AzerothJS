@@ -85,7 +85,7 @@ describe('only-child hole (bindContent) renders a multi-node value as direct chi
         const container = mount(() =>
         {
             const ul = h('ul', {});
-            bindContent(ul, () => For({ each: items(), key: i => i.id, children: i => h('li', {}, String(i.id)) }));
+            bindContent(ul, () => For({ each: items(), key: item => item.id, children: item => h('li', {}, String(item().id)) }));
             return ul;
         });
         const ul = container.querySelector('ul')!;
@@ -147,7 +147,7 @@ describe('sibling hole (bindHole) renders a fragment value as direct children', 
             const close = document.createComment(']');
             ul.appendChild(open);
             ul.appendChild(close);
-            bindHole(open, () => For({ each: items(), key: i => i.id, children: i => h('li', {}, String(i.id)) }));
+            bindHole(open, () => For({ each: items(), key: item => item.id, children: item => h('li', {}, String(item().id)) }));
             return ul;
         });
         const ul = container.querySelector('ul')!;
@@ -206,7 +206,7 @@ describe('manual h() child renders a fragment value as direct children', () =>
     {
         const [items] = createSignal([{ id: 1 }, { id: 2 }]);
         const container = mount(() => h('ul', {},
-            () => For({ each: items(), key: i => i.id, children: i => h('li', {}, String(i.id)) })
+            () => For({ each: items(), key: item => item.id, children: item => h('li', {}, String(item().id)) })
         ));
         const ul = container.querySelector('ul')!;
         expect(ul.querySelectorAll('span').length).toBe(0);

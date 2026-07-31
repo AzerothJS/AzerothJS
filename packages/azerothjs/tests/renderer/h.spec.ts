@@ -337,8 +337,8 @@ describe('h - null props', () =>
 
     it('serializes an element with no props in string mode', async () =>
     {
-        const { renderToStaticMarkup } = await import('azerothjs');
-        const html = renderToStaticMarkup(() => h('p', null, h('code', null, 'x')));
+        const { renderToString } = await import('azerothjs');
+        const html = renderToString(() => h('p', null, h('code', null, 'x')), { markers: false });
         expect(html).toBe('<p><code>x</code></p>');
     });
 });

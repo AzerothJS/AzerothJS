@@ -52,6 +52,17 @@ export interface ReactiveSources
      * stay untouched.
      */
     rowForms?: ReadonlyMap<string, ReadonlySet<string>>;
+
+    /**
+     * `<For>` ROW ITEM parameters: names that are reactive GETTERS at runtime but read as VALUES in
+     * markup. The row builder receives `() => T` (a replaced item updates the row in place), and the
+     * language keeps value reads - `item.name` rewrites to `item().name`, a bare `item` to `item()`.
+     * Threaded per-render-child at codegen (never component-global), so an identically named binding
+     * outside the row callback is untouched. Like {@link rowForms}, deliberately NOT a shadowing name:
+     * the For arrow's own param must not suppress the rewrite; the cost is that a nested callback
+     * inside the row reusing the exact name is rewritten too.
+     */
+    rowItems?: ReadonlySet<string>;
 }
 
 /** One resolved reactive dependency. */

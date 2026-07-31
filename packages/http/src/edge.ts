@@ -31,6 +31,50 @@ import { errorResponse } from './errors.ts';
 export type HandlerWrapper = (next: WebHandler) => WebHandler;
 
 /**
+ * @internal The brand that lets {@link App.use} tell an EDGE middleware from an app middleware.
+ *
+ * Both are single-argument functions, so nothing observable at runtime distinguishes them and an
+ * overload resolved by types alone would silently pick the wrong one for a JavaScript caller.
+ * Marking the four framework wrappers is what allows ONE verb to accept both kinds instead of the
+ * framework growing a second one.
+ */
+export const EDGE: unique symbol = Symbol('azerothjs.http.edge');
+
+/** An edge middleware: a {@link HandlerWrapper} marked so `use` can recognise it. */
+export type EdgeMiddleware = HandlerWrapper & { readonly [EDGE]: true };
+
+/**
+ * Marks a wrapper as edge middleware.
+ *
+ * Applied by `cors`, `requestId`, `rateLimit` and `securityHeaders` to their return value. The
+ * value stays an ordinary callable, so {@link pipeline} and any existing caller are unaffected -
+ * the brand is additive.
+ *
+ * @param wrapper - The wrapper to mark.
+ * @returns The same function, branded.
+ * @example
+ * export function myEdgeConcern(): EdgeMiddleware
+ * {
+ *     return edge((next) => ({ handle: (request) => next.handle(request) }));
+ * }
+ */
+export function edge(wrapper: HandlerWrapper): EdgeMiddleware
+{
+    return Object.assign(wrapper, { [EDGE]: true as const });
+}
+
+/**
+ * Whether `value` is an edge middleware rather than an app middleware.
+ *
+ * @param value - Any middleware-shaped function.
+ * @returns True when the value carries the {@link EDGE} brand.
+ */
+export function isEdge(value: unknown): value is EdgeMiddleware
+{
+    return typeof value === 'function' && (value as { [EDGE]?: unknown })[EDGE] === true;
+}
+
+/**
  * Composes edge middleware around an app, FIRST argument outermost: `pipeline(app, cors, rl)`
  * runs cors, then rate limiting, then the app, and unwinds responses back out through each.
  * The result is a `WebHandler` - hand it to `serve()`, or call `.handle()` in a test.
@@ -120,13 +164,13 @@ const VALID_ID = /^[\x21-\x7e]{1,200}$/;
  * expose it on the request (see {@link requestIdOf}) for handlers and the logger, and echo it
  * on the response so a client and its logs share one id across the whole call.
  */
-export function requestId(options: RequestIdOptions = {}): HandlerWrapper
+export function requestId(options: RequestIdOptions = {}): EdgeMiddleware
 {
     const header = (options.header ?? 'x-request-id').toLowerCase();
     const generate = options.generate ?? ((): string => crypto.randomUUID());
     const trustInbound = options.trustInbound ?? true;
 
-    return (next) => ({
+    return edge((next) => ({
         async handle(request: Request): Promise<Response>
         {
             let id: string | undefined;
@@ -144,5 +188,5 @@ export function requestId(options: RequestIdOptions = {}): HandlerWrapper
             const response = await next.handle(request);
             return withResponseHeaders(response, { [header]: id });
         }
-    });
+    }));
 }

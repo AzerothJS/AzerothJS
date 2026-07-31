@@ -200,6 +200,16 @@ export class RadixRouter<T>
                 {
                     throw new Error(`Route "${ pattern }": a parameter segment needs a name - write ":id".`);
                 }
+                // ":base...:head" (the compound-segment syntax some URL schemes use) reads as two
+                // params but registers as ONE whose name is the whole text - it matches anything
+                // and neither "base" nor "head" ever exists. Refusing at boot turns a route that
+                // could only 404 into an error naming the fix.
+                if (name.includes(':') || name.includes('*'))
+                {
+                    throw new Error(`Route "${ pattern }": the segment ":${ name }" declares more than one parameter. `
+                        + 'A segment holds ONE param; split it into separate segments (":base/:head") or parse the '
+                        + 'compound value inside the handler from a single param.');
+                }
                 if (node.param === null)
                 {
                     node.param = { name, node: createNode() };

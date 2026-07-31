@@ -310,17 +310,23 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             const op = update.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-';
             edits.push({ start: update.getStart(sourceFile), end: update.getEnd(), text: `${ form }.setValue(${ JSON.stringify(field) }, ${ form }.values()${ memberAccess(field) } ${ op } 1)` });
         },
-        // An array-form ROW FIELD read `row.name` -> `row.form.values().name`: insert `.form.values()`
-        // between the row and the field. (`row.key` / `row.form` / FormApi access are not reported here.)
+        // An array-form ROW FIELD read `row.name` -> `row.form.values().name`, through the getter call
+        // (`row().form.values().name`) when the row var is a `<For>` getter param. Outside the row
+        // callback (`rows().forEach(row => row.qty)`) the name is NOT in rowItems and the value form
+        // stays - there the binding really is the plain `{ key, form }` row object.
         rowFieldRead: (node) =>
         {
-            insert(node.expression.getEnd(), '.form.values()');
+            const call = sources.rowItems?.has(node.expression.getText(sourceFile)) === true ? '()' : '';
+            insert(node.expression.getEnd(), `${ call }.form.values()`);
         },
-        // A write to a ROW field -> the row form's setValue, through `.form`. `row.n = e` ->
-        // `row.form.setValue('n', e)`; compound/`++` read the current value via `row.form.values()`.
+        // A write to a ROW field -> the row form's setValue, through `.form` (and the getter call when
+        // the row var is a `<For>` getter param). `row.n = e` -> `row.form.setValue('n', e)`;
+        // compound/`++` read the current value via `row.form.values()`.
         rowFieldWrite: (target, expression) =>
         {
-            const form = `${ target.expression.getText(sourceFile) }.form`;
+            const rowVar = target.expression.getText(sourceFile);
+            const call = sources.rowItems?.has(rowVar) === true ? '()' : '';
+            const form = `${ rowVar }${ call }.form`;
             const field = target.name.text;
             const lhsStart = target.getStart(sourceFile);
 
@@ -345,6 +351,15 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             const update = expression as ts.PostfixUnaryExpression | ts.PrefixUnaryExpression;
             const op = update.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-';
             edits.push({ start: update.getStart(sourceFile), end: update.getEnd(), text: `${ form }.setValue(${ JSON.stringify(field) }, ${ form }.values()${ memberAccess(field) } ${ op } 1)` });
+        },
+        // A `<For>` row-item getter read - bare `item` or the `item` of `item.name` - gains the call
+        // (`item()` / `item().name`), so the CURRENT item flows into the binding, not the one the row
+        // was built from. Call-shaped output is load-bearing: the row-binding reactivity heuristic
+        // (wrapDynamic) binds call-shaped expressions live, which is what updates a replaced item's
+        // row in place.
+        rowItemRead: (node) =>
+        {
+            insert(node.getEnd(), '()');
         }
     });
 

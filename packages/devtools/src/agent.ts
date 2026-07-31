@@ -20,9 +20,9 @@ import {
     type DevtoolsNode,
     type DevtoolsPrimitive,
     type GraphSnapshot
-} from 'azerothjs';
+} from 'azerothjs/internal';
 
-export type { DevtoolsPrimitive } from 'azerothjs';
+export type { DevtoolsPrimitive } from 'azerothjs/internal';
 
 /** A live node in the agent's model. */
 export interface AgentNode

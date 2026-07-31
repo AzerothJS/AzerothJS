@@ -38,7 +38,7 @@ Three entry points cover the common cases:
 
 - `renderToString(component)` renders the component subtree to an HTML string
   with hydration markers.
-- `renderToStaticMarkup(component)` renders without hydration markers, for output
+- `renderToString(component, { markers: false })` renders without hydration markers, for output
   that will not be hydrated (emails, static pages).
 - `renderToDocument(component, options)` wraps the rendered markup in a full HTML
   document, with `title`, `head`, and `lang` options.
@@ -91,7 +91,7 @@ render, so the app always boots.
 
 | File | Role |
 | --- | --- |
-| `render-to-string.ts` | `renderToString` and `renderToStaticMarkup`. |
+| `render-to-string.ts` | `renderToString`, with `{ markers }`. |
 | `render-to-document.ts` | `renderToDocument` and `RenderToDocumentOptions`. |
 | `island.ts` | `island`: mark an interactivity boundary for partial hydration. |
 

@@ -76,7 +76,7 @@ the complete API surface:
 | State | `createStore` (lazy singleton; per-request isolation under SSR) |
 | Forms | `createForm` `createFieldArray` + validators (`required` `email` `minLength` `pattern` `combine` `phone` ...) |
 | Routing | `createRouter` `Link` `Routes` `Outlet` `useParams` `useQuery` `useNavigate` `useLoader` ... |
-| SSR | `renderToString` `renderToStaticMarkup` `renderToDocument` |
+| SSR | `renderToString` `renderToDocument` |
 
 ---
 
@@ -198,7 +198,7 @@ const useCart = createStore(() =>
     return { items, add: (id: string) => setItems([...items(), id]) };
 });
 
-const user = createResource(() => fetch(`/api/users/${id()}`).then((r) => r.json()));
+const user = createResource(() => fetch(`/api/users/${id()}`).then((response) => response.json()));
 user.loading(); // true while a fetch is in flight
 user.data();    // the resolved value, or undefined
 ```

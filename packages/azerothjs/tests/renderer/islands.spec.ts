@@ -83,7 +83,9 @@ describe('hydrateIslands', () =>
 
     it('one island failing to load leaves the others revived (allSettled, not all)', async () =>
     {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        // error, not warn: a revive failure swallows the exception, so it keeps its one
+        // PRODUCTION signal (the advisory warns are dev-gated; this is not one of them).
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() =>
         {});
         const root = pageInto(() => h('main', {},
             island('/islands/ok', Counter, { start: 1 }),
@@ -96,19 +98,19 @@ describe('hydrateIslands', () =>
             }
         };
         const revived = await hydrateIslands(registry, root);
-        // The good island still came up; the failed one is left static with a warning.
+        // The good island still came up; the failed one is left static with an error line.
         expect(revived).toBe(1);
-        expect(warn).toHaveBeenCalled();
+        expect(errorLog).toHaveBeenCalled();
         const buttons = Array.from(root.querySelectorAll('button'));
         buttons[0]?.click();
         expect(buttons[0]?.textContent).toBe('2');
-        warn.mockRestore();
+        errorLog.mockRestore();
         root.remove();
     });
 
     it('malformed props JSON leaves that island static instead of aborting the pass', async () =>
     {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() =>
         {});
         const root = pageInto(() => h('main', {},
             island('/islands/a', Counter, { start: 7 }),
@@ -122,8 +124,8 @@ describe('hydrateIslands', () =>
         };
         const revived = await hydrateIslands(registry, root);
         expect(revived).toBe(1);
-        expect(warn).toHaveBeenCalled();
-        warn.mockRestore();
+        expect(errorLog).toHaveBeenCalled();
+        errorLog.mockRestore();
         root.remove();
     });
 

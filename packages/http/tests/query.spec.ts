@@ -5,7 +5,7 @@
 // the Content-Type requirement is enforced, and the method takes part in routing like any other.
 
 import { describe, it, expect } from 'vitest';
-import { App, readJson, queryResult, acceptQuery, json } from '@azerothjs/http';
+import { App, readJson, json } from '@azerothjs/http';
 
 function queryRequest(url: string, doc: unknown, contentType: string | null = 'application/json'): Request
 {
@@ -21,9 +21,12 @@ describe('QUERY method (RFC 10008)', () =>
         app.query('/search', async ({ request }) =>
         {
             const filter = await readJson(request);
-            return queryResult({ results: [filter] }, {
-                contentLocation: '/search/results/abc',
-                cacheControl: 'private, max-age=30'
+            // What `queryResult` did: `json` plus the QUERY headers, spelled out.
+            return json({ results: [filter] }, {
+                headers: {
+                    'content-location': '/search/results/abc',
+                    'cache-control': 'private, max-age=30'
+                }
             });
         });
 
@@ -37,7 +40,7 @@ describe('QUERY method (RFC 10008)', () =>
     it('is idempotent - two identical queries yield identical results', async () =>
     {
         const app = new App();
-        app.query('/q', async ({ request }) => queryResult({ echo: await readJson(request) }));
+        app.query('/q', async ({ request }) => json({ echo: await readJson(request) }));
         const body = { a: 1, b: [2, 3] };
 
         const first = await app.handle(queryRequest('http://local/q', body));
@@ -48,7 +51,7 @@ describe('QUERY method (RFC 10008)', () =>
     it('fails a QUERY whose Content-Type is not the accepted media type (415)', async () =>
     {
         const app = new App();
-        app.query('/q', async ({ request }) => queryResult({ ok: await readJson(request) }));
+        app.query('/q', async ({ request }) => json({ ok: await readJson(request) }));
 
         const response = await app.handle(queryRequest('http://local/q', { x: 1 }, 'text/plain'));
         expect(response.status).toBe(415);
@@ -58,7 +61,7 @@ describe('QUERY method (RFC 10008)', () =>
     {
         const app = new App();
         app.get('/items', () => json({ via: 'GET' }));
-        app.query('/items', async ({ request }) => queryResult({ q: await readJson(request) }));
+        app.query('/items', async ({ request }) => json({ q: await readJson(request) }));
 
         const response = await app.handle(new Request('http://local/items', { method: 'DELETE' }));
         expect(response.status).toBe(405);
@@ -67,9 +70,10 @@ describe('QUERY method (RFC 10008)', () =>
         expect(allow).toContain('QUERY');
     });
 
-    it('acceptQuery advertises the supported query media types', () =>
+    it('an endpoint can advertise its query media types with a plain header', () =>
     {
-        expect(acceptQuery(['application/json', 'application/sql'])).toEqual({
+        // `acceptQuery(types)` was `{ 'accept-query': types.join(', ') }` and nothing more.
+        expect({ 'accept-query': ['application/json', 'application/sql'].join(', ') }).toEqual({
             'accept-query': 'application/json, application/sql'
         });
     });

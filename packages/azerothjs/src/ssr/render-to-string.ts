@@ -8,7 +8,7 @@
  *   renderToString       - emits hydration markers (the co-range comment anchors and
  *                          reactive-hole `<!--[-->` anchors) so the client can adopt the markup
  *                          with hydrate().
- *   renderToStaticMarkup - emits clean HTML with no markers, for output that will never hydrate
+ *   `{ markers: false }`  - emits clean HTML with no markers, for output that will never hydrate
  *                          (emails, static pages).
  *
  * For class-style components, pass a thunk that reads .element, e.g.
@@ -68,101 +68,78 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
             })), { markers });
 }
 
+/** How {@link renderToString} shapes its output. */
+export interface RenderToStringOptions
+{
+    /**
+     * Emit the hydration markers {@link hydrate} adopts (default true).
+     *
+     * Set false for output that will never hydrate - an email, a feed, a static page, a PDF
+     * source. The markup is then clean HTML with no framework bookkeeping in it.
+     */
+    markers?: boolean;
+}
+
 /**
  * renderToString
  *
  * PURPOSE:
- * Renders a component to body HTML in string mode, including the hydration markers {@link hydrate}
- * relies on to adopt the markup on the client.
+ * Renders a component to body HTML on the server, with or without the anchors a hydrating client
+ * needs to adopt the markup.
  *
  * WHY IT EXISTS:
- * SSR must emit HTML the client can revive without rebuilding. Doing it by hand (runInMode with
- * the markers option + digging the html off the returned SSRNode) is verbose; this is the one
- * canonical entry point.
+ * SSR must emit HTML the client can revive without rebuilding it. Doing that by hand - `runInMode`
+ * with the markers option, then digging the html off the returned SSRNode - is verbose and easy to
+ * get subtly wrong; this is the one call.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, server; the SSR render entry. Runs the tree in runInMode('string') (no DOM, getters
- * read once, no live effects) inside a fresh store scope per render for per-request isolation.
+ * WHY ONE FUNCTION AND NOT TWO:
+ * This used to be two exports, `renderToString` and `renderToStaticMarkup`, which were the same
+ * private function called with `true` and `false`. Two names for one boolean is a choice every
+ * reader has to make and can make wrongly - shipping marker-laden HTML into an email, or
+ * marker-free HTML into a page that then fails to hydrate. The capability is kept; the second name
+ * is not.
  *
  * INPUT CONTRACT:
- * - component: a thunk building the root element (e.g. () => App({})). For class-style components
- *   pass () => new C(props).element.
+ * - `component`: a THUNK that builds the root element. It must be a thunk, because the tree has to
+ *   build while string mode is active.
+ * - `options.markers`: whether to emit hydration anchors (default true).
  *
  * OUTPUT CONTRACT:
- * - The serialized BODY HTML with hydration markers. Pair with {@link renderToDocument} for a full
- *   document shell. The marker setting is restored afterwards (even on throw).
+ * - Body HTML only. No `<html>`/`<head>` shell - that is {@link renderToDocument}'s job.
  *
  * WHY THIS DESIGN:
- * Markers ride the runInMode window (render-scoped, exception-safe by construction); the
- * per-render store scope makes concurrent requests' createStore() state independent, which is sound
- * because an SSR render is synchronous (one scope is set and restored before another can start).
+ * Markers ride the `runInMode` window, so they are render-scoped and exception-safe by
+ * construction. The per-render store scope makes concurrent requests' `createStore()` state
+ * independent, which is sound because an SSR render is synchronous: one scope is set and restored
+ * before another can start.
  *
  * WHEN TO USE:
- * On the server, to render a page that the client will hydrate().
+ * On the server, for any component you want as HTML.
  *
  * WHEN NOT TO USE:
- * For never-hydrated output (use {@link renderToStaticMarkup}); on the client (use render()).
+ * On the client - use `render()`, which builds real DOM.
  *
  * EDGE CASES:
- * - Returns body HTML only - no <html>/<head> shell (that is renderToDocument's job).
+ * - A fragment-rooted component returns an array of nodes; their html is concatenated.
  * - Marker state is scoped to the render window, so a throwing render cannot leak it.
+ * - Passing an already-built element instead of a thunk throws a named error rather than failing
+ *   later against a missing DOM.
  *
  * PERFORMANCE NOTES:
- * A synchronous string build, no DOM allocation. Cost is proportional to the serialized output.
- *
- * DEVELOPER WARNING:
- * Pass a THUNK, not an already-built element (string mode must be active while the tree builds).
- * The output carries framework markers - do not ship it where it will not be hydrated.
+ * A synchronous string build with no DOM allocation. Cost is proportional to the output size.
  *
  * @param component - A thunk that builds the root element.
- * @returns The serialized, hydration-ready body HTML.
- * @see {@link renderToStaticMarkup}
- * @see {@link renderToDocument}
+ * @param options - Output shaping; see {@link RenderToStringOptions}.
+ * @returns The serialized body HTML.
+ * @see {@link renderToDocument} for a full document with a shell.
  * @example
- * const html = renderToString(() => App({ user }));
+ * // Hydration-ready, the default.
+ * const page = renderToString(() => App({ user }));
+ *
+ * // Never hydrated: an email body, clean of framework markers.
+ * const email = renderToString(() => Receipt({ order }), { markers: false });
  */
-export function renderToString(component: () => HTMLElement | DocumentFragment): string
+export function renderToString(component: () => HTMLElement | DocumentFragment, options: RenderToStringOptions = {}): string
 {
-    return renderBody(component, true);
-}
-
-/**
- * renderToStaticMarkup
- *
- * PURPOSE:
- * Renders a component to clean, marker-free HTML - for output that will not be hydrated
- * (transactional emails, fully static pages).
- *
- * WHY IT EXISTS:
- * renderToString ships hydration bookkeeping (co-range anchors, comment markers) that a mail
- * client renders as noise or strips unpredictably. Static output needs the same render WITHOUT
- * those markers.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, server; the static-HTML render entry. Identical to renderToString but with markers off.
- *
- * INPUT CONTRACT:
- * - component: a thunk building the root element.
- *
- * OUTPUT CONTRACT:
- * - Plain HTML with no framework bookkeeping. Not hydratable.
- *
- * WHEN TO USE:
- * For emails, static-site output, or any HTML that will never run hydrate().
- *
- * WHEN NOT TO USE:
- * For a page you intend to hydrate (use {@link renderToString}).
- *
- * PERFORMANCE NOTES:
- * Same as renderToString minus the marker emission.
- *
- * @param component - A thunk that builds the root element.
- * @returns The serialized HTML with no framework bookkeeping.
- * @see {@link renderToString}
- * @example
- * const html = renderToStaticMarkup(() => EmailTemplate({ name }));
- */
-export function renderToStaticMarkup(component: () => HTMLElement | DocumentFragment): string
-{
-    return renderBody(component, false);
+    return renderBody(component, options.markers ?? true);
 }

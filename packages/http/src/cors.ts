@@ -18,8 +18,7 @@
  * so a cache keyed on it stays correct alongside the compression layer's own `Vary`.
  */
 
-import type { HandlerWrapper } from './edge.ts';
-import { withResponseHeaders } from './edge.ts';
+import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 import { PayloadResponse } from './payload.ts';
 
 export type CorsOrigin = string | string[] | boolean | ((origin: string) => boolean);
@@ -92,7 +91,7 @@ function appendVary(existing: string | null, token: string): string
  * Cross-Origin Resource Sharing. Answers preflights directly and decorates real cross-origin
  * responses; same-origin requests (no Origin header) pass through unchanged.
  */
-export function cors(options: CorsOptions): HandlerWrapper
+export function cors(options: CorsOptions): EdgeMiddleware
 {
     const credentials = options.credentials === true;
     if (credentials && options.origin === true)
@@ -122,7 +121,7 @@ export function cors(options: CorsOptions): HandlerWrapper
         return options.origin === true && !credentials ? '*' : origin;
     };
 
-    return (next) => ({
+    return edge((next) => ({
         async handle(request: Request): Promise<Response>
         {
             const origin = request.headers.get('origin');
@@ -188,5 +187,5 @@ export function cors(options: CorsOptions): HandlerWrapper
             }
             return withResponseHeaders(response, extra);
         }
-    });
+    }));
 }

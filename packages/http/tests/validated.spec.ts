@@ -41,9 +41,9 @@ describe('readValidated', () =>
 {
     it('returns the parsed, NORMALIZED value on success', async () =>
     {
-        const response = await app().handle(post({ name: '  Jaina  ', email: 'Jaina@Theramore.ORG', age: 32 }));
+        const response = await app().handle(post({ name: '  IntelligentQuantum  ', email: 'IntelligentQuantum@Example.ORG', age: 32 }));
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ input: { name: 'Jaina', email: 'jaina@theramore.org', age: 32 } });
+        expect(await response.json()).toEqual({ input: { name: 'IntelligentQuantum', email: 'intelligentquantum@example.org', age: 32 } });
     });
 
     it('a failure is a 422 carrying the field map AND the coded issues', async () =>
@@ -70,7 +70,7 @@ describe('readValidated', () =>
 
     it('the wrong Content-Type never reaches the schema (415 from readJson)', async () =>
     {
-        const response = await app().handle(post({ name: 'Jaina', email: 'j@t.org', age: 1 }, 'text/plain'));
+        const response = await app().handle(post({ name: 'IntelligentQuantum', email: 'j@t.org', age: 1 }, 'text/plain'));
         expect(response.status).toBe(415);
     });
 });

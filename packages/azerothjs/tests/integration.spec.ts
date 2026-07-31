@@ -8,23 +8,7 @@
 // behavior (those live in the source packages). No mocks: real signals, real happy-dom
 // nodes, real delegated events, real string-mode SSR.
 import { describe, it, expect } from 'vitest';
-import {
-    createSignal,
-    createStore,
-    createForm,
-    combine,
-    required,
-    minLength,
-    email,
-    h,
-    render,
-    Show,
-    For,
-    classList,
-    renderToString,
-    renderToStaticMarkup,
-    createRoot
-} from 'azerothjs';
+import { createSignal, createStore, createForm, combine, required, minLength, email, h, render, Show, For, classList, renderToString, createRoot } from 'azerothjs';
 
 // Mount a component into a container that is attached to document.body so the renderer's
 // DELEGATED event handlers (which listen at the document level) fire on real .click().
@@ -61,7 +45,7 @@ describe('core CSR - signals + h + control flow, then a store driving the same U
                         For({
                             each: todos,
                             key: (t: Todo) => t.id,
-                            children: (t: Todo, index: () => number) => h('li', {}, () => `${ index() + 1 }: ${ t.text }`)
+                            children: (todo: () => Todo, index: () => number) => h('li', {}, () => `${ index() + 1 }: ${ todo().text }`)
                         }))
                 })));
 
@@ -137,7 +121,7 @@ describe('core CSR - signals + h + control flow, then a store driving the same U
                     For({
                         each: cart.items,
                         key: (name: string, i: number) => `${ i }:${ name }`,
-                        children: (name: string) => h('li', {}, name)
+                        children: (name: () => string) => h('li', {}, () => name())
                     })));
         });
 
@@ -254,7 +238,7 @@ describe('core SSR - renderToString / renderToStaticMarkup from the umbrella', (
                 For({
                     each: props.items,
                     key: (it: Item) => it.id,
-                    children: (it: Item) => h('li', { 'data-id': it.id }, it.label)
+                    children: (item: () => Item) => h('li', { 'data-id': item().id }, item().label)
                 })));
     }
 
@@ -293,7 +277,7 @@ describe('core SSR - renderToString / renderToStaticMarkup from the umbrella', (
 
     it('renderToStaticMarkup produces clean, marker-free HTML for the same component', () =>
     {
-        const html = renderToStaticMarkup(() => Catalog({ items, heading: true }));
+        const html = renderToString(() => Catalog({ items, heading: true }), { markers: false });
 
         expect(html).toContain('alpha');
         expect(html).toContain('beta');

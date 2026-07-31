@@ -935,7 +935,9 @@ export function createRouter(config: RouterConfig): Router
                 applyVerdict(error);
                 return;
             }
-            // A throwing guard fails CLOSED: the guarded route must not render.
+            // A throwing guard fails CLOSED: the guarded route must not render. Deliberately
+            // NOT dev-gated: the exception is swallowed here, and a production navigation
+            // silently going nowhere needs its one signal.
             console.error('[azerothjs/router] a route guard threw; navigation vetoed.', error);
             veto();
         };

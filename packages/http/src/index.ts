@@ -32,8 +32,8 @@ export { onRequestCleanup, runInRequestRoot } from './request-root.ts';
 export { loadConfig, str, num, flag, oneOf } from './config.ts';
 export type { ConfigVar, ConfigOf } from './config.ts';
 
-export { createMinimalLogger, jsonSink, prettySink, logRequests } from './logger.ts';
-export type { Logger, LogLevel, LogRecord, LogSink } from './logger.ts';
+export { logRequests } from './logger.ts';
+export type { RequestLogger } from './logger.ts';
 
 export {
     HttpError, BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError,
@@ -42,21 +42,18 @@ export {
 } from './errors.ts';
 export type { ErrorObserver, ErrorSerializer, ErrorSerializerContext } from './errors.ts';
 
-export { json, text, html, redirect, noContent, created, queryResult, acceptQuery } from './respond.ts';
+export { json, text, html, redirect, noContent, created } from './respond.ts';
 
 export { conditional, etagFor, matchesEtag } from './conditional.ts';
 export type { ConditionalOptions } from './conditional.ts';
-export type { QueryResultOptions } from './respond.ts';
 export { jsonEncoder } from './encode-json.ts';
 export type { EncodableSchema, EncoderMeta } from './encode-json.ts';
 
 export { readRaw, readText, readJson, readForm, readValidated, mediaTypeOf, DEFAULT_BODY_LIMIT } from './body.ts';
-export type { ReadOptions, SchemaLike, ValidationIssue } from './body.ts';
+export type { ReadOptions, SchemaLike, StandardSchemaLike } from './body.ts';
 
-export { pipeline, withResponseHeaders, requestId, requestIdOf } from './edge.ts';
-export type { HandlerWrapper, RequestIdOptions, WebHandler } from './edge.ts';
-
-export { toFetchHandler } from './fetch-handler.ts';
+export { pipeline, withResponseHeaders, requestId, requestIdOf, edge, isEdge } from './edge.ts';
+export type { HandlerWrapper, EdgeMiddleware, RequestIdOptions, WebHandler } from './edge.ts';
 
 export { securityHeaders } from './security.ts';
 export type { SecurityHeadersOptions, HstsOptions } from './security.ts';

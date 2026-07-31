@@ -11,6 +11,7 @@
  */
 
 import { createRoot, runInMode } from '../reactivity/index.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '../reactivity/internal.ts';
 import { containerDisposers } from './container-disposers.ts';
 
@@ -95,7 +96,10 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
         // its parent could own.
         if (anchor.parentElement?.closest('[data-azeroth-island]'))
         {
-            console.warn(`hydrateIslands: nested island "${ anchor.getAttribute('data-azeroth-island') }" skipped - islands do not nest.`);
+            if (DEV)
+            {
+                console.warn(`hydrateIslands: nested island "${ anchor.getAttribute('data-azeroth-island') }" skipped - islands do not nest.`);
+            }
             return;
         }
 
@@ -105,7 +109,10 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
         const load = Object.hasOwn(registry, src) ? registry[src] : undefined;
         if (!load)
         {
-            console.warn(`hydrateIslands: no loader registered for "${ src }" - island left static.`);
+            if (DEV)
+            {
+                console.warn(`hydrateIslands: no loader registered for "${ src }" - island left static.`);
+            }
             return;
         }
 
@@ -120,7 +127,9 @@ export async function hydrateIslands(registry: IslandRegistry, root: ParentNode 
         }
         catch (error)
         {
-            console.warn(`hydrateIslands: island "${ src }" failed to revive - left static.`, error);
+            // error, not a gated warn: the island's interactive code did not load, the exception
+            // is swallowed here, and production is where that needs a signal.
+            console.error(`hydrateIslands: island "${ src }" failed to revive - left static.`, error);
         }
     }));
 
@@ -177,8 +186,7 @@ function hydrateIslandRoot(component: () => HTMLElement, anchor: HTMLElement): v
             throw error;
         }
 
-        const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
-        if (!proc || proc.env?.NODE_ENV !== 'production')
+        if (DEV)
         {
             console.warn(`${ error.message } - island replaced with a fresh client render.`);
         }

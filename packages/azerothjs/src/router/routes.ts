@@ -22,7 +22,7 @@ import type { HydrationCursor as HydrationCursorType } from '../reactivity/inter
 import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode } from '../component/index.ts';
-import { playTransitionClasses } from '../renderer/index.ts';
+import { playTransitionClasses } from '../renderer/transition-classes.ts';
 import { hydrateChild } from '../renderer/h.ts';
 import type { RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';

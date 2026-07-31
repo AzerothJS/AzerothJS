@@ -26,6 +26,7 @@ import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
 import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { runInRequestRoot } from './request-root.ts';
+import { isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
 /**
  * THE context - the single argument every handler receives, carrying this one
@@ -278,6 +279,7 @@ interface AppInternals
     router: RadixRouter<Handler>;
     middlewares: Array<Middleware<object, Record<string, unknown>>>;
     installed: Array<{ name: string; version?: string | undefined }>;
+    wrappers: HandlerWrapper[];
 }
 
 /**
@@ -321,6 +323,16 @@ export class App<Ctx extends object = object>
     readonly #installed: Array<{ name: string; version?: string | undefined }>;
 
     /**
+     * Edge wrappers applied around dispatch, innermost first (see {@link wrap}). Shared with a
+     * {@link with} fork by reference, so wrapping through a fork wraps the app it forked from -
+     * an edge concern is per-SERVER, never per-route.
+     */
+    readonly #wrappers: HandlerWrapper[];
+
+    /** @internal The wrapped dispatch, rebuilt whenever {@link wrap} adds a layer. */
+    #wrapped: WebHandler | null = null;
+
+    /**
      * @param options Error, observability, and request-root policy for every route on this app.
      * @param internals @internal What a {@link with} fork inherits; never passed by application code.
      */
@@ -330,6 +342,7 @@ export class App<Ctx extends object = object>
         this.#router = internals?.router ?? new RadixRouter<Handler>();
         this.#middlewares = internals?.middlewares ?? [];
         this.#installed = internals?.installed ?? [];
+        this.#wrappers = internals?.wrappers ?? [];
     }
 
     /**
@@ -338,6 +351,12 @@ export class App<Ctx extends object = object>
      * and a route above a `use` is untouched by it. The runtime merge happens in the
      * composed chain; middleware never mutate the context directly, they return additions.
      *
+     * Also takes an EDGE middleware ({@link rateLimit}, {@link cors}, {@link securityHeaders},
+     * {@link requestId}, or your own via `edge()`), which wraps the whole dispatch instead of
+     * joining the per-route chain - it has to, because a limiter must refuse before a route is
+     * matched and a preflight must be answered for paths with no route. The two kinds are told
+     * apart by a brand, not by shape, because both are single-argument functions.
+     *
      * SOUNDNESS CAVEATS (the deliberate trade, same one Hono makes): `use` mutates the
      * shared middleware list and returns `this` re-typed, so (1) an app reference ALIASED
      * before the `use` registers routes whose handlers run the middleware but are typed
@@ -345,11 +364,32 @@ export class App<Ctx extends object = object>
      * Response instead of additions) leaves the additions typed-as-present on paths it
      * never decorated. When either matters, prefer {@link with}: its forked view makes
      * both the scope and the typing exact.
+     *
+     * The reverse trade is real too, so this is a choice and not a ranking: `with` RETURNS the
+     * app that carries the middleware and does not mutate this one, so dropping its return value
+     * is a silent no-op - `app.with(requireAuth)` on its own compiles, runs, and leaves the routes
+     * below it unguarded. `use` cannot fail that way. Reach for `with` when scope or exact typing
+     * matters; reach for `use` when the middleware genuinely applies to everything after it.
      */
+    public use(edgeMiddleware: EdgeMiddleware): this;
     public use<Added extends Record<string, unknown> = Record<never, never>>(
         middleware: Middleware<Ctx, Added>
+    ): App<Ctx & Added>;
+    public use<Added extends Record<string, unknown> = Record<never, never>>(
+        middleware: Middleware<Ctx, Added> | EdgeMiddleware
     ): App<Ctx & Added>
     {
+        // An EDGE middleware wraps dispatch instead of joining the per-route chain. It is
+        // recognised by its brand rather than its shape, because both kinds are single-argument
+        // functions and an overload resolved by types alone would silently mis-route a
+        // JavaScript caller.
+        if (isEdge(middleware))
+        {
+            this.#wrappers.push(middleware);
+            this.#wrapped = null;
+            return this as unknown as App<Ctx & Added>;
+        }
+
         this.#middlewares.push(middleware as Middleware<object, Record<string, unknown>>);
         return this as unknown as App<Ctx & Added>;
     }
@@ -379,6 +419,7 @@ export class App<Ctx extends object = object>
         return new App<Ctx & Added>(this.#options, {
             router: this.#router,
             middlewares: [...this.#middlewares, middleware as Middleware<object, Record<string, unknown>>],
+            wrappers: this.#wrappers,
             installed: this.#installed
         });
     }
@@ -566,7 +607,22 @@ export class App<Ctx extends object = object>
         let response: Response;
         try
         {
-            if (this.#options.requestRoot === false)
+            // Edge wrappers (see `wrap`) sit OUTSIDE routing and the request root: a rate limiter
+            // must refuse before a route is matched, and a preflight must be answered for paths
+            // that have no route. Composed lazily and cached; `wrap` invalidates.
+            if (this.#wrappers.length > 0)
+            {
+                // reduceRight, so the FIRST registered wrapper is outermost - the same order
+                // `pipeline(app, cors, rateLimit)` composes in. Reducing left-to-right would make
+                // the last `use` outermost, giving the framework two opposite orders for one
+                // concept and making a security header's position depend on which API applied it.
+                this.#wrapped ??= this.#wrappers.reduceRight<WebHandler>(
+                    (next, wrapper) => wrapper(next),
+                    { handle: (inner: Request): Promise<Response> => this.#dispatchOnly(inner) }
+                );
+                response = await this.#wrapped.handle(request);
+            }
+            else if (this.#options.requestRoot === false)
             {
                 response = await this.#dispatch(request);
             }
@@ -619,6 +675,32 @@ export class App<Ctx extends object = object>
             }
         }
         return response;
+    }
+
+    /**
+     * @internal Dispatch with the request-root policy applied, but WITHOUT the observer or the
+     * error path - both belong to {@link handle}, which owns them for wrapped and unwrapped
+     * requests alike. Only the edge-wrapper chain calls this.
+     */
+    async #dispatchOnly(request: Request): Promise<Response>
+    {
+        if (this.#options.requestRoot === false)
+        {
+            return await this.#dispatch(request);
+        }
+        this.#rootOptions ??= {
+            onCleanupError: ((): ((error: unknown) => void) | undefined =>
+            {
+                const onError = this.#options.onError;
+                return onError !== undefined
+                    ? (error): void =>
+                    {
+                        onError(error, new HttpError(500, 'Request cleanup failed', { cause: error }));
+                    }
+                    : undefined;
+            })()
+        };
+        return await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
     }
 
     /** @internal Stable dispatch reference: runInRequestRoot receives this one function

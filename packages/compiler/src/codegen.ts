@@ -876,13 +876,41 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
 
     if (binding.children !== null)
     {
+        // A <For> render child's params are reactive GETTERS at runtime ((item, i) => ... receives
+        // () => T and () => number) but read as VALUES in markup - thread them into the child's
+        // rewrite as rowItems so `item.name` emits `item().name`. Scoped to THIS child's emission:
+        // an identically named binding elsewhere in the component is untouched.
+        const childSources = binding.tag === 'For' && binding.children.kind === 'render' && binding.children.param !== null
+            ? { ...sources, rowItems: rowItemNames(source, binding.children.param, sources.rowItems) }
+            : sources;
         // Parens are load-bearing: a children expression starting on the line after the
         // opening brace would otherwise emit `return` + newline, which ASI silently turns
         // into `return;` - children becomes undefined and <For> crashes at runtime.
-        parts.push(`get children() { return (${ emitChildrenValue(source, binding.children, sources, emit) }); }`);
+        parts.push(`get children() { return (${ emitChildrenValue(source, binding.children, childSources, emit) }); }`);
     }
 
     return parts.length === 0 ? `${ binding.tag }()` : `${ binding.tag }({ ${ parts.join(', ') } })`;
+}
+
+/**
+ * The identifier names a `<For>` render child's param span declares (`(item)`, `(item, i)`, or a
+ * bare `item`), merged with any outer rowItems so nested Fors compose. Both params join: the item
+ * AND the index are runtime getters that markup reads as values.
+ */
+function rowItemNames(source: string, param: Span, outer: ReadonlySet<string> | undefined): ReadonlySet<string>
+{
+    const names = new Set(outer ?? []);
+    const text = source.slice(param.start, param.end).replace(/^\(|\)$/g, '');
+    for (const part of text.split(','))
+    {
+        // The leading identifier only - a type annotation's name (`item: Todo`) must not join.
+        const lead = /^\s*([A-Za-z_$][\w$]*)/.exec(part);
+        if (lead?.[1] !== undefined)
+        {
+            names.add(lead[1]);
+        }
+    }
+    return names;
 }
 
 /**

@@ -7,7 +7,7 @@
 //
 // No mocks: real render-mode stack, real string emitter, real h().
 import { describe, it, expect } from 'vitest';
-import { island, renderToString, renderToStaticMarkup, h, createSignal, runInMode } from 'azerothjs';
+import { island, renderToString, h, createSignal, runInMode } from 'azerothjs';
 
 interface CounterProps extends Record<string, unknown>
 {
@@ -76,7 +76,7 @@ describe('island - SSR (string mode) anchor attributes', () =>
         // hydrateIslands() finds the boundary; it is not a hydration co-range marker. The
         // INNER body, however, is serialized marker-free.
         const Live = (props: CounterProps): HTMLElement => h('span', {}, () => `n=${ props.start }`);
-        const html = renderToStaticMarkup(() => island('/live', Live, { start: 2 }));
+        const html = renderToString(() => island('/live', Live, { start: 2 }), { markers: false });
         expect(html).toContain('data-azeroth-island="/live"');
         expect(html).toMatch(/<span data-azeroth-island="\/live"[^>]*>n=2<\/span>/);
         expect(html).not.toContain('<!--[-->');
