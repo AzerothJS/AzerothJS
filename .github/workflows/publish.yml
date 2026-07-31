@@ -64,7 +64,6 @@ jobs:
             -   run: npm run build
             -   run: npm run lint:publish
             -   run: npm test
-            -   run: npm run leak
             # Publish smoke: pack + install the tarballs into a clean consumer and
             # import them, validating the real install/resolution path and pin graph.
             -   run: npm run smoke

@@ -51,6 +51,11 @@ export interface MultipartBody
     files: UploadedFile[];
 }
 
+/**
+ * Caps for {@link readMultipart} - three independent axes (total bytes, part count, per-file
+ * bytes), each ON by default. A cap crossing aborts the parse mid-stream as a 413; nothing is
+ * buffered past the limit.
+ */
 export interface MultipartOptions
 {
     /** Total body cap in bytes (default 8 MiB - form-with-files is legitimately larger than JSON). */
@@ -412,6 +417,11 @@ export interface MultipartPartStream
     text(limit?: number): Promise<string>;
 }
 
+/**
+ * Caps for {@link streamMultipart}, the pull-based twin: per-part limits only, because the
+ * whole point is that file payloads stream to their sink instead of buffering - total size is
+ * the sink's business.
+ */
 export interface StreamMultipartOptions
 {
     /** Maximum number of parts, fields and files together (default 256). */

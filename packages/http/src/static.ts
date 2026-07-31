@@ -93,6 +93,11 @@ function hasDotSegment(relative: string): boolean
     return false;
 }
 
+/**
+ * Options for the static file server: the root it can never escape, index/extension fallbacks,
+ * cache policy, and range support. Traversal safety is not configurable - every resolved path
+ * is verified to stay under `root` regardless of what these say.
+ */
 export interface StaticOptions
 {
     /**

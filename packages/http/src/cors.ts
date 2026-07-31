@@ -21,8 +21,17 @@
 import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 import { PayloadResponse } from './payload.ts';
 
+/**
+ * What {@link CorsOptions.origin} accepts: one exact origin, a list, `true` (reflect any
+ * origin - credentials stay OFF), or a predicate over the caller's `Origin` header value.
+ */
 export type CorsOrigin = string | string[] | boolean | ((origin: string) => boolean);
 
+/**
+ * Options for {@link cors}. The posture is deny-by-default: only what `origin` admits is
+ * reflected, and `credentials` never combines with a wildcard - the browser would refuse it
+ * and the pairing is exactly how private APIs leak to arbitrary sites.
+ */
 export interface CorsOptions
 {
     /** Allowed origin(s): an exact string, an allowlist, a predicate, or `true` to reflect any. */

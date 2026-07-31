@@ -15,6 +15,11 @@
 
 import { socketAddress, type FastCapabilities } from './body.ts';
 
+/**
+ * Options for {@link clientIp}: whether to read forwarding headers at all (`trustProxy`) and
+ * how many proxy hops are YOURS (`trustedHops`) - the address is picked from the right end of
+ * `X-Forwarded-For`, because the left end is client-supplied fiction.
+ */
 export interface ClientIpOptions
 {
     /** Believe the forwarded-for header (default false - peer address only). */

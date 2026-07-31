@@ -53,6 +53,23 @@ type StandaloneFetcher<T> = (signal: AbortSignal) => Promise<T>;
 /** Fetcher form with a source signal. @typeParam S - source type. @typeParam T - fetched value type. */
 type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
 
+/** Options for {@link createResource}. */
+export interface ResourceOptions<T>
+{
+    /**
+     * Seeds the resource as ALREADY SETTLED: `data()` returns this value synchronously and
+     * the FIRST fetch is skipped entirely (loading never flips). This is the hydration/SSR
+     * handoff seam - the server rendered with this data, so the client adopting it must not
+     * refetch it, and a synchronous server render must see it without waiting for an effect.
+     * Everything AFTER the first key behaves normally: a source change fetches, refetch()
+     * fetches, and a skip-key reset discards the seed along with the data it clears.
+     */
+    initialValue?: T;
+
+    /** Debug name surfaced to devtools; groups the resource's data/loading/error/fetch nodes. */
+    name?: string;
+}
+
 /**
  * createResource
  *
@@ -125,23 +142,6 @@ type SourceFetcher<S, T> = (sourceValue: S, signal: AbortSignal) => Promise<T>;
  * );
  * post.loading(); post.data(); post.refetch();
  */
-/** Options for {@link createResource}. */
-export interface ResourceOptions<T>
-{
-    /**
-     * Seeds the resource as ALREADY SETTLED: `data()` returns this value synchronously and
-     * the FIRST fetch is skipped entirely (loading never flips). This is the hydration/SSR
-     * handoff seam - the server rendered with this data, so the client adopting it must not
-     * refetch it, and a synchronous server render must see it without waiting for an effect.
-     * Everything AFTER the first key behaves normally: a source change fetches, refetch()
-     * fetches, and a skip-key reset discards the seed along with the data it clears.
-     */
-    initialValue?: T;
-
-    /** Debug name surfaced to devtools; groups the resource's data/loading/error/fetch nodes. */
-    name?: string;
-}
-
 export function createResource<T>(
     fetcher: StandaloneFetcher<T>,
     options?: ResourceOptions<T>

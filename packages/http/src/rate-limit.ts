@@ -119,6 +119,11 @@ export class MemoryRateStore implements RateStore
     }
 }
 
+/**
+ * Options for {@link rateLimit}: the window, the budget, the key (defaults to the client IP -
+ * behind a proxy set `trustProxy`/`trustedHops` or every client shares the proxy's bucket),
+ * and the store ({@link MemoryRateStore} by default; swap for shared state across instances).
+ */
 export interface RateLimitOptions
 {
     /**

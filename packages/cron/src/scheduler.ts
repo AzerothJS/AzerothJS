@@ -68,6 +68,11 @@ export interface SchedulerLogger
     error(message: string, fields?: Record<string, unknown>): void;
 }
 
+/**
+ * Options for {@link createScheduler}: failure reporting, structural logging, and the clock
+ * seam tests use. Defaults are production-lean - jobs arm on registration and failures are
+ * reported, never thrown into the timer loop.
+ */
 export interface SchedulerOptions
 {
     /** Called with every job failure. Its own throws are swallowed - watching must not break. */
@@ -87,6 +92,11 @@ export interface SchedulerOptions
     pin?: boolean;
 }
 
+/**
+ * The scheduler handle {@link createScheduler} returns: registration (`schedule`/`every`/`at`),
+ * manual runs, the live job table, and start/stop with drain. Every job runs on the ONE
+ * process clock; there is no persistence - a restart re-registers and re-arms.
+ */
 export interface Scheduler
 {
     /** Registers a cron job. Validates the expression, timezone, and name HERE - loudly. */

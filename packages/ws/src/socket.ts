@@ -24,6 +24,11 @@ import {
     FrameParser, OPCODE, ProtocolError, closePayload, parseClosePayload, serializeFrame
 } from './frames.ts';
 
+/**
+ * Per-socket protocol limits: message/frame caps and timings. The defaults assume a hostile
+ * network - an unanswered ping or an oversized frame closes the connection with the RFC 6455
+ * code that says why.
+ */
 export interface ServerSocketOptions
 {
     /** Cap for one ASSEMBLED message (default 16 MiB) - fragment sums included. */

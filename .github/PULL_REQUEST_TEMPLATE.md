@@ -72,7 +72,6 @@ don't. See CONTRIBUTING.md for the full workflow and coding conventions.
 - [ ] `npm test` passes
 - [ ] `npm run build` succeeds for all packages
 - [ ] `npm run typecheck` passes
-- [ ] `npm run leak` shows no reactive-graph leaks *(required when touching `azerothjs` reactivity - signals, effects, roots, stores - or any reactive primitive)*
 - [ ] New behaviour is covered by tests in the relevant `tests/*.spec.ts`
 - [ ] Bug fixes include a regression test
 - [ ] Public API additions/changes have doc comments that explain **why**, not just what

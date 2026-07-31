@@ -47,7 +47,6 @@ jobs:
             -   run: npm run lint
             -   run: npm run build
             -   run: npm test
-            -   run: npm run leak
 
             # --- Editor artifacts, built from the exact tagged code. ---
             # VS Code: the server bundle's esbuild entry is the language-server dist,

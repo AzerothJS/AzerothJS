@@ -63,6 +63,11 @@ export interface SseConnection
     readonly lastEventId: string | null;
 }
 
+/**
+ * Options for {@link sse}: the comment heartbeat that keeps proxies from idling the stream,
+ * the client's reconnect delay hint, the `[DONE]` terminator (what the frontend `stream`
+ * keyword's parser stops on), and the buffered-bytes cap backpressure enforces.
+ */
 export interface SseOptions
 {
     /** Comment-heartbeat interval in ms; 0 disables (default 15000). */

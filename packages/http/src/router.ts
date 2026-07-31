@@ -66,6 +66,12 @@ export interface RouteDecodeError
     kind: 'decode-error';
 }
 
+/**
+ * Everything {@link RadixRouter.route} can answer, as a discriminated union on `kind`: a match
+ * carrying the value and decoded params, a method mismatch carrying the Allow set (405), a
+ * plain miss (404), or a decode error for malformed percent-escapes (400). One union so a
+ * dispatcher must handle all four - there is no throwing path.
+ */
 export type RouteResult<T> = RouteMatch<T> | RouteMethodMismatch | RouteMiss | RouteDecodeError;
 
 /** One radix-tree node. Children are keyed by literal segment; param/wildcard are singular. */

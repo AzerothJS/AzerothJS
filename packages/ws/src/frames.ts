@@ -64,8 +64,13 @@ export class ProtocolError extends Error
 /** One parsed frame (payload already unmasked). */
 export interface Frame
 {
+    /** Final fragment of the message (RFC 6455 FIN bit). */
     fin: boolean;
+
+    /** The {@link OPCODE} value: continuation, text, binary, close, ping, or pong. */
     opcode: number;
+
+    /** The frame payload, already unmasked. */
     payload: Uint8Array;
 }
 

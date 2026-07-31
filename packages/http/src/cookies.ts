@@ -61,6 +61,11 @@ export function parseCookies(request: Request): Record<string, string>
     return cookies;
 }
 
+/**
+ * Attributes for {@link serializeCookie}. Validation is loud where browsers are silent: a
+ * `__Host-` name with a Domain or a non-root Path, or `SameSite=None` without `Secure`, throws
+ * here instead of shipping a cookie the browser drops.
+ */
 export interface CookieOptions
 {
     /** Seconds until expiry. Omit both maxAge and expires for a session cookie. */

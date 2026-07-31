@@ -90,3 +90,29 @@ describe('hover: AzerothJS keywords', () =>
         expect(contents).not.toContain('reactive side effect');
     });
 });
+
+describe('hover: imported framework APIs carry their JSDoc', () =>
+{
+    // The orphaned-doc regression: createResource's house block once sat detached from its
+    // function (an interface slid between them), so hovering the import showed NOTHING while
+    // the types were fine. This pins the doc at the layer a user experiences it.
+    const IMPORT_SOURCE = [
+        "import { createResource } from 'azerothjs';",  // 0  `createResource` at col 9
+        'export default component Loader',               // 1
+        '{',                                             // 2
+        "    resource user = fetch('/u').then((response) => response.json());", // 3
+        '    <p>{user.loading() ? \'...\' : \'done\'}</p>', // 4
+        '}',                                             // 5
+        ''
+    ].join('\n');
+
+    it('hover on a symbol imported from azerothjs renders its documentation', () =>
+    {
+        const service = new AzerothLanguageService(fixtures, tsconfig);
+        const uri = pathToFileURL(path.join(fixtures, 'Loader.azeroth')).href;
+        service.didOpen(uri, IMPORT_SOURCE);
+        const hover = service.getHover(uri, { line: 0, character: 12 });
+        const contents = hover && typeof hover.contents === 'string' ? hover.contents : '';
+        expect(contents).toContain('Wraps an async fetcher');
+    });
+});

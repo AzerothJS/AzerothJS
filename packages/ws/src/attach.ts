@@ -18,6 +18,10 @@ import type { Socket } from 'node:net';
 import { upgradeResponse, validateHandshake } from './handshake.ts';
 import { ServerSocket, type ServerSocketOptions } from './socket.ts';
 
+/**
+ * Options for attaching the WebSocket endpoint to an HTTP server: the upgrade path, origin
+ * admission, and every {@link ServerSocketOptions} limit, applied per accepted socket.
+ */
 export interface AttachOptions extends ServerSocketOptions
 {
     /** Only upgrade this exact pathname (default: every upgrade request). */

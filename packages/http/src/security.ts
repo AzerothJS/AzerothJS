@@ -19,6 +19,11 @@
 
 import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
 
+/**
+ * HSTS for {@link securityHeaders}. Emitted only over a connection proven secure - sending it
+ * on plain HTTP is meaningless, and a wrong `maxAge` with `preload` is close to irreversible,
+ * which is why nothing here defaults to preload.
+ */
 export interface HstsOptions
 {
     /** max-age in seconds (default 15552000 = 180 days). */

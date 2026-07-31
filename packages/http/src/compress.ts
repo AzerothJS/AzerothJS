@@ -114,6 +114,11 @@ function encodedEtag(etag: string, encoding: string): string
     return `${ etag }-${ encoding }`;
 }
 
+/**
+ * Options for negotiated response compression (br/gzip/deflate): the size floor below which
+ * compression costs more than it saves, and the media types worth compressing. Event streams
+ * and already-compressed types are skipped regardless.
+ */
 export interface CompressOptions
 {
     /** Bodies below this byte count (per Content-Length, when known) pass through. Default 1024. */

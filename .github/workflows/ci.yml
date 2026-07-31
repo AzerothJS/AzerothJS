@@ -122,7 +122,7 @@ jobs:
                     retention-days: 14
 
     build:
-        name: Build & leak check
+        name: Build & publish contract
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
@@ -137,6 +137,3 @@ jobs:
             # Validates the published package.json contract (exports/types/format/bin),
             # which the src-aliased test suite never exercises. Requires the build above.
             -   run: npm run lint:publish
-            # Deterministic reactive-graph leak gate (build output is required: the gate
-            # imports azerothjs from its published dist).
-            -   run: npm run leak

@@ -139,6 +139,11 @@ export function requestIdOf(request: Request): string | undefined
     return (request as { [REQUEST_ID]?: string })[REQUEST_ID];
 }
 
+/**
+ * Options for {@link requestId}: the header name and whether an inbound value is trusted or
+ * always replaced. The generated id is what {@link requestIdOf} reads and `logRequests`
+ * attaches to every line.
+ */
 export interface RequestIdOptions
 {
     /** Header carrying the id, both inbound and outbound (default `x-request-id`). */

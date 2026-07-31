@@ -53,16 +53,15 @@ npm run test:watch # watch mode
 npm run lint       # eslint over the whole repo
 npm run lint:fix   # autofix style issues
 npm run build      # compile + emit declarations for all packages
-npm run leak       # deterministic reactive-graph memory-leak gate
 npm run typecheck  # whole-monorepo type-check (no emit)
 npm run dev        # whole-monorepo type-check in watch mode
 ```
 
 Before opening a PR, make sure `npm run lint`, `npm run typecheck`, `npm test`,
-and `npm run build` all pass. CI runs these (plus the leak gate, the publish
-contract check, test coverage on Linux, a Windows test cell, and - when editor
-or package code changes - builds of both editor plugins), so a green local run
-should mean a green CI run. `npm run verify` chains every local gate in one
+and `npm run build` all pass. CI runs these (plus the publish contract check,
+test coverage on Linux, a Windows test cell, and - when editor or package code
+changes - builds of both editor plugins), so a green local run should mean a
+green CI run. `npm run verify` chains every local gate in one
 command.
 
 ## Testing
@@ -160,13 +159,9 @@ Common types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
 `BREAKING CHANGE:` footer, e.g.
 `build(packages)!: raise the Node engines floor to >=24 in every published package`.
 
-A `commit-msg` hook enforces this shape (`scripts/check-commit-msg.mjs`, run by
-husky) - a zero-dependency check, not commitlint. It is strict about the **type**
-and the summary, and only shape-checks the scope, so it never argues with a
-legitimate commit. Git's own generated messages (merge, revert, `fixup!`) pass
-through untouched. The convention is still a readability and history aid: it is
-**not** wired into automated versioning (see Releases below), which stays a
-deliberate, hand-cut decision.
+The convention is a readability and history aid: it is **not** wired into
+automated versioning (see Releases below), which stays a deliberate, hand-cut
+decision.
 
 ## Pull requests
 

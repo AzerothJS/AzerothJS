@@ -40,9 +40,12 @@ export type PathParams<Path extends string> =
                 ? Name extends '' ? object : { [K in Name]: string }
                 : object;
 
-// QUERY (RFC 10008) is a safe, idempotent method that carries a request body - a read whose
-// parameters are too large or structured for a URL. On a QUERY route, `input` is that body (the
-// query document), validated exactly as a POST body is; the handler MUST NOT mutate state.
+/**
+ * The JSON verbs a declaration may carry. QUERY (RFC 10008) is a safe, idempotent method that
+ * carries a request body - a read whose parameters are too large or structured for a URL; its
+ * `input` is that body, validated exactly as a POST body is, and the handler MUST NOT mutate
+ * state. `raw` routes may use any method string beyond this union.
+ */
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'QUERY';
 
 /**

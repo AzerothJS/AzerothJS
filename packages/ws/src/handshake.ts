@@ -23,7 +23,10 @@ export function acceptValueFor(key: string): string
 /** Why a handshake was refused (mapped to a plain HTTP response by the attach layer). */
 export interface HandshakeRejection
 {
+    /** The HTTP status the refusal answers with (400/403/426). */
     status: number;
+
+    /** The human-readable reason, sent as the response body. */
     reason: string;
 }
 

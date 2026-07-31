@@ -485,6 +485,10 @@ const FORMAT_MESSAGES: Record<string, string> =
     url: 'Must be a valid URL'
 };
 
+/**
+ * Constraints for {@link string}: length bounds, pattern, format, and the normalizations
+ * (`trim`/`lowercase`) that run BEFORE validation - what parses out is the normalized value.
+ */
 export interface StringOptions extends RuleOverrides
 {
     /** Strip surrounding whitespace BEFORE any check; the trimmed value is what parses out. */
@@ -563,6 +567,10 @@ export function string(options: StringOptions = {}): Schema<string>
     }, { kind: 'string', constraints: options });
 }
 
+/**
+ * Constraints for {@link number}: bounds, integer-ness, and `coerce` - the query-string seam,
+ * turning the string a URL carries into the number the schema declares before validating it.
+ */
 export interface NumberOptions extends RuleOverrides
 {
     /** Minimum value. */
@@ -612,6 +620,10 @@ export function number(options: NumberOptions = {}): Schema<number>
     }, { kind: 'number', constraints: options });
 }
 
+/**
+ * Constraints for {@link boolean}: `coerce` accepts the forms a query string or form post
+ * actually sends ('true'/'false'/'1'/'0') instead of treating every non-empty string as true.
+ */
 export interface BooleanOptions extends RuleOverrides
 {
     /** Accept 'true'/'false'/'1'/'0' strings (query/form transports ONLY - never default). */
@@ -677,6 +689,10 @@ export function enumOf<const V extends readonly string[]>(values: V, overrides?:
     }, { kind: 'enum', values: values });
 }
 
+/**
+ * Constraints for {@link array}: element-count bounds. Element validation belongs to the item
+ * schema; these only bound how many of them a caller may send.
+ */
 export interface ArrayOptions extends RuleOverrides
 {
     /** Minimum length. */

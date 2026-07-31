@@ -22,6 +22,40 @@ type StyleValue = string | number | null | undefined | (() => string | number | 
 export type StyleObject = Record<string, StyleValue>;
 
 /**
+ * A CSS property name after kebab-case conversion: an optional `-`/`--` prefix (vendor or
+ * custom property) then a letter-led identifier. A name outside this shape (spaces, `;`,
+ * `:`) came from data and would open its own declaration inside the style attribute.
+ *
+ * @internal
+ */
+const CSS_PROPERTY_NAME = /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/;
+
+/**
+ * Rejects a style VALUE whose text could terminate its declaration and start another
+ * (`10px; background: url(//evil)` is an exfiltration primitive). `;` is legal INSIDE a
+ * quoted string or a url() body (data: URIs carry them), so those regions are blanked
+ * before the test rather than banning the character outright.
+ *
+ * @internal
+ */
+function assertSafeStyleValue(property: string, resolved: string | number): void
+{
+    if (typeof resolved === 'number')
+    {
+        return;
+    }
+
+    const bare = resolved
+        .replace(/(['"])(?:\\.|(?!\1).)*\1/g, '""')
+        .replace(/url\([^)]*\)/gi, 'url()');
+    if (/[;}]/.test(bare))
+    {
+        throw new Error(`azeroth: invalid style value for "${ property }" - a ';' or '}' outside a string or url() `
+            + 'would start a new declaration inside the style attribute.');
+    }
+}
+
+/**
  * styleMap
  *
  * PURPOSE:
@@ -82,40 +116,6 @@ export type StyleObject = Record<string, StyleValue>;
  *   style: styleMap({ color, 'font-size': () => `${ size() }px`, display: () => hidden() ? 'none' : null })
  * }, 'Styled');
  */
-/**
- * A CSS property name after kebab-case conversion: an optional `-`/`--` prefix (vendor or
- * custom property) then a letter-led identifier. A name outside this shape (spaces, `;`,
- * `:`) came from data and would open its own declaration inside the style attribute.
- *
- * @internal
- */
-const CSS_PROPERTY_NAME = /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/;
-
-/**
- * Rejects a style VALUE whose text could terminate its declaration and start another
- * (`10px; background: url(//evil)` is an exfiltration primitive). `;` is legal INSIDE a
- * quoted string or a url() body (data: URIs carry them), so those regions are blanked
- * before the test rather than banning the character outright.
- *
- * @internal
- */
-function assertSafeStyleValue(property: string, resolved: string | number): void
-{
-    if (typeof resolved === 'number')
-    {
-        return;
-    }
-
-    const bare = resolved
-        .replace(/(['"])(?:\\.|(?!\1).)*\1/g, '""')
-        .replace(/url\([^)]*\)/gi, 'url()');
-    if (/[;}]/.test(bare))
-    {
-        throw new Error(`azeroth: invalid style value for "${ property }" - a ';' or '}' outside a string or url() `
-            + 'would start a new declaration inside the style attribute.');
-    }
-}
-
 export function styleMap(styles: StyleObject): () => string
 {
     return (): string =>

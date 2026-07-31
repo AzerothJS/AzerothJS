@@ -50,6 +50,11 @@ const DECODER = new TextDecoder();
 /** The default body cap: 1 MiB, matching the conservative end of ecosystem defaults. */
 export const DEFAULT_BODY_LIMIT: number = 1024 * 1024;
 
+/**
+ * Limits for the body readers ({@link readRaw}/{@link readText}/{@link readJson}/
+ * {@link readForm}/{@link readValidated}). The cap is ON by default - an absent option means
+ * {@link DEFAULT_BODY_LIMIT}, never unlimited.
+ */
 export interface ReadOptions
 {
     /** Maximum body size in bytes (default {@link DEFAULT_BODY_LIMIT}). */
