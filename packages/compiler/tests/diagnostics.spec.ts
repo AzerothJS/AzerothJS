@@ -85,6 +85,24 @@ describe('diagnoseModule - constant-derived', () =>
         // warning here would suggest "use a plain value", which would silently break reactivity.
         expect(codes('component C { derived d = router.location().pathname; <p>{d}</p> }')).not.toContain('azeroth/constant-derived');
     });
+
+    it('does not flag a derived that reads a PROPERTY off an external object', () =>
+    {
+        // The same argument as the call case, for the access shape the framework's OWN store uses.
+        // `createStore` returns a proxy read by plain property access - `store.rows`, no call - so
+        // a rule that exempts `router.location()` but flags `store.rows` fires on the idiomatic
+        // way to consume the framework's own state container, and its suggested fix ("use a plain
+        // value") would silently break reactivity in exactly the case it is most likely to hit.
+        expect(codes('component C { derived d = socket.presence.online; <p>{d}</p> }')).not.toContain('azeroth/constant-derived');
+        expect(codes('component C { derived d = settings.theme; <p>{d}</p> }')).not.toContain('azeroth/constant-derived');
+    });
+
+    it('still flags a provably constant derived built only from literals', () =>
+    {
+        // The exemption above must not swallow the rule: no external read, nothing to be reactive.
+        expect(codes('component C { derived d = 1 + 2; <p>{d}</p> }')).toContain('azeroth/constant-derived');
+        expect(codes('component C { derived d = `a${ 1 }b`; <p>{d}</p> }')).toContain('azeroth/constant-derived');
+    });
 });
 
 describe('diagnoseModule - inert-effect', () =>

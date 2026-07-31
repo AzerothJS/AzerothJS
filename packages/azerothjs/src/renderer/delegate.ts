@@ -164,6 +164,22 @@ function dispatchDelegated(event: Event): void
         nativeStopImmediate.call(this);
     };
 
+    /*
+     * `currentTarget` is the node whose listener is running. The real listener is on the DOCUMENT,
+     * so without this every delegated handler reads `document` - and `event.currentTarget` is the
+     * only way an ARROW function can reach its own element, which is how markup handlers are
+     * written. It failed loudly on methods the document lacks (`setPointerCapture`) and silently
+     * wherever the document happens to have the property.
+     *
+     * Redefined per handler and restored in the finally, so a later document-level listener still
+     * observes the document. Same shape as the stopImmediatePropagation override above.
+     */
+    const ownCurrentTarget = Object.getOwnPropertyDescriptor(event, 'currentTarget');
+    const setCurrentTarget = (node: Node | null): void =>
+    {
+        Object.defineProperty(event, 'currentTarget', { value: node, configurable: true, enumerable: true });
+    };
+
     try
     {
         for (const node of path)
@@ -173,6 +189,7 @@ function dispatchDelegated(event: Event): void
             {
                 continue;
             }
+            setCurrentTarget(node);
             handler.call(node, event);
             // eslint-disable-next-line @typescript-eslint/no-deprecated, @typescript-eslint/no-unnecessary-condition -- reading cancelBubble is the only way to OBSERVE stopPropagation() from outside (the deprecation targets writing it); immediateStop is mutated by the override closure, which the rule's flow analysis cannot see
             if (immediateStop || event.cancelBubble)
@@ -185,5 +202,16 @@ function dispatchDelegated(event: Event): void
     {
         // Restore the prototype method for the listeners that run after this one.
         delete (event as unknown as Record<string, unknown>).stopImmediatePropagation;
+
+        // And hand `currentTarget` back to the DOM, so a later document listener sees the document
+        // rather than whichever node this dispatch happened to stop on.
+        if (ownCurrentTarget === undefined)
+        {
+            delete (event as unknown as Record<string, unknown>).currentTarget;
+        }
+        else
+        {
+            Object.defineProperty(event, 'currentTarget', ownCurrentTarget);
+        }
     }
 }

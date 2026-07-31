@@ -22,7 +22,7 @@
  */
 
 export { RadixRouter } from './router.ts';
-export type { PathParams, RouteResult, RouteMatch, RouteMethodMismatch, RouteMiss } from './router.ts';
+export type { PathParams, RouteResult, RouteMatch, RouteMethodMismatch, RouteMiss, RouteDecodeError } from './router.ts';
 
 export { App } from './app.ts';
 export type { AppOptions, Handler, Middleware, RequestContext, RequestObserver, AzerothPlugin } from './app.ts';
@@ -43,6 +43,9 @@ export {
 export type { ErrorObserver, ErrorSerializer, ErrorSerializerContext } from './errors.ts';
 
 export { json, text, html, redirect, noContent, created, queryResult, acceptQuery } from './respond.ts';
+
+export { conditional, etagFor, matchesEtag } from './conditional.ts';
+export type { ConditionalOptions } from './conditional.ts';
 export type { QueryResultOptions } from './respond.ts';
 export { jsonEncoder } from './encode-json.ts';
 export type { EncodableSchema, EncoderMeta } from './encode-json.ts';
@@ -68,7 +71,7 @@ export { rateLimit, MemoryRateStore } from './rate-limit.ts';
 export type { RateStore, RateLimitOptions, RateLimitDecision } from './rate-limit.ts';
 
 export { readMultipart, streamMultipart, boundaryOf } from './multipart.ts';
-export type { MultipartBody, MultipartOptions, UploadedFile } from './multipart.ts';
+export type { MultipartBody, MultipartOptions, StreamMultipartOptions, UploadedFile } from './multipart.ts';
 
 export { parseCookies, serializeCookie, expireCookie } from './cookies.ts';
 export type { CookieOptions } from './cookies.ts';

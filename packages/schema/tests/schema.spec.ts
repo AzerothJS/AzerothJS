@@ -23,14 +23,30 @@ describe('inference: the type IS the declaration', () =>
             role: enumOf(['viewer', 'editor'] as const),
             tags: array(string())
         });
+        // `admin` is an optional KEY (`?`), not a required key of type `| undefined`: the runtime
+        // accepts the key's absence, so the type must too, or every caller constructing a value
+        // (a typed client's `query: {}`, a handler's return) is forced to write `admin: undefined`
+        // for a field the schema says they can omit.
         expectTypeOf<Infer<typeof user>>().toEqualTypeOf<{
             name: string;
             age: number;
-            admin: boolean | undefined;
+            admin?: boolean | undefined;
             role: 'viewer' | 'editor';
             tags: string[];
         }>();
         expect(user.safeParse({ name: 'x', age: 1, role: 'viewer', tags: [] }).ok).toBe(true);
+    });
+
+    it('a value omitting optional keys is constructible AS the inferred type', () =>
+    {
+        const query = object({
+            before: string().optional(),
+            limit: number({ int: true }).optional(),
+            q: string()
+        });
+        // The compile-time half of "optional means omittable" - this line is the regression.
+        const value: Infer<typeof query> = { q: 'find me' };
+        expect(query.parse(value)).toEqual({ q: 'find me' });
     });
 
     it('literal and union infer narrow types', () =>

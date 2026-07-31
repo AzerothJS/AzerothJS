@@ -3,10 +3,10 @@
 // produces the SAME failure at all three. No rule is written twice anywhere in the triangle.
 
 import { describe, it, expect } from 'vitest';
-import { object, string, number, SchemaError, type Infer } from '@azerothjs/schema';
+import { object, string, number, type Infer } from '@azerothjs/schema';
 import { createForm } from 'azerothjs';
 import { App, readValidated, json } from '@azerothjs/http';
-import { defineContract, route, mountApi, createClient } from '@azerothjs/http/api';
+import { defineContract, route, mountApi, createClient, ApiError } from '@azerothjs/http/api';
 
 const CODES = { required: 'NOT_EMPTY', nonempty: 'NOT_EMPTY', min: 'MIN_LENGTH', format: 'INVALID_EMAIL' };
 
@@ -57,8 +57,12 @@ describe('one schema, three boundaries', () =>
         });
 
         const failure: unknown = await client.signUp({ input: INVALID }).catch((error: unknown) => error);
-        expect(failure).toBeInstanceOf(SchemaError);
-        expect((failure as SchemaError).issues.map((issue) => [issue.path, issue.code])).toEqual([
+        // The client reports EVERY failure as ApiError now, local or server - one type, one catch.
+        // The issue detail this asserts is unchanged; it is a first-class field rather than a
+        // SchemaError-only one, so the same assertion holds for a server 422.
+        expect(failure).toBeInstanceOf(ApiError);
+        expect((failure as ApiError).status).toBe(422);
+        expect((failure as ApiError).issues.map((issue) => [issue.path, issue.code])).toEqual([
             ['name', 'MIN_LENGTH'],
             ['email', 'INVALID_EMAIL'],
             ['age', 'min']

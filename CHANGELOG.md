@@ -9,6 +9,158 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed (renderer events)
+
+- **`event.currentTarget` in a compiled component is the element again, not the document.**
+  Markup handlers lower to `bindEvent`, which routes bubbling types through one document-level
+  listener. The browser sets `currentTarget` to the node whose listener is running - the document -
+  and the dispatcher fixed up `this` but never `currentTarget`. Since markup handlers are arrow
+  functions, and arrows have no `this`, `currentTarget` is the only way a handler can reach its own
+  element, so every one of them received the wrong node.
+
+  It failed loudly on methods the document lacks (`event.currentTarget.setPointerCapture(...)`, the
+  standard way to make a drag survive the pointer leaving the element) and silently wherever the
+  document happens to have the property, which is the worse half. `h()` was never affected - it
+  attaches per-element listeners - so the two render paths disagreed, and a test written with `h()`
+  cannot observe the bug. The regression test drives `bindEvent` for that reason.
+
+  `currentTarget` is now defined for the duration of each handler call and the original descriptor
+  restored afterwards, so a document-level listener registered by application code still observes
+  the document.
+
+### Fixed (control flow)
+
+- **A keyed `<For>` warns in development when a reused row's data went stale.** A row is built once
+  from the item it was handed and is not rebuilt while its key is unchanged. A list keyed by id
+  whose rows display mutable fields therefore renders the values those fields held when the row
+  first appeared, and never updates them - the store is right, the screen is wrong, and nothing is
+  logged.
+
+  The reconciliation itself is correct and unchanged; the trap is that reading a field off the item
+  the row builder handed you is the natural way to write a row. The warning names the field that
+  went stale and both remedies: fold the changing field into the key, or pass a getter and read it
+  through a `derived`. It is development-only and folds away in a production build.
+
+### Added (http)
+
+- **`conditional()`, `etagFor()` and `matchesEtag()` - conditional JSON responses.** A polled
+  endpoint is the most common thing an API serves and the most wasteful to serve unconditionally.
+  These turn "nothing changed" into a bodyless 304, handling comma-separated `If-None-Match` lists,
+  `W/` weak validators and `*`.
+
+  `scope` is a REQUIRED option rather than an optional one. An entity-tag computed over the body
+  alone means two callers whose rows happen to serialize identically share a validator, and handing
+  one of them a 304 serves the other's data out of its cache. Naming what the response varies by
+  turns a silent cross-tenant leak into a parameter that cannot be forgotten.
+
+  The existing `matchesEntity` in static file serving is unchanged and stays private: it is
+  specialized for files, understanding encoding-suffixed validators and `If-Modified-Since` dates.
+
+### Fixed (logger sinks)
+
+- **A stream handed where the options object belongs now throws instead of writing to stdout.**
+  `prettySink` and `ndjsonSink` take `{ stream }`, so a bare stream became the options bag,
+  `options.stream` read undefined, and the sink fell back to stdout - leaving the configured file
+  empty and every line on the console, with nothing naming the cause. In production that reads as
+  "logging is broken" while the evidence of the misconfiguration is the first thing lost.
+
+  TypeScript already rejected the call (a writable has no properties in common with the options
+  type), so this is the guard for a JavaScript caller. `prettySink()`, `prettySink({})` and
+  `prettySink({ stream })` are unchanged.
+
+### Fixed (contract mount diagnostics)
+
+- **A group-relative handler map mounted against the whole contract now names the mistake.**
+  `implement(routes, ...)` keys its result relative to the routes it was passed - the only key
+  space a feature file can know - while `mountApi(app, contract, ...)` keys from the contract root.
+  Spreading the first into the second compiles and fails at boot, and the old error reported a
+  generic "route has no handler", leaving the reader to work out that the two halves of one feature
+  count from different places.
+
+  The mount now checks whether the BARE key is present, which is exactly this mismatch and nothing
+  else, and says so - naming both ways out, including the `mountApi(app, contract.<group>, ...)`
+  call that fixes it. A genuinely missing handler still reports plainly, with no misleading hint.
+
+  Found by building a realistic multi-feature application rather than a demo: the mismatch does not
+  appear until a contract has more than one group, which is why no existing project surfaced it.
+  The underlying design - two key spaces for one feature - is not addressed here.
+
+### Changed (contract client)
+
+- **The typed client now reports every failure as `ApiError`.** It validates input locally before
+  sending - deliberately, since that failure costs no network - but threw `SchemaError` for the
+  local case and `ApiError` for a server refusal. One logical failure ("validation failed")
+  arrived as two types with different shapes, and only the server one carried `status`/`code`.
+
+  That is why a real application accumulates a dozen copies of
+  `err instanceof Error && err.message !== '' ? err.message : 'fallback'`: `instanceof ApiError`
+  genuinely does not catch client-side validation, so reaching for the typed error does not work
+  and duck-typing is the rational response. **The typed error was unreachable in the exact case it
+  was designed for**, which was only visible once a realistic application was built against it.
+
+  Local validation now reports `status: 422` and `code: 'validation-failed'` - the same pair the
+  server sends for the same failure - and keeps the form-ready `fields` map that made
+  `SchemaError` worth catching. A caller cannot tell where the failure was caught, and no longer
+  needs to. **BREAKING** for anyone catching `SchemaError` from a client call; catch `ApiError`.
+
+### Fixed (logger, compiler, public types)
+
+- **A logger name containing a regex character deleted other writers' files.** Folder-mode
+  retention interpolated the configured `name` straight into the pattern that decides what
+  `unlinkSync` removes, so the name acted as a pattern rather than a literal: `[a-c]` matched
+  `a-`, `b-` and `c-`, and the likelier `api.v2` matched `apiXv2`. Reproduced - a sink named
+  `[a-c]` pruned two files belonging to unrelated services sharing the directory. Not remotely
+  exploitable, since `name` is developer configuration and never request data, but escaping an
+  interpolated value costs one call and a name should select its own files and nothing else.
+
+- **Five types were public in effect but not nameable.** Each appears in an exported signature or
+  union while the package entry never re-exported it, so a consumer could call the function but
+  not write down its parameter or narrow its result: `RouteDecodeError` and
+  `StreamMultipartOptions` from `@azerothjs/http`, and `TypeCheckOptions`, `MarkupOutput` and
+  `OpaqueStatements` from `@azerothjs/compiler`. `RouteDecodeError` is the member added to
+  `RouteResult` earlier in this release, so nobody could narrow the union it joined.
+
+- **The compiler's attribute escaper now matches the runtime's.** It escaped `&` and `"` where the
+  runtime escapes `&`, `"`, `<` and `>`. Both are safe inside a quoted value and the compiler's
+  only ever sees author-written static markup - but two functions with one name and different
+  escape sets is a trap for whoever first routes dynamic content through the wrong one.
+
+### Corrected (performance claims)
+
+- **The "ahead of Fastify on the five-scenario geometric mean (~4%)" claim in [0.9.0-beta.1] does
+  not hold and is withdrawn.** Re-measured with the same stated methodology (autocannon, 100
+  connections, interleaved same-machine A/B, 3 runs x 8s), `@azerothjs/http` is **~5% behind**
+  Fastify on that geomean, reproducibly: -5.5%, -4.1% and -6.2% across three runs, and -4.2% at 50
+  connections. The measurement used a rebuilt interleaved A/B harness linked to the local packages,
+  persisting a JSON artifact per run (Node version, platform, settings, per-scenario medians and
+  every individual run). The original harness sat in an untracked sibling directory and wrote
+  nothing at all, so the number outlived its evidence - which is why this went unnoticed for three
+  minor versions, and why any future claim needs a stored artifact behind it.
+
+  Three findings that should not be collapsed into each other:
+
+  - **The security work accounts for part of the gap, not all of it.** The same benchmark against
+    `8bf1c71` (before both audits) gives ~-2%, so the two security commits cost roughly 3 points.
+    The pre-audit code was already behind, so the fixes did not turn a lead into a deficit.
+  - **The original claim was measured against 0.8.0-beta.2**, whose handler signature no longer
+    exists: its server entry used the two-argument `(request, ctx)` form and imported `serve` from
+    the package root. That entry cannot run on 1.1.0 at all, so the old numbers describe a
+    materially different framework and were never re-earned across the 1.0 API change.
+  - **Run duration changes the sign.** At 2 seconds the same comparison reports azerothjs ~4%
+    ahead; at 8 seconds it reports ~5% behind, because a short run never reaches steady state. The
+    published figure is close to what a too-short run produces.
+
+  Still unverified against 1.1.0 and NOT re-measured here: the Express/Koa/Nest comparisons in the
+  same entry. The js-framework-benchmark and `ws` claims were checked against their stored raw data
+  and do hold - but for 0.8.0-beta.2, not for the current release.
+
+- **Measured cost of the security work on the paths it touched.** Three commits compared in one
+  process, interleaved, 21 rounds, medians with interquartile bands: SSR render **-8% to -13%**
+  (real - the renderer safety gate is the XSS defence that caught two criticals, so the cost is
+  accepted, and now documented rather than assumed); HTTP dispatch **-4% to -7%** (borderline, the
+  verdict moved between runs); WebSocket frame parsing **+77% to +82%** (a real improvement, from
+  the first audit's parser rewrite).
+
 ### Security (second adversarial pass: fuzzing, differential testing, editor tooling)
 
 A second audit attacked the framework by RUNNING it rather than reading it: 16 million seeded
@@ -165,10 +317,11 @@ guarantees held exactly as documented, and nothing OUTSIDE the kernel re-establi
   grammar `X-Forwarded-Host` already used, falling back to `localhost`.
 
 - **`context.path` is new, and it is the path to make policy decisions on.** The router matches
-  decoded, slash-collapsed segments, so `/%61dmin`, `//admin` and `/admin//` are all the route
-  `/admin` - while `url.pathname` preserves the client's spelling, so a prefix check written on
-  it could be bypassed by re-spelling the path that still reached the protected handler. There
-  was no canonical path available to compare against; now there is one.
+  decoded segments, so `/%61dmin` is the route `/admin` - while `url.pathname` preserves the
+  client's spelling, so a prefix check written on it could be bypassed by re-spelling the path
+  that still reached the protected handler. There was no canonical path available to compare
+  against; now there is one. (An empty segment, `//admin`, was in that set when this landed and
+  is no longer: see the entry above, which stops the router matching such a path at all.)
 
 - **A single request could kill the process, through five reachable triggers.** `App.handle`
   cannot reject, but the layers around it could, and nothing caught them: the node adapter
@@ -2346,6 +2499,12 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
     attached, taking a per-signal/effect/root allocation off the hot paths.
   - A single `class:` toggle compiles to a bare conditional instead of an
     array/filter/join per evaluation.
+- **WITHDRAWN - see the "Corrected (performance claims)" entry under [Unreleased].** The Fastify
+  half of this claim does not reproduce: re-measured with this same methodology, `@azerothjs/http`
+  is ~5% BEHIND Fastify on the five-scenario geomean, and was already ~2% behind before the
+  security work. The Express/Koa/Nest half has not been re-measured. Left in place unedited below
+  as the historical record of what was believed at this release.
+
 - `@azerothjs/http` got faster on the wire, measured against Express, Koa, NestJS,
   and Fastify with autocannon (100 connections, interleaved same-machine A/B):
   ahead of Express/Koa/Nest on every scenario by wide margins, and ahead of

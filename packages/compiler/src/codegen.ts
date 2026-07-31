@@ -44,7 +44,7 @@ import { rewriteReactive, setterName } from './rewrite.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
-import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren } from './ir.ts';
+import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren } from './ir.ts';
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
@@ -674,10 +674,17 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
     const binds: string[] = [];
     for (const [target, group] of elementBindings)
     {
+        // Event types a `bind:` on this element already owns. An author handler for the same type
+        // is COMPOSED into the write-back rather than registered separately: two registrations for
+        // one element+event silently drop one (a duplicate object key on the h()/string path, an
+        // overwritten slot in the delegated-handler store on the clone path), and the one that
+        // died was always the binding.
+        const boundEvents = new Set(group.filter(b => b.kind === 'bind').map(b => b.event));
+
         if (group.some(b => b.kind === 'spread' || b.kind === 'ref'))
         {
             emit.used.add('bindProps');
-            binds.push(`bindProps(${ nodeVar(target) }, { ${ group.map(b => propEntry(source, b, sources, emit)).join(', ') } });`);
+            binds.push(`bindProps(${ nodeVar(target) }, { ${ propEntries(source, group, sources, emit).join(', ') } });`);
             continue;
         }
         for (const binding of group)
@@ -722,6 +729,11 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
             }
             else if (binding.kind === 'event')
             {
+                // Folded into the bind: write-back below when both claim this event - see there.
+                if (boundEvents.has(binding.event))
+                {
+                    continue;
+                }
                 // bindEvent delegates bubbling event types to one document-level
                 // listener (matching the bindProps path); non-bubbling types fall
                 // back to a per-element listener inside the helper.
@@ -736,7 +748,7 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                 emit.used.add('createEffect');
                 emit.used.add('bindEvent');
                 binds.push(`createEffect(() => setProp(${ nodeVar(target) }, ${ quoteString(binding.prop) }, ${ bindValue(source, binding, sources) }));`);
-                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ bindHandler(source, binding, sources) });`);
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ composedBindHandler(source, binding, group, sources) });`);
             }
             else if (binding.kind === 'class')
             {
@@ -960,7 +972,7 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
     const props =
     [
         ...node.attrs.map(a => `${ objectKey(a.name) }: ${ a.value === true ? 'true' : quoteString(a.value) }`),
-        ...group.map(b => propEntry(source, b, sources, emit))
+        ...propEntries(source, group, sources, emit)
     ];
     const childItems = node.children.map(child => emitNode(source, child, plan, sources, emit));
     const args = [quoteString(node.tag), `{ ${ props.join(', ') } }`, ...childItems];
@@ -1062,6 +1074,33 @@ function bindHandler(source: string, binding: BindBinding, sources: ReactiveSour
 }
 
 /**
+ * The write-back for a `bind:` directive, with any author handler for the SAME event folded in.
+ * `<input bind:value={draft} onInput={announce} />` is an ordinary thing to write - bind the
+ * field, and do something else on each keystroke - and both must survive.
+ *
+ * The write-back runs FIRST so the author's handler observes the state the user just produced,
+ * not the previous one.
+ */
+function composedBindHandler(
+    source: string, binding: BindBinding, group: readonly Binding[], sources: ReactiveSources
+): string
+{
+    const writeBack = bindHandler(source, binding, sources);
+    const authored = group.filter((entry): entry is EventBinding =>
+        entry.kind === 'event' && entry.event === binding.event);
+
+    if (authored.length === 0)
+    {
+        return writeBack;
+    }
+
+    const calls = authored
+        .map(entry => `(${ rewriteReactive(handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`)
+        .join('; ');
+    return `($event) => { (${ writeBack })($event); ${ calls }; }`;
+}
+
+/**
  * Builds the merged class string for a {@link ClassBinding}:
  * `[<base>, <dynamic>, (<cond>) ? '<name>' : '', ...].filter(Boolean).join(' ')`. The base is a static
  * literal; the dynamic and each toggle condition are run through the reactive rewrite.
@@ -1114,6 +1153,24 @@ function styleCombined(source: string, binding: StyleBinding, sources: ReactiveS
         parts.push(`${ quoteString(`${ entry.name }: `) } + (${ value })`);
     }
     return `[${ parts.join(', ') }].filter(Boolean).join('; ')`;
+}
+
+/**
+ * Emits an element's bindings as object entries, with any author handler folded into a `bind:`
+ * write-back for the same event. Emitting both separately produced a DUPLICATE OBJECT KEY
+ * (`{ oninput: writeBack, oninput: authored }`), where JS silently keeps the last one - so
+ * `<input bind:value={draft} onInput={announce} />` rendered a field that never updated.
+ */
+function propEntries(source: string, group: readonly Binding[], sources: ReactiveSources, emit: Emit): string[]
+{
+    const boundEvents = new Set(group.filter((b): b is BindBinding => b.kind === 'bind').map(b => b.event));
+
+    return group
+        .filter(binding => !(binding.kind === 'event' && boundEvents.has(binding.event)))
+        .map(binding => binding.kind === 'bind'
+            ? `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), `
+                + `on${ binding.event }: ${ composedBindHandler(source, binding, group, sources) }`
+            : propEntry(source, binding, sources, emit));
 }
 
 /** Emits one element-binding (attr/event/bind/class/style/spread/ref) as a bindProps object entry. */
@@ -1393,10 +1450,22 @@ function escapeText(text: string): string
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Escapes an attribute value for template HTML. */
+/**
+ * Escapes an attribute value for template HTML.
+ *
+ * Escapes the same four characters as the runtime's `escapeAttr` in reactivity/ssr.ts. Only `"`
+ * can close a double-quoted value, so `<` and `>` are not strictly required here and this sees
+ * author-written static markup rather than user data - but two functions with one name and
+ * different escape sets is a trap waiting for whoever first routes dynamic content through this
+ * one. Matching costs nothing: over-escaping inside a quoted value is always safe.
+ */
 function escapeAttr(value: string): string
 {
-    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 /** Finds the piece containing an output offset (binary search). */

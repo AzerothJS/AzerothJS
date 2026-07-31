@@ -45,11 +45,15 @@ export interface RequestContext<Params extends Record<string, string> = Record<s
     url: URL;
 
     /**
-     * The path the ROUTER matched: decoded per segment, duplicate and trailing slashes
-     * collapsed. Use THIS, not `url.pathname`, for any policy decision (an auth prefix check,
-     * a CSRF exemption list, a rate-limit bucket, an audit line): `url.pathname` preserves the
-     * client's spelling, so `/%61dmin` and `//admin` read as something other than `/admin`
-     * there while still reaching the `/admin` handler.
+     * The path the ROUTER matched: percent-decoded per segment, one trailing slash dropped.
+     * Prefer THIS over `url.pathname` for a policy decision (an auth prefix check, a CSRF
+     * exemption list, a rate-limit bucket, an audit line), because `url.pathname` preserves the
+     * client's spelling: `/%61dmin` reads as something other than `/admin` there while still
+     * reaching the `/admin` handler.
+     *
+     * A path carrying an empty segment (`//admin`) no longer reaches any handler at all - it is
+     * a distinct URI and the router refuses it - so that spelling is not a way around a check
+     * written on either accessor.
      */
     path: string;
 }
@@ -192,10 +196,10 @@ class DispatchContext implements RequestContext
 
     public get path(): string
     {
-        // The path the ROUTER matched: percent-decoded per segment and slash-collapsed, so
-        // `/%61dmin`, `//admin` and `/admin//` all read as `/admin`. `url.pathname` keeps the
-        // raw spelling, which means a prefix check written on it can be bypassed by re-spelling
-        // the path while the router still reaches the protected handler.
+        // The path the ROUTER matched: percent-decoded per segment, so `/%61dmin` reads as
+        // `/admin` where `url.pathname` keeps the raw spelling. segmentsOf still collapses empty
+        // segments here, which is harmless now that the router REFUSES a path containing one -
+        // nothing carrying `//` reaches a handler for this getter to describe.
         if (this.#path === null)
         {
             const segments = segmentsOf(pathnameOf(this.request.url));

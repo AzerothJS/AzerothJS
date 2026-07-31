@@ -110,6 +110,67 @@ interface KeyEntry
      * the element being rebuilt.
      */
     setIndex: (index: number) => void;
+
+    /**
+     * The item this row was BUILT from. Kept only to detect the stale-row trap in dev: a key that
+     * stays the same while its item's contents change means the row is showing data the store no
+     * longer holds, because the row builder received the item by value and is never re-invoked.
+     */
+    item: unknown;
+}
+
+/**
+ * Warns when a reused row's item changed identity AND contents.
+ *
+ * A keyed row is built ONCE from the item it was handed; the builder is not re-invoked while the
+ * key is stable. So a list whose keys are ids and whose rows display mutable fields renders the
+ * values those fields had when the row appeared, and never updates them. The store is right, the
+ * screen is wrong, and nothing is logged.
+ *
+ * This is the single highest-frequency defect found while building applications on this framework:
+ * two unrelated products hit it independently, and the second time was AFTER the trap had been
+ * documented - the author of the note fell into it anyway, because reading a field off the item
+ * the row builder handed you is the natural way to write a row.
+ *
+ * Dev-only and shallow: one level of own enumerable keys, and only for plain objects. A row that
+ * legitimately reads through a getter is untouched, because its item reference does not change.
+ *
+ * @internal
+ */
+function warnIfStale(previous: unknown, next: unknown, key: string | number): void
+{
+    if (previous === next)
+    {
+        return;
+    }
+    // NODE_ENV off globalThis, matching hydrate.ts and islands.ts - no Node type dependency, and
+    // bundlers replace it so the whole check folds away in a production build.
+    const proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
+    if (proc?.env?.NODE_ENV === 'production')
+    {
+        return;
+    }
+    if (typeof previous !== 'object' || previous === null || typeof next !== 'object' || next === null)
+    {
+        return;
+    }
+    if (Array.isArray(previous) || Array.isArray(next))
+    {
+        return;
+    }
+
+    const before = previous as Record<string, unknown>;
+    const after = next as Record<string, unknown>;
+    const changed = Object.keys(after).find((name) => !Object.is(before[name], after[name]));
+    if (changed === undefined)
+    {
+        return;
+    }
+
+    console.warn(`azeroth: <For> row "${ String(key) }" kept its key while its item's "${ changed }" changed. `
+        + 'The row was built from the OLD item and will not re-render, because a keyed row receives its '
+        + 'item by value once. Either include the changing field in the key, or pass a getter '
+        + '(`lookup={() => rows.find(r => r.id === id)}`) and read it through a `derived`.');
 }
 
 /**
@@ -331,7 +392,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
                     hydrateChild(rowDescriptor, cursor);
                 });
 
-                adoptedMap.set(key, { el, dispose, setIndex: index.set });
+                adoptedMap.set(key, { el, dispose, setIndex: index.set, item });
             }
 
             // No server rows beyond the ones we adopted; a leftover means the
@@ -370,6 +431,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
                 // (no-op when the index is unchanged, since the
                 // signal gates on equality).
                 existing.setIndex(i);
+                warnIfStale(existing.item, item, key);
                 newOrder[i] = existing.el;
                 newMap.set(key, existing);
                 keyMap.delete(key);
@@ -407,7 +469,7 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
                     }
                     orphans.push(displaced);
                 }
-                newMap.set(key, { el, dispose, setIndex: index.set });
+                newMap.set(key, { el, dispose, setIndex: index.set, item });
             }
         }
 

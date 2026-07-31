@@ -172,12 +172,17 @@ function createElementByTag(tag: string): HTMLElement
  *   h('button', { onClick: () => setCount(n => n + 1) }, 'Inc')
  * );
  */
-export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
+export function h(tag: string, props: Props | null, ...children: Child[]): HTMLElement
 {
+    // null is the conventional "no props" spelling (createElement muscle memory, and the natural
+    // shape for element-only nodes). Normalized ONCE here so every path below - including
+    // string-mode serialization, which iterates entries - sees an object.
+    const properties = props ?? {};
+
     // Ahead of the mode dispatch, so an executable tag is refused identically whether it would
     // be serialized, adopted, or built. Returns the concrete name (an unsafeTag() marker is not
     // a string), which is what every mode below builds with.
-    const tagName = assertSafeTag(tag, props);
+    const tagName = assertSafeTag(tag, properties);
 
     // Server-side rendering: in string mode there is no document, so emit HTML
     // directly. The SSRNode is cast to HTMLElement so it flows through
@@ -185,14 +190,14 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
     // element would in the DOM path.
     if (isStringMode())
     {
-        return serializeElement(tagName, props, children) as unknown as HTMLElement;
+        return serializeElement(tagName, properties, children) as unknown as HTMLElement;
     }
 
     // Hydration: don't build DOM. Return a descriptor that, when walked by
     // hydrate(), adopts the matching server-rendered element in place.
     if (isHydrating())
     {
-        return createHydrationNode(tagName, props, children) as unknown as HTMLElement;
+        return createHydrationNode(tagName, properties, children) as unknown as HTMLElement;
     }
 
     // DOM-build path (not the compiled hot path - that clones tmpl()). A missing `document` here
@@ -208,7 +213,7 @@ export function h(tag: string, props: Props, ...children: Child[]): HTMLElement
 
     const el = createElementByTag(tagName);
 
-    applyProps(el, props);
+    applyProps(el, properties);
 
     appendChildren(el, children);
 

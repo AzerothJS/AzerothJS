@@ -17,6 +17,32 @@ function settle(ms = 30): Promise<void>
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Waits for a TERMINAL condition rather than sleeping a fixed span.
+ *
+ * A transition completes on a rAF callback plus a duration timeout, and a fixed sleep races
+ * both: 30ms of wall clock on a loaded machine can pass without either having run, so the
+ * assertion fires while the element is still mounted. That flake is real - it failed a gate run
+ * on this exact test - and it is the same fixed-sleep shape already removed from
+ * adapter-node.spec.ts.
+ *
+ * Polling succeeds the moment the condition holds and only fails when it genuinely never does,
+ * which is what the test means. `settle(n)` stays where a test asserts a MID-FLIGHT state, since
+ * that deliberately samples a moment rather than an outcome.
+ */
+async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void>
+{
+    const deadline = Date.now() + timeoutMs;
+    while (!condition())
+    {
+        if (Date.now() > deadline)
+        {
+            throw new Error('waitFor: condition never held');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
+
 function makeContainer(): HTMLElement
 {
     const container = document.createElement('div');
@@ -127,7 +153,7 @@ describe('Transition - animated enter/leave (rAF + timeout backstop)', () =>
 
         // No real CSS transition fires transitionend; the duration timeout
         // backstops it and completes the leave (removal).
-        await settle();
+        await waitFor(() => container.querySelector('.box') === null);
         expect(container.querySelector('.box')).toBeNull();
         container.remove();
     });

@@ -216,12 +216,31 @@ function errorBlock(shape: ErrorShape, paint: Palette, indent: string): string
 }
 
 /**
+ * @internal Refuses a WRITABLE handed where the options object belongs.
+ *
+ * Both sinks take `{ stream }`, so a bare stream becomes the options bag, `options.stream` reads
+ * undefined, and the sink silently falls back to stdout - an empty log file and every line on the
+ * console, with nothing naming the cause. TypeScript rejects the call (a writable has no
+ * properties in common with the options type), so this is the JavaScript caller's guard.
+ */
+function assertSinkOptions(options: unknown, name: string): void
+{
+    if (typeof (options as { write?: unknown } | null)?.write === 'function')
+    {
+        throw new TypeError(`${ name }() takes an options object, not a stream: write `
+            + `${ name }({ stream }) instead of ${ name }(stream). Passing the stream directly makes it `
+            + 'the options bag, so the sink writes to stdout and the destination stays empty.');
+    }
+}
+
+/**
  * The developer face: aligned, colored, iconed single lines on a TTY.
  * warn/error/fatal go to stderr when no explicit stream is given, so `app 2>errors.log`
  * separates severities the Unix way.
  */
 export function prettySink(options: TerminalSinkOptions = {}): LogSink
 {
+    assertSinkOptions(options, 'prettySink');
     const out = options.stream ?? stdStream('stdout');
     const err = options.stream ?? stdStream('stderr');
     const tier = options.tier ?? colorTier(out);
@@ -331,6 +350,7 @@ function isErrorShape(value: object): value is ErrorShape
  */
 export function ndjsonSink(options: { stream?: WritableLike | undefined } = {}): LogSink
 {
+    assertSinkOptions(options, 'ndjsonSink');
     const out = options.stream ?? stdStream('stdout');
     return (record: LogRecord): void =>
     {

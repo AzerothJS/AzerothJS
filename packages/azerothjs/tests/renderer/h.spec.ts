@@ -320,3 +320,25 @@ describe('h - hostile props are rejected, not rendered', () =>
             .toThrow(/invalid attribute name/);
     });
 });
+
+describe('h - null props', () =>
+{
+    // `h('em', null, 'text')` is the muscle-memory call shape from createElement, and the
+    // natural one for element-only nodes (a markdown renderer is made of them). It must work
+    // on BOTH build paths - the DOM path tolerated null by accident (for-in skips it), while
+    // the string path crashed in Object.entries.
+    it('builds an element with no props in DOM mode', () =>
+    {
+        const el = h('em', null, 'emphasis');
+        expect(el.tagName).toBe('EM');
+        expect(el.textContent).toBe('emphasis');
+        expect(el.attributes.length).toBe(0);
+    });
+
+    it('serializes an element with no props in string mode', async () =>
+    {
+        const { renderToStaticMarkup } = await import('azerothjs');
+        const html = renderToStaticMarkup(() => h('p', null, h('code', null, 'x')));
+        expect(html).toBe('<p><code>x</code></p>');
+    });
+});

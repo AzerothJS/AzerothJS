@@ -46,7 +46,7 @@ export {
     type VirtualCode
 } from './virtual-code.ts';
 
-export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
+export { CodeMapping, type MappingSegment, type MappingKind } from '@azerothjs/compiler';
 
 export { StyleIndex, type ClassDefinition } from './style-index.ts';
 

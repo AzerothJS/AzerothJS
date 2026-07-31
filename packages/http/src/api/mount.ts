@@ -214,6 +214,18 @@ function walk(app: App, node: Contract, handlers: HandlerMapView, prefix: string
             const handler = Object.hasOwn(handlers, at) ? handlers[at] : undefined;
             if (typeof handler !== 'function')
             {
+                // A handler present under the BARE key is the implement()/mountApi key-space
+                // mismatch, not a missing handler: implement() keys relative to the routes it was
+                // given (the only space a feature file can know), while a mount over the whole
+                // contract keys from the root. Saying so turns a boot failure into a fix.
+                if (Object.hasOwn(handlers, key) && typeof handlers[key] === 'function')
+                {
+                    const root = at.slice(0, -(key.length + 1));
+                    throw new Error(`The contract route "${ at }" has no handler, but "${ key }" is present. `
+                        + `implement() keys relative to the routes it was passed, so its map is "${ key }" while `
+                        + `this mount counts from the contract root and wants "${ at }". Either mount the subtree `
+                        + `- mountApi(app, contract.${ root }, { prefix, handlers }) - or key the map "${ at }".`);
+                }
                 throw new Error(`The contract route "${ at }" has no handler. The mount enforces this at `
                     + 'compile time; a runtime gap means the handlers map was built untyped.');
             }

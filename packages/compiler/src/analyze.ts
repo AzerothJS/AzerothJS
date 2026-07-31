@@ -472,9 +472,18 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
 }
 
 /**
- * Conservative purity: true when an expression performs no call, `new`,
- * `await`/`yield`, assignment, or `++`/`--`. May be refined into a real effect
- * analysis later.
+ * Conservative purity: true when an expression performs no call, `new`, `await`/`yield`,
+ * assignment, `++`/`--`, or PROPERTY ACCESS on a value this analysis cannot see into.
+ *
+ * The flag's only consumer is the constant-derived / inert-effect pair, where it means "provably
+ * reads nothing reactive". A property read fails that test for the same reason a call does: the
+ * object may be an external reactive source. It is not a hypothetical - `createStore` returns a
+ * proxy read by plain property access (`store.rows`), so treating `store.rows` as pure warns on
+ * the framework's own state container and tells the author to replace it with a plain value,
+ * which silently breaks reactivity.
+ *
+ * A property read on a value BUILT here (`[1, 2].length`, `{ a: 1 }.a`) stays pure: the object is
+ * visible in the expression, so there is nothing unseen to be reactive.
  *
  * @internal
  */
@@ -488,6 +497,11 @@ function isPure(node: ts.Node): boolean
             return;
         }
         if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n))
+        {
+            pure = false;
+            return;
+        }
+        if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && !isSelfContained(n.expression))
         {
             pure = false;
             return;
@@ -509,4 +523,23 @@ function isPure(node: ts.Node): boolean
     };
     visit(node);
     return pure;
+}
+
+/**
+ * @internal Whether an expression's value is constructed IN this expression, so a property read
+ * off it cannot reach an unseen reactive source. A literal qualifies; a name does not, because the
+ * name may be bound to a store.
+ */
+function isSelfContained(node: ts.Expression): boolean
+{
+    if (ts.isParenthesizedExpression(node))
+    {
+        return isSelfContained(node.expression);
+    }
+    return ts.isStringLiteral(node)
+        || ts.isNumericLiteral(node)
+        || ts.isArrayLiteralExpression(node)
+        || ts.isObjectLiteralExpression(node)
+        || ts.isTemplateExpression(node)
+        || ts.isNoSubstitutionTemplateLiteral(node);
 }

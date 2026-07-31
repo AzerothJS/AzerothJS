@@ -723,9 +723,24 @@ export function array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[
     }, { kind: 'array', item: item, constraints: options });
 }
 
-/** The object type of a shape of schemas. */
-export type ShapeType<Shape extends Record<string, Schema<unknown>>> =
-    { [K in keyof Shape]: Infer<Shape[K]> };
+/** @internal Keys whose schema admits undefined - `.optional()` fields, whose absence parses. */
+type OptionalShapeKeys<Shape extends Record<string, Schema<unknown>>> =
+    { [K in keyof Shape]: undefined extends Infer<Shape[K]> ? K : never }[keyof Shape];
+
+/**
+ * The object type of a shape of schemas. A `.optional()` field becomes an optional KEY, matching
+ * what the runtime enforces (absence parses), so a caller constructing a value - a typed client's
+ * `query: {}`, a handler's return - may omit it rather than writing `field: undefined`. The value
+ * type keeps `| undefined` so an explicit undefined stays assignable under
+ * exactOptionalPropertyTypes.
+ */
+export type ShapeType<Shape extends Record<string, Schema<unknown>>> = Reify<
+    { [K in Exclude<keyof Shape, OptionalShapeKeys<Shape>>]: Infer<Shape[K]> }
+    & { [K in OptionalShapeKeys<Shape>]?: Infer<Shape[K]> }
+>;
+
+/** @internal Flattens the required/optional intersection into one object type (`?` preserved). */
+type Reify<T> = { [K in keyof T]: T[K] };
 
 /**
  * An object with a fixed shape. Unknown keys are STRIPPED (never delivered to handlers - a

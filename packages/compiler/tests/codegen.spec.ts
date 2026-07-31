@@ -815,3 +815,36 @@ describe('generateModule - markup nested through expression holes', () =>
         expect(gen(nested(50))).toContain('h(\'div\'');
     });
 });
+
+describe('codegen - bind: alongside an explicit handler for the same event', () =>
+{
+    // A chat composer needs BOTH: `bind:value` for the draft, and `onInput` to announce typing.
+    // Emitting two separate registrations for one event silently drops one of them - as a
+    // duplicate object key on the string/hydrate path (last wins) and as an overwritten slot in
+    // the delegated-event store on the DOM path (also last wins). Either way the BINDING is the
+    // one that dies, so the field stops updating and nothing warns.
+    it('composes the write-back and the author handler into one listener (DOM path)', () =>
+    {
+        const code = gen('component C { state draft = ""; <input bind:value={draft} onInput={() => announce()} /> }');
+        const registrations = [...code.matchAll(/bindEvent\(_n0, 'input'/g)];
+        expect(registrations).toHaveLength(1);
+        // Both behaviors survive in the single listener.
+        expect(code).toContain('setDraft($event.target.value)');
+        expect(code).toContain('announce()');
+    });
+
+    it('emits no duplicate object key on the string/hydrate path', () =>
+    {
+        const code = gen('component C { state draft = ""; <input bind:value={draft} onInput={() => announce()} /> }');
+        const stringBranch = code.slice(code.indexOf('isStringMode()'), code.indexOf('const _r ='));
+        expect([...stringBranch.matchAll(/oninput:/g)]).toHaveLength(1);
+    });
+
+    it('composes bind:checked with an explicit onChange', () =>
+    {
+        const code = gen('component C { state on = false; <input type="checkbox" bind:checked={on} onChange={() => track()} /> }');
+        expect([...code.matchAll(/bindEvent\(_n0, 'change'/g)]).toHaveLength(1);
+        expect(code).toContain('setOn($event.target.checked)');
+        expect(code).toContain('track()');
+    });
+});

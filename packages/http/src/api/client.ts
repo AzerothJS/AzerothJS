@@ -35,7 +35,15 @@ export class ApiError extends Error
     /** The field-path error map of a validation failure - feed it to the form's setError. */
     public readonly fields: Record<string, string>;
 
-    /** The full `error.details` payload, for anything beyond code/message/fields. */
+    /**
+     * The per-issue detail of a validation failure: path, machine code, message. Lifted out of
+     * `details` alongside `fields` because the server sends both for a 422 and the client
+     * produces both for the local case - so code that branches on an issue CODE rather than a
+     * message should not have to reach through an `unknown`.
+     */
+    public readonly issues: ReadonlyArray<{ path: string; code: string; message: string }>;
+
+    /** The full `error.details` payload, for anything beyond code/message/fields/issues. */
     public readonly details: unknown;
 
     constructor(status: number, code: string, message: string, details: unknown)
@@ -45,7 +53,9 @@ export class ApiError extends Error
         this.status = status;
         this.code = code;
         this.details = details;
-        this.fields = (details as { fields?: Record<string, string> } | undefined)?.fields ?? {};
+        const payload = details as { fields?: Record<string, string>; issues?: ReadonlyArray<{ path: string; code: string; message: string }> } | undefined;
+        this.fields = payload?.fields ?? {};
+        this.issues = payload?.issues ?? [];
     }
 }
 
@@ -188,15 +198,22 @@ export function createClient<Shape extends Contract>(contract: Shape, options: C
                 + 'the typed client only speaks JSON. Post a FormData body with fetch directly.');
         }
         // Pre-validate locally: the same schema unification the server boundary runs
-        // (validate.ts), but the failure costs no network - and it lands as the
-        // form-ready SchemaError.
+        // (validate.ts), but the failure costs no network.
+        //
+        // It reports as ApiError, exactly as a server refusal does. Throwing SchemaError here
+        // made one logical failure arrive as two types - and only the server one carried
+        // `status`/`code`, so `instanceof ApiError` missed the local case and callers fell back
+        // to duck-typing `err.message`. The status and code are the pair the SERVER sends for
+        // this same failure, so a caller cannot tell (or need to tell) where it was caught, and
+        // `fields` stays the form-ready map that made SchemaError worth reaching for.
         let body = args.input;
         if (routeDef.input !== undefined)
         {
             const parsed = await parseAny(routeDef.input, body);
             if (!parsed.ok)
             {
-                throw new SchemaError(parsed.errors, parsed.issues);
+                const failure = new SchemaError(parsed.errors, parsed.issues);
+                throw new ApiError(422, 'validation-failed', failure.message, { fields: parsed.errors, issues: parsed.issues });
             }
             body = parsed.value;
         }

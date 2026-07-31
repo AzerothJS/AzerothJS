@@ -93,6 +93,12 @@ export type FileSink = LogSink & Pick<FileStream, 'flush' | 'close' | 'dropped'>
 
 const DAY_STAMP_LENGTH = 10;
 
+/** @internal Makes a configured name safe to interpolate into the retention pattern. */
+function escapeRegExp(literal: string): string
+{
+    return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** @internal Streams with buffered lines, flushed synchronously when the process exits. */
 const liveStreams = new Set<BufferedFileStream>();
 let exitHookInstalled = false;
@@ -310,7 +316,10 @@ class BufferedFileStream implements FileStream
         let entries: string[];
         try
         {
-            const pattern = new RegExp(`^${ this.#name }-(\\d{4}-\\d{2}-\\d{2})(?:\\.(\\d+))?\\.ndjson$`);
+            // The name is ESCAPED: this pattern decides what unlinkSync deletes, so an
+            // unescaped one turns the sink's own identity into a wildcard over its neighbours -
+            // `[a-c]` matches `a-`/`b-`/`c-`, and the likelier `api.v2` matches `apiXv2`.
+            const pattern = new RegExp(`^${ escapeRegExp(this.#name) }-(\\d{4}-\\d{2}-\\d{2})(?:\\.(\\d+))?\\.ndjson$`);
             // Age order is (date, sequence) - NOT lexicographic, where the unsuffixed
             // first file of a day would sort after its numbered siblings ('.' < 'n').
             const ageKey = (entry: string): string =>

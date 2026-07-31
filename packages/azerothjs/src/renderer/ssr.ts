@@ -354,7 +354,7 @@ export function assertSafeAttribute(key: string, value: unknown): void
         throw new Error(`azeroth: invalid attribute name ${ JSON.stringify(key) } - names may not contain whitespace, quotes, '>', '/', or '='.`);
     }
 
-    if (EVENT_ATTR_NAME.test(key)
+    if (isEventAttribute(key)
         && typeof value !== 'function'
         && value !== false && value !== null && value !== undefined)
     {

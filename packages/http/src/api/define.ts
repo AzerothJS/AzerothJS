@@ -584,9 +584,10 @@ export interface GuardContext
     params: Record<string, string>;
 
     /**
-     * The path the router matched, decoded and slash-collapsed. A guard is exactly the place this
-     * matters: deciding on `url.pathname` lets `/%61dmin` or `//admin` read as a different path
-     * than the one whose handler is about to run.
+     * The path the router matched, percent-decoded per segment. A guard is exactly the place this
+     * matters: deciding on `url.pathname` lets `/%61dmin` read as a different path than the one
+     * whose handler is about to run. (`//admin` cannot: the router refuses an empty segment
+     * outright, so no such request reaches a guard.)
      */
     path: string;
 }
@@ -740,10 +741,16 @@ type AdditionsFor<Path extends string, Guards> =
         ? (Guards[Path] extends OnlyGuards ? AddOf<Guards[Path]> : InheritedAdditions<Path, Guards>)
         : InheritedAdditions<Path, Guards>;
 
-/** @internal The intersection of every matching guard's additions for one route path. */
+/**
+ * @internal The intersection of every matching guard's additions for one route path. The final
+ * filter exists to turn the no-matching-guard result (`unknown`, via the empty union) into "adds
+ * nothing" - and it must be `extends object`, NOT `extends Record<string, unknown>`: an addition
+ * declared as an INTERFACE has no implicit index signature, so the Record form silently dropped
+ * exactly the shape every application annotates its guards with.
+ */
 type InheritedAdditions<Path extends string, Guards> = UnionToIntersection<
     { [Key in keyof Guards & string]: KeyMatches<Key, Path> extends true ? AddOf<Guards[Key]> : never }[keyof Guards & string]
-> extends infer R ? (R extends Record<string, unknown> ? R : Record<never, never>) : Record<never, never>;
+> extends infer R ? (R extends object ? R : Record<never, never>) : Record<never, never>;
 
 /** @internal Turns a union into an intersection (the standard contravariant-inference trick). */
 type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (arg: infer I) => void ? I : never;

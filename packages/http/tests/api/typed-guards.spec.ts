@@ -108,3 +108,55 @@ describe('typed guards - additions flow into the handler context, no cast', () =
         expect((await (await app.handle(new Request('http://local/health'))).json())).toEqual({ ok: 'v1' });
     });
 });
+
+describe('interface-typed additions survive the flow', () =>
+{
+    // The addition declared as an INTERFACE - the shape every real app writes (`interface
+    // Viewer`), and the one case the object-literal inferences above cannot cover: an interface
+    // has no implicit index signature, so a `Record<string, unknown>` filter silently drops it.
+    interface Viewer
+    {
+        userId: number;
+        role: 'admin' | 'member';
+    }
+
+    const asViewer = guard((context): Viewer | Response =>
+    {
+        if (context.request.headers.get('authorization') === null)
+        {
+            return new Response('no', { status: 401 });
+        }
+        return { userId: 3, role: 'member' };
+    });
+
+    it('a bare guard annotated with an interface still types the handler context', async () =>
+    {
+        // A bare (non-guard()-wrapped) guard whose return type is an interface.
+        type Bare = (context: { request: Request }) => Viewer;
+        type Ctx = Parameters<HandlersWithGuards<typeof contract, { '*': [Bare] }>['account.me']>[0];
+        expectTypeOf<Ctx['userId']>().toEqualTypeOf<number>();
+        expectTypeOf<Ctx['role']>().toEqualTypeOf<'admin' | 'member'>();
+    });
+
+    it('a guard()-wrapped interface return types the handler context', async () =>
+    {
+        const app = new App();
+        mountApi(app, contract, {
+            prefix: '',
+            guards: { 'account.*': [asViewer] },
+            handlers: {
+                health: () => ({ ok: 'yes' }),
+                'account.me': (context) =>
+                {
+                    expectTypeOf(context.userId).toEqualTypeOf<number>();
+                    expectTypeOf(context.role).toEqualTypeOf<'admin' | 'member'>();
+                    return { id: context.userId };
+                },
+                'account.update': (context) => ({ id: context.userId })
+            }
+        });
+
+        const response = await app.handle(new Request('http://local/me', { headers: { authorization: 'Bearer x' } }));
+        expect(await response.json()).toEqual({ id: 3 });
+    });
+});
