@@ -25,6 +25,16 @@
  *   - azeroth/non-ascii-name       - a non-ASCII character in a declaration name (the ASCII-only
  *                                    scanner would truncate it silently).
  *
+ * Plus the normative markup rules of GRAMMAR 6.6, defined HERE and nowhere else (the lowerer
+ * assumes validated input; the language server and ESLint processor surface the same findings):
+ *   - azeroth/reserved-event-name  - a host on* attribute that is not handler-form (`onclick`,
+ *                                    `once`); the namespace is reserved for event handlers;
+ *   - azeroth/duplicate-attr       - a repeated host attribute name (render modes disagree on
+ *                                    the winner);
+ *   - azeroth/duplicate-prop       - a repeated component prop key, including bind:'s claimed
+ *                                    value + write-back keys and children=/markup-children;
+ *   - azeroth/content-property-children - innerHTML/textContent combined with children.
+ *
  * (assign-derived and use-before-declaration are out of scope here - left to TypeScript; the harder
  * data-flow rules are future work.)
  *
@@ -39,8 +49,16 @@ import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
 import { parseModule, step, skipTrivia } from './parser.ts';
+import { parseMarkup } from './markup-parser.ts';
 import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
-import { isEventName } from './markup-util.ts';
+import {
+    hostEventType,
+    isReservedHostAttribute,
+    reservedHostAttributeMessage,
+    contentChildrenMessage,
+    bindWriteBack,
+    CONTENT_PROPERTIES
+} from 'azerothjs/semantics';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -126,6 +144,9 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
         else
         {
             diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
+            // Module-scope markup (`const row = () => <li/>`) compiles through the same
+            // lowerer, so it answers to the same GRAMMAR 6.6 rules.
+            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(diagnostics));
         }
     }
     return diagnostics;
@@ -691,12 +712,15 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     // (the codegen-time backstop), so derived mutation is caught in both phases.
     diagnoseDerivedWrites(source, component, analysis, out);
 
-    // azeroth/handler-not-function
+    // azeroth/handler-not-function, plus the GRAMMAR 6.6 markup rules (duplicate-attr,
+    // duplicate-prop, reserved-event-name, content-property-children) - both walk the SAME
+    // deep markup traversal, embedded expression markup included.
     for (const item of component.body)
     {
         if (item.kind === 'markup')
         {
-            diagnoseEventHandlers(item.node, out);
+            diagnoseEventHandlers(source, item.node, out);
+            walkMarkupDeep(source, item.node, markupRuleVisitor(out));
         }
     }
 
@@ -892,14 +916,226 @@ function* collectMarkupExpressions(node: MarkupElement | MarkupFragment): Genera
     }
 }
 
-/** Walks markup for on* handlers whose value would run at setup, not on the event. */
-function diagnoseEventHandlers(node: MarkupElement | MarkupFragment, out: AzerothDiagnostic[]): void
+/**
+ * Walks EVERY markup element reachable from `node`: direct children, and markup embedded in
+ * expression values (attribute values and holes), re-parsed from the ORIGINAL source so a
+ * finding inside `{cond ? <a/> : <b/>}` carries its absolute span. One walker for every
+ * markup-level rule, so no rule can quietly cover less markup than another.
+ */
+function walkMarkupDeep(source: string, node: MarkupElement | MarkupFragment, visit: (el: MarkupElement) => void): void
 {
     if (node.kind === 'element')
     {
+        visit(node);
         for (const attr of node.attributes)
         {
-            if (!attr.spread && attr.name !== null && isEventName(attr.name) &&
+            if (!attr.spread && attr.value.kind === 'expression')
+            {
+                walkEmbeddedMarkup(source, source.indexOf('{', attr.start) + 1, attr.end - 1, visit);
+            }
+        }
+    }
+    for (const child of node.children)
+    {
+        if (child.kind === 'element' || child.kind === 'fragment')
+        {
+            walkMarkupDeep(source, child, visit);
+        }
+        else if (child.kind === 'expression')
+        {
+            walkEmbeddedMarkup(source, child.start + 1, child.end - 1, visit);
+        }
+    }
+}
+
+/**
+ * Finds and walks any markup regions inside `[start, end)` of the original source.
+ * Malformed embedded markup is skipped here - its parse error surfaces through the
+ * compile/type-check gates with its own message.
+ */
+function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (el: MarkupElement) => void): void
+{
+    let pos = start;
+    while (pos < end)
+    {
+        const at = findMarkupStart(source, pos);
+        if (at === -1 || at >= end)
+        {
+            return;
+        }
+        let parsed: { node: MarkupElement | MarkupFragment; end: number };
+        try
+        {
+            parsed = parseMarkup(source, at);
+        }
+        catch
+        {
+            return;
+        }
+        walkMarkupDeep(source, parsed.node, visit);
+        pos = parsed.end;
+    }
+}
+
+/** The GRAMMAR 6.6 host-element rules: uniqueness, the reserved on* namespace, content ownership. */
+function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    const hasContent = el.children.some(child => !(child.kind === 'text' && child.value.trim() === ''));
+    const seen = new Set<string>();
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null)
+        {
+            continue;
+        }
+        if (seen.has(attr.name))
+        {
+            out.push({
+                code: 'azeroth/duplicate-attr',
+                severity: 'error',
+                message: `Duplicate attribute '${ attr.name }' - render modes disagree on which one wins`,
+                start: attr.start,
+                end: attr.end
+            });
+        }
+        seen.add(attr.name);
+
+        if (attr.name.startsWith('on:'))
+        {
+            out.push({
+                code: 'azeroth/reserved-event-name',
+                severity: 'error',
+                message: `'${ attr.name }' - the exact-case event form \`on:Type\` is reserved for a future language version; it is not accepted today.`,
+                start: attr.start,
+                end: attr.end
+            });
+        }
+        else if (isReservedHostAttribute(attr.name))
+        {
+            out.push({
+                code: 'azeroth/reserved-event-name',
+                severity: 'error',
+                message: reservedHostAttributeMessage(attr.name),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+
+        if (CONTENT_PROPERTIES.has(attr.name) && hasContent)
+        {
+            out.push({
+                code: 'azeroth/content-property-children',
+                severity: 'error',
+                message: contentChildrenMessage(attr.name),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+    }
+}
+
+/**
+ * The GRAMMAR 6.6 component-prop uniqueness rules. Every explicit attribute EMITS a props
+ * key; a duplicate would fall to the object literal's last-wins and silently drop author
+ * code. A `bind:` claims its value key AND its write-back callback key; exactly ONE
+ * authored handler may share that callback key (codegen composes them, write-back first).
+ * Markup children emit `children` too, so an explicit children= prop alongside them collides.
+ */
+function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    const emitted = new Set<string>();
+    const claim = (key: string, start: number, end: number): void =>
+    {
+        if (emitted.has(key))
+        {
+            out.push({
+                code: 'azeroth/duplicate-prop',
+                severity: 'error',
+                message: `Duplicate prop '${ key }' - the later value would silently replace the earlier one`,
+                start,
+                end
+            });
+            return;
+        }
+        emitted.add(key);
+    };
+
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null)
+        {
+            continue;
+        }
+        const name = attr.name;
+        if (attr.value.kind === 'static' || attr.value.kind === 'none')
+        {
+            claim(name, attr.start, attr.end);
+        }
+        else if (hostEventType(name) !== null)
+        {
+            // Claimed in the write-back pass below, where the one-composable exemption lives.
+        }
+        else if (name.startsWith('bind:'))
+        {
+            claim(name.slice(5), attr.start, attr.end);
+        }
+        else
+        {
+            claim(name, attr.start, attr.end);
+        }
+    }
+
+    const composable = new Set<string>();
+    for (const attr of el.attributes)
+    {
+        if (!attr.spread && attr.name !== null && attr.name.startsWith('bind:') && attr.value.kind === 'expression')
+        {
+            const { callback } = bindWriteBack(attr.name.slice(5));
+            claim(callback, attr.start, attr.end);
+            composable.add(callback);
+        }
+    }
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null || hostEventType(attr.name) === null || attr.value.kind !== 'expression')
+        {
+            continue;
+        }
+        if (composable.has(attr.name))
+        {
+            composable.delete(attr.name);
+            continue;
+        }
+        claim(attr.name, attr.start, attr.end);
+    }
+
+    if (el.children.length > 0 && emitted.has('children'))
+    {
+        const childrenAttr = el.attributes.find(attr => !attr.spread && attr.name === 'children');
+        out.push({
+            code: 'azeroth/duplicate-prop',
+            severity: 'error',
+            message: "Duplicate prop 'children' - the element has markup children AND an explicit children= prop",
+            start: childrenAttr?.start ?? el.start,
+            end: childrenAttr?.end ?? el.start + el.tag.length + 1
+        });
+    }
+}
+
+/** Dispatches one element to its name-domain's rule set. */
+function markupRuleVisitor(out: AzerothDiagnostic[]): (el: MarkupElement) => void
+{
+    return (el) => (el.isComponent ? componentPropRules(el, out) : hostAttributeRules(el, out));
+}
+
+/** Walks markup for on* handlers whose value would run at setup, not on the event. */
+function diagnoseEventHandlers(source: string, node: MarkupElement | MarkupFragment, out: AzerothDiagnostic[]): void
+{
+    walkMarkupDeep(source, node, (el) =>
+    {
+        for (const attr of el.attributes)
+        {
+            if (!attr.spread && attr.name !== null && hostEventType(attr.name) !== null &&
                 attr.value.kind === 'expression' && isSetupHandler(attr.value.code))
             {
                 const handler = attr.value.code.trim();
@@ -912,12 +1148,5 @@ function diagnoseEventHandlers(node: MarkupElement | MarkupFragment, out: Azerot
                 });
             }
         }
-    }
-    for (const child of node.children)
-    {
-        if (child.kind === 'element' || child.kind === 'fragment')
-        {
-            diagnoseEventHandlers(child, out);
-        }
-    }
+    });
 }

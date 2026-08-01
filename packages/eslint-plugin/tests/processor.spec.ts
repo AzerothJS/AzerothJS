@@ -195,12 +195,12 @@ describe('markup lint surfaces through the processor (rules no TS rule can expre
         expect(lint(fixed, {}).find(m => m.ruleId === 'azeroth/interpolation-spacing')).toBeUndefined();
     });
 
-    it('duplicate-attr and event-case reach ESLint too (previously vite-only)', () =>
+    it('duplicate-attr and reserved-event-name reach ESLint too (the same diagnoseModule rules the build enforces)', () =>
     {
         const source = 'export default component Demo\n{\n    <button id="a" id="b" onclick={ f }>x</button>\n}\n';
         const ids = lint(source, {}).map(m => m.ruleId);
         expect(ids).toContain('azeroth/duplicate-attr');
-        expect(ids).toContain('azeroth/event-case');
+        expect(ids).toContain('azeroth/reserved-event-name');
     });
 
     it('eslint --fix applies EVERY markup fix in one pass (multiple holes)', () =>

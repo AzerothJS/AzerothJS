@@ -184,7 +184,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): MountNode
         {
             class: props.class,
             style: `overflow-y:auto;height:${ props.height }px;position:relative`,
-            onscroll: (event: Event) => virtualizer.setScrollOffset((event.currentTarget as HTMLElement).scrollTop)
+            onScroll: (event: Event) => virtualizer.setScrollOffset((event.currentTarget as HTMLElement).scrollTop)
         },
         h('div', { style: () => `position:relative;height:${ virtualizer.totalSize() }px` },
             For({

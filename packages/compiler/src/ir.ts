@@ -146,14 +146,17 @@ export interface TextBinding
     expr: ReactiveExpr;
 }
 
-/** A reactive attribute or DOM property on an element. */
+/**
+ * A reactive attribute on an element. The attribute-vs-DOM-property routing is the
+ * runtime's decision (semantics DOM_PROPERTIES, applied inside setProp), so the IR
+ * carries only the name - a compiler-side copy of that classification would be a second
+ * owner that could drift.
+ */
 export interface AttributeBinding
 {
     kind: 'attribute';
     target: number;
     name: string;
-    /** Set as a DOM property (`el.value = ...`) rather than an attribute. */
-    property: boolean;
     expr: ReactiveExpr;
 }
 
@@ -267,12 +270,17 @@ export interface ComponentBinding
     children: ComponentChildren | null;
 }
 
-/** One entry in a component's props. */
+/**
+ * One entry in a component's props. An `event` entry is a CALLBACK PROP, not a DOM event:
+ * `name` is the exact props key the component receives (`onSideChange`, verbatim from the
+ * author) - carried whole so no later stage re-derives it. Only `bind` stores a DOM-style
+ * event tail (`input`/`change`), because its write-back callback is compiler-synthesized.
+ */
 export type PropEntry =
     | { kind: 'static'; name: string; value: string | true }
     | { kind: 'prop'; name: string; expr: ReactiveExpr }
-    | { kind: 'event'; event: string; handler: Span }
-    | { kind: 'bind'; prop: string; event: string; expr: Span }
+    | { kind: 'event'; name: string; handler: Span }
+    | { kind: 'bind'; prop: string; expr: Span }
     | { kind: 'spread'; expr: ReactiveExpr };
 
 /** How a component receives its children. */

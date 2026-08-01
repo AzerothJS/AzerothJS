@@ -312,7 +312,7 @@ describe('fire', () =>
             {
                 seenCancelable = event.cancelable;
                 seenBubbles = event.bubbles;
-            } }, ''));
+            } }));
 
         const input = container.querySelector('input')!;
         fire(input, 'input');
@@ -324,15 +324,17 @@ describe('fire', () =>
 
     it('custom init overrides the bubbling default (bubbles: false wins)', () =>
     {
+        // A NON-delegated type (focus attaches per-element), so the handler observes the
+        // event regardless of bubbling; a delegated type with bubbles:false never reaches
+        // the document dispatcher by design - covered above.
         let bubbles: boolean | null = null;
-        const button = h('button', { onClick: (event: Event) =>
+        const button = h('button', { onFocus: (event: Event) =>
         {
             bubbles = event.bubbles;
         } });
-        // Per-element listener still fires regardless of bubbling.
         const { unmount } = renderTest(() => button);
 
-        fire(button, 'click', { bubbles: false });
+        fire(button, 'focus', { bubbles: false });
         expect(bubbles).toBe(false);
 
         unmount();

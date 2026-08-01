@@ -420,51 +420,91 @@ function collectExprs(code: string, plan: RenderPlan, holeDepth = 0, anchor = 0)
     };
     for (const binding of plan.bindings)
     {
-        if (binding.kind === 'text' || binding.kind === 'attribute' || binding.kind === 'spread')
+        // Exhaustive over the Binding union ON PURPOSE: this walker is a second enumeration
+        // of "which IR kinds carry reads", and an if-chain let it silently fall behind the
+        // IR once already. A new kind now fails to COMPILE until this walker decides.
+        switch (binding.kind)
         {
-            add(binding.expr.span);
-        }
-        else if (binding.kind === 'event')
-        {
-            add(binding.handler);
-        }
-        else if (binding.kind === 'ref')
-        {
-            add(binding.ref);
-        }
-        else if (binding.kind === 'component')
-        {
-            for (const prop of binding.props)
-            {
-                if (prop.kind === 'prop' || prop.kind === 'spread')
+            case 'text':
+            case 'attribute':
+            case 'spread':
+                add(binding.expr.span);
+                break;
+            case 'event':
+                add(binding.handler);
+                break;
+            case 'ref':
+                add(binding.ref);
+                break;
+            case 'bind':
+                add(binding.expr);
+                break;
+            case 'class':
+                if (binding.dynamic !== null)
                 {
-                    add(prop.expr.span);
+                    add(binding.dynamic);
                 }
-                else if (prop.kind === 'event')
+                for (const toggle of binding.toggles)
                 {
-                    add(prop.handler);
+                    add(toggle.expr);
                 }
-            }
-            const children = binding.children;
-            if (children === null)
+                break;
+            case 'style':
+                if (binding.dynamic !== null)
+                {
+                    add(binding.dynamic);
+                }
+                for (const entry of binding.props)
+                {
+                    add(entry.expr);
+                }
+                break;
+            // A literal content property carries no reads by construction.
+            case 'property':
+                break;
+            case 'component':
             {
-                continue;
-            }
-            if (children.kind === 'markup')
-            {
-                out.push(...collectExprs(code, children.plan, holeDepth, anchor));
-            }
-            else if (children.kind === 'dynamic')
-            {
-                add(children.expr.span);
-            }
-            else if ('template' in children.body)
-            {
-                out.push(...collectExprs(code, children.body, holeDepth, anchor));
-            }
-            else
-            {
-                add(children.body.span);
+                for (const prop of binding.props)
+                {
+                    switch (prop.kind)
+                    {
+                        case 'prop':
+                        case 'spread':
+                            add(prop.expr.span);
+                            break;
+                        case 'event':
+                            add(prop.handler);
+                            break;
+                        case 'bind':
+                            add(prop.expr);
+                            break;
+                        // A static prop is a literal; nothing to read.
+                        case 'static':
+                            break;
+                    }
+                }
+                const children = binding.children;
+                if (children === null)
+                {
+                    continue;
+                }
+                if (children.kind === 'markup')
+                {
+                    out.push(...collectExprs(code, children.plan, holeDepth, anchor));
+                }
+                else if (children.kind === 'dynamic')
+                {
+                    add(children.expr.span);
+                }
+                else if ('template' in children.body)
+                {
+                    out.push(...collectExprs(code, children.body, holeDepth, anchor));
+                }
+                else
+                {
+                    add(children.body.span);
+                }
+                break;
             }
         }
     }

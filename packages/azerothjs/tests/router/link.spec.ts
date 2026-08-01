@@ -45,10 +45,12 @@ function leftClick(): MouseEvent
 }
 
 // Dispatches a click and returns whether the Link intercepted it (i.e. called
-// preventDefault). A trailing listener - registered AFTER the Link handler, so it
-// runs last - records the prevented state the Link left behind, then cancels any
-// remaining default so happy-dom never attempts a real network navigation. The
-// recorded flag reflects exactly what the Link did, untouched by this guard.
+// preventDefault). Link handlers are DELEGATED (one document listener per type), so a
+// listener that must observe the state Link leaves behind has to sit on the document
+// AFTER the delegation dispatcher - a direct anchor listener would run BEFORE Link and
+// its own preventDefault would (correctly) make Link bail out as an upstream veto. The
+// guard records the prevented state, then cancels any remaining default so happy-dom
+// never attempts a real network navigation.
 function dispatchClick(anchor: HTMLAnchorElement, ev: MouseEvent): boolean
 {
     let interceptedByLink = false;
@@ -57,9 +59,9 @@ function dispatchClick(anchor: HTMLAnchorElement, ev: MouseEvent): boolean
         interceptedByLink = e.defaultPrevented;
         e.preventDefault();
     };
-    anchor.addEventListener('click', guard);
+    document.addEventListener('click', guard);
     anchor.dispatchEvent(ev);
-    anchor.removeEventListener('click', guard);
+    document.removeEventListener('click', guard);
     return interceptedByLink;
 }
 

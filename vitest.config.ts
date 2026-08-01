@@ -28,6 +28,7 @@ const alias = readdirSync(packagesDir)
             ['prerender', 'prerender.ts'],
             ['api', 'api/index.ts'],
             ['internal', 'internal.ts'],
+            ['semantics', 'semantics.ts'],
             ['node', 'node.ts']
         ])
         {

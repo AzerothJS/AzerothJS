@@ -16,6 +16,7 @@
 // `getVirtual` translates to and from the virtual offsets TS understands.
 
 import ts from 'typescript';
+import { AZEROTH_HANDLER_DECL } from '@azerothjs/compiler';
 import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
 import { StyleIndex } from './style-index.ts';
 import { containedPath } from './containment.ts';
@@ -28,20 +29,11 @@ const VIRTUAL_SUFFIX = '.azeroth.ts';
 const INTRINSICS_BASENAME = '__azeroth-intrinsics.d.ts';
 
 /**
- * Ambient types injected into every project. `AzerothHandler<'onClick'>` maps a
- * camelCase event prop to the right DOM event (via lib.dom's
- * GlobalEventHandlersEventMap), so the virtual code can contextually type host
- * event handlers - `<button onClick={(e) => ...}>` infers `e: MouseEvent` - without
- * imposing strict attribute checking that the permissive `h()` runtime doesn't.
+ * Ambient types injected into every project - the compiler's own `AzerothHandler`
+ * declaration verbatim, so the projection and this program can never disagree about
+ * how a handler name types its event.
  */
-const INTRINSICS_CONTENT = `
-type AzerothHandler<N extends string> =
-    N extends \`on\${infer E}\`
-        ? (event: Lowercase<E> extends keyof GlobalEventHandlersEventMap
-            ? GlobalEventHandlersEventMap[Lowercase<E>]
-            : Event) => unknown
-        : (event: Event) => unknown;
-`;
+const INTRINSICS_CONTENT = `\n${ AZEROTH_HANDLER_DECL }\n`;
 
 /** True for a synthetic virtual file name. */
 export function isVirtualFile(fileName: string): boolean

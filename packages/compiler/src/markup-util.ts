@@ -1,9 +1,10 @@
 /**
  * MODULE: compiler/markup-util - shared codegen string/markup utilities
  *
- * The small shared helpers the codegen emitter (codegen.ts) consults. Top-level component output and
- * expression-embedded markup both compile from the IR through that single emitter; this module holds
- * the pieces it needs:
+ * The small shared EMITTER helpers (codegen and the type projection consult them). Language
+ * FACTS - the event namespace, content properties, factory props, builtins - live in
+ * `azerothjs/semantics`, the one owner every backend imports; this module keeps only the
+ * emission mechanics:
  *   - wrapDynamic   - the reactivity-shape heuristic (wrap a computed expression in a getter; leave a
  *                     bare getter / fn-literal / collection verbatim);
  *   - isFunctionLiteral / isBareReference / isCollectionLiteral - the expression-shape predicates the
@@ -11,55 +12,18 @@
  *                     the type projection so all three classify `{expr}` identically);
  *   - quoteString   - string-literal quoting;
  *   - objectKey     - object-key quoting;
- *   - isEventName   - the single source of truth for "is this an on* event attribute";
  *   - alreadyImports - whether a module already names-imports a symbol (used by both emitters before they
  *                     inject runtime imports);
- *   - FACTORY_ATTRS - the lazy-factory prop set (`fallback`, `component`);
- *   - CONTENT_PROPERTIES - the DOM properties that own an element's content, which no path may bake
- *                     into the static template;
  *   - walkComponentTags - walk a markup tree's component tags.
  *
  * All of these are compiler-internal EXCEPT {@link walkComponentTags}, which is re-exported from the
  * package index.
  */
 
-import { BUILTIN_COMPONENTS } from './builtins.ts';
 import type {
     MarkupElement,
     MarkupFragment
 } from './types.ts';
-
-// Component props that are lazy render factories (called when shown), not
-// reactive values - emitted as `name: () => (value)` thunks rather than getters
-// so a branch isn't built until needed. (`fallback` for Show/Switch/Suspense;
-// `component` for Dynamic, whose runtime contract is a CALLABLE returning the
-// component-or-tag - the thunk is what lets `component={ view }` markup and the
-// manual `Dynamic({ component: view })` API present the same shape; structural
-// `children` is handled separately and is already a thunk.)
-export const FACTORY_ATTRS: ReadonlySet<string> = new Set(['fallback', 'component']);
-
-// The components whose props may BE factories: the builtins plus Routes (framework-shipped
-// but user-imported, so deliberately not in the auto-import builtin set). The gate exists
-// because factory emission is part of a COMPONENT's contract, never a prop NAME's - a user
-// component with a value prop that happens to be called `fallback` or `component` must
-// receive the plain value, exactly like any other prop.
-export const FACTORY_COMPONENTS: ReadonlySet<string> = new Set([...BUILTIN_COMPONENTS, 'Routes']);
-
-/** True when `tag`'s `name` prop follows the lazy-factory contract (see the two sets above). */
-export function isFactoryProp(tag: string, name: string): boolean
-{
-    return FACTORY_COMPONENTS.has(tag) && FACTORY_ATTRS.has(name);
-}
-
-/**
- * The DOM properties that OWN an element's content. Unlike the rest of h()'s property set
- * (`value`/`checked`/`selected`, whose server representation is the matching attribute, so an
- * attribute in the clone template and the h() property write agree), these two have no attribute
- * form: as an attribute the browser stores an inert lowercased string and the element stays empty,
- * while h() writes the content. So neither the lowerer nor the constant folder may put one in the
- * static template - both paths go through the property write instead.
- */
-export const CONTENT_PROPERTIES: ReadonlySet<string> = new Set(['innerHTML', 'textContent']);
 
 /**
  * True when `code` is an arrow/function literal - pass it through unwrapped.
@@ -170,25 +134,6 @@ const LITERAL_ESCAPES: Readonly<Record<string, string>> =
 export function quoteString(value: string): string
 {
     return `'${ value.replace(/[\\'\n\r\u2028\u2029]/g, ch => LITERAL_ESCAPES[ch] ?? ch) }'`;
-}
-
-/**
- * True for an `on*` event attribute name (`on` + uppercase letter). The single source of truth for
- * "is this an event handler attribute" across lowering, diagnostics, and codegen.
- *
- * @param name - The attribute name.
- * @returns True when `name` is an `on<Upper>...` event attribute.
- * @example
- * ```ts
- * isEventName('onClick'); // true
- * isEventName('online');  // false (third char is lowercase)
- * ```
- * @internal
- */
-export function isEventName(name: string): boolean
-{
-    const third = name[2];
-    return name.length > 2 && name.startsWith('on') && third !== undefined && third === third.toUpperCase();
 }
 
 /**

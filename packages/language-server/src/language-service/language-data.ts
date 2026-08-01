@@ -133,24 +133,9 @@ export const BUILTIN_COMPONENT_MAP: ReadonlyMap<string, BuiltinComponent> = new 
 // complete and stays current without a hand-maintained list here. What remains
 // below is genuinely AzerothJS-specific.
 
-/**
- * DOM event handler attribute names. AzerothJS binds any `on<Event>` prop as a
- * listener (camelCase) and passes the handler through verbatim (see the
- * compiler's codegen) - this differs from HTML's lowercase `onclick`, so it is
- * supplied here rather than by the HTML service.
- */
-export const DOM_EVENTS: string[] =
-[
-    'onClick', 'onDblClick', 'onMouseDown', 'onMouseUp', 'onMouseEnter', 'onMouseLeave',
-    'onMouseMove', 'onMouseOver', 'onMouseOut', 'onContextMenu',
-    'onInput', 'onChange', 'onSubmit', 'onReset', 'onFocus', 'onBlur', 'onFocusIn', 'onFocusOut',
-    'onKeyDown', 'onKeyUp', 'onKeyPress',
-    'onPointerDown', 'onPointerUp', 'onPointerMove', 'onPointerEnter', 'onPointerLeave',
-    'onTouchStart', 'onTouchEnd', 'onTouchMove',
-    'onScroll', 'onWheel', 'onDrag', 'onDragStart', 'onDragEnd', 'onDragOver', 'onDrop',
-    'onCopy', 'onCut', 'onPaste',
-    'onLoad', 'onError', 'onAnimationEnd', 'onTransitionEnd'
-];
+// The DOM event vocabulary (camelCase handler names) lives in azerothjs/semantics as
+// EVENT_HANDLER_NAMES - one list for completion, documentation, and the delegation
+// contract - so it is imported where needed rather than restated here.
 
 /**
  * Concise documentation for common element attributes that the standard HTML

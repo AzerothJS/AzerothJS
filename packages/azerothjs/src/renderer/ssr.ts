@@ -18,47 +18,17 @@ import type { Props, Child } from './types.ts';
 import { untrack, escapeText, escapeAttr, ssr } from '../reactivity/index.ts';
 import { resolveThunks, serializeChild } from '../reactivity/internal.ts';
 import type { SSRNode } from '../reactivity/index.ts';
-
-/**
- * HTML void elements: they have no children and no closing tag. Rendered
- * as `<tag ...>` with no content.
- *
- * @example
- * ```ts
- * VOID_ELEMENTS.has('br');   // true  -> emitted as '<br>', no </br>
- * VOID_ELEMENTS.has('div');  // false -> emitted with a closing tag
- * ```
- *
- * @internal
- */
-export const VOID_ELEMENTS: ReadonlySet<string> = new Set
-([
-    'area',
-    'base',
-    'br',
-    'col',
-    'embed',
-    'hr',
-    'img',
-    'input',
-    'link',
-    'meta',
-    'param',
-    'source',
-    'track',
-    'wbr'
-]);
-
-/**
- * HTML raw-text elements: their content is CDATA. `<script>`/`<style>` text is emitted
- * without HTML-escaping - a browser does not decode entities inside them (raw text), so
- * escaping `&`/`<` would render `&amp;`/`&lt;` literally and corrupt the CSS or JSON-LD.
- * Mirrors the compiler's set. The element-terminating sequences are the one exception:
- * see {@link neutralizeRawText}.
- *
- * @internal
- */
-const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
+import {
+    hostEventType,
+    isReservedHostAttribute,
+    isEventNamespace,
+    reservedHostAttributeMessage,
+    handlerValueMessage,
+    canonicalHandlerName,
+    CONTENT_PROPERTIES,
+    VOID_ELEMENTS,
+    RAW_TEXT_ELEMENTS
+} from '../semantics.ts';
 
 /**
  * Raw-text content is CDATA, but CDATA is closed by the element's own end tag: a child
@@ -90,16 +60,6 @@ function neutralizeRawText(tagName: string, content: string): string
 }
 
 /**
- * Props that h()'s DOM path sets as content rather than attributes
- * (`el.innerHTML = x` / `el.textContent = x`). The serializer handles them
- * as element content in {@link serializeElement}, so they must NOT be
- * emitted as attributes.
- *
- * @internal
- */
-const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
-
-/**
  * Characters an HTML attribute name may not contain (the HTML5 attribute-name
  * production): controls, space, quote, apostrophe, `>`, `/`, and `=`. A name
  * carrying any of these cannot be written as an attribute without breaking out
@@ -116,28 +76,6 @@ const CONTENT_PROPERTIES = new Set(['innerHTML', 'textContent']);
 // delimiters happen not to matter today.
 // eslint-disable-next-line no-control-regex -- matching control characters is the POINT: a control char in an attribute name is invalid HTML and an injection vector
 const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'`<>/=]/;
-
-/**
- * The event-handler attribute namespace, case-insensitive because HTML attribute names
- * are: `ONERROR="..."` parses (and `setAttribute` lowercases) to the same live handler
- * as `onerror="..."`. The framework claims the whole `on*` prefix for function handlers,
- * so any other value under it is rejected rather than written as an attribute.
- *
- * @internal
- */
-const EVENT_ATTR_NAME = /^on/i;
-
-/**
- * Whether `name` belongs to the `on*` event-handler namespace, judged case-insensitively
- * because HTML attribute names are. The ONE definition of that namespace, shared by the
- * prop gate below and hydration's attribute strip in h.ts.
- *
- * @internal
- */
-export function isEventAttribute(name: string): boolean
-{
-    return EVENT_ATTR_NAME.test(name);
-}
 
 /**
  * Attributes the browser resolves as a URL and then FETCHES or NAVIGATES to. A scheme it
@@ -354,12 +292,14 @@ export function assertSafeAttribute(key: string, value: unknown): void
         throw new Error(`azeroth: invalid attribute name ${ JSON.stringify(key) } - names may not contain whitespace, quotes, '>', '/', or '='.`);
     }
 
-    if (isEventAttribute(key)
-        && typeof value !== 'function'
-        && value !== false && value !== null && value !== undefined)
+    // Defense in depth: the prop dispatchers route the whole on* namespace to the event
+    // machinery (handler-form) or refuse it (reserved) before any attribute write, so a
+    // name landing here is an internal invariant break - and writing it would create a
+    // live inline handler, the classic string-handler XSS. Case-insensitive because HTML
+    // attribute names are.
+    if (isEventNamespace(key))
     {
-        throw new Error(`azeroth: invalid event prop ${ JSON.stringify(key) } - an on* prop must be a function handler `
-            + '(or null/undefined/false to omit it); any other value would be written as a live inline event handler.');
+        throw new Error(`azeroth: ${ JSON.stringify(key) } is in the on* event namespace and is never written as an attribute.`);
     }
 
     assertSafeUrl(key, value);
@@ -610,12 +550,21 @@ function serializeAttrs(props: Props): string
             continue;
         }
 
-        // Case-INSENSITIVE, matching the gate below. A case-sensitive skip missed `ONCLICK`,
-        // so resolveValue then CALLED the handler to see what it returned - running a click
-        // handler on the server, once per render.
-        if (isEventAttribute(key) && typeof rawValue === 'function')
+        // Handlers never serialize, but the handler-value rule still holds: the same three
+        // "no handler" values pass here and in attachEvent, and anything else throws the
+        // same rule text, so no mode accepts a program another refuses.
+        const eventType = hostEventType(key);
+        if (eventType !== null)
         {
+            if (rawValue !== null && rawValue !== undefined && rawValue !== false && typeof rawValue !== 'function')
+            {
+                throw new TypeError(handlerValueMessage(canonicalHandlerName(eventType), typeof rawValue));
+            }
             continue;
+        }
+        if (isReservedHostAttribute(key))
+        {
+            throw new TypeError(reservedHostAttributeMessage(key));
         }
 
         if (CONTENT_PROPERTIES.has(key))

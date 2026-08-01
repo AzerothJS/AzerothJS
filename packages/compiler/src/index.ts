@@ -32,9 +32,11 @@ export {
     skipTemplate,
     skipLineComment,
     skipBlockComment,
-    skipRegex,
-    VOID_ELEMENTS
+    skipRegex
 } from './scanner.ts';
+// Language facts live in the shared semantics module (azerothjs/semantics); these two are
+// re-exported here because they predate it on this package's public surface.
+export { VOID_ELEMENTS, BUILTIN_COMPONENTS } from 'azerothjs/semantics';
 export { walkComponentTags } from './markup-util.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
 
@@ -69,8 +71,7 @@ export { emitDeclarations, emitDeclarationsWithMap, type DeclarationOutput } fro
 export { RUNTIME_FN, WRAPPER_FN, DECLARATION_KEYWORDS, type ConstructKind } from './keyword-spec.ts';
 // THE single Azeroth -> TypeScript projection. Every tool (type checker, language service, TS plugin,
 // ESLint processor, declaration emitter) lowers `.azeroth` to TypeScript through this one function.
-export { generateVirtualCode, type VirtualCode } from './project.ts';
-export { BUILTIN_COMPONENTS } from './builtins.ts';
+export { generateVirtualCode, AZEROTH_HANDLER_DECL, type VirtualCode } from './project.ts';
 export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 export {
     vlqEncode,

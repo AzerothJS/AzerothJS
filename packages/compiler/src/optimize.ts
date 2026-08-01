@@ -18,7 +18,7 @@ import * as ts from 'typescript';
 
 import type { RenderPlan, TemplateNode, StaticAttr, Binding } from './ir.ts';
 
-import { CONTENT_PROPERTIES } from './markup-util.ts';
+import { CONTENT_PROPERTIES } from 'azerothjs/semantics';
 import { parseExpressionSlice } from './ts-slice.ts';
 
 /**

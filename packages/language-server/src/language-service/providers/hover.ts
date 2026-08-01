@@ -10,6 +10,7 @@
 // stray TS result even when the surrounding markup is mid-edit.
 
 import ts from 'typescript';
+import { hostEventType } from 'azerothjs/semantics';
 import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
 import type { Hover, Range } from '../protocol.ts';
 import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
@@ -103,7 +104,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
 
             // AzerothJS binds camelCase events; the HTML engine only knows the
             // lowercase form, so look its MDN docs up explicitly.
-            if (/^on[A-Z]/.test(attribute))
+            if (hostEventType(attribute) !== null)
             {
                 const doc = eventDocumentation(attribute);
                 return { contents: `**${ attribute }** - DOM event handler${ doc ? `\n\n${ doc }` : '' }` };

@@ -11,6 +11,7 @@
 // be fetched lazily on resolve.
 
 import ts from 'typescript';
+import { isEventNamespace, EVENT_HANDLER_NAMES } from 'azerothjs/semantics';
 import {
     CompletionItemKind,
     type CompletionItem,
@@ -20,7 +21,6 @@ import { classifyPosition, enclosingElement, withClauseAt, type PositionContext 
 import {
     BUILTIN_COMPONENTS,
     BUILTIN_COMPONENT_MAP,
-    DOM_EVENTS,
     attributeDocumentation,
     keywordDocumentation,
     keywordOptions,
@@ -80,12 +80,12 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
         case 'attributeName':
             return isComponentTag(context.tag)
                 ? componentAttributeCompletions(ctx, offset, context.tag)
-                // HTML attributes (with docs/value hints), minus the lowercase
-                // `on*` events - AzerothJS binds camelCase handlers (`onClick`).
-                // Fill in docs for common attributes the HTML dataset omits.
+                // HTML attributes (with docs/value hints), minus the on* namespace -
+                // its lowercase spellings are RESERVED (the language binds camelCase
+                // handlers). Fill in docs for common attributes the HTML dataset omits.
                 : [
                     ...htmlCompletions(ctx.source, position)
-                        .filter(i => !/^on[a-z]/.test(i.label))
+                        .filter(i => !isEventNamespace(i.label))
                         .map(i => i.documentation ? i : { ...i, documentation: attributeDocumentation(i.label) }),
                     ...eventCompletions(),
                     ...directiveCompletions()
@@ -518,10 +518,10 @@ function directiveCompletions(): CompletionItem[]
     }));
 }
 
-/** DOM event handler attributes (`on*`). */
+/** DOM event handler attributes (`on*`), from the shared semantics vocabulary. */
 function eventCompletions(): CompletionItem[]
 {
-    return DOM_EVENTS.map(name => ({
+    return EVENT_HANDLER_NAMES.map(name => ({
         label: name,
         kind: CompletionItemKind.Event,
         detail: 'DOM event handler',

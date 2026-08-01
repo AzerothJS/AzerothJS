@@ -20,23 +20,19 @@ import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../r
 import { createEffect, createRoot, isStringMode, isHydrating } from '../reactivity/index.ts';
 import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
-import { serializeElement, assertSafeAttribute, assertSafeTag, isEventAttribute } from './ssr.ts';
-import { delegateEvent, isDelegatedEvent } from './delegate.ts';
-
-/**
- * Set of props that must be set as DOM properties, not attributes.
- *
- * @internal
- */
-const DOM_PROPERTIES = new Set
-([
-    'value',
-    'checked',
-    'selected',
-    'disabled',
-    'innerHTML',
-    'textContent'
-]);
+import { serializeElement, assertSafeAttribute, assertSafeTag } from './ssr.ts';
+import { attachEvent } from './delegate.ts';
+import {
+    hostEventType,
+    isReservedHostAttribute,
+    isEventNamespace,
+    reservedHostAttributeMessage,
+    contentChildrenMessage,
+    voidChildrenMessage,
+    CONTENT_PROPERTIES,
+    DOM_PROPERTIES,
+    VOID_ELEMENTS
+} from '../semantics.ts';
 
 /** SVG / MathML namespace URIs. @internal */
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -122,8 +118,10 @@ function createElementByTag(tag: string): HTMLElement
  *
  * INPUT CONTRACT:
  * - tag: an HTML tag name.
- * - props: attributes, on* event handlers, DOM properties, and `ref`. A FUNCTION value is a
- *   reactive attribute (re-applied in an effect); `ref` is a callback or a createRef object.
+ * - props: attributes, handler-form event handlers (`onClick`; the reserved lowercase
+ *   spellings of the on* namespace are refused), DOM properties, and `ref`. A FUNCTION value
+ *   on a non-event key is a reactive attribute (re-applied in an effect); `ref` is a callback
+ *   or a createRef object.
  * - children: elements, strings/numbers, arrays, null/undefined/false (skipped), or
  *   functions (reactive holes).
  *
@@ -157,8 +155,9 @@ function createElementByTag(tag: string): HTMLElement
  *
  * DEVELOPER WARNING:
  * A reactive attribute/child MUST be passed as a function (`() => expr`); passing the value
- * eagerly binds it once. h() attaches per-element event listeners, whereas the compiled
- * template path (bindProps) delegates bubbling events to one document listener per type.
+ * eagerly binds it once. Event handlers follow the language's single attachment model
+ * (see semantics DELEGATED_EVENTS): bubbling types share one document listener per type,
+ * identical for h(), compiled markup, and hydration.
  *
  * @param tag - The HTML tag name ('div', 'p', 'span', ...).
  * @param props - Attributes, on* handlers, DOM properties, and `ref`.
@@ -183,6 +182,20 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
     // be serialized, adopted, or built. Returns the concrete name (an unsafeTag() marker is not
     // a string), which is what every mode below builds with.
     const tagName = assertSafeTag(tag, properties);
+
+    // Structural rules, also ahead of the dispatch so all three modes accept the same calls:
+    // a void element owns no content, and a content property owns ALL of it.
+    if (VOID_ELEMENTS.has(tagName) && hasRenderableChildren(children))
+    {
+        throw new TypeError(voidChildrenMessage(tagName));
+    }
+    for (const contentProp of CONTENT_PROPERTIES)
+    {
+        if (Object.hasOwn(properties, contentProp) && hasRenderableChildren(children))
+        {
+            throw new TypeError(contentChildrenMessage(contentProp));
+        }
+    }
 
     // Server-side rendering: in string mode there is no document, so emit HTML
     // directly. The SSRNode is cast to HTMLElement so it flows through
@@ -222,15 +235,17 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
 
 /**
  * Applies properties, attributes, and event handlers to a DOM element.
- * Dispatches each prop to one of: ref, event handler (on*), reactive attribute
- * (function value), or static attribute.
+ * Dispatches each prop by the language's name-domain rules: ref, handler-form
+ * event (via the shared attachment model), reactive attribute (function value),
+ * or static attribute. Reserved on* names are refused - the same rule the
+ * compiler and the serializer enforce, so no entry path accepts them.
  *
  * @param el - The real DOM element to apply props to
  * @param props - The props object passed to h()
  *
  * @internal
  */
-function applyProps(el: HTMLElement, props: Props, delegate = false): void
+function applyProps(el: HTMLElement, props: Props): void
 {
     // for...in over Object.entries: this runs once per element created, and
     // entries() allocates an array of [key, value] tuples each call.
@@ -254,22 +269,15 @@ function applyProps(el: HTMLElement, props: Props, delegate = false): void
             continue;
         }
 
-        if (key.startsWith('on') && typeof value === 'function')
+        const eventType = hostEventType(key);
+        if (eventType !== null)
         {
-            const eventName = key.slice(2).toLowerCase();
-            // Template path (bindProps) delegates bubbling events to one
-            // document listener per type; h() keeps per-element listeners
-            // (its long-standing contract covers detached elements and
-            // non-bubbling dispatches).
-            if (delegate && isDelegatedEvent(eventName))
-            {
-                delegateEvent(el, eventName, value as EventListener);
-            }
-            else
-            {
-                el.addEventListener(eventName, value as EventListener);
-            }
+            attachEvent(el, eventType, value);
             continue;
+        }
+        if (isReservedHostAttribute(key))
+        {
+            throw new TypeError(reservedHostAttributeMessage(key));
         }
 
         // Reactive attribute: re-apply whenever the signals it reads change.
@@ -407,6 +415,34 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
 export function setProp(el: HTMLElement, name: string, value: unknown): void
 {
     setProperty(el, name, resolveReactive(value));
+}
+
+/**
+ * Whether a children list contains anything that would render: nullish and `false`
+ * entries are skip markers in every mode, so a list of only those is "no children"
+ * for the structural rules h() enforces before dispatch.
+ *
+ * @internal
+ */
+function hasRenderableChildren(children: readonly Child[]): boolean
+{
+    for (const child of children)
+    {
+        if (child === null || child === undefined || child === false)
+        {
+            continue;
+        }
+        if (Array.isArray(child))
+        {
+            if (hasRenderableChildren(child))
+            {
+                return true;
+            }
+            continue;
+        }
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -758,12 +794,8 @@ export function materializeChild(value: unknown): Node | null
 /**
  * Applies props (events, reactive attributes, refs, DOM properties) to an
  * existing element - the template path's equivalent of the prop wiring h()
- * does at creation. Compiled `dom`-target code calls this on cloned nodes.
- *
- * Bubbling events are DELEGATED to one document-level listener per type
- * (see delegate.ts): handlers fire only for events that actually bubble to
- * the document, so the element must be connected - the normal state for
- * compiled application markup.
+ * does at creation. Compiled `dom`-target code calls this on cloned nodes;
+ * the dispatch (and the event-attachment model) is byte-identical to h()'s.
  *
  * @param el - The element inside a template clone
  * @param props - The dynamic props the compiler collected for it
@@ -772,7 +804,7 @@ export function materializeChild(value: unknown): Node | null
  */
 export function bindProps(el: HTMLElement, props: Props): void
 {
-    applyProps(el, props, true);
+    applyProps(el, props);
 }
 
 /**
@@ -858,10 +890,9 @@ function placeStatic(el: HTMLElement, value: unknown): void
 }
 
 /**
- * Wires one event handler the way the template path does everywhere else:
- * bubbling event types are DELEGATED to one document-level listener (a property
- * write per element instead of an addEventListener per element per row); types
- * that do not reliably bubble keep a per-element listener.
+ * Wires one event handler through the language's single attachment model - the
+ * same {@link attachEvent} h(), spreads, and hydration use, including its
+ * handler-value rule (nullish is a no-op, any other non-function throws).
  *
  * @param el - The element the handler belongs to
  * @param type - The lowercase event type (`'click'`)
@@ -869,14 +900,9 @@ function placeStatic(el: HTMLElement, value: unknown): void
  *
  * @internal Compiler-emitted runtime; not part of the application API.
  */
-export function bindEvent(el: HTMLElement, type: string, handler: EventListener): void
+export function bindEvent(el: HTMLElement, type: string, handler: unknown): void
 {
-    if (isDelegatedEvent(type))
-    {
-        delegateEvent(el, type, handler);
-        return;
-    }
-    el.addEventListener(type, handler);
+    attachEvent(el, type, handler);
 }
 
 /**
@@ -1114,7 +1140,7 @@ function stripEventAttributes(el: HTMLElement): void
     // getAttributeNames() returns a snapshot array, so removing during the walk is safe.
     for (const name of el.getAttributeNames())
     {
-        if (isEventAttribute(name))
+        if (isEventNamespace(name))
         {
             el.removeAttribute(name);
         }

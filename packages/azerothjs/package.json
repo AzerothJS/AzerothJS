@@ -20,6 +20,11 @@
             "import": "./dist/internal.js",
             "default": "./dist/internal.js"
         },
+        "./semantics": {
+            "types": "./dist/semantics.d.ts",
+            "import": "./dist/semantics.js",
+            "default": "./dist/semantics.js"
+        },
         "./package.json": "./package.json"
     },
     "files": [

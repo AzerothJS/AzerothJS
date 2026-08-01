@@ -43,9 +43,6 @@
         "typescript": ">=5 <7"
     },
     "peerDependenciesMeta": {
-        "azerothjs": {
-            "optional": true
-        },
         "vite": {
             "optional": true
         }

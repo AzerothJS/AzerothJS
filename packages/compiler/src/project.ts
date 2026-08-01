@@ -29,8 +29,6 @@ import { findMarkupStart, skipString, skipTemplate, isWhitespace } from './scann
 import { CompileError, parseMarkup, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import {
     walkComponentTags,
-    isEventName,
-    isFactoryProp,
     isFunctionLiteral,
     isBareReference,
     isCollectionLiteral,
@@ -38,11 +36,11 @@ import {
     quoteString,
     alreadyImports
 } from './markup-util.ts';
+import { hostEventType, isFactoryProp, bindWriteBack, BUILTIN_SET } from 'azerothjs/semantics';
 import { parseModule } from './parser.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
 import { RUNTIME_FN } from './keyword-spec.ts';
-import { BUILTIN_SET } from './builtins.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
 /** Module the auto-injected runtime bindings point at (matches the compiler's codegen). */
@@ -51,9 +49,11 @@ const RUNTIME_MODULE = 'azerothjs';
 /**
  * `AzerothHandler<'onClick'>` maps a camelCase event prop to the right DOM event (via lib.dom's
  * GlobalEventHandlersEventMap), so a host handler `<button onClick={(e) => ...}>` infers `e: MouseEvent`
- * without imposing strict attribute checking the permissive `h()` runtime doesn't.
+ * without imposing strict attribute checking the permissive `h()` runtime doesn't. Exported so the
+ * language server's ambient intrinsics carry the SAME text - two hand-maintained copies of a type
+ * that encodes the handler-name rule would be two owners of it.
  */
-const AZEROTH_HANDLER_DECL =
+export const AZEROTH_HANDLER_DECL: string =
     'type AzerothHandler<N extends string> = N extends `on${infer E}`'
     + ' ? (event: Lowercase<E> extends keyof GlobalEventHandlersEventMap'
     + ' ? GlobalEventHandlersEventMap[Lowercase<E>] : Event) => unknown'
@@ -298,10 +298,9 @@ export function generateVirtualCode(source: string): VirtualCode
         {
             const bindSpan = attrExprSpan(source, attr);
             const prop = name.slice(5);
-            const event = prop === 'checked' ? 'Change' : 'Input';
             builder.emit(`${ objectKey(prop) }: (`);
             emitCode(bindSpan.start, bindSpan.end, 'attribute');
-            builder.emit(`), on${ event }: ($event) => ((`);
+            builder.emit(`), ${ bindWriteBack(prop).callback }: ($event) => ((`);
             emitCode(bindSpan.start, bindSpan.end, 'attribute');
             builder.emit(') = $event)');
             return;
@@ -335,7 +334,7 @@ export function generateVirtualCode(source: string): VirtualCode
         // Host event handlers: check the value IS a function via `satisfies AzerothHandler<'onX'>`, which
         // also contextually types an inline handler so `(e) => ...` infers the right DOM event. Applied to
         // every handler value (inline OR reference), so a non-function handler is rejected either way.
-        if (isHost && isEventName(name))
+        if (isHost && hostEventType(name) !== null)
         {
             usedHandler = true;
             builder.emit('(');

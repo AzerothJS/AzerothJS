@@ -28,9 +28,9 @@
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
-import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './scanner.ts';
+import { isFactoryProp, bindWriteBack, canonicalHandlerName, VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
-import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, isFactoryProp, objectKey, alreadyImports } from './markup-util.ts';
+import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
@@ -45,7 +45,7 @@ import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
-import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren } from './ir.ts';
+import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type PropEntry } from './ir.ts';
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
@@ -826,6 +826,14 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         emit.used.add(binding.tag);
     }
 
+    // A bind: entry synthesizes a write-back callback; an authored callback prop may share
+    // its key. Both must survive under ONE accessor (an object literal would let the later
+    // one silently win), so the bind branch composes them - write-back FIRST, matching the
+    // element path's composedBindHandler - and the event branch skips the folded entries.
+    const bindCallbackNames = new Set<string>(binding.props
+        .filter((prop): prop is Extract<PropEntry, { kind: 'bind' }> => prop.kind === 'bind')
+        .map(prop => bindWriteBack(prop.prop).callback));
+
     const parts: string[] = [];
     for (const prop of binding.props)
     {
@@ -839,9 +847,15 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         }
         else if (prop.kind === 'event')
         {
+            if (bindCallbackNames.has(prop.name))
+            {
+                continue;
+            }
             const handler = maybeRewrite(emit, handlerSource(source, prop.handler), sources, prop.handler.start);
+            // objectKey because the classifier admits any non-lowercase third character, so an
+            // authored name like `on-retry` must emit as a QUOTED accessor, not invalid JS.
             // Parens guard against ASI when the user-authored handler starts on its own line.
-            parts.push(`get on${ capitalize(prop.event) }() { return (${ handler }); }`);
+            parts.push(`get ${ objectKey(prop.name) }() { return (${ handler }); }`);
         }
         else if (prop.kind === 'bind')
         {
@@ -851,9 +865,17 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
             // reactive rewrite so it becomes the state's setter - a non-writable target is rejected there.
             const bound = source.slice(prop.expr.start, prop.expr.end);
             const value = rewriteReactive(bound, sources, prop.expr.start);
-            const handler = `($event) => ${ rewriteReactive(`${ bound } = $event`, sources, prop.expr.start) }`;
+            const writeBack = `($event) => ${ rewriteReactive(`${ bound } = $event`, sources, prop.expr.start) }`;
+            const callbackName = bindWriteBack(prop.prop).callback;
+            const authored = binding.props
+                .filter((entry): entry is Extract<PropEntry, { kind: 'event' }> =>
+                    entry.kind === 'event' && entry.name === callbackName)
+                .map(entry => `(${ maybeRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`);
+            const handler = authored.length === 0
+                ? writeBack
+                : `($event) => { (${ writeBack })($event); ${ authored.join('; ') }; }`;
             parts.push(`get ${ objectKey(prop.prop) }() { return (${ value }); }`);
-            parts.push(`get on${ capitalize(prop.event) }() { return (${ handler }); }`);
+            parts.push(`get ${ objectKey(callbackName) }() { return (${ handler }); }`);
         }
         else
         {
@@ -1013,12 +1035,6 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
     const childItems = node.children.map(child => emitNode(source, child, plan, sources, emit));
     const args = [quoteString(node.tag), `{ ${ props.join(', ') } }`, ...childItems];
     return `h(${ args.join(', ') })`;
-}
-
-/** `click` -> `Click`, for reconstructing a component's `onEvent` prop name. */
-function capitalize(text: string): string
-{
-    return text.length === 0 ? text : (text[0] ?? '').toUpperCase() + text.slice(1);
 }
 
 /**
@@ -1205,7 +1221,7 @@ function propEntries(source: string, group: readonly Binding[], sources: Reactiv
         .filter(binding => !(binding.kind === 'event' && boundEvents.has(binding.event)))
         .map(binding => binding.kind === 'bind'
             ? `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), `
-                + `on${ binding.event }: ${ composedBindHandler(source, binding, group, sources) }`
+                + `${ objectKey(canonicalHandlerName(binding.event)) }: ${ composedBindHandler(source, binding, group, sources) }`
             : propEntry(source, binding, sources, emit));
 }
 
@@ -1222,12 +1238,14 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     }
     if (binding.kind === 'event')
     {
-        return `on${ binding.event }: ${ maybeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) }`;
+        // The wire format is the language's canonical handler-form key (`onClick:`), never the
+        // lowercase spelling - the runtime reserves non-handler-form on* names and refuses them.
+        return `${ objectKey(canonicalHandlerName(binding.event)) }: ${ maybeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) }`;
     }
     if (binding.kind === 'bind')
     {
         // The bound value as a reactive getter prop (h() unwraps `() =>`), plus the write-back listener.
-        return `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), on${ binding.event }: ${ bindHandler(source, binding, sources) }`;
+        return `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), ${ objectKey(canonicalHandlerName(binding.event)) }: ${ bindHandler(source, binding, sources) }`;
     }
     if (binding.kind === 'class')
     {

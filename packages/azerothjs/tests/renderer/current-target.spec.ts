@@ -16,7 +16,7 @@ describe('delegated events report the bound element as currentTarget', () =>
         document.body.append(el);
 
         let seen: EventTarget | null = null;
-        bindEvent(el, 'click', (event) =>
+        bindEvent(el, 'click', (event: Event) =>
         {
             seen = event.currentTarget;
         });
@@ -33,7 +33,7 @@ describe('delegated events report the bound element as currentTarget', () =>
         document.body.append(parent);
 
         const seen: Array<{ current: EventTarget | null; target: EventTarget | null }> = [];
-        bindEvent(parent, 'click', (event) =>
+        bindEvent(parent, 'click', (event: Event) =>
         {
             seen.push({ current: event.currentTarget, target: event.target });
         });

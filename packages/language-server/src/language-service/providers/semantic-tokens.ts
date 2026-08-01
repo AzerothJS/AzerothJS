@@ -7,6 +7,7 @@
 // LSP's packed delta encoding.
 
 import ts from 'typescript';
+import { hostEventType } from 'azerothjs/semantics';
 import { isWhitespace, isIdentPart, parseModule, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
 import type { MarkupElement } from '@azerothjs/compiler';
 import {
@@ -307,8 +308,7 @@ function collectElementTokens(source: string, node: MarkupElement, tokens: RawTo
         {
             continue;
         }
-        const third = attr.name[2];
-        const isEvent = attr.name.length > 2 && attr.name.startsWith('on') && third !== undefined && third === third.toUpperCase();
+        const isEvent = hostEventType(attr.name) !== null;
         tokens.push({ offset: attr.start, length: attr.name.length, type: isEvent ? 'event' : 'attribute', modifiers: 0 });
 
         if (attr.value.kind === 'static')

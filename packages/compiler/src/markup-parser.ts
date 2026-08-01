@@ -22,10 +22,9 @@ import {
     isIdentPart,
     isWhitespace,
     skipBalanced,
-    skipString,
-    VOID_ELEMENTS,
-    RAW_TEXT_ELEMENTS
+    skipString
 } from './scanner.ts';
+import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS, voidChildrenMessage } from 'azerothjs/semantics';
 
 /**
  * The named HTML character references decoded in text content. Numeric references (`&#38;`,
@@ -265,8 +264,12 @@ class MarkupParser
         // HTML void element written without a self-closing slash (`<br>`, `<input ...>`): it has no
         // children and no closing tag, so finish here rather than scanning for a `</br>` that will
         // never come. `<br/>` is handled by the self-closing branch above; both forms are accepted.
+        // Authored children ARE a located error, not leftovers: without the lookahead below, a root
+        // `<input>text</input>` ends the markup region at the void tag and `text</input>` leaks into
+        // the surrounding code as garbage the author is then blamed for.
         if (VOID_ELEMENTS.has(tag))
         {
+            this.#rejectVoidChildren(tag);
             return {
                 kind: 'element',
                 tag,
@@ -636,6 +639,35 @@ class MarkupParser
             .replace(/\/\/[^\n]*/g, '')
             .trim();
         return stripped === '';
+    }
+
+    /**
+     * Lookahead after a completed void tag (nothing consumed): a text run followed by the void
+     * tag's OWN closing tag means the author wrote children. Rejecting here, with the content's
+     * position, is the difference between a clear rule and the markup region silently ending at
+     * the void element - which re-parses `text</input>` as surrounding CODE and blames the
+     * author with an unrelated syntax error.
+     */
+    #rejectVoidChildren(tag: string): void
+    {
+        let i = this.pos;
+        while (i < this.#src.length && this.#src[i] !== '<' && this.#src[i] !== '}')
+        {
+            i++;
+        }
+        if (!this.#src.startsWith('</', i))
+        {
+            return;
+        }
+        let j = i + 2;
+        while (j < this.#src.length && isWhitespace(this.#src[j]))
+        {
+            j++;
+        }
+        if (this.#src.slice(j, j + tag.length).toLowerCase() === tag && !isIdentPart(this.#src[j + tag.length] ?? ''))
+        {
+            throw new CompileError(voidChildrenMessage(tag), this.pos);
+        }
     }
 
     /** Consumes `</tag>` (or `</>` when `tag === ''`). */

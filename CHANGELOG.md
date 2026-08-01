@@ -9,6 +9,56 @@ follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Changed (azerothjs, compiler, language-server, eslint-plugin) - one owner for markup semantics - BREAKING
+
+- **Every markup rule now has exactly one owner: `azerothjs/semantics`.** An adversarial audit
+  proved the language's rules were re-decided independently by the compiler, the DOM renderer, the
+  SSR serializer, and the editor projection - and where they disagreed, the meaning of a program
+  was chosen by whichever render mode happened to run. The new zero-dependency module owns the
+  handler classifier, the bind write-back rule, the content/void/DOM-property tables, the builtin
+  and event vocabularies, and the RULE MESSAGE TEXT itself; the runtime consumes it internally,
+  the compiler, language server, and ESLint plugin import it, and the two artifacts that cannot
+  import (the TextMate grammar, the JetBrains handler) sit behind a drift-guard test.
+
+- **The host `on*` namespace is reserved for event handlers.** `onclick={save}` used to mean four
+  different things: client render INVOKED the handler once at mount (or crashed on its return
+  value), the server silently dropped it, and hydration attached a listener - with no diagnostic
+  anywhere. Handler-form names (`on` + non-lowercase third character) denote events; every other
+  `on*` spelling is a compile error carrying the mechanical rename (`onpaste` -> `onPaste`), and
+  `h()` and the serializer refuse the same names with the same rule text. The lint's KNOWN_EVENTS
+  allowlist is deleted - the rule is shape-derived, so it cannot lag the platform. The rule
+  immediately found a real bug: `VirtualList` passed lowercase `onscroll` and had been silently
+  losing its scroll handler on the server. Component props are untouched - a component attribute
+  is a verbatim props key in every spelling.
+
+- **ONE event-attachment model in every mode.** The template path delegated bubbling events to a
+  document dispatcher while `h()`, hydration, and fragment-rooted compiled output attached direct
+  listeners - so the same click behind a third-party `stopPropagation()` listener died on a
+  client-rendered route and fired on the hydrated one. `attachEvent` is now the single wiring
+  path (delegated set at the document, per-element otherwise, nullish/false = no handler, any
+  other non-function throws), the `delegate` flag no longer exists, and the compiled wire format
+  emits canonical handler-form keys (`onClick:`) - prebuilt `.azeroth` artifacts must be
+  recompiled. Verified in real Chromium: client-rendered and hydrated trees are now suppressed
+  identically.
+
+- **Content properties own the element's content, void elements own none.** `innerHTML` plus
+  children rendered three different DOMs across modes depending on the ROOT SHAPE of the
+  component; both `innerHTML`/`textContent`-plus-children and void-element children are now
+  rejected programs - at compile time for markup, and by the identical error from `h()` in every
+  mode. The void rule also replaces the old failure, where `<input>text</input>` leaked
+  `text</input>` into the emitted module as garbage code blamed on the author as an unrelated
+  syntax error.
+
+- **The editor can no longer bless a program the build rejects.** Duplicate attributes, duplicate
+  props (including `bind:`'s claimed keys and the children collision), reserved names, and the
+  content rule moved from lowering throws into `diagnoseModule` - one implementation that now
+  reaches the build gate, the language server's diagnostics, `azeroth-tsc`, and the ESLint
+  processor with the same codes, messages, and spans; the deep walker also covers markup embedded
+  in expression holes and module-scope helpers. GRAMMAR 6.6 was rewritten LAST, from the shipped
+  rules, and names the new cross-mode conformance suite (client render, SSR + hydration, and
+  manual `h()` asserted against each other) as its executable form - 13 of its cases failed
+  against the old implementation; all pass now.
+
 ### Changed (http) - BREAKING
 
 - **`app.use` now takes edge middleware too, so applying a rate limit no longer costs you your

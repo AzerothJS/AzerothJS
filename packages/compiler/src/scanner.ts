@@ -19,6 +19,8 @@
  * @see {@link findMarkupStart}
  */
 
+import { VOID_ELEMENTS } from 'azerothjs/semantics';
+
 /**
  * True for a single whitespace character (space, tab, newline, etc.).
  *
@@ -217,19 +219,6 @@ export function skipRegex(src: string, i: number): number
     }
     return i;
 }
-
-/** HTML void elements: no closing tag and no children (`<br>`, `<img>`, ...). */
-export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
-    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-    'link', 'meta', 'param', 'source', 'track', 'wbr'
-]);
-
-/**
- * HTML raw-text elements: their content is CDATA, not markup. `<style>`/`<script>` carry `{`, `<`,
- * and `&` that must stay LITERAL - the markup parser reads their content verbatim (no `{ ... }` holes,
- * no nested tags) and the serializers emit it unescaped, so CSS and JSON-LD survive intact.
- */
-export const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(['script', 'style']);
 
 /** Characters that continue a tag name: identifiers plus `.` (`Foo.Bar`) and `-` (custom elements). */
 function isTagNameChar(ch: string): boolean

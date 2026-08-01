@@ -111,13 +111,24 @@ describe('an attribute name cannot carry a delimiter into the tag', () =>
 
 describe('an on* prop is recognised regardless of case', () =>
 {
-    it.each(['onclick', 'onClick', 'ONCLICK', 'OnClick', 'oNcLiCk'])('does not invoke the %s handler while rendering', (key) =>
+    it('does not invoke the onClick handler while rendering', () =>
     {
         const handler = vi.fn(() => 'SIDE EFFECT RAN');
 
-        const html = renderToString(() => h('div', { [key]: handler }, 'x'), { markers: false });
+        const html = renderToString(() => h('div', { onClick: handler }, 'x'), { markers: false });
 
         expect(handler).not.toHaveBeenCalled();
         expect(html).toBe('<div>x</div>');
+    });
+
+    it.each(['onclick', 'ONCLICK', 'OnClick', 'oNcLiCk'])('refuses the reserved %s key without invoking it', (key) =>
+    {
+        // Only handler-form names denote events; every other spelling of the on* namespace
+        // is reserved and refused - which also guarantees the value never runs on the server.
+        const handler = vi.fn(() => 'SIDE EFFECT RAN');
+
+        expect(() => renderToString(() => h('div', { [key]: handler }, 'x'), { markers: false }))
+            .toThrow(/reserved for event handlers/);
+        expect(handler).not.toHaveBeenCalled();
     });
 });

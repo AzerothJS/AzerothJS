@@ -211,6 +211,23 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).toContain('get onChange() { return (($event) => setOn($event)); }');
     });
 
+    it('a component on* callback prop keeps its authored casing (it is a prop, not a DOM event)', () =>
+    {
+        const code = gen('import Ticket from "./Ticket.azeroth"; component C { <Ticket onSideChange={(next) => next} /> }');
+        expect(code).toContain('get onSideChange()');
+        expect(code).not.toContain('onSidechange');
+    });
+
+    it('bind: composed with an authored same-name callback keeps BOTH under one key, write-back first', () =>
+    {
+        const code = gen('import Field from "./Field.azeroth"; component C { state name = ""; <Field bind:value={name} onInput={(v) => console.log(v)} /> }');
+        const accessors = [...code.matchAll(/get onInput\(\)/g)];
+        expect(accessors.length).toBe(1);
+        // The state the user just produced must be visible to the authored handler.
+        expect(code.indexOf('setName($event)')).toBeGreaterThan(-1);
+        expect(code.indexOf('setName($event)')).toBeLessThan(code.indexOf('console.log(v)'));
+    });
+
     it('rejects bind: to a read-only derived on a component (same write-back guard as DOM)', () =>
     {
         expect(() => gen('import Field from "./Field.azeroth"; component C { state a = 1; derived d = a + 1; <Field bind:value={d} /> }'))
@@ -630,9 +647,11 @@ describe('generateModule - element-rooted unified body', () =>
     {
         const code = gen('component C { <button onClick={save}>x</button> }');
         // bindEvent delegates bubbling types to one document listener and
-        // falls back to addEventListener for non-bubbling ones.
+        // falls back to addEventListener for non-bubbling ones. The h-branch wire
+        // format is the canonical handler-form key - the runtime reserves
+        // non-handler-form on* spellings and refuses them.
         expect(code).toMatch(/bindEvent\(_n\d+, 'click', save\)/);
-        expect(code).toContain('onclick: save');
+        expect(code).toContain('onClick: save');
     });
 
     it('routes a spread/ref through bindProps', () =>
@@ -932,7 +951,7 @@ describe('codegen - bind: alongside an explicit handler for the same event', () 
     {
         const code = gen('component C { state draft = ""; <input bind:value={draft} onInput={() => announce()} /> }');
         const stringBranch = code.slice(code.indexOf('isStringMode()'), code.indexOf('const _r ='));
-        expect([...stringBranch.matchAll(/oninput:/g)]).toHaveLength(1);
+        expect([...stringBranch.matchAll(/onInput:/g)]).toHaveLength(1);
     });
 
     it('composes bind:checked with an explicit onChange', () =>

@@ -19,6 +19,7 @@ import {
     type MarkedString
 } from 'vscode-html-languageservice';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { isEventNamespace } from 'azerothjs/semantics';
 import { generateHtmlSource } from '../html-source.ts';
 import {
     CompletionItemKind,
@@ -87,7 +88,7 @@ function buildEventDocs(): Map<string, string>
     const map = new Map<string, string>();
     for (const attr of getDefaultHTMLDataProvider().provideAttributes('div'))
     {
-        if (!/^on/i.test(attr.name))
+        if (!isEventNamespace(attr.name))
         {
             continue;
         }

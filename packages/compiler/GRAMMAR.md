@@ -225,6 +225,115 @@ fragment `<>`, a self-close), the region IS markup: a malformation past that poi
 to opaque TypeScript. An *uncommitted* failure - e.g. `<T,>` - falls through to
 plain TypeScript (that is what makes the trailing-comma spelling reliable, §3.3).
 
+### 6.6 Attribute and props semantics (normative)
+
+These rules define what an element's attributes MEAN, independently of any
+implementation. Every conforming compiler and every render mode (template clone,
+`h()`, SSR string, hydration) must assign the same meaning to the same program.
+The shared vocabulary these rules are written against is the `azerothjs/semantics`
+module; the executable form of this section is the cross-mode conformance suite
+(`packages/compiler/tests/conformance`), which a conforming implementation must
+pass without consulting any other implementation's internals.
+
+**Name domains.** The tag selects the domain of every attribute name on it:
+
+- **Host elements**: a *handler-form* name (`on` followed by any character that is
+  not a lowercase letter) denotes the DOM event type `lowercase(name[2..])`;
+  `onClick` and `onCLICK` both denote `click`. The REST of the `on*` namespace,
+  matched case-insensitively (`onclick`, `once`, `ONCLICK`, `onward-link`), is
+  **reserved**: HTML compiles `on*` content attributes into live handlers, so these
+  names can neither pass through as attributes safely nor name an event, and a
+  program using one is REJECTED (`azeroth/reserved-event-name`; the error carries
+  the mechanical camelCase repair). Every name OUTSIDE the `on*` namespace denotes
+  the attribute/property verbatim; the language does not validate those against the
+  DOM (unknown names pass through, exactly as in HTML).
+- **Components**: every attribute name denotes a props-object key, **verbatim** -
+  handler form changes only the VALUE rule (below), never the name, and the
+  reservation above does not apply (`onclick` on a component is an ordinary prop).
+  `onSideChange` reaches the component as `onSideChange`.
+
+**Handler values.** In both domains, a handler-form attribute's value must be a
+function at the time the event fires; `null`, `undefined`, and `false` mean "no
+handler" (so `onClick={ open && fn }` needs no ternary). An expression that would
+EXECUTE at setup (an assignment, `++`/`--`, a zero-argument call of a plain
+reference) is a compile error - wrap it (`onClick={() => save()}`). Any other
+non-function value is rejected with ONE rule text in every mode: at compile time
+when it is statically evident, and by the identical runtime error from client
+render, the serializer, and `h()` otherwise.
+
+**Content ownership.** `innerHTML` and `textContent` OWN an element's content:
+combining either with children is a rejected program
+(`azeroth/content-property-children`), at compile time for markup and by the same
+rule thrown from `h()` in every mode. A void element (`<input>`, `<br>`, ...) owns
+NO content: children or a closing tag on one is a located parse error.
+
+**Event attachment (observable model).** Handlers attach through ONE model in
+every mode - client render, hydration, and `h()` alike. Types in the semantics
+module's `DELEGATED_EVENTS` set share a single document-level dispatcher per type:
+their handlers run when the event bubbles to the document, so a non-framework
+listener between the element and the document that calls `stopPropagation()`
+suppresses them - identically everywhere. All other types attach per element. The
+dispatcher preserves per-handler `currentTarget`, `stopPropagation` ordering, and
+`stopImmediatePropagation`.
+
+**Uniqueness.** Within one element, every explicit attribute's full name must be
+unique, and on components every EMITTED key must be unique; a violation is a
+compile error. This is not style policing: repeated keys have no single meaning
+across render modes (a template fires both duplicate listeners and keeps the FIRST
+duplicate parsed attribute; an object literal keeps the LAST), so the language
+refuses the program instead of picking a winner. Consequences:
+
+- `children` is a key like any other: markup children and an explicit
+  `children={...}` prop on the same component collide.
+- `bind:p` claims BOTH `p` and its write-back callback key (below), so
+  `bind:value={x} value={y}` collides.
+- Exactly ONE authored handler may share a `bind:`'s callback key - that pairing
+  is *composition*, defined below, not a collision.
+
+**Two-way binding.** `bind:p={lvalue}` requires a writable reactive `lvalue` and
+means, by definition: the target receives the current value of `lvalue` under key
+`p`, and writes back through `wb(p)` - `change`/`onChange` when `p` is `checked`,
+`input`/`onInput` otherwise (one rule for hosts and components; the on-chain key
+for components, the DOM event for hosts). When an authored handler shares the
+write-back key, both survive under ONE key and the write-back runs FIRST, so the
+authored handler observes the state the user just produced.
+
+**Merging.** Attributes and spreads merge in **source order, later wins** - the
+semantics of a JavaScript object literal, in every mode and regardless of whether
+a value is a literal or an expression. Two exceptions, both claims rather than
+merges:
+
+- `class:`/`style:` directives CLAIM their base key: the merged
+  base + dynamic + toggles expression owns `class`/`style`, and no spread outranks
+  it on that element.
+- The uniqueness rule above removes explicit-vs-explicit competition entirely.
+
+**Spreads.** A spread is an opaque runtime value; the language cannot and does not
+inspect its keys statically. Its semantics are: **snapshot at instantiation** -
+the spread's key set and values are read once when the element is created (getters
+on the spread object are evaluated by the spread itself, per JavaScript). A spread
+therefore does not forward *reactivity*; it forwards *values*. Passing live props
+through requires passing them explicitly (or passing thunks as values). A spread
+whose keys collide with explicit attributes resolves by the merge rule above; the
+compile-time uniqueness rule does not apply to it.
+
+**Mode equivalence.** For every program these rules accept, string rendering
+followed by hydration is observably equivalent to client rendering - including
+the event-attachment model above. `h()` is a JavaScript API, not markup: the
+UNIQUENESS rules cannot apply to it (an object literal cannot express a duplicate
+key) and spreads follow object-literal merge semantics by definition - but the
+name-domain, handler-value, content-ownership, and attachment rules of this
+section bind `h()` identically, so a reserved name, a non-function handler, or a
+content-property/children combination is refused by `h()` with the same rule in
+every mode.
+
+**Reserved for the future.** Exact-case event syntax (`on:TypeName`, attaching
+the event type verbatim - required for camelCase `CustomEvent` types on custom
+elements) is reserved but NOT part of the language today; a conforming
+implementation rejects it (`azeroth/reserved-event-name`) rather than guessing.
+When adopted, `on:x` and any handler-form name whose lowercased tail is also `x`
+denote the same event type and therefore collide under the uniqueness rule.
+
 ## 7. Keywords: all contextual, none reserved
 
 `.azeroth` reserves NO identifiers beyond TypeScript's own. Every construct word is

@@ -3,12 +3,9 @@
  *
  * Catches the SYNTAX-level slips in a markup region that neither the TYPE system nor the
  * component-semantic diagnostics catch. (A handler that runs at setup - onClick={save()} - is
- * diagnoseModule's azeroth/handler-not-function, so it is NOT duplicated here.) These rules have
- * near-zero false-positive rates:
- *   - azeroth/duplicate-attr - the same attribute written twice on one element (the later one
- *     silently wins);
- *   - azeroth/event-case - onclick= for a known DOM event, where the framework convention is
- *     camelCase (onClick);
+ * diagnoseModule's azeroth/handler-not-function; duplicate attributes and lowercase on* names
+ * are diagnoseModule's error-severity GRAMMAR 6.6 rules - none of those are duplicated here.)
+ * These rules have near-zero false-positive rates:
  *   - azeroth/interpolation-spacing - spacing inside markup expression braces ({ expr }, not
  *     {expr}). The braces are markup punctuation, invisible to any TypeScript-based rule (the
  *     projection lowers them away), so this is the ONLY layer that can enforce it - the
@@ -84,26 +81,6 @@ export interface LintOptions
 }
 
 /**
- * DOM events users actually write handlers for. The lowercase-event rule
- * only fires for these, so an unconventional attribute that merely starts
- * with "on" (onward-link, ...) is never flagged.
- */
-const KNOWN_EVENTS = new Set([
-    'click', 'dblclick', 'contextmenu',
-    'input', 'change', 'submit', 'reset', 'invalid',
-    'keydown', 'keyup', 'keypress',
-    'focus', 'blur', 'focusin', 'focusout',
-    'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave',
-    'pointerdown', 'pointerup', 'pointermove', 'pointerenter', 'pointerleave', 'pointercancel',
-    'touchstart', 'touchend', 'touchmove', 'touchcancel',
-    'wheel', 'scroll',
-    'drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
-    'load', 'error', 'abort',
-    'animationstart', 'animationend', 'animationiteration', 'transitionend',
-    'play', 'pause', 'ended', 'canplay', 'timeupdate', 'volumechange'
-]);
-
-/**
  * Lints one parsed markup region. Pure and allocation-light - safe to call per region on every
  * diagnostics/transform pass.
  *
@@ -112,8 +89,8 @@ const KNOWN_EVENTS = new Set([
  * @see {@link lintSource}
  * @example
  * ```ts
- * const { node } = parseMarkup('<input onclick={f} />', 0);
- * lintMarkup(node)[0].code; // 'azeroth/event-case'
+ * const { node } = parseMarkup('<p>{count()}</p>', 0);
+ * lintMarkup(node, source)[0].code; // 'azeroth/interpolation-spacing'
  * ```
  */
 export function lintMarkup(node: MarkupElement | MarkupFragment, source: string, options?: LintOptions): LintWarning[]
@@ -247,7 +224,6 @@ function visit(
 {
     if (node.kind === 'element')
     {
-        lintElement(node, warnings);
         if (node.tag === 'Show')
         {
             lintShowNarrowing(node, warnings);
@@ -353,45 +329,6 @@ function lintBraceSpacing(
     });
 }
 
-/** @internal */
-function lintElement(el: MarkupElement, warnings: LintWarning[]): void
-{
-    const seen = new Set<string>();
-
-    for (const attr of el.attributes)
-    {
-        if (attr.spread || attr.name === null)
-        {
-            continue;
-        }
-        const name = attr.name;
-
-        if (seen.has(name))
-        {
-            warnings.push({
-                code: 'azeroth/duplicate-attr',
-                message: `Duplicate attribute \`${ name }\` - the later value silently wins; remove one.`,
-                start: attr.start,
-                end: attr.end
-            });
-        }
-        seen.add(name);
-
-        // onclick= on a host element: works at runtime, but the convention
-        // (and all editor tooling) is camelCase.
-        if (!el.isComponent && name.startsWith('on') && KNOWN_EVENTS.has(name.slice(2)))
-        {
-            const camel = `on${ (name[2] ?? '').toUpperCase() }${ name.slice(3) }`;
-            warnings.push({
-                code: 'azeroth/event-case',
-                message: `\`${ name }\` - AzerothJS event handlers are camelCase: use \`${ camel }\`.`,
-                start: attr.start,
-                end: attr.end
-            });
-        }
-    }
-}
-
 /** True for identifier characters (`[\w$]`), false for `undefined` (past the string's start). @internal */
 function isIdentChar(ch: string | undefined): boolean
 {
@@ -485,9 +422,9 @@ function isNarrowedCallbackForm(children: MarkupChild[]): boolean
 /**
  * azeroth/unsafe-narrow-in-show: flags `guard()!.x` inside a `<Show when={ guard() }>` whose
  * children are plain (not the callback form) - see the module doc comment for why this is a
- * real bug pattern, not a style nit. Reports the whole offending attribute/expression span,
- * matching {@link lintElement}'s other rules (no `source` dependency, no auto-fix: rewriting
- * the branch into the callback form is a structural change, not a mechanical one).
+ * real bug pattern, not a style nit. Reports the whole offending attribute/expression span
+ * (no `source` dependency, no auto-fix: rewriting the branch into the callback form is a
+ * structural change, not a mechanical one).
  * @internal
  */
 function lintShowNarrowing(el: MarkupElement, warnings: LintWarning[]): void
@@ -596,8 +533,8 @@ function unsafeNarrowWarning(guarded: string, start: number, end: number): LintW
  *
  * @example
  * ```ts
- * lintSource('const x = <button onclick={f}>go</button>;')[0].code;
- * // 'azeroth/event-case'
+ * lintSource('const x = <button label={f}>go</button>;')[0].code;
+ * // 'azeroth/interpolation-spacing'
  * ```
  */
 export function lintSource(source: string, options?: LintOptions): LintWarning[]

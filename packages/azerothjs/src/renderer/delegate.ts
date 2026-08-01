@@ -1,19 +1,17 @@
 /**
  * MODULE: renderer/delegate (internal)
  *
- * Event delegation for the template (`dom`-target) path: one document-level listener per event
- * type, with per-element handlers stored on the elements themselves. Compiled rows stop paying
- * an addEventListener per handler per row - the listener exists once and registering a handler
- * is one property write.
- *
- * SCOPE: ONLY bindProps (compiled dom-target output) delegates; h() keeps per-element listeners
- * because delegation changes observable behavior for detached elements and non-bubbling
- * dispatches, and h()'s contract predates it. The opt-in dom target carries the stricter
- * semantics: a delegated handler fires only for events that actually bubble to the document.
- * The document listeners are never removed (at most one per type for the page's life; removal
- * bookkeeping would cost more than the listeners do).
+ * The ONE event-attachment path for every render surface - compiled template clones, h(),
+ * and hydration all wire handlers through {@link attachEvent}, so the attachment model is
+ * part of the language contract rather than a per-path choice. Types in the semantics
+ * module's DELEGATED_EVENTS set share one document-level listener per type, with
+ * per-element handlers stored on the elements themselves (compiled rows stop paying an
+ * addEventListener per handler per row); every other type gets a per-element listener.
+ * The document listeners are never removed (at most one per type for the page's life;
+ * removal bookkeeping would cost more than the listeners do).
  */
 
+import { isDelegatedEvent, canonicalHandlerName, handlerValueMessage } from '../semantics.ts';
 import { getDestroyHooks, setDestroyHooks } from '../component/destroy-hooks.ts';
 
 /**
@@ -41,22 +39,6 @@ function typeKey(type: string): symbol
 /** Event types with a document listener installed. @internal */
 const installed = new Set<string>();
 
-/**
- * Bubbling events worth delegating. Conservative: everything here reliably
- * bubbles in browsers and happy-dom. Non-bubbling types (focus, blur,
- * mouseenter, ...) keep per-element listeners.
- *
- * @internal
- */
-const DELEGATED_EVENTS = new Set([
-    'click', 'dblclick', 'contextmenu',
-    'input', 'change',
-    'keydown', 'keyup', 'keypress',
-    'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout',
-    'pointerdown', 'pointerup', 'pointermove',
-    'touchstart', 'touchend', 'touchmove'
-]);
-
 /** @internal */
 interface DelegatedStore { [key: symbol]: EventListener | boolean | undefined }
 
@@ -68,10 +50,37 @@ interface DelegatedStore { [key: symbol]: EventListener | boolean | undefined }
  */
 const CLEANUP_KEY = Symbol('azeroth_delegate_cleanup');
 
-/** Whether bindProps should delegate this (lowercase) event type. @internal */
-export function isDelegatedEvent(type: string): boolean
+/**
+ * Wires one handler for `type` on `el` under the language's single attachment model:
+ * delegated types go through the document dispatcher, everything else gets a per-element
+ * listener. Nullish handlers are a no-op; any other non-function value violates the
+ * handler-value rule and throws - identically to the SSR serializer, so no mode accepts
+ * what another refuses.
+ *
+ * @param el - The element the handler belongs to
+ * @param type - The lowercase event type (`'click'`)
+ * @param handler - The handler, or null/undefined for none
+ *
+ * @internal
+ */
+export function attachEvent(el: HTMLElement, type: string, handler: unknown): void
 {
-    return DELEGATED_EVENTS.has(type);
+    // false is a first-class "no handler" so conditional handlers (`onClick={ open && fn }`)
+    // need no ternary; the same three values pass the serializer's gate.
+    if (handler === null || handler === undefined || handler === false)
+    {
+        return;
+    }
+    if (typeof handler !== 'function')
+    {
+        throw new TypeError(handlerValueMessage(canonicalHandlerName(type), typeof handler));
+    }
+    if (isDelegatedEvent(type))
+    {
+        delegateEvent(el, type, handler as EventListener);
+        return;
+    }
+    el.addEventListener(type, handler as EventListener);
 }
 
 /**

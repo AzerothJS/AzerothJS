@@ -13,7 +13,7 @@
 //      markup so the editor flags exactly what the azeroth-tsc gate flags.
 
 import ts from 'typescript';
-import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup } from '@azerothjs/compiler';
+import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup, diagnoseModule } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
     type Diagnostic,
@@ -35,7 +35,34 @@ export function getDiagnostics(ctx: RequestContext): Diagnostic[]
     {
         return errors;
     }
-    return [...warnings, ...withOptionDiagnostics(ctx), ...typeScriptDiagnostics(ctx)];
+    return [...warnings, ...semanticDiagnostics(ctx), ...withOptionDiagnostics(ctx), ...typeScriptDiagnostics(ctx)];
+}
+
+/**
+ * The compiler's own semantic rules (diagnoseModule) - the SAME findings, codes, and spans
+ * the build gate enforces, so the editor can never bless a program `generateModule` rejects
+ * (duplicate attrs/props, reserved on* names, content-property/children, setup handlers, ...).
+ */
+function semanticDiagnostics(ctx: RequestContext): Diagnostic[]
+{
+    let findings: ReturnType<typeof diagnoseModule>;
+    try
+    {
+        findings = diagnoseModule(ctx.source);
+    }
+    catch
+    {
+        // A mid-edit source that trips the analyzer must not take the whole diagnostics
+        // pass down with it; the parse/type layers still report their own findings.
+        return [];
+    }
+    return findings.map((finding) => ({
+        range: ctx.lineIndex.rangeAt(finding.start, Math.min(finding.end, ctx.source.length)),
+        severity: finding.severity === 'error' ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
+        message: finding.message,
+        code: finding.code,
+        source: 'azeroth'
+    }));
 }
 
 /**

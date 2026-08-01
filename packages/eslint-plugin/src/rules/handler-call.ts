@@ -5,6 +5,7 @@
 // `onClick: makeHandler(id)` (the factory idiom) stays silent.
 
 import type { Rule } from 'eslint';
+import { hostEventType } from 'azerothjs/semantics';
 import { type AstNode, type CallNode, isCallTo, isIdentifier } from '../ast.ts';
 
 /** `save` or `actions.reset` - a bare callable reference. */
@@ -65,7 +66,7 @@ export const handlerCall: Rule.RuleModule = {
                         continue;
                     }
                     const key = property.key as AstNode;
-                    if (!isIdentifier(key) || !/^on[A-Z]/.test(key.name))
+                    if (!isIdentifier(key) || hostEventType(key.name) === null)
                     {
                         continue;
                     }

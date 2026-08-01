@@ -182,11 +182,14 @@ describe('router integration - nested layout app', () =>
         const link = container.querySelector('#to-about') as HTMLAnchorElement;
         expect(link.getAttribute('href')).toBe('/about');
 
+        // The residual-default guard sits on the DOCUMENT, after the delegation dispatcher:
+        // Link handlers are delegated, and a direct anchor listener calling preventDefault
+        // would run first and (correctly) read as an upstream veto.
         const ev = new MouseEvent('click', { button: 0, cancelable: true, bubbles: true });
         const guard = (e: Event): void => e.preventDefault();
-        link.addEventListener('click', guard);
+        document.addEventListener('click', guard);
         link.dispatchEvent(ev);
-        link.removeEventListener('click', guard);
+        document.removeEventListener('click', guard);
 
         expect(router.location().pathname).toBe('/about');
         expect(container.querySelector('#home')).toBeNull();

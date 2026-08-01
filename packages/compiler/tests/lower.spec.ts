@@ -111,17 +111,16 @@ describe('lowerComponent - element bindings', () =>
         const plan = lower(src);
         const attr = bindingsOf(plan, 'attribute')[0] as AttributeBinding;
         expect(attr.name).toBe('class');
-        expect(attr.property).toBe(false);
         expect(attr.target).toBe((plan.template as TemplateElement).id);
         expect(attr.expr.deps).toEqual([{ kind: 'source', name: 'cls' }]);
     });
 
-    it('a DOM-property attribute (value) is flagged property:true', () =>
+    it('a DOM-property attribute (value) carries only its name - the property routing is the runtime\'s', () =>
     {
         const plan = lower('component C { state v = "x"; <input value={v} /> }');
         const attr = bindingsOf(plan, 'attribute')[0] as AttributeBinding;
         expect(attr.name).toBe('value');
-        expect(attr.property).toBe(true);
+        expect('property' in attr).toBe(false);
     });
 
     it('an on* attribute becomes an event binding with the lower-cased event name', () =>
@@ -194,11 +193,11 @@ describe('lowerComponent - components and control-flow use slots', () =>
         expect(nested.template.id).toBe(0);
     });
 
-    it('an event prop on a component becomes an event prop entry', () =>
+    it('a callback prop on a component carries its WHOLE authored name in the IR', () =>
     {
         const plan = lower('component C { <Foo onSelect={pick} /> }');
         const comp = bindingsOf(plan, 'component')[0] as ComponentBinding;
-        expect(comp.props).toContainEqual(expect.objectContaining({ kind: 'event', event: 'select' }));
+        expect(comp.props).toContainEqual(expect.objectContaining({ kind: 'event', name: 'onSelect' }));
     });
 });
 

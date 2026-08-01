@@ -36,6 +36,7 @@
     },
     "peerDependencies": {
         "@typescript-eslint/parser": ">=8",
+        "azerothjs": "^1.1.0",
         "eslint": ">=9",
         "typescript": ">=5 <7"
     },

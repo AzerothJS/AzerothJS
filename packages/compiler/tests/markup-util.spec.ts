@@ -1,10 +1,12 @@
 // @vitest-environment node
 //
 // Real-execution coverage for markup-util: the wrapDynamic reactivity-shape
-// heuristic, quoteString/objectKey escaping, isEventName, and walkComponentTags.
+// heuristic, quoteString/objectKey escaping, and walkComponentTags. (The event
+// classifier and the other language facts live in azerothjs/semantics and are
+// covered by that package's semantics spec.)
 import { describe, it, expect } from 'vitest';
 import { walkComponentTags, parseMarkup } from '@azerothjs/compiler';
-import { wrapDynamic, quoteString, objectKey, isEventName } from '../src/markup-util.ts';
+import { wrapDynamic, quoteString, objectKey } from '../src/markup-util.ts';
 
 describe('wrapDynamic', () =>
 {
@@ -83,22 +85,6 @@ describe('objectKey', () =>
         expect(objectKey('$ref')).toBe('$ref');
         expect(objectKey('data-id')).toBe('\'data-id\'');
         expect(objectKey('aria-label')).toBe('\'aria-label\'');
-    });
-});
-
-describe('isEventName', () =>
-{
-    it('is true for on + uppercase letter', () =>
-    {
-        expect(isEventName('onClick')).toBe(true);
-        expect(isEventName('onMouseDown')).toBe(true);
-    });
-
-    it('is false when the third char is not uppercase or it is too short', () =>
-    {
-        expect(isEventName('online')).toBe(false);
-        expect(isEventName('on')).toBe(false);
-        expect(isEventName('onclick')).toBe(false);
     });
 });
 
