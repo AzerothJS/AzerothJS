@@ -14,7 +14,7 @@
  *   - isEventName   - the single source of truth for "is this an on* event attribute";
  *   - alreadyImports - whether a module already names-imports a symbol (used by both emitters before they
  *                     inject runtime imports);
- *   - FACTORY_ATTRS - the lazy-factory prop set (`fallback`);
+ *   - FACTORY_ATTRS - the lazy-factory prop set (`fallback`, `component`);
  *   - CONTENT_PROPERTIES - the DOM properties that own an element's content, which no path may bake
  *                     into the static template;
  *   - walkComponentTags - walk a markup tree's component tags.
@@ -23,6 +23,7 @@
  * package index.
  */
 
+import { BUILTIN_COMPONENTS } from './builtins.ts';
 import type {
     MarkupElement,
     MarkupFragment
@@ -31,8 +32,24 @@ import type {
 // Component props that are lazy render factories (called when shown), not
 // reactive values - emitted as `name: () => (value)` thunks rather than getters
 // so a branch isn't built until needed. (`fallback` for Show/Switch/Suspense;
-// structural `children` is handled separately and is already a thunk.)
-export const FACTORY_ATTRS: ReadonlySet<string> = new Set(['fallback']);
+// `component` for Dynamic, whose runtime contract is a CALLABLE returning the
+// component-or-tag - the thunk is what lets `component={ view }` markup and the
+// manual `Dynamic({ component: view })` API present the same shape; structural
+// `children` is handled separately and is already a thunk.)
+export const FACTORY_ATTRS: ReadonlySet<string> = new Set(['fallback', 'component']);
+
+// The components whose props may BE factories: the builtins plus Routes (framework-shipped
+// but user-imported, so deliberately not in the auto-import builtin set). The gate exists
+// because factory emission is part of a COMPONENT's contract, never a prop NAME's - a user
+// component with a value prop that happens to be called `fallback` or `component` must
+// receive the plain value, exactly like any other prop.
+export const FACTORY_COMPONENTS: ReadonlySet<string> = new Set([...BUILTIN_COMPONENTS, 'Routes']);
+
+/** True when `tag`'s `name` prop follows the lazy-factory contract (see the two sets above). */
+export function isFactoryProp(tag: string, name: string): boolean
+{
+    return FACTORY_COMPONENTS.has(tag) && FACTORY_ATTRS.has(name);
+}
 
 /**
  * The DOM properties that OWN an element's content. Unlike the rest of h()'s property set

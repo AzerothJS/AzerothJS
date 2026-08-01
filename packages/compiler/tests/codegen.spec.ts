@@ -281,6 +281,35 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).not.toContain('__azRow');                    // the marker is transport, not output
     });
 
+    it('Dynamic `component=` is a FACTORY prop: markup emits the callable thunk the runtime calls', () =>
+    {
+        // The runtime contract is `component()` -> component-or-tag. A plain getter would make
+        // the runtime call the RESOLVED value instead (invoking a component with no props, or
+        // crashing on a tag string). The factory emission is what unifies markup with the
+        // manual `Dynamic({ component: view })` API.
+        const code = gen('component C { state tag = "path"; <svg><Dynamic component={ tag } props={ () => ({ d: "M0 0" }) } /></svg> }');
+        expect(code).toContain('component: () => (tag())');
+        expect(code).not.toContain('get component()');
+    });
+
+    it('factory emission is the COMPONENT\'s contract, never the prop NAME\'s', () =>
+    {
+        // A USER component with props that happen to be called `component`/`fallback` gets
+        // plain reactive getters like any other prop - emission must depend on what the tag
+        // IS, not on what the prop is named.
+        const code = gen('import Uploader from "./Uploader.azeroth";\ncomponent C { state part = "a"; <Uploader component={ part } fallback={ part } /> }');
+        expect(code).toContain('get component() { return (part()); }');
+        expect(code).toContain('get fallback() { return (part()); }');
+        expect(code).not.toContain('component: () =>');
+    });
+
+    it('Routes keeps its factory `fallback` (framework component outside the auto-import set)', () =>
+    {
+        const code = gen('import { Routes } from "azerothjs";\ncomponent C { <Routes fallback={ <p>404</p> } /> }');
+        expect(code).toMatch(/fallback: \(\) => \(/);
+        expect(code).not.toContain('get fallback()');
+    });
+
     it('a HAND-WRITTEN For({ children }) call is untouched - For is public manual API', () =>
     {
         // The row rewrite must never key off the `For` NAME: the runtime For is public manual

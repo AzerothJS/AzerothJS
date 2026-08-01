@@ -30,7 +30,7 @@ import { CompileError, parseMarkup, MAX_MARKUP_DEPTH, markupDepthError } from '.
 import {
     walkComponentTags,
     isEventName,
-    FACTORY_ATTRS,
+    isFactoryProp,
     isFunctionLiteral,
     isBareReference,
     isCollectionLiteral,
@@ -278,7 +278,7 @@ export function generateVirtualCode(source: string): VirtualCode
         builder.emit(')');
     };
 
-    const emitAttribute = (attr: MarkupAttribute, isHost: boolean): void =>
+    const emitAttribute = (attr: MarkupAttribute, isHost: boolean, tag: string): void =>
     {
         if (attr.spread)
         {
@@ -348,7 +348,7 @@ export function generateVirtualCode(source: string): VirtualCode
         // component's other props are auto-reactive via the runtime's getter, so the AUTHOR passes the
         // VALUE - the prop is checked against its value type directly (no getter wrap), which is what makes
         // a double-wrapped `prop={() => x}` (passing a function to a value prop) correctly surface.
-        if (!isHost && FACTORY_ATTRS.has(name))
+        if (!isHost && isFactoryProp(tag, name))
         {
             // A function LITERAL is the factory itself: pass it through unwrapped so its
             // parameters take contextual types from the prop's declared signature (e.g.
@@ -370,7 +370,7 @@ export function generateVirtualCode(source: string): VirtualCode
         emitCode(span.start, span.end, 'attribute');
     };
 
-    const emitProps = (attrs: MarkupAttribute[], childrenEntry: (() => void) | null, isHost: boolean): void =>
+    const emitProps = (attrs: MarkupAttribute[], childrenEntry: (() => void) | null, isHost: boolean, tag: string): void =>
     {
         builder.emit('{ ');
         attrs.forEach((attr, index) =>
@@ -379,7 +379,7 @@ export function generateVirtualCode(source: string): VirtualCode
             {
                 builder.emit(', ');
             }
-            emitAttribute(attr, isHost);
+            emitAttribute(attr, isHost, tag);
         });
         if (childrenEntry)
         {
@@ -595,7 +595,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     }
                     builder.emit('children: ');
                     emitCode(renderChild.start, renderChild.end);
-                }, false);
+                }, false, node.tag);
                 builder.emit(')');
                 return;
             }
@@ -615,7 +615,7 @@ export function generateVirtualCode(source: string): VirtualCode
             // Always a `Name({ ... })` call (never `Name()`), so a component with a REQUIRED props type is
             // checked: `<Card/>` -> `Card({})` surfaces the missing prop.
             builder.emit('(');
-            emitProps(node.attributes, hasChildren ? childrenSpread : null, false);
+            emitProps(node.attributes, hasChildren ? childrenSpread : null, false, node.tag);
             builder.emit(')');
             if (hasChildren)
             {
@@ -626,7 +626,7 @@ export function generateVirtualCode(source: string): VirtualCode
 
         usedRuntime.add('h');
         builder.emit(`h(${ quoteString(node.tag) }, `);
-        emitProps(node.attributes, null, true);
+        emitProps(node.attributes, null, true, node.tag);
         for (const child of node.children)
         {
             builder.emit(', ');

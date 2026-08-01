@@ -280,6 +280,16 @@ describe('renderToString - control-flow string-mode paths (co-range comment mark
         expect(html).toBe('<div><!--azc:dynamic--><h2>Hi Ada</h2><!--/azc--></div>');
     });
 
+    it('Dynamic serializes a TAG selection with attrs (bare-object props) the same way', () =>
+    {
+        // The tag-string half of the contract must hold on the server too - the icon shape
+        // (`component={ node[0] } props={ node[1] }`) rides straight through the string h().
+        const html = renderToString(() =>
+            h('svg', {}, Dynamic({ component: () => 'path', props: { d: 'M0 0L4 4' } })));
+        expect(html).toContain('<!--azc:dynamic-->');
+        expect(html).toContain('<path d="M0 0L4 4">');
+    });
+
     it('Dynamic with a null component emits an empty dynamic co-range', () =>
     {
         const html = renderToString(() =>

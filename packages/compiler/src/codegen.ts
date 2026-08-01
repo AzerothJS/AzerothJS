@@ -30,7 +30,7 @@ import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
 import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './scanner.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
-import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, FACTORY_ATTRS, objectKey, alreadyImports } from './markup-util.ts';
+import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, isFactoryProp, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
@@ -858,7 +858,7 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
         else
         {
             const value = rewriteExpr(source, prop.expr, sources, emit);
-            if (FACTORY_ATTRS.has(prop.name))
+            if (isFactoryProp(binding.tag, prop.name))
             {
                 // A factory prop (`fallback`) is a function the component invokes - for
                 // ErrorBoundary with `(error, reset)`, for Routes with no args. If the author

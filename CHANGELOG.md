@@ -51,6 +51,67 @@ follow [Semantic Versioning](https://semver.org).
   fallback), living in one place. A zod/valibot/arktype schema handed to `readValidated` is a
   422 with the flat field map, exactly as a native schema is.
 
+### Added (azerothjs + compiler) - markup-native `<Dynamic>`
+
+- **`<Dynamic component={ ... }>` now works from markup, and accepts element TAG strings.**
+  Two halves, found dogfooding an icon component. First: `component` joins the factory-prop
+  set (like `fallback`), so markup emits the CALLABLE the runtime contract expects - a plain
+  getter made the runtime invoke the resolved value itself, which called a component with no
+  props or crashed on a non-function. Markup and the manual `Dynamic({ component: view })`
+  API now present the same shape. Second: the getter may return a tag STRING (`'path'`,
+  `'div'`), rendered through h()'s namespace-aware builder - which is what lets data-driven
+  node lists (`[tag, attrs][]`, the lucide shape) project from markup instead of forcing the
+  component down to hand-written h(). Pinned by a codegen spec (the factory emission) and a
+  renderer spec (string tags land in the SVG namespace, swaps included).
+
+  An adversarial design review then broke the first cut in four places, all fixed and
+  pinned by a 9-case contract matrix:
+
+  - **The selection is memoized (Object.is).** The swap effect's cleanup destroys the
+    branch before every re-run, so without a memo, ANY dependency of the component
+    expression re-firing to the same result (`count() > 0 ? 'ul' : 'p'` moving 1 -> 2)
+    tore down and rebuilt the whole subtree, losing its state. This is Solid's exact
+    shape; the equality gate is what makes teardown-on-rerun correct.
+  - **`props` accepts a plain object OR a thunk - one contract.** `component` had been
+    unified while `props` still demanded a function, so markup `props={ node[1] }` was a
+    type error and `props={ () => node[1] }` a ritual. Both shapes now read untracked
+    (the untrack wraps the property READ - a bare-object markup getter evaluates there).
+  - **Invalid selections fail loudly.** A truthy non-function/non-tag (a pre-created
+    node, an object) now throws a named `<Dynamic>` error instead of a cryptic
+    "not a function" from deep inside an effect. Falsy values (null/undefined/false)
+    all mean "render nothing" and recover.
+  - **Factory emission is the COMPONENT's contract, never the prop NAME's.** The
+    factory-prop set had been keyed globally by name, so a USER component with a value
+    prop merely called `fallback` or `component` was silently handed a thunk. Emission
+    now gates on the tag (`isFactoryProp`: the builtins plus `Routes`); user components
+    receive plain values for every prop name.
+
+  A five-year-regret review then found ONE invariant-level flaw and fixed it: thunk
+  `props` had been a swap-time SNAPSHOT, so the same child component received frozen
+  props through Dynamic but live getter props when rendered directly - tab content
+  pinned to stale data, forever. A thunk is now LIVE per property read (key set fixed at
+  swap): a child tracking a prop in its own scope updates in place with no rebuild,
+  restoring render-path parity with direct markup - and with how React, Solid, and Vue
+  all deliver dynamic children their props. A follow-up adversarial round then broke the
+  first liveness cut with legal user code - `props={ dark() ? darkProps : lightProps }`
+  stayed pinned to the MOUNT-TIME thunk - so live reads now route through the CURRENT
+  `props` value: swapping the thunk itself is as live as the values inside one. The
+  counterexample is a pinned spec, alongside recursive self-selection and
+  owner-disposal-reaches-escaped-Portal-DOM proofs. The module doc now carries the seven
+  numbered INVARIANTS a reimplementation must preserve; everything else in the file is
+  declared implementation detail.
+
+  A forward-design stress pass then PROVED (not argued) the contract composes with the
+  1.x-adjacent roadmap, each as a pinned spec: selecting `Portal` escapes inline flow AND
+  the swap's branch dispose reaches the escaped DOM; a resource-backed component under
+  explicit `Suspense` is the whole lazy() pattern - async never touches Dynamic, because
+  suspension is declared on Suspense (`on:`), so a future `lazy(loader)` is a stable
+  component identity and the memoized selection holds through loading; and a TAG
+  selection serializes on the server (bare-object props included) through the same
+  string-mode h(). Static-literal selections remain open to constant folding in codegen -
+  the callable contract carries the literal visibly, so that optimization needs no
+  contract change.
+
 ### Fixed (compiler) - `<For>` rows, found by a real application
 
 - **A `<For>` row rooted at a COMPONENT keeps its getter rewrite.** `(item) => <Card
