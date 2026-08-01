@@ -7,8 +7,8 @@
 // themselves (RUNTIME_FN / PROJECTION_STYLE), so:
 //   - adding a keyword to RUNTIME_FN without teaching the fixture (and thus every emitter) FAILS;
 //   - changing a kind's projection shape without updating PROJECTION_STYLE FAILS;
-//   - the two watch-dependency splitters can never disagree again (one implementation, pinned
-//     here on the regex-literal case that used to differ).
+//   - the watch-dependency splitter is ONE implementation, pinned here on the regex-literal
+//     case where two copies diverge first.
 import { describe, it, expect } from 'vitest';
 import { generateVirtualCode } from '@azerothjs/compiler';
 import { generateModule } from '../src/codegen.ts';

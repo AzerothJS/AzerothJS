@@ -58,8 +58,8 @@ describe('one schema, three boundaries', () =>
         });
 
         const failure: unknown = await client.account.signUp({ input: INVALID }).catch((error: unknown) => error);
-        // EVERY failure is ApiError - one type, one catch - and the issue detail that used to be
-        // asserted for the local check holds verbatim for the wire refusal: same schema, same codes.
+        // EVERY failure is ApiError - one type, one catch - and the issue detail asserted for
+        // the local check holds verbatim for the wire refusal: same schema, same codes.
         expect(failure).toBeInstanceOf(ApiError);
         expect((failure as ApiError).status).toBe(422);
         expect((failure as ApiError).issues.map((issue) => [issue.path, issue.code])).toEqual([

@@ -513,10 +513,10 @@ const TAG_NAME = /^[A-Za-z][A-Za-z0-9._:-]*$/;
 
 /**
  * Rejects a tag name the serializer would write into `<...>` as something other than a name.
- * The refused-name set alone was not enough: a name is not markup, and `img src=x onerror=...`
- * is not in any refused set, so it used to be interpolated verbatim and reparsed as attributes.
- * The DOM path never had this hole - createElement refuses the same names - so checking here is
- * what makes the two modes agree.
+ * The refused-name set alone is not enough: a name is not markup, and `img src=x onerror=...`
+ * is not in any refused set, so without this it interpolates verbatim and reparses as
+ * attributes. The DOM path has no such hole - createElement refuses the same names - so
+ * checking here is what makes the two modes agree.
  *
  * @internal
  */

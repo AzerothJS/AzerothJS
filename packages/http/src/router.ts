@@ -292,7 +292,7 @@ export class RadixRouter<T>
                     // Distinct from a miss: a `%` not followed by two hex digits is not a valid
                     // URI at all (RFC 3986 2.1), so the request-target is malformed and the
                     // answer is 400, not "no such resource" (RFC 9110 15.5.1). Reporting it as a
-                    // miss is what made this return a 404 while the comment above promised a 400.
+                    // miss makes this return a 404 while the comment above promises a 400.
                     return { kind: 'decode-error' };
                 }
             }

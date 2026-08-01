@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 //
-// One SSR entry point, one option. This used to be two exports - `renderToString` and
-// `renderToStaticMarkup` - which were the same private function called with `true` and `false`.
-// Two names for one boolean is a choice a reader can make wrongly in both directions: shipping
-// marker-laden HTML into an email, or marker-free HTML into a page that then fails to hydrate.
+// One SSR entry point, one option. A `renderToStaticMarkup` twin would be the same private
+// function called with `true` and `false`, and two names for one boolean is a choice a reader
+// can make wrongly in both directions: shipping marker-laden HTML into an email, or marker-free
+// HTML into a page that then fails to hydrate.
 import { describe, expect, it } from 'vitest';
 import { createSignal, h, renderToString } from 'azerothjs';
 

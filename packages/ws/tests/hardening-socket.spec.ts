@@ -1,6 +1,6 @@
-// The connection state machine's failure modes: two remote memory-exhaustion kills that the
-// byte cap could not bound, a message delivered after the app tore its state down, a backpressure
-// await that never settled, and a heartbeat that a plausible configuration silently disabled.
+// The connection state machine's failure modes: two remote memory-exhaustion vectors the byte
+// cap alone cannot bound, a message delivered after the app tears its state down, a backpressure
+// await that never settles, and a heartbeat that a plausible configuration silently disables.
 //
 // Driven against a hand-built socket stand-in rather than a real server, so each rule is tested
 // in isolation from the handshake and the frame codec.

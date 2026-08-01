@@ -105,10 +105,10 @@ describe('scanner - skip helpers', () =>
         expect(skipBalanced(src, 0)).toBe(src.length);
     });
 
-    // A regex or an apostrophe inside a hole used to desync the brace scanner (the regex
-    // was scanned as chars, then an inner apostrophe triggered a string skip that ran to
-    // EOF) - hard-failing the whole build with a bogus "Unclosed tag". The scanner now
-    // consumes regex literals and embedded markup as units.
+    // The scanner consumes regex literals and embedded markup as units. Scanned as chars
+    // instead, a regex or an apostrophe inside a hole desyncs the brace scanner (an inner
+    // apostrophe triggers a string skip that runs to EOF), hard-failing the whole build
+    // with a bogus "Unclosed tag".
     it('skipBalanced treats a regex literal in expression position as a unit', () =>
     {
         const src = '{ name.replace(/\'/g, "") } rest';

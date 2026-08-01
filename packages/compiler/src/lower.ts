@@ -488,10 +488,10 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             const code = source.slice(span.start, span.end).trim();
             if (isFunctionLiteral(code))
             {
-                // The param must be captured on the pass-through path too: a <For> row rooted
-                // at a COMPONENT (`(item) => <Card item={ item } />`) still reads its params as
-                // values, and codegen's rowItems rewrite keys off this span. Losing it here
-                // handed the raw row GETTER to the child component.
+                // The param is captured on the pass-through path too: a <For> row rooted at a
+                // COMPONENT (`(item) => <Card item={ item } />`) still reads its params as
+                // values, and codegen's rowItems rewrite keys off this span - without it the
+                // child receives the raw row getter.
                 return tryLowerRenderClone(span) ?? { kind: 'render', param: renderParamSpan(source, span), body: expr };
             }
             return { kind: 'dynamic', expr };

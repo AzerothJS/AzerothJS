@@ -119,7 +119,7 @@ describe('calendar-impossible expressions fail by arithmetic, not by scanning', 
         {
             expect(() => parseExpression(expression)).toThrow(/never matches a real date/);
         }
-        // Each one used to burn the whole 400000-candidate scan (~0.9 s) before failing.
+        // Without the impossibility check, each burns the whole 400000-candidate scan (~0.9 s).
         expect(performance.now() - startedAt).toBeLessThan(200);
     });
 

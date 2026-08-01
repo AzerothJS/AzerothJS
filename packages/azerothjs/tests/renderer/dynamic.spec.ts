@@ -142,9 +142,8 @@ describe('Dynamic', () =>
     });
 });
 
-// The adversarial contract matrix: every shape `component` can resolve to, every swap
-// direction, and the equality guarantee - written to BREAK the implementation, kept
-// because each row is the contract.
+// The contract matrix: every shape `component` can resolve to, every swap direction, and
+// the equality guarantee.
 describe('Dynamic - contract matrix', () =>
 {
     it('a re-evaluation resolving to the SAME tag keeps the element (no teardown churn)', () =>
@@ -277,7 +276,7 @@ describe('Dynamic - contract matrix', () =>
     {
         // The parity invariant: the SAME child must get the same prop liveness through
         // Dynamic as it gets from direct markup getter props. A frozen swap-time snapshot
-        // here was the 5-year-regret defect - tab content pinned to stale data.
+        // here pins tab content to stale data.
         let builds = 0;
         const [label, setLabel] = createSignal('first');
         const Reader: Comp = (props) =>
@@ -304,7 +303,7 @@ describe('Dynamic - contract matrix', () =>
         // The markup shape `props={ dark() ? darkProps : lightProps }`: the property read
         // evaluates the conditional in the READER's scope, so which-thunk is as live as
         // the values a single thunk closes over. An implementation that captures the
-        // mount-time thunk pins the child to it forever - this spec exists to forbid that.
+        // mount-time thunk pins the child to it forever.
         let builds = 0;
         const [dark, setDark] = createSignal(false);
         const lightProps = (): Record<string, unknown> => ({ label: 'light' });

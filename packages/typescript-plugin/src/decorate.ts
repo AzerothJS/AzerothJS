@@ -15,11 +15,11 @@
 // ProjectService: tsserver creates a `ScriptInfo` only for paths it can find on
 // disk, and its document registry asserts that a ScriptInfo exists before it
 // caches a source file (`ProjectService.setDocument` -> `Debug.checkDefined`). A
-// synthetic path has no ScriptInfo, so loading it threw `Debug Failure` and took
-// down the whole program - i.e. every `.ts` file lost IntelliSense. The real
+// synthetic path has no ScriptInfo, so loading one throws `Debug Failure` and
+// takes down the whole program - every `.ts` file loses IntelliSense. The real
 // path has one, so the program builds. (The raw `ts.LanguageService` API used by
-// `azeroth-tsc` has no ProjectService and tolerated the synthetic twin, which is
-// why the batch checker never hit this.)
+// `azeroth-tsc` has no ProjectService and tolerates a synthetic twin, so the
+// batch checker cannot stand in for tsserver on this constraint.)
 //
 // The decoration wraps each host method and defers to the original for anything
 // that is not a `.azeroth` file, so it composes with whatever host tsserver (or

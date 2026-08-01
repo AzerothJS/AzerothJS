@@ -129,7 +129,7 @@ export const REPLY: unique symbol = Symbol('azerothjs.api.reply');
 /**
  * A typed non-default reply: status + body + headers, built with {@link reply}. Unlike a
  * raw `Response`, the body is STILL validated against the route's schema for that status
- * (`responses[status]`, or `output` for 200) - status codes and headers no longer cost
+ * (`responses[status]`, or `output` for 200) - a status code and headers do not cost
  * the route its output guarantee.
  */
 export interface StatusReply<S extends number = number, B = unknown>

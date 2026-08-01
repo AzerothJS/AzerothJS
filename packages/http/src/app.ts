@@ -52,8 +52,8 @@ export interface RequestContext<Params extends Record<string, string> = Record<s
      * client's spelling: `/%61dmin` reads as something other than `/admin` there while still
      * reaching the `/admin` handler.
      *
-     * A path carrying an empty segment (`//admin`) no longer reaches any handler at all - it is
-     * a distinct URI and the router refuses it - so that spelling is not a way around a check
+     * A path carrying an empty segment (`//admin`) never reaches any handler - it is a
+     * distinct URI and the router refuses it - so that spelling is not a way around a check
      * written on either accessor.
      */
     path: string;

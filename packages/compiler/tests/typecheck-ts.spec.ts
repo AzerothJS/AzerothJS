@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * U1 type-checking layer - real TypeScript Program backend (Option A).
+ * The type-checking layer - real TypeScript Program backend.
  *
  * These tests exercise the GENUINE checker: each case is projected to virtual TypeScript, run
  * through a real `ts.Program` / `TypeChecker`, and the resulting diagnostics are mapped back to

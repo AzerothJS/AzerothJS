@@ -269,11 +269,11 @@ describe('generateModule - reactive desugaring', () =>
 
     it('a <For> EMBEDDED in a component prop expression keeps the row rewrite, marker-free output', () =>
     {
-        // Regression (field report): a For inside a factory prop (`fallback={ <div><For ...>
-        // ... }`) lowers in raw mode, deferring the single rewrite to the enclosing pass -
-        // which had no IR to learn the row param from. The raw emission now wraps the render
-        // arrow in the reserved `__azRow(...)` marker; the walk scopes its params as rows and
-        // the rewrite strips the wrapper, so no marker ever reaches emitted code.
+        // Regression: a For inside a factory prop (`fallback={ <div><For ...> ... }`) lowers
+        // in raw mode, deferring the single rewrite to the enclosing pass - which has no IR
+        // to learn the row param from. The raw emission wraps the render arrow in the
+        // reserved `__azRow(...)` marker; the walk scopes its params as rows and the rewrite
+        // strips the wrapper, so no marker ever reaches emitted code.
         const code = gen('component C { state items = [{ id: 1, label: "x" }]; state on = true; <Show when={on} fallback={<ul><For each={items} key={(row) => row.id}>{(row) => <li title={`k-${ row.id }`}>{row.label}</li>}</For></ul>}><p>y</p></Show> }');
         expect(code).toContain('row().label');                    // member read through the getter
         expect(code).toContain('`k-${ row().id }`');              // template-literal read through the getter
@@ -337,10 +337,10 @@ describe('generateModule - reactive desugaring', () =>
 
     it('a COMPONENT-rooted row keeps the getter rewrite (pass-through path)', () =>
     {
-        // Regression (field report): a row rooted at a component takes the pass-through
-        // path (no clonable template), which used to drop the param span - rowItems was
-        // never built, `item={ row }` handed the child the raw GETTER, and a row var in a
-        // template literal stringified a function body into the page.
+        // Regression: a row rooted at a component takes the pass-through path (no clonable
+        // template); without the captured param span rowItems is never built, `item={ row }`
+        // hands the child the raw GETTER, and a row var in a template literal stringifies a
+        // function body into the page.
         const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id}>{(row) => <Show when={row.id > 0}><li title={`n-${ row.id }`}>{row.id}</li></Show>}</For> }');
         expect(code).toContain('row().id > 0');                   // bare prop expression through the getter
         expect(code).toContain('`n-${ row().id }`');              // template-literal read through the getter
@@ -680,10 +680,10 @@ describe('generateModule - constant folding and fragments', () =>
 
     it('a children expression starting on the line AFTER the brace survives ASI', () =>
     {
-        // Regression (field report): `get children() { return\n    (item) => ... }` -
-        // automatic semicolon insertion silently turned that into `return;`, children
-        // became undefined, and <For> crashed with "renderItem is not a function".
-        // The emitted return is parenthesized now, so the newline is harmless.
+        // Regression: with an unparenthesized `get children() { return\n    (item) => ... }`,
+        // automatic semicolon insertion turns that into `return;`, children becomes
+        // undefined, and <For> crashes with "renderItem is not a function". The emitted
+        // return is parenthesized, so the newline is harmless.
         const code = gen('component L { <For each={[1]} key={(i) => i}>{\n    (item) => <li>{item}</li>\n}</For> }');
         const childrenGetter = /get children\(\) \{ return \(([\s\S]*?)\); \}/.exec(code);
         expect(childrenGetter).not.toBeNull();
@@ -761,9 +761,9 @@ describe('generateModule - event-handler validation', () =>
 
 describe('generateModule - regex and apostrophes in holes / markup (scanner regression)', () =>
 {
-    // Everyday code used to hard-fail the build with a bogus "Unclosed tag": a regex
-    // literal in a hole, or an apostrophe in markup text (`Don't`), desynced the brace
-    // scanner. These must compile.
+    // Everyday code that desyncs a char-by-char brace scanner - a regex literal in a hole,
+    // an apostrophe in markup text (`Don't`) - hard-fails the build with a bogus
+    // "Unclosed tag". These must compile.
     it('compiles a regex literal inside a hole', () =>
     {
         const compile = (): string => gen('component C(props: { name: string }) { <p>{ props.name.replace(/\'/g, "") }</p> }');

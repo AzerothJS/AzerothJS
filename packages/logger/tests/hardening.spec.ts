@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// The logger's own doctrine, tested where it used to break: nothing in the serializer throws
+// The logger's own doctrine, tested at its hostile edges: nothing in the serializer throws
 // (a BigInt, a cycle, a throwing getter or toJSON, a throwing `stack`), the pretty face is
 // bounded and byte-clean (a cyclic error-shaped field, ANSI in a value), redaction reaches the
 // keys applications actually log (nested, differently cased, inherited), a throwing sink cannot

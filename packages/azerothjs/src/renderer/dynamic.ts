@@ -9,11 +9,9 @@
  * tracks only the `component` selection, so a prop change does not tear down and rebuild
  * the component tree.
  *
- * INVARIANTS - the public contract, stated as WHAT Dynamic guarantees, never how this
- * file achieves it. A from-scratch reimplementation that preserves these - with any
- * internal algorithm - passes every public test; everything else in this file is
- * implementation detail. The contract matrix in the renderer tests is their executable
- * form.
+ * INVARIANTS - the public contract. A reimplementation that preserves these passes every
+ * public test; everything else in this file is implementation detail. The contract matrix
+ * in the renderer tests is the executable form.
  *
  *  1. SELECTION: `component` is a callable returning a component function, an element tag
  *     string, or a falsy value. Markup `component={ expr }` and the manual API present
@@ -98,10 +96,9 @@ export interface DynamicProps
 
 /**
  * Normalizes the selection to a renderable component: a TAG STRING becomes an h()-builder
- * for that element (which is what lets icon-style components project data-driven
- * `[tag, attrs][]` node lists from markup); a truthy value that is neither a function nor
- * a tag is an API-misuse error and fails LOUDLY - the cryptic alternative is a
- * "Component is not a function" thrown from deep inside an effect.
+ * for that element, which lets data-driven `[tag, attrs][]` node lists project from
+ * markup. A truthy value that is neither a function nor a tag throws a named error here,
+ * where the cause is legible, rather than a bare "not a function" from inside an effect.
  *
  * @internal
  */

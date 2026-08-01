@@ -2,12 +2,12 @@
  * MODULE: language-service/containment - the editor's trust boundary
  *
  * A `.azeroth` file inside a repository someone cloned is untrusted input, exactly like a request
- * path. The module resolvers used to hand `path.resolve(dirname(importer), specifier)` straight to
- * `ts.sys.readFile`, so `import x from '../../../../secrets.azeroth'` read - and compiled, and
- * surfaced in a hover - a file outside the project. This is the check that was missing, shaped
- * after the one `@azerothjs/http`'s static handler already applies to a request path: containment
- * on the RESOLVED string, then containment again on what the filesystem actually resolved, so an
- * in-tree symlink cannot point out of the tree.
+ * path. A module resolver that hands `path.resolve(dirname(importer), specifier)` straight to
+ * `ts.sys.readFile` lets `import x from '../../../../secrets.azeroth'` read - and compile, and
+ * surface in a hover - a file outside the project. This check closes that, shaped after the one
+ * `@azerothjs/http`'s static handler applies to a request path: containment on the RESOLVED
+ * string, then containment again on what the filesystem actually resolved, so an in-tree
+ * symlink cannot point out of the tree.
  */
 
 import { realpathSync } from 'node:fs';

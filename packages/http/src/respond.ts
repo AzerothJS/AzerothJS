@@ -130,9 +130,9 @@ export function noContent(init: ResponseInit = {}): Response
 /** 201 with a Location header; `data` (when given) is the created representation as JSON. */
 export function created(location: string, data?: unknown): Response
 {
-    // Both arms go through the kernel's response: the bodyless one used to be a plain `Response`,
-    // which meant a 201 with no representation lost the adapter fast path and could not carry a
-    // `Set-Cookie` - the same defect `redirect` and `noContent` had.
+    // Both arms go through the kernel's response: a plain `Response` on the bodyless arm loses
+    // the adapter fast path and cannot carry a `Set-Cookie`. `redirect` and `noContent` route
+    // the same way for the same reason.
     return data === undefined
         ? payloadResponse('', 'text/plain; charset=utf-8', { status: 201, headers: { location } })
         : json(data, { status: 201, headers: { location } });

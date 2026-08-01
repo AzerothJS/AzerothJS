@@ -1,9 +1,9 @@
 // @vitest-environment node
 //
-// The pool is module-level and used to have no eviction at all: one full TS program per tsconfig
-// root encountered, held for the life of the process. Linting a repository with many package
-// directories therefore grew without bound, and the same shape existed in the language server's
-// service map and the tsserver plugin's compiled-file cache.
+// The pool is module-level: without eviction it holds one full TS program per tsconfig root
+// encountered, for the life of the process, so linting a repository with many package
+// directories grows without bound. The language server's service map and the tsserver plugin's
+// compiled-file cache guard against the same growth shape.
 //
 // Eviction is observable here without measuring memory, because the pool returns the SAME object
 // for a cached root: identity changing across two calls with no source edit in between means the

@@ -54,7 +54,7 @@ describe('completion UX: component attributes are not flooded with DOM events', 
     it('a component does NOT offer the generic DOM-event list', () =>
     {
         // `<Show >` is a component tag - its attributes are its declared props (when/fallback), never
-        // the 43-event `on*` dump that used to bury them.
+        // the 43-event `on*` dump that would bury them.
         const labels = completions('export default component C\n{\n    state n = 0;\n    <Show ></Show>\n}\n', 3, 9).map(i => i.label);
         expect(labels).not.toContain('onClick');
         expect(labels).not.toContain('onPointerMove');

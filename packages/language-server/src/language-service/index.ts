@@ -18,9 +18,9 @@
 //
 // WHAT THIS ENTRY PUBLISHES, and why it is short: the facade, the options its methods take, the
 // constants an editor must echo back in its capabilities, and the three helpers other packages
-// build on. The pipeline stages above are NOT here - they are how the service is built, not how it
-// is used, and publishing them made a 65-symbol surface for the 17 symbols anything imported. A
-// stage that turns out to be genuinely useful outside can be published on that evidence.
+// build on. The pipeline stages above are NOT here - they are how the service is built, not how
+// it is used, and publishing them makes a 65-symbol surface for the 17 symbols anything imports.
+// A stage that turns out to be genuinely useful outside can be published on that evidence.
 
 export { AzerothLanguageService } from './service.ts';
 export type { CompletionOptions } from './providers/completion.ts';

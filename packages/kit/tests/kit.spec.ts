@@ -208,8 +208,8 @@ describe('prerender', () =>
         })).rejects.toThrow(/parameters/);
     });
 
-    // `..` in a route path used to escape the build output entirely: the write landed two
-    // levels above dist, in whatever the parent directory happened to be.
+    // Unchecked, `..` in a route path escapes the build output entirely: the write lands
+    // two levels above dist, in whatever the parent directory happens to be.
     it('a route path that resolves outside the client dir is a BUILD error, not a write', async () =>
     {
         const dir = makeClientDir();

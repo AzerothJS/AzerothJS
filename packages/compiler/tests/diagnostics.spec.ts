@@ -199,8 +199,8 @@ describe('diagnoseModule - multiple-roots', () =>
 {
     it('flags every top-level markup region except the last (only the last is returned)', () =>
     {
-        // Regression (field report): a component with <section> + <Show> silently rendered
-        // only the <Show> - the first root vanished with no error.
+        // Regression: without this diagnostic a component with <section> + <Show> silently
+        // renders only the <Show> - the first root vanishes with no error.
         const src = 'component C { state on = false; <section>main</section> <Show when={on}>{() => <p>bar</p>}</Show> }';
         const diagnostic = find(src, 'azeroth/multiple-roots');
         expect(diagnostic).toBeDefined();
@@ -331,8 +331,8 @@ describe('declaration slips (silent-corruption traps)', () =>
 
     it('flags a missing semicolon that absorbs the RETURN MARKUP (decl -> markup)', () =>
     {
-        // `state count = 0` with no `;`, then `<div>…`: the value ran to the body end and
-        // swallowed the markup (which vanishes). This used to compile to garbage with 0 errors.
+        // `state count = 0` with no `;`, then `<div>…`: the value runs to the body end and
+        // swallows the markup (which vanishes). Undiagnosed, this compiles to garbage with 0 errors.
         const src = 'component App { state count = 0\n  <div>Count: {count()}</div> }';
         const diag = find(src, 'azeroth/unterminated-declaration');
         expect(diag).toBeDefined();

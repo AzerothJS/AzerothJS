@@ -452,7 +452,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
-            // 0) Optional U1 type-check (real TypeScript Program). When enabled, a type error
+            // 0) Optional type-check (real TypeScript Program). When enabled, a type error
             //    (non-function handler, wrong-typed component prop) fails the build here, BEFORE
             //    compiling - no type-unsafe module reaches codegen. Off by default (see options).
             if (typeCheck)
@@ -505,7 +505,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
-            // 2) TS -> JS (the compiled module may still contain types). Vite
+            // 3) TS -> JS (the compiled module may still contain types). Vite
             //    transforms via oxc; passing our map as `inMap` chains it, so
             //    the final map points all the way back to the original
             //    `.azeroth` source. `lang: 'ts'` is explicit since `.azeroth`

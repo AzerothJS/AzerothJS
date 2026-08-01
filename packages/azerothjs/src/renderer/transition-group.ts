@@ -6,7 +6,7 @@
  * the removal deferred until the leave animation completes. This is the primitive a toast
  * stack, a notification tray, or any animated list needs; hand-rolling it means tracking
  * per-item "leaving" flags and deferred removal around <For>, which every app gets subtly
- * wrong (the Guardian report that motivated this component did exactly that).
+ * wrong.
  *
  * SAME CLASS CONVENTION AS <Transition> (name: 'toast'): `toast-enter-from/-active/-to`
  * on join, `toast-leave-from/-active/-to` on departure; a `duration` backstop guarantees

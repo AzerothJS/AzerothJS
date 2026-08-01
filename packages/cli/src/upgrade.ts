@@ -97,7 +97,7 @@ export function rewritePins(manifestText: string, file: string, target: string):
     catch
     {
         // Which key belongs to which section is knowable only from the parse; guessing it
-        // from the text is what once rewrote peer ranges and `overrides` entries too.
+        // from the text rewrites peer ranges and `overrides` entries too.
         return { text: manifestText, changes, skipped };
     }
 

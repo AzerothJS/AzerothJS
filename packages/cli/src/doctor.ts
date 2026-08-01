@@ -207,8 +207,8 @@ function newestMtime(dir: string, matches: (name: string) => boolean, depth: num
 function checkAzerothTypesMirror(app: FrontendProject): DoctorResult
 {
     // `.azeroth/types`, not `.azeroth-types`: the compiler's DECLARATIONS_DIR
-    // (packages/compiler/src/vite.ts). This check looked at the old path and so could
-    // only ever report "no mirror in use" - it never once ran against a real project.
+    // (packages/compiler/src/vite.ts). A check against any other path can only ever
+    // report "no mirror in use", so this must track that constant.
     const mirror = join(app.dir, '.azeroth', 'types');
     if (!existsSync(mirror))
     {

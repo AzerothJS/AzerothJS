@@ -92,13 +92,6 @@ export interface RenderToStringOptions
  * with the markers option, then digging the html off the returned SSRNode - is verbose and easy to
  * get subtly wrong; this is the one call.
  *
- * WHY ONE FUNCTION AND NOT TWO:
- * This used to be two exports, `renderToString` and `renderToStaticMarkup`, which were the same
- * private function called with `true` and `false`. Two names for one boolean is a choice every
- * reader has to make and can make wrongly - shipping marker-laden HTML into an email, or
- * marker-free HTML into a page that then fails to hydrate. The capability is kept; the second name
- * is not.
- *
  * INPUT CONTRACT:
  * - `component`: a THUNK that builds the root element. It must be a thunk, because the tree has to
  *   build while string mode is active.
@@ -108,6 +101,10 @@ export interface RenderToStringOptions
  * - Body HTML only. No `<html>`/`<head>` shell - that is {@link renderToDocument}'s job.
  *
  * WHY THIS DESIGN:
+ * One function, not a `renderToStaticMarkup` twin: the two would be the same private function
+ * called with `true` and `false`, and two names for one boolean is a choice every reader has to
+ * make and can make wrongly - shipping marker-laden HTML into an email, or marker-free HTML into
+ * a page that then fails to hydrate. The capability rides the `markers` option instead.
  * Markers ride the `runInMode` window, so they are render-scoped and exception-safe by
  * construction. The per-render store scope makes concurrent requests' `createStore()` state
  * independent, which is sound because an SSR render is synchronous: one scope is set and restored

@@ -293,9 +293,9 @@ describe('multiple endpoints on one server', () =>
 {
     it('two attaches coexist: each claims its own path, an unmatched path gets ONE clean 404', async () =>
     {
-        // The regression: every 'upgrade' listener fires per request, and a path-mismatched
-        // endpoint used to refuse+destroy immediately - killing the sibling endpoint's
-        // handshake. Now a mismatch defers, and only an upgrade NOBODY claims is refused.
+        // Regression: every 'upgrade' listener fires per request, so a path-mismatched
+        // endpoint that refuses+destroys immediately kills the sibling endpoint's
+        // handshake. A mismatch defers; only an upgrade NOBODY claims is refused.
         const app = new App();
         const served = await serve(app);
         const detachA = attachWebSockets(served.server, {

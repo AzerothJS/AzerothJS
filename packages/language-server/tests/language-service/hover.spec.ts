@@ -1,8 +1,8 @@
 // @vitest-environment node
 //
 // AzerothJS authoring keywords (`component`, `state`, `derived`, `deferred`, `effect`, `watch`,
-// and the reactive wrappers) compile away, so TypeScript has no symbol to describe them -
-// hovering one used to return nothing. The hover provider supplies their docs from language-data.
+// and the reactive wrappers) compile away, so TypeScript has no symbol to describe them and
+// hovering one returns nothing. The hover provider supplies their docs from language-data.
 // These guard that keyword forms get docs while member accesses / calls fall through to TypeScript.
 
 import { describe, it, expect } from 'vitest';

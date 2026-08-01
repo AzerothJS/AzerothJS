@@ -338,13 +338,11 @@ export function getCountry(codeOrCallingCode: string): CountryInfo | undefined
     const cleaned = codeOrCallingCode.replace(/^\+/, '');
     const upper = cleaned.toUpperCase();
 
-    // Try ISO code first - letters, exact match.
+    // ISO code first (letters), calling code second (digits) - the two namespaces cannot collide.
     const byIsoCode = countries.find(c => c.code === upper);
     if (byIsoCode)
     {
         return byIsoCode;
     }
-
-    // Fall back to calling code - digits, exact match.
     return countries.find(c => c.callingCode === cleaned);
 }

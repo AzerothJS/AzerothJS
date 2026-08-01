@@ -139,8 +139,8 @@ export class FrameParser
             }
             catch (error)
             {
-                // Hand the caller what already parsed cleanly. Losing it here is what made
-                // delivery depend on the peer's segmentation - see ProtocolError.frames.
+                // Hand the caller what already parsed cleanly; losing it here makes delivery
+                // depend on the peer's segmentation - see ProtocolError.frames.
                 if (error instanceof ProtocolError)
                 {
                     throw new ProtocolError(error.code, error.message, frames);
@@ -430,8 +430,8 @@ function isWireCloseCode(code: number): boolean
  * input, so the length is attacker-influenced and cannot be trusted to fit.
  *
  * 1005/1006 become the empty payload (their meaning, and all the wire can express); any
- * other unsendable code is a RangeError rather than a silent 16-bit truncation - `1000 +
- * 69000` used to reach the peer as 4464.
+ * other unsendable code is a RangeError rather than a silent 16-bit truncation, which
+ * would deliver `1000 + 69000` to the peer as 4464.
  */
 export function closePayload(code: number, reason = ''): Uint8Array
 {

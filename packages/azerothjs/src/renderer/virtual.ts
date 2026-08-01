@@ -9,9 +9,8 @@
  * scroll position - which changes EVERY FRAME - so the window memo invalidates and the list
  * re-slices and reconciles on every scrolled pixel, even when the visible rows are the same
  * thirty. The fix is an EQUALITY-GUARDED range memo (same start/end = same value, no
- * downstream work), which is exactly the subtle piece users ship without (the Guardian
- * report hand-built it, most apps will not). createVirtualizer owns that memo; <VirtualList>
- * packages the whole scroller.
+ * downstream work), which is exactly the subtle piece users ship without. createVirtualizer
+ * owns that memo; <VirtualList> packages the whole scroller.
  *
  * V1 SCOPE, DELIBERATE: fixed `itemSize` and an explicit viewport size - no dynamic
  * per-item measurement (a measurement cache is a future surface, and fixed-size covers

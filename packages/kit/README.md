@@ -14,7 +14,7 @@
 
 ---
 
-Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the assembled car: per-route SSR, static prerendering, and hydration wired over the pieces you already have - the router's route table, the renderer, and `@azerothjs/http`. The kit invents nothing: no new routing system, no new data layer, no config format. It replaces the ~10 lines of hand-wiring every fullstack app used to repeat.
+Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained fullstack framework. This is the assembled car: per-route SSR, static prerendering, and hydration wired over the pieces you already have - the router's route table, the renderer, and `@azerothjs/http`. The kit invents nothing: no new routing system, no new data layer, no config format. It replaces the ~10 lines of hand-wiring every fullstack app otherwise repeats.
 
 - **Per-route rendering modes** - `server` (SSR per request), `static` (prerendered at build), or `client` (SPA shell), chosen with one field on the route you already declared.
 - **Server-correct guards and loaders** - a redirecting guard becomes a real 302, a vetoed route serves the shell with the guard's status, and parallel loaders stream into the hydration handoff.

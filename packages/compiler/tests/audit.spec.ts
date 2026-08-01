@@ -1,8 +1,8 @@
 // @vitest-environment node
 //
-// Compiler audit: locks the invariants verified by adversarial probing, and records the
-// known gaps as `todo` markers (intended behavior, not yet implemented) plus concrete
-// assertions of the current (defective) output so a future fix breaks loudly here.
+// Invariant locks for the compiler pipeline. Known gaps are recorded as `todo` markers
+// (intended behavior, not yet implemented) plus concrete assertions of the current
+// defective output, so a fix breaks loudly here and updates the record.
 import { describe, it, expect } from 'vitest';
 import { generateModule } from '../src/codegen.ts';
 import { diagnoseModule } from '../src/diagnostics.ts';
@@ -10,7 +10,7 @@ import { typeCheckModuleTS } from '../src/typecheck-ts.ts';
 
 const code = (src: string): string => generateModule(src, 'X.azeroth').code;
 
-describe('compiler audit - verified invariants', () =>
+describe('codegen invariants', () =>
 {
     it('codegen is deterministic (identical output for identical input)', () =>
     {
@@ -64,7 +64,7 @@ describe('compiler audit - verified invariants', () =>
     });
 });
 
-describe('compiler audit - derived is read-only + error severities enforce', () =>
+describe('derived is read-only + error severities enforce', () =>
 {
     it('assigning or incrementing a `derived` is a located compile error (no phantom setter)', () =>
     {
@@ -89,7 +89,7 @@ describe('compiler audit - derived is read-only + error severities enforce', () 
     });
 });
 
-describe('compiler audit - malformed markup is a hard, located error', () =>
+describe('malformed markup is a hard, located error', () =>
 {
     it('markup the parser COMMITTED to (mismatched/nested/attrs) is a located CompileError, not raw passthrough', () =>
     {
@@ -127,7 +127,7 @@ describe('compiler audit - malformed markup is a hard, located error', () =>
     });
 });
 
-describe('compiler audit - IR validation before codegen', () =>
+describe('IR validation before codegen', () =>
 {
     it('a component exercising every binding kind passes IR validation and compiles', () =>
     {
@@ -147,9 +147,9 @@ describe('compiler audit - IR validation before codegen', () =>
     });
 });
 
-describe('compiler audit - current behavior of invalid input (residual; see audit report)', () =>
+describe('invalid input - current behavior (documented residual gaps)', () =>
 {
-    it('FIXED: a bare `<Foo>bar` (forgotten `</Foo>`) is now a located error, not an opaque cast', () =>
+    it('a bare `<Foo>bar` (forgotten `</Foo>`) is a located error, not an opaque cast', () =>
     {
         // Angle-bracket casts are disallowed, so a completed opening tag commits to markup: the
         // missing `</Foo>` is reported where it sits instead of silently shipping as `(bar as Foo)`.
@@ -171,7 +171,7 @@ describe('compiler audit - current behavior of invalid input (residual; see audi
     {
         // The handler classifier only inspects the top-level expression form, so a comma sequence
         // whose last operand is a write slips through and the setter runs at setup. A type-checker
-        // would reject it (number is not a handler); see U1.
+        // would reject it (number is not a handler); see the type-checker suite below.
         const out = code('component C { state n = 0; <button onClick={(a, n++)}>x</button> }');
         expect(out).toMatch(/bindEvent\(_n\d+, 'click', \(a, setN/);
     });
@@ -285,7 +285,7 @@ describe('correctness - malformed markup stress (every case is a located error)'
     });
 });
 
-describe('correctness - M3 handler edge cases (accept functions, reject setup effects)', () =>
+describe('correctness - handler edge cases (accept functions, reject setup effects)', () =>
 {
     const reject = ['count++', '--count', 'count = 5', 'count += 1', 'save()', 'props.onClose()', 'save?.()'];
     const accept = ['save', 'props.onClose', '() => count++', '(e) => save(e)', 'makeHandler(id)'];
@@ -307,7 +307,7 @@ describe('correctness - M3 handler edge cases (accept functions, reject setup ef
     }
 });
 
-describe('compiler audit - U1 type-checker (real ts.Program, now implemented)', () =>
+describe('type-checker (real ts.Program)', () =>
 {
     it('provides a build-time type-check path: non-function handlers are caught', () =>
     {

@@ -1,23 +1,22 @@
 // @vitest-environment node
 //
-// The render-safety gate decides what a value is ALLOWED to become in the output. Two holes let
-// attacker data through it, both found by differential testing against react-dom/server and both
+// The render-safety gate decides what a value is ALLOWED to become in the output. These specs
+// pin two attacker vectors through it, verified differentially against react-dom/server and
 // confirmed to execute in real Chromium.
 //
-// 1. `assertSafeTag` vetted the tag against a refused-name SET but never against the HTML name
-//    production, and `serializeElement` interpolates the name raw. A tag of
-//    `img src=x onerror=alert(1)` is not a refused name, so it was written verbatim and the
-//    browser parsed the attributes out of it. `document.createElement` rejects that name, so the
-//    DOM path failed safe and only SSR injected - the exact server/client split the gate exists
-//    to prevent.
+// 1. `assertSafeTag` must vet the tag against the HTML name production, not just a refused-name
+//    SET, because `serializeElement` interpolates the name raw. A tag of
+//    `img src=x onerror=alert(1)` is not a refused name; written verbatim, the browser parses
+//    the attributes out of it. `document.createElement` rejects that name, so a set-only check
+//    fails safe in the DOM and injects only on SSR - the exact server/client split the gate
+//    exists to prevent.
 //
-// 2. `assertSafeUrl` tested `typeof candidate === 'string'` while both writers coerce with
-//    `String(value)`. Any carrier whose string form is a dangerous URL walked past: an array is
-//    the realistic one, since a repeated query parameter (`?next=javascript:...&next=x`) yields
-//    an array from every mainstream parser. The string form THREW, so the intent was never in
-//    doubt - only the reach of the test.
+// 2. `assertSafeUrl` must gate every carrier, not `typeof candidate === 'string'`, because both
+//    writers coerce with `String(value)`. Any carrier whose string form is a dangerous URL walks
+//    past a string-only check: an array is the realistic one, since a repeated query parameter
+//    (`?next=javascript:...&next=x`) yields an array from every mainstream parser.
 //
-// The rule both fixes encode: gate the value that will actually be WRITTEN, not the value's
+// The rule both checks encode: gate the value that will actually be WRITTEN, not the value's
 // declared type.
 import { describe, expect, it, vi } from 'vitest';
 

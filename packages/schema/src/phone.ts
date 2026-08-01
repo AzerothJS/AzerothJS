@@ -217,8 +217,7 @@ export function phone(options?: PhoneOptions): FieldValidator<string>
             cleaned = '+' + defaultCallingCode + national;
         }
 
-        // Step 2: must start with `+` and contain only digits
-        // after that. Strict E.164.
+        // Step 2: strict E.164 shape.
         if (!/^\+\d+$/.test(cleaned))
         {
             return message ?? 'Phone must be in E.164 format (e.g. +14155551234)';

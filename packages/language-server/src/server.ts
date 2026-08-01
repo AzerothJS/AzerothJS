@@ -248,9 +248,9 @@ export function startServer(connection: Connection = createConnection()): void
     const nearestProjectDir = (filePath: string): string | null =>
     {
         const path = norm(filePath);
-        // The walk stops at the workspace folder the editor OPENED. It used to run to the
-        // filesystem root, so a `tsconfig.json` placed ABOVE the opened folder was discovered and
-        // obeyed - and a tsconfig is not inert: `files`/`include` pull arbitrary `.ts` into the
+        // The walk stops at the workspace folder the editor OPENED, never the filesystem
+        // root: a `tsconfig.json` placed ABOVE the opened folder must not be discovered and
+        // obeyed. A tsconfig is not inert - `files`/`include` pull arbitrary `.ts` into the
         // program (whose contents come back quoted in type errors), and `paths` redirects module
         // resolution, so go-to-definition lands on a file the config chose. Whoever opened the
         // folder vouched for what is inside it and for nothing above it; that is the same line
@@ -283,11 +283,11 @@ export function startServer(connection: Connection = createConnection()): void
      * Returns the service keyed by `key`, creating it anchored there if needed.
      *
      * Bounded, least-recently-used first. Each service owns a full `ts.LanguageService`, its
-     * program and its lib files - measured at roughly 48 MB resident - and the only eviction
-     * used to be workspace-folder REMOVAL, which a session never does. A repository with a few
-     * dozen package directories therefore drove the extension host past a gigabyte simply by
-     * being browsed, since one service materializes per nearest-tsconfig directory touched.
-     * Dropping the reference is the whole teardown: nothing else holds the program.
+     * program and its lib files - roughly 48 MB resident - and one materializes per
+     * nearest-tsconfig directory touched, so without an in-session bound (workspace-folder
+     * removal never happens in one) merely browsing a repository with a few dozen package
+     * directories drives the extension host past a gigabyte. Dropping the reference is the
+     * whole teardown: nothing else holds the program.
      */
     const serviceAt = (key: string): AzerothLanguageService =>
     {

@@ -37,9 +37,9 @@ function rootFor(filePath: string): string
 /**
  * The AzerothProject for `filePath`'s workspace, created lazily and cached for reuse.
  *
- * Bounded, least-recently-used first. Each project is a full TS program; the pool is
- * module-level and used to have no eviction at all, so linting a repository with many package
- * directories held one program per tsconfig root for the whole run.
+ * Bounded, least-recently-used first. Each project is a full TS program and the pool is
+ * module-level, so without eviction a lint run over a repository with many package
+ * directories holds one program per tsconfig root for the whole run.
  */
 export function projectFor(filePath: string): AzerothProject
 {

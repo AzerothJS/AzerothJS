@@ -250,9 +250,9 @@ describe('generateVirtualCode - totality (never throws on incomplete source)', (
     it('fails a pathologically hole-nested module with a LOCATED CompileError, not a RangeError', () =>
     {
         // MAX_MARKUP_DEPTH is enforced per parseMarkup call, and the projection re-enters the parser at
-        // depth 0 for every `{ ... }` hole, so nesting through holes used to overflow this mutual
-        // recursion (emitMarkup -> emitNode -> emitChild -> emitDynamic -> emitCode). A RangeError out
-        // of the ONE projection is an internal crash in every tool that runs it.
+        // depth 0 for every `{ ... }` hole, so without its own depth guard nesting through holes
+        // overflows this mutual recursion (emitMarkup -> emitNode -> emitChild -> emitDynamic ->
+        // emitCode). A RangeError out of the ONE projection is an internal crash in every tool that runs it.
         let inner = 'x';
         for (let i = 0; i < 700; i++)
         {

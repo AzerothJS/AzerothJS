@@ -116,8 +116,8 @@ describe('lintMarkup - unsafe-narrow-in-show', () =>
         expect(lint('<Show when={ config() }><p>{ config().name }</p></Show>')).toEqual([]);
     });
 
-    it('stays fast on an adversarial when with no real call (regression: the old '
-        + 'regex-based extractor was polynomial on strings shaped like this)', () =>
+    it('stays fast on an adversarial when with no real call (regression: a regex-based '
+        + 'extractor is polynomial on strings shaped like this)', () =>
     {
         const adversarial = '$.'.repeat(50000); // no '()' anywhere - nothing to guard
         const start = performance.now();

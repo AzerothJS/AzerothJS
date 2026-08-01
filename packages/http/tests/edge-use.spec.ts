@@ -4,12 +4,11 @@
 //
 // `rateLimit`, `cors`, `securityHeaders` and `requestId` wrap the whole dispatch - they must, because
 // a rate limiter has to refuse before a route is matched and a preflight has to be answered for
-// paths with no route. They used to be un-passable to `use`, so an application wanting a rate limit
-// built a `pipeline(app, ...)` and handed THAT around instead of its App; three independently-built
-// applications hit it, and the error names a missing `handle` on RequestContext, which does not say
-// "wrong middleware kind".
+// paths with no route. Unbranded, they are un-passable to `use`: an application wanting a rate limit
+// builds a `pipeline(app, ...)` and hands THAT around instead of its App, and the error names a
+// missing `handle` on RequestContext, which does not say "wrong middleware kind".
 //
-// They are now branded, so one verb takes both and the framework does not grow a third.
+// The brand (`edge()`) is what lets one verb take both kinds without the framework growing a third.
 import { describe, expect, it } from 'vitest';
 import { App, edge, json, pipeline, rateLimit, securityHeaders } from '@azerothjs/http';
 

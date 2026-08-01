@@ -1,9 +1,9 @@
 // @vitest-environment node
 //
-// Security hardening for the codec and the attach layer, each case reproducing a confirmed
-// defect: the quadratic reassembly that blocked the event loop for 30 seconds on a plain
+// Security hardening for the codec and the attach layer, each case pinning a concrete
+// attack or defect: quadratic reassembly blocking the event loop for 30 seconds on a plain
 // upload, cross-site WebSocket hijacking by default, a throwing gate taking the process
-// down, unbounded connections, and the illegal control frames the serializer used to emit.
+// down, unbounded connections, and illegal control frames leaving the serializer.
 //
 // Everything here is hand-crafted over a raw node:net socket against a real server - a
 // client library normalizes away exactly the malformed input under test.
@@ -426,7 +426,7 @@ describe('the server never emits an illegal control frame', () =>
 
     it('a code outside the sendable set is a RangeError, not a 16-bit alias', () =>
     {
-        expect(() => closePayload(70_000)).toThrow(RangeError); // used to reach the peer as 4464
+        expect(() => closePayload(70_000)).toThrow(RangeError); // 16-bit truncation would deliver 4464
         for (const code of [0, 999, 1004, 1015, 2999, 5000])
         {
             expect(() => closePayload(code), `code ${ code }`).toThrow(RangeError);

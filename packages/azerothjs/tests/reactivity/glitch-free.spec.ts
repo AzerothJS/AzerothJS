@@ -3,11 +3,10 @@
 // Glitch-freedom: every top-level write runs inside an implicit flush, so an effect
 // downstream of a diamond (one signal feeding several memos the effect reads) fires
 // exactly ONCE per write and never observes mixed-generation state (one memo fresh,
-// another stale). This was the defining reactive-core defect of the 1.0 review: a
-// plain `set(2)` used to fire the diamond effect twice, first on [new, STALE]. The
-// flush stays fully synchronous - effects have run by the time the setter returns -
-// and batch() still extends the window across multiple writes (and now returns the
-// body's value).
+// another stale) - without the flush, a plain `set(2)` fires the diamond effect twice,
+// first on [new, STALE]. The flush stays fully synchronous - effects have run by the
+// time the setter returns - and batch() extends the window across multiple writes
+// (and returns the body's value).
 import { describe, it, expect } from 'vitest';
 import { createSignal, createMemo, createEffect, createRoot, batch, untrack } from 'azerothjs';
 

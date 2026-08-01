@@ -64,53 +64,42 @@ follow [Semantic Versioning](https://semver.org).
   component down to hand-written h(). Pinned by a codegen spec (the factory emission) and a
   renderer spec (string tags land in the SVG namespace, swaps included).
 
-  An adversarial design review then broke the first cut in four places, all fixed and
-  pinned by a 9-case contract matrix:
+  The full contract, pinned by a contract matrix in the renderer specs:
 
-  - **The selection is memoized (Object.is).** The swap effect's cleanup destroys the
-    branch before every re-run, so without a memo, ANY dependency of the component
-    expression re-firing to the same result (`count() > 0 ? 'ul' : 'p'` moving 1 -> 2)
-    tore down and rebuilt the whole subtree, losing its state. This is Solid's exact
-    shape; the equality gate is what makes teardown-on-rerun correct.
-  - **`props` accepts a plain object OR a thunk - one contract.** `component` had been
-    unified while `props` still demanded a function, so markup `props={ node[1] }` was a
-    type error and `props={ () => node[1] }` a ritual. Both shapes now read untracked
-    (the untrack wraps the property READ - a bare-object markup getter evaluates there).
+  - **The selection is memoized (Object.is).** The subtree is torn down and rebuilt only
+    when the resolved value CHANGES; a dependency of the component expression re-firing
+    to the same result (`count() > 0 ? 'ul' : 'p'` moving 1 -> 2) never disturbs the
+    subtree or its state. This is Solid's exact shape; the equality gate is what makes
+    teardown-on-rerun correct.
+  - **`props` accepts a plain object OR a thunk - one contract.** Markup `props={ node[1] }`
+    and `props={ () => bag() }` both work; both read untracked at the swap (the untrack
+    wraps the property READ, so a bare-object markup getter evaluates there). An object is
+    a caller-owned snapshot. A thunk is LIVE per property read, key set fixed per
+    selection, and every read routes through the CURRENT `props` value - swapping the
+    thunk itself (`props={ dark() ? darkProps : lightProps }`) is as live as the values
+    inside one. A child tracking a prop in its own scope updates in place with no rebuild:
+    the same delivery direct markup gives, and the same React, Solid, and Vue give
+    dynamic children.
   - **Invalid selections fail loudly.** A truthy non-function/non-tag (a pre-created
-    node, an object) now throws a named `<Dynamic>` error instead of a cryptic
+    node, an object) throws a named `<Dynamic>` error instead of a cryptic
     "not a function" from deep inside an effect. Falsy values (null/undefined/false)
     all mean "render nothing" and recover.
-  - **Factory emission is the COMPONENT's contract, never the prop NAME's.** The
-    factory-prop set had been keyed globally by name, so a USER component with a value
-    prop merely called `fallback` or `component` was silently handed a thunk. Emission
-    now gates on the tag (`isFactoryProp`: the builtins plus `Routes`); user components
-    receive plain values for every prop name.
+  - **Factory emission is the COMPONENT's contract, never the prop NAME's.** Emission
+    gates on the tag (`isFactoryProp`: the builtins plus `Routes`), so a USER component
+    with a value prop merely called `fallback` or `component` receives the plain value,
+    never a thunk.
 
-  A five-year-regret review then found ONE invariant-level flaw and fixed it: thunk
-  `props` had been a swap-time SNAPSHOT, so the same child component received frozen
-  props through Dynamic but live getter props when rendered directly - tab content
-  pinned to stale data, forever. A thunk is now LIVE per property read (key set fixed at
-  swap): a child tracking a prop in its own scope updates in place with no rebuild,
-  restoring render-path parity with direct markup - and with how React, Solid, and Vue
-  all deliver dynamic children their props. A follow-up adversarial round then broke the
-  first liveness cut with legal user code - `props={ dark() ? darkProps : lightProps }`
-  stayed pinned to the MOUNT-TIME thunk - so live reads now route through the CURRENT
-  `props` value: swapping the thunk itself is as live as the values inside one. The
-  counterexample is a pinned spec, alongside recursive self-selection and
-  owner-disposal-reaches-escaped-Portal-DOM proofs. The module doc now carries the seven
-  numbered INVARIANTS a reimplementation must preserve; everything else in the file is
-  declared implementation detail.
-
-  A forward-design stress pass then PROVED (not argued) the contract composes with the
-  1.x-adjacent roadmap, each as a pinned spec: selecting `Portal` escapes inline flow AND
-  the swap's branch dispose reaches the escaped DOM; a resource-backed component under
-  explicit `Suspense` is the whole lazy() pattern - async never touches Dynamic, because
-  suspension is declared on Suspense (`on:`), so a future `lazy(loader)` is a stable
-  component identity and the memoized selection holds through loading; and a TAG
-  selection serializes on the server (bare-object props included) through the same
-  string-mode h(). Static-literal selections remain open to constant folding in codegen -
-  the callable contract carries the literal visibly, so that optimization needs no
-  contract change.
+  Composition is pinned by specs rather than argued: selecting `Portal` escapes inline
+  flow AND the swap's branch dispose reaches the escaped DOM (owner disposal does too);
+  a resource-backed component under explicit `Suspense` is the whole lazy() pattern -
+  async never touches Dynamic, because suspension is declared on Suspense (`on:`), so a
+  future `lazy(loader)` is a stable component identity and the memoized selection holds
+  through loading; a TAG selection serializes on the server (bare-object props included)
+  through the same string-mode h(); recursive self-selection works. The module doc
+  carries the seven numbered INVARIANTS a reimplementation must preserve; everything
+  else in the file is declared implementation detail. Static-literal selections remain
+  open to constant folding in codegen - the callable contract carries the literal
+  visibly, so that optimization needs no contract change.
 
 ### Fixed (compiler) - `<For>` rows, found by a real application
 
@@ -137,9 +126,8 @@ follow [Semantic Versioning](https://semver.org).
 
   Recognition deliberately rides the marker and NEVER the `For` name: the runtime `For`
   is public manual API, and a hand-written `For({ children: (item) => ... })` callback
-  receives getters the author already calls - a name-based rewrite (the first attempt at
-  this fix) turned that legitimate `item()` into `item()()`. A negative spec now pins the
-  manual call untouched. The two mechanisms cannot double-fire on one occurrence: both
+  receives getters the author already calls - a name-based rewrite would turn that
+  legitimate `item()` into `item()()`. A negative spec pins the manual call untouched. The two mechanisms cannot double-fire on one occurrence: both
   are chosen by the same raw-mode flag at the single children-emission site - immediate
   IR rewrite when not raw, marker when raw.
 

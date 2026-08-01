@@ -267,7 +267,7 @@ export class ServerSocket
                 // Frames that completed BEFORE the violation arrived while the connection was
                 // still healthy, so they are delivered - the same rule the close-frame case above
                 // follows. Carrying them here is what makes the delivered set independent of how
-                // the peer split its segments; dropping them made it the peer's choice.
+                // the peer split its segments; dropping them makes it the peer's choice.
                 for (const frame of error.frames)
                 {
                     if (this.#closed)
@@ -291,10 +291,10 @@ export class ServerSocket
             case OPCODE.ping:
                 // RFC 6455 section 5.5.3 allows answering only the MOST RECENT ping, which is
                 // what makes this safe to drop: a peer that floods pings while refusing to read
-                // would otherwise queue one userland write per ping forever. Measured 13.7 MiB of
-                // pings against an unreading client growing the process to 751 MiB, and
-                // bufferedAmount under-reports it by two orders of magnitude because the
-                // per-write bookkeeping dominates, so an app watching that number sees nothing.
+                // would otherwise queue one userland write per ping forever - 13.7 MiB of pings
+                // against an unreading client grows the process to 751 MiB. bufferedAmount
+                // under-reports it by two orders of magnitude because the per-write bookkeeping
+                // dominates, so an app watching that number sees nothing.
                 if (!this.#closeSent && this.#socket.writableLength <= PONG_BACKLOG_BYTES)
                 {
                     this.#socket.write(serializeFrame(OPCODE.pong, payload));
@@ -354,10 +354,10 @@ export class ServerSocket
             throw new ProtocolError(1009, `Message exceeds the ${ this.#maxMessage }-byte limit.`);
         }
         // The byte cap alone cannot bound this. RFC 6455 permits a zero-length fragment, so an
-        // endless stream of them adds nothing to #partsLength while #parts grows forever: measured
-        // 34.9x wire-to-heap amplification, and 12 MB of traffic reaching a 512 MB heap ceiling
-        // with maxMessage set to 1024. Each retained fragment also costs far more than its
-        // payload, so the count is capped independently of the size.
+        // endless stream of them adds nothing to #partsLength while #parts grows forever - 34.9x
+        // wire-to-heap amplification, with 12 MB of traffic reaching a 512 MB heap ceiling at a
+        // maxMessage of 1024. Each retained fragment also costs far more than its payload, so
+        // the count is capped independently of the size.
         this.#partsCount++;
         if (this.#partsCount > MAX_FRAGMENTS)
         {
@@ -451,10 +451,10 @@ export class ServerSocket
             return;
         }
         // A probe already outstanding means the deadline is armed and must be left alone.
-        // Re-arming it every tick is how `pongTimeoutMs >= heartbeatMs` silently disabled
-        // half-open reclamation entirely: the timeout could never fire, so a peer that vanished
-        // without a FIN was never terminated and its socket, parser buffer and registry entry
-        // stayed for the process lifetime.
+        // Re-arming it every tick silently disables half-open reclamation whenever
+        // `pongTimeoutMs >= heartbeatMs`: the timeout can never fire, so a peer that vanishes
+        // without a FIN is never terminated and its socket, parser buffer and registry entry
+        // stay for the process lifetime.
         if (this.#awaitingPong)
         {
             return;
