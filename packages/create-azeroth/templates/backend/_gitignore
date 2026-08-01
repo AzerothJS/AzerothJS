@@ -3,3 +3,5 @@ dist/
 logs/
 .env
 *.local
+.idea
+.vscode

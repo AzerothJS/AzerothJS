@@ -2,3 +2,5 @@ node_modules/
 dist/
 .azeroth/
 *.local
+.idea
+.vscode

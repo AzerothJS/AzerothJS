@@ -325,6 +325,50 @@ describe('typeCheckModuleTS - soundness: no false positives on children / contro
         expect(typeCheckModuleTS(source)).toHaveLength(0);
     });
 
+    it('types the For row param as the VALUE: member reads, optional members included', () =>
+    {
+        // The row must not surface as the runtime getter (`() => T`): a getter-typed param
+        // makes every member read a TS2339 - which whole-value holes (`<li>{i}</li>`) can
+        // never detect, since a function child is legal there.
+        const source = `component C {
+    state options: Array<{ id: string; label: string; icon?: string }> = [];
+    <ul><For each={options} key={(option) => option.id}>{(option, index) =>
+        <li>{ option.icon !== undefined ? option.icon : option.label }{ index }</li>
+    }</For></ul>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+
+    it('types the row as the VALUE in a COMPONENT-rooted row body', () =>
+    {
+        const source = `component Chip(props: { label: string; icon?: string }) {
+    <span>{props.label}</span>
+}
+component C {
+    state options: Array<{ id: string; label: string; icon?: string }> = [];
+    <For each={options} key={(option) => option.id}>{(option) =>
+        <Chip label={ option.label } icon={ option.icon ?? '-' } />
+    }</For>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+
+    it('types a derived find() result as the VALUE: optional chaining + guarded reads', () =>
+    {
+        const source = `component C {
+    state value = 'a';
+    state options: Array<{ id: string; label: string; icon?: string }> = [];
+    derived selected = options.find((option) => option.id === value);
+    <div>
+        <Show when={ selected !== undefined && selected.icon !== undefined }>
+            <p>{ selected?.icon ?? '-' }</p>
+        </Show>
+        <span>{ selected?.label ?? 'none' }</span>
+    </div>
+}`;
+        expect(typeCheckModuleTS(source)).toHaveLength(0);
+    });
+
     it('does not flag control-flow built-ins with children (Show)', () =>
     {
         const source = 'component C { state on = true; <Show when={on}><p>hi</p></Show> }';
