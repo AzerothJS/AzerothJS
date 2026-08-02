@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/cli",
-    "version": "1.1.0",
+    "version": "2.0.0-beta.1",
     "engines": {
         "node": ">=22"
     },
@@ -40,7 +40,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/logger": "^1.1.0"
+        "@azerothjs/logger": "^2.0.0-beta.1"
     },
     "publishConfig": {
         "access": "public"

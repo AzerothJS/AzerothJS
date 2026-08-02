@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/eslint-plugin",
-    "version": "1.1.0",
+    "version": "2.0.0-beta.1",
     "description": "AzerothJS ESLint rules - reactivity foot-guns in plain .ts files",
     "keywords": [
         "azerothjs",
@@ -31,12 +31,12 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/compiler": "^1.1.0",
-        "@azerothjs/language-server": "^1.1.0"
+        "@azerothjs/compiler": "^2.0.0-beta.1",
+        "@azerothjs/language-server": "^2.0.0-beta.1"
     },
     "peerDependencies": {
         "@typescript-eslint/parser": ">=8",
-        "azerothjs": "^1.1.0",
+        "azerothjs": "^2.0.0-beta.1",
         "eslint": ">=9",
         "typescript": ">=5 <7"
     },

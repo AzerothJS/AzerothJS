@@ -10,6 +10,8 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+## [2.0.0-beta.1] - 2026-08-02
+
 ### Changed (azerothjs, compiler, language-server, eslint-plugin) - one owner for markup semantics - BREAKING
 
 - **Every markup rule now has exactly one owner: `azerothjs/semantics`.** An adversarial audit
@@ -3102,7 +3104,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.1...HEAD
+[2.0.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...v2.0.0-beta.1
 [1.1.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.2...v1.0.0
 [1.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0-beta.1...v1.0.0-beta.2
