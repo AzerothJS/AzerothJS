@@ -15,6 +15,13 @@
 // the install block alone. This mirrors promoteChangelog() in release.mjs - a
 // changelog problem should nag, never block a release that is already tagged and
 // published.
+//
+// A GitHub release body is capped at 125,000 characters, and a major's changelog section
+// can exceed that (2.0.0-beta.1's was 141,622). The body therefore fits BY CONSTRUCTION:
+// when the full section does not fit, it degrades to the section's OUTLINE - every `###`
+// heading, which is exactly the "what changed" index a reader scans for - above the link to
+// the full text. Truncating the prose instead would cut mid-sentence, and failing would
+// block a release whose packages are already published.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -90,6 +97,31 @@ function changelogSection(version)
     return body;
 }
 
+/**
+ * GitHub's hard cap on a release body. The API rejects the whole request over it, which
+ * fails the release AFTER npm has published - so the body is trimmed to fit here instead.
+ */
+const BODY_LIMIT = 125_000;
+
+/**
+ * Headroom under the cap. `--generate-notes` appends GitHub's own "What's Changed" list to
+ * the supplied body, and the margin keeps the composed page clear of the limit even though
+ * the API validates the submitted body alone.
+ */
+const BODY_MARGIN = 10_000;
+
+/**
+ * A changelog section reduced to its `###` headings - the release's index. Used when the
+ * full section cannot fit, so the page still says WHAT changed and links to the detail.
+ */
+function outline(section)
+{
+    const headings = section.split('\n')
+        .filter(line => line.startsWith('### '))
+        .map(line => `- ${ line.slice(4).trim() }`);
+    return headings.length === 0 ? null : headings.join('\n');
+}
+
 function compose(version, section, repo)
 {
     // Pad the two commands to a common width so their comments line up whatever
@@ -112,17 +144,40 @@ function compose(version, section, repo)
         'the `.zip` for JetBrains (Settings -> Plugins -> Install Plugin from Disk).'
     ];
 
+    const tail = ['', '---', '', `[Full changelog](${ repo }/blob/v${ version }/CHANGELOG.md)`];
+    const budget = BODY_LIMIT - BODY_MARGIN - (parts.join('\n') + tail.join('\n')).length;
+
     if (section !== null)
     {
-        parts.push('', '---', '', section);
+        if (section.length <= budget)
+        {
+            parts.push('', '---', '', section);
+        }
+        else
+        {
+            // Too large for one release page. Emit the index and say so plainly, rather
+            // than truncating prose mid-sentence or failing a published release.
+            const index = outline(section);
+            warn(`the ${ version } changelog section is ${ section.length } characters, over the `
+                + `${ BODY_LIMIT } release-body limit - emitting its outline and the changelog link`);
+            parts.push(
+                '',
+                '---',
+                '',
+                '## What changed',
+                '',
+                'This release is too large to reproduce in full here. Every entry, with its',
+                'reasoning and migration notes, is in the changelog linked below.',
+                ''
+            );
+            if (index !== null)
+            {
+                parts.push(index.length <= budget ? index : index.slice(0, budget));
+            }
+        }
     }
 
-    parts.push(
-        '',
-        '---',
-        '',
-        `[Full changelog](${ repo }/blob/v${ version }/CHANGELOG.md)`
-    );
+    parts.push(...tail);
 
     return parts.join('\n') + '\n';
 }

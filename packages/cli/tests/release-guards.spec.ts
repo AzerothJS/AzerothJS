@@ -144,3 +144,52 @@ describe('release dist-tag safety', () =>
         expect(run.output).not.toContain('npm dist-tag add');
     });
 });
+
+// The GitHub release body is composed from CHANGELOG.md and the API caps it at 125,000
+// characters. A major's section can exceed that (2.0.0-beta.1's was 141,136), and the API
+// rejects the whole request - failing the release AFTER npm has published, which is the
+// worst moment for it. The body therefore has to fit by construction.
+describe('release notes fit a GitHub release body', () =>
+{
+    const NOTES = join(ROOT, 'scripts', 'release-notes.mjs');
+    const LIMIT = 125_000;
+
+    function notes(version: string): { status: number; body: string; warnings: string }
+    {
+        const result = spawnSync(process.execPath, [NOTES, version], { cwd: ROOT, encoding: 'utf8', shell: false });
+        return { status: result.status ?? 1, body: result.stdout, warnings: result.stderr };
+    }
+
+    it('stays under the cap for the version this repo currently carries', () =>
+    {
+        const run = notes(currentVersion);
+        expect(run.status).toBe(0);
+        expect(run.body.length).toBeLessThan(LIMIT);
+    });
+
+    it('degrades an oversized section to its outline instead of truncating prose', () =>
+    {
+        // Whether THIS version's section is oversized depends on the release; assert the
+        // rule that holds either way - the body fits, and an oversized one keeps the index.
+        const run = notes(currentVersion);
+        expect(run.body.length).toBeLessThan(LIMIT);
+        if (run.warnings.includes('over the'))
+        {
+            const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+            const section = changelog.split(`## [${ currentVersion }]`)[1]?.split('\n## [')[0] ?? '';
+            const headings = (section.match(/^### /gm) ?? []).length;
+            expect(headings).toBeGreaterThan(0);
+            // Every heading survives as an index entry, and no prose is cut mid-sentence.
+            expect((run.body.match(/^- /gm) ?? []).length).toBe(headings);
+            expect(run.body).toContain('## What changed');
+        }
+        expect(run.body).toContain('[Full changelog]');
+    });
+
+    it('always emits the install block, section or not', () =>
+    {
+        const run = notes('9.9.9-beta.1');
+        expect(run.status).toBe(0);
+        expect(run.body).toContain('npm install azerothjs@9.9.9-beta.1');
+    });
+});
