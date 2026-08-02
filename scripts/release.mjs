@@ -85,7 +85,12 @@
 //   --no-bump       Don't bump/commit/tag; just push the existing tag and publish.
 //   --no-push       Skip the git push.
 //   --no-publish    Skip the npm publish.
-//   --no-promote-latest  Don't move the `latest` dist-tag to a prerelease.
+//   --no-promote-latest  Don't move the `latest` dist-tag to a prerelease. A prerelease
+//                   already leaves a STABLE `latest` alone on its own (see below); this
+//                   also declines it in the pre-1.0 case, where there is no stable line
+//                   to protect and promoting keeps a plain `npm i` current.
+//   --promote-latest  Move `latest` to this prerelease even though a stable release
+//                   holds it. That downgrades every default `npm i` - deliberate use only.
 //   --provenance    Attach an npm provenance attestation to each publish. Only
 //                   valid when publishing from CI with OIDC; the publish
 //                   workflow passes it. A local run must omit it.
@@ -122,7 +127,7 @@
 // `--no-promote-latest` once a real stable release exists and prereleases should
 // stay off `latest`.
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
@@ -298,6 +303,8 @@ Options:
   --no-push            Skip the git push.
   --no-publish         Skip the npm publish.
   --no-promote-latest  Don't move 'latest' to a pre-release.
+  --promote-latest     Move 'latest' to this pre-release even though a stable
+                       release holds it (downgrades every default npm i).
   --promote-only       Only move 'latest' to an already-published version.
   --provenance         Attach an npm provenance attestation (CI/OIDC only).
   --otp <code>         npm 2FA code; handed to npm via NPM_CONFIG_OTP, never argv.
@@ -306,31 +313,59 @@ Options:
   -h, --help           Show this help.`);
 }
 
-// Two execution paths so no call ever runs with `shell: true` AND an args array.
-// That combination is what Node's DEP0190 warns about: with a shell the args are
-// concatenated, not escaped - which both risks injection AND word-splits any arg
-// containing a space or `()` (e.g. a `chore(release): vX.Y.Z` commit message, where
-// git then read the version as a stray pathspec and the commit died).
-//   - Real executables (git, cargo, node): execFileSync with shell:false. Each arg
-//     is its own argv entry, passed verbatim - spaces/parens stay intact, no shell.
-//   - npm / npx on Windows only: these resolve to `.cmd` shims that cmd.exe must
-//     interpret, so a shell is unavoidable. Pass ONE pre-quoted command STRING via
-//     execSync (a string, not an args array) - that does not trip DEP0190. Safe
-//     here because every npm arg is an internal package name, a static flag or a
-//     dist-tag: no spaces, no metacharacters, and no secret (the OTP reaches npm
-//     through the child environment, never an argument). On macOS/Linux npm is a
-//     normal executable, so it takes the shell-free path like everything else.
-const winShellShim = (file) => process.platform === 'win32' && (file === 'npm' || file === 'npx');
-const winQuote = (arg) => `"${ String(arg).replace(/"/g, '\\"') }"`;
+// NOTHING here runs through a shell. Every child is spawned with execFileSync and
+// `shell: false`, so each argument is its own argv entry, passed verbatim: spaces and
+// parens survive (a `chore(release): vX.Y.Z` commit message once word-split into a stray
+// git pathspec), no quoting layer can be wrong, and no argument is ever parsed as syntax.
+// It is also what keeps Node's DEP0190 (shell:true WITH an args array) out of the picture.
+//
+// npm needs no exception. It resolves to a `.cmd` shim on Windows that only cmd.exe can
+// execute - which is why this used to shell out with hand-quoted arguments there - but npm
+// is itself a Node program, so running `node <npm-cli.js>` bypasses the shim on every
+// platform. {@link npmCli} resolves that entry once.
+
+/**
+ * npm's own JS entry point, so npm is spawned as a Node program instead of through a
+ * platform-specific launcher. `npm_execpath` is the path npm sets for exactly this purpose
+ * whenever it runs a script; the fallbacks cover a direct `node scripts/release.mjs`
+ * invocation from a standard Node installation (Windows layout, then Unix).
+ */
+function npmCli()
+{
+    const fromEnv = process.env.npm_execpath;
+    if (fromEnv !== undefined && fromEnv.endsWith('.js') && existsSync(fromEnv))
+    {
+        return fromEnv;
+    }
+    const nodeDir = path.dirname(process.execPath);
+    for (const candidate of [
+        path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    ])
+    {
+        if (existsSync(candidate))
+        {
+            return candidate;
+        }
+    }
+    // Falling back to a shell here would reintroduce the quoting layer this exists to
+    // delete, so the release stops instead - and says how to give it what it needs.
+    fail('cannot locate npm\'s CLI entry point (npm_execpath is unset and no standard '
+        + 'installation was found). Run the release through npm: npm run release -- <version>');
+    return '';
+}
+
+/** The (file, args) pair that runs `file` as a real process - npm included. */
+function spawnArgs(file, args)
+{
+    return file === 'npm' ? [process.execPath, [npmCli(), ...args]] : [file, args];
+}
 
 /** Reads a command's stdout (used for read-only queries; always runs). */
 function query(file, args)
 {
-    if (winShellShim(file))
-    {
-        return execSync([file, ...args.map(winQuote)].join(' '), { cwd: ROOT, encoding: 'utf8' }).trim();
-    }
-    return execFileSync(file, args, { cwd: ROOT, encoding: 'utf8', shell: false }).trim();
+    const [bin, argv] = spawnArgs(file, args);
+    return execFileSync(bin, argv, { cwd: ROOT, encoding: 'utf8', shell: false }).trim();
 }
 
 let dryRun = false;
@@ -367,12 +402,8 @@ function act(file, args, extra)
     {
         return;
     }
-    if (winShellShim(file))
-    {
-        execSync([file, ...args.map(winQuote)].join(' '), { cwd: ROOT, stdio: 'inherit', ...(extra ?? {}) });
-        return;
-    }
-    execFileSync(file, args, { cwd: ROOT, stdio: 'inherit', shell: false, ...(extra ?? {}) });
+    const [bin, argv] = spawnArgs(file, args);
+    execFileSync(bin, argv, { cwd: ROOT, stdio: 'inherit', shell: false, ...(extra ?? {}) });
 }
 
 /** Every file that carries the shared version (root, packages). */
@@ -512,6 +543,24 @@ function prereleaseChannel(version)
     }
     const id = version.slice(dash + 1).split('.')[0];
     return /^[a-z]+$/i.test(id) ? id.toLowerCase() : 'next';
+}
+
+/**
+ * The version `latest` currently points at, or null when the name is unpublished or the
+ * registry cannot be reached. Read from the ENTRY package: the monorepo publishes in
+ * lockstep, so one name answers for the whole set.
+ */
+function publishedLatest()
+{
+    try
+    {
+        const value = query('npm', ['view', 'azerothjs', 'dist-tags.latest']);
+        return value === '' ? null : value;
+    }
+    catch
+    {
+        return null;
+    }
 }
 
 /** The npm dist-tag implied by a version: its pre-release channel, or `latest` for a stable release. */
@@ -759,7 +808,7 @@ function confirm(question)
 function parseArgs()
 {
     const argv = process.argv.slice(2);
-    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteOnly: false, provenance: false, otp: null, allowBranch: false, version: null, channel: undefined, changelog: true };
+    const options = { help: false, skipChecks: false, noBump: false, noPush: false, noPublish: false, promoteLatest: true, promoteLatestExplicit: false, promoteOnly: false, provenance: false, otp: null, allowBranch: false, version: null, channel: undefined, changelog: true };
     for (let i = 0; i < argv.length; i++)
     {
         const arg = argv[i];
@@ -791,6 +840,13 @@ function parseArgs()
         {
             options.promoteLatest = false;
         }
+        else if (arg === '--promote-latest')
+        {
+            // Overrides the stable-latest guard: move `latest` onto this prerelease even
+            // though a stable release holds it. Every default `npm i` downgrades.
+            options.promoteLatest = true;
+            options.promoteLatestExplicit = true;
+        }
         else if (arg === '--provenance')
         {
             // Attach an npm provenance attestation to each publish. Only works
@@ -806,6 +862,7 @@ function parseArgs()
             options.noPush = true;
             options.noPublish = true;
             options.promoteLatest = true;
+            options.promoteLatestExplicit = true;
             options.promoteOnly = true;
         }
         else if (arg === '-y' || arg === '--yes')
@@ -939,13 +996,31 @@ const resuming = !options.noBump && current === next && !tagExists;
 // the operator explicitly asked to move it (`--promote-only`). A bare
 // `--no-publish` must therefore NOT touch the registry, and a normal stable
 // release leaves it to `npm publish` (which sets `latest` itself).
+//
+// A prerelease additionally promotes ONLY while no stable release exists to protect:
+// before 1.0.0 there was no `latest` line worth keeping and pointing it at each beta kept
+// a plain `npm i` current, but once a stable version holds `latest`, moving it to a
+// prerelease silently downgrades every default install. That condition is read from the
+// registry rather than left to the operator to remember - `--promote-latest` overrides it
+// deliberately, `--no-promote-latest` still declines it outright.
+const stableLatest = !dryRun && !options.noPublish && distTag(next) !== 'latest'
+    ? publishedLatest()
+    : null;
+const stableHoldsLatest = stableLatest !== null && !stableLatest.includes('-');
 const willPromoteLatest = options.promoteLatest
+    && !(stableHoldsLatest && !options.promoteLatestExplicit)
     && (options.promoteOnly || (!options.noPublish && distTag(next) !== 'latest'));
 
 log(`\nRelease ${ current } -> ${ next }`);
 log(`  git tag:   ${ tag }${ tagExists ? ' (already exists)' : '' }`);
 log(`  npm tag:   ${ distTag(next) }`);
-log(`  latest:    ${ willPromoteLatest ? 'promote -> ' + next : (distTag(next) === 'latest' && !options.noPublish ? 'set by publish' : 'left unchanged') }`);
+log(`  latest:    ${ willPromoteLatest
+    ? 'promote -> ' + next
+    : distTag(next) === 'latest' && !options.noPublish
+        ? 'set by publish'
+        : stableHoldsLatest
+            ? `left on ${ stableLatest } (a prerelease must not downgrade the default install)`
+            : 'left unchanged' }`);
 log(`  bump:      ${ options.noBump ? 'no' : (resuming ? `resume (files already at ${ next })` : 'yes') }`);
 log(`  push:      ${ options.noPush ? 'no' : 'yes' }`);
 log(`  publish:   ${ options.noPublish ? 'no' : PUBLISH_ORDER.length + ' packages' }`);
@@ -1044,21 +1119,17 @@ else if (resuming)
 
 if (!options.skipChecks)
 {
-    // The FULL gate, cheap-first. This must match what CI would reject, because
-    // publishing happens BEFORE the tag is pushed: a version that fails typecheck,
-    // tests, or the leak check would otherwise reach npm minutes before CI ever
-    // saw it, and a published version cannot be taken back.
-    log('\nVerifying (lint, typecheck, build, publish contract, tests, leak, publish smoke)');
-    act('npm', ['run', 'lint']);
-    act('npm', ['run', 'typecheck']);
-    act('npm', ['run', 'build']);
-    // Validate the published artifacts before tagging: publint checks each
-    // package.json contract; the smoke test packs + installs the tarballs and
-    // imports them, catching a broken exports map or a corrupted inter-package
-    // pin that the src-aliased suite cannot see.
-    act('npm', ['run', 'lint:publish']);
-    act('npm', ['test']);
-    act('npm', ['run', 'leak']);
+    // The gate is `verify` itself - the same script CI runs - because publishing happens
+    // BEFORE the tag is pushed: a version that fails it would otherwise reach npm minutes
+    // before CI ever saw it, and a published version cannot be taken back. Restating its
+    // steps here made a second copy that drifted (a stale step order, and a step whose
+    // script had been deleted), so the composition has one owner and this adds only what
+    // is specific to publishing.
+    log('\nVerifying (npm run verify, then the publish smoke test)');
+    act('npm', ['run', 'verify']);
+    // Beyond verify: pack + install the real tarballs into a throwaway consumer and import
+    // them, catching a broken exports map or a corrupted inter-package pin that the
+    // src-aliased suite cannot see. Needs the build verify just produced.
     act('npm', ['run', 'smoke']);
 }
 else if (!options.noPublish)

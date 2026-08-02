@@ -43,10 +43,11 @@ jobs:
             -   run: npm ci
 
             # The tag must build and pass the full gate on a clean machine, not just
-            # on the maintainer's box.
-            -   run: npm run lint
-            -   run: npm run build
-            -   run: npm test
+            # on the maintainer's box. One step: verify owns the gate's composition and
+            # order (it builds first - the toolchain imports workspace packages through
+            # their dist export maps), so this cannot drift from what CI and the release
+            # script run.
+            -   run: npm run verify
 
             # --- Editor artifacts, built from the exact tagged code. ---
             # VS Code: the server bundle's esbuild entry is the language-server dist,

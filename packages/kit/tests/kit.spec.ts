@@ -68,6 +68,24 @@ describe('flattenPages / prerenderFileFor', () =>
         expect(prerenderFileFor('/')).toBe('index.html');
         expect(prerenderFileFor('/docs/intro')).toBe('docs/intro/index.html');
     });
+
+    it('collapses trailing slashes, however many, without a backtracking scan', () =>
+    {
+        // Route paths are library input, so the strip runs in one linear pass; a
+        // slash-only path still resolves to the root rather than to the empty string.
+        const routes: PageRoute[] = [
+            { path: '/', component, render: 'static' },
+            { path: '/a///', component, render: 'static' },
+            { path: '///', component, render: 'static' },
+            { path: '/docs/', component, render: 'static', children: [{ path: 'intro/', component }] }
+        ];
+        expect(flattenPages(routes)).toEqual([
+            { path: '/', render: 'static' },
+            { path: '/a', render: 'static' },
+            { path: '/', render: 'static' },
+            { path: '/docs/intro', render: 'static' }
+        ]);
+    });
 });
 
 describe('mountPages', () =>

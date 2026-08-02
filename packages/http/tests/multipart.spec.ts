@@ -136,6 +136,34 @@ describe('preamble, epilogue, and quoted params', () =>
         const parsed = await readMultipart(rawRequest(body));
         expect(parsed.files[0]!.filename).toBe('my file; v2.txt');
     });
+
+    it('reads the LAST parameter, which no separator terminates', async () =>
+    {
+        // The final run ends at the string's end, not at a `;`. It is flushed after the
+        // scan; spelling that as one extra loop iteration meant indexing one past the end.
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; filename="last.txt"\r\n\r\nv\r\n--xyz--';
+        const parsed = await readMultipart(rawRequest(body));
+        expect(parsed.files[0]!.filename).toBe('last.txt');
+        expect(parsed.files[0]!.name).toBe('a');
+    });
+
+    it('tolerates a trailing semicolon and repeated separators', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a";;\r\n\r\n1\r\n--xyz--';
+        const parsed = await readMultipart(rawRequest(body));
+        expect(parsed.fields.get('a')).toBe('1');
+    });
+
+    it('a semicolon inside the quoted NAME cannot smuggle a filename', async () =>
+    {
+        // The security property the quote-aware scan exists for: read naively, this part
+        // would classify as a FILE named evil.exe. It is one field whose name contains
+        // a semicolon, and no file part exists.
+        const body = '--xyz\r\ncontent-disposition: form-data; name="note; filename=evil.exe"\r\n\r\n1\r\n--xyz--';
+        const parsed = await readMultipart(rawRequest(body));
+        expect(parsed.files).toHaveLength(0);
+        expect(parsed.fields.get('note; filename=evil.exe')).toBe('1');
+    });
 });
 
 describe('what counts as a FILE part', () =>

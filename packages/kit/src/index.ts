@@ -58,6 +58,20 @@ export interface KitOptions
     renderer?: PageRenderer;
 }
 
+/**
+ * @internal Drops every trailing slash in one linear pass. The regex form (`/\/+$/`)
+ * backtracks quadratically on a path made of slashes, and route paths are library input.
+ */
+function withoutTrailingSlashes(value: string): string
+{
+    let end = value.length;
+    while (end > 0 && value[end - 1] === '/')
+    {
+        end--;
+    }
+    return value.slice(0, end);
+}
+
 /** @internal Flattens the page tree to absolute paths with their effective modes. */
 export function flattenPages(routes: PageRoute[], base = '', inherited?: PageRoute['render']): Array<{ path: string; render: PageRoute['render'] }>
 {
@@ -65,7 +79,9 @@ export function flattenPages(routes: PageRoute[], base = '', inherited?: PageRou
     for (const route of routes)
     {
         const child = route.path.startsWith('/') ? route.path.slice(1) : route.path;
-        const full = base === '' ? `/${ child }`.replace(/\/+$/, '') || '/' : `${ base }/${ child }`.replace(/\/+$/, '');
+        const full = base === ''
+            ? withoutTrailingSlashes(`/${ child }`) || '/'
+            : withoutTrailingSlashes(`${ base }/${ child }`);
         const mode = route.render ?? inherited;
         if (route.children !== undefined && route.children.length > 0)
         {

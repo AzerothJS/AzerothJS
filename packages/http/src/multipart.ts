@@ -319,32 +319,22 @@ function parsePartHeaders(block: string): { name: string; filename: string | nul
 function dispositionParams(disposition: string): Map<string, string>
 {
     const params = new Map<string, string>();
-    let start = 0;
-    let quoted = false;
     let first = true;
-    for (let i = 0; i <= disposition.length; i++)
+
+    // Each semicolon-delimited run, in order. The LAST one ends at the string's end rather
+    // than at a separator, so it is flushed after the scan - reading one past the end to
+    // spell that as a loop iteration is an out-of-bounds read for a sentinel's sake.
+    const take = (segment: string): void =>
     {
-        const char = disposition[i];
-        if (char === '"')
-        {
-            quoted = !quoted;
-            continue;
-        }
-        if (char !== undefined && (char !== ';' || quoted))
-        {
-            continue;
-        }
-        const segment = disposition.slice(start, i);
-        start = i + 1;
         if (first)
         {
             first = false; // the disposition type itself ("form-data"), not a parameter
-            continue;
+            return;
         }
         const equals = segment.indexOf('=');
         if (equals === -1)
         {
-            continue;
+            return;
         }
         const key = segment.slice(0, equals).trim().toLowerCase();
         const raw = segment.slice(equals + 1).trim();
@@ -353,7 +343,26 @@ function dispositionParams(disposition: string): Map<string, string>
         {
             params.set(key, value);
         }
+    };
+
+    let start = 0;
+    let quoted = false;
+    for (let i = 0; i < disposition.length; i++)
+    {
+        const char = disposition[i];
+        if (char === '"')
+        {
+            quoted = !quoted;
+            continue;
+        }
+        if (char !== ';' || quoted)
+        {
+            continue;
+        }
+        take(disposition.slice(start, i));
+        start = i + 1;
     }
+    take(disposition.slice(start));
     return params;
 }
 
