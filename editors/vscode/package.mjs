@@ -18,13 +18,56 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(here, 'package.json'), 'utf8'));
-// On Windows, npm/npx/code are `.cmd` shims and need a shell; node does not
-// (and its path contains a space, which a shell would mis-split).
-const run = (cmd, args, cwd) => execFileSync(cmd, args, {
-    cwd,
-    stdio: 'inherit',
-    shell: process.platform === 'win32' && cmd !== process.execPath
-});
+/**
+ * npm's and npx's own JS entry points, so both are spawned as Node programs rather than
+ * through the `.cmd` shim Windows resolves them to. `npm_execpath` is what npm sets for
+ * exactly this purpose; the fallback covers a direct `node package.mjs` from a standard
+ * installation. Returns null when neither is found, leaving the shell path as the last resort.
+ */
+function nodeEntryFor(cmd)
+{
+    const file = cmd === 'npm' ? 'npm-cli.js' : 'npx-cli.js';
+    const fromEnv = process.env.npm_execpath;
+    if (fromEnv !== undefined && fromEnv.endsWith('npm-cli.js') && existsSync(fromEnv))
+    {
+        const sibling = path.join(path.dirname(fromEnv), file);
+        if (existsSync(sibling))
+        {
+            return sibling;
+        }
+    }
+    const nodeDir = path.dirname(process.execPath);
+    for (const base of [path.join(nodeDir, 'node_modules', 'npm', 'bin'), path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin')])
+    {
+        const candidate = path.join(base, file);
+        if (existsSync(candidate))
+        {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+/**
+ * Runs a child process. npm/npx go through their Node entry points so no shell is involved:
+ * a shell WITH an args array concatenates instead of escaping (Node's DEP0190), and this
+ * script's arguments include staged temp paths, which on Windows contain spaces.
+ */
+const run = (cmd, args, cwd) =>
+{
+    const entry = cmd === 'npm' || cmd === 'npx' ? nodeEntryFor(cmd) : null;
+    if (entry !== null)
+    {
+        execFileSync(process.execPath, [entry, ...args], { cwd, stdio: 'inherit' });
+        return;
+    }
+    execFileSync(cmd, args, {
+        cwd,
+        stdio: 'inherit',
+        // Only `code` (an IDE launcher with no Node entry) can still reach this on Windows.
+        shell: process.platform === 'win32' && cmd !== process.execPath
+    });
+};
 
 // 1) Bundle extension + server into self-contained CJS.
 run(process.execPath, [path.join(here, 'esbuild.mjs')], here);
