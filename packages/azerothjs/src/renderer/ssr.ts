@@ -22,6 +22,7 @@ import {
     hostEventType,
     isReservedHostAttribute,
     isEventNamespace,
+    refValueMessage,
     reservedHostAttributeMessage,
     handlerValueMessage,
     canonicalHandlerName,
@@ -119,6 +120,28 @@ const URL_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
  * @internal
  */
 const DATA_IMAGE_URL = /^data:image\/(?!svg)[a-z0-9.+-]+[;,]/i;
+
+/** An `image/svg+xml` data URL, which is inert in an image context and scripted everywhere else. */
+const DATA_SVG_URL = /^data:image\/svg\+xml[;,]/i;
+
+/**
+ * Tag+attribute pairs where the browser renders the URL as an IMAGE and nothing else. SVG
+ * loaded there runs in the spec's secure static mode: no script, no external references, no
+ * navigation - a guarantee every engine implements. Anywhere else (`<a href>`, `<iframe src>`,
+ * a `<use xlink:href>`) an SVG document keeps its scripting, so the refusal stands there.
+ *
+ * @internal
+ */
+const IMAGE_URL_CONTEXT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+    ['img', new Set(['src'])],
+    ['video', new Set(['poster'])]
+]);
+
+/** Whether `tag[attribute]` is one of the image-only contexts above. */
+function rendersAsImage(tag: string | undefined, name: string): boolean
+{
+    return tag !== undefined && IMAGE_URL_CONTEXT.get(tag.toLowerCase())?.has(name) === true;
+}
 
 /**
  * Tags refused outright: `<base>` rewrites where every relative URL on the page resolves to
@@ -285,7 +308,7 @@ export function unsafeTag(name: string): string
  *
  * @internal
  */
-export function assertSafeAttribute(key: string, value: unknown): void
+export function assertSafeAttribute(key: string, value: unknown, tag?: string): void
 {
     if (key === '' || INVALID_ATTR_NAME.test(key))
     {
@@ -302,7 +325,7 @@ export function assertSafeAttribute(key: string, value: unknown): void
         throw new Error(`azeroth: ${ JSON.stringify(key) } is in the on* event namespace and is never written as an attribute.`);
     }
 
-    assertSafeUrl(key, value);
+    assertSafeUrl(key, value, tag);
 }
 
 /**
@@ -313,7 +336,7 @@ export function assertSafeAttribute(key: string, value: unknown): void
  *
  * @internal
  */
-function assertSafeUrl(key: string, value: unknown): void
+function assertSafeUrl(key: string, value: unknown, tag?: string): void
 {
     if (value === false || value === null || value === undefined || unbrand(value, 'url') !== null)
     {
@@ -339,10 +362,11 @@ function assertSafeUrl(key: string, value: unknown): void
     if (URL_ATTRIBUTES.has(name))
     {
         const written = asWritten(candidate);
-        if (written !== null && isExecutableUrl(written))
+        if (written !== null && isExecutableUrl(written, rendersAsImage(tag, name)))
         {
             throw new Error(`azeroth: refusing ${ JSON.stringify(key) }=${ JSON.stringify(written) } - the browser would `
-                + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image). '
+                + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image - '
+                + 'an SVG data URL is accepted only on <img src> and <video poster>, where it cannot script). '
                 + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.');
         }
     }
@@ -378,7 +402,7 @@ function asWritten(value: unknown): string | null
  *
  * @internal
  */
-function isExecutableUrl(value: string): boolean
+function isExecutableUrl(value: string, imageContext = false): boolean
 {
     const candidate = value.replace(URL_CONTROL_CHARS, '');
     const scheme = URL_SCHEME.exec(candidate)?.[1]?.toLowerCase();
@@ -388,11 +412,12 @@ function isExecutableUrl(value: string): boolean
         return false;
     }
 
-    // Every data: URL is same-origin-ish content the browser parses; only a real (non-SVG)
-    // image is inert, so the allowance is stated positively.
+    // Every data: URL is same-origin-ish content the browser parses; only a real image is
+    // inert, so the allowance is stated positively. SVG joins that allowance ONLY where the
+    // browser renders it as an image, which strips its scripting.
     if (scheme === 'data')
     {
-        return !DATA_IMAGE_URL.test(candidate);
+        return !DATA_IMAGE_URL.test(candidate) && !(imageContext && DATA_SVG_URL.test(candidate));
     }
 
     return scheme === 'javascript' || scheme === 'vbscript';
@@ -539,14 +564,23 @@ function resolveValue(value: unknown): unknown
  * serializeAttrs({ onClick: handler, ref: r }); // '' (handlers/refs skipped)
  * ```
  */
-function serializeAttrs(props: Props): string
+function serializeAttrs(props: Props, tag?: string): string
 {
     let out = '';
 
     for (const [key, rawValue] of Object.entries(props))
     {
+        // Refs never serialize, but the ref-value rule still holds (mirroring the handler
+        // gate below): the same three "no ref" values pass here and in applyRef, and anything
+        // else throws the same rule text, so no mode accepts a program another refuses.
         if (key === 'ref')
         {
+            if (rawValue !== null && rawValue !== undefined && rawValue !== false
+                && typeof rawValue !== 'function'
+                && !(typeof rawValue === 'object' && 'current' in rawValue))
+            {
+                throw new TypeError(refValueMessage(typeof rawValue));
+            }
             continue;
         }
 
@@ -577,7 +611,7 @@ function serializeAttrs(props: Props): string
         // Gated on the RESOLVED value, exactly as the DOM path gates the value its effect
         // resolved: a reactive `href={() => url()}` must meet the same policy as a literal one,
         // and checking the raw thunk here would see a function and wave every reactive prop past.
-        assertSafeAttribute(key, value);
+        assertSafeAttribute(key, value, tag);
 
         if (value === false || value === null || value === undefined)
         {
@@ -648,7 +682,7 @@ function serializeChildren(children: Child[]): string
 export function serializeElement(tag: string, props: Props, children: Child[]): SSRNode
 {
     const tagName = tag.toLowerCase();
-    const attrs = serializeAttrs(props);
+    const attrs = serializeAttrs(props, tagName);
 
     if (VOID_ELEMENTS.has(tagName))
     {

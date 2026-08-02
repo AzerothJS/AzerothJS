@@ -34,6 +34,9 @@
  *   - azeroth/duplicate-prop       - a repeated component prop key, including bind:'s claimed
  *                                    value + write-back keys and children=/markup-children;
  *   - azeroth/content-property-children - innerHTML/textContent combined with children.
+ *   - azeroth/ref-value            - a host `ref` with no value or a static string: it can
+ *                                    never receive the element, and the render modes disagree
+ *                                    on whether the attribute appears in the document.
  *
  * (assign-derived and use-before-declaration are out of scope here - left to TypeScript; the harder
  * data-flow rules are future work.)
@@ -999,6 +1002,19 @@ function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
             });
         }
         seen.add(attr.name);
+
+        if (attr.name === 'ref' && attr.value.kind !== 'expression')
+        {
+            out.push({
+                code: 'azeroth/ref-value',
+                severity: 'error',
+                message: '\'ref\' needs an expression value - a callback (`ref={ el => ... }`) or a '
+                    + 'createRef box (`ref={ box }`). A bare or string-valued ref can never receive '
+                    + 'the element, and the render modes disagree on whether the attribute appears in the document.',
+                start: attr.start,
+                end: attr.end
+            });
+        }
 
         if (attr.name.startsWith('on:'))
         {

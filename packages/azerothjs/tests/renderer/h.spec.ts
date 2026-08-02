@@ -275,6 +275,32 @@ describe('h - refs', () =>
         const el = h('div', { ref });
         expect(el.hasAttribute('ref')).toBe(false);
     });
+
+    it('null, undefined, and false mean "no ref" - the handler-value convention', () =>
+    {
+        expect(h('div', { ref: null }).hasAttribute('ref')).toBe(false);
+        expect(h('div', { ref: undefined }).hasAttribute('ref')).toBe(false);
+        expect(h('div', { ref: false }).hasAttribute('ref')).toBe(false);
+    });
+
+    it('throws on a value that is neither callback, box, nor "no ref"', () =>
+    {
+        // attachEvent throws for a garbage handler value; a garbage ref used to be SILENTLY
+        // dropped - two strictness levels for one value-rule family. One rule now.
+        expect(() => h('div', { ref: 'x' })).toThrow(/callback or a createRef box/);
+        expect(() => h('div', { ref: 5 })).toThrow(/callback or a createRef box/);
+        expect(() => h('div', { ref: true })).toThrow(/callback or a createRef box/);
+    });
+
+    it('boxes an SVG element - createRef is not HTML-only', () =>
+    {
+        // The runtime always boxed whatever element carried the ref; only the TYPE bound
+        // (Ref<T extends HTMLElement>) forbade SVG. The bound is Element now, so this
+        // compiles typed instead of through any.
+        const ref = createRef<SVGCircleElement>();
+        const el = h('circle', { ref });
+        expect(ref.current).toBe(el);
+    });
 });
 
 describe('h - hostile props are rejected, not rendered', () =>

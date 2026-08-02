@@ -92,6 +92,12 @@ export function handlerValueMessage(name: string, got: string): string
     return `'${ name }' expects a function handler (or null/undefined/false for none); got ${ got }.`;
 }
 
+/** The one rule text for a `ref` whose value is not a callback, a createRef box, or "no ref". */
+export function refValueMessage(got: string): string
+{
+    return `'ref' expects a callback or a createRef box (or null/undefined/false for none); got ${ got }.`;
+}
+
 /**
  * The canonical handler-form name for a lowercase event type: `click` -> `onClick`.
  * Provably lossless - `hostEventType(canonicalHandlerName(t)) === t` for every lowercase

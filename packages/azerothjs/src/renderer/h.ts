@@ -26,6 +26,7 @@ import {
     hostEventType,
     isReservedHostAttribute,
     isEventNamespace,
+    refValueMessage,
     reservedHostAttributeMessage,
     contentChildrenMessage,
     voidChildrenMessage,
@@ -336,16 +337,25 @@ export const resolveReactive: (value: unknown) => unknown = resolveThunks;
  */
 function applyRef(el: HTMLElement, ref: unknown): void
 {
+    // The handler-value convention holds for refs too: null/undefined/false are "no ref",
+    // so a conditional ref (`ref={ open && cb }`) needs no ternary - and anything else
+    // throws the same rule text the serializer uses, so no mode accepts a program another
+    // refuses. attachEvent is the pattern being mirrored.
+    if (ref === null || ref === undefined || ref === false)
+    {
+        return;
+    }
     if (typeof ref === 'function')
     {
         (ref as (element: HTMLElement) => void)(el);
         return;
     }
-
-    if (ref !== null && typeof ref === 'object' && 'current' in ref)
+    if (typeof ref === 'object' && 'current' in ref)
     {
         (ref as { current: HTMLElement | null }).current = el;
+        return;
     }
+    throw new TypeError(refValueMessage(typeof ref));
 }
 
 /**
@@ -377,7 +387,7 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
         return;
     }
 
-    assertSafeAttribute(key, value);
+    assertSafeAttribute(key, value, el.tagName);
 
     if (value === false || value === null || value === undefined)
     {

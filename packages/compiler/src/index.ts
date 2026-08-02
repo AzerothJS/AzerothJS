@@ -71,7 +71,7 @@ export { emitDeclarations, emitDeclarationsWithMap, type DeclarationOutput } fro
 export { RUNTIME_FN, WRAPPER_FN, DECLARATION_KEYWORDS, type ConstructKind } from './keyword-spec.ts';
 // THE single Azeroth -> TypeScript projection. Every tool (type checker, language service, TS plugin,
 // ESLint processor, declaration emitter) lowers `.azeroth` to TypeScript through this one function.
-export { generateVirtualCode, AZEROTH_HANDLER_DECL, type VirtualCode } from './project.ts';
+export { generateVirtualCode, AZEROTH_HANDLER_DECL, AZEROTH_REF_DECL, isRefTypeFailure, type VirtualCode } from './project.ts';
 export { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 export {
     vlqEncode,

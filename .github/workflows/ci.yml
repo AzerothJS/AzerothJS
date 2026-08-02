@@ -41,6 +41,10 @@ jobs:
                     node-version: ${{ env.NODE_VERSION }}
                     cache: npm
             -   run: npm ci
+            # azerothjs/semantics is a real package export (dist/), and the eslint config
+            # imports it through the plugin - the owner package must exist before eslint
+            # can even load its own config. Same prerequisite verify encodes locally.
+            -   run: npm run build -w azerothjs
             -   run: npm run lint
 
     typecheck:
@@ -54,6 +58,9 @@ jobs:
                     node-version: ${{ env.NODE_VERSION }}
                     cache: npm
             -   run: npm ci
+            # azerothjs/semantics types resolve through the package export map (dist/),
+            # so the owner package builds first - same prerequisite the lint job has.
+            -   run: npm run build -w azerothjs
             # tsc over the whole monorepo (tsconfig.json project). The vitest suite
             # runs through esbuild-style transforms that do NOT type-check, so this
             # is the only gate that proves the source compiles as TypeScript.

@@ -47,17 +47,92 @@ import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts
 const RUNTIME_MODULE = 'azerothjs';
 
 /**
- * `AzerothHandler<'onClick'>` maps a camelCase event prop to the right DOM event (via lib.dom's
+ * `AzerothHandler<'onClick'>` encodes the handler contract: the VALUE rule (a function, or
+ * null/undefined/false for "no handler" - attachEvent's exact accepted set, as GRAMMAR
+ * documents it) and the EVENT type, mapping a camelCase event prop to the right DOM event (via lib.dom's
  * GlobalEventHandlersEventMap), so a host handler `<button onClick={(e) => ...}>` infers `e: MouseEvent`
  * without imposing strict attribute checking the permissive `h()` runtime doesn't. Exported so the
  * language server's ambient intrinsics carry the SAME text - two hand-maintained copies of a type
  * that encodes the handler-name rule would be two owners of it.
  */
 export const AZEROTH_HANDLER_DECL: string =
-    'type AzerothHandler<N extends string> = N extends `on${infer E}`'
+    'type AzerothHandler<N extends string> = (N extends `on${infer E}`'
     + ' ? (event: Lowercase<E> extends keyof GlobalEventHandlersEventMap'
     + ' ? GlobalEventHandlersEventMap[Lowercase<E>] : Event) => unknown'
-    + ' : (event: Event) => unknown;';
+    + ' : (event: Event) => unknown) | null | undefined | false;';
+
+/** The ref contract's type name; the decl below and the 1360 classifier both key on it. */
+const REF_TYPE_NAME = 'AzerothRef';
+
+/**
+ * `AzerothRef<'input'>` types a host `ref` value the way {@link AZEROTH_HANDLER_DECL} types a
+ * handler: the VALUE rule is the runtime's (a callback, a createRef box, or null/undefined/false
+ * for "no ref" - applyRef's exact accepted set), and the ELEMENT follows the tag AND its markup
+ * namespace. The HTML branch lowercases (HTML tag names are case-insensitive) and falls back to
+ * HTMLElement (createElement of ANY name - custom elements included - yields an HTMLElement
+ * subclass); the SVG branch is exact-case (`textPath`) and falls back to SVGElement; the MathML
+ * branch lowercases (the parser does) and falls back to MathMLElement. Which branch applies is
+ * the emitter's namespace context, mirroring the HTML parser's rule.
+ */
+export const AZEROTH_REF_DECL: string =
+    "type AzerothRefElement<T extends string, NS> = NS extends 'svg'"
+    + ' ? (T extends keyof SVGElementTagNameMap ? SVGElementTagNameMap[T] : SVGElement)'
+    + " : NS extends 'math'"
+    + ' ? (Lowercase<T> extends keyof MathMLElementTagNameMap ? MathMLElementTagNameMap[Lowercase<T>] : MathMLElement)'
+    + ' : (Lowercase<T> extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[Lowercase<T>] : HTMLElement);'
+    + `type ${ REF_TYPE_NAME }<T extends string, NS extends 'html' | 'svg' | 'math' = 'html'> =`
+    + ' ((element: AzerothRefElement<T, NS>) => unknown)'
+    + ' | { current: AzerothRefElement<T, NS> | null }'
+    + ' | null | undefined | false;';
+
+/**
+ * Whether a TS 1360 (`satisfies` failure) came from the REF contract rather than the handler
+ * one. The projection emits exactly two `satisfies` forms, so its consumers (the azeroth-tsc
+ * gate and the language server) dispatch the diagnostic's label and anchor on this - keyed
+ * here, beside the decl that owns the name, so they can never drift from it.
+ */
+export function isRefTypeFailure(flattenedMessage: string): boolean
+{
+    return flattenedMessage.includes(`${ REF_TYPE_NAME }<`);
+}
+
+/** MathML's HTML text integration points: their children parse as HTML again. */
+const MATHML_TEXT_INTEGRATION: ReadonlySet<string> = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']);
+
+/** The annotation-xml encodings that make it an HTML integration point (HTML tree construction). */
+const HTML_ANNOTATION_ENCODINGS: ReadonlySet<string> = new Set(['text/html', 'application/xhtml+xml']);
+
+/**
+ * The markup namespace of an element's CHILDREN, given the element's own namespace - the HTML
+ * parser's foreign-content rule verbatim: `<foreignObject>` and the MathML text integration
+ * points re-enter HTML, and `annotation-xml` does so only under a literal html encoding
+ * (integration-point-ness is decided AT PARSE TIME from the attribute; an expression attribute
+ * is applied after parsing, so it cannot switch the parser).
+ */
+function childNamespace(node: MarkupElement, elementNs: 'html' | 'svg' | 'math'): 'html' | 'svg' | 'math'
+{
+    if (elementNs === 'svg')
+    {
+        return node.tag === 'foreignObject' ? 'html' : 'svg';
+    }
+    if (elementNs === 'math')
+    {
+        if (MATHML_TEXT_INTEGRATION.has(node.tag))
+        {
+            return 'html';
+        }
+        if (node.tag === 'annotation-xml')
+        {
+            const encoding = node.attributes.find(a => !a.spread && a.name === 'encoding');
+            const literal = encoding !== undefined && encoding.value.kind === 'static'
+                ? encoding.value.value.trim().toLowerCase()
+                : '';
+            return HTML_ANNOTATION_ENCODINGS.has(literal) ? 'html' : 'math';
+        }
+        return 'math';
+    }
+    return 'html';
+}
 
 /** Offset fields a {@link BodyItem} can carry; shifted in bulk when re-basing a nested-scan result. */
 const OFFSET_FIELDS =
@@ -158,9 +233,17 @@ export function generateVirtualCode(source: string): VirtualCode
     const builder = new Builder(source);
     const usedRuntime = new Set<string>();
     let usedHandler = false;
+    let usedRef = false;
     let usedChildren = false;
     let usedRender = false;
     let usedRow = false;
+    /**
+     * The markup namespace at the CURRENT emission point, maintained by emitNode exactly as
+     * the HTML parser maintains it: entering <svg> switches to 'svg', <foreignObject> children
+     * return to 'html'. Only the ref contract consumes it today (element types are namespace-
+     * dependent); handlers are not (GlobalEventHandlersEventMap spans both).
+     */
+    let markupNamespace: 'html' | 'svg' | 'math' = 'html';
     /** Expression-hole nesting depth of the markup walk, and the offset of the region it is inside. */
     let holeDepth = 0;
     let lastMarkupStart = 0;
@@ -334,6 +417,17 @@ export function generateVirtualCode(source: string): VirtualCode
         // Host event handlers: check the value IS a function via `satisfies AzerothHandler<'onX'>`, which
         // also contextually types an inline handler so `(e) => ...` infers the right DOM event. Applied to
         // every handler value (inline OR reference), so a non-function handler is rejected either way.
+        // A host `ref` receives the real element, so the callback's parameter takes its type from
+        // the tag rather than falling to implicit any.
+        if (isHost && name === 'ref')
+        {
+            usedRef = true;
+            builder.emit('(');
+            emitCode(span.start, span.end, 'attribute');
+            const ns = markupNamespace === 'html' ? '' : ", '" + markupNamespace + "'";
+            builder.emit(`) satisfies ${ REF_TYPE_NAME }<'${ tag }'${ ns }>`);
+            return;
+        }
         if (isHost && hostEventType(name) !== null)
         {
             usedHandler = true;
@@ -624,13 +718,28 @@ export function generateVirtualCode(source: string): VirtualCode
         }
 
         usedRuntime.add('h');
+        // The parser's namespace rule, applied to the projection's walk: the element's own
+        // namespace governs its attributes (an <svg> tag is itself an SVG element), the child
+        // context governs its children (childNamespace). The guards mirror foreign content
+        // exactly: an <svg> start tag inside non-integration MathML content stays MathML, and
+        // a <math> inside non-integration SVG content stays SVG - only HTML context (which
+        // integration points re-enter) opens a foreign subtree.
+        const saved = markupNamespace;
+        const elementNs = node.tag === 'svg' && saved !== 'math'
+            ? 'svg'
+            : node.tag === 'math' && saved !== 'svg'
+                ? 'math'
+                : saved;
         builder.emit(`h(${ quoteString(node.tag) }, `);
+        markupNamespace = elementNs;
         emitProps(node.attributes, null, true, node.tag);
+        markupNamespace = childNamespace(node, elementNs);
         for (const child of node.children)
         {
             builder.emit(', ');
             emitChild(child);
         }
+        markupNamespace = saved;
         builder.emit(')');
     }
 
@@ -943,7 +1052,7 @@ export function generateVirtualCode(source: string): VirtualCode
         throw error;
     }
 
-    return finalize(builder, source, usedRuntime, usedHandler, usedChildren, usedRender, usedRow);
+    return finalize(builder, source, usedRuntime, usedHandler, usedRef, usedChildren, usedRender, usedRow);
 }
 
 /** Re-bases every offset field of a {@link BodyItem} returned by a sub-region scan onto the full source. */
@@ -966,12 +1075,16 @@ function shiftConstruct(c: BodyItem, delta: number): BodyItem
  * markup used - so the virtual module type-checks in any `ts.Program`. They are APPENDED (after all user
  * code) and ambient/module-scoped, so user offsets are unchanged and the segments map 1:1 with no shift.
  */
-function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedChildren: boolean, usedRender: boolean, usedRow: boolean): VirtualCode
+function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedRef: boolean, usedChildren: boolean, usedRender: boolean, usedRow: boolean): VirtualCode
 {
     const parts: string[] = [];
     if (usedHandler)
     {
         parts.push(AZEROTH_HANDLER_DECL);
+    }
+    if (usedRef)
+    {
+        parts.push(AZEROTH_REF_DECL);
     }
     if (usedChildren)
     {

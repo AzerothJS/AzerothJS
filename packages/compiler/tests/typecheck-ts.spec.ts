@@ -54,6 +54,23 @@ describe('typeCheckModuleTS - handler type checking (real ts.Program)', () =>
         expect(typeCheckModuleTS(source)).toHaveLength(0);
     });
 
+    it('accepts a conditional handler - null/undefined/false mean "no handler" (GRAMMAR)', () =>
+    {
+        // The value rule the GRAMMAR documents and attachEvent enforces: `onClick={ open && fn }`
+        // needs no ternary. The ambient type must encode the SAME rule, or the gate rejects a
+        // program the specification blesses.
+        expect(typeCheckModuleTS('component C(props: { on: boolean }) { <button onClick={ props.on && (() => 1) }>x</button> }'))
+            .toHaveLength(0);
+        expect(typeCheckModuleTS('component C(props: { fn: (() => void) | null }) { <button onClick={ props.fn }>x</button> }'))
+            .toHaveLength(0);
+    });
+
+    it('still rejects true and other non-functions - the exact set attachEvent throws on', () =>
+    {
+        expect(typeCheckModuleTS('component C(props: { on: boolean }) { <button onClick={ props.on }>x</button> }').length)
+            .toBeGreaterThan(0);
+    });
+
     it('accepts an arrow-function handler that mutates state', () =>
     {
         const source = `component Counter {

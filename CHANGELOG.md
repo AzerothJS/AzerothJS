@@ -101,6 +101,50 @@ follow [Semantic Versioning](https://semver.org).
   fallback), living in one place. A zod/valibot/arktype schema handed to `readValidated` is a
   422 with the flat field map, exactly as a native schema is.
 
+### Added (compiler, azerothjs, language-server) - host `ref` gets the full contract, not just a type
+
+- **`ref={ ... }` on a host element now types its value from the tag AND its namespace, under the
+  runtime's own value rule.** The projection emitted the value untyped (implicit `any`, hand
+  annotations nothing checked), so a first cut added an `AzerothRef<'tag'>` satisfies - and an
+  adversarial audit of that cut found the type transcribed the wrong contract. The shipped design
+  derives both halves from their owners:
+  - the VALUE rule is `applyRef`'s exact accepted set - a callback, a `createRef()` box, or
+    null/undefined/false for "no ref" (the handler convention, so `ref={ open && cb }` needs no
+    ternary). `AzerothHandler` now encodes the same nil tolerance the GRAMMAR always documented
+    and `attachEvent` always implemented - the gate used to reject `onClick={ open && fn }`, a
+    program the specification blesses;
+  - the ELEMENT type follows the markup namespace, the same rule the HTML parser applies: `<a>`
+    inside `<svg>` is an `SVGAElement` (the HTML-map-first lookup certified `e.href = "x"`, which
+    throws at mount), `<mi>` inside `<math>` is a `MathMLElement` (the HTML fallback certified
+    `e.click()`, which threw in Chromium - MathML is the parser's other foreign branch, with the
+    text integration points `mi`/`mo`/`mn`/`ms`/`mtext` and literal-encoded `annotation-xml`
+    re-entering HTML), `<foreignObject>` children return to HTML, HTML tag lookups lowercase
+    (`<dIv>` is a div), and unknown or custom-element tags give the context's base element -
+    the old `Element` fallback rejected the correct annotation on every custom element.
+- **A bare or string-valued host `ref` is a compile error** (`azeroth/ref-value`): it can never
+  receive the element, and the clone path stamped a literal `ref` attribute into the document
+  while SSR dropped it - a mode divergence now closed by rejection. Dynamic garbage
+  (`ref={ someString }`) throws one rule text from the client renderer and the serializer alike,
+  exactly as handler values do; it used to be silently swallowed.
+- **`createRef` boxes any element** (`Ref<T extends Element>`): the runtime always did; only the
+  type bound forbade `createRef<SVGCircleElement>()`.
+- **A refused ref is reported as a ref failure** (`azeroth/ref-type`) in the azeroth-tsc gate and
+  the editor - both had hard-coded "a 1360 is always a handler" and labeled ref failures "Event
+  handler must be a function". The classifier is exported beside the decl that owns the name, so
+  the three consumers cannot drift.
+  On a component tag `ref` stays an ordinary prop throughout.
+
+### Fixed (azerothjs) - the render-safety gate refused inline SVG images
+
+- **`data:image/svg+xml` is now accepted on `<img src>` and `<video poster>`.** The gate refused
+  every SVG data URL on the grounds that an SVG document carries script - true where the browser
+  loads it AS a document, but not in an image context, where the spec's secure static mode
+  disables scripting, external references, and navigation. The blanket refusal broke legitimate
+  inline vectors, EIP-6963 wallet icons among them (that standard REQUIRES the icon to be a data
+  URI). The rule is now tag-aware: those two attributes accept it, and `<a href>`, `<iframe src>`,
+  `<use xlink:href>`, `<video src>` and every other URL attribute still refuse it. Both writers
+  pass the tag, so the DOM path and the serializer decide identically.
+
 ### Added (azerothjs + compiler) - markup-native `<Dynamic>`
 
 - **`<Dynamic component={ ... }>` now works from markup, and accepts element TAG strings.**

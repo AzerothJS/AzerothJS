@@ -16,7 +16,7 @@
 // `getVirtual` translates to and from the virtual offsets TS understands.
 
 import ts from 'typescript';
-import { AZEROTH_HANDLER_DECL } from '@azerothjs/compiler';
+import { AZEROTH_HANDLER_DECL, AZEROTH_REF_DECL } from '@azerothjs/compiler';
 import { generateVirtualCode, type VirtualCode } from './virtual-code.ts';
 import { StyleIndex } from './style-index.ts';
 import { containedPath } from './containment.ts';
@@ -29,11 +29,11 @@ const VIRTUAL_SUFFIX = '.azeroth.ts';
 const INTRINSICS_BASENAME = '__azeroth-intrinsics.d.ts';
 
 /**
- * Ambient types injected into every project - the compiler's own `AzerothHandler`
- * declaration verbatim, so the projection and this program can never disagree about
- * how a handler name types its event.
+ * Ambient types injected into every project - the compiler's own `AzerothHandler` and
+ * `AzerothRef` declarations verbatim, so the projection and this program can never disagree
+ * about how a handler name types its event or a tag types its ref.
  */
-const INTRINSICS_CONTENT = `\n${ AZEROTH_HANDLER_DECL }\n`;
+const INTRINSICS_CONTENT = `\n${ AZEROTH_HANDLER_DECL }\n${ AZEROTH_REF_DECL }\n`;
 
 /** True for a synthetic virtual file name. */
 export function isVirtualFile(fileName: string): boolean

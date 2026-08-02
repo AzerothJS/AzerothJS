@@ -46,7 +46,7 @@ import type { CodeMapping } from './mapping.ts';
 import type { AzerothDiagnostic } from './diagnostics.ts';
 
 import { parseModule } from './parser.ts';
-import { generateVirtualCode } from './project.ts';
+import { generateVirtualCode, isRefTypeFailure } from './project.ts';
 import { nativeCheckOnce, createNativeIncrementalBackend } from './native-check.ts';
 
 /**
@@ -72,12 +72,13 @@ export interface TypeCheckOptions
 }
 
 /** A diagnostic class this checker surfaces, used as the public code. */
-type CheckCode = 'azeroth/handler-type' | 'azeroth/prop-type' | 'azeroth/prop-missing' | 'azeroth/syntax';
+type CheckCode = 'azeroth/handler-type' | 'azeroth/ref-type' | 'azeroth/prop-type' | 'azeroth/prop-missing' | 'azeroth/syntax';
 
 /** Human-readable prefix for each diagnostic class. */
 const MESSAGE_PREFIX: Record<CheckCode, string> =
 {
     'azeroth/handler-type': 'Event handler must be a function',
+    'azeroth/ref-type': 'Element ref must be a callback or a createRef box',
     'azeroth/prop-type': 'Component prop type mismatch',
     'azeroth/prop-missing': 'Component is missing a required prop',
     'azeroth/syntax': 'Syntax error'
@@ -97,7 +98,7 @@ const COMPILER_OPTIONS: ts.CompilerOptions =
 
 /**
  * The TypeScript diagnostic codes we ENFORCE - genuine type-safety failures only:
- *   1360 Type X does not satisfy the expected type   (a non-function host event handler)
+ *   1360 Type X does not satisfy the expected type   (a bad host handler or ref value)
  *   2322 Type X is not assignable to type Y           (wrong-typed prop / on* component prop)
  *   2345 Argument of type X not assignable to param   (missing/!assignable component props)
  *   2353 Object literal may only specify known props  (a typo'd / unknown component prop)
@@ -381,15 +382,18 @@ function mapDiagnostics(diagnostics: readonly DiagnosticLike[], mapping: CodeMap
         const detail = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ');
         const seg = mapping.segmentAt(start);
 
-        // A handler `satisfies` failure (1360) is always an event-handler check (the only `satisfies` the
-        // projection emits). TypeScript reports it at the `satisfies` keyword - generated scaffolding -
-        // so anchor it to the handler value, the attribute segment immediately before.
+        // A `satisfies` failure (1360) is one of the projection's two contracts - the event
+        // handler or the element ref - told apart by the contract's own type name
+        // (isRefTypeFailure, exported beside the decl). TypeScript reports it at the
+        // `satisfies` keyword - generated scaffolding - so anchor it to the value, the
+        // attribute segment immediately before.
         if (diagnostic.code === 1360)
         {
-            const handlerSeg = seg ?? mapping.nearestSegmentBefore(start);
-            if (handlerSeg !== null)
+            const valueSeg = seg ?? mapping.nearestSegmentBefore(start);
+            if (valueSeg !== null)
             {
-                out.push(make('azeroth/handler-type', detail, handlerSeg.sourceStart, handlerSeg.sourceEnd));
+                const kind = isRefTypeFailure(detail) ? 'azeroth/ref-type' : 'azeroth/handler-type';
+                out.push(make(kind, detail, valueSeg.sourceStart, valueSeg.sourceEnd));
             }
             continue;
         }

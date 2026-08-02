@@ -13,7 +13,7 @@
 //      markup so the editor flags exactly what the azeroth-tsc gate flags.
 
 import ts from 'typescript';
-import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup, diagnoseModule } from '@azerothjs/compiler';
+import { findMarkupStart, parseModule, parseMarkup, CompileError, lintMarkup, diagnoseModule, isRefTypeFailure } from '@azerothjs/compiler';
 import {
     DiagnosticSeverity,
     type Diagnostic,
@@ -221,11 +221,11 @@ function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
         {
             continue;
         }
-        // A handler `satisfies AzerothHandler<...>` failure (TS 1360 - the only `satisfies` the
-        // projection emits) is reported on the generated `satisfies` keyword, which is scaffolding.
-        // Anchor it to the handler value segment and present it as a handler error, so a
-        // non-function `onClick={...}` surfaces in the editor exactly as the azeroth-tsc gate
-        // reports it - otherwise the editor stays silent while CI fails.
+        // A `satisfies` failure (TS 1360) is one of the projection's two contracts - the
+        // event handler or the element ref, told apart by isRefTypeFailure (exported beside
+        // the decls). It is reported on the generated `satisfies` keyword, which is
+        // scaffolding; anchor it to the value segment and present it under the same label the
+        // azeroth-tsc gate uses - otherwise the editor stays silent while CI fails.
         if (diag.code === 1360)
         {
             const handler = ctx.virtual.mapping.segmentAt(diag.start)
@@ -235,7 +235,9 @@ function typeScriptDiagnostics(ctx: RequestContext): Diagnostic[]
                 out.push(withRelated(ctx, diag, {
                     range: ctx.lineIndex.rangeAt(handler.sourceStart, handler.sourceEnd),
                     severity: categoryToSeverity(diag.category),
-                    message: 'Event handler must be a function: ' + ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
+                    message: (isRefTypeFailure(ts.flattenDiagnosticMessageText(diag.messageText, '\n'))
+                        ? 'Element ref must be a callback or a createRef box: '
+                        : 'Event handler must be a function: ') + ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
                     code: diag.code,
                     source: 'azeroth-ts'
                 }));

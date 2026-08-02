@@ -66,6 +66,16 @@ describe('renderToString - element / attribute / text correctness', () =>
             .toBe('<button>Go</button>');
     });
 
+    it('validates a ref value before dropping it - the same rule text as the client', () =>
+    {
+        // Handlers are validated-then-skipped here so no mode accepts a program another
+        // refuses; refs used to be skipped UNvalidated, so a garbage ref crashed the client
+        // and serialized silently on the server.
+        expect(() => renderToString(() => h('div', { ref: 'x' }, 'Go')))
+            .toThrow(/callback or a createRef box/);
+        expect(renderToString(() => h('div', { ref: false }, 'Go'))).toBe('<div>Go</div>');
+    });
+
     it('serializes numbers and concatenates mixed children', () =>
     {
         expect(renderToString(() => h('p', {}, 'n=', 42, ' done'))).toBe('<p>n=42 done</p>');

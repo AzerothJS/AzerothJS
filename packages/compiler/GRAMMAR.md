@@ -261,6 +261,27 @@ non-function value is rejected with ONE rule text in every mode: at compile time
 when it is statically evident, and by the identical runtime error from client
 render, the serializer, and `h()` otherwise.
 
+**Element refs.** On a host element, `ref={ value }` hands the element back at
+creation: a callback receives it, a `createRef()` box gets it written to `.current`.
+The value rule is the handler convention: `null`, `undefined`, and `false` mean "no
+ref" (`ref={ open && cb }` needs no ternary), and any other non-callback, non-box
+value is rejected - with a located compile error when it is statically evident (a
+bare `ref` or `ref="text"` can never receive an element: `azeroth/ref-value`), and
+by the identical runtime rule text from the client renderer and the serializer
+otherwise. The element's type follows the TAG and its markup NAMESPACE, the same
+rule the HTML parser applies: `<input>` gives an `HTMLInputElement`, `<circle>`
+inside `<svg>` an `SVGCircleElement`, `<mi>` inside `<math>` a `MathMLElement`, an
+ambiguous tag follows its context (`<a>` is an HTML anchor outside `<svg>` and an
+SVG anchor inside), and the parser's re-entry points return to HTML
+(`<foreignObject>` children; the MathML text integration points `mi`/`mo`/`mn`/
+`ms`/`mtext`; `annotation-xml` under a literal html encoding). An unknown or
+custom-element tag gives the context's base element: `HTMLElement` in HTML
+content, `SVGElement`/`MathMLElement` in a foreign subtree.
+No annotation is needed; an incompatible one is a type error (subject to
+TypeScript's structural typing - a structurally identical wrong annotation cannot
+be told apart). On a component tag `ref` is an ordinary prop and carries no such
+rule.
+
 **Content ownership.** `innerHTML` and `textContent` OWN an element's content:
 combining either with children is a rejected program
 (`azeroth/content-property-children`), at compile time for markup and by the same

@@ -25,9 +25,9 @@
 /**
  * A ref object holding a reference to a DOM element.
  *
- * @typeParam T - The element type (defaults to HTMLElement).
+ * @typeParam T - The element type (defaults to HTMLElement; SVG elements are equally boxable).
  */
-export interface Ref<T extends HTMLElement = HTMLElement>
+export interface Ref<T extends Element = HTMLElement>
 {
     /** The referenced element; null until assigned by h() at creation. */
     current: T | null;
@@ -87,7 +87,7 @@ export interface Ref<T extends HTMLElement = HTMLElement>
  * h('input', { type: 'text', ref: inputRef });
  * // later: inputRef.current?.focus();
  */
-export function createRef<T extends HTMLElement = HTMLElement>(): Ref<T>
+export function createRef<T extends Element = HTMLElement>(): Ref<T>
 {
     return { current: null };
 }
