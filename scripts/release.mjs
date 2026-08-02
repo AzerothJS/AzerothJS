@@ -1003,7 +1003,9 @@ const resuming = !options.noBump && current === next && !tagExists;
 // prerelease silently downgrades every default install. That condition is read from the
 // registry rather than left to the operator to remember - `--promote-latest` overrides it
 // deliberately, `--no-promote-latest` still declines it outright.
-const stableLatest = !dryRun && !options.noPublish && distTag(next) !== 'latest'
+// Read even under --dry-run: the lookup is read-only, and a dry run that reported a
+// promotion the real run would decline would be worse than useless.
+const stableLatest = !options.noPublish && distTag(next) !== 'latest'
     ? publishedLatest()
     : null;
 const stableHoldsLatest = stableLatest !== null && !stableLatest.includes('-');

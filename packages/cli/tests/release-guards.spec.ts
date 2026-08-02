@@ -102,12 +102,45 @@ describe('release --otp', () =>
 {
     it('never prints the code: it reaches npm through the environment, not an argv', () =>
     {
-        const run = release(['9.9.9-beta.1', '--dry-run', '-y', '--skip-checks', '--allow-branch', '--otp', '987654']);
+        // `--promote-latest` so the dist-tag move is part of the plan: it is the last command
+        // an OTP reaches, and a stable release holds `latest`, which otherwise (correctly)
+        // suppresses the promotion for a prerelease.
+        const run = release(['9.9.9-beta.1', '--dry-run', '-y', '--skip-checks', '--allow-branch', '--promote-latest', '--otp', '987654']);
         expect(run.status).toBe(0);
         expect(run.output).toContain('Publishing to npm');
         expect(run.output).toContain('npm publish -w @azerothjs/schema --access public --tag beta');
         expect(run.output).toContain('npm dist-tag add');
         expect(run.output).toContain('forwarded through NPM_CONFIG_OTP (never argv)');
         expect(run.output).not.toContain('987654');
+    });
+});
+
+describe('release dist-tag safety', () =>
+{
+    it('a prerelease leaves a STABLE latest alone - no flag to remember', () =>
+    {
+        // `latest` on a published stable line must not move to a prerelease, or a plain
+        // `npm i azerothjs` downgrades everyone. The condition is read from the registry,
+        // not left to the operator, and the plan says which version it is protecting.
+        const run = release(['9.9.9-beta.1', '--dry-run', '-y', '--skip-checks', '--allow-branch']);
+        expect(run.status).toBe(0);
+        expect(run.output).toMatch(/latest:\s+left on \d+\.\d+\.\d+ \(a prerelease must not downgrade/);
+        expect(run.output).not.toContain('npm dist-tag add');
+    });
+
+    it('--promote-latest overrides it deliberately', () =>
+    {
+        const run = release(['9.9.9-beta.1', '--dry-run', '-y', '--skip-checks', '--allow-branch', '--promote-latest']);
+        expect(run.status).toBe(0);
+        expect(run.output).toContain('promote -> 9.9.9-beta.1');
+        expect(run.output).toContain('npm dist-tag add');
+    });
+
+    it('a STABLE release still lets npm publish set latest itself', () =>
+    {
+        const run = release(['9.9.9', '--dry-run', '-y', '--skip-checks', '--allow-branch']);
+        expect(run.status).toBe(0);
+        expect(run.output).toContain('set by publish');
+        expect(run.output).not.toContain('npm dist-tag add');
     });
 });

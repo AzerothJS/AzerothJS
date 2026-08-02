@@ -41,8 +41,12 @@ Major releases are milestone-driven, not calendar-driven: a major ships when its
 changes are complete and migration-ready, not on a date. Because the compiler
 owns the source format, majors may ship codemods (`azeroth upgrade`) that
 rewrite affected programs automatically - migration tooling, not compatibility
-layers, is how AzerothJS carries users across breaking changes. Every major gets
-a prerelease window on the `next` dist-tag before `latest` moves.
+layers, is how AzerothJS carries users across breaking changes.
+
+Every major gets a prerelease window before `latest` moves. A prerelease
+publishes under the dist-tag its channel names (`2.0.0-beta.1` under `beta`,
+`2.0.0-rc.1` under `rc`), so it is installable as `azerothjs@beta` while
+`azerothjs` keeps resolving to the current stable release.
 
 ## Long-term support
 
