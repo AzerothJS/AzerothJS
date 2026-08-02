@@ -5,7 +5,8 @@ lockstep: one version covers every `@azerothjs/*` package, the `azerothjs` entry
 package, and both editor integrations.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
-follow [Semantic Versioning](https://semver.org).
+follow [Semantic Versioning](https://semver.org) under the release contract in
+[VERSIONING.md](VERSIONING.md).
 
 ## [Unreleased]
 

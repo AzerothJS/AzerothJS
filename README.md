@@ -237,8 +237,12 @@ Add `--print` to any command to see the exact child invocations and exit - nothi
 
 ## 📦 Packages
 
-Everything is versioned in lockstep. `azerothjs` is the one package a frontend installs; the
-`@azerothjs/*` scope holds the backend stack, the compiler, and the tooling.
+Everything is versioned in lockstep under the release contract in
+[VERSIONING.md](VERSIONING.md) - one version across every package and both editor
+integrations, breaking changes only in milestone-driven majors, deprecations
+announced a full major cycle before removal. `azerothjs` is the one package a
+frontend installs; the `@azerothjs/*` scope holds the backend stack, the
+compiler, and the tooling.
 
 | Package | Purpose |
 | --- | --- |

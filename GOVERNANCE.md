@@ -16,10 +16,13 @@ every release, and changing a policy is itself a documented decision:
   the 1.x keyword freeze, the rubric any future keyword must pass, and
   semver-for-syntax (PATCH: never; MINOR: rubric-passing additions only; MAJOR:
   everything else, with codemods).
-- **[Semantic Versioning](https://semver.org)** over a **lockstep train**: every
-  package ships the same version in one release; a breaking change anywhere is a
-  breaking release everywhere. No compatibility shims, no legacy aliases - a
-  rename or fold lands complete, with its migration path stated in the changelog.
+- **[VERSIONING.md](VERSIONING.md)** - the release contract:
+  [Semantic Versioning](https://semver.org) over a lockstep train (every package
+  ships the same version; a breaking change anywhere is a breaking release
+  everywhere), breaking changes confined to milestone-driven majors with
+  codemods, and announced deprecations as the only compatibility surface - no
+  ad-hoc shims or legacy aliases; a rename or fold lands complete, with its
+  migration path stated in the changelog.
 - **The test suite as executable specification** - behavioral guarantees
   (hydration markers, escaping, the reactive semantics, kernel purity, grammar
   sync) are welded by tests that must be deleted knowingly to change them.
