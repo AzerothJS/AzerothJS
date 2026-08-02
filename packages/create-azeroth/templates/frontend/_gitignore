@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .azeroth/
+coverage/
+*.tsbuildinfo
+.env
 *.local
+.DS_Store
+Thumbs.db
 .idea
 .vscode

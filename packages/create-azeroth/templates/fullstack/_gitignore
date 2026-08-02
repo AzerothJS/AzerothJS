@@ -3,7 +3,11 @@ dist/
 dist-server/
 .azeroth/
 logs/
+coverage/
+*.tsbuildinfo
 .env
 *.local
+.DS_Store
+Thumbs.db
 .idea
 .vscode
