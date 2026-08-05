@@ -24,7 +24,7 @@ import {
     skipBalanced,
     skipString
 } from './scanner.ts';
-import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS, voidChildrenMessage } from 'azerothjs/semantics';
+import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS, isComponentTag, voidChildrenMessage } from 'azerothjs/semantics';
 
 /**
  * The named HTML character references decoded in text content. Numeric references (`&#38;`,
@@ -240,7 +240,7 @@ class MarkupParser
             return {
                 kind: 'element',
                 tag,
-                isComponent: MarkupParser.#isComponentTag(tag),
+                isComponent: isComponentTag(tag),
                 attributes,
                 children: [],
                 start,
@@ -297,7 +297,7 @@ class MarkupParser
         return {
             kind: 'element',
             tag,
-            isComponent: MarkupParser.#isComponentTag(tag),
+            isComponent: isComponentTag(tag),
             attributes,
             children,
             start,
@@ -334,11 +334,6 @@ class MarkupParser
             return [];
         }
         return [{ kind: 'text', value: this.#src.slice(start, this.pos), start, end: this.pos }];
-    }
-
-    static #isComponentTag(tag: string): boolean
-    {
-        return /[A-Z]/.test(tag[0] ?? '') || tag.includes('.');
     }
 
     /** Reads a tag name: identifiers plus `.` (`Foo.Bar`) and `-` (custom elements). */

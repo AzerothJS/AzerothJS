@@ -11,7 +11,7 @@
 // be fetched lazily on resolve.
 
 import ts from 'typescript';
-import { isEventNamespace, EVENT_HANDLER_NAMES } from 'azerothjs/semantics';
+import { isEventNamespace, isComponentTag, EVENT_HANDLER_NAMES } from 'azerothjs/semantics';
 import {
     CompletionItemKind,
     type CompletionItem,
@@ -159,12 +159,6 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
             return items;
         }
     }
-}
-
-/** True for a component tag (PascalCase, dotted, or a known built-in). */
-function isComponentTag(tag: string): boolean
-{
-    return /^[A-Z]/.test(tag) || tag.includes('.') || BUILTIN_COMPONENT_MAP.has(tag);
 }
 
 /**
