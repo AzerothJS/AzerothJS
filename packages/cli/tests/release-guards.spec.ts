@@ -10,7 +10,7 @@
 // include is `packages/*/tests/**`, and the release script is what publishes this CLI.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -68,12 +68,26 @@ describe('release --no-bump (the documented resume path)', () =>
         }
     });
 
-    it('reports the tree state whether or not a bump is happening', () =>
+    it('reports a dirty tree under --dry-run instead of failing on it', () =>
     {
-        const dirty = git(['status', '--porcelain']) !== '';
-        const run = release(['9.9.9-beta.1', ...RESUME]);
-        // Under --dry-run the check reports; a real run fails on the same condition.
-        expect(run.output.includes('working tree is not clean')).toBe(dirty);
+        // The dirt is the test's OWN, so the expectation is a constant rather than a
+        // second reading of the world. Sampling the ambient tree and comparing it against
+        // the script's later sample made this depend on state no test controls: any
+        // concurrent writer - a sibling spec's fixtures, an editor autosave, a background
+        // build - lands between the two reads and they disagree.
+        const probe = join(ROOT, '.release-guard-probe');
+        writeFileSync(probe, '');
+        try
+        {
+            const run = release(['9.9.9-beta.1', ...RESUME]);
+            expect(run.output).toContain('working tree is not clean');
+            // Reported here; a real (non-dry) run fails on the same condition.
+            expect(run.output).not.toContain('Publishing to npm');
+        }
+        finally
+        {
+            rmSync(probe, { force: true });
+        }
     });
 });
 
