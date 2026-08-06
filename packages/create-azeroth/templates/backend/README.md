@@ -62,8 +62,10 @@ never touches the environment, a test can drive the entire app with a plain
 Copy `.env.example` to `.env` and adjust; `src/main.ts` reads it into a typed object
 before anything else runs. Production reads the real environment instead.
 
-`NODE_ENV=production` locks CORS down to nothing (add your real origins in
-`src/main.ts` before going live) and switches request logs to NDJSON under `logs/`.
+Logs go to two places at once: pretty request lines on the terminal, and clean
+NDJSON under `logs/` for collectors - in every mode. `NODE_ENV=production` locks
+CORS down to nothing (add your real origins in `src/main.ts` before going live)
+and switches the terminal half to NDJSON too.
 Origins are always a NAMED list: `cors` refuses to reflect an arbitrary origin while
 credentials are on, because that combination lets any site read an authenticated reply.
 

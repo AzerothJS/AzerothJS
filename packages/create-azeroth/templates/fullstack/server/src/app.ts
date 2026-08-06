@@ -1,4 +1,4 @@
-import { App, json, type RequestObserver } from '@azerothjs/http';
+import { App, json, type ErrorObserver, type RequestObserver } from '@azerothjs/http';
 import { feature, manifestOf, register } from '@azerothjs/http/api';
 import { mountPages, type KitOptions } from '@azerothjs/kit';
 import { array } from '@azerothjs/schema';
@@ -53,6 +53,7 @@ export interface AppOptions
 {
     dev: boolean;
     observe?: RequestObserver;
+    onError?: ErrorObserver;
 
     /** The built client + SSR renderer (production); omit in dev - vite serves the client. */
     pages?: KitOptions;
@@ -60,7 +61,7 @@ export interface AppOptions
 
 export function buildApp(options: AppOptions): App
 {
-    const app = new App({ dev: options.dev, observe: options.observe });
+    const app = new App({ dev: options.dev, observe: options.observe, onError: options.onError });
 
     app.get('/api/healthz', () => json({ ok: true, at: new Date().toISOString() }));
 

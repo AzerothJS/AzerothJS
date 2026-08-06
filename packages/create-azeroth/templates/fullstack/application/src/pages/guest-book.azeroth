@@ -88,9 +88,9 @@ export default component GuestBook()
         <ul class="entries">
             <For each={ entries } key={ (item) => item.id } let={ item }>
                 <li>
-                        <strong>{ item.name }</strong>
-                        <span>{ item.message }</span>
-                    </li>
+                    <strong>{ item.name }</strong>
+                    <span>{ item.message }</span>
+                </li>
             </For>
         </ul>
     </section>

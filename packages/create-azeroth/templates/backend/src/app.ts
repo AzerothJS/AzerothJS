@@ -1,11 +1,12 @@
-import { App, json, readJson, UnauthorizedError, ValidationError, type ErrorSerializerContext, type RequestObserver } from '@azerothjs/http';
+import { App, json, readJson, UnauthorizedError, ValidationError, type ErrorObserver, type ErrorSerializerContext, type RequestObserver } from '@azerothjs/http';
 
-export function buildApp(options: { dev: boolean; observe?: RequestObserver }): App
+export function buildApp(options: { dev: boolean; observe?: RequestObserver; onError?: ErrorObserver }): App
 {
     const app = new App
     ({
         dev: options.dev,
         observe: options.observe,
+        onError: options.onError,
         serializeError: ({ error, expose }: ErrorSerializerContext) => ({
             ok: false,
             error:

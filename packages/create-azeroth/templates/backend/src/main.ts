@@ -1,7 +1,7 @@
 import { pipeline, requestId, securityHeaders, cors, rateLimit, logRequests, loadConfig, num, oneOf } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
-import { createLogger } from '@azerothjs/logger';
-import { fileStream } from '@azerothjs/logger/node';
+import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
+import { fileSink } from '@azerothjs/logger/node';
 
 import { buildApp } from './app.ts';
 
@@ -20,10 +20,24 @@ const config = loadConfig({
 });
 const isProduction = config.env === 'production';
 
-const log = createLogger({ stream: fileStream('logs/'), fields: { service: '{{name}}' } });
+// Pretty lines on the terminal, clean NDJSON in logs/ - both, in every mode.
+const log = createLogger({
+    sink: teeSink(terminalSink(), fileSink(new URL('../logs/', import.meta.url))),
+    fields: { service: '{{name}}' }
+});
 
 const handler = pipeline(
-    buildApp({ dev: !isProduction, observe: logRequests(log) }),
+    buildApp({
+        dev: !isProduction,
+        observe: logRequests(log),
+        onError: (error, mapped) =>
+        {
+            if (mapped.status >= 500)
+            {
+                log.error('unhandled error', { status: mapped.status, error });
+            }
+        }
+    }),
     requestId(),
     securityHeaders(),
     // Origins are named, never reflected: `origin: true` with credentials would echo whatever
@@ -38,4 +52,4 @@ const handler = pipeline(
 const served = await serve(handler, { port: config.port });
 handleShutdownSignals(served);
 
-log.info('Listening', { port: served.port, env: config.env });
+log.info('Listening', { url: `http://localhost:${ served.port }`, env: config.env });

@@ -3,8 +3,8 @@ import { pathToFileURL } from 'node:url';
 import { pipeline, requestId, securityHeaders, rateLimit, logRequests, loadConfig, num, oneOf, str } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import type { PageRenderer, PageRoute } from '@azerothjs/kit';
-import { createLogger } from '@azerothjs/logger';
-import { fileStream } from '@azerothjs/logger/node';
+import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
+import { fileSink } from '@azerothjs/logger/node';
 
 import { buildApp } from './app.ts';
 
@@ -25,7 +25,11 @@ const config = loadConfig({
 });
 const isProduction = config.env === 'production';
 
-const log = createLogger({ stream: fileStream('logs/'), fields: { service: '{{name}}-server' } });
+// Pretty lines on the terminal, clean NDJSON in server/logs/ - both, in every mode.
+const log = createLogger({
+    sink: teeSink(terminalSink(), fileSink(new URL('../logs/', import.meta.url))),
+    fields: { service: '{{name}}-server' }
+});
 
 // In dev, vite serves the client and proxies /api here; in production this server serves
 // the whole app - one origin, no CORS between halves. The SSR bundle is ONE self-contained
@@ -37,6 +41,13 @@ const ssr = isProduction
 const app = buildApp({
     dev: !isProduction,
     observe: logRequests(log),
+    onError: (error, mapped) =>
+    {
+        if (mapped.status >= 500)
+        {
+            log.error('unhandled error', { status: mapped.status, error });
+        }
+    },
     pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage }
 });
 
@@ -67,4 +78,4 @@ if (process.env.NODE_ENV === 'development')
     log.info('devtools bridge', { url: `ws://localhost:${ served.port }/__azeroth/devtools?token=${ token }` });
 }
 
-log.info('Listening', { port: served.port, env: config.env });
+log.info('Listening', { url: `http://localhost:${ served.port }`, env: config.env });

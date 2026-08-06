@@ -10,6 +10,46 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Added (compiler, logger, create-azeroth) - one dev terminal for the whole fullstack session
+
+- **Browser logs reach the dev terminal.** The vite plugin turns on vite's
+  `server.forwardConsole` transport for every dev serve (console.warn/error plus
+  uncaught errors and unhandled rejections with source-mapped stacks; it previously
+  defaulted on only under an AI agent) and restyles the relayed lines into a
+  rate-limited `client` lane - `14:32:12 x client  Uncaught TypeError: ...`. The
+  new `clientLogs` plugin option controls it: `'errors'` (default), `'all'` (adds
+  console.log/info), `false`. A user-configured `server.forwardConsole` wins.
+- **The framework owns vite's dev output.** The plugin injects a vite
+  `customLogger` for dev serves (never when the app configured its own, never for
+  builds): vite's identity block and shortcut hints are dropped, HMR updates and
+  page reloads become one dim house-styled line, warnings/errors pass through
+  byte-intact, and `clearScreen` is a no-op. The azeroth banner now carries the
+  version, the bound `Local`/`Network` URLs, and the vite version - one identity
+  block instead of two. When stdout is piped (the `azeroth dev` conductor), the
+  URL lines pass through instead so the conductor's ready frame still harvests
+  them.
+- **`terminalSink()`** (`@azerothjs/logger`): the terminal half of a tee - pretty
+  on a dev TTY or under `AZEROTH_LOG=pretty`, byte-clean NDJSON when piped or in
+  production, the console face in a browser. `fileStream`/`fileSink` accept a
+  `URL` target (`new URL('../logs/', import.meta.url)`) so the log folder anchors
+  to the package instead of the process cwd.
+- **The scaffolded servers tee.** The backend and fullstack templates log through
+  `teeSink(terminalSink(), fileSink(...))` - pretty request/domain lines on the
+  terminal AND clean NDJSON under `logs/`, in every mode - wire `onError` so 5xx
+  stacks land in the terminal, and their `Listening` line carries the URL, which
+  completes the `azeroth dev` ready frame for the api half (it previously
+  degraded, 10 s late, to web only).
+
+### Fixed (logger) - `AZEROTH_LOG` could corrupt an NDJSON log file with ANSI prose
+
+- **The env face override now targets the ambient terminal only.** `azeroth dev`
+  injects `AZEROTH_LOG=pretty` + `FORCE_COLOR=3` into child processes; in an app
+  logging to `fileStream('logs/')` the override repointed the FILE to the pretty
+  face and `FORCE_COLOR` colored it - human sentences and raw escape codes inside
+  `.ndjson` files that collectors must parse (observed live in a scaffolded
+  fullstack app). A logger built over an explicit `stream` now keeps its
+  code-chosen face regardless of environment; the level component still applies.
+
 ### Changed (azerothjs, compiler, language-server) - control-flow values are named bindings - BREAKING
 
 - **`<Show>`, `<Match>` and `<For>` declare their subtree names with `let=` / `index=`; the
