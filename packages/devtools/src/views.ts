@@ -4,7 +4,7 @@
 // chrome, layout, and persistence.
 
 import type { Agent, AgentGraph, AgentGraphNode, AgentHealth, AgentModel, AgentNode, TimelineEntry } from './agent.ts';
-import { el } from './dom.ts';
+import { el, SVG_NS } from './dom.ts';
 import { KIND_COLOR, PRIMITIVE_COLOR, EVENT_COLOR } from './theme.ts';
 
 /** What every view receives: data accessors plus the interaction state the shell owns. */
@@ -560,8 +560,6 @@ export function renderTimeline(ctx: PanelCtx, main: HTMLElement): void
 }
 
 // --- Graph ---------------------------------------------------------------------------------
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** A focused dependency map: reads on the left, the node centered, dependents on the right. */
 function svgNeighborhood(ctx: PanelCtx, graph: AgentGraph, id: number): SVGSVGElement | null

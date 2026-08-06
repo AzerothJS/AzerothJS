@@ -21,10 +21,12 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     return node;
 }
 
+/** The namespace every panel graphic is built in - icons here, the graph in views. */
+export const SVG_NS = 'http://www.w3.org/2000/svg';
+
 /** An inline SVG icon from a path `d` (24x24 viewBox, stroked). */
 export function icon(d: string): SVGSVGElement
 {
-    const SVG_NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('fill', 'none');

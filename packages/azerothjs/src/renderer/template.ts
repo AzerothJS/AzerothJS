@@ -11,6 +11,14 @@
  */
 
 import { isStringMode, isHydrating } from '../reactivity/index.ts';
+import { parseContainerFor } from './namespace.ts';
+
+/** @internal The template root's tag name, or '' when the html does not start with one. */
+function rootTagOf(html: string): string
+{
+    const match = /^\s*<([A-Za-z][^\s/>]*)/.exec(html);
+    return match?.[1] ?? '';
+}
 
 /**
  * Interns an HTML string as a lazily-parsed template and returns the
@@ -46,7 +54,19 @@ export function tmpl(html: string): () => HTMLElement
         if (template === null)
         {
             template = document.createElement('template');
-            template.innerHTML = html;
+            // The HTML fragment parser only applies foreign-content rules once it has
+            // entered <svg>/<math>, so a region whose ROOT is an SVG child (`<g>`, `<path>`
+            // - what a For row or a nested region serializes to) would parse as an unknown
+            // HTML element and never paint, while the same markup built through h() lands
+            // in the SVG namespace. Parsing inside the container and unwrapping keeps the
+            // two paths identical.
+            const container = parseContainerFor(rootTagOf(html));
+            template.innerHTML = container === null ? html : `<${ container }>${ html }</${ container }>`;
+            if (container !== null)
+            {
+                const wrapper = template.content.firstChild as Element | null;
+                template.content.replaceChildren(...(wrapper === null ? [] : Array.from(wrapper.childNodes)));
+            }
         }
 
         const root = template.content.firstChild;

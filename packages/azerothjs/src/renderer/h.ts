@@ -34,69 +34,7 @@ import {
     DOM_PROPERTIES,
     VOID_ELEMENTS
 } from '../semantics.ts';
-
-/** SVG / MathML namespace URIs. @internal */
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
-
-/**
- * SVG element tag names. A `<circle>`/`<path>`/`<svg>` built with the HTML
- * `createElement` lands in the XHTML namespace and the browser refuses to paint it
- * (no geometry, no styling), so these must be created with createElementNS(SVG_NS).
- * The four tags SVG shares with HTML (`a`, `script`, `style`, `title`) are deliberately
- * NOT listed: they are far more common as HTML, and an SVG `<a>`/`<title>` is rare.
- *
- * @internal
- */
-const SVG_TAGS = new Set
-([
-    'svg', 'g', 'defs', 'symbol', 'use', 'switch', 'foreignObject', 'marker', 'mask',
-    'pattern', 'clipPath', 'filter', 'view', 'desc', 'metadata',
-    'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan',
-    'textPath', 'image', 'animate', 'animateMotion', 'animateTransform', 'mpath', 'set',
-    'linearGradient', 'radialGradient', 'stop', 'feBlend', 'feColorMatrix',
-    'feComponentTransfer', 'feComposite', 'feConvolveMatrix', 'feDiffuseLighting',
-    'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood', 'feFuncA',
-    'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feImage', 'feMerge',
-    'feMergeNode', 'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting',
-    'feSpotLight', 'feTile', 'feTurbulence'
-]);
-
-/** MathML element tag names; created with createElementNS(MATHML_NS) for the same reason. @internal */
-const MATHML_TAGS = new Set
-([
-    'math', 'mrow', 'mi', 'mn', 'mo', 'ms', 'mtext', 'mspace', 'mfrac', 'msqrt',
-    'mroot', 'mstyle', 'merror', 'mpadded', 'mphantom', 'mfenced', 'menclose', 'msub',
-    'msup', 'msubsup', 'munder', 'mover', 'munderover', 'mmultiscripts', 'mtable',
-    'mtr', 'mtd', 'maction', 'annotation', 'semantics'
-]);
-
-/**
- * Creates a DOM element in the correct namespace for its tag. Plain `createElement`
- * always uses the XHTML namespace, which silently breaks SVG and MathML; foreign-content
- * tags are routed to createElementNS so a `<svg>`/`<math>` subtree built through h()
- * renders and styles exactly like one cloned from a template.
- *
- * Because h() builds children before their parent, the namespace is inferred from each
- * tag name rather than a parent context - the known SVG/MathML tag sets give every
- * element in such a subtree the right namespace independently.
- *
- * @internal
- * @param tag - The element tag name.
- * @returns The created element, namespaced when the tag is SVG/MathML.
- */
-function createElementByTag(tag: string): HTMLElement
-{
-    if (SVG_TAGS.has(tag))
-    {
-        return document.createElementNS(SVG_NS, tag) as unknown as HTMLElement;
-    }
-    if (MATHML_TAGS.has(tag))
-    {
-        return document.createElementNS(MATHML_NS, tag) as unknown as HTMLElement;
-    }
-    return document.createElement(tag);
-}
+import { createElementByTag } from './namespace.ts';
 
 /**
  * h

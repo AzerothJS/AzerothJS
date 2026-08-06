@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { createSignal, createRoot, h, render, Show } from 'azerothjs';
 import { tmpl, bindHole, bindSlot } from 'azerothjs/internal';
+import { parseContainerFor } from '../../src/renderer/namespace.ts';
 
 function makeContainer(): HTMLElement
 {
@@ -36,6 +37,53 @@ describe('tmpl', () =>
         const el = make();
         expect(el.querySelectorAll('span').length).toBe(2);
         expect(el.textContent).toBe('ab');
+    });
+
+    it('a template rooted at an SVG CHILD lands in the SVG namespace, like h() does', () =>
+    {
+        // The HTML fragment parser enters foreign content only at <svg>/<math>, so a region
+        // whose root is `<g>`/`<path>` - what a For row or a nested region serializes to -
+        // used to clone as an HTMLUnknownElement and never paint, while the SAME markup
+        // built through h() (the SSR/hydrate path) was namespaced correctly. One artifact,
+        // two DOMs. Both paths now answer identically.
+        const SVG = 'http://www.w3.org/2000/svg';
+        const group = tmpl('<g><path d="M0 0"></path></g>')();
+
+        expect(group.namespaceURI).toBe(SVG);
+        expect(group.firstChild instanceof SVGElement).toBe(true);
+        expect((group.firstChild as Element).namespaceURI).toBe(SVG);
+        expect(group.namespaceURI).toBe(h('g', {}).namespaceURI);
+    });
+
+    it('leaves an svg root and plain HTML alone - only a foreign CHILD root needs the wrapper', () =>
+    {
+        expect(tmpl('<svg><circle r="1"></circle></svg>')().namespaceURI).toBe('http://www.w3.org/2000/svg');
+        expect(tmpl('<div><span>a</span></div>')().namespaceURI).toBe('http://www.w3.org/1999/xhtml');
+    });
+
+    it('preserves camelCase foreign tag names through the wrapped parse', () =>
+    {
+        // `clipPath`/`feGaussianBlur` are case-sensitive in SVG; an HTML parse outside
+        // foreign content would lowercase them into a different element.
+        expect(tmpl('<clipPath><rect></rect></clipPath>')().tagName).toBe('clipPath');
+        expect(tmpl('<feGaussianBlur stdDeviation="2"></feGaussianBlur>')().tagName).toBe('feGaussianBlur');
+    });
+
+    it('decides the parse container per root tag - svg children, math children, neither', () =>
+    {
+        // The DECISION is ours and is asserted here. What the parser then does inside the
+        // container (the foreignObject -> HTML transition, MathML namespacing) belongs to
+        // the DOM implementation, and this test environment implements neither, so those
+        // are verified in a real browser rather than asserted against a stub here.
+        expect(parseContainerFor('g')).toBe('svg');
+        expect(parseContainerFor('feGaussianBlur')).toBe('svg');
+        expect(parseContainerFor('foreignObject')).toBe('svg');
+        expect(parseContainerFor('mi')).toBe('math');
+        expect(parseContainerFor('svg')).toBeNull();
+        expect(parseContainerFor('math')).toBeNull();
+        expect(parseContainerFor('div')).toBeNull();
+        // `a`, `script`, `style`, `title` are deliberately HTML: far commoner there.
+        expect(parseContainerFor('a')).toBeNull();
     });
 });
 
