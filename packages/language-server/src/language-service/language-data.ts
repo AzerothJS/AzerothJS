@@ -34,18 +34,21 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
         doc: 'Conditionally renders its children when `when` is truthy, otherwise the optional `fallback`. Swaps automatically when the reactive condition changes.',
         props: [
             { name: 'when', doc: 'Reactive condition (`() => boolean`). Children show while truthy.', required: true },
+            { name: 'let', doc: 'Declares a subtree name for the narrowed non-null `when` value: `let={ user }`. Read it bare, like state. Optional.', required: false },
             { name: 'fallback', doc: 'Rendered when `when` is false: `() => element`. Optional.', required: false },
             { name: 'children', doc: 'Content shown while `when` is truthy: `() => element`.', required: true }
         ]
     },
     {
         name: 'For',
-        detail: '<For each={...} key={...}>{(item, i) => ...}</For>',
-        doc: 'Keyed list rendering. Re-uses DOM elements across updates by `key`, so only changed rows touch the DOM. The child is a render function `(item, index) => element`.',
+        detail: '<For each={...} key={...} let={ item } index={ i }>...</For>',
+        doc: 'Keyed list rendering. Re-uses DOM elements across updates by `key`, so only changed rows touch the DOM. `let=`/`index=` declare the row names, read bare like state.',
         props: [
             { name: 'each', doc: 'Reactive getter returning the array of items: `() => T[]`.', required: true },
             { name: 'key', doc: 'Returns a stable unique key per item: `(item, index) => string | number`.', required: true },
-            { name: 'children', doc: 'Per-item render function: `(item, index: () => number) => element`.', required: true }
+            { name: 'let', doc: 'Declares the row item name: `let={ item }`. Read it bare, like state. Optional.', required: false },
+            { name: 'index', doc: 'Declares the row index name: `index={ i }`. Read it bare, a plain number. Optional.', required: false },
+            { name: 'children', doc: 'The row markup; the names declared by `let=`/`index=` are in scope.', required: true }
         ]
     },
     {
@@ -63,6 +66,7 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
         doc: 'A single case inside `<Switch>`. Rendered when its `when` condition is the first truthy one.',
         props: [
             { name: 'when', doc: 'Reactive condition for this case: `() => boolean`.', required: true },
+            { name: 'let', doc: 'Declares a subtree name for the narrowed non-null `when` value: `let={ value }`. Read it bare, like state. Optional.', required: false },
             { name: 'children', doc: 'Content rendered when this case wins: `() => element`.', required: true }
         ]
     },
@@ -325,8 +329,8 @@ export const KEYWORD_DOCS: Record<string, string> =
         'binds with `bind:value={row.field}`.\n\n' +
         '```azeroth\nform items[] = { qty: 1, price: 0 } with {\n' +
         '    validateArray: (rows) => rows.length ? null : \'Add one\'\n};\n\n' +
-        '<For each={items.rows()} key={(item) => item.key}>\n' +
-        '    {(item, i) => <input type="number" bind:value={item.qty} />}\n</For>\n```',
+        '<For each={items.rows()} key={(item) => item.key} let={ item }>\n' +
+        '    <input type="number" bind:value={item.qty} />\n</For>\n```',
     with:
         '**`with`** - reactive options clause\n\n' +
         'Attaches an options object to a `state`, `derived`, `deferred`, `effect`, `watch`, `resource`, `stream`, ' +

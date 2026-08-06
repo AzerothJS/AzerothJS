@@ -10,6 +10,64 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Changed (azerothjs, compiler, language-server) - control-flow values are named bindings - BREAKING
+
+- **`<Show>`, `<Match>` and `<For>` declare their subtree names with `let=` / `index=`; the
+  render-callback child is gone.** The callback leaked the mechanism: its parameter was an
+  ACCESSOR, nothing in the syntax said so, and the language already hides exactly that
+  everywhere else - `state`, `derived`, and `<For>`'s own row parameters all read bare because
+  the compiler emits the call. Three shapes expressed one concept (Show's optional arity-1
+  callback, For's mandatory two-parameter callback, and Match, which narrowed `when` but bound
+  nothing at all). A binding attribute is now the single shape, and a declared name reads like
+  every other reactive name.
+
+  ```azeroth
+  <Show when={ user() } let={ user }>
+      <p>Welcome, { user.name }</p>
+  </Show>
+
+  <For each={ items() } key={ (item) => item.id } let={ item } index={ i }>
+      <li>{ i + 1 }. { item.label }</li>
+  </For>
+  ```
+
+  The RUNTIME contract is unchanged - the attributes compile to the same value callback, so the
+  manual API (`Show({ when, children: (v) => ... })`) and user components' render props are
+  untouched. Migration is mechanical: move the parameters onto the tag and drop the accessor
+  calls (`user()` -> `user`).
+
+- **The bound name now has a real type.** The callback's parameter was widened to `any` by the
+  editor projection, which is why every real usage carried a hand-written annotation. The
+  binding projects through a typed adapter instead, so the name INFERS from `when`/`each` with
+  its null narrowing intact, and rename, hover and go-to-definition resolve it as the genuine
+  TypeScript binding it is.
+
+- **`<Match>` gained the narrowed value it never had.** Its children may now be a value callback
+  under the same contract as `Show`'s - pull-derived, so a read cannot observe a stale value -
+  which is what lets `<Match when={...} let={...}>` exist.
+
+- Diagnostics reject a non-identifier or reserved-word binding, `let` and `index` declaring the
+  same name, and a render-callback child on the three control-flow tags. A zero-argument thunk
+  child (`{ () => ... }`) is untouched: it binds nothing.
+
+- KNOWN LIMITATION: the `azeroth/markup-indent` lint autofix can corrupt markup whose
+  indentation it re-derives after a structural edit (observed as mismatched closing tags on
+  freshly-migrated files). Until it is fixed, review `--fix` output on `.azeroth` files it
+  touched rather than trusting it blindly.
+
+### Fixed (azerothjs) - `<Show>`'s narrowed accessor could hand its branch a null seed
+
+- **A value callback could observe the null SEED while `when` was already truthy**, crashing any
+  child that dereferenced it during construction. `driveShow` split the narrowed value (an
+  effect) from the truthiness decision (a memo) into two independent subscribers of the same
+  producers, and depended on the effect being notified first - an ordering the graph never
+  promises. It held only for a `<Show>` constructed at top level: effects created during a write
+  wave defer their first run, so a `<Show>` built inside any post-mount branch (a flipped
+  `<Show>`, a `<Transition>` enter, a late `<For>` row) had its subscriber order permanently
+  inverted. The narrowed value is now PULL-derived from a single memo, so a read recomputes from
+  the same `when` state the branch decision observed and the seed is unreachable from a mounted
+  branch, whatever the construction context. Hydration shares the path and inherits the fix.
+
 ## [2.0.0-beta.1] - 2026-08-02
 
 ### Changed (azerothjs, compiler, language-server, eslint-plugin) - one owner for markup semantics - BREAKING

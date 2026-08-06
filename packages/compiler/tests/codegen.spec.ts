@@ -263,7 +263,7 @@ describe('generateModule - reactive desugaring', () =>
 
     it('<For> over an array-form sugars the row field through .form (read + bind write)', () =>
     {
-        const code = gen('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(row) => row.key}>{(row) => <input bind:value={row.a} />}</For> }');
+        const code = gen('component C { form rows[] = { a: "" }; <For each={rows.rows()} key={(row) => row.key} let={ row }><input bind:value={row.a} /></For> }');
         expect(code).toContain('row().form.values().a');        // row field read -> the getter call, then .form.values()
         expect(code).toContain('row().form.setValue("a"');      // bind: write -> row().form.setValue()
         expect(code).toContain('(row) => row.key');               // row.key in the key fn stays literal
@@ -271,7 +271,7 @@ describe('generateModule - reactive desugaring', () =>
 
     it('<For> row reads gain the getter call: member, bare, and index - the key fn stays by-value', () =>
     {
-        const code = gen('component C { state items = [{ id: 1, name: "a" }]; <For each={items} key={(row) => row.id}>{(row, index) => <li data-n={index} onClick={() => console.log(row)}>{row.name}</li>}</For> }');
+        const code = gen('component C { state items = [{ id: 1, name: "a" }]; <For each={items} key={(row) => row.id} let={ row } index={ index }><li data-n={index} onClick={() => console.log(row)}>{row.name}</li></For> }');
         expect(code).toContain('row().name');                   // member read through the getter
         expect(code).toContain('console.log(row())');           // bare read through the getter
         expect(code).toContain('index()');                        // the index param is a getter too
@@ -280,7 +280,7 @@ describe('generateModule - reactive desugaring', () =>
 
     it('a callback outside the row does not catch the row rewrite', () =>
     {
-        const code = gen('component C { state items = [{ id: 1 }]; const total = (row) => row.id; <For each={items} key={(row) => row.id}>{(row) => <li>{row.id}</li>}</For> }');
+        const code = gen('component C { state items = [{ id: 1 }]; const total = (row) => row.id; <For each={items} key={(row) => row.id} let={ row }><li>{row.id}</li></For> }');
         expect(code).toContain('const total = (row) => row.id');  // same param name outside the For - untouched
     });
 
@@ -291,7 +291,7 @@ describe('generateModule - reactive desugaring', () =>
         // to learn the row param from. The raw emission wraps the render arrow in the
         // reserved `__azRow(...)` marker; the walk scopes its params as rows and the rewrite
         // strips the wrapper, so no marker ever reaches emitted code.
-        const code = gen('component C { state items = [{ id: 1, label: "x" }]; state on = true; <Show when={on} fallback={<ul><For each={items} key={(row) => row.id}>{(row) => <li title={`k-${ row.id }`}>{row.label}</li>}</For></ul>}><p>y</p></Show> }');
+        const code = gen('component C { state items = [{ id: 1, label: "x" }]; state on = true; <Show when={on} fallback={<ul><For each={items} key={(row) => row.id} let={ row }><li title={`k-${ row.id }`}>{row.label}</li></For></ul>}><p>y</p></Show> }');
         expect(code).toContain('row().label');                    // member read through the getter
         expect(code).toContain('`k-${ row().id }`');              // template-literal read through the getter
         expect(code).toContain('(row) => row.id');                // the key fn still receives the VALUE
@@ -343,7 +343,7 @@ describe('generateModule - reactive desugaring', () =>
         // The outer row is component-rooted (IR rowItems on the pass-through arrow); the inner
         // For lowers inside that expression in raw mode (marker path). Both rewrites land, both
         // key fns stay by-value, and the marker is stripped.
-        const code = gen('component C { state groups = [{ id: 1, members: [{ id: 2, name: "m" }] }]; <For each={groups} key={(g) => g.id}>{(g) => <Panel title={g.id}><For each={g.members} key={(m) => m.id}>{(m) => <Row name={m.name} /> }</For></Panel>}</For> }');
+        const code = gen('component C { state groups = [{ id: 1, members: [{ id: 2, name: "m" }] }]; <For each={groups} key={(g) => g.id} let={ g }><Panel title={g.id}><For each={g.members} key={(m) => m.id} let={ m }><Row name={m.name} /></For></Panel></For> }');
         expect(code).toContain('g().id');                         // outer row read through the getter
         expect(code).toContain('g().members');                    // inner each reads the OUTER row getter
         expect(code).toContain('m().name');                       // inner row read through the getter
@@ -358,7 +358,7 @@ describe('generateModule - reactive desugaring', () =>
         // template); without the captured param span rowItems is never built, `item={ row }`
         // hands the child the raw GETTER, and a row var in a template literal stringifies a
         // function body into the page.
-        const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id}>{(row) => <Show when={row.id > 0}><li title={`n-${ row.id }`}>{row.id}</li></Show>}</For> }');
+        const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id} let={ row }><Show when={row.id > 0}><li title={`n-${ row.id }`}>{row.id}</li></Show></For> }');
         expect(code).toContain('row().id > 0');                   // bare prop expression through the getter
         expect(code).toContain('`n-${ row().id }`');              // template-literal read through the getter
         expect(code).toContain('(row) => row.id');                // the key fn still receives the VALUE
@@ -703,7 +703,7 @@ describe('generateModule - constant folding and fragments', () =>
         // automatic semicolon insertion turns that into `return;`, children becomes
         // undefined, and <For> crashes with "renderItem is not a function". The emitted
         // return is parenthesized, so the newline is harmless.
-        const code = gen('component L { <For each={[1]} key={(i) => i}>{\n    (item) => <li>{item}</li>\n}</For> }');
+        const code = gen('component L { <For each={[1]} key={(i) => i} let={ item }>\n    <li>{item}</li>\n</For> }');
         const childrenGetter = /get children\(\) \{ return \(([\s\S]*?)\); \}/.exec(code);
         expect(childrenGetter).not.toBeNull();
         // The load-bearing property: no bare `return` followed by a line break.

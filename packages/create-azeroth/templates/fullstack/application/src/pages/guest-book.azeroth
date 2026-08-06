@@ -86,13 +86,11 @@ export default component GuestBook()
             </Match>
         </Switch>
         <ul class="entries">
-            <For each={ entries } key={ (item) => item.id }>
-                { (item) =>
-                    <li>
+            <For each={ entries } key={ (item) => item.id } let={ item }>
+                <li>
                         <strong>{ item.name }</strong>
                         <span>{ item.message }</span>
                     </li>
-                }
             </For>
         </ul>
     </section>

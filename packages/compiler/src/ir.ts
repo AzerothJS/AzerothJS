@@ -285,12 +285,31 @@ export type PropEntry =
 
 /** How a component receives its children. */
 export type ComponentChildren =
-    /** Markup children -> a nested plan (which may itself carry bindings). */
-    | { kind: 'markup'; plan: RenderPlan }
-    /** A render-function child (`{(item) => ...}`); body is markup or an expression. */
-    | { kind: 'render'; param: Span | null; body: RenderPlan | ReactiveExpr }
+    /**
+     * Markup children -> a nested plan (which may itself carry bindings). `lets` carries
+     * the subtree names declared by binding attributes (`let={item}` / `index={i}`);
+     * emission wraps the plan in a callback with those names as parameters and joins
+     * them to the bare-read rewrite set, so a declared name reads like state.
+     */
+    | { kind: 'markup'; plan: RenderPlan; lets?: LetBinding[] }
+    /**
+     * A render-function child. `param` carries a source arrow's parameter span (user
+     * components' render props); `lets` carries binding-attribute names instead when the
+     * row was declared with `let=`/`index=` - the two are exclusive. Body is markup
+     * (a clonable row plan) or an expression (pass-through).
+     */
+    | { kind: 'render'; param: Span | null; lets?: LetBinding[]; body: RenderPlan | ReactiveExpr }
     /** A dynamic `{expr}` children value. */
     | { kind: 'dynamic'; expr: ReactiveExpr };
+
+/** A subtree name declared by a binding attribute: the bare identifier's source span and its role. */
+export interface LetBinding
+{
+    /** `value` for `let=`; `index` for For's `index=`. */
+    role: 'value' | 'index';
+    /** Span of the identifier inside the attribute's braces (`let={ item }` -> `item`). */
+    span: Span;
+}
 
 // --- The plan ---
 

@@ -34,7 +34,7 @@ export default component Sink
     <main class="a" class:active={n > 0} style:color={'red'}>
         <input bind:value={txt} onInput={(e) => e} />
         <Show when={n > 0} fallback={<p>none</p>}><span>{ double }</span></Show>
-        <For each={[1,2]} key={(i) => i}>{(i) => <li>{i}</li>}</For>
+        <For each={[1,2]} key={(i) => i} let={ i }><li>{i}</li></For>
         <Switch value={n}><Match when={1}><b>one</b></Match></Switch>
         <Dynamic component={Card} />
         <Suspense fallback={<p>...</p>}><span>{ user.loading ? '' : 'ok' }</span></Suspense>

@@ -237,6 +237,13 @@ function collectRowForms(
             : undefined;
         if (keys !== undefined)
         {
+            // The row variable: declared by `let={ row }`, or (manual API surfaces that
+            // still carry a callback child) the arrow's first parameter.
+            const letAttr = node.attributes.find(a => a.name === 'let' && a.value.kind === 'expression');
+            if (letAttr !== undefined && letAttr.value.kind === 'expression')
+            {
+                rowForms.set(letAttr.value.code.trim(), keys);
+            }
             for (const child of node.children)
             {
                 if (child.kind === 'expression')

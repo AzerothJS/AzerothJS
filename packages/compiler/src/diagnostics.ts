@@ -46,7 +46,7 @@
 
 import * as ts from 'typescript';
 
-import type { MarkupElement, MarkupFragment } from './types.ts';
+import type { MarkupAttribute, MarkupElement, MarkupFragment } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
@@ -56,12 +56,14 @@ import { parseMarkup } from './markup-parser.ts';
 import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 import {
     hostEventType,
+    isBindingAttr,
     isReservedHostAttribute,
     reservedHostAttributeMessage,
     contentChildrenMessage,
     bindWriteBack,
     CONTENT_PROPERTIES
 } from 'azerothjs/semantics';
+import { isFunctionLiteral } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -980,6 +982,111 @@ function walkEmbeddedMarkup(source: string, start: number, end: number, visit: (
     }
 }
 
+/**
+ * JS reserved words that cannot become a binding parameter: emitting `(let) => ...`
+ * is a syntax error the author would meet as an opaque build failure.
+ */
+const RESERVED_BINDING_NAMES: ReadonlySet<string> = new Set([
+    'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
+    'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally', 'for',
+    'function', 'if', 'import', 'in', 'instanceof', 'let', 'new', 'null', 'return',
+    'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'var',
+    'void', 'while', 'with', 'yield', 'await'
+]);
+
+/**
+ * The binding-attribute rules (`let=` / `index=`, vocabulary-gated by tag): the value
+ * must be a bare, non-reserved identifier (it becomes a callback parameter), the
+ * declared names must be distinct, and the declaration must not compete with a
+ * render-callback child, which binds the same names positionally.
+ */
+function bindingAttrRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    const names: { name: string; attr: MarkupAttribute }[] = [];
+
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null || !isBindingAttr(el.tag, attr.name))
+        {
+            continue;
+        }
+        if (attr.value.kind !== 'expression')
+        {
+            out.push({
+                code: 'azeroth/binding-value',
+                severity: 'error',
+                message: `'${ attr.name }' declares a subtree name and needs one: write ${ attr.name }={ name }`,
+                start: attr.start,
+                end: attr.end
+            });
+            continue;
+        }
+        const name = attr.value.code.trim();
+        if (!/^[A-Za-z_$][\w$]*$/.test(name) || RESERVED_BINDING_NAMES.has(name))
+        {
+            out.push({
+                code: 'azeroth/binding-value',
+                severity: 'error',
+                message: `'${ attr.name }' declares a NAME, not an expression - write ${ attr.name }={ someName } `
+                    + 'and read it bare in the subtree (a reserved word cannot be a name)',
+                start: attr.start,
+                end: attr.end
+            });
+            continue;
+        }
+        names.push({ name, attr });
+    }
+
+    if (names.length === 0)
+    {
+        return;
+    }
+
+    const first = names[0];
+    const second = names[1];
+    if (first !== undefined && second !== undefined && first.name === second.name)
+    {
+        out.push({
+            code: 'azeroth/binding-duplicate-name',
+            severity: 'error',
+            message: `'let' and 'index' declare the same name '${ second.name }' - the index would shadow the value`,
+            start: second.attr.start,
+            end: second.attr.end
+        });
+    }
+
+}
+
+/**
+ * A render-callback child does not exist on Show/Match/For: binding names are declared
+ * with `let=` / `index=`, read bare, and infer their types. A zero-arg thunk child is
+ * the plain lazy form, not a binding, and stays legal. The runtime's callback contract
+ * is untouched - it is what the binding attrs compile TO, and the manual API; user
+ * components keep render-prop children.
+ */
+function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    if (el.tag !== 'Show' && el.tag !== 'Match' && el.tag !== 'For')
+    {
+        return;
+    }
+    const only = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
+    const solo = only[0];
+    if (only.length === 1 && solo !== undefined && solo.kind === 'expression'
+        && isFunctionLiteral(solo.code.trim()) && !/^\(\s*\)/.test(solo.code.trim()))
+    {
+        out.push({
+            code: 'azeroth/callback-children-removed',
+            severity: 'error',
+            message: `A render-callback child does not exist on <${ el.tag }>: declare the name with `
+                + `${ el.tag === 'For' ? '`let={ item } index={ i }`' : '`let={ name }`' } `
+                + 'and read it bare inside, like state.',
+            start: solo.start,
+            end: solo.end
+        });
+    }
+}
+
 /** The GRAMMAR 6.6 host-element rules: uniqueness, the reserved on* namespace, content ownership. */
 function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
@@ -1075,6 +1182,9 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
         }
         emitted.add(key);
     };
+
+    bindingAttrRules(el, out);
+    callbackChildRule(el, out);
 
     for (const attr of el.attributes)
     {

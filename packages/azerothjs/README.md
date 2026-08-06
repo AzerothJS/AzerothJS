@@ -161,12 +161,12 @@ Conditional, list, async, relocated, and error rendering are components, used in
 markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `ErrorBoundary`.
 
 ```azeroth
-<Show when={user()} fallback={<a href="/login">Sign in</a>}>
-    <p>Welcome, {user()!.name}</p>
+<Show when={user()} let={ user } fallback={<a href="/login">Sign in</a>}>
+    <p>Welcome, {user.name}</p>
 </Show>
 
-<For each={items()} key={(item) => item.id}>
-    {(item, index) => <li>{index() + 1}. {item.label}</li>}
+<For each={items()} key={(item) => item.id} let={ item } index={ i }>
+    <li>{i + 1}. {item.label}</li>
 </For>
 
 <Switch fallback={<NotFound />}>

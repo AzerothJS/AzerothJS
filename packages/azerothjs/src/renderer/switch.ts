@@ -11,7 +11,7 @@
 
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createEffect, createMemo, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
@@ -42,8 +42,13 @@ export interface MatchProps<W = boolean>
      */
     when: W | (() => W);
 
-    /** Thunk building this case's content (a prop, matching the compiled `<Match when={...}>...</Match>` form). */
-    children: () => MountNode | MountNode[];
+    /**
+     * Content builder. Two forms, matching {@link ShowProps.children}: a plain thunk, or a
+     * CALLBACK `(value) => node` receiving an ACCESSOR to the narrowed, non-nullish `when`
+     * value (the compiled `<Match when={...} let={x}>` form). A thunk simply ignores the
+     * accessor argument, so both forms share this one signature.
+     */
+    children: (value: () => NonNullable<W>) => MountNode | MountNode[];
 }
 
 /**
@@ -81,11 +86,40 @@ export interface MatchProps<W = boolean>
  */
 export function Match<W = boolean>(props: MatchProps<W>): MatchCase
 {
+    // A value CALLBACK (arity >= 1, the compiled `let=` form) receives an accessor to the
+    // narrowed `when` value, under the same contract as Show's: PULL-derived, so a read
+    // recomputes from the same `when` state the match decision observed - never a racing
+    // side channel (see driveShow for why a pushing effect cannot provide this). The
+    // memo is created inside the case's build, which Switch runs inside the branch's
+    // createRoot, so it is disposed with the branch on every swap.
+    const render = props.children.length >= 1
+        ? (): MountNode | MountNode[] =>
+        {
+            let lastTruthy = untrack(() => resolveReactive(props.when)) as W;
+
+            const narrowed = createMemo<W>(() =>
+            {
+                const current = resolveReactive(props.when);
+
+                if (current)
+                {
+                    lastTruthy = current as W;
+                }
+
+                return current ? current as W : lastTruthy;
+            });
+
+            return props.children(narrowed as () => NonNullable<W>);
+        }
+        // Thunk form: pass through untouched, exactly as before - a zero-arity children
+        // never reads its accessor argument, so none is manufactured for it.
+        : (props.children as unknown as () => MountNode | MountNode[]);
+
     return {
         // props.when may be a value (getter-object prop) or a function; resolveReactive
         // unwraps it. Re-read lazily so the case stays reactive when Switch calls it.
         when: () => Boolean(resolveReactive(props.when)),
-        render: props.children
+        render
     };
 }
 

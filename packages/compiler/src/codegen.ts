@@ -45,7 +45,7 @@ import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
 import type { ComponentDecl } from './ast.ts';
-import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type PropEntry } from './ir.ts';
+import { isReactive, type RenderPlan, type TemplateNode, type Binding, type TextBinding, type BindBinding, type EventBinding, type ClassBinding, type StyleBinding, type ReactiveExpr, type ComponentBinding, type ComponentChildren, type LetBinding, type PropEntry } from './ir.ts';
 
 const RUNTIME_MODULE = 'azerothjs/internal';
 
@@ -899,20 +899,22 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
 
     if (binding.children !== null)
     {
-        // A <For> render child's params are reactive GETTERS at runtime ((item, i) => ... receives
-        // () => T and () => number) but read as VALUES in markup - thread them into the child's
-        // rewrite as rowItems so `item.name` emits `item().name`. Scoped to THIS child's emission:
-        // an identically named binding elsewhere in the component is untouched.
-        const renderChild = binding.tag === 'For' && binding.children.kind === 'render' ? binding.children : null;
-        const childSources = renderChild !== null && renderChild.param !== null
-            ? { ...sources, rowItems: rowItemNames(source, renderChild.param, sources.rowItems) }
+        // Binding names (`let=`/`index=`) are reactive GETTERS at runtime but read as VALUES in
+        // markup - thread them into the child's rewrite as rowItems so `item.name` emits
+        // `item().name`. Scoped to THIS child's emission: an identically named binding elsewhere
+        // in the component is untouched. They arrive on a render child (the clone row path) or
+        // on markup children.
+        const lets = binding.children.kind !== 'dynamic' ? binding.children.lets : undefined;
+        const letChild = lets !== undefined && lets.length > 0 ? binding.children : null;
+        const childSources = letChild !== null
+            ? { ...sources, rowItems: letNames(source, lets ?? [], sources.rowItems) }
             : sources;
         const childValue = emitChildrenValue(source, binding.children, childSources, emit);
         // In RAW mode the rewrite is deferred to the enclosing pass, which walks plain text with
-        // no IR - so the row-param knowledge crosses the boundary as a `__azRow(...)` marker the
-        // walk recognizes and the rewrite strips. Recognition is by this reserved marker, never
-        // by the `For` name: For is public manual API a user may call with getter-style reads.
-        const wrapped = emit.raw && renderChild !== null ? `${ MARKER_ROW }(${ childValue })` : childValue;
+        // no IR - so the binding-name knowledge crosses the boundary as a `__azRow(...)` marker
+        // the walk recognizes and the rewrite strips. Recognition is by this reserved marker,
+        // never by a tag name: For is public manual API a user may call with getter-style reads.
+        const wrapped = emit.raw && letChild !== null ? `${ MARKER_ROW }(${ childValue })` : childValue;
         // Parens are load-bearing: a children expression starting on the line after the
         // opening brace would otherwise emit `return` + newline, which ASI silently turns
         // into `return;` - children becomes undefined and <For> crashes at runtime.
@@ -920,27 +922,6 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
     }
 
     return parts.length === 0 ? `${ binding.tag }()` : `${ binding.tag }({ ${ parts.join(', ') } })`;
-}
-
-/**
- * The identifier names a `<For>` render child's param span declares (`(item)`, `(item, i)`, or a
- * bare `item`), merged with any outer rowItems so nested Fors compose. Both params join: the item
- * AND the index are runtime getters that markup reads as values.
- */
-function rowItemNames(source: string, param: Span, outer: ReadonlySet<string> | undefined): ReadonlySet<string>
-{
-    const names = new Set(outer ?? []);
-    const text = source.slice(param.start, param.end).replace(/^\(|\)$/g, '');
-    for (const part of text.split(','))
-    {
-        // The leading identifier only - a type annotation's name (`item: Todo`) must not join.
-        const lead = /^\s*([A-Za-z_$][\w$]*)/.exec(part);
-        if (lead?.[1] !== undefined)
-        {
-            names.add(lead[1]);
-        }
-    }
-    return names;
 }
 
 /**
@@ -962,8 +943,12 @@ function emitChildrenValue(source: string, children: ComponentChildren, sources:
         if ('template' in children.body)
         {
             // The captured param span already includes its parens when present
-            // (`(i)` or a bare `i`), so emit it verbatim - don't re-wrap.
-            const param = children.param ? source.slice(children.param.start, children.param.end) : '()';
+            // (`(i)` or a bare `i`), so emit it verbatim - don't re-wrap. Binding-attr
+            // rows have no source arrow: the params are the declared names, in the
+            // runtime order (value, then index; `_` fills an index-only value slot).
+            const param = children.lets !== undefined && children.lets.length > 0
+                ? letParamList(source, children.lets)
+                : children.param ? source.slice(children.param.start, children.param.end) : '()';
             // Inside embedded markup (raw mode) a tmpl() clone can't live in an
             // expression, so emit the row via h() (the outer rewrite handles its
             // reads). Otherwise emit the mode-dispatched clone row.
@@ -976,8 +961,51 @@ function emitChildrenValue(source: string, children: ComponentChildren, sources:
         // Pass-through: the body span is the whole arrow (`(i) => ...`); emit verbatim.
         return rewriteExpr(source, children.body, sources, emit);
     }
+    // Markup children with declared binding names (`let=`/`index=`): the thunk becomes
+    // the runtime's value callback. Reads inside the plan are already rewritten through
+    // rowItems, so a declared name reads like state.
+    const lets = children.lets;
+    if (lets !== undefined && lets.length > 0)
+    {
+        return `${ letParamList(source, lets) } => ${ emitMarkupChildren(source, children.plan, sources, emit) }`;
+    }
+
     // Markup children: a thunk returning the node(s), built with h() from the IR.
     return `() => ${ emitMarkupChildren(source, children.plan, sources, emit) }`;
+}
+
+/**
+ * The parameter list a binding-attr callback declares, in the runtime order: value,
+ * then index, with `_` occupying an index-only For's value slot.
+ */
+function letParamList(source: string, lets: readonly LetBinding[]): string
+{
+    const value = lets.find(entry => entry.role === 'value');
+    const index = lets.find(entry => entry.role === 'index');
+    const params = [
+        value ? source.slice(value.span.start, value.span.end).trim() : '_',
+        ...(index ? [source.slice(index.span.start, index.span.end).trim()] : [])
+    ];
+    return `(${ params.join(', ') })`;
+}
+
+/**
+ * The identifier names declared by binding attributes, merged with any outer rowItems so
+ * nesting composes so nested Fors see both rows. Each span is a
+ * bare identifier (`let={ item }` -> `item`); diagnoseModule rejects anything else.
+ */
+function letNames(source: string, lets: readonly LetBinding[], outer: ReadonlySet<string> | undefined): ReadonlySet<string>
+{
+    const names = new Set(outer ?? []);
+    for (const entry of lets)
+    {
+        const lead = /^\s*([A-Za-z_$][\w$]*)/.exec(source.slice(entry.span.start, entry.span.end));
+        if (lead?.[1] !== undefined)
+        {
+            names.add(lead[1]);
+        }
+    }
+    return names;
 }
 
 /**

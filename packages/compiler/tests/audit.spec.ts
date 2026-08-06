@@ -14,7 +14,7 @@ describe('codegen invariants', () =>
 {
     it('codegen is deterministic (identical output for identical input)', () =>
     {
-        const src = 'component C { state a = 0; state b = 0; <div><span>{a}</span><For each={list}>{(i) => <li>{i}</li>}</For></div> }';
+        const src = 'component C { state a = 0; state b = 0; <div><span>{a}</span><For each={list} let={ i }><li>{i}</li></For></div> }';
         expect(code(src)).toBe(code(src));
     });
 
@@ -142,7 +142,7 @@ describe('IR validation before codegen', () =>
 
     it('determinism holds with IR validation in the pipeline', () =>
     {
-        const src = 'component C { state a = 0; <ul><For each={list}>{(i) => <li>{i}</li>}</For></ul> }';
+        const src = 'component C { state a = 0; <ul><For each={list} let={ i }><li>{i}</li></For></ul> }';
         expect(code(src)).toBe(code(src));
     });
 });

@@ -37,9 +37,8 @@ export default component TeamMembersForm(props: { onSave: (members: Member[]) =>
     }
 
     <form onSubmit={save}>
-        <For each={ members.rows() } key={ (member) => member.key }>
-            { (member, index) =>
-                <fieldset>
+        <For each={ members.rows() } key={ (member) => member.key } let={ member } index={ index }>
+            <fieldset>
                     <input placeholder="Name" bind:value={member.name} />
                     <Show when={member.form.touched().name}><span class="field-error">{member.form.errors().name}</span></Show>
 
@@ -48,7 +47,6 @@ export default component TeamMembersForm(props: { onSave: (members: Member[]) =>
 
                     <button type="button" onClick={() => members.remove(index())}>Remove</button>
                 </fieldset>
-            }
         </For>
 
         <Show when={ members.error() }><p class="field-error">{ members.error() }</p></Show>

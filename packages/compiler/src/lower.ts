@@ -32,7 +32,7 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { hostEventType, bindWriteBack, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
+import { hostEventType, bindWriteBack, isBindingAttr, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -46,6 +46,7 @@ import type {
     Binding,
     PropEntry,
     ComponentChildren,
+    LetBinding,
     ReactiveExpr
 } from './ir.ts';
 
@@ -377,6 +378,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
     {
         const id = ctx.next++;
         const props: PropEntry[] = [];
+        const lets: LetBinding[] = [];
 
         // Duplicate emitted keys (including a bind:'s claimed value + write-back callback keys
         // and the markup-children/children= collision) are rejected by diagnoseModule before
@@ -389,6 +391,13 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
                 continue;
             }
             const name = attr.name as string;
+            // A binding attribute declares a subtree NAME (part of the builtin's contract,
+            // vocabulary-gated by tag) - consumed here, never passed as a prop.
+            if (BUILTINS.has(node.tag) && isBindingAttr(node.tag, name) && attr.value.kind === 'expression')
+            {
+                lets.push({ role: name === 'index' ? 'index' : 'value', span: attrInnerSpan(source, attr) });
+                continue;
+            }
             if (attr.value.kind === 'static')
             {
                 props.push({ kind: 'static', name, value: attr.value.value });
@@ -420,7 +429,31 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             }
         }
 
-        const children = lowerComponentChildren(node.children);
+        let children = lowerComponentChildren(node.children);
+
+        // Binding attributes only make sense over markup children: the plan is emitted
+        // wrapped in a callback whose parameters are the declared names. Other children
+        // shapes with binding attrs are rejected by diagnoseModule before lowering.
+        if (lets.length > 0 && children !== null && children.kind === 'markup')
+        {
+            // A For row whose body is one HOST element rides the CLONE row path - the
+            // same per-row template the callback form produced - instead of a per-row
+            // h() tree. Component-rooted and multi-child bodies stay on the markup
+            // path, mirroring tryLowerRenderClone's own bailouts.
+            const real = node.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
+            const solo = real[0];
+            if (node.tag === 'For' && real.length === 1 && solo !== undefined
+                && solo.kind === 'element' && !solo.isComponent)
+            {
+                const subCtx: Ctx = { next: 0, bindings: [] };
+                const template = lowerNode(solo, subCtx);
+                children = { kind: 'render', param: null, lets, body: { template, bindings: subCtx.bindings } };
+            }
+            else
+            {
+                children = { ...children, lets };
+            }
+        }
 
         ctx.bindings.push({
             kind: 'component',

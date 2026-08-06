@@ -251,3 +251,25 @@ export function isFactoryProp(tag: string, name: string): boolean
 {
     return FACTORY_COMPONENTS.has(tag) && FACTORY_ATTRS.has(name);
 }
+
+/**
+ * Control-flow binding attributes: the narrowed reactive NAMES a builtin declares for
+ * its subtree - `<Show when={x} let={x}>`, `<For each={xs} let={item} index={i}>`,
+ * and Match like Show. The attribute value is a BARE IDENTIFIER, not an expression;
+ * a declared name reads like state (bare, compiler-unwrapped) inside the subtree.
+ *
+ * Gated per TAG for the same reason as {@link FACTORY_ATTRS}: binding is part of a
+ * builtin's contract, never an attribute NAME's - a user component with a prop that
+ * happens to be called `let` receives the plain value.
+ */
+export const BINDING_ATTRS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+    ['Show', new Set(['let'])],
+    ['Match', new Set(['let'])],
+    ['For', new Set(['let', 'index'])]
+]);
+
+/** True when `tag`'s `name` attribute declares a subtree binding. */
+export function isBindingAttr(tag: string, name: string): boolean
+{
+    return BINDING_ATTRS.get(tag)?.has(name) ?? false;
+}

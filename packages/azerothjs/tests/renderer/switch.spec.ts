@@ -25,6 +25,37 @@ describe('Match', () =>
         expect(typeof c.render).toBe('function');
         expect(c.when()).toBe(true);
     });
+
+    it('value callback: hands the branch a narrowed accessor, like Show', () =>
+    {
+        interface User { name: string }
+
+        const [user, setUser] = createSignal<User | null>(null);
+
+        const c = mount(() => h('div', {}, Switch({
+            children: () => Match<User | null>({
+                when: user,
+                children: (u) => h('p', {}, () => u().name)
+            }),
+            fallback: () => h('span', {}, 'none')
+        })));
+
+        expect(c.querySelector('span')).not.toBeNull();
+
+        setUser({ name: 'Ann' });
+        expect(c.querySelector('p')!.textContent).toBe('Ann');
+
+        // Value change without a match flip: the accessor yields the fresh value. Note
+        // Switch rebuilds the branch on any tracked `when` change (its case predicate is
+        // a plain closure, not Show's truthiness memo) - that is pre-existing Switch
+        // semantics, not part of the value-callback contract.
+        setUser({ name: 'Bob' });
+        expect(c.querySelector('p')!.textContent).toBe('Bob');
+
+        setUser(null);
+        expect(c.querySelector('p')).toBeNull();
+        expect(c.querySelector('span')).not.toBeNull();
+    });
 });
 
 describe('Switch', () =>

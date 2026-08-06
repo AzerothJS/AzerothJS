@@ -21,7 +21,8 @@ import {
     BUILTIN_COMPONENTS,
     BUILTIN_SET,
     isComponentTag,
-    isFactoryProp
+    isFactoryProp,
+    isBindingAttr
 } from 'azerothjs/semantics';
 
 describe('hostEventType - the one handler classifier', () =>
@@ -155,5 +156,18 @@ describe('tag domain and builtins', () =>
         expect(isFactoryProp('Dynamic', 'component')).toBe(true);
         expect(isFactoryProp('Routes', 'fallback')).toBe(true);
         expect(isFactoryProp('Card', 'fallback')).toBe(false);
+    });
+
+    it('binding attrs belong to the component contract, not the attribute name', () =>
+    {
+        expect(isBindingAttr('Show', 'let')).toBe(true);
+        expect(isBindingAttr('Match', 'let')).toBe(true);
+        expect(isBindingAttr('For', 'let')).toBe(true);
+        expect(isBindingAttr('For', 'index')).toBe(true);
+
+        // `index` narrows nothing outside a row, and a user component's `let` is a prop.
+        expect(isBindingAttr('Show', 'index')).toBe(false);
+        expect(isBindingAttr('Transition', 'let')).toBe(false);
+        expect(isBindingAttr('Card', 'let')).toBe(false);
     });
 });

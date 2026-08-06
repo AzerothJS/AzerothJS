@@ -36,7 +36,7 @@ import {
     quoteString,
     alreadyImports
 } from './markup-util.ts';
-import { hostEventType, isFactoryProp, bindWriteBack, BUILTIN_SET } from 'azerothjs/semantics';
+import { hostEventType, isBindingAttr, isFactoryProp, bindWriteBack, BUILTIN_SET } from 'azerothjs/semantics';
 import { parseModule } from './parser.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
@@ -237,6 +237,8 @@ export function generateVirtualCode(source: string): VirtualCode
     let usedChildren = false;
     let usedRender = false;
     let usedRow = false;
+    let usedNarrow = false;
+    let usedForNames = false;
     /**
      * The markup namespace at the CURRENT emission point, maintained by emitNode exactly as
      * the HTML parser maintains it: entering <svg> switches to 'svg', <foreignObject> children
@@ -589,6 +591,35 @@ export function generateVirtualCode(source: string): VirtualCode
         guardClose();
     };
 
+    // The children VALUE for a binding-attr subtree: a single child or an array, with no
+    // thunk prefix and no `when` guard - the adapter's parameter carries the narrowing.
+    const emitChildrenValue = (children: MarkupChild[]): void =>
+    {
+        const only = children[0];
+        if (children.length === 1 && only !== undefined)
+        {
+            if (only.kind === 'expression')
+            {
+                builder.emit('(');
+                emitCode(only.start + 1, only.end - 1);
+                builder.emit(')');
+                return;
+            }
+            emitChild(only);
+            return;
+        }
+        builder.emit('[');
+        children.forEach((child, index) =>
+        {
+            if (index > 0)
+            {
+                builder.emit(', ');
+            }
+            emitChild(child);
+        });
+        builder.emit(']');
+    };
+
     // A component whose ONLY child is a render callback (`{(item, i) => ...}`, e.g. `<For>`): returns the
     // callback's source span so it can be passed as the REAL typed `children:` prop. Returns null otherwise
     // (markup children, multiple children, a value/thunk), which stay on the type-neutral __azRender path.
@@ -693,6 +724,71 @@ export function generateVirtualCode(source: string): VirtualCode
                 return;
             }
 
+            // Binding attributes (`let=` / `index=`, vocabulary-gated by tag) declare subtree
+            // names. They are NOT props: their identifiers become the parameters of a typed
+            // adapter so the name INFERS its narrowed type from `when`/`each` - the same
+            // pass-the-source-through-a-value-argument device as `__azRow` - and rename/GTD
+            // resolve through the real TS binding the parameter is.
+            const letAttr = node.attributes.find(a => !a.spread && a.name === 'let'
+                && isBindingAttr(node.tag, 'let') && a.value.kind === 'expression');
+            const indexAttr = node.attributes.find(a => !a.spread && a.name === 'index'
+                && isBindingAttr(node.tag, 'index') && a.value.kind === 'expression');
+            const propAttrs = letAttr !== undefined || indexAttr !== undefined
+                ? node.attributes.filter(a => a !== letAttr && a !== indexAttr)
+                : node.attributes;
+
+            if (hasChildren && (letAttr !== undefined || indexAttr !== undefined))
+            {
+                const sourceAttrName = node.tag === 'For' ? 'each' : 'when';
+                const sourceAttr = node.attributes.find(a => !a.spread && a.name === sourceAttrName && a.value.kind === 'expression');
+
+                usedRender = true;
+                if (node.tag === 'For')
+                {
+                    usedForNames = true;
+                }
+                else
+                {
+                    usedNarrow = true;
+                }
+
+                builder.emit(`(__azRender(() => ${ node.tag === 'For' ? '__azForNames' : '__azNarrow' }(`);
+                if (sourceAttr !== undefined)
+                {
+                    const span = attrExprSpan(source, sourceAttr);
+                    emitCode(span.start, span.end);
+                }
+                else
+                {
+                    builder.emit('undefined');
+                }
+                builder.emit(', (');
+                if (letAttr !== undefined)
+                {
+                    const span = attrExprSpan(source, letAttr);
+                    emitCode(span.start, span.end);
+                }
+                else
+                {
+                    // Index-only For: the value slot is occupied but unnamed.
+                    builder.emit('_v');
+                }
+                if (indexAttr !== undefined)
+                {
+                    builder.emit(', ');
+                    const span = attrExprSpan(source, indexAttr);
+                    emitCode(span.start, span.end);
+                }
+                builder.emit(') => ');
+                emitChildrenValue(node.children);
+                builder.emit(')), ');
+                builder.copy(tagStart, tagStart + node.tag.length, 'tag');
+                builder.emit('(');
+                emitProps(propAttrs, childrenSpread, false, node.tag);
+                builder.emit('))');
+                return;
+            }
+
             // Otherwise project the children through a type-neutral `__azRender(...)`, then the comma operator
             // keeps the component CALL as the expression's value: `(__azRender(<children>), Comp({ ... }))`.
             // For `Show`/`Match`, the `when` condition is threaded in as a NARROWING guard so the children
@@ -708,7 +804,7 @@ export function generateVirtualCode(source: string): VirtualCode
             // Always a `Name({ ... })` call (never `Name()`), so a component with a REQUIRED props type is
             // checked: `<Card/>` -> `Card({})` surfaces the missing prop.
             builder.emit('(');
-            emitProps(node.attributes, hasChildren ? childrenSpread : null, false, node.tag);
+            emitProps(propAttrs, hasChildren ? childrenSpread : null, false, node.tag);
             builder.emit(')');
             if (hasChildren)
             {
@@ -1052,7 +1148,7 @@ export function generateVirtualCode(source: string): VirtualCode
         throw error;
     }
 
-    return finalize(builder, source, usedRuntime, usedHandler, usedRef, usedChildren, usedRender, usedRow);
+    return finalize(builder, source, usedRuntime, usedHandler, usedRef, usedChildren, usedRender, usedRow, usedNarrow, usedForNames);
 }
 
 /** Re-bases every offset field of a {@link BodyItem} returned by a sub-region scan onto the full source. */
@@ -1075,7 +1171,7 @@ function shiftConstruct(c: BodyItem, delta: number): BodyItem
  * markup used - so the virtual module type-checks in any `ts.Program`. They are APPENDED (after all user
  * code) and ambient/module-scoped, so user offsets are unchanged and the segments map 1:1 with no shift.
  */
-function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedRef: boolean, usedChildren: boolean, usedRender: boolean, usedRow: boolean): VirtualCode
+function finalize(builder: Builder, source: string, usedRuntime: Set<string>, usedHandler: boolean, usedRef: boolean, usedChildren: boolean, usedRender: boolean, usedRow: boolean, usedNarrow: boolean, usedForNames: boolean): VirtualCode
 {
     const parts: string[] = [];
     if (usedHandler)
@@ -1129,6 +1225,25 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
             'declare function __azRow<T, R>(each: readonly T[] | (() => readonly T[]) | undefined, '
             + 'fn: (item: NoInfer<T>, index: number) => R): '
             + '(item: () => T, index: () => number) => R;'
+        );
+    }
+    if (usedNarrow)
+    {
+        // Types a `let=` binding: the parameter infers NonNullable of `when` from a VALUE
+        // argument (the same device as __azRow). The thunk overload first, so the
+        // legitimate `when={ () => cond }` form unwraps to the thunk's result.
+        parts.push(
+            'declare function __azNarrow<T, R>(when: () => T, body: (value: NonNullable<T>) => R): R;\n'
+            + 'declare function __azNarrow<T, R>(when: T, body: (value: NonNullable<T>) => R): R;'
+        );
+    }
+    if (usedForNames)
+    {
+        // Types `<For let= index=>`: item infers from `each`, index is a plain number -
+        // matching the language's bare-read semantics for both.
+        parts.push(
+            'declare function __azForNames<T, R>(each: () => readonly T[], row: (item: T, index: number) => R): R;\n'
+            + 'declare function __azForNames<T, R>(each: readonly T[] | undefined, row: (item: T, index: number) => R): R;'
         );
     }
     if (parts.length === 0)
