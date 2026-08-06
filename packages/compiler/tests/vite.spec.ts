@@ -193,3 +193,66 @@ describe('azeroth() plugin - emitDeclarations mirror', () =>
         }
     });
 });
+
+describe('azeroth() plugin - vite logger ownership', () =>
+{
+    type ConfigFn = (config: Record<string, unknown>, env: { command: string }) => void;
+    const configOf = (): ConfigFn => azeroth().config as unknown as ConfigFn;
+
+    it('injects the customLogger for dev serves only', () =>
+    {
+        const serve: Record<string, unknown> = {};
+        configOf()(serve, { command: 'serve' });
+        expect(serve.customLogger).toBeDefined();
+
+        const build: Record<string, unknown> = {};
+        configOf()(build, { command: 'build' });
+        expect(build.customLogger).toBeUndefined();
+    });
+
+    it('never clobbers a user-configured logger', () =>
+    {
+        const mine = { info: vi.fn() };
+        const config: Record<string, unknown> = { customLogger: mine };
+        configOf()(config, { command: 'serve' });
+        expect(config.customLogger).toBe(mine);
+    });
+});
+
+describe('azeroth() plugin - clientLogs -> server.forwardConsole', () =>
+{
+    type ConfigFn = (config: Record<string, unknown>, env: { command: string }) => void;
+    const configOf = (options?: Parameters<typeof azeroth>[0]): ConfigFn => azeroth(options).config as unknown as ConfigFn;
+
+    it('turns vite forwarding on for dev serves with the errors default', () =>
+    {
+        const config: Record<string, unknown> = {};
+        configOf()(config, { command: 'serve' });
+        expect((config.server as { forwardConsole?: unknown }).forwardConsole).toEqual({
+            unhandledErrors: true,
+            logLevels: ['error', 'warn']
+        });
+
+        const build: Record<string, unknown> = {};
+        configOf()(build, { command: 'build' });
+        expect(build.server).toBeUndefined();
+    });
+
+    it("clientLogs: 'all' adds console.log/info; false disables even the agent default", () =>
+    {
+        const all: Record<string, unknown> = {};
+        configOf({ clientLogs: 'all' })(all, { command: 'serve' });
+        expect((all.server as { forwardConsole?: { logLevels?: string[] } }).forwardConsole?.logLevels).toEqual(['error', 'warn', 'log', 'info']);
+
+        const off: Record<string, unknown> = {};
+        configOf({ clientLogs: false })(off, { command: 'serve' });
+        expect((off.server as { forwardConsole?: unknown }).forwardConsole).toBe(false);
+    });
+
+    it('a user-configured forwardConsole wins', () =>
+    {
+        const config: Record<string, unknown> = { server: { forwardConsole: { unhandledErrors: false, logLevels: ['error'] } } };
+        configOf()(config, { command: 'serve' });
+        expect((config.server as { forwardConsole?: { logLevels?: string[] } }).forwardConsole?.logLevels).toEqual(['error']);
+    });
+});

@@ -17,9 +17,10 @@
  */
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, type Dirent } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { join, relative, dirname, basename, isAbsolute, sep } from 'node:path';
 
-import type { Plugin } from 'vite';
+import type { Logger as ViteLogger, LogLevel as ViteLogLevel, Plugin } from 'vite';
 
 import { lintSource } from './lint.ts';
 import { buildLineStarts, locationFor } from './sourcemap.ts';
@@ -28,6 +29,7 @@ import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
 import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
 import { emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
+import { azerothViteLogger } from './vite-logger.ts';
 import { printBanner } from '@azerothjs/logger';
 
 /** The Rollup plugin context when Vite binds it; unit tests invoke hooks bare, so it may be absent. */
@@ -97,6 +99,17 @@ export interface AzerothPluginOptions
      * app calls `renderToString`/`hydrate`.
      */
     ssr?: boolean;
+
+    /**
+     * Forward browser logs to the dev terminal. **Default: `'errors'`** -
+     * console.warn/console.error plus uncaught errors and unhandled rejections
+     * (with source-mapped stacks). `'all'` adds console.log/console.info; `false`
+     * turns the channel off. Rides vite's own `server.forwardConsole` transport
+     * (which otherwise defaults on only under an AI agent); the plugin's logger
+     * restyles the lines into a rate-limited `client` lane. A user-configured
+     * `server.forwardConsole` wins. Dev server only.
+     */
+    clientLogs?: 'all' | 'errors' | false;
 }
 
 /** True when `path` is `dir` itself or sits under it (no `..` escape, no other root/drive). */
@@ -253,6 +266,60 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
  * ```
  */
 /** Recursively collects files ending in `ext` under `dir`, skipping dependency/output/hidden folders. */
+let cachedVersion: string | undefined | null = null;
+
+/** @internal The compiler's own version, for the banner; a broken read just omits it. */
+function compilerVersion(): string | undefined
+{
+    if (cachedVersion === null)
+    {
+        try
+        {
+            cachedVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string }).version;
+        }
+        catch
+        {
+            cachedVersion = undefined;
+        }
+    }
+    return cachedVersion;
+}
+
+/**
+ * @internal Banner URL entries from the dev server's BOUND address: `Local` always,
+ * one `Network` per non-internal IPv4 when the bind is unspecified - the same
+ * addresses vite's suppressed identity block would have shown.
+ */
+function boundUrls(address: unknown): Array<readonly [string, string]>
+{
+    if (typeof address !== 'object' || address === null || typeof (address as { port?: unknown }).port !== 'number')
+    {
+        return [];
+    }
+    const { port, address: bound } = address as { port: number; address?: string };
+    const entries: Array<readonly [string, string]> = [];
+    if (bound === undefined || bound === '0.0.0.0' || bound === '::')
+    {
+        entries.push(['Local', `http://localhost:${ port }`]);
+        for (const nets of Object.values(networkInterfaces()))
+        {
+            for (const net of nets ?? [])
+            {
+                if (net.family === 'IPv4' && !net.internal)
+                {
+                    entries.push(['Network', `http://${ net.address }:${ port }`]);
+                }
+            }
+        }
+    }
+    else
+    {
+        const host = bound === '::1' || bound === '127.0.0.1' ? 'localhost' : bound;
+        entries.push(['Local', `http://${ host }:${ port }`]);
+    }
+    return entries;
+}
+
 function collectFiles(dir: string, ext: string, out: string[] = []): string[]
 {
     let entries: Dirent[];
@@ -300,6 +367,7 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
     const typeCheck = options.typeCheck ?? true;
     const emitDecls = options.emitDeclarations ?? false;
     const markupIndent = options.markupIndent ?? 4;
+    const clientLogs = options.clientLogs ?? 'errors';
     // ONE incremental type-checker for the whole build: it binds lib.d.ts once and reuses it across
     // every `.azeroth` file (lazily created on first use), instead of building a fresh ts.Program per
     // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
@@ -340,7 +408,10 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // `.azeroth` specifiers keep working - this is purely additive. We must
         // preserve Vite's default list (setting `resolve.extensions` otherwise
         // replaces it and breaks `.ts`/`.js` resolution) and any user entries.
-        config(config: { resolve?: { extensions?: string[] } })
+        config(
+            config: { resolve?: { extensions?: string[] }; logLevel?: ViteLogLevel; customLogger?: ViteLogger; server?: { forwardConsole?: unknown } },
+            env: { command?: string }
+        )
         {
             // Vite's default extension list, minus `.jsx`/`.tsx`: an AzerothJS
             // project is `.ts` + `.azeroth`, so those are intentionally excluded.
@@ -350,6 +421,34 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             resolve.extensions = current.includes(extension)
                 ? current
                 : [...current, extension];
+
+            if (env.command === 'serve')
+            {
+                // Dev serves speak with the framework's voice: vite's identity block is
+                // dropped (the azeroth banner carries version + URLs), HMR notices are
+                // restyled, diagnostics pass through untouched. A user-configured logger
+                // always wins, and builds keep vite's own reporter.
+                if (config.customLogger === undefined)
+                {
+                    config.customLogger = azerothViteLogger(config.logLevel);
+                }
+
+                // Browser logs reach the dev terminal through vite's own forwarding
+                // (which source-maps error stacks and defaults ON only under an AI
+                // agent); `clientLogs` turns it on for everyone and the injected
+                // logger above restyles the lines into the `client` lane. A
+                // user-configured `server.forwardConsole` wins.
+                const server = (config.server ??= {});
+                if (server.forwardConsole === undefined)
+                {
+                    server.forwardConsole = clientLogs === false
+                        ? false
+                        : {
+                            unhandledErrors: true,
+                            logLevels: clientLogs === 'all' ? ['error', 'warn', 'log', 'info'] : ['error', 'warn']
+                        };
+                }
+            }
         },
 
         // Capture the resolved project root so buildStart can locate every `.azeroth` file, and
@@ -368,11 +467,13 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // carrying what the COMPILER knows (component count, whether the type-check
         // gate guards this session). Vite's own block keeps the URLs; this one keeps
         // the identity. printBanner self-gates: TTY only, never in production.
-        configureServer(server: {
-            httpServer?: { once(event: string, fn: () => void): void } | null;
+        async configureServer(server: {
+            httpServer?: { once(event: string, fn: () => void): void; address?: () => unknown } | null;
             watcher?: { on(event: string, fn: (path: string) => void): void };
         })
         {
+            // By definition vite is running here; the import cost is paid once at startup.
+            const viteVersion = (await import('vite') as { version?: string }).version;
             // The incremental checker caches dependency snapshots for its lifetime; without
             // these notices, a plain `.ts` file edited mid-session stays pinned at its first
             // snapshot and every later `.azeroth` check resolves imports against the STALE
@@ -386,15 +487,23 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             }
 
             const startedAt = performance.now();
-            server.httpServer?.once('listening', () =>
+            const httpServer = server.httpServer;
+            httpServer?.once('listening', () =>
             {
                 const components = collectFiles(root, extension).length;
                 printBanner({
+                    version: compilerVersion(),
                     subtitle: 'dev',
                     entries:
                     [
+                        // Vite's identity block is suppressed by the injected logger, so
+                        // the banner carries the URLs it would have printed. Addresses
+                        // come from the BOUND socket - `resolvedUrls` is not assigned
+                        // until listen() resolves, after this event.
+                        ...boundUrls(httpServer.address?.()),
                         ['Components', String(components)],
-                        ['Type check', typeCheck ? 'on' : 'off']
+                        ['Type check', typeCheck ? 'on' : 'off'],
+                        ...(viteVersion === undefined ? [] : [['Vite', `v${ viteVersion }`] as const])
                     ],
                     readyMs: performance.now() - startedAt
                 });
