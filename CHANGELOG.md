@@ -10,6 +10,28 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed (devtools) - the Server tab reconnects itself, and says what went wrong
+
+- **A dropped bridge stayed dropped.** The link had no retry at all: `onclose` set a status
+  and stopped, and the panel's auto-connect was a one-shot latch that only fired from
+  `idle`. Every dev-server restart left the tab dead until someone clicked Connect.
+
+  It now retries - but only for a url that has ALREADY opened once. That single fact is the
+  whole design: an accepted upgrade proves the token, path and origin are good, so a later
+  drop is a restart and worth waiting out; a url that never opened is a wrong token or a
+  wrong address, and retrying it would hide the mistake behind a spinner. The browser cannot
+  distinguish these from the socket itself - a refused upgrade never becomes a WebSocket and
+  carries no status to script - so this history is the only signal available, and it lives
+  in the client because the client is what outlives the restart.
+
+  Retries are bounded (10 attempts, 300ms doubling to a 5s cap) so a server that stays down,
+  or a token rotated under a live panel, settles into a terminal state instead of looping.
+  Disconnect and dispose cancel pending work; a manual Connect clears the budget.
+
+- **The Server tab now names the situation** rather than repeating setup instructions: it
+  distinguishes reconnecting, a proven url that stopped answering (backend down, or
+  `DEVTOOLS_TOKEN` changed), and a url that never worked.
+
 ### Fixed (devtools, create-azeroth) - the devtools bridge survives a restart
 
 - **The bridge secret was minted per boot, so it expired on every file save.** The

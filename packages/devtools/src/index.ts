@@ -488,7 +488,10 @@ export function installDevtools(options: InstallOptions = {}): () => void
                 connect();
             }
         });
-        const dot = el('span', `az-status ${ status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : status === 'idle' ? '' : 'err' }`,
+        // `retrying` is a working state, not a failure: the link opened here before and is
+        // waiting out a restart, so it reads amber like `connecting` rather than red.
+        const working = status === 'connecting' || status === 'retrying';
+        const dot = el('span', `az-status ${ status === 'open' ? 'ok' : working ? 'warn' : status === 'idle' ? '' : 'err' }`,
             status === 'idle' ? 'off' : status);
         bar.append(url, action, dot);
         main.appendChild(bar);
@@ -501,7 +504,7 @@ export function installDevtools(options: InstallOptions = {}): () => void
             renderComponents(serverCtx, main);
             return;
         }
-        renderServer(ctx, main);
+        renderServer(ctx, main, status, serverLink.everOpened());
     }
 
     /** Settings: dock, pop-out, session export/import, and the shortcut list. */

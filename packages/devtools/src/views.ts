@@ -819,10 +819,33 @@ export function renderPerf(ctx: PanelCtx, main: HTMLElement): void
 // --- Server --------------------------------------------------------------------------------
 
 /** The Server view: teaches how to enable the bridge; the live client replaces this content. */
-export function renderServer(ctx: PanelCtx, main: HTMLElement): void
+export function renderServer(ctx: PanelCtx, main: HTMLElement, status?: string, everOpened?: boolean): void
 {
     main.onscroll = null;
     ctx.navOrder = [];
+
+    // The browser never learns WHY an upgrade failed - a refused handshake carries no status
+    // to script - so the panel says what it does know: whether this url has ever worked. That
+    // is the difference between "your backend restarted" and "this url is wrong", and it is
+    // the only thing that makes the message actionable rather than generic.
+    if (status === 'retrying')
+    {
+        emptyState(main, 'Reconnecting',
+            'The bridge went away - usually your dev server restarting. Reconnecting automatically; nothing to do.');
+        return;
+    }
+    if (status === 'error' && everOpened === true)
+    {
+        emptyState(main, 'Bridge unreachable',
+            'This url worked earlier and has stopped answering. The backend is down, or its DEVTOOLS_TOKEN changed - check the url the server logged at startup, then press Connect.');
+        return;
+    }
+    if (status === 'error' || status === 'closed')
+    {
+        emptyState(main, 'Cannot connect',
+            'The bridge refused or never answered. Check that the backend runs with NODE_ENV=development, that attachDevtools is installed, and that the url carries the same ?token= the server logged.');
+        return;
+    }
     emptyState(main, 'Server inspection',
         'Call attachDevtools(served.server, { token }) from @azerothjs/devtools/server on your backend (dev only), then connect above with that token in the URL query - this tab streams the server\'s reactive graph, where every request is a reactive root.');
 }
