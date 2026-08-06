@@ -10,6 +10,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Changed (create-azeroth, devtools, http) - the real logo replaces the triangle stand-ins
+
+- **Templates**: every scaffolded app's brand element renders the logo (a 22px
+  rounded tile from the template's own `public/favicon-32.png`) next to the app
+  name, replacing the `&#9650;` glyph - all six template/overlay variants.
+- **Devtools**: the launcher pill and the panel header carry the mark as an inline
+  data URI (the package ships no asset files and the panel makes no network
+  requests). The header keeps the "AzerothJS" wordmark. The long-broken
+  `assets/devtools-panel.png` README screenshot now exists - captured from a live
+  session.
+- **http API explorer**: the sidebar mark is the logo and both served pages (house
+  explorer + Scalar shell) gain a data-URI favicon - still zero external requests.
+- **JetBrains**: dark-marketplace `pluginIcon_dark.svg` added; the README header
+  uses the standard 13 KB tile instead of the 858 KB master.
+- Terminal banners deliberately keep the `▲` glyph - terminals render text.
+
 ### Added (compiler, logger, create-azeroth) - one dev terminal for the whole fullstack session
 
 - **Browser logs reach the dev terminal.** The vite plugin turns on vite's
