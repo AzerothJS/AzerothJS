@@ -127,6 +127,8 @@ function resolveComponentSymbol(checker: ts.TypeChecker, moduleSymbol: ts.Symbol
     for (const symbol of exports)
     {
         const resolved = unalias(checker, symbol);
+        // Deliberately NOT isComponentTag: the input is a TypeScript export name, not a
+        // markup tag, so the dotted-tag half of that rule has no meaning here.
         if (/^[A-Z]/.test(symbol.getName()) && isCallable(checker, resolved))
         {
             return { symbol: resolved, exportName: symbol.getName() };

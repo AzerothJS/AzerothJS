@@ -140,6 +140,19 @@ describe('tag domain and builtins', () =>
         expect(isComponentTag('my-widget')).toBe(false);
     });
 
+    it('classifies the edges an inline copy gets wrong', () =>
+    {
+        // Every re-implementation of this rule found in the tree tested `/^[A-Z]/` or
+        // its `/^[a-z]/` inverse, which answer differently from the owner on a tag that
+        // starts with neither. Pinned here so the next copy fails a test instead of
+        // splitting hover, navigation and the parser three ways.
+        expect(isComponentTag('')).toBe(false);
+        expect(isComponentTag('_private')).toBe(false);
+        expect(isComponentTag('9lives')).toBe(false);
+        // A dotted tag is a component whatever its first character.
+        expect(isComponentTag('ns.widget')).toBe(true);
+    });
+
     it('the builtin list and its Set form agree, with no duplicates', () =>
     {
         expect(BUILTIN_SET.size).toBe(BUILTIN_COMPONENTS.length);

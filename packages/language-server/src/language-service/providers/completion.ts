@@ -585,6 +585,9 @@ function completionData(ctx: RequestContext, generatedOffset: number, entry: ts.
  */
 function isLikelyComponent(entry: ts.CompletionEntry): boolean
 {
+    // Deliberately NOT isComponentTag: that rule classifies a markup TAG, where a dot
+    // means a namespaced component. Here the input is a TypeScript export name, which
+    // can never contain a dot, and capitalization is the only signal available.
     if (!/^[A-Z]/.test(entry.name) || BUILTIN_COMPONENT_MAP.has(entry.name))
     {
         return false;

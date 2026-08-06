@@ -57,6 +57,7 @@ import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 import {
     hostEventType,
     isBindingAttr,
+    BINDING_ATTRS,
     isReservedHostAttribute,
     reservedHostAttributeMessage,
     contentChildrenMessage,
@@ -1058,15 +1059,19 @@ function bindingAttrRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 }
 
 /**
- * A render-callback child does not exist on Show/Match/For: binding names are declared
- * with `let=` / `index=`, read bare, and infer their types. A zero-arg thunk child is
- * the plain lazy form, not a binding, and stays legal. The runtime's callback contract
- * is untouched - it is what the binding attrs compile TO, and the manual API; user
- * components keep render-prop children.
+ * A render-callback child does not exist on a tag that declares binding attributes:
+ * names are declared with `let=` / `index=`, read bare, and infer their types. A
+ * zero-arg thunk child is the plain lazy form, not a binding, and stays legal. The
+ * runtime's callback contract is untouched - it is what the binding attrs compile TO,
+ * and the manual API; user components keep render-prop children.
+ *
+ * The tag set and the names in the message both come from BINDING_ATTRS, so a tag
+ * added to the vocabulary is covered here the same day rather than silently skipped.
  */
 function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
-    if (el.tag !== 'Show' && el.tag !== 'Match' && el.tag !== 'For')
+    const declared = BINDING_ATTRS.get(el.tag);
+    if (declared === undefined)
     {
         return;
     }
@@ -1075,12 +1080,12 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     if (only.length === 1 && solo !== undefined && solo.kind === 'expression'
         && isFunctionLiteral(solo.code.trim()) && !/^\(\s*\)/.test(solo.code.trim()))
     {
+        const form = [...declared].map(name => `${ name }={ ${ name === 'index' ? 'i' : 'name' } }`).join(' ');
         out.push({
             code: 'azeroth/callback-children-removed',
             severity: 'error',
             message: `A render-callback child does not exist on <${ el.tag }>: declare the name with `
-                + `${ el.tag === 'For' ? '`let={ item } index={ i }`' : '`let={ name }`' } `
-                + 'and read it bare inside, like state.',
+                + `\`${ form }\` and read it bare inside, like state.`,
             start: solo.start,
             end: solo.end
         });

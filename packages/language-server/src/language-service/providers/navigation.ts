@@ -7,6 +7,7 @@
 
 import ts from 'typescript';
 import type { DocumentHighlight, Location, PrepareRenameResult, WorkspaceEdit } from '../protocol.ts';
+import { isComponentTag } from 'azerothjs/semantics';
 import {
     resolveLocation,
     spanToRange,
@@ -127,7 +128,7 @@ function isHostTagPair(ctx: RequestContext, tagPair: { start: { line: number; ch
         return false;
     }
     const name = ctx.source.slice(ctx.lineIndex.offsetAt(open.start), ctx.lineIndex.offsetAt(open.end));
-    return /^[a-z]/.test(name) && !name.includes('.');
+    return !isComponentTag(name);
 }
 
 /** Occurrences of the symbol at `offset` within this document, for highlighting. */

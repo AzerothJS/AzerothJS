@@ -10,7 +10,7 @@
 // stray TS result even when the surrounding markup is mid-edit.
 
 import ts from 'typescript';
-import { hostEventType } from 'azerothjs/semantics';
+import { hostEventType, isComponentTag } from 'azerothjs/semantics';
 import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
 import type { Hover, Range } from '../protocol.ts';
 import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
@@ -66,7 +66,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
             {
                 return builtinHover(ctx, offset, builtin);
             }
-            if (isComponentName(name))
+            if (isComponentTag(name))
             {
                 // A user component: render its JSDoc + props table from the real
                 // TS types, falling back to plain quick-info when unresolvable.
@@ -81,7 +81,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
 
             // Component prop: read its type/JSDoc from the component's props
             // type, falling back to the built-in table.
-            if (isComponentName(context.tag) || BUILTIN_COMPONENT_MAP.has(context.tag))
+            if (isComponentTag(context.tag) || BUILTIN_COMPONENT_MAP.has(context.tag))
             {
                 const typed = typedPropHover(ctx, offset, attribute);
                 if (typed)
@@ -121,7 +121,7 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
         }
 
         case 'attributeValue':
-            if (isComponentName(context.tag))
+            if (isComponentTag(context.tag))
             {
                 return null;
             }
@@ -398,12 +398,6 @@ function tsHover(ctx: RequestContext, offset: number): Hover | null
     const doc = ts.displayPartsToString(info.documentation);
     const contents = '```typescript\n' + signature + '\n```' + (doc ? `\n\n${ doc }` : '');
     return { contents, range: spanToRange(ctx, info.textSpan) ?? undefined };
-}
-
-/** True for a component tag name (PascalCase or dotted). */
-function isComponentName(name: string): boolean
-{
-    return /^[A-Z]/.test(name) || name.includes('.');
 }
 
 /**
