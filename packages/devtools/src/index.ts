@@ -433,12 +433,16 @@ export function installDevtools(options: InstallOptions = {}): () => void
     {
         const status = serverLink.status();
 
-        // First open: try the configured backend (or the last manually-used URL) once.
+        // First open: try the configured backend (or the last manually-used URL) once, but
+        // only if it carries a token. `attachDevtools` REFUSES an upgrade without one, so a
+        // bare origin - what `installDevtools({ server: apiUrl })` produces - is a request
+        // we already know will 403. Attempting it anyway spends a round trip to print an
+        // error in the console of every boot; the tab explains what to paste instead.
         if (!serverAutoTried && status === 'idle')
         {
             serverAutoTried = true;
             const initial = savedServerUrl() || (options.server !== undefined ? bridgeUrl(options.server) : '');
-            if (initial !== '')
+            if (initial !== '' && /[?&]token=[^&]/.test(initial))
             {
                 serverLink.connect(initial);
             }

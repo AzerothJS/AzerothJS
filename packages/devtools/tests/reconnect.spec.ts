@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { attachDevtools } from '../src/server.ts';
-import { createServerLink } from '../src/server-client.ts';
+import { bridgeUrl, createServerLink } from '../src/server-client.ts';
 
 process.env.NODE_ENV = 'development';
 
@@ -146,5 +146,19 @@ describe('retry cannot mask a permanent failure', () =>
         await new Promise((resolve) => setTimeout(resolve, 1200));
         expect(link.status()).toBe('idle');
         link.dispose();
+    });
+});
+
+describe('a url that cannot work is not attempted', () =>
+{
+    it('recognises a tokenless bridge url', () =>
+    {
+        // attachDevtools refuses an upgrade without a token, so `installDevtools({ server })`
+        // given a bare API origin produces a url that is known-bad before any socket opens.
+        const hasToken = (url: string): boolean => /[?&]token=[^&]/.test(url);
+
+        expect(hasToken(bridgeUrl('http://localhost:3000'))).toBe(false);
+        expect(hasToken(bridgeUrl('ws://localhost:3000/__azeroth/devtools?token='))).toBe(false);
+        expect(hasToken(bridgeUrl('ws://localhost:3000/__azeroth/devtools?token=abc123'))).toBe(true);
     });
 });
