@@ -1,8 +1,9 @@
 // @vitest-environment node
 //
 // Guard typing under the colocated design: the feature chain's additions flow into every
-// handler's context (no cast), `routes.with(...)` REPLACES the chain for one route - nearest
-// declaration wins, which is what deleted `only()` - and `routes.with()` is the visible opt-out.
+// handler's context (no cast), `routes.with(...)` ADDS to that chain (accumulating across
+// calls, like the kernel's app.with), and `routes.only(...)` is the one form that can drop
+// inherited protection - so every place a feature's guard stops is greppable by one name.
 // These are TYPE assertions first, runtime behavior second.
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import { App } from '../../src/app.ts';
@@ -46,7 +47,51 @@ describe('feature guards - additions flow into the handler context, no cast', ()
         expect(denied.status).toBe(401);
     });
 
-    it('routes.with REPLACES the feature chain: the route sees only its own additions', async () =>
+    it('routes.with ADDS to the feature chain: inherited protection cannot be lost by adding', async () =>
+    {
+        // The regression this design exists for: `with(throttle)` used to REPLACE the
+        // chain, so asking for a rate limit silently removed the authentication. A route
+        // can only ever gain protection through with().
+        const tag = guard(() => ({ tag: 'v1' as const }));
+        const app = new App();
+        register(app, {
+            account: feature('/account', [requireAuth], (routes) => ({
+                version: routes.with(tag).get('/version', {}, (context) =>
+                {
+                    // BOTH sets of additions are on the context, and the type says so.
+                    expectTypeOf(context.accountId).toEqualTypeOf<number>();
+                    expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
+                    return { v: context.tag, id: context.accountId };
+                })
+            }))
+        }, { prefix: '' });
+
+        expect((await app.handle(new Request('http://local/account/version'))).status).toBe(401);
+        const ok = await app.handle(new Request('http://local/account/version', { headers: { authorization: 'Bearer x' } }));
+        expect(await ok.json()).toEqual({ v: 'v1', id: 7 });
+    });
+
+    it('chained with() calls ACCUMULATE, in declaration order, after the feature chain', async () =>
+    {
+        // `.with(a).with(b)` used to yield only [b] - silently dropping a.
+        const order: string[] = [];
+        const mark = (name: string) => guard((): void =>
+        {
+            order.push(name);
+        });
+        const [featureGuard, first, second] = [mark('feature'), mark('first'), mark('second')];
+        const app = new App();
+        register(app, {
+            probe: feature('/probe', [featureGuard], (routes) => ({
+                read: routes.with(first).with(second).get('/', {}, () => ({ ok: true }))
+            }))
+        }, { prefix: '' });
+
+        await app.handle(new Request('http://local/probe'));
+        expect(order).toEqual(['feature', 'first', 'second']);
+    });
+
+    it('routes.only REPLACES the chain, and only() with no arguments is the unguarded opt-out', async () =>
     {
         const tag = guard(() => ({ tag: 'v1' as const }));
         const app = new App();
@@ -58,14 +103,14 @@ describe('feature guards - additions flow into the handler context, no cast', ()
                     return { id: context.accountId };
                 }),
                 // Replaced chain: tag runs, requireAuth does NOT - and the type says so.
-                version: routes.with(tag).get('/version', {}, (context) =>
+                version: routes.only(tag).get('/version', {}, (context) =>
                 {
                     expectTypeOf(context.tag).toEqualTypeOf<'v1'>();
                     expectTypeOf(context).not.toHaveProperty('accountId');
                     return { v: context.tag };
                 }),
                 // The deliberate opt-out: unguarded inside a guarded feature.
-                signIn: routes.with().post('/session', { input: object({ key: string() }) }, (context) =>
+                signIn: routes.only().post('/session', { input: object({ key: string() }) }, (context) =>
                 {
                     expectTypeOf(context).not.toHaveProperty('accountId');
                     return { ok: context.input.key.length > 0 };
@@ -84,6 +129,40 @@ describe('feature guards - additions flow into the handler context, no cast', ()
 
         // The feature chain still guards the inheriting route.
         expect((await app.handle(new Request('http://local/account/me'))).status).toBe(401);
+    });
+
+    it('only() then with() rebuilds from the replacement, never resurrecting the feature chain', async () =>
+    {
+        const order: string[] = [];
+        const mark = (name: string) => guard((): void =>
+        {
+            order.push(name);
+        });
+        const [featureGuard, replacement, added] = [mark('feature'), mark('replacement'), mark('added')];
+        const app = new App();
+        register(app, {
+            probe: feature('/probe', [featureGuard], (routes) => ({
+                read: routes.only(replacement).with(added).get('/', {}, () => ({ ok: true }))
+            }))
+        }, { prefix: '' });
+
+        await app.handle(new Request('http://local/probe'));
+        expect(order).toEqual(['replacement', 'added']);
+    });
+
+    it('a guard may not overwrite request, params or url - the same refusal the kernel makes', async () =>
+    {
+        // A guard returning parsed request data as its additions would otherwise let
+        // `{ params: { id: 'admin' } }` replace the path params a handler authorises on.
+        const hostile = guard(() => ({ params: { id: 'admin' }, url: 'http://evil', ok: true }));
+        const app = new App();
+        register(app, {
+            users: feature('/users', [hostile], (routes) => ({
+                one: routes.get('/:id', {}, (context) => ({ authorizedFor: context.params.id }))
+            }))
+        }, { prefix: '' });
+
+        expect(await (await app.handle(new Request('http://local/users/alice'))).json()).toEqual({ authorizedFor: 'alice' });
     });
 
     it('two guards on one chain BOTH reach the handler, so the additions intersect', async () =>

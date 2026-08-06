@@ -53,10 +53,13 @@ OpenAPI tag, and the operation id prefix - written once.
 
 ```ts
 // browser
-import { createClient, type Manifest } from '@azerothjs/http/api/shared';
+import { createClient, readManifest, type Manifest } from '@azerothjs/http/api/shared';
 import type { api } from '../server/app.ts';   // TYPE-ONLY - erased at build
 
-const manifest: Manifest = await fetch('/api/_manifest').then((response) => response.json());
+// Embedded by the server when the page was rendered; the fetch is the fallback for a
+// page that carries no handoff (vite dev, a prerendered file).
+const manifest: Manifest = readManifest()
+    ?? await fetch('/api/_manifest').then((response) => response.json()).catch(() => ({}));
 const client = createClient<typeof api>(manifest, { baseUrl: '/api' });
 
 const key = await client.keys.create({ input: { label: 'ci' } });   // fully inferred
@@ -87,15 +90,27 @@ The client needs two things: the TYPE of the server's features (`typeof api` - a
 import, erased at build, so no handler, store, or driver can reach a browser bundle) and each
 route's method + path at runtime. The second is the **manifest**: `manifestOf(api)` projects it
 from the same declaration `register` installed - a plain JSON value, no schemas, no handlers, a
-few hundred bytes. Serve it (`app.get('/api/_manifest', () => json(manifestOf(api)))`), emit it
-at build time, or import it through a build-level module; it is a projection of the first
-source of truth, never a second one.
+few hundred bytes. It is a projection of the first source of truth, never a second one, and it
+reaches the browser two ways:
+
+- **Embedded** (the fast path): a server-rendered page carries it as an inert JSON script tag -
+  `mountPages(app, { ..., manifest: manifestOf(api) })` splices it into every served page, and
+  the client reads it back synchronously with `readManifest()` from `@azerothjs/http/api/shared`.
+  No network round trip on the hydration path. Non-kit servers can splice `manifestScript(...)`
+  into their own HTML.
+- **Served** (the fallback): `app.get('/api/_manifest', () => json(manifestOf(api)))` plus one
+  fetch at boot - the path a plain vite dev page or a prerendered file takes:
+  `readManifest() ?? await fetch('/api/_manifest')...`.
+
+A client built over an empty or stale manifest (the server was unreachable at boot and the
+fetch degraded to `{}`) fails each call at its own site with an error naming the cause - pages
+still render; no call ever dies as a bare property-of-undefined TypeError.
 
 Non-JSON routes carry a `kind` marker in the manifest: the typed client filters them from its
 surface at the type level and refuses them loudly at runtime - a browser posts `FormData` or
 opens an `EventSource` directly.
 
-## Guards: the chain is at the feature, the exception is at the route
+## Guards: the chain is at the feature, and only one word can drop it
 
 A guard reads the context and returns an object to ADD to it (typed - the additions flow into
 every handler behind it), a `Response` to short-circuit, or nothing. Any plain
@@ -105,16 +120,29 @@ addition has to be inferred.
 ```ts
 feature('/account', [requireAuth], (routes) => ({
     me:      routes.get('/me', { output: profile }, (context) => load(context.accountId)),
-    // routes.with REPLACES the chain for one declaration - nearest wins, visible at the route:
-    signIn:  routes.with(throttle(10, 60_000)).post('/session', { input: keyInput }, signInHandler),
-    // routes.with() with no arguments is the deliberate opt-out - unguarded inside a guarded feature:
-    health:  routes.with().get('/healthz', {}, () => ({ ok: true }))
+    // routes.with ADDS to the chain: requireAuth still runs, then the throttle. Chains, too -
+    // `.with(a).with(b)` runs the feature chain, then a, then b:
+    rotate:  routes.with(throttle(10, 60_000)).post('/key', { input: keyInput }, rotateHandler),
+    // routes.only REPLACES the chain - the ONLY way a route loses inherited protection:
+    signIn:  routes.only(throttle(10, 60_000)).post('/session', { input: keyInput }, signInHandler),
+    // routes.only() with no arguments is the deliberate opt-out - unguarded inside a guarded feature:
+    health:  routes.only().get('/healthz', {}, () => ({ ok: true }))
 }))
 ```
+
+The asymmetry is the point. Adding a rate limit is the common edit and it cannot cost you an
+authentication check; dropping the feature's protection is the rare one and it has its own
+name, so `grep -rn 'routes.only'` is the complete inventory of every place a feature's
+guarantee stops. Each declaration is stamped with its complete chain as it is written, so a
+route's real guards are readable at the route and never re-derived later.
 
 A guard whose every path attaches types its additions exactly; a guard with a conditional bare
 `return` (the everyday optional-session guard) types them OPTIONAL, because on the anonymous
 path nothing was assigned - the compiler makes the handler narrow, which is the runtime truth.
+
+A guard's additions are merged the same way the kernel merges middleware additions: own keys
+only, and never `request`, `params` or `url` - a guard that returns parsed request data cannot
+replace the path params a handler authorises on.
 
 ## Four route kinds, all inside the system
 

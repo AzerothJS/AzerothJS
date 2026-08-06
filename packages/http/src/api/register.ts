@@ -26,6 +26,7 @@ import { ValidationError, HttpError, json, readJson, readMultipart, sse } from '
 import type { AnyDecl, AnyGuard, Feature } from './declare.ts';
 import { isStatusReply, pathOf, responseSchemaFor } from './declare.ts';
 import { parseAny } from '../body.ts';
+import { mergeAdditions } from '../context-merge.ts';
 import type { StreamConnection } from './feature.ts';
 
 /** Options for {@link register}. */
@@ -55,7 +56,7 @@ export function register<Features extends Record<string, Feature>>(
     {
         for (const declaration of Object.values(built.routes))
         {
-            installRoute(app as App, declaration, pathOf(built.prefix, declaration.path as string, prefix), declaration.guards ?? built.guards);
+            installRoute(app as App, declaration, pathOf(built.prefix, declaration.path as string, prefix), declaration.guards);
         }
     }
     return features;
@@ -88,9 +89,9 @@ function installRoute(app: App, declaration: AnyDecl, fullPath: string, guards: 
 
     app.route(declaration.method, fullPath, async (context) =>
     {
-        // Guards mirror the app's own middleware composition: an object return adds
-        // request context (merged FLAT onto the one context), a Response short-circuits,
-        // a throw rejects.
+        // Guards mirror the app's own middleware composition, through the SAME merge:
+        // an object return adds request context, a Response short-circuits, a throw
+        // rejects. mergeAdditions owns the protected-key rule for both.
         for (const guardFn of guards)
         {
             const added = await guardFn(context);
@@ -98,10 +99,7 @@ function installRoute(app: App, declaration: AnyDecl, fullPath: string, guards: 
             {
                 return added;
             }
-            if (added !== null && added !== undefined && typeof added === 'object')
-            {
-                Object.assign(context, added);
-            }
+            mergeAdditions(context, added);
         }
 
         // The handler-owned kinds: past the guards, the declaration hands over the exchange.

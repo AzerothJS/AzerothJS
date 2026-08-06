@@ -25,6 +25,7 @@
 import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
 import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
+import { mergeAdditions } from './context-merge.ts';
 import { runInRequestRoot } from './request-root.ts';
 import { isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
@@ -446,21 +447,7 @@ export class App<Ctx extends object = object>
             {
                 return result;
             }
-            if (result !== undefined && result !== null)
-            {
-                // `request`, `params` and `url` are readonly to TypeScript and writable at
-                // runtime, so a middleware that returns parsed request data as its additions
-                // (`app.use((c) => readJson(c.request))`) would let a body of
-                // `{"params":{"id":"admin"}}` replace the path params a handler authorises on.
-                // Own keys only: an addition must never arrive from a polluted prototype.
-                for (const key of Object.keys(result))
-                {
-                    if (key !== 'request' && key !== 'params' && key !== 'url')
-                    {
-                        (ctx as Record<string, unknown>)[key] = (result as Record<string, unknown>)[key];
-                    }
-                }
-            }
+            mergeAdditions(ctx, result);
             return null;
         };
         const composed: Handler = (context) =>

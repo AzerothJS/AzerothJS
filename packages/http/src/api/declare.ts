@@ -322,11 +322,13 @@ export interface Decl<Path extends string = string, In = undefined, Out = unknow
     spec: SpecShape;
 
     /**
-     * The COMPLETE guard chain for this route when present - `r.with(...)` replaces the
-     * feature's chain rather than adding to it, so a route's guards are readable at the route.
-     * Absent means "inherit the feature chain".
+     * The COMPLETE guard chain this route runs: the feature's chain plus anything
+     * `routes.with(...)` added, or exactly what `routes.only(...)` named. The builder
+     * resolves it as the route is declared - the one moment both halves are known - so a
+     * route's real guards are readable AT the route and nothing downstream re-derives
+     * them. This is the single source of truth for what protects a route.
      */
-    guards?: ReadonlyArray<AnyGuard>;
+    guards: ReadonlyArray<AnyGuard>;
 
     /** The handler. Typed through the builder; erased here. */
     handler: (context: never) => unknown;
@@ -353,9 +355,6 @@ export interface Feature<Prefix extends string = string, R extends Routes = Rout
 {
     prefix: Prefix;
     routes: R;
-
-    /** The feature-level guard chain every route inherits unless it declared its own. */
-    guards: ReadonlyArray<AnyGuard>;
 
     /** Projects the runtime half a client needs: method + path (+ non-json kind marker). */
     manifest(): Record<string, ManifestEntry>;

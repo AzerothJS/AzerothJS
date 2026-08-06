@@ -256,26 +256,42 @@ export interface Verbs<Add, Prefix extends string>
     ): Decl<P, undefined, Response, undefined, Add, 'stream'>;
 
     /**
-     * Re-scopes the guard chain for the declarations made through the RETURNED builder - the
-     * nearest declaration wins, replacing (never adding to) the feature chain. `routes.with()` with
-     * no arguments is the deliberate opt-out: an unguarded route inside a guarded feature (a
-     * sign-in route IS the way in), visible and greppable at the route.
+     * ADDS guards to the chain for the declarations made through the RETURNED builder -
+     * the feature's chain still runs, then these, in order. Chains:
+     * `routes.with(throttle).with(audit)` runs the feature chain, then throttle, then
+     * audit - the same accumulating semantics as the kernel's `app.with`.
+     *
+     * A route can only ever gain protection this way. To LOSE the feature's chain, say
+     * so with {@link Verbs.only}.
      */
-    with<const G extends ReadonlyArray<AnyGuard>>(...guards: G): Verbs<AdditionsOf<G>, Prefix>;
+    with<const G extends ReadonlyArray<AnyGuard>>(...guards: G): Verbs<Add & AdditionsOf<G>, Prefix>;
+
+    /**
+     * REPLACES the chain for the declarations made through the RETURNED builder: the
+     * feature's guards do not run, only these. `routes.only()` with no arguments is the
+     * deliberate unguarded opt-out - a sign-in route inside a guarded feature IS the way
+     * in, and it is visible and greppable at the route.
+     *
+     * Dropping an inherited guard is the one thing here that can turn a protected route
+     * into an open one, so it has its own name: `grep -rn 'routes.only'` is the complete
+     * inventory of every place a feature's protection stops.
+     */
+    only<const G extends ReadonlyArray<AnyGuard>>(...guards: G): Verbs<AdditionsOf<G>, Prefix>;
 }
 
-/** @internal Builds one verbs surface bound to a replacement chain (undefined = inherit). */
-function verbs(chain: ReadonlyArray<AnyGuard> | undefined): Verbs<Record<never, never>, string>
+/**
+ * @internal Builds one verbs surface. `inherited` is the feature's chain and `scoped` the
+ * guards added by `with()` at this point; `only()` returns a surface with an EMPTY
+ * inherited chain, which is the whole of what replacement means. Every declaration is
+ * stamped with its COMPLETE chain here, where both halves are known - so there is no
+ * later moment at which a route's real guards have to be inferred.
+ */
+function verbs(inherited: ReadonlyArray<AnyGuard>, scoped: ReadonlyArray<AnyGuard>): Verbs<Record<never, never>, string>
 {
+    const chain = scoped.length === 0 ? inherited : [...inherited, ...scoped];
+
     const decl = (kind: RouteKind, method: string, path: string, spec: SpecShape, handler: (context: never) => unknown): AnyDecl =>
-    {
-        const built: AnyDecl = { kind, method, path, spec, handler };
-        if (chain !== undefined)
-        {
-            built.guards = chain;
-        }
-        return built;
-    };
+        ({ kind, method, path, spec, handler, guards: chain });
 
     // The type-erased factory behind every verb; the Verbs interface's generics re-clothe it.
     const make = (kind: RouteKind, method: string) =>
@@ -295,15 +311,17 @@ function verbs(chain: ReadonlyArray<AnyGuard> | undefined): Verbs<Record<never, 
         raw: (method: string, path: string, spec: unknown, handler: unknown): AnyDecl =>
             make('raw', method.toUpperCase())(path, spec, handler),
         stream: make('stream', 'GET'),
-        with: (...guards: ReadonlyArray<AnyGuard>) => verbs(guards)
+        with: (...guards: ReadonlyArray<AnyGuard>) => verbs(inherited, [...scoped, ...guards]),
+        only: (...guards: ReadonlyArray<AnyGuard>) => verbs([], guards)
     } as unknown as Verbs<Record<never, never>, string>;
 }
 
 /**
  * Declares a feature: a prefix, an optional guard chain, and the routes built through the
  * callback's {@link Verbs}. The chain's typed additions are already on every handler's context;
- * `routes.with(...)` replaces the chain for a single route. The route name is written exactly once -
- * it keys the object, the manifest, the client surface, and the OpenAPI operation.
+ * `routes.with(...)` ADDS guards to it for one route and `routes.only(...)` replaces it. The
+ * route name is written exactly once - it keys the object, the manifest, the client surface,
+ * and the OpenAPI operation.
  *
  * ```ts
  * export const keys = feature('/keys', [requireAuth], (routes) => ({
@@ -330,12 +348,13 @@ export function feature(
 {
     const chain = typeof guardsOrBuild === 'function' ? [] : guardsOrBuild;
     const build = typeof guardsOrBuild === 'function' ? guardsOrBuild : maybeBuild as (routes: Verbs<Record<never, never>, string>) => Routes;
-    const routes = build(verbs(undefined));
+    // The builder is handed the feature chain, so each declaration resolves its own
+    // complete chain as it is written - inheritance is never left to be re-derived.
+    const routes = build(verbs(chain, []));
 
     return {
         prefix,
         routes,
-        guards: chain,
         manifest(): Record<string, ManifestEntry>
         {
             const out: Record<string, ManifestEntry> = {};
