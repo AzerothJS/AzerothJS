@@ -29,6 +29,13 @@ export const EVENT_COLOR: Record<string, string> = {
     disposed: '#6b7f93'
 };
 
+/**
+ * The brand mark (the 32px A-dragon tile) as a data URI - the package ships no
+ * asset files and the panel makes no network requests, so the logo travels as a
+ * string. Rendered at 16-18px, where the 32px raster stays crisp on 2x displays.
+ */
+export const MARK_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAARNSURBVFhHxVdraBxVFL67SfYxM/uYmc0maZqdnWylpNW26UabdomkPhr1h4igWKUVY4xJJEZsqX0oWhAV0YJGEIJFilD6Qyj+EEQKUhpa88DalFZro0hsbBObbF6bTZNNPrlnm0BnN+lu0m0ufFwYzj3nO+d+9945jCUZgkcrFWT/K4KiHxAU/7tLh35Akv21gse30RjrlmGTtc2Sov8kqjokNQDJE4jPS8VNP9yvqOgnJdkXMsZmoqxtFxU9JqnFEBV/xkD+VX1acPt2zAW3q/r9oqLPxBkmLrrjoArrsCtaeTx7xX8605kbQfFkrZ0JLm3DXcvcAF4FJrm1ehJIEoNMg8dl/JikS4AzzxYLwJgLzOSKzxYPfTfaLgQiYJe199IlYBHysXpdCHVNe1Fdvxt1Tfvw8BPPIsuen2C7EBZdAWZy48ix78BHdIYmdP/TD09hCXKkFQn282FRBMxWL9YGK9E3FEHf0Dj+HRglcB71b+wHYw6IauK6ZFgUAcac+PizFtwA0Ht9BEPRGCIx4K/efrR2nofg9sHmKkpYlwxpE+DCKwxsQPeVfgxPzGACQOf5S9j5ciP2vPMhpgE8vb2Gtsi4NhnSI6Dy7B3Ytf99KvefV/pR07AborMA/tVBtJ/7HSPRSXx/ohVmay7sspboYykELM6VcHqK0XXpbxId3+9VazbB4dEhuIrw0OPP4EJ3D8LRGCoeeQosW03wYURaBPjev1S3C4MjEdQ27gXLksEsuWBZCqzOlXDIGmob30IMwNdHj6e0DSkTsLl9yBEL8PPZi2jt6AJjDGWhx3CouQXPvdgAi7QCZksu1pdtxZGj3yI8FkVJaQXMNm+Cr0URYGYZVU8+T2rvH47ik+avcLmnj7ZiMDJFl5IpxwO3dxXOnL1I3z849GX8SCbxlxYBQdbAshUcO/4DEeBnfmwK+G9kgk7CtXAEgZJNlC23PdV+DuPTwOWeayjwr0OOOP/FlBIBk8WD4JYqDIxNULCrg2OU9fDENJ39HTVNVH473yZHIX482UbEJgE07TlIVZjvjUiJABdfc8s3dOZ59iM3pvHam2/jgVAVCovXU3W4Hb98eKC2X39DeDyG8PgUOrr+gEPVSaRGvykRyBLyEVhbjt7rwxgYm8To5AzO/HKBBMlVbrz3+cn49IvDlD2vFp9fqG6kF9PoOyUCPMjBjz7H1E2HvAqvvr6PqpLsvufvxH1lW3F1cJQ0wjVz4lQH7M4i2iKj/W0J8EX3BitJA6Xlj2Lj5m1w5gaSOpuF1VmENaUPIrhlG60pC1XBnXcPCdRoSwQW/B+Y/fGwemGyeWnmwecT1SzM9ry5NWZbXtLgHLetQKZBBCS31rCsBHi7tKx/xYwxkyhrbcvTF/g7452RopWTsO5aJXhnVIxbekRB8e+UVH0m05WgwGoxBEWrngs+OyS3XiEq/lZeDS6QO9ode+a649OiS6ucjfk/ceCe0xVL2SsAAAAASUVORK5CYII=';
+
 /** Builds the one stylesheet the shadow root carries. */
 export function buildStyle(): HTMLStyleElement
 {
@@ -66,6 +73,7 @@ const CSS = `
     padding: 5px 11px; cursor: grab; user-select: none; font: inherit; font-weight: 600;
     letter-spacing: 0.5px; box-shadow: 0 2px 10px rgba(0,0,0,0.5);
 }
+.az-launcher .az-launcher-mark { width: 18px; height: 18px; border-radius: 5px; display: block }
 .az-launcher:hover { border-color: var(--accent) }
 .az-badge {
     background: var(--sel); color: var(--text); border-radius: 999px;
@@ -85,7 +93,7 @@ const CSS = `
     user-select: none; flex: none;
 }
 .az-brand { color: var(--accent); font-weight: 700; letter-spacing: 0.4px; flex: none }
-.az-brand .az-mark { margin-right: 5px }
+.az-brand .az-mark { width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: -3px }
 .az-summary {
     color: var(--mut); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: 11px;

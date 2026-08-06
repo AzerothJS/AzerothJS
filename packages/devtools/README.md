@@ -22,7 +22,7 @@ group with its fields and validity, a `resource` with a live pending/ready/error
 `state` with its current value - instead of an anonymous pile of signals and effects. Every
 re-run answers the question that matters: WHAT triggered it.
 
-<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/devtools-panel.png" alt="The devtools panel inspecting a form" width="720" />
+<img src="https://raw.githubusercontent.com/AzerothJS/AzerothJS/main/assets/devtools-panel.png" alt="The devtools panel inspecting a fullstack app's reactive graph" width="380" />
 
 > [!NOTE]
 > Dev-only. Install it behind an `import.meta.env.DEV` guard and it tree-shakes out of

@@ -22,7 +22,7 @@ import {
     type SessionSnapshot
 } from './agent.ts';
 import { el, icon } from './dom.ts';
-import { buildStyle } from './theme.ts';
+import { buildStyle, MARK_SRC } from './theme.ts';
 import {
     renderComponents,
     renderTimeline,
@@ -753,7 +753,9 @@ export function installDevtools(options: InstallOptions = {}): () => void
         const pill = el('button', 'az-launcher');
         pill.setAttribute('data-devtools-launcher', '');
         pill.title = 'AzerothJS devtools - click to open, drag to move';
-        const mark = el('span', '', 'AZ');
+        const mark = el('img', 'az-launcher-mark');
+        mark.src = MARK_SRC;
+        mark.alt = 'AzerothJS';
         const badge = el('span', 'az-badge', '0');
         badge.setAttribute('data-devtools-badge', '');
         pill.append(mark, badge);
@@ -783,8 +785,10 @@ export function installDevtools(options: InstallOptions = {}): () => void
         const header = el('div', 'az-header');
         header.setAttribute('data-devtools-header', '');
         const brand = el('strong', 'az-brand');
-        const markSpan = el('span', 'az-mark', '▲');
-        brand.append(markSpan, document.createTextNode('AzerothJS'));
+        const markImg = el('img', 'az-mark');
+        markImg.src = MARK_SRC;
+        markImg.alt = '';
+        brand.append(markImg, document.createTextNode('AzerothJS'));
         const summary = el('span', 'az-summary');
         summary.setAttribute('data-devtools-summary', '');
         const collapse = el('button', 'az-iconbtn', '-');

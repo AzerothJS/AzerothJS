@@ -86,6 +86,22 @@ describe('installDevtools - chrome lifecycle', () =>
         dispose();
     });
 
+    it('the launcher and header carry the inline logo mark, not text stand-ins', async () =>
+    {
+        const dispose = await installWithGraph();
+
+        const root = panelRoot();
+        const launcherMark = root?.querySelector('[data-devtools-launcher] img') as HTMLImageElement;
+        const headerMark = root?.querySelector('[data-devtools-header] .az-mark') as HTMLImageElement;
+
+        expect(launcherMark.src.startsWith('data:image/png;base64,')).toBe(true);
+        expect(headerMark.tagName).toBe('IMG');
+        expect(headerMark.src.startsWith('data:image/png;base64,')).toBe(true);
+        // The brand still NAMES the framework; the image replaces only the glyph.
+        expect(root?.querySelector('[data-devtools-header]')?.textContent).toContain('AzerothJS');
+        dispose();
+    });
+
     it('is idempotent: a second install returns the same uninstall', () =>
     {
         uninstall = installDevtools();
