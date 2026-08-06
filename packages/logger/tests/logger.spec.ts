@@ -6,7 +6,7 @@
 // (NO_COLOR/FORCE_COLOR/TTY), pretty rendering, and the banner's layout and gating.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-    createLogger, ndjsonSink, prettySink, consoleSink,
+    createLogger, terminalSink, ndjsonSink, prettySink, consoleSink,
     renderBanner, printBanner, formatReady,
     ndjsonLine, errorShape, colorTier, supportsUnicode, palette
 } from '@azerothjs/logger';
@@ -411,14 +411,105 @@ describe('face selection and env overrides', () =>
         expect(out.lines()[0]?.startsWith('{"level"')).toBe(true);
     });
 
-    it('AZEROTH_LOG overrides level and face from the environment', () =>
+    it('AZEROTH_LOG level applies on an explicit stream; its face does not', () =>
     {
-        process.env.AZEROTH_LOG = 'json:debug';
-        const out = capture(true);
-        const log = createLogger({ level: 'error', face: 'pretty', stream: out.stream });
+        // The env face targets the ambient terminal. A code-chosen stream (a log file)
+        // keeps its code-chosen face - here auto -> NDJSON on a non-TTY - while the
+        // level component still applies.
+        process.env.AZEROTH_LOG = 'pretty:debug';
+        const out = capture(false);
+        const log = createLogger({ level: 'error', stream: out.stream });
         log.debug('visible');
         const parsed = JSON.parse(out.lines()[0] ?? '{}') as { msg?: string };
         expect(parsed.msg).toBe('visible');
+    });
+
+    it('the conductor env cannot corrupt a file-bound logger (ANSI-in-NDJSON regression)', () =>
+    {
+        // The exact environment `azeroth dev` injects into children. Found live: a
+        // fullstack app's logs/*.ndjson filled with colored prose. Every line must
+        // stay parseable NDJSON with zero escape bytes.
+        process.env.AZEROTH_LOG = 'pretty';
+        process.env.FORCE_COLOR = '3';
+        const out = capture(false);
+        const log = createLogger({ stream: out.stream, fields: { service: 'app' } });
+        log.info('Listening', { url: 'http://localhost:3000' });
+        log.error('request failed', { status: 500 });
+
+        expect(out.lines().length).toBe(2);
+        for (const line of out.lines())
+        {
+            expect(line.includes(String.fromCharCode(27))).toBe(false);
+            expect((JSON.parse(line) as { service?: string }).service).toBe('app');
+        }
+    });
+
+    it('AZEROTH_LOG=pretty repoints a piped DEFAULT stdout (the conductor mechanism)', () =>
+    {
+        process.env.AZEROTH_LOG = 'pretty';
+        const written: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) =>
+        {
+            written.push(String(chunk));
+            return true;
+        });
+        try
+        {
+            createLogger().info('hello');
+        }
+        finally
+        {
+            spy.mockRestore();
+        }
+        expect(written.length).toBe(1);
+        expect(written[0]?.startsWith('{')).toBe(false);
+        expect(strip(written[0] ?? '')).toContain('hello');
+    });
+
+    it('an explicit sink ignores the env face entirely', () =>
+    {
+        process.env.AZEROTH_LOG = 'pretty';
+        const records: LogRecord[] = [];
+        const log = createLogger({ sink: (record) => records.push(record) });
+        log.info('raw record');
+        expect(records[0]?.message).toBe('raw record');
+    });
+});
+
+describe('terminalSink', () =>
+{
+    const record: LogRecord = { level: 'info', message: 'hello', time: 0, fields: {} };
+
+    it('renders pretty on a dev TTY', () =>
+    {
+        const out = capture(true);
+        terminalSink(out.stream)(record);
+        expect(out.raw().startsWith('{')).toBe(false);
+        expect(strip(out.raw())).toContain('hello');
+    });
+
+    it('renders NDJSON when piped', () =>
+    {
+        const out = capture(false);
+        terminalSink(out.stream)(record);
+        expect((JSON.parse(out.lines()[0] ?? '{}') as { msg?: string }).msg).toBe('hello');
+    });
+
+    it('follows AZEROTH_LOG=pretty when piped - the tee half the env is entitled to repoint', () =>
+    {
+        process.env.AZEROTH_LOG = 'pretty';
+        const out = capture(false);
+        terminalSink(out.stream)(record);
+        expect(out.raw().startsWith('{')).toBe(false);
+        expect(strip(out.raw())).toContain('hello');
+    });
+
+    it('renders NDJSON on a production TTY', () =>
+    {
+        process.env.NODE_ENV = 'production';
+        const out = capture(true);
+        terminalSink(out.stream)(record);
+        expect(out.raw().startsWith('{')).toBe(true);
     });
 });
 

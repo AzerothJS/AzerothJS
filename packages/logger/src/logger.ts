@@ -8,8 +8,12 @@
  *     the property that makes leaving instrumentation in production code acceptable.
  *   - FACE SELECTION is automatic and honest. On a TTY outside production the pretty
  *     face renders; piped, in production, or under a collector, byte-clean NDJSON.
- *     `AZEROTH_LOG` overrides both face and level from the environment without touching
- *     code: `AZEROTH_LOG=debug`, `AZEROTH_LOG=json`, `AZEROTH_LOG=pretty:trace`.
+ *     `AZEROTH_LOG` overrides face and level from the environment without touching
+ *     code: `AZEROTH_LOG=debug`, `AZEROTH_LOG=json`, `AZEROTH_LOG=pretty:trace`. The
+ *     face component targets the AMBIENT terminal only - a logger built over an
+ *     explicit `stream` (a log file) keeps its code-chosen face, so no environment
+ *     can repoint pretty prose into a machine-read file. The level component always
+ *     applies.
  *
  * Redaction happens in the logger, not the sink: a redacted field never reaches ANY
  * sink, so no formatter can leak what the application declared secret.
@@ -18,7 +22,7 @@
 import type { LevelThreshold, Logger, LogLevel, LogRecord, LogSink } from './record.ts';
 import { LEVEL_RANK } from './record.ts';
 import type { WritableLike } from './sinks.ts';
-import { consoleSink, prettySink } from './sinks.ts';
+import { consoleSink, ndjsonSink, prettySink } from './sinks.ts';
 import type { Redactor } from './serialize.ts';
 import { createRedactor, fieldsFragment, quotedString, shapeFields } from './serialize.ts';
 
@@ -48,7 +52,11 @@ export interface LoggerOptions
      */
     redact?: readonly string[] | undefined;
 
-    /** Target stream for the built-in faces; default stdout/stderr. */
+    /**
+     * Target stream for the built-in faces; default stdout/stderr. An explicit stream
+     * also pins the face against `AZEROTH_LOG` - the env face component only applies
+     * to the default stdio, so a file target can never be repointed to pretty prose.
+     */
     stream?: WritableLike | undefined;
 }
 
@@ -112,7 +120,10 @@ export function createLogger(options: LoggerOptions = {}): Logger
 
     if (options.sink === undefined)
     {
-        const face = resolveFace(override.face ?? options.face ?? 'auto', options.stream);
+        // The env face targets the ambient terminal; an explicit stream keeps its
+        // code-chosen face (a FileStream stays NDJSON no matter what AZEROTH_LOG says).
+        const envFace = options.stream === undefined ? override.face : undefined;
+        const face = resolveFace(envFace ?? options.face ?? 'auto', options.stream);
         if (face === 'ndjson')
         {
             // The production face gets the FUSED path: no record object, no per-call
@@ -128,6 +139,27 @@ export function createLogger(options: LoggerOptions = {}): Logger
     // Bound fields are shaped ONCE here (and again per child()); emit can then pass
     // them through untouched on the no-call-fields fast path.
     return build(options.sink, threshold, bound, redact);
+}
+
+/**
+ * The sink the terminal gets under the automatic rules, env override included:
+ * pretty on a dev TTY or under `AZEROTH_LOG=pretty`, byte-clean NDJSON when piped
+ * or in production, the console face in a browser. This is the terminal half of a
+ * tee - `teeSink(terminalSink(), fileSink('logs/'))` - and the ONE construction
+ * that still follows the env face after createLogger stopped applying it to
+ * explicit streams: here the stream IS the terminal, so repointing it is exactly
+ * what the environment is entitled to do.
+ *
+ * @param stream - The terminal stream; default stdout (stderr routing for
+ *   warn+ stays the pretty face's own behavior).
+ * @returns A sink for the resolved face.
+ */
+export function terminalSink(stream?: WritableLike): LogSink
+{
+    const face = resolveFace(envOverride().face ?? 'auto', stream);
+    return face === 'pretty' ? prettySink({ stream })
+        : face === 'console' ? consoleSink()
+            : ndjsonSink({ stream });
 }
 
 /** @internal The one shared no-op for every disabled level - a call site pays a plain call. */

@@ -194,27 +194,30 @@ write fails, lines are DROPPED and counted - never blocking the event loop, neve
 growing unbounded - with one stderr notice and a `log lines dropped` record on
 recovery: logging must never break the system.
 
-Both faces at once - pretty for eyes, a file for the record:
+Both faces at once - pretty for eyes, a file for the record. `terminalSink()` is the
+terminal half done right: pretty on a dev TTY (or under `AZEROTH_LOG=pretty`), NDJSON
+when piped or in production. A `URL` target anchors the folder to your package instead
+of the process cwd:
 
 ```ts
-import { createLogger, prettySink, teeSink } from '@azerothjs/logger';
+import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
 import { fileSink } from '@azerothjs/logger/node';
 
-const file = fileSink('logs/');
-const log = createLogger({ sink: teeSink(prettySink(), file) });
+const file = fileSink(new URL('../logs/', import.meta.url));
+const log = createLogger({ sink: teeSink(terminalSink(), file) });
 // on shutdown: file.close()  (flushes; process exit also flushes automatically)
 ```
 
 And with `@azerothjs/http`, one line per request - pretty on your terminal, NDJSON in
 the folder. Compose the tee: a bare `stream: fileStream(...)` would send EVERYTHING to
 the file and leave your terminal silent (a file is not a TTY, so the logger picks its
-NDJSON face for it):
+NDJSON face for it - and no environment variable can repoint an explicit stream):
 
 ```ts
-import { createLogger, prettySink, teeSink } from '@azerothjs/logger';
+import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
 import { fileSink } from '@azerothjs/logger/node';
 
-const log = createLogger({ sink: teeSink(prettySink(), fileSink('logs/')) });
+const log = createLogger({ sink: teeSink(terminalSink(), fileSink('logs/')) });
 new App({ observe: logRequests(log) });
 ```
 

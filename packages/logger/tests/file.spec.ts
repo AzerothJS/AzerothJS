@@ -52,6 +52,23 @@ describe('single-file mode', () =>
         expect(readFileSync(path, 'utf8')).toBe('{"n":1}\n{"n":2}\n{"n":3}\n');
     });
 
+    it('accepts a file URL target for both file and folder modes (package-anchored logs)', () =>
+    {
+        const dir = root();
+        const fileUrl = pathToFileURL(join(dir, 'via-url.ndjson'));
+        const stream = fileStream(fileUrl);
+        stream.write('{"n":1}\n');
+        stream.close();
+        expect(lines(join(dir, 'via-url.ndjson'))).toEqual(['{"n":1}']);
+
+        // Trailing slash on the URL path must survive into folder mode.
+        const folderUrl = new URL(`${ pathToFileURL(dir).href }/nested/`);
+        const folder = fileStream(folderUrl, { clock: () => Date.UTC(2026, 7, 6) });
+        folder.write('{"n":2}\n');
+        folder.close();
+        expect(lines(join(dir, 'nested', 'app-2026-08-06.ndjson'))).toEqual(['{"n":2}']);
+    });
+
     it('flushes by itself when the buffer crosses maxBufferBytes', () =>
     {
         const path = join(root(), 'out.ndjson');

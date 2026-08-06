@@ -6,7 +6,7 @@
 // both faces) - the rewriters are tested against what the tools actually print.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { palette } from '@azerothjs/logger';
+import { ndjsonLine, palette, prettySink } from '@azerothjs/logger';
 import { classifyStep, serverUrl, stripAnsi, transformLine, tscReport, viteUrl } from '../src/lines.ts';
 
 // Glyph choice reads the environment; pin it so assertions are deterministic.
@@ -75,6 +75,29 @@ describe('ready signals', () =>
         expect(serverUrl(LISTEN_PRETTY)).toBe('http://localhost:5200');
         expect(serverUrl(LISTEN_NDJSON)).toBe('http://localhost:5200');
         expect(serverUrl(NODE_RESTART)).toBeNull();
+    });
+
+    it('the scaffolded Listening record produces the signal through both REAL faces', () =>
+    {
+        // Welds template -> logger -> conductor: the record the templates emit,
+        // rendered by the actual sinks, must carry the ready-frame signal.
+        const record = {
+            level: 'info' as const,
+            message: 'Listening',
+            time: Date.UTC(2026, 7, 6, 10, 0, 0),
+            fields: { service: 'app-server', url: 'http://localhost:3000', env: 'development' }
+        };
+        let pretty = '';
+        const stream = {
+            write: (chunk: string): boolean =>
+            {
+                pretty += chunk;
+                return true;
+            }
+        };
+        prettySink({ stream })(record);
+        expect(serverUrl(pretty)).toBe('http://localhost:3000');
+        expect(serverUrl(ndjsonLine(record))).toBe('http://localhost:3000');
     });
 
     it('survives the pretty face dropping url= and any message casing', () =>

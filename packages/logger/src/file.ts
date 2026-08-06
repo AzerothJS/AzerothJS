@@ -29,6 +29,7 @@
 
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { LogRecord, LogSink } from './record.ts';
 import type { WritableLike } from './sinks.ts';
@@ -404,21 +405,27 @@ class BufferedFileStream implements FileStream
  * (trailing slash, or an existing directory) for day-named files with size rotation
  * and retention. Use it as the logger's `stream` to keep the fused fast path:
  *
+ * A `URL` target (`new URL('../logs/', import.meta.url)`) anchors the directory to
+ * the PACKAGE instead of the process cwd, so a server started from the repo root and
+ * one started from its own directory write the same file.
+ *
  * @example
  * ```ts
  * const log = createLogger({ stream: fileStream('logs/') });
  * ```
  */
-export function fileStream(target: string, options: FileStreamOptions = {}): FileStream
+export function fileStream(target: string | URL, options: FileStreamOptions = {}): FileStream
 {
-    return new BufferedFileStream(target, options);
+    // A file URL's trailing slash survives fileURLToPath, so the folder-vs-file
+    // detection downstream sees the same shape a string target carries.
+    return new BufferedFileStream(target instanceof URL ? fileURLToPath(target) : target, options);
 }
 
 /**
  * The record-level form of {@link fileStream}, for composing with other sinks via
  * {@link teeSink}. Carries `flush`/`close` so shutdown code can drain it.
  */
-export function fileSink(target: string, options: FileStreamOptions = {}): FileSink
+export function fileSink(target: string | URL, options: FileStreamOptions = {}): FileSink
 {
     const stream = fileStream(target, options);
     const sink = (record: LogRecord): void =>

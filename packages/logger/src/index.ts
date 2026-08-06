@@ -13,7 +13,7 @@
  * {@link node} subpath (`@azerothjs/logger/node`) so they never reach client code.
  */
 
-export { createLogger } from './logger.ts';
+export { createLogger, terminalSink } from './logger.ts';
 export type { LoggerOptions, LoggerFace } from './logger.ts';
 export type { Logger, LogRecord, LogSink, LogLevel, LevelThreshold } from './record.ts';
 export { prettySink, ndjsonSink, consoleSink, teeSink } from './sinks.ts';
