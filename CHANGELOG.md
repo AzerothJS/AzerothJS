@@ -65,6 +65,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   difference the fixes are stripped and the findings survive report-only. A wrong fix costs
   an autofix, never a file - for this bug's whole class, not just the found instance.
 
+### Fixed (devtools) - go-to-file opened the right file at the wrong line
+
+- **Creation-line attribution used raw stack positions.** `Error.stack` is never
+  source-mapped - frames carry positions in the transformed module Vite serves - and the
+  agent pasted those generated line numbers onto the `.azeroth` source path, so go-to-file
+  landed on a divider comment or a neighboring declaration instead of the node's creation
+  site. The agent now resolves each creation frame through the module's served source map
+  (fetched and decoded once per module URL, asynchronously off the creation hot path) and
+  patches the node's location when the mapped position arrives; an unresolvable map keeps
+  the raw position, so attribution can only get more precise. `state`/`derived`/`effect`
+  nodes now open on their declaration lines, markup binding effects on their markup.
+
 ### Fixed (azerothjs) - `<Show>`'s narrowed accessor could hand its branch a null seed
 
 - **A value callback could observe the null SEED while `when` was already truthy**, crashing any

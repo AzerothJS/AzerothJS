@@ -21,6 +21,7 @@ import {
     type DevtoolsPrimitive,
     type GraphSnapshot
 } from 'azerothjs/internal';
+import { createPositionResolver } from './sourcemap.ts';
 
 export type { DevtoolsPrimitive } from 'azerothjs/internal';
 
@@ -213,12 +214,26 @@ export function detectLeakTrend(samples: number[]): boolean
     return avg(recent) > avg(older) + 10 && (recent[recent.length - 1] ?? 0) > (recent[0] ?? 0);
 }
 
+/** The creation frame's raw position: the served module's URL and a GENERATED line/column. */
+interface OriginFrame
+{
+    url: string;
+    line: number;
+    column: number;
+}
+
 /**
  * Resolves the first /src/ frame of the current stack (creation site). Accepts both path
  * separators: browser and ESM frames carry URLs (forward slashes), while Windows CJS server
  * frames - the bridge's agent runs in Node - carry backslash paths.
+ *
+ * The returned line/column are GENERATED positions - `Error.stack` is never source-mapped,
+ * so they index the transformed module, not the `.azeroth` source. `frame` carries the
+ * module URL for http(s) frames so the caller can resolve the position through the served
+ * source map; a filesystem frame (the Node bridge) has no fetchable map and keeps the raw
+ * numbers, which for plain server TS are close enough to be useful.
  */
-function captureOrigin(): { file: string; loc: string; open: string }
+function captureOrigin(): { file: string; loc: string; open: string; frame: OriginFrame | null }
 {
     const stack = new Error().stack ?? '';
     for (const line of stack.split('\n'))
@@ -232,12 +247,18 @@ function captureOrigin(): { file: string; loc: string; open: string }
         {
             const [, raw = '(unknown)', lineNo = '0', col = '0'] = match;
             const file = raw.replace(/\\/g, '/');
+            const url = /(https?:\/\/[^\s()]+):\d+:\d+\)?\s*$/.exec(line);
             // The `open` form is what Vite's /__open-in-editor middleware
             // resolves (relative to the project root).
-            return { file, loc: `${ file }:${ lineNo }`, open: `src/${ file }:${ lineNo }:${ col }` };
+            return {
+                file,
+                loc: `${ file }:${ lineNo }`,
+                open: `src/${ file }:${ lineNo }:${ col }`,
+                frame: url === null ? null : { url: url[1] ?? '', line: Number(lineNo), column: Number(col) }
+            };
         }
     }
-    return { file: '(unknown)', loc: '', open: '' };
+    return { file: '(unknown)', loc: '', open: '', frame: null };
 }
 
 /** Renders any value as a short, transport-safe preview string. */
@@ -418,6 +439,28 @@ export function createAgent(): Agent
         }, 100);
     }
 
+    // The frame's line/column index the TRANSFORMED module (stacks are never
+    // source-mapped), so `created` stores them as a placeholder and this remap
+    // patches the node with the position the served source map actually says -
+    // asynchronously, keeping the creation hot path synchronous, and memoized
+    // per module URL so a mount burst costs one fetch. An unresolvable map
+    // leaves the raw position in place.
+    const resolvePosition = createPositionResolver();
+    function remapOrigin(id: number, file: string, frame: { url: string; line: number; column: number }): void
+    {
+        void resolvePosition(frame.url, frame.line, frame.column).then((pos) =>
+        {
+            const stats = nodes.get(id);
+            if (pos === null || stats === undefined)
+            {
+                return;
+            }
+            stats.loc = `${ file }:${ pos.line }`;
+            stats.open = `src/${ file }:${ pos.line }:${ pos.column }`;
+            scheduleNotify();
+        });
+    }
+
     const uninstallHook = setDevtoolsHook({
         created(node: DevtoolsNode): void
         {
@@ -436,6 +479,10 @@ export function createAgent(): Agent
                 runs: 0,
                 writes: 0
             });
+            if (origin.frame !== null)
+            {
+                remapOrigin(node.id, origin.file, origin.frame);
+            }
             totals[node.kind].created++;
             push({ t: now(), type: 'created', id: node.id, kind: node.kind, name: node.name });
             scheduleNotify();
