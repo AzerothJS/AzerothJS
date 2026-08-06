@@ -21,6 +21,12 @@ function escapeHtml(text: string): string
         (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '"' ? '&quot;' : '&#39;'));
 }
 
+// The brand mark (the 32px A-dragon tile) as a data URI: both pages promise zero
+// external requests, so the logo and the favicon travel inside the HTML string.
+const MARK_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAARNSURBVFhHxVdraBxVFL67SfYxM/uYmc0maZqdnWylpNW26UabdomkPhr1h4igWKUVY4xJJEZsqX0oWhAV0YJGEIJFilD6Qyj+EEQKUhpa88DalFZro0hsbBObbF6bTZNNPrlnm0BnN+lu0m0ufFwYzj3nO+d+9945jCUZgkcrFWT/K4KiHxAU/7tLh35Akv21gse30RjrlmGTtc2Sov8kqjokNQDJE4jPS8VNP9yvqOgnJdkXMsZmoqxtFxU9JqnFEBV/xkD+VX1acPt2zAW3q/r9oqLPxBkmLrrjoArrsCtaeTx7xX8605kbQfFkrZ0JLm3DXcvcAF4FJrm1ehJIEoNMg8dl/JikS4AzzxYLwJgLzOSKzxYPfTfaLgQiYJe199IlYBHysXpdCHVNe1Fdvxt1Tfvw8BPPIsuen2C7EBZdAWZy48ix78BHdIYmdP/TD09hCXKkFQn282FRBMxWL9YGK9E3FEHf0Dj+HRglcB71b+wHYw6IauK6ZFgUAcac+PizFtwA0Ht9BEPRGCIx4K/efrR2nofg9sHmKkpYlwxpE+DCKwxsQPeVfgxPzGACQOf5S9j5ciP2vPMhpgE8vb2Gtsi4NhnSI6Dy7B3Ytf99KvefV/pR07AborMA/tVBtJ/7HSPRSXx/ohVmay7sspboYykELM6VcHqK0XXpbxId3+9VazbB4dEhuIrw0OPP4EJ3D8LRGCoeeQosW03wYURaBPjev1S3C4MjEdQ27gXLksEsuWBZCqzOlXDIGmob30IMwNdHj6e0DSkTsLl9yBEL8PPZi2jt6AJjDGWhx3CouQXPvdgAi7QCZksu1pdtxZGj3yI8FkVJaQXMNm+Cr0URYGYZVU8+T2rvH47ik+avcLmnj7ZiMDJFl5IpxwO3dxXOnL1I3z849GX8SCbxlxYBQdbAshUcO/4DEeBnfmwK+G9kgk7CtXAEgZJNlC23PdV+DuPTwOWeayjwr0OOOP/FlBIBk8WD4JYqDIxNULCrg2OU9fDENJ39HTVNVH473yZHIX482UbEJgE07TlIVZjvjUiJABdfc8s3dOZ59iM3pvHam2/jgVAVCovXU3W4Hb98eKC2X39DeDyG8PgUOrr+gEPVSaRGvykRyBLyEVhbjt7rwxgYm8To5AzO/HKBBMlVbrz3+cn49IvDlD2vFp9fqG6kF9PoOyUCPMjBjz7H1E2HvAqvvr6PqpLsvufvxH1lW3F1cJQ0wjVz4lQH7M4i2iKj/W0J8EX3BitJA6Xlj2Lj5m1w5gaSOpuF1VmENaUPIrhlG60pC1XBnXcPCdRoSwQW/B+Y/fGwemGyeWnmwecT1SzM9ry5NWZbXtLgHLetQKZBBCS31rCsBHi7tKx/xYwxkyhrbcvTF/g7452RopWTsO5aJXhnVIxbekRB8e+UVH0m05WgwGoxBEWrngs+OyS3XiEq/lZeDS6QO9ode+a649OiS6ucjfk/ceCe0xVL2SsAAAAASUVORK5CYII=';
+
+const FAVICON_LINK = `<link rel="icon" type="image/png" href="${ MARK_SRC }">`;
+
 /**
  * Renders the Scalar shell page: ~10 lines of our HTML, the viewer itself loaded from
  * the CDN by the BROWSER (the framework still ships zero dependencies and the shell
@@ -37,6 +43,7 @@ export function renderScalarHtml(specUrl: string, title: string): string
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${ FAVICON_LINK }
 <title>${ safeTitle }</title>
 </head>
 <body>
@@ -63,6 +70,7 @@ export function renderExplorerHtml(specUrl: string, title: string): string
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${ FAVICON_LINK }
 <title>${ safeTitle }</title>
 <style>
 :root {
@@ -76,7 +84,7 @@ a { color: var(--brand); text-decoration: none; }
 .frame { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
 .side { border-right: 1px solid var(--line); padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .head { display: flex; align-items: baseline; gap: 8px; padding: 0 20px 14px; }
-.mark { color: var(--brand); font-size: 18px; }
+.mark { width: 18px; height: 18px; border-radius: 4px; align-self: center; }
 .head b { font-size: 16px; }
 .head .v { color: var(--dim); font-size: 12px; }
 .search { margin: 0 20px 14px; }
@@ -132,7 +140,7 @@ th { color: var(--dim); font-weight: 500; font-size: 12px; }
 <body>
 <div class="frame">
     <nav class="side">
-        <div class="head"><span class="mark">▲</span><b>${ safeTitle }</b><span class="v" id="version"></span></div>
+        <div class="head"><img class="mark" src="${ MARK_SRC }" alt=""><b>${ safeTitle }</b><span class="v" id="version"></span></div>
         <div class="search"><input id="search" type="search" placeholder="Filter operations..." autocomplete="off"></div>
         <div id="nav"></div>
     </nav>

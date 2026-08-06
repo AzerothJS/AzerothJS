@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { object, string, number, boolean } from '@azerothjs/schema';
 import { feature, toOpenApi } from '@azerothjs/http/api';
 
-import { renderExplorerHtml } from '../../src/api/explorer.ts';
+import { renderExplorerHtml, renderScalarHtml } from '../../src/api/explorer.ts';
 
 const INFO = { title: 'Test API', version: '1.0.0' };
 const originalFetch = globalThis.fetch;
@@ -92,5 +92,23 @@ describe('the explorer renders every declared media type', () =>
         const content = document.getElementById('content');
         expect(content?.textContent).toContain('text/plain');
         expect(content?.querySelector('.schema')).toBeNull();
+    });
+});
+
+describe('brand: both pages carry the inline logo and favicon, zero external requests', () =>
+{
+    it('the house explorer renders the data-URI mark and icon link', () =>
+    {
+        const html = renderExplorerHtml('/openapi.json', 'Test API');
+        expect(html).toContain('<img class="mark" src="data:image/png;base64,');
+        expect(html).toContain('<link rel="icon" type="image/png" href="data:image/png;base64,');
+        expect(html).not.toContain('&#9650;');
+        expect(html).not.toContain('\u25b2');
+    });
+
+    it('the Scalar shell carries the icon link too', () =>
+    {
+        const html = renderScalarHtml('/openapi.json', 'Test API');
+        expect(html).toContain('<link rel="icon" type="image/png" href="data:image/png;base64,');
     });
 });
