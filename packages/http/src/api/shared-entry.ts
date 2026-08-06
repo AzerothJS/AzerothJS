@@ -12,6 +12,7 @@
  */
 
 export { createClient, ApiError } from './client.ts';
+export { manifestScript, readManifest } from './manifest-handoff.ts';
 export type { ClientOf, FeatureClient, ClientOptions, Call, CallArgs } from './client.ts';
 
 export type {

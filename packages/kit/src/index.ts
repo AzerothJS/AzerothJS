@@ -24,6 +24,7 @@ import type { Route } from 'azerothjs';
 import type { App } from '@azerothjs/http';
 import { html as htmlResponse } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
+import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
 import type { PageRenderer } from './ssr.ts';
 
@@ -56,6 +57,14 @@ export interface KitOptions
      * Omit for a fully static/client site.
      */
     renderer?: PageRenderer;
+
+    /**
+     * The api manifest (`manifestOf(api)`), embedded into every served page as an
+     * inert JSON script tag so the typed client boots synchronously - no
+     * `/api/_manifest` round trip on the hydration path. Omit and clients fall
+     * back to fetching.
+     */
+    manifest?: Manifest;
 }
 
 /**
@@ -132,7 +141,14 @@ function loadShell(clientDir: string): Promise<string>
  */
 export function mountPages(app: App, options: KitOptions): void
 {
-    const shellPromise = loadShell(options.clientDir);
+    // ONE splice point: the manifest rides the shell text, so every serving path -
+    // the plain shell, and SSR output (the renderer builds from this same shell) -
+    // carries it without any per-request work. Prerendered files were written at
+    // build time without a server and keep the fetch fallback.
+    const manifest = options.manifest;
+    const shellPromise = manifest === undefined
+        ? loadShell(options.clientDir)
+        : loadShell(options.clientDir).then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
 
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';

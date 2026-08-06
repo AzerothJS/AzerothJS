@@ -10,6 +10,71 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Changed (http) - `routes.with(...)` ADDS guards; `routes.only(...)` is the one way to drop them - BREAKING
+
+- **Adding a guard could silently remove authentication.** `routes.with(throttle)` on a
+  feature declared `feature('/admin', [requireAdmin], ...)` REPLACED the chain, so the
+  route that asked for a rate limit lost its authentication - a 200 for an
+  unauthenticated caller. `routes.with(a).with(b)` silently dropped `a` as well. The
+  semantics were documented and test-pinned, so nothing was lying; the model itself made
+  the dangerous edit the cheap one to type, while the identically-named `app.with` in the
+  same package accumulates.
+
+  `routes.with(...)` now ADDS to the feature's chain and accumulates across calls - a
+  route can only ever gain protection through it. Dropping inherited protection has its
+  own name, `routes.only(...)`, and `routes.only()` with no arguments is the deliberate
+  unguarded opt-out (a sign-in route IS the way in). `grep -rn 'routes.only'` is now the
+  complete inventory of every place a feature's guarantee stops.
+
+  **Migration**: a `routes.with(...)` that re-stated the feature's own guards to keep them
+  drops those repeats; a `routes.with(...)` that MEANT to replace the chain becomes
+  `routes.only(...)`; `routes.with()` (no arguments) becomes `routes.only()`.
+
+- **A declaration now carries its complete chain.** The builder resolves inheritance as
+  each route is written - where both the feature chain and the route's own additions are
+  known - instead of leaving "absent means inherit" to be re-derived at registration.
+
+- **A guard can no longer overwrite `request`, `params` or `url`.** The feature-guard
+  runner merged additions with a bare `Object.assign` while claiming to mirror the
+  kernel's middleware composition, so a guard returning `{ params: { id: 'admin' } }`
+  replaced the path params a handler authorises on - a request for `/users/alice`
+  executed as `admin`. Both paths now share one merge with one protected-key rule.
+
+### Fixed (azerothjs, compiler) - SVG regions paint from a template, and a `<For>` row must be one element
+
+- **A template rooted at an SVG child parsed as HTML and never painted.** `tmpl()` builds a
+  region by setting `innerHTML`, and the HTML fragment parser enters foreign content only at
+  `<svg>`/`<math>` - so a region whose root is `<g>`/`<path>` (what a `<For>` row or a nested
+  region serializes to) cloned as an `HTMLUnknownElement` with no geometry, while the SAME
+  component rendered correctly under SSR and hydration, which go through `h()`. One artifact,
+  two DOMs. `tmpl()` now parses such a region inside its container and unwraps the result, and
+  the tag-to-namespace knowledge `h()` and `tmpl()` share lives in one module instead of one
+  of them. This is why wrapping a row in `<g>` did not work as a workaround; it does now.
+
+- **A `<For>` row rooted at a component or at control flow is now rejected at compile time -
+  BREAKING.** The reconciler tracks and moves rows by element identity, so such a row handed it
+  a `DocumentFragment`: the fragment empties itself into the DOM on first insert, then every
+  later reconcile diffs against an empty detached node and the list blanks itself. First paint
+  looked right, which is why it shipped unnoticed in two applications. The contract existed
+  only as a runtime doc comment; nothing enforced it, and the `let=` migration had removed the
+  last place TypeScript could have caught it. `azeroth/for-row-shape` now rejects it with the
+  fix in the message. **Migration**: wrap the row in an element - `<li>`, `<div>`, or `<g>`
+  inside SVG - and put the control flow inside it.
+
+### Added (http, kit) - the api manifest can ride the page instead of a round trip
+
+- `manifestScript()` / `readManifest()` (`@azerothjs/http/api`, and the browser-safe
+  `/api/shared`): the manifest as an inert JSON script tag, the same discipline as the
+  router's loader handoff. `mountPages(app, { ..., manifest: manifestOf(api) })` embeds it
+  into every served page and the client reads it synchronously - no `/api/_manifest` fetch
+  blocking module evaluation on the hydration path. Pages without the tag (vite dev,
+  prerendered files, non-kit servers) fall back to the fetch, which is unchanged.
+- **A client built over an empty or stale manifest now fails at the CALL, not at the
+  property access.** `client.things.list()` on a manifest missing `things` threw a bare
+  `Cannot read properties of undefined`; it now throws an error naming the group and the
+  likely cause. The scaffolded template also stops taking the whole module graph down when
+  the API half is unreachable at boot.
+
 ### Changed (create-azeroth, devtools, http) - the real logo replaces the triangle stand-ins
 
 - **Templates**: every scaffolded app's brand element renders the logo (a 22px

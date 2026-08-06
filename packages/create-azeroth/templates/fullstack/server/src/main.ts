@@ -6,7 +6,9 @@ import type { PageRenderer, PageRoute } from '@azerothjs/kit';
 import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
 import { fileSink } from '@azerothjs/logger/node';
 
-import { buildApp } from './app.ts';
+import { manifestOf } from '@azerothjs/http/api';
+
+import { api, buildApp } from './app.ts';
 
 try
 {
@@ -48,7 +50,7 @@ const app = buildApp({
             log.error('unhandled error', { status: mapped.status, error });
         }
     },
-    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage }
+    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api) }
 });
 
 const handler = pipeline(

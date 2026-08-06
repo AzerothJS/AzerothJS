@@ -12,6 +12,7 @@
  */
 
 export { feature, guard, manifestOf } from './feature.ts';
+export { manifestScript, readManifest } from './manifest-handoff.ts';
 export type { Verbs, AdditionsOf, BodySpec, BodylessSpec, FormSpec, RawSpec, StreamSpec, StreamConnection } from './feature.ts';
 
 export { register } from './register.ts';

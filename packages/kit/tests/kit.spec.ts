@@ -111,6 +111,29 @@ describe('mountPages', () =>
         expect(html).toContain('/assets/app.js'); // the built shell's tags survive
     });
 
+    it('a provided manifest rides EVERY served page as an inert script tag', async () =>
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+        const app = new App();
+        const manifest = { guestbook: { list: { method: 'GET', path: '/guestbook' } } };
+        mountPages(app, { routes: [{ path: '/', component }, { path: '/spa', component, render: 'client' }], clientDir: dir, renderer: fakeRenderer, manifest });
+
+        // SSR page: the renderer builds from the spliced shell, so the tag is inherited.
+        const ssr = await (await fetch(app, '/')).text();
+        expect(ssr).toContain('id="azeroth-api-manifest"');
+        expect(ssr).toContain('"guestbook"');
+
+        // Client-mode page: the plain shell carries it too.
+        const shell = await (await fetch(app, '/spa')).text();
+        expect(shell).toContain('id="azeroth-api-manifest"');
+
+        // Without the option, nothing is embedded - clients fall back to fetching.
+        const bare = new App();
+        mountPages(bare, { routes: [{ path: '/', component }], clientDir: dir, renderer: fakeRenderer });
+        expect(await (await fetch(bare, '/')).text()).not.toContain('azeroth-api-manifest');
+    });
+
     it('a guard/loader redirect becomes a REAL 302, never a rendered page', async () =>
     {
         const { app } = build([{ path: '/locked', component }], true);

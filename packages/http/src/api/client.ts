@@ -269,5 +269,35 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
         }
         surface[group] = namespace;
     }
-    return surface as ClientOf<Features>;
+
+    // The types promise every group exists, but the VALUE arrives at runtime - an empty
+    // manifest (server unreachable at boot, degraded to {}) or a stale one can miss
+    // groups the types still declare. Reading such a group yields a trap namespace whose
+    // every method throws a designed error at ITS call - pages render, each call fails at
+    // its own site naming the cause - instead of `undefined` and a bare TypeError. Real
+    // groups stay plain objects: the trap exists only where the manifest has a hole.
+    return new Proxy(surface, {
+        get(target, group, receiver): unknown
+        {
+            if (typeof group !== 'string' || group in target || group === 'then')
+            {
+                return Reflect.get(target, group, receiver);
+            }
+            return new Proxy({}, {
+                get(_missing, name): unknown
+                {
+                    if (typeof name !== 'string' || name === 'then')
+                    {
+                        return undefined;
+                    }
+                    return (): never =>
+                    {
+                        throw new Error(`The api group "${ group }" is not in the manifest this client was built with - `
+                            + 'the manifest was empty (server unreachable when the page booted?) or stale. '
+                            + `${ group }.${ name }() cannot be called.`);
+                    };
+                }
+            });
+        }
+    }) as ClientOf<Features>;
 }
