@@ -338,12 +338,11 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).not.toContain('item()()');
     });
 
-    it('a NESTED <For> inside a component-rooted row composes both row mechanisms', () =>
+    it('a NESTED <For> inside a wrapped component row composes both row mechanisms', () =>
     {
-        // The outer row is component-rooted (IR rowItems on the pass-through arrow); the inner
-        // For lowers inside that expression in raw mode (marker path). Both rewrites land, both
-        // key fns stay by-value, and the marker is stripped.
-        const code = gen('component C { state groups = [{ id: 1, members: [{ id: 2, name: "m" }] }]; <For each={groups} key={(g) => g.id} let={ g }><Panel title={g.id}><For each={g.members} key={(m) => m.id} let={ m }><Row name={m.name} /></For></Panel></For> }');
+        // The outer row wraps a component; the inner For lowers inside that expression in raw
+        // mode (marker path). Both rewrites land, both key fns stay by-value, marker stripped.
+        const code = gen('component C { state groups = [{ id: 1, members: [{ id: 2, name: "m" }] }]; <For each={groups} key={(g) => g.id} let={ g }><li><Panel title={g.id}><For each={g.members} key={(m) => m.id} let={ m }><span><Row name={m.name} /></span></For></Panel></li></For> }');
         expect(code).toContain('g().id');                         // outer row read through the getter
         expect(code).toContain('g().members');                    // inner each reads the OUTER row getter
         expect(code).toContain('m().name');                       // inner row read through the getter
@@ -352,13 +351,12 @@ describe('generateModule - reactive desugaring', () =>
         expect(code).not.toContain('__azRow');
     });
 
-    it('a COMPONENT-rooted row keeps the getter rewrite (pass-through path)', () =>
+    it('a wrapped control-flow row keeps the getter rewrite reaching inside it', () =>
     {
-        // Regression: a row rooted at a component takes the pass-through path (no clonable
-        // template); without the captured param span rowItems is never built, `item={ row }`
+        // Regression: without the captured param span rowItems is never built, `item={ row }`
         // hands the child the raw GETTER, and a row var in a template literal stringifies a
-        // function body into the page.
-        const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id} let={ row }><Show when={row.id > 0}><li title={`n-${ row.id }`}>{row.id}</li></Show></For> }');
+        // function body into the page. The wrapper does not stop the rewrite reaching in.
+        const code = gen('component C { state items = [{ id: 1 }]; <For each={items} key={(row) => row.id} let={ row }><li><Show when={row.id > 0}><span title={`n-${ row.id }`}>{row.id}</span></Show></li></For> }');
         expect(code).toContain('row().id > 0');                   // bare prop expression through the getter
         expect(code).toContain('`n-${ row().id }`');              // template-literal read through the getter
         expect(code).toContain('(row) => row.id');                // the key fn still receives the VALUE

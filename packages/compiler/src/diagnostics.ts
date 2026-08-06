@@ -1087,6 +1087,53 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     }
 }
 
+/**
+ * A `<For>` row must be exactly ONE host element. The reconciler tracks and moves rows by
+ * element identity, so a row rooted at a component or at control flow hands it a
+ * DocumentFragment: the fragment empties itself into the DOM on first insert, and every
+ * later reconcile diffs against an empty detached node - the list blanks itself. That is
+ * silent data loss at run time, so the shape is rejected here instead.
+ *
+ * Wrapping is always available and costs one element (`<li>`, `<g>`); the wrapper is what
+ * the reconciler moves.
+ */
+function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    if (el.tag !== 'For')
+    {
+        return;
+    }
+    const real = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
+    const solo = real[0];
+
+    // A callback/thunk child is the manual API's own form and is judged by its own rule.
+    if (real.length === 1 && solo !== undefined && solo.kind === 'expression')
+    {
+        return;
+    }
+    if (real.length === 1 && solo !== undefined && solo.kind === 'element' && !solo.isComponent)
+    {
+        return;
+    }
+    const offender = solo ?? el;
+    const what = real.length === 0
+        ? 'has no element to render'
+        : real.length > 1
+            ? `renders ${ real.length } children`
+            : solo !== undefined && solo.kind === 'element'
+                ? `is rooted at <${ solo.tag }>, which renders a fragment rather than one element`
+                : 'is not an element';
+    out.push({
+        code: 'azeroth/for-row-shape',
+        severity: 'error',
+        message: `A <For> row must be exactly one host element - this row ${ what }. `
+            + 'The list reconciler moves rows by element identity, so wrap the row in an element '
+            + '(`<li>`, `<div>`, `<g>` inside SVG) and put the control flow inside it.',
+        start: offender.start,
+        end: offender.end
+    });
+}
+
 /** The GRAMMAR 6.6 host-element rules: uniqueness, the reserved on* namespace, content ownership. */
 function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
@@ -1185,6 +1232,7 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 
     bindingAttrRules(el, out);
     callbackChildRule(el, out);
+    forRowRule(el, out);
 
     for (const attr of el.attributes)
     {

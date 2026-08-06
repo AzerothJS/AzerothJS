@@ -354,3 +354,41 @@ describe('declaration slips (silent-corruption traps)', () =>
             .not.toContain('azeroth/unterminated-declaration');
     });
 });
+
+describe('azeroth/for-row-shape - a For row is exactly one host element', () =>
+{
+    // The list reconciler tracks and moves rows by ELEMENT IDENTITY. A row rooted at a
+    // component or at control flow returns a DocumentFragment, which empties itself into
+    // the DOM on first insert; every later reconcile then diffs against an empty detached
+    // node and the list blanks itself. First paint looks right, so this shipped in two
+    // apps unnoticed - it is rejected here rather than left to fail silently at run time.
+    const row = (body: string): string =>
+        `component C { state items = []; <ul><For each={ items } key={ (r) => r.id } let={ row }>${ body }</For></ul> }`;
+
+    it('rejects a control-flow-rooted row, naming the tag', () =>
+    {
+        const diag = find(row('<Show when={ row.ok }><li>x</li></Show>'), 'azeroth/for-row-shape');
+        expect(diag?.severity).toBe('error');
+        expect(diag?.message).toContain('<Show>');
+        expect(diag?.message).toContain('wrap the row in an element');
+    });
+
+    it('rejects a component-rooted row and a multi-element row', () =>
+    {
+        expect(codes(row('<Card item={ row } />'))).toContain('azeroth/for-row-shape');
+        expect(codes(row('<li>a</li><li>b</li>'))).toContain('azeroth/for-row-shape');
+    });
+
+    it('accepts one host element, including the wrapper that fixes the rejected shapes', () =>
+    {
+        expect(codes(row('<li>{ row.name }</li>'))).not.toContain('azeroth/for-row-shape');
+        expect(codes(row('<li><Show when={ row.ok }><span>x</span></Show></li>'))).not.toContain('azeroth/for-row-shape');
+        expect(codes(row('<g><Dynamic component={ row.tag } /></g>'))).not.toContain('azeroth/for-row-shape');
+    });
+
+    it('leaves Show/Match rows alone - only For reconciles by identity', () =>
+    {
+        const src = 'component C { state on = true; <div><Show when={ on } let={ v }><p>a</p><p>b</p></Show></div> }';
+        expect(codes(src)).not.toContain('azeroth/for-row-shape');
+    });
+});

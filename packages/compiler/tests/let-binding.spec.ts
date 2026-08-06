@@ -299,7 +299,7 @@ export default component L()
         expect(code).toContain('item().name');
     });
 
-    it('a component-rooted let= row stays on the markup path', () =>
+    it('a wrapped component row still rewrites reads through the row getter', () =>
     {
         const code = gen(`
 import Card from './card.azeroth';
@@ -310,13 +310,16 @@ export default component L()
 
     <ul>
         <For each={ items } key={ (t) => t.id } let={ item }>
-            <Card item={ item } />
+            <li>
+                <Card item={ item } />
+            </li>
         </For>
     </ul>
 }
 `);
 
-        // Mirrors tryLowerRenderClone's bailout: no host element to clone.
+        // The wrapper is what the reconciler moves; the component inside still reads
+        // the row through its getter.
         expect(code).toMatch(/\(item\) =>/);
         expect(code).toContain('item()');
     });
@@ -337,9 +340,11 @@ export default component Nested()
                 <section title={ group.name + gi.toFixed(0) }>
                     <Switch>
                         <For each={ group.rows } key={ (r) => r.id } let={ row }>
-                            <Match when={ row.kind } let={ kind }>
-                                <p title={ kind }>{ row.id }</p>
-                            </Match>
+                            <li>
+                                <Match when={ row.kind } let={ kind }>
+                                    <p title={ kind }>{ row.id }</p>
+                                </Match>
+                            </li>
                         </For>
                     </Switch>
                 </section>

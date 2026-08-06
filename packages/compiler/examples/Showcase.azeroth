@@ -95,7 +95,9 @@ export default component Showcase(props: { heading: string })
 
         <ul class="list">
             <For each={ visible } key={ (todo) => todo.id } let={ todo }>
-                <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />
+                <li>
+                    <TodoRow todo={todo} onToggle={toggle} onRemove={remove} />
+                </li>
             </For>
         </ul>
     </section>
