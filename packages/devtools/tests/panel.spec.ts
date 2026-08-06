@@ -241,3 +241,29 @@ describe('installDevtools - persisted-state hardening', () =>
         dispose();
     });
 });
+
+describe('direction independence', () =>
+{
+    it('renders left-to-right inside an RTL page', async () =>
+    {
+        // `all: initial` on :host does NOT reset direction - the CSS spec excludes it - so
+        // an RTL application used to mirror the whole panel. The labels are English and the
+        // values are code; the tool reads LTR whatever it is inspecting.
+        document.documentElement.setAttribute('dir', 'rtl');
+        try
+        {
+            const dispose = await installWithGraph();
+            const style = panelRoot()?.getRootNode() as ShadowRoot | undefined;
+            const css = style?.querySelector('style')?.textContent ?? '';
+
+            expect(css).toContain('direction: ltr');
+            // Pinned on the shadow HOST rule, so every node inside inherits it.
+            expect(/:host\s*\{[^}]*direction:\s*ltr/.test(css)).toBe(true);
+            dispose();
+        }
+        finally
+        {
+            document.documentElement.removeAttribute('dir');
+        }
+    });
+});

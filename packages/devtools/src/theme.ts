@@ -45,7 +45,14 @@ export function buildStyle(): HTMLStyleElement
 }
 
 const CSS = `
-:host { all: initial }
+/*
+ * \`direction\` is set explicitly because \`all\` does NOT cover it: the CSS spec excludes
+ * direction and unicode-bidi from the \`all\` shorthand, so the panel would otherwise
+ * inherit an RTL page and mirror itself - header, rows, filter, badges. This is a
+ * developer tool whose labels are English and whose values are code, so it reads
+ * left-to-right whatever the application it is inspecting does.
+ */
+:host { all: initial; direction: ltr; unicode-bidi: isolate }
 * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #2a3a4d transparent }
 ::-webkit-scrollbar { width: 9px; height: 9px }
 ::-webkit-scrollbar-thumb { background: #2a3a4d; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box }
