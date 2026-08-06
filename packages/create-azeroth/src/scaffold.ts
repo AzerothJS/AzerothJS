@@ -23,6 +23,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 /** The shapes a scaffold can produce, in the order the prompt offers them. */
 export const TEMPLATES = ['frontend', 'backend', 'fullstack'] as const;
@@ -172,6 +173,48 @@ function overlayDirs(overlaysRoot: string, template: TemplateName, options: read
 }
 
 /**
+ * @internal Writes the local `.env` beside each `.env.example` the template shipped,
+ * filling `DEVTOOLS_TOKEN` with a freshly generated secret.
+ *
+ * The devtools bridge needs a shared secret that OUTLIVES the process: a dev server
+ * restarts on every file save, so a token minted at boot would differ each time and the
+ * panel would be refused from the first edit onward. Generating it once per project - here,
+ * into the gitignored `.env` - keeps it stable and unguessable, and means a fresh scaffold
+ * has a working bridge with no setup step. An existing `.env` is never touched.
+ */
+function seedEnvFiles(target: string): void
+{
+    for (const example of findFiles(target, '.env.example'))
+    {
+        const local = join(dirname(example), '.env');
+        if (existsSync(local))
+        {
+            continue;
+        }
+        const text = readFileSync(example, 'utf8').replace(/^DEVTOOLS_TOKEN=$/m, `DEVTOOLS_TOKEN=${ randomUUID() }`);
+        writeFileSync(local, text);
+    }
+}
+
+/** @internal Every file named `name` under `dir`, recursively. */
+function findFiles(dir: string, name: string, out: string[] = []): string[]
+{
+    for (const entry of readdirSync(dir, { withFileTypes: true }))
+    {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory())
+        {
+            findFiles(path, name, out);
+        }
+        else if (entry.name === name)
+        {
+            out.push(path);
+        }
+    }
+    return out;
+}
+
+/**
  * Copies the named template tree into `target`, substituting `{{name}}` and `{{version}}`
  * in every file, then applies each chosen option's overlay (see the module banner).
  * Call it once the CLI has resolved a valid template, options, and destination.
@@ -205,4 +248,5 @@ export function scaffold(templatesRoot: string, template: TemplateName, target: 
     {
         copyTree(overlay, target, substitute);
     }
+    seedEnvFiles(target);
 }

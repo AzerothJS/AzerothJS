@@ -110,15 +110,20 @@ function secretMatches(expected: string, presented: string | null): boolean
  *
  * Install BEFORE the app handles traffic to capture every request root from the start.
  *
+ * The token must OUTLIVE the process. A dev server restarts on every file save, so a token
+ * minted at boot (`crypto.randomUUID()`) is a different secret each time: the panel holds the
+ * previous one and every restart refuses it with a 403. Read it from the environment, where
+ * it survives restarts and both halves can agree on it.
+ *
  * @example
  * ```ts
  * import { serve } from '@azerothjs/http/node';
  * import { attachDevtools } from '@azerothjs/devtools/server';
  *
  * const served = await serve(app, { port: 5200 });
- * if (process.env.NODE_ENV === 'development')
+ * const token = process.env.DEVTOOLS_TOKEN;
+ * if (process.env.NODE_ENV === 'development' && token !== undefined)
  * {
- *     const token = crypto.randomUUID();
  *     attachDevtools(served.server, { token });
  *     console.log(`devtools: ws://localhost:5200/__azeroth/devtools?token=${ token }`);
  * }

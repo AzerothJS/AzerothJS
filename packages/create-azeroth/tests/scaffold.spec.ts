@@ -538,3 +538,50 @@ describe('manifests: every import declared, every declaration used', () =>
         }
     });
 });
+
+describe('the devtools bridge secret outlives the process', () =>
+{
+    // A dev server restarts on every file save. A token minted at boot is a different
+    // secret each time, so the panel - which remembers the URL it was given - is refused
+    // from the first edit onward. The scaffold generates ONE per project instead.
+    it('seeds a gitignored .env with a generated token, leaving the example empty', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'shop', '^2.0.0');
+
+        const example = readFileSync(join(dir, 'server', '.env.example'), 'utf8');
+        const local = readFileSync(join(dir, 'server', '.env'), 'utf8');
+
+        // The committed example documents the key and carries no secret.
+        expect(example).toContain('DEVTOOLS_TOKEN=');
+        expect(/^DEVTOOLS_TOKEN=$/m.test(example)).toBe(true);
+
+        // The local one carries a real, unguessable value.
+        const token = (/^DEVTOOLS_TOKEN=(.+)$/m.exec(local) ?? [])[1] ?? '';
+        expect(token.length).toBeGreaterThanOrEqual(16);
+        expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toContain('.env');
+    });
+
+    it('gives two projects different secrets - never a shared constant', () =>
+    {
+        const a = target();
+        const b = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', a, 'a', '^2.0.0');
+        scaffold(TEMPLATES_ROOT, 'fullstack', b, 'b', '^2.0.0');
+
+        const read = (dir: string): string =>
+            (/^DEVTOOLS_TOKEN=(.+)$/m.exec(readFileSync(join(dir, 'server', '.env'), 'utf8')) ?? [])[1] ?? '';
+        expect(read(a)).not.toBe(read(b));
+    });
+
+    it('the server reads the token, never mints one', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'shop', '^2.0.0');
+        const main = readFileSync(join(dir, 'server', 'src', 'main.ts'), 'utf8');
+
+        expect(main).toContain('process.env.DEVTOOLS_TOKEN');
+        // The per-boot form is the defect: it cannot survive a restart.
+        expect(main).not.toContain('crypto.randomUUID()');
+    });
+});

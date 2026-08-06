@@ -66,7 +66,8 @@ handleShutdownSignals(served);
 // The panel's Server tab connects here and mirrors the server's reactive graph: request roots,
 // their per-request state, and long-lived stores. That is live application data, so the bridge
 // attaches ONLY under NODE_ENV=development and every upgrade must present the token below from a
-// loopback peer. The token is minted per boot: it is never written to disk and never committed.
+// loopback peer. The token lives in `.env`, which is gitignored: never committed, and the same
+// secret from one restart to the next.
 // Reads the RAW variable, not `config.env`. `loadConfig` defaults an unset NODE_ENV to
 // 'development' for this app's own purposes, but the bridge refuses anything that is not
 // literally development - so guarding on the defaulted value would call it in a scaffold where
@@ -74,10 +75,21 @@ handleShutdownSignals(served);
 // `azeroth dev` sets NODE_ENV=development, so `npm run dev` gets the panel.
 if (process.env.NODE_ENV === 'development')
 {
-    const { attachDevtools } = await import('@azerothjs/devtools/server');
-    const token = crypto.randomUUID();
-    attachDevtools(served.server, { token });
-    log.info('devtools bridge', { url: `ws://localhost:${ served.port }/__azeroth/devtools?token=${ token }` });
+    // The token is read, never minted. A dev server restarts on every file save, so a
+    // per-boot secret would be a different one each time and the panel - which remembers
+    // the URL you gave it - would 403 from your first edit onward. `.env` outlives the
+    // process, so the panel stays connected across restarts.
+    const token = process.env.DEVTOOLS_TOKEN;
+    if (token === undefined || token.length < 16)
+    {
+        log.warn('devtools bridge off - set DEVTOOLS_TOKEN in .env (16+ chars) to enable it');
+    }
+    else
+    {
+        const { attachDevtools } = await import('@azerothjs/devtools/server');
+        attachDevtools(served.server, { token });
+        log.info('devtools bridge', { url: `ws://localhost:${ served.port }/__azeroth/devtools?token=${ token }` });
+    }
 }
 
 log.info('Listening', { url: `http://localhost:${ served.port }`, env: config.env });

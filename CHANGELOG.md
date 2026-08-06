@@ -10,6 +10,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed (devtools, create-azeroth) - the devtools bridge survives a restart
+
+- **The bridge secret was minted per boot, so it expired on every file save.** The
+  scaffolded server called `crypto.randomUUID()` at startup and logged the URL; the panel
+  remembers that URL, but `node --watch` restarts the server on every edit and the next
+  boot minted a different secret - so the bridge worked once and then answered 403 for the
+  rest of the session. A secret both halves must share cannot have a lifetime shorter than
+  the thing that remembers it.
+
+  The token is now READ from `DEVTOOLS_TOKEN` rather than minted, so it is the same across
+  restarts, and `create-azeroth` generates one per project into the gitignored `.env` -
+  a fresh scaffold has a working bridge with no setup step and no secret in git. An unset
+  token means the bridge does not attach, with a line saying so, instead of a boot crash.
+
+  The framework's own `@example` taught the per-boot form, which is how it reached every
+  template and application; it now teaches the stable one and says why.
+
 ### Changed (http) - `routes.with(...)` ADDS guards; `routes.only(...)` is the one way to drop them - BREAKING
 
 - **Adding a guard could silently remove authentication.** `routes.with(throttle)` on a
