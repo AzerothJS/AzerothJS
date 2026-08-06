@@ -5,7 +5,7 @@ export default component App()
     derived doubled = count * 2;
 
     <main class="app max-w-2xl mx-auto px-6 pb-16 pt-[clamp(3rem,12vh,7rem)] motion-safe:animate-rise">
-        <p class="font-mono text-[0.8rem] tracking-[0.08em] text-ice mb-3">&#9650; azerothjs</p>
+        <p class="font-mono text-[0.8rem] tracking-[0.08em] text-ice mb-3"><img class="inline-block h-[22px] w-[22px] rounded-[5px] align-middle mr-1.5" src="/favicon-32.png" alt=""/> azerothjs</p>
         <h1 class="font-mono font-semibold tracking-tight text-[clamp(1.8rem,5vw,2.4rem)] mb-3">{{name}}</h1>
         <p class="text-faint leading-relaxed mb-10">
             Fine-grained reactivity, compiled. Click the state cell: the update

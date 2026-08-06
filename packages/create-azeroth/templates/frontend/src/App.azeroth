@@ -5,7 +5,7 @@ export default component App()
     derived doubled = count * 2;
 
     <main class="app">
-        <p class="brand">&#9650; azerothjs</p>
+        <p class="brand"><img class="brand-mark" src="/favicon-32.png" alt=""/> azerothjs</p>
         <h1>{{name}}</h1>
         <p class="claim">
             Fine-grained reactivity, compiled. Click the state cell: the update

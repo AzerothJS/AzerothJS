@@ -11,7 +11,7 @@ export default component App(props: { url?: string })
     <RouterProvider router={ router }>
         <div class="app">
             <nav>
-                <span class="brand">&#9650; {{name}}</span>
+                <span class="brand"><img class="brand-mark" src="/favicon-32.png" alt=""/> {{name}}</span>
                 <Link to="/" activeClass="active" end>Home</Link>
                 <Link to="/about" activeClass="active">About</Link>
             </nav>

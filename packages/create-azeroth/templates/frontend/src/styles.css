@@ -58,6 +58,15 @@ body
     margin: 0 0 0.75rem;
 }
 
+.brand-mark
+{
+    height: 22px;
+    width: 22px;
+    vertical-align: middle;
+    border-radius: 5px;
+    margin-right: 0.45em;
+}
+
 .app h1
 {
     font-family: var(--mono);

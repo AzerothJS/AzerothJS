@@ -11,7 +11,7 @@ export default component App(props: { url?: string })
     <RouterProvider router={ router }>
         <div class="app max-w-2xl mx-auto px-6 pb-16 pt-6">
             <nav class="flex items-baseline gap-5 pb-4 mb-10 border-b border-line">
-                <span class="font-mono text-[0.85rem] tracking-[0.04em] text-ice mr-auto">&#9650; {{name}}</span>
+                <span class="font-mono text-[0.85rem] tracking-[0.04em] text-ice mr-auto"><img class="inline-block h-[22px] w-[22px] rounded-[5px] align-middle mr-1.5" src="/favicon-32.png" alt=""/> {{name}}</span>
                 <Link class="text-[0.95rem] text-faint no-underline pb-1 border-b-2 border-transparent hover:text-ink [&.active]:text-ink [&.active]:border-ice" to="/" activeClass="active" end>Home</Link>
                 <Link class="text-[0.95rem] text-faint no-underline pb-1 border-b-2 border-transparent hover:text-ink [&.active]:text-ink [&.active]:border-ice" to="/about" activeClass="active">About</Link>
             </nav>

@@ -54,6 +54,15 @@ body
     margin-right: auto;
 }
 
+.brand-mark
+{
+    height: 22px;
+    width: 22px;
+    vertical-align: middle;
+    border-radius: 5px;
+    margin-right: 0.45em;
+}
+
 .app nav a
 {
     font-size: 0.95rem;
