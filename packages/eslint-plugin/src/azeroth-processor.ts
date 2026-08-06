@@ -16,7 +16,7 @@
 
 import { packageVersion } from './version.ts';
 import type { Linter, Rule } from 'eslint';
-import { generateVirtualCode, diagnoseModule, lintSource, parseModule, type CodeMapping } from '@azerothjs/compiler';
+import { findMarkupStart, generateVirtualCode, diagnoseModule, lintSource, parseMarkup, parseModule, type CodeMapping } from '@azerothjs/compiler';
 import { registerDocument } from './project-pool.ts';
 
 /** What preprocess stashes for postprocess, keyed by the `.azeroth` file name. */
@@ -330,6 +330,17 @@ export const azerothProcessor: Linter.Processor =
 
     preprocess(text: string, filename: string): Linter.ProcessorFile[]
     {
+        // ESLint's fix contract is BOM-STRIPPED offset space: its SourceCode removes a
+        // leading U+FEFF before rules and the fixer ever see the text, and re-prepends it
+        // on write. Processors, however, receive the RAW text - so every offset computed
+        // from it (lintSource fixes, the projection mapping, line starts) would drift one
+        // character on BOM files, and a whitespace-only indent fix would eat the `<` of
+        // the tag it meant to indent. Strip here, once, so the whole pipeline downstream
+        // shares the applier's coordinate space.
+        if (text.charCodeAt(0) === 0xFEFF)
+        {
+            text = text.slice(1);
+        }
         // Register the file in the shared AzerothProject so its virtual twin joins the program BEFORE the
         // parser runs - that program is what gives the virtual block real types (the type-aware path).
         // Best-effort: a project-setup failure must never break linting, so it falls back to syntactic.
@@ -398,6 +409,94 @@ export const azerothProcessor: Linter.Processor =
         // Unify the compiler's reactivity diagnostics and markup lint into the same list.
         out.push(...compilerDiagnostics(projection));
         out.push(...markupLint(projection));
-        return out;
+        return guardStructure(out, projection.source);
     }
 };
+
+/**
+ * The structural invariant behind `--fix`: applying this file's fixes must never change
+ * its MARKUP SKELETON (the sequence of tags and their nesting). The fixes are applied to
+ * a scratch copy the same way ESLint would (sorted, non-overlapping, bottom-up) and the
+ * result's skeleton compared to the original's; on any difference - or on a result that
+ * no longer parses where the original did - every fix is STRIPPED and the messages
+ * survive as report-only. A wrong fix therefore costs an autofix, never a file. This
+ * guards the whole merged stream (mapped virtual fixes and lint-native ones alike)
+ * against coordinate mistakes this code has already made once: the BOM drift above
+ * shipped, and only review of `--fix` output caught it.
+ */
+function guardStructure(messages: Linter.LintMessage[], source: string): Linter.LintMessage[]
+{
+    const fixable = messages.filter((m) => m.fix !== undefined);
+    if (fixable.length === 0)
+    {
+        return messages;
+    }
+
+    const sorted = [...fixable].sort((a, b) => (a.fix as Rule.Fix).range[0] - (b.fix as Rule.Fix).range[0]);
+    let scratch = '';
+    let cursor = 0;
+    let lastEnd = -1;
+    for (const message of sorted)
+    {
+        const fix = message.fix as Rule.Fix;
+        if (fix.range[0] < lastEnd)
+        {
+            continue; // Overlap: ESLint would defer it to a later pass, where it is re-guarded.
+        }
+        scratch += source.slice(cursor, fix.range[0]) + fix.text;
+        cursor = fix.range[1];
+        lastEnd = fix.range[1];
+    }
+    scratch += source.slice(cursor);
+
+    if (markupSkeleton(scratch) === markupSkeleton(source))
+    {
+        return messages;
+    }
+    return messages.map((m) => (m.fix === undefined ? m : { ...m, fix: undefined }));
+}
+
+/**
+ * A canonical string of every markup region's tag structure: open/close/self-close events
+ * with tag names, in document order. Whitespace-only edits cannot change it; anything
+ * that does is a corrupted fix. Unparseable input yields a sentinel that never equals a
+ * parsed skeleton, so a fix that breaks parsing is caught by the same comparison.
+ */
+function markupSkeleton(source: string): string
+{
+    const events: string[] = [];
+    const walk = (node: { kind: string; tag?: string; children?: unknown[] }): void =>
+    {
+        if (node.kind === 'element' || node.kind === 'fragment')
+        {
+            events.push(`+${ node.kind === 'fragment' ? '' : node.tag ?? '' }`);
+            for (const child of (node.children ?? []) as { kind: string }[])
+            {
+                walk(child);
+            }
+            events.push('-');
+        }
+    };
+
+    let pos = 0;
+    while (pos < source.length)
+    {
+        const at = findMarkupStart(source, pos);
+        if (at === -1)
+        {
+            break;
+        }
+        let parsed: { node: { kind: string; tag?: string; children?: unknown[] }; end: number };
+        try
+        {
+            parsed = parseMarkup(source, at);
+        }
+        catch
+        {
+            return `!unparseable@${ at }`;
+        }
+        walk(parsed.node);
+        pos = parsed.end;
+    }
+    return events.join('');
+}

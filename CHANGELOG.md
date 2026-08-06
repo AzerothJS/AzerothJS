@@ -50,10 +50,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   same name, and a render-callback child on the three control-flow tags. A zero-argument thunk
   child (`{ () => ... }`) is untouched: it binds nothing.
 
-- KNOWN LIMITATION: the `azeroth/markup-indent` lint autofix can corrupt markup whose
-  indentation it re-derives after a structural edit (observed as mismatched closing tags on
-  freshly-migrated files). Until it is fixed, review `--fix` output on `.azeroth` files it
-  touched rather than trusting it blindly.
+### Fixed (eslint-plugin) - `--fix` is structurally safe on `.azeroth` files
+
+- **A BOM file could be corrupted by a whitespace-only autofix.** ESLint's fixer works in
+  BOM-STRIPPED offset space (its SourceCode removes a leading U+FEFF before rules see the
+  text), but processors receive the raw text - so every fix offset the azeroth processor
+  computed drifted one character on BOM files, and an indent fix ate the `<` of the tag it
+  meant to indent, cascading into mismatched closing tags. The processor now strips the BOM
+  at its entry point, putting the whole pipeline in the applier's coordinate space.
+
+- **Structural guarantee: `--fix` now produces valid markup or refuses to fix.** Before the
+  processor returns fixable messages, it applies the candidate fixes to a scratch copy and
+  compares the markup skeleton (tag structure and nesting) against the original; on any
+  difference the fixes are stripped and the findings survive report-only. A wrong fix costs
+  an autofix, never a file - for this bug's whole class, not just the found instance.
 
 ### Fixed (azerothjs) - `<Show>`'s narrowed accessor could hand its branch a null seed
 
