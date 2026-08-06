@@ -13,7 +13,7 @@
 
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createSignal, createMemo, createEffect, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { createMemo, createEffect, createRoot, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, materializeChild, resolveReactive } from './h.ts';
@@ -187,20 +187,31 @@ function driveShow<W>(props: ShowProps<W>, target: CoTarget, hydrateFirstRun: bo
 
     if (usesValue)
     {
-        // The NARROWED value the callback reads. This signal is updated ONLY while `when` is truthy, so a
-        // binding inside the branch never observes a null: when `when` goes falsy the signal keeps its last
-        // truthy value and the branch is torn down (the binding never re-reads and crashes). This is what
-        // lets `<Show when={x()}>{(x) => x().foo}</Show>` replace a snapshot IIFE safely.
-        const [value, setValue] = createSignal<W>(untrack(() => resolveReactive(props.when)) as W);
-        createEffect(() =>
+        // The NARROWED value the callback reads: the current truthy `when`, or the last truthy value once
+        // `when` goes falsy (the branch is torn down on that flip; a binding validating during the teardown
+        // window must still see a real value). This is what lets `<Show when={x()}>{(x) => x().foo}</Show>`
+        // replace a snapshot IIFE safely.
+        //
+        // It must be PULL-derived, never pushed by a separate effect: subscribers of a producer have no
+        // ordering guarantee, and an effect created during a write wave defers its first run - so a pushing
+        // effect can lose the race against the truthy memo below and hand the branch a stale seed. A memo
+        // recomputes AT THE READ, from the same `when` state the truthiness decision observed, so a mounted
+        // branch cannot observe the seed no matter where or when this Show was constructed.
+        let lastTruthy = untrack(() => resolveReactive(props.when)) as W;
+
+        const narrowed = createMemo<W>(() =>
         {
             const current = resolveReactive(props.when);
+
             if (current)
             {
-                setValue(() => current as W);
+                lastTruthy = current as W;
             }
+
+            return current ? current as W : lastTruthy;
         });
-        valueAccessor = (): NonNullable<W> => value() as NonNullable<W>;
+
+        valueAccessor = narrowed as () => NonNullable<W>;
 
         // The swap is driven by TRUTHINESS (a memo): a `when` change that stays truthy does not bump the
         // boolean, so the branch is NOT rebuilt - only a truthy<->falsy flip rebuilds. Value changes reach

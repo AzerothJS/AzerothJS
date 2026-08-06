@@ -6,7 +6,7 @@
 // while the branch is mounted, and the branch is NOT rebuilt when the value changes (only on a
 // truthy<->falsy flip). The plain thunk form keeps its original contract (see show.spec.ts).
 import { describe, it, expect } from 'vitest';
-import { createSignal, createEffect, onCleanup, h, render, hydrate, Show, renderToString } from 'azerothjs';
+import { createSignal, createEffect, onCleanup, h, render, hydrate, Show, renderToString, untrack } from 'azerothjs';
 import { subscriberCount } from 'azerothjs/internal';
 
 interface User { name: string }
@@ -214,5 +214,72 @@ describe('Show value-callback', () =>
         setUser({ name: 'Bob' });
         expect(container.querySelector('span')!.textContent).toBe('Bob'); // reactive after hydrate
         container.remove();
+    });
+
+    // A value-callback Show whose HOST is built during a write wave - inside another
+    // Show's branch flipped after mount, a Transition enter, a late <For> row. Effects
+    // created mid-wave defer their first run while memos subscribe eagerly at creation,
+    // so nothing may depend on the notification order between the narrowed accessor's
+    // machinery and the truthy memo: the accessor must be correct AT THE READ. This is
+    // the shape that shipped as a crash in 2.0.0-beta.1 (found live in Guardian's import
+    // sheet); every earlier test in this file mounts the Show directly and cannot see it.
+    it('constructed during a write wave: the branch still gets the real value, not the seed', () =>
+    {
+        const [outer, setOuter] = createSignal(false);
+        const [done, setDone] = createSignal(false);
+        const [report, setReport] = createSignal<User | null>(null);
+
+        const seen: Array<User | null> = [];
+
+        const c = mount(() => h('div', {}, Show({
+            when: outer,
+            children: () => h('section', {}, Show<User | null>({
+                when: () => (done() ? report() : null),
+                children: (u) =>
+                {
+                    seen.push(untrack(() => u()));
+                    return h('span', {}, () => u().name);
+                }
+            }))
+        })));
+
+        // The inner Show is constructed DURING this write's notification wave.
+        setOuter(true);
+        expect(c.querySelector('section')).not.toBeNull();
+
+        // The fixtures' own order: value first, then the flag.
+        setReport({ name: 'Real' });
+        setDone(true);
+
+        expect(seen).toEqual([{ name: 'Real' }]);
+        expect(c.querySelector('span')!.textContent).toBe('Real');
+    });
+
+    it('keeps the last truthy value through the falsy flip, and yields the new one on re-entry', () =>
+    {
+        const [user, setUser] = createSignal<User | null>({ name: 'First' });
+
+        let accessor: (() => User) | null = null;
+
+        const c = mount(() => h('div', {}, Show<User | null>({
+            when: user,
+            children: (u) =>
+            {
+                accessor = u;
+                return h('span', {}, () => u().name);
+            }
+        })));
+
+        expect(c.querySelector('span')!.textContent).toBe('First');
+
+        // Falsy flip: the branch tears down; the accessor must still answer with the
+        // LAST truthy value for anything validating during the teardown window.
+        setUser(null);
+        expect(c.querySelector('span')).toBeNull();
+        expect(untrack(() => accessor!())).toEqual({ name: 'First' });
+
+        // Re-entry with a new value must yield the new one, never the latch.
+        setUser({ name: 'Second' });
+        expect(c.querySelector('span')!.textContent).toBe('Second');
     });
 });
