@@ -121,7 +121,7 @@ describe('let binding projection', () =>
 {
     it('projects the binding through the typed adapter, not as a prop', () =>
     {
-        const { code } = generateVirtualCode(SHOW, 'panel.azeroth');
+        const { code } = generateVirtualCode(SHOW);
 
         expect(code).toContain('__azNarrow(');
         expect(code).toMatch(/\(report\) =>/);

@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/typescript-plugin",
-    "version": "2.0.0-beta.1",
+    "version": "2.0.0-beta.2",
     "description": "AzerothJS TypeScript language-service plugin - resolves .azeroth imports with real types in tsserver/editors",
     "type": "commonjs",
     "main": "./dist/index.js",
@@ -47,6 +47,6 @@
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     },
     "dependencies": {
-        "@azerothjs/language-server": "^2.0.0-beta.1"
+        "@azerothjs/language-server": "^2.0.0-beta.2"
     }
 }

@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/kit",
-    "version": "2.0.0-beta.1",
+    "version": "2.0.0-beta.2",
     "description": "The assembled car: per-route SSR, static prerendering, hydration, and one-command production builds over the AzerothJS router, renderer, and HTTP server.",
     "keywords": [
         "azerothjs",
@@ -61,10 +61,10 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/http": "^2.0.0-beta.1"
+        "@azerothjs/http": "^2.0.0-beta.2"
     },
     "peerDependencies": {
-        "azerothjs": "^2.0.0-beta.1"
+        "azerothjs": "^2.0.0-beta.2"
     },
     "publishConfig": {
         "access": "public"

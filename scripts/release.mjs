@@ -61,6 +61,8 @@
 //
 //   beta | alpha | rc   same base, that channel (.1 to enter, .n+1 when already on it)
 //                       0.7.0-beta.1 -> `beta` -> 0.7.0-beta.2; -> `rc` -> 0.7.0-rc.1
+//                       If the CURRENT version was never tagged (an interrupted release
+//                       left its bump behind), the keyword resumes it instead of advancing.
 //   pre                 next iteration of the current prerelease channel
 //   stable              drop the prerelease suffix        0.7.0-beta.3 -> 0.7.0
 //   patch|minor|major   SemVer increment; a prerelease line keeps its channel for
@@ -214,7 +216,7 @@ function resolveVersion(input, current)
     if (['alpha', 'beta', 'rc', 'next', 'canary'].includes(input))
     {
         return input === channel
-            ? `${ base }-${ channel }.${ iteration + 1 }`
+            ? resumable(current) ?? `${ base }-${ channel }.${ iteration + 1 }`
             : `${ base }-${ input }.1`;
     }
 
@@ -224,7 +226,7 @@ function resolveVersion(input, current)
         {
             fail(`current version ${ current } is stable - name the channel instead (e.g. \`release -- beta\`)`);
         }
-        return `${ base }-${ channel }.${ iteration + 1 }`;
+        return resumable(current) ?? `${ base }-${ channel }.${ iteration + 1 }`;
     }
 
     if (input === 'stable' || input === 'release')
@@ -273,6 +275,17 @@ function resolveVersion(input, current)
     return nextBase;
 }
 
+/**
+ * The current version itself when an interrupted release left it behind - files bumped,
+ * tag never created - or null once its tag exists. A same-channel keyword must finish
+ * that release rather than advance past it: the advance would strand the bump and then
+ * fail on the dirty tree the bump IS.
+ */
+function resumable(current)
+{
+    return query('git', ['tag', '-l', `v${ current }`]) === `v${ current }` ? null : current;
+}
+
 /** Prints usage + a versioning cheat-sheet (the full detail is in the file header). */
 function printHelp()
 {
@@ -282,7 +295,8 @@ Usage:  npm run release -- <version | keyword> [options]
         node scripts/release.mjs <version | keyword> [options]
 
 Keywords (resolved against the current version - no math needed):
-  beta / alpha / rc   same base, that channel (.1 to enter, .n+1 when on it)
+  beta / alpha / rc   same base, that channel (.1 to enter, .n+1 when on it;
+                      an untagged current version is resumed, not advanced past)
   pre                 next iteration of the current prerelease
   stable              drop the prerelease suffix (cut the release)
   patch|minor|major   SemVer bump; prerelease lines keep their channel

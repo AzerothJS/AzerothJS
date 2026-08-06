@@ -112,6 +112,37 @@ describe('release branch guard', () =>
     });
 });
 
+describe('release keyword resolution', () =>
+{
+    it('a same-channel keyword finishes an untagged current version instead of advancing past it', () =>
+    {
+        // Whether the repo sits mid-release (bumped, untagged) or at rest (tagged) depends
+        // on when the suite runs; assert the rule that holds in each state.
+        const parts = /^(.+-([a-z]+))\.(\d+)$/.exec(currentVersion);
+        if (parts === null)
+        {
+            return;
+        }
+        // noUncheckedIndexedAccess types every group as possibly-undefined; the match
+        // above proves all three exist, so empty defaults just discharge the checker.
+        const [, prefix = '', channel = '', iteration = ''] = parts;
+        const tagged = git(['tag', '-l', `v${ currentVersion }`]) === `v${ currentVersion }`;
+        const run = release([channel, '--dry-run', '-y', '--skip-checks', '--allow-branch']);
+        expect(run.status).toBe(0);
+        if (tagged)
+        {
+            expect(run.output).toContain(`Release ${ currentVersion } -> ${ prefix }.${ Number(iteration) + 1 }`);
+        }
+        else
+        {
+            // The state an interrupted release leaves behind: advancing the iteration would
+            // strand the existing bump and then fail on the dirty tree that bump IS.
+            expect(run.output).toContain(`Release ${ currentVersion } -> ${ currentVersion }`);
+            expect(run.output).toContain('resume');
+        }
+    });
+});
+
 describe('release --otp', () =>
 {
     it('never prints the code: it reaches npm through the environment, not an argv', () =>

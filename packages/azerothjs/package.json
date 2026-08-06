@@ -1,6 +1,6 @@
 {
     "name": "azerothjs",
-    "version": "2.0.0-beta.1",
+    "version": "2.0.0-beta.2",
     "engines": {
         "node": ">=22"
     },
@@ -39,7 +39,7 @@
         "prepublishOnly": "npm run build"
     },
     "dependencies": {
-        "@azerothjs/schema": "^2.0.0-beta.1"
+        "@azerothjs/schema": "^2.0.0-beta.2"
     },
     "keywords": [
         "framework",
