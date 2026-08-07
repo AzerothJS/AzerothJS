@@ -78,11 +78,41 @@ describe('azerothViteLogger', () =>
         expect(strip(h.out[1] ?? '')).toMatch(/^. reload src\/main\.ts\n$/);
     });
 
+    it('the optimizer notices survive - they explain a mid-session URL invalidation', () =>
+    {
+        // A re-bundle invalidates optimized-module URLs the browser may hold; a dead
+        // dynamic import right after one of these lines is EXPLAINED by it, so
+        // swallowing them turns an infrastructure event into an apparent app bug.
+        const h = harness(true);
+        const log = azerothViteLogger(undefined, h.streams);
+        log.info(green('optimized dependencies changed. reloading'));
+        log.info('Re-optimizing dependencies because lockfile has changed');
+        expect(h.out.length).toBe(2);
+        expect(strip(h.out[0] ?? '')).toMatch(/optimized dependencies changed/);
+        expect(strip(h.out[1] ?? '')).toMatch(/Re-optimizing dependencies/);
+    });
+
+    it('recognises a line whose head carries a cursor control, not just colour', () =>
+    {
+        // Every matcher here is `^`-anchored, so a surviving control byte at the head of a
+        // line silently stops it from being recognised. Colour-only stripping left erase,
+        // cursor-move and hide sequences in place; the URL handoff to the conductor is the
+        // one that hurts - a missed `Local:` is a ready frame that degrades on a timer.
+        const h = harness(false);
+        const log = azerothViteLogger(undefined, h.streams);
+        const local = `  ${ green('➜') }  Local:   http://localhost:5173/`;
+        log.info(`${ ESC }[2K${ ESC }[?25l${ local }`);
+        expect(h.out).toHaveLength(1);
+        expect(h.out[0]).toContain('http://localhost:5173/');
+    });
+
     it('suppresses remaining info chatter and keeps warnings/errors byte-intact on stderr', () =>
     {
         const h = harness(true);
         const log = azerothViteLogger(undefined, h.streams);
-        log.info('Re-optimizing dependencies because lockfile has changed');
+        // The scan-time hint is chatter (the plugin pre-registers deps itself); the
+        // mid-session re-optimize NOTICES are load-bearing and covered above.
+        log.info(`${ green('✨') } new dependencies optimized: @azerothjs/devtools`);
         const warning = `${ green('[plugin:x]') } something looks off`;
         log.warn(warning);
         log.error('boom');

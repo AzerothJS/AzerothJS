@@ -6,6 +6,13 @@ export default component Home()
     state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
     state latency = 0;
 
+    // `stream` is idle while its source is falsy, restarts when it changes, and accumulates
+    // chunks into one reactive string; `parse: 'sse'` unframes the events up to [DONE].
+    state asked: string | false = false;
+    stream reply = (question: string, signal: AbortSignal) =>
+        fetch(`/api/assistant?q=${ encodeURIComponent(question) }`, { signal })
+        with { source: asked, parse: 'sse' };
+
     const ping = async (): Promise<void> =>
     {
         status = 'checking';
@@ -71,6 +78,34 @@ export default component Home()
                     <p class="text-danger text-[0.9rem] mt-3">No answer. <code class="font-mono">npm run dev</code> from the project root starts both halves.</p>
                 </Match>
             </Switch>
+        </div>
+
+        <div class="border border-line rounded-lg bg-panel p-4 mt-4">
+            <div class="flex items-center justify-between gap-4">
+                <code class="font-mono text-[0.9rem]">GET /api/assistant</code>
+                <Show when={ asked !== false && !reply.done() }>
+                    <button
+                        class="text-[0.9rem] px-5 py-2 rounded-md border border-line cursor-pointer transition hover:border-ice"
+                        onClick={ () => reply.cancel() }
+                    >
+                        Stop
+                    </button>
+                </Show>
+                <Show when={ asked === false || reply.done() }>
+                    <button
+                        class="text-[0.9rem] px-5 py-2 rounded-md border border-ice bg-ice/12 cursor-pointer transition hover:bg-ice/22"
+                        onClick={ () => asked = `hello #${ count + 1 }` }
+                    >
+                        Stream
+                    </button>
+                </Show>
+            </div>
+            <Show when={ asked === false }>
+                <p class="text-faint text-[0.9rem] mt-3">A server-sent token stream, arriving one word at a time.</p>
+            </Show>
+            <Show when={ asked !== false }>
+                <p class="text-[0.9rem] leading-relaxed mt-3">{ reply.partial() }</p>
+            </Show>
         </div>
     </section>
 }

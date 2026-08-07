@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { azeroth } from '@azerothjs/compiler';
+import { azerothDepScanPlugin } from '../src/vite.ts';
 
 type TransformFn = (this: unknown, code: string, id: string) => Promise<unknown>;
 
@@ -254,5 +255,133 @@ describe('azeroth() plugin - clientLogs -> server.forwardConsole', () =>
         const config: Record<string, unknown> = { server: { forwardConsole: { unhandledErrors: false, logLevels: ['error'] } } };
         configOf()(config, { command: 'serve' });
         expect((config.server as { forwardConsole?: { logLevels?: string[] } }).forwardConsole?.logLevels).toEqual(['error']);
+    });
+});
+
+// Vite's dependency scanner only crawls modules it can read (JS extensions, html-likes,
+// optimizeDeps.extensions entries) and runs OUTSIDE the plugin pipeline - only
+// optimizeDeps.rolldownOptions.plugins participate. Without both wirings the `.azeroth`
+// entry is externalized at scan, nothing is pre-bundled, and a runtime re-optimization
+// can invalidate an in-flight dynamic import.
+describe('azeroth() plugin - dependency scanner wiring', () =>
+{
+    interface OptimizeDeps { extensions?: string[]; rolldownOptions?: { plugins?: unknown } }
+    type ConfigFn = (config: Record<string, unknown>, env: { command: string }) => void;
+    const configOf = (options?: Parameters<typeof azeroth>[0]): ConfigFn => azeroth(options).config as unknown as ConfigFn;
+
+    it('a dev serve gains the extension and the scan plugin; a build stays untouched', () =>
+    {
+        const serve: Record<string, unknown> = {};
+        configOf()(serve, { command: 'serve' });
+        const optimize = serve.optimizeDeps as OptimizeDeps;
+        expect(optimize.extensions).toEqual(['.azeroth']);
+        expect((optimize.rolldownOptions?.plugins as Array<{ name: string }>).map((p) => p.name)).toEqual(['azerothjs:dep-scan']);
+
+        const build: Record<string, unknown> = {};
+        configOf()(build, { command: 'build' });
+        expect(build.optimizeDeps).toBeUndefined();
+    });
+
+    it('user extensions and plugins are preserved, never clobbered', () =>
+    {
+        const mine = { name: 'my-scan-shim' };
+        const config: Record<string, unknown> = { optimizeDeps: { extensions: ['.marko'], rolldownOptions: { plugins: [mine] } } };
+        configOf()(config, { command: 'serve' });
+        const optimize = config.optimizeDeps as OptimizeDeps;
+        expect(optimize.extensions).toEqual(['.marko', '.azeroth']);
+        // Nested, not spread: vite flattens the array itself, and the user's value may
+        // be a promise. The user's entry stays first so their shim wins on overlap.
+        const plugins = optimize.rolldownOptions?.plugins as [unknown, { name: string }];
+        expect(plugins[0]).toEqual([mine]);
+        expect(plugins[1].name).toBe('azerothjs:dep-scan');
+    });
+
+    it('an already-registered extension is not duplicated, and a custom extension flows through', () =>
+    {
+        const config: Record<string, unknown> = { optimizeDeps: { extensions: ['.azeroth'] } };
+        configOf()(config, { command: 'serve' });
+        expect((config.optimizeDeps as OptimizeDeps).extensions).toEqual(['.azeroth']);
+
+        const custom: Record<string, unknown> = {};
+        configOf({ extension: '.az' })(custom, { command: 'serve' });
+        const optimize = custom.optimizeDeps as OptimizeDeps;
+        expect(optimize.extensions).toEqual(['.az']);
+        const [shim] = optimize.rolldownOptions?.plugins as [{ load: { filter: { id: RegExp } } }];
+        expect(shim.load.filter.id.test('C:/app/src/main.az')).toBe(true);
+        expect(shim.load.filter.id.test('C:/app/src/main.azeroth')).toBe(false);
+    });
+});
+
+describe('azerothDepScanPlugin', () =>
+{
+    const shim = azerothDepScanPlugin('.azeroth', true);
+
+    it('matches .azeroth paths in both separator styles and nothing else', () =>
+    {
+        expect(shim.load.filter.id.test('/app/src/main.azeroth')).toBe(true);
+        expect(shim.load.filter.id.test('C:\\app\\src\\main.azeroth')).toBe(true);
+        expect(shim.load.filter.id.test('/app/src/main.ts')).toBe(false);
+    });
+
+    it('hands the scanner the lowered module as TS, injected runtime import included', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-scan-'));
+        try
+        {
+            const file = join(dir, 'Widget.azeroth');
+            writeFileSync(file, 'import { helper } from "./lib.ts";\n\nexport default component Widget()\n{\n    <p>{ helper() }</p>\n}\n');
+            const result = shim.load.handler(file);
+            expect(result.moduleType).toBe('ts');
+            expect(result.code).toContain("from 'azerothjs/internal'");
+            expect(result.code).toContain('./lib.ts');
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('a broken file and a missing file both degrade to an empty module instead of failing the scan', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-scan-'));
+        try
+        {
+            const broken = join(dir, 'Broken.azeroth');
+            writeFileSync(broken, 'export default component Broken()\n{\n    <div>\n}\n');
+            expect(shim.load.handler(broken)).toEqual({ code: '', moduleType: 'js' });
+            expect(shim.load.handler(join(dir, 'Missing.azeroth'))).toEqual({ code: '', moduleType: 'js' });
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('the wired shim compiles with the same options the transform will use - ssr:false included', () =>
+    {
+        // The scanner must see the imports of the module vite will SERVE, so the shim and the
+        // transform hand generateModule the same options. The dep SPECIFIER set is provably
+        // option-independent today; aligning the arguments keeps that true by construction
+        // rather than by theorem when codegen evolves.
+        const config: Record<string, unknown> = {};
+        (azeroth({ ssr: false }).config as unknown as (c: Record<string, unknown>, e: { command: string }) => void)(config, { command: 'serve' });
+        const optimize = config.optimizeDeps as { rolldownOptions?: { plugins?: unknown } };
+        const [wired] = optimize.rolldownOptions?.plugins as [ReturnType<typeof azerothDepScanPlugin>];
+
+        const dir = mkdtempSync(join(tmpdir(), 'az-scan-'));
+        try
+        {
+            const file = join(dir, 'Widget.azeroth');
+            writeFileSync(file, 'export default component Widget()\n{\n    state n = 0;\n    <p>{ n }</p>\n}\n');
+            const result = wired.load.handler(file);
+            expect(result.moduleType).toBe('ts');
+            // Client-only emission (no SSR string-mode branches), same single runtime specifier.
+            expect(result.code).toContain("from 'azerothjs/internal'");
+            expect(result.code).not.toContain('isStringMode');
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

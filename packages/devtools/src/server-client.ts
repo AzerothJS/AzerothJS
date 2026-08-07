@@ -137,9 +137,13 @@ export function createServerLink(onChange: () => void): ServerLink
         setStatus('connecting');
         socket.onopen = (): void =>
         {
-            // The url is proven: this is what licenses a retry after a later drop.
+            // The url is proven: this is what licenses a retry after a later drop. The budget
+            // is NOT refilled here - a handshake alone is too weak a signal. A bridge that
+            // accepts the upgrade and drops it immediately (its onConnection threw, a proxy
+            // is answering) would reset the budget on every cycle and retry forever at the
+            // first delay, which is the endless loop the budget exists to prevent. Only a
+            // real session message proves the far end works; that refills it.
             everOpened = true;
-            attempt = 0;
             setStatus('open');
         };
         socket.onmessage = (e: MessageEvent): void =>
@@ -149,6 +153,10 @@ export function createServerLink(onChange: () => void): ServerLink
                 const parsed = JSON.parse(String(e.data)) as { type?: string; session?: SessionSnapshot };
                 if (parsed.type === 'session' && parsed.session !== undefined)
                 {
+                    // A delivered session is the proof a handshake is not: the far end is the
+                    // bridge and it works, so the retry budget refills here and a later drop
+                    // gets the full allowance again.
+                    attempt = 0;
                     session = parsed.session;
                     onChange();
                 }

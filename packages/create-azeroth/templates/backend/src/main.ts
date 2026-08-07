@@ -40,9 +40,8 @@ const handler = pipeline(
     }),
     requestId(),
     securityHeaders(),
-    // Origins are named, never reflected: `origin: true` with credentials would echo whatever
-    // Origin the caller sent and honour cookies with it, which any website could then read.
-    // Add your deployed frontends to the production list.
+    // Origins are named, never reflected (`origin: true` + credentials would let any site
+    // read cookie-bearing responses). Add your deployed frontends to the production list.
     cors({ origin: isProduction ? [] : ['http://localhost:3000'], credentials: true }),
     // The default key is the TCP peer, so behind a proxy every client shares one bucket. Declare
     // the proxy (`trustProxy`, plus `trustedHops` for a chain) or the limit is a global budget.

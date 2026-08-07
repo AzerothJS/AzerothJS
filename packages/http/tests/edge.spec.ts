@@ -371,6 +371,48 @@ describe('MemoryRateStore', () =>
         expect(store.size).toBe(3);
         expect(store.hit('k1', 1, 60_000).limited).toBe(false); // k1 was evicted: a fresh bucket, not the old count
     });
+
+    it('a limited client cannot clear its own counter by churning keys past the cap', () =>
+    {
+        // Eviction is indistinguishable from forgiveness, so an attacker who can mint keys
+        // (a forged X-Forwarded-For, an IPv6 /64) could burn their allowance, spray the cap,
+        // and come back clean. This is the WORST case for the store: the attacker goes idle
+        // during the churn, so their bucket is the least-recently-hit - the very first
+        // eviction candidate. It must be skipped for being over its limit.
+        const store = new MemoryRateStore({ maxEntries: 8 });
+        for (let i = 0; i < 3; i++)
+        {
+            store.hit('attacker', 2, 60_000);
+        }
+        expect(store.hit('attacker', 2, 60_000).limited).toBe(true);
+
+        for (let i = 0; i < 40; i++)
+        {
+            store.hit(`churn-${ i }`, 2, 60_000);
+        }
+
+        expect(store.size).toBeLessThanOrEqual(8);
+        expect(store.hit('attacker', 2, 60_000).limited).toBe(true);
+    });
+
+    it('fails CLOSED when every retained bucket is an enforced limit', () =>
+    {
+        // With nothing safe to drop, admitting a new key would have to cost someone's
+        // enforcement. Refusing the newcomer is the only direction that cannot be used to
+        // clear a limit - the newcomer is told it is limited rather than given a free pass.
+        const store = new MemoryRateStore({ maxEntries: 4 });
+        for (const key of ['a', 'b', 'c', 'd'])
+        {
+            store.hit(key, 1, 60_000);
+            store.hit(key, 1, 60_000); // count 2 > limit 1: every bucket is over
+        }
+        expect(store.hit('newcomer', 1, 60_000).limited).toBe(true);
+        // ...and none of the enforced buckets was traded away for it.
+        for (const key of ['a', 'b', 'c', 'd'])
+        {
+            expect(store.hit(key, 1, 60_000).limited).toBe(true);
+        }
+    });
 });
 
 describe('ipBucket', () =>

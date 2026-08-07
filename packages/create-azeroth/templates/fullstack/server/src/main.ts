@@ -33,9 +33,8 @@ const log = createLogger({
     fields: { service: '{{name}}-server' }
 });
 
-// In dev, vite serves the client and proxies /api here; in production this server serves
-// the whole app - one origin, no CORS between halves. The SSR bundle is ONE self-contained
-// file, so importing it gives the kit both the route table and the page renderer.
+// Dev: vite serves the client and proxies /api here. Production: this server serves the
+// whole app from one origin; the self-contained SSR bundle carries routes + renderer.
 const ssr = isProduction
     ? await import(pathToFileURL(config.ssrEntry).href) as { routes: PageRoute[]; renderPage: PageRenderer }
     : undefined;
@@ -63,22 +62,12 @@ const handler = pipeline(
 const served = await serve(handler, { port: config.port });
 handleShutdownSignals(served);
 
-// The panel's Server tab connects here and mirrors the server's reactive graph: request roots,
-// their per-request state, and long-lived stores. That is live application data, so the bridge
-// attaches ONLY under NODE_ENV=development and every upgrade must present the token below from a
-// loopback peer. The token lives in `.env`, which is gitignored: never committed, and the same
-// secret from one restart to the next.
-// Reads the RAW variable, not `config.env`. `loadConfig` defaults an unset NODE_ENV to
-// 'development' for this app's own purposes, but the bridge refuses anything that is not
-// literally development - so guarding on the defaulted value would call it in a scaffold where
-// nothing is set, and the boot would die on a bridge that was never going to attach.
-// `azeroth dev` sets NODE_ENV=development, so `npm run dev` gets the panel.
+// The devtools bridge exposes live server state, so it attaches only under a LITERAL
+// NODE_ENV=development (the raw variable - config.env is defaulted and would enable it
+// everywhere). The token comes from gitignored .env, never minted per boot: `node --watch`
+// restarts on every save, and a fresh token each restart would strand the panel.
 if (process.env.NODE_ENV === 'development')
 {
-    // The token is read, never minted. A dev server restarts on every file save, so a
-    // per-boot secret would be a different one each time and the panel - which remembers
-    // the URL you gave it - would 403 from your first edit onward. `.env` outlives the
-    // process, so the panel stays connected across restarts.
     const token = process.env.DEVTOOLS_TOKEN;
     if (token === undefined || token.length < 16)
     {

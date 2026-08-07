@@ -13,6 +13,13 @@ export interface PanelCtx
     agent: Agent;
     /** False while an imported snapshot is being viewed (read-only). */
     live: boolean;
+    /**
+     * Where this model comes from. `local` is this page's own graph; `server` is the bridge's
+     * mirror, whose emptiness is normal (server primitives live inside requests). Separate
+     * from {@link live}, which answers whether the model may be WRITTEN to - an imported
+     * snapshot of a local session is `local` and not live.
+     */
+    source: 'local' | 'server';
     filter: string;
     selectedId: number | null;
     /** Ordered ids of selectable rows in the current view; views rebuild it each render. */
@@ -346,10 +353,19 @@ export function renderComponents(ctx: PanelCtx, main: HTMLElement): void
 
     if (rows.length === 0)
     {
-        emptyState(main, ctx.filter === '' ? 'Nothing mounted yet' : 'No matches',
-            ctx.filter === ''
-                ? 'Every state, derived, effect, form, resource, store, stream and selector your components declare appears here as it is created. Interact with the app to see it live.'
-                : 'No node, primitive, kind, or file matches this filter. Clear it to see everything again.');
+        // The server mirror is empty for a DIFFERENT reason than a local app: an idle
+        // backend legitimately has nothing reactive alive - stores and resources are
+        // created lazily inside requests and disposed when they settle - so the copy must
+        // say "empty is normal" rather than imply something failed to appear. Keyed on
+        // `source`, NOT on `live`: an imported local snapshot is also not live, and telling
+        // its reader about server requests would be nonsense.
+        const server = ctx.source === 'server';
+        emptyState(main, ctx.filter === '' ? (server ? 'Nothing alive right now' : 'Nothing mounted yet') : 'No matches',
+            ctx.filter !== ''
+                ? 'No node, primitive, kind, or file matches this filter. Clear it to see everything again.'
+                : server
+                    ? 'An idle backend is normally empty: server stores, resources and streams are created inside requests and disposed when they settle, appearing here while they live. Anything created before attachDevtools ran is not mirrored - create long-lived server state after it (or through the lazy store idiom).'
+                    : 'Every state, derived, effect, form, resource, store, stream and selector your components declare appears here as it is created. Interact with the app to see it live.');
         return;
     }
 
@@ -847,7 +863,7 @@ export function renderServer(ctx: PanelCtx, main: HTMLElement, status?: string, 
         return;
     }
     emptyState(main, 'Server inspection',
-        'Call attachDevtools(served.server, { token }) from @azerothjs/devtools/server on your backend (dev only), then connect above with that token in the URL query - this tab streams the server\'s reactive graph, where every request is a reactive root.');
+        'Call attachDevtools(served.server, { token }) from @azerothjs/devtools/server on your backend (dev only), then connect above with that token in the URL query. This tab mirrors the server\'s live reactive graph: stores, resources and streams appear while requests use them.');
 }
 
 // --- Inspector -----------------------------------------------------------------------------

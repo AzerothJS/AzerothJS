@@ -213,6 +213,7 @@ export function installDevtools(options: InstallOptions = {}): () => void
     const ctx: PanelCtx = {
         agent,
         live: true,
+        source: 'local',
         filter: '',
         selectedId: null,
         navOrder: [],
@@ -287,11 +288,41 @@ export function installDevtools(options: InstallOptions = {}): () => void
     {
         try
         {
-            return localStorage.getItem(SERVER_URL_KEY) ?? '';
+            const saved = localStorage.getItem(SERVER_URL_KEY) ?? '';
+            // A stored URL without a token predates the tokenless-URL guard (older panels
+            // persisted whatever was attempted). It can never connect - attachDevtools
+            // refuses the upgrade - so it is junk that would poison every later session
+            // on this origin. Purge rather than ignore: gone is provably inert.
+            if (saved !== '' && !/[?&]token=[^&]/.test(saved))
+            {
+                localStorage.removeItem(SERVER_URL_KEY);
+                return '';
+            }
+            return saved;
         }
         catch
         {
             return '';
+        }
+    }
+
+    /**
+     * Forgets a stored bridge URL that never opened. The panel remembers a URL so a restart
+     * reconnects by itself, but ONLY a url that actually worked is worth remembering: this
+     * key is per-ORIGIN, and every vite project shares `localhost:5173`, so a token from the
+     * last project stays behind and makes each new one open with a 403 in its console -
+     * forever, since nothing cleared it. A url that never opened is the same dead entry the
+     * tokenless guard already refuses to keep; this is the other half of that rule.
+     */
+    function forgetUnusableServerUrl(): void
+    {
+        try
+        {
+            localStorage.removeItem(SERVER_URL_KEY);
+        }
+        catch
+        {
+            // No storage - nothing to forget.
         }
     }
 
@@ -302,6 +333,7 @@ export function installDevtools(options: InstallOptions = {}): () => void
     const serverCtx: PanelCtx = {
         agent,
         live: false,
+        source: 'server',
         filter: '',
         selectedId: null,
         navOrder: [],
@@ -448,6 +480,15 @@ export function installDevtools(options: InstallOptions = {}): () => void
             }
         }
 
+        // The attempt above (or a manual one) settled without the socket ever opening: wrong
+        // token, wrong address, bridge not attached. Whatever is stored is dead, so stop
+        // carrying it into every future load of this origin. The url stays in the bar for
+        // this session - `serverLink.url()` still has it - so a typo is still correctable.
+        if (status === 'error' && !serverLink.everOpened())
+        {
+            forgetUnusableServerUrl();
+        }
+
         const bar = el('div', 'az-toolbar');
         const url = el('input', 'az-search az-mono');
         url.placeholder = 'ws://localhost:5200/__azeroth/devtools?token=...';
@@ -456,7 +497,10 @@ export function installDevtools(options: InstallOptions = {}): () => void
         const connect = (): void =>
         {
             const target = bridgeUrl(url.value);
-            if (target === '')
+            // A tokenless target is neither attempted nor persisted: the bridge refuses the
+            // upgrade without one, and a stored copy would poison every later session on
+            // this origin. The tab's guidance already says what to paste.
+            if (target === '' || !/[?&]token=[^&]/.test(target))
             {
                 return;
             }

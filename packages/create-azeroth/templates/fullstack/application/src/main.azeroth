@@ -2,15 +2,13 @@ import { bootClient } from '@azerothjs/kit/client';
 
 import App from './App.azeroth';
 
-// Before the app boots, or the panel misses every primitive built during the first render.
-// `import.meta.env.DEV` is replaced with false in a build, so this branch and its import are
-// eliminated; `server` is where the Server tab finds the bridge.
+// Before the app boots, or the panel misses the first render's primitives. DEV is replaced
+// with false in a build, so the branch and its import are eliminated.
 if (import.meta.env.DEV)
 {
     const { installDevtools } = await import('@azerothjs/devtools');
     installDevtools({ server: 'http://localhost:3000' });
 }
 
-// Markup already on the page is ADOPTED (hydration, loader handoff read back); an empty shell
-// renders normally.
+// Markup already on the page is adopted (hydration); an empty shell renders normally.
 bootClient(App);

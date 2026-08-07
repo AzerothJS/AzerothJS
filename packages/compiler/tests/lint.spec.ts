@@ -34,7 +34,11 @@ describe('lintMarkup - unsafe-narrow-in-show', () =>
         expect(warnings).toHaveLength(1);
         expect(warnings[0]!.code).toBe('azeroth/unsafe-narrow-in-show');
         expect(warnings[0]!.message).toContain('config()!');
-        expect(warnings[0]!.message).toContain('(value) => ...');
+        // The fix-it must name the form the compiler ACCEPTS. It used to recommend the
+        // render-callback child, which `azeroth/callback-children-removed` rejects as a hard
+        // error - following the lint's own advice broke the build.
+        expect(warnings[0]!.message).toContain('let={ value }');
+        expect(warnings[0]!.message).not.toContain('(value) => ...');
     });
 
     it('flags a dotted guarded call reached through a nested attribute', () =>
@@ -55,9 +59,17 @@ describe('lintMarkup - unsafe-narrow-in-show', () =>
         expect(warnings[0]!.message).toContain('configs.lastReport()!');
     });
 
-    it('does not flag the narrowed-accessor callback form', () =>
+    it('does not flag the let= binding form - the value is already bound, not re-read', () =>
     {
-        expect(lint('<Show when={ config() }>{ (config) => <p>{ config().name }</p> }</Show>')).toEqual([]);
+        expect(lint('<Show when={ config() } let={ value }><p>{ value.name }</p></Show>')).toEqual([]);
+    });
+
+    it('STILL flags a removed callback child, so the two layers agree', () =>
+    {
+        // The callback form is a compile error now, so it must not silence this warning:
+        // suppressing here would hide the real problem behind a shape that cannot build.
+        const warnings = lint('<Show when={ config() }>{ (config) => <p>{ config()!.name }</p> }</Show>');
+        expect(warnings.map((w) => w.code)).toContain('azeroth/unsafe-narrow-in-show');
     });
 
     it('does not flag optional chaining (no runtime crash, left to a future rule)', () =>

@@ -122,6 +122,39 @@ describe('a producer that fails', () =>
         expect(await bodyText(throwing)).not.toContain('[DONE]');
         expect(failures).toHaveLength(1);
     });
+
+    it('WITHOUT onError it reports on stderr and the process survives', async () =>
+    {
+        // The default used to re-throw on a fresh microtask. A microtask throw is an
+        // uncaughtException, and its default disposition ends the process - so one handler's
+        // failed query killed the server and every other live connection with it. The default
+        // has to be loud, not fatal.
+        const uncaught: unknown[] = [];
+        const onUncaught = (error: unknown): void => void uncaught.push(error);
+        process.on('uncaughtException', onUncaught);
+        const reported = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try
+        {
+            const throwing = sse(request(), (connection) =>
+            {
+                connection.send('page-1');
+                throw new Error('the ledger cursor died');
+            }, { heartbeatMs: 0 });
+
+            const wire = await bodyText(throwing);
+            await new Promise((resolve) => setTimeout(resolve, 10)); // let any microtask throw land
+
+            expect(wire).toContain('data: page-1');
+            expect(wire).not.toContain('[DONE]');
+            expect(uncaught).toEqual([]);
+            expect(reported).toHaveBeenCalled();
+        }
+        finally
+        {
+            reported.mockRestore();
+            process.off('uncaughtException', onUncaught);
+        }
+    });
 });
 
 describe('relayed text cannot forge events', () =>

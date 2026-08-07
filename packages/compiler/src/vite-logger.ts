@@ -25,7 +25,12 @@ export interface LoggerStreams
     err?: { write(chunk: string): unknown; isTTY?: boolean | undefined };
 }
 
-const ANSI = new RegExp(`${ String.fromCharCode(27) }\\[[0-9;]*m`, 'g');
+// Every CSI sequence, not just the colour (SGR) ones, plus a bare RIS reset. The narrower
+// colour-only form left cursor and erase controls (`ESC[2K`, `ESC[?25l`, `ESC[1A`) in the
+// text, and every matcher below is `^`-anchored - one surviving control byte at the head of
+// a line silently stops it from being recognised. Stripping is for MATCHING only; what gets
+// written out is the original message, so widening this cannot change any output.
+const ANSI = new RegExp(`${ String.fromCharCode(27) }(?:\\[[0-9;?]*[A-Za-z]|c)`, 'g');
 
 /** @internal */
 function stripAnsi(text: string): string
@@ -108,8 +113,17 @@ export function azerothViteLogger(level: ViteLogLevel | undefined, streams: Logg
         {
             const verb = change[1] === 'page reload' ? 'reload' : 'hmr';
             out?.write(paint.dim(`${ glyph } ${ verb } ${ change[2] ?? '' }`) + '\n');
+            return;
         }
-        // Remaining info-level chatter (optimize notices, restart rituals) stays quiet.
+        // The optimizer's mid-session notices are load-bearing: a re-bundle invalidates
+        // module URLs the browser may hold, so a failure right after one of these lines
+        // (a dead dynamic import, a full reload) is EXPLAINED by it. Swallowing them
+        // once made that failure look like an app bug.
+        if (/^optimized dependencies changed/i.test(plain) || /^Re-optimizing dependencies/.test(plain))
+        {
+            out?.write(paint.dim(`${ glyph } ${ plain }`) + '\n');
+        }
+        // Remaining info-level chatter (dependency-scan chatter, restart rituals) stays quiet.
     }
 
     return {

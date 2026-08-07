@@ -10,6 +10,117 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed (http) - a rate-limited client can no longer clear its own counter - SECURITY
+
+`MemoryRateStore` evicted the oldest bucket when it hit its entry cap, and eviction is
+indistinguishable from forgiveness: an attacker who can mint keys - a forged
+`X-Forwarded-For`, an IPv6 /64 - could burn their allowance, spray `maxEntries` fresh
+keys until their own bucket was dropped, and come back with a clean counter. Reproduced
+against the real store: limited, churn, unlimited.
+
+Eviction now skips any bucket that is over its limit and gives up only expired or
+under-limit ones, and when nothing is safe to drop the store fails CLOSED - the new key
+is refused rather than paid for with someone else's enforcement. Buckets also move to
+the back of the map on every hit, so the scan really does start at the least-recently-hit
+end (`Map.set` on an existing key does not reorder it, so a continuously-active client
+used to sit permanently first in line).
+
+### Fixed (http) - one failing SSE producer no longer takes the server down
+
+With no `onError`, a producer's throw was re-thrown inside `queueMicrotask`. A microtask
+throw is an uncaughtException, and its default disposition exits the process - so a
+single handler's rejected query killed every other live connection. The default observer
+now writes to stderr and ends that one stream; `onError` still overrides it.
+
+### Fixed (http) - `shutdown()` no longer leaves a timer running
+
+The drain raced a 10ms poll against the grace deadline and cleared only the poll, and
+only on the branch where the drain won. If the deadline won, the poll ran forever and
+nothing could end the process on its own; if the drain won, the abandoned grace timer
+held the event loop open for its full duration (10s by default) after `shutdown()`
+resolved. Both timers are now cleared on either outcome.
+
+### Fixed (devtools) - the bridge answers 403, never 500, for a malformed token - SECURITY
+
+The token gate compared `String.length` (UTF-16 code units) and then handed
+`timingSafeEqual` the UTF-8 buffers, so a token of equal code-unit but unequal byte
+length passed the guard and made the comparison throw - surfacing as 500 where every
+honest mismatch is 403. The peer gate admits any loopback browser and the Origin check
+runs after the secret, so any page the developer had open could binary-search the
+token's length off that difference. Lengths are now compared as bytes.
+
+### Fixed (compiler) - `azeroth/unsafe-narrow-in-show` stops recommending syntax that does not compile
+
+The warning told authors to rewrite `<Show when={ guard() }>` children as the render
+callback `{ (value) => ... }` - a form `azeroth/callback-children-removed` rejects as a
+hard error, so following the compiler's own fix-it broke the build. It now points at
+`let={ value }`, and the suppression that used to exempt the callback form (dead for any
+program that can compile) keys on the binding attribute instead.
+
+### Fixed (devtools) - the Server tab reconnect budget is bounded again
+
+A bridge that accepted the upgrade and dropped it immediately - its `onConnection` threw,
+a proxy answered - refilled the retry budget on every handshake, so the panel reconnected
+forever at the shortest delay. The budget now refills on a delivered session, which is
+the proof a handshake alone is not.
+
+### Fixed (compiler) - the dependency scanner sees `.azeroth` modules, so the first load stops gambling
+
+Vite's optimizer only crawls modules it can read, and its scan runs outside the normal
+plugin pipeline - so an app whose entry is `.azeroth` was externalized at scan and had
+NOTHING pre-bundled. Every dependency was discovered at runtime instead, and after any
+cache invalidation (a fresh install, a lockfile change) the mid-session re-bundle could
+invalidate an in-flight `await import('@azerothjs/devtools')`, killing the panel with
+`error loading dynamically imported module` on the first page load.
+
+The plugin now registers `.azeroth` with `optimizeDeps.extensions` and joins the scan
+through `optimizeDeps.rolldownOptions.plugins` with a shim that runs the real
+`generateModule` lowering - the scanner sees the same imports the served module will
+have, the injected `azerothjs/internal` included, so dependencies reached by import from
+the entry - the literal dynamic devtools import too - are pre-bundled before the browser
+asks. Modules reached only through `import.meta.glob` are still discovered at runtime:
+vite's scan-time glob expansion skips non-JS ids, and reimplementing it here would mean a
+second copy of vite's own resolution. Vite recovers on first use, so an island registry
+built the idiomatic way costs one re-optimize in dev, never a failure. A file that fails
+to compile degrades to an empty scan module; the transform hook still reports its real
+error with full diagnostics. Both wirings are additive over user config.
+
+### Fixed (devtools) - a bridge URL that never opened is forgotten, not retried on every load
+
+The panel remembers a working bridge URL so a dev-server restart reconnects by itself, but
+it kept remembering one that had never connected. That key is per-ORIGIN and every Vite
+project shares `localhost:5173`, so the token from the last project stayed behind and each
+new one opened with a 403 in its console - on every load, forever, because nothing cleared
+it. A URL that never opened now gets dropped when the attempt settles, so the next load is
+silent; a URL that did open is still remembered, and the address stays in the bar for the
+session so a typo is still correctable.
+
+### Fixed (devtools) - a tokenless bridge URL is never attempted and never persisted
+
+Older panels persisted whatever bridge URL was attempted - including the tokenless
+ones `installDevtools({ server })` produces - and that stored junk outlives the fix
+that stopped attempting them: any origin that ever ran an old panel still carried a
+URL that can only ever 403. The invariant now holds at the storage boundary too:
+the manual Connect neither attempts nor stores a target without a `token=`, and a
+legacy tokenless entry found in storage is purged on read, so every poisoned
+profile heals itself the next time the panel opens.
+
+### Fixed (create-azeroth) - the Tailwind fullstack scaffold demonstrates the stream route it serves
+
+`--tailwind` overlaid a `home` page written before the `stream` keyword existed, so a
+project scaffolded that way shipped a working `/api/assistant` SSE route with nothing on
+the page to reach it - the plain fullstack template's assistant panel was simply absent.
+The overlay now carries the same demo in its own styling. Its guest-book row also had an
+indentation the markup lint flagged on a freshly generated project.
+
+### Changed (compiler) - the dev logger lets the optimizer's re-bundle notices through
+
+`optimized dependencies changed. reloading` and `Re-optimizing dependencies because
+lockfile has changed` were swallowed with the rest of vite's info chatter - so when a
+re-bundle DID invalidate module URLs, the resulting failure looked like an app bug with
+no explanation. Those two lines now render (dim, house-styled); the scan-time hints
+stay quiet.
+
 ## [2.0.0-beta.2] - 2026-08-06
 
 ### Fixed (devtools) - the Server tab reconnects itself, and says what went wrong

@@ -185,13 +185,14 @@ export function sse(
             options.onError(error);
             return;
         }
-        // With no observer the error resurfaces on a fresh microtask, where the runtime's
-        // unhandled-exception path reports it: swallowing it here is what would let a
-        // truncated stream pass for a complete one with nobody the wiser.
-        queueMicrotask(() =>
-        {
-            throw error;
-        });
+        // Loud, but survivable: ONE stream's producer failing must not take the server down
+        // with it. Re-throwing on a fresh microtask did exactly that - a microtask throw is
+        // an uncaughtException, whose default disposition exits the process, so a single
+        // handler's rejected promise killed every other live connection. Swallowing is the
+        // other wrong answer (a truncated stream passing for a complete one), so the default
+        // observer writes to stderr and the stream still ends without its `[DONE]`.
+        console.error('[azeroth/http] SSE producer failed; the stream was ended. '
+            + 'Pass `onError` to sse() to handle this yourself.', error);
     };
 
     const connection: SseConnection = {

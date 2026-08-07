@@ -10,15 +10,14 @@
  *     {expr}). The braces are markup punctuation, invisible to any TypeScript-based rule (the
  *     projection lowers them away), so this is the ONLY layer that can enforce it - the
  *     eslint-plugin and the editors both surface it from here;
- *   - azeroth/unsafe-narrow-in-show - `guard()!.x` inside a `<Show when={ guard() }>` whose
- *     children are NOT the narrowed-accessor callback form. `guard()` here is a second,
- *     independent read of the same nullable value `when` already checked - it can observe
- *     null even while the branch is mounted (a signal change between the two reads, an async
- *     race), and TypeScript's `!` is erased at compile time, so it gives no runtime
- *     protection. `<Show>`'s callback-children form (`{ (value) => ... }`) exists precisely
- *     for this: the accessor it hands back is backed by a signal Show only ever updates while
- *     truthy, so it cannot yield null while the branch is mounted - not "usually doesn't,"
- *     structurally cannot.
+ *   - azeroth/unsafe-narrow-in-show - `guard()!.x` inside a `<Show when={ guard() }>` that
+ *     does NOT declare a binding name. `guard()` here is a second, independent read of the
+ *     same nullable value `when` already checked - it can observe null even while the branch
+ *     is mounted (a signal change between the two reads, an async race), and TypeScript's `!`
+ *     is erased at compile time, so it gives no runtime protection. `let={ value }` exists
+ *     precisely for this: the name is bound to the value Show checked and only updates while
+ *     that stays truthy, so it cannot yield null while the branch is mounted - not "usually
+ *     doesn't," structurally cannot.
  *
  * Rules walk the parsed element tree of each top-level markup region. Warnings carry source spans, so
  * the Vite plugin can print file:line:col (and any tooling can squiggle them). A warning MAY carry a
@@ -32,7 +31,7 @@
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute } from './types.ts';
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { isFunctionLiteral } from './markup-util.ts';
+import { isBindingAttr } from 'azerothjs/semantics';
 
 /** A machine-applicable fix: replace `[start, end)` of the ORIGINAL source with `text`. */
 export interface LintFix
@@ -407,16 +406,15 @@ function extractGuardedCall(whenCode: string): string | null
 }
 
 /**
- * True when `children` is already the narrowed-accessor callback form (`{ (value) => ... }`) -
- * a single expression child whose code is a function literal. That form is exactly the fix
- * {@link lintShowNarrowing} would otherwise suggest, so it is left alone.
+ * True when the element already declares a binding name (`let={ value }`) - the form
+ * {@link lintShowNarrowing} recommends, so there is nothing left to warn about. The bound
+ * name is a plain non-null value, which is exactly what makes the second `guard()!` read
+ * unnecessary.
  * @internal
  */
-function isNarrowedCallbackForm(children: MarkupChild[]): boolean
+function isNarrowedBindingForm(el: MarkupElement): boolean
 {
-    const meaningful = children.filter((child) => child.kind !== 'text' || child.value.trim() !== '');
-    const only = meaningful.length === 1 ? meaningful[0] : undefined;
-    return only !== undefined && only.kind === 'expression' && isFunctionLiteral(only.code.trim());
+    return el.attributes.some((attr) => attr.name !== null && !attr.spread && isBindingAttr(el.tag, attr.name));
 }
 
 /**
@@ -430,7 +428,7 @@ function isNarrowedCallbackForm(children: MarkupChild[]): boolean
 function lintShowNarrowing(el: MarkupElement, warnings: LintWarning[]): void
 {
     const whenAttr = el.attributes.find((attr) => attr.name === 'when' && attr.value.kind === 'expression');
-    if (whenAttr === undefined || whenAttr.value.kind !== 'expression' || isNarrowedCallbackForm(el.children))
+    if (whenAttr === undefined || whenAttr.value.kind !== 'expression' || isNarrowedBindingForm(el))
     {
         return;
     }
@@ -477,8 +475,8 @@ function unsafeNarrowWarning(guarded: string, start: number, end: number): LintW
         code: 'azeroth/unsafe-narrow-in-show',
         message: `\`${ guarded }!\` re-reads the value this <Show>'s \`when\` already checked - a second, `
             + 'independent read that can observe null even while the branch is mounted, and `!` is erased '
-            + 'at compile time so it gives no runtime protection. Use the callback form instead: '
-            + `<Show when={ ${ guarded } }>{ (value) => ... }</Show>, and read through \`value()\` instead `
+            + 'at compile time so it gives no runtime protection. Declare the checked value instead: '
+            + `<Show when={ ${ guarded } } let={ value }>...</Show>, and read \`value\` bare instead `
             + `of \`${ guarded }!\`.`,
         start,
         end

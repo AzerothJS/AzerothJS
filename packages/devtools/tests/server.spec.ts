@@ -167,6 +167,28 @@ describe('the upgrade gate', () =>
         });
     });
 
+    it('answers 403, never 500, for a multi-byte token of the same code-unit length', async () =>
+    {
+        // The length guard compared `String.length` (UTF-16 code units) but then handed
+        // `timingSafeEqual` the UTF-8 BUFFERS. A token of equal code-unit length but unequal
+        // byte length passed the guard and made timingSafeEqual THROW, which the ws layer
+        // turns into 500 while every honest mismatch is 403. Since the peer gate admits any
+        // loopback browser and Origin is checked AFTER the secret, any page the developer
+        // visited could binary-search the token's length off that difference.
+        await withBridge(async (port) =>
+        {
+            const sameUnitsMoreBytes = 'é'.repeat(TOKEN.length).slice(0, TOKEN.length);
+            expect(sameUnitsMoreBytes.length).toBe(TOKEN.length);
+            expect(Buffer.byteLength(sameUnitsMoreBytes)).not.toBe(Buffer.byteLength(TOKEN));
+
+            const path = `/__azeroth/devtools?token=${ encodeURIComponent(sameUnitsMoreBytes) }`;
+            const { socket, text } = await exchange(port, handshake(path, 'http://localhost:5173'));
+            expect(text()).toContain('403 Forbidden');
+            expect(text()).not.toContain('500');
+            socket.destroy();
+        });
+    });
+
     it('refuses a MISSING Origin - what a non-browser client sends', async () =>
     {
         await withBridge(async (port) =>

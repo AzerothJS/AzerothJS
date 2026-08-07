@@ -1,7 +1,5 @@
-// The `render: 'static'` route (src/routes.ts): prerendered at BUILD time
-// (azeroth-kit-prerender renders it through the same compiled component) and the
-// browser ADOPTS that markup instead of rebuilding it - view-source on / shows
-// real content. Everything below stays fully reactive after hydration.
+// The `render: 'static'` route: prerendered at build time, adopted by the browser instead
+// of rebuilt - view-source on / shows real content. Fully reactive after hydration.
 export default component Home()
 {
     state count = 0;
@@ -10,11 +8,8 @@ export default component Home()
     state status: 'idle' | 'checking' | 'up' | 'down' = 'idle';
     state latency = 0;
 
-    // The stream half of the API: /api/assistant is a declared stream route (r.stream in the
-    // server's feature), not a JSON one. `stream` is idle while its source is
-    // falsy, restarts when the source changes, and accumulates chunks into one reactive
-    // string - `parse: 'sse'` unframes the events and stops at the [DONE] terminator.
-    // `source` takes the reactive expression itself; the compiler wraps it in the getter.
+    // `stream` is idle while its source is falsy, restarts when it changes, and accumulates
+    // chunks into one reactive string; `parse: 'sse'` unframes the events up to [DONE].
     state asked: string | false = false;
     stream reply = (question: string, signal: AbortSignal) =>
         fetch(`/api/assistant?q=${ encodeURIComponent(question) }`, { signal })

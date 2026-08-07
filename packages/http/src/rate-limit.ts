@@ -41,16 +41,27 @@ export interface RateStore
 /**
  * A fixed-window counter in a Map. Buckets expire at their window end; a lazy sweep (once
  * per window, at most once a minute) drops expired keys, and a hard entry cap (default
- * 100000, oldest bucket evicted) bounds memory even against a deliberate churn of distinct
- * keys. Single-process only - share one across a fleet and each node limits independently.
+ * 100000) bounds memory even against a deliberate churn of distinct keys.
+ *
+ * Eviction NEVER drops a bucket that is currently over its limit, because dropping one is
+ * indistinguishable from forgiving it: an attacker who can mint keys (a forged
+ * `X-Forwarded-For`, an IPv6 /64) would otherwise burn their allowance, churn the cap, and
+ * return with a clean counter. Only under-limit or already-expired buckets are given up, and
+ * when the map holds nothing but limited buckets the store fails CLOSED - the new key is
+ * refused rather than paid for with someone else's enforcement.
+ *
+ * Single-process only - share one across a fleet and each node limits independently.
  */
 export class MemoryRateStore implements RateStore
 {
-    readonly #buckets = new Map<string, { count: number; resetAt: number }>();
+    readonly #buckets = new Map<string, { count: number; resetAt: number; limit: number }>();
 
     readonly #maxEntries: number;
 
     #nextSweep = 0;
+
+    /** Cap on the eviction scan, so a map full of limited buckets stays O(1) per hit. */
+    static readonly #EVICT_SCAN = 8;
 
     constructor(options: { maxEntries?: number } = {})
     {
@@ -71,14 +82,23 @@ export class MemoryRateStore implements RateStore
         let bucket = this.#buckets.get(key);
         if (bucket === undefined || bucket.resetAt <= now)
         {
-            if (bucket === undefined && this.#buckets.size >= this.#maxEntries)
+            if (bucket === undefined && this.#buckets.size >= this.#maxEntries && !this.#evict(now))
             {
-                this.#evict();
+                // Nothing was safe to drop: admitting this key would cost an enforced limit.
+                // Refusing is the only direction that cannot be used to clear one.
+                return { limited: true, limit, remaining: 0, resetSeconds: Math.ceil(windowMs / 1000) };
             }
-            bucket = { count: 0, resetAt: now + windowMs };
-            this.#buckets.set(key, bucket);
+            bucket = { count: 0, resetAt: now + windowMs, limit };
         }
         bucket.count += 1;
+        // The caller owns the limit and may change it between hits; the bucket carries the
+        // latest so #evict can tell an enforced bucket from a spare one.
+        bucket.limit = limit;
+        // Re-inserted on EVERY hit so iteration order is least-recently-hit first, which is
+        // where #evict starts. `Map.set` on a key already present does not move it, so a
+        // continuously-active client stayed pinned at the front - the first candidate.
+        this.#buckets.delete(key);
+        this.#buckets.set(key, bucket);
 
         return {
             limited: bucket.count > limit,
@@ -106,16 +126,31 @@ export class MemoryRateStore implements RateStore
         }
     }
 
-    /** @internal At capacity the oldest-inserted bucket goes - O(1), and under key churn the
-     * oldest is the closest to expiry; refusing new keys instead would let an attacker lock
-     * real clients out of the map. */
-    #evict(): void
+    /**
+     * @internal Frees one slot, starting from the least-recently-hit end (every hit re-inserts
+     * its key at the back). Expired buckets and under-limit buckets are fair game - losing
+     * either costs nothing that was being enforced. A bucket already over its limit is SKIPPED,
+     * because dropping it would hand its owner a clean counter. Returns false when the first
+     * {@link MemoryRateStore.#EVICT_SCAN} candidates are all enforced limits, which keeps the
+     * scan bounded and tells the caller to fail closed.
+     */
+    #evict(now: number): boolean
     {
-        const oldest = this.#buckets.keys().next();
-        if (!oldest.done)
+        let scanned = 0;
+        for (const [key, bucket] of this.#buckets)
         {
-            this.#buckets.delete(oldest.value);
+            if (bucket.resetAt <= now || bucket.count <= bucket.limit)
+            {
+                this.#buckets.delete(key);
+                return true;
+            }
+            scanned += 1;
+            if (scanned >= MemoryRateStore.#EVICT_SCAN)
+            {
+                return false;
+            }
         }
+        return false;
     }
 }
 

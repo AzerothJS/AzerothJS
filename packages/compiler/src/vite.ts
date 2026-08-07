@@ -25,7 +25,7 @@ import type { Logger as ViteLogger, LogLevel as ViteLogLevel, Plugin } from 'vit
 import { lintSource } from './lint.ts';
 import { buildLineStarts, locationFor } from './sourcemap.ts';
 import { generateModule } from './codegen.ts';
-import { diagnoseModule, diagnoseUnusedImports } from './diagnostics.ts';
+import { diagnoseModule, diagnoseUnusedImports, escapeRegExp } from './diagnostics.ts';
 import { createIncrementalChecker, type AzerothTypeChecker } from './typecheck-ts.ts';
 import { emitDeclarationsWithMap, type DeclarationOutput } from './declarations.ts';
 import { CompileError } from './markup-parser.ts';
@@ -196,76 +196,6 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
     }
 }
 
-/**
- * azeroth
- *
- * PURPOSE:
- * The AzerothJS Vite plugin. Add it to your Vite config so imports of `.azeroth` files compile to
- * runnable modules - with source maps back to the markup and build-time lint/diagnostics.
- *
- * WHY IT EXISTS:
- * It is the supported, batteries-included integration path. Without it you'd hand-wire generateModule
- * plus a TS->JS step plus source-map chaining plus extension resolution yourself:
- *
- *     const compiled = generateModule(readFileSync(file, 'utf8'), file);
- *     const js = transformWithOxc(compiled.code, file, { lang: 'ts' });
- *     // wire js back into the build by hand; source maps to the markup are on you
- *
- * With azeroth(): drop it in `plugins` and Vite loads `.azeroth` files directly, maps included.
- *
- * COMPILER / RUNTIME ROLE:
- * Build-time, compiler; the package's PRIMARY public API. Bridges the compiler to Vite for both CSR
- * and SSR builds (one artifact serves both).
- *
- * INPUT CONTRACT:
- * - options.extension?: the file extension to handle (default '.azeroth').
- *
- * OUTPUT CONTRACT:
- * - A Vite {@link Plugin} with `config` (registers the extension) and `transform` (compiles matching
- *   files) hooks, running at `enforce: 'pre'`.
- *
- * WHY THIS DESIGN:
- * `enforce: 'pre'` so it sees raw source before other transforms. The extension is added ADDITIVELY to
- * resolve.extensions (preserving Vite's defaults, so .ts/.js still resolve) so component imports may
- * omit it. Lint + semantic diagnostics run BEFORE compiling and surface as build warnings (catching
- * mistakes the type system can't). Compilation emits ONE unified, mode-dispatched artifact (clone in
- * the DOM, serialize in SSR, adopt on hydrate), and the compiler's source map is chained through oxc's
- * `inMap` so the final map points all the way back to the `.azeroth` source. `vite` is imported
- * dynamically so non-Vite consumers never pull it in.
- *
- * WHEN TO USE:
- * Any Vite-based AzerothJS app (CSR or SSR).
- *
- * WHEN NOT TO USE:
- * Non-Vite builds - call generateModule yourself and run a TS->JS step (the "without" snippet above).
- *
- * EDGE CASES:
- * - A `?query` suffix on the module id is stripped before the extension check.
- * - `this?.warn` is optional-chained, so bare (non-Vite) unit-test calls to `transform` don't crash.
- * - Non-matching files return null (Vite falls through to its normal handling).
- *
- * PERFORMANCE NOTES:
- * One transform per `.azeroth` file (and again on each HMR edit); lint/diagnose are linear in source.
- *
- * DEVELOPER WARNING:
- * Requires `vite` as a peer dependency at >= 6 (where `transformWithOxc` exists; vite 5 hard-crashes
- * the transform). HMR RESETS app state - there is no component-instance tree to preserve it.
- *
- * @param options - Plugin options (`extension`, `typeCheck`, `emitDeclarations`)
- * @returns A Vite {@link Plugin}
- * @see {@link AzerothPluginOptions}
- * @see {@link generateModule}
- *
- * @example
- * ```ts
- * // vite.config.ts
- * import { defineConfig } from 'vite';
- * import { azeroth } from '@azerothjs/compiler';
- *
- * export default defineConfig({ plugins: [azeroth()] });
- * ```
- */
-/** Recursively collects files ending in `ext` under `dir`, skipping dependency/output/hidden folders. */
 let cachedVersion: string | undefined | null = null;
 
 /** @internal The compiler's own version, for the banner; a broken read just omits it. */
@@ -320,6 +250,7 @@ function boundUrls(address: unknown): Array<readonly [string, string]>
     return entries;
 }
 
+/** Recursively collects files ending in `ext` under `dir`, skipping dependency/output/hidden folders. */
 function collectFiles(dir: string, ext: string, out: string[] = []): string[]
 {
     let entries: Dirent[];
@@ -346,6 +277,52 @@ function collectFiles(dir: string, ext: string, out: string[] = []): string[]
         }
     }
     return out;
+}
+
+/**
+ * The dependency-scanner's view of `.azeroth` files. Vite's optimizer only crawls modules it
+ * can read (JS extensions, html-likes, and `optimizeDeps.extensions` entries), and its scan
+ * runs OUTSIDE the normal plugin pipeline - only plugins passed through
+ * `optimizeDeps.rolldownOptions.plugins` participate. Without this shim the app's entry
+ * `.azeroth` module is externalized at scan, ZERO dependencies are pre-bundled, and every dep
+ * is discovered at runtime instead - where a mid-session re-optimization can invalidate an
+ * in-flight dynamic import (`await import('@azerothjs/devtools')` dying on first load after a
+ * fresh install was exactly this).
+ *
+ * The handler runs {@link generateModule} - the one lowering - with the SAME options the
+ * transform hook passes (scan only exists for dev serves, so `dev` is true by construction),
+ * so the scanner sees exactly the imports the served module will have, the injected
+ * `azerothjs/internal` included. Output is handed to rolldown as TS (its oxc pass strips
+ * types; the `.astro` scanner does the same). A file that fails to read or compile degrades
+ * to an empty module: its deps stay runtime-discovered as before, and the transform hook
+ * reports the real error with full diagnostics when Vite serves it.
+ *
+ * Both parameters are required: the extension's one default lives on
+ * {@link AzerothPluginOptions.extension}, and restating it here would be a second copy.
+ *
+ * @internal Exported for unit tests.
+ */
+export function azerothDepScanPlugin(extension: string, ssr: boolean):
+{ name: string; load: { filter: { id: RegExp }; handler(id: string): { code: string; moduleType: string } } }
+{
+    return {
+        name: 'azerothjs:dep-scan',
+        load: {
+            filter: { id: new RegExp(`${ escapeRegExp(extension) }$`) },
+            handler(id: string): { code: string; moduleType: string }
+            {
+                try
+                {
+                    const source = readFileSync(id, 'utf-8');
+                    return { code: generateModule(source, id.replace(/\\/g, '/'), { ssr, dev: true }).code, moduleType: 'ts' };
+                }
+                catch
+                {
+                    return { code: '', moduleType: 'js' };
+                }
+            }
+        }
+    };
 }
 
 /**
@@ -409,7 +386,13 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
         // preserve Vite's default list (setting `resolve.extensions` otherwise
         // replaces it and breaks `.ts`/`.js` resolution) and any user entries.
         config(
-            config: { resolve?: { extensions?: string[] }; logLevel?: ViteLogLevel; customLogger?: ViteLogger; server?: { forwardConsole?: unknown } },
+            config: {
+                resolve?: { extensions?: string[] };
+                logLevel?: ViteLogLevel;
+                customLogger?: ViteLogger;
+                server?: { forwardConsole?: unknown };
+                optimizeDeps?: { extensions?: string[]; rolldownOptions?: { plugins?: unknown } };
+            },
             env: { command?: string }
         )
         {
@@ -448,6 +431,23 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                             logLevels: clientLogs === 'all' ? ['error', 'warn', 'log', 'info'] : ['error', 'warn']
                         };
                 }
+
+                // Dependency scanner: without these, `.azeroth` modules fail vite's
+                // isScannable gate, the entry is externalized at scan, and NOTHING is
+                // pre-bundled (see azerothDepScanPlugin). Both merges are additive over
+                // user config; `plugins` is nested rather than spread because vite
+                // accepts promises and nested arrays there and flattens them itself.
+                const optimizeDeps = (config.optimizeDeps ??= {});
+                const scanExtensions = optimizeDeps.extensions ?? [];
+                if (!scanExtensions.includes(extension))
+                {
+                    optimizeDeps.extensions = [...scanExtensions, extension];
+                }
+                const rolldownOptions = (optimizeDeps.rolldownOptions ??= {});
+                const scanShim = azerothDepScanPlugin(extension, options.ssr !== false);
+                rolldownOptions.plugins = rolldownOptions.plugins === undefined
+                    ? [scanShim]
+                    : [rolldownOptions.plugins, scanShim];
             }
         },
 

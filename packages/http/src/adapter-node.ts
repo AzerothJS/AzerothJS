@@ -316,20 +316,37 @@ function manage<S extends Server | Http2Server>(
 
                     if (inFlight.size > 0)
                     {
-                        await Promise.race([
-                            new Promise<void>((done) =>
-                            {
-                                const check = setInterval(() =>
+                        // Both timers are cleared on EITHER outcome. `Promise.race` settles on
+                        // the winner and abandons the loser, so a lone `clearInterval` inside
+                        // the drain branch left the poll running forever when the grace period
+                        // won (nothing could then end the process on its own), and the grace
+                        // timer held the loop open for its full duration when the drain won.
+                        let check: ReturnType<typeof setInterval> | undefined;
+                        let expiry: ReturnType<typeof setTimeout> | undefined;
+                        try
+                        {
+                            await Promise.race([
+                                new Promise<void>((done) =>
                                 {
-                                    if (inFlight.size === 0)
+                                    check = setInterval(() =>
                                     {
-                                        clearInterval(check);
-                                        done();
-                                    }
-                                }, 10);
-                            }),
-                            new Promise<void>((done) => setTimeout(done, gracePeriodMs))
-                        ]);
+                                        if (inFlight.size === 0)
+                                        {
+                                            done();
+                                        }
+                                    }, 10);
+                                }),
+                                new Promise<void>((done) =>
+                                {
+                                    expiry = setTimeout(done, gracePeriodMs);
+                                })
+                            ]);
+                        }
+                        finally
+                        {
+                            clearInterval(check);
+                            clearTimeout(expiry);
+                        }
                     }
                     (server as Partial<Server>).closeAllConnections?.();
                     await closed;

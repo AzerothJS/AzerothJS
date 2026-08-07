@@ -258,7 +258,7 @@ interface ImportBinding { name: string; start: number; end: number; stmtStart: n
 
 /** Escapes every regex metacharacter in `value` so it can be embedded in a `new RegExp(...)` pattern
  *  and still only match itself literally. @internal */
-function escapeRegExp(value: string): string
+export function escapeRegExp(value: string): string
 {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

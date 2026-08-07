@@ -240,6 +240,131 @@ describe('installDevtools - persisted-state hardening', () =>
         expect(active.classList.contains('on')).toBe(true);
         dispose();
     });
+
+    // A stored bridge URL without a token predates the tokenless-URL guard. It can never
+    // connect (attachDevtools refuses the upgrade), so keeping it poisons every later
+    // session on the origin: the invariant is that a tokenless URL is never attempted AND
+    // never persisted. These seed the Server tab open so the auto-connect path runs at mount.
+    describe('the stored bridge URL invariant', () =>
+    {
+        const SERVER_URL_KEY = 'azeroth-devtools:server-url';
+        const SERVER_VIEW = JSON.stringify({ collapsed: false, dock: 'float', view: 'server', floatLeft: null, floatTop: null, floatW: 374, floatH: 520, dockSize: 380 });
+
+        class RecordingSocket
+        {
+            public static urls: string[] = [];
+
+            public static last: RecordingSocket | null = null;
+
+            public onopen: (() => void) | null = null;
+
+            public onmessage: (() => void) | null = null;
+
+            public onerror: (() => void) | null = null;
+
+            public onclose: (() => void) | null = null;
+
+            constructor(url: string)
+            {
+                RecordingSocket.urls.push(url);
+                RecordingSocket.last = this;
+            }
+
+            public close(): void
+            {
+                // The panel only ever calls this; nothing observes the result.
+            }
+        }
+
+        let realSocket: unknown;
+
+        beforeEach(() =>
+        {
+            RecordingSocket.urls = [];
+            RecordingSocket.last = null;
+            realSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
+            (globalThis as { WebSocket?: unknown }).WebSocket = RecordingSocket;
+        });
+
+        afterEach(() =>
+        {
+            (globalThis as { WebSocket?: unknown }).WebSocket = realSocket;
+            try
+            {
+                localStorage.removeItem(SERVER_URL_KEY);
+            }
+            catch
+            {
+                // No storage - nothing to clean.
+            }
+        });
+
+        it('a legacy tokenless stored URL is purged, never attempted', async () =>
+        {
+            try
+            {
+                localStorage.setItem(SERVER_URL_KEY, 'ws://localhost:3000/__azeroth/devtools');
+                localStorage.setItem('azeroth-devtools:ui', SERVER_VIEW);
+            }
+            catch
+            {
+                return;
+            }
+            const dispose = await installWithGraph();
+            await flush();
+            expect(RecordingSocket.urls).toEqual([]);
+            expect(localStorage.getItem(SERVER_URL_KEY)).toBeNull();
+            dispose();
+        });
+
+        it('a tokenful stored URL survives and connects', async () =>
+        {
+            const target = 'ws://localhost:3000/__azeroth/devtools?token=0123456789abcdef';
+            try
+            {
+                localStorage.setItem(SERVER_URL_KEY, target);
+                localStorage.setItem('azeroth-devtools:ui', SERVER_VIEW);
+            }
+            catch
+            {
+                return;
+            }
+            const dispose = await installWithGraph();
+            await flush();
+            expect(RecordingSocket.urls).toEqual([target]);
+            expect(localStorage.getItem(SERVER_URL_KEY)).toBe(target);
+            dispose();
+        });
+
+        it('a stored URL that never opens is forgotten, so the next load is clean', async () =>
+        {
+            // This key is per-ORIGIN and every vite project shares localhost:5173, so a token
+            // left by the previous project made each new one open with a 403 in its console -
+            // on every load, because nothing ever cleared it. Reproduced in a real browser
+            // before this fix: one attempt per load, forever.
+            const stale = 'ws://localhost:3000/__azeroth/devtools?token=stale-token-from-old-project';
+            try
+            {
+                localStorage.setItem(SERVER_URL_KEY, stale);
+                localStorage.setItem('azeroth-devtools:ui', SERVER_VIEW);
+            }
+            catch
+            {
+                return;
+            }
+            const dispose = await installWithGraph();
+            await flush();
+            expect(RecordingSocket.urls).toEqual([stale]); // it is tried once...
+
+            // ...the socket closes without ever opening, which is terminal for a url that
+            // never worked. The panel must not carry it into the next session.
+            const socket = RecordingSocket.last;
+            socket?.onclose?.();
+            await flush();
+            expect(localStorage.getItem(SERVER_URL_KEY)).toBeNull();
+            dispose();
+        });
+    });
 });
 
 describe('direction independence', () =>

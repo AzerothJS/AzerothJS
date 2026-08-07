@@ -40,7 +40,7 @@ import { hostEventType, isBindingAttr, isFactoryProp, bindWriteBack, BUILTIN_SET
 import { parseModule } from './parser.ts';
 import { findConstructs, splitTopLevelCommaSpans } from './lower-reactive.ts';
 import { parseDeclarationSlice, factoryPlan, parseComponentParam } from './ts-slice.ts';
-import { RUNTIME_FN } from './keyword-spec.ts';
+import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY } from './keyword-spec.ts';
 import { CodeMapping, type MappingSegment, type MappingKind } from './mapping.ts';
 
 /** Module the auto-injected runtime bindings point at (matches the compiler's codegen). */
@@ -908,7 +908,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     // `FieldArrayApi<T>`. Like a factory it reads explicitly (NAME.rows()/NAME.append()),
                     // so there is no `& T` field-sugar half; row field access is sugared on the <For> row
                     // variable instead.
-                    usedRuntime.add('createFieldArray');
+                    usedRuntime.add(RUNTIME_FN_FIELD_ARRAY);
                     builder.emit('const ');
                     builder.copy(c.nameStart, c.nameEnd, 'script');
                     // Wrap with __azRowForm (declared in finalize) so `NAME.rows()` types each row as
@@ -916,7 +916,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     // from `ForProps<FieldArrayRow<R> & R>`, that `& R` half is what types the row variable's
                     // field access (`row.field`, `bind:value={row.field}`) - mirroring the runtime rewrite to
                     // `row.form.values().field`. The createFieldArray config still type-checks (it is wrapped).
-                    builder.emit(' = __azRowForm(createFieldArray({ blank: () => (');
+                    builder.emit(` = __azRowForm(${ RUNTIME_FN_FIELD_ARRAY }({ blank: () => (`);
                     emitInitial();
                     builder.emit(')');
                     if (c.optionsStart !== null && c.optionsEnd !== null)
@@ -927,10 +927,10 @@ export function generateVirtualCode(source: string): VirtualCode
                     builder.emit(' }));\n');
                     return;
                 }
-                usedRuntime.add('createForm');
+                usedRuntime.add(RUNTIME_FN.form);
                 builder.emit('const ');
                 builder.copy(c.nameStart, c.nameEnd, 'script');
-                builder.emit(' = Object.assign(createForm({ initial: (');
+                builder.emit(` = Object.assign(${ RUNTIME_FN.form }({ initial: (`);
                 emitInitial();
                 builder.emit(')');
                 if (c.optionsStart !== null && c.optionsEnd !== null)
@@ -1202,7 +1202,7 @@ function finalize(builder: Builder, source: string, usedRuntime: Set<string>, us
             parts.push(`declare const ${ name }: typeof import('${ RUNTIME_MODULE }').${ name };`);
         }
     }
-    if (usedRuntime.has('createFieldArray'))
+    if (usedRuntime.has(RUNTIME_FN_FIELD_ARRAY))
     {
         // Projection-only helper: re-types `NAME.rows()` so each row is `FieldArrayRow<R> & R`. The `& R`
         // half is what makes an array-form `<For>` row variable's field access type-check (mirroring the

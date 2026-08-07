@@ -90,14 +90,29 @@ function isLoopback(address: string | undefined): boolean
         && (address.startsWith('127.') || address === '::1' || address === '::ffff:127.0.0.1');
 }
 
-/** @internal Length-first constant-time compare; a mismatch must not leak where it happened. */
+/**
+ * @internal Length-first constant-time compare; a mismatch must not leak where it happened.
+ *
+ * The lengths compared are BYTE lengths, not `String.length`: a UTF-16 code-unit count is not
+ * the buffer size, so `'e'.repeat(16)` (16 units, 32 bytes) used to pass a `.length` guard
+ * against a 16-byte token and then make `timingSafeEqual` THROW on its unequal buffers. That
+ * throw left the gate as a 500 while a normal mismatch answered 403 - a length oracle any
+ * page on the machine could read off the close event, since the peer gate passes for every
+ * loopback browser and Origin is checked after this.
+ */
 function secretMatches(expected: string, presented: string | null): boolean
 {
-    if (presented === null || presented.length !== expected.length)
+    if (presented === null)
     {
         return false;
     }
-    return timingSafeEqual(Buffer.from(presented, 'utf8'), Buffer.from(expected, 'utf8'));
+    const a = Buffer.from(presented, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length)
+    {
+        return false;
+    }
+    return timingSafeEqual(a, b);
 }
 
 /**
@@ -108,7 +123,12 @@ function secretMatches(expected: string, presented: string | null): boolean
  * application state, so the perimeter is never a single header. Returns a detach function that
  * closes every client, removes the endpoint, and uninstalls the server-side agent.
  *
- * Install BEFORE the app handles traffic to capture every request root from the start.
+ * Install BEFORE the app handles traffic: the agent registers primitives as they are
+ * CREATED, keeps no retroactive record (zero overhead while no panel is attached), and so
+ * never mirrors anything built earlier - an eager module-scope signal predating this call
+ * is permanently invisible. The canonical server idioms are unaffected: `store` and
+ * `resource` instances materialize lazily inside requests, after this ran. An idle backend
+ * therefore shows an EMPTY mirror, which is truthful, not broken.
  *
  * The token must OUTLIVE the process. A dev server restarts on every file save, so a token
  * minted at boot (`crypto.randomUUID()`) is a different secret each time: the panel holds the

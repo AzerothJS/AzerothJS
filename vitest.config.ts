@@ -52,6 +52,15 @@ export default defineConfig({
         // DOM-less environment with a `// @vitest-environment node` docblock, so the
         // "no DOM shim required" SSR contract is genuinely exercised.
         environment: 'happy-dom',
+        // One level of `tests/` per package, which deliberately EXCLUDES the scaffold payload
+        // under `packages/create-azeroth/templates|overlays`. Those specs are not repo tests -
+        // they ship to the user's generated project and run there, against that project's own
+        // vite config and installed dependencies. They cannot run here: their sources carry
+        // `{{name}}`/`{{version}}` placeholders, the template directories are not workspaces
+        // (root `workspaces` is `packages/*`), and this config registers no `.azeroth`
+        // transform, so a spec importing a component fails at import analysis. The templates
+        // are covered instead by `create-azeroth`'s own suite for GENERATION, and by
+        // scaffolding each flavour and running its build/check/test before a release.
         include: ['packages/*/tests/**/*.spec.ts'],
         // The real-socket / real-process suites (ws close handshakes, the node adapter, sse,
         // kit, npm-spawning scaffold checks) do genuine I/O; under full file parallelism on a

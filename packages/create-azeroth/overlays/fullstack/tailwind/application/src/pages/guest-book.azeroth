@@ -85,9 +85,9 @@ export default component GuestBook()
         <ul class="entries mt-4">
             <For each={ entries } key={ (item) => item.id } let={ item }>
                 <li class="flex items-baseline gap-3 py-2.5 border-b border-line">
-                        <strong class="font-mono text-[0.9rem] font-semibold">{ item.name }</strong>
-                        <span class="text-faint">{ item.message }</span>
-                    </li>
+                    <strong class="font-mono text-[0.9rem] font-semibold">{ item.name }</strong>
+                    <span class="text-faint">{ item.message }</span>
+                </li>
             </For>
         </ul>
     </section>
