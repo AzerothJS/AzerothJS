@@ -21,7 +21,10 @@ catch
 
 const config = loadConfig({
     port: num('PORT', { default: 3000 }),
-    env: oneOf('NODE_ENV', ['development', 'production', 'test'], { default: 'development' }),
+    // Unset means production: `azeroth dev` declares development for its children, so anything
+    // that did NOT come from the dev command is a deploy. Defaulting the other way makes a
+    // deployment that forgot the variable serve the dev app and open dev-only gates.
+    env: oneOf('NODE_ENV', ['development', 'production', 'test'], { default: 'production' }),
     clientDir: str('CLIENT_DIR', { default: '../application/dist' }),
     ssrEntry: str('SSR_ENTRY', { default: '../application/dist-server/entry.server.js' })
 });

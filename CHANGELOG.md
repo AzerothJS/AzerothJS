@@ -10,6 +10,81 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed (create-azeroth) - `npm start` served a 404 homepage on a fresh fullstack scaffold
+
+The generated `server/.env` carried `NODE_ENV=development`, copied from the example so the
+devtools token could be written into it. That pinned the mode for `npm start` as well - the
+command the template's own README calls "Production: one origin serving the API and the built
+client" - so a new project that ran the documented `npm run build && npm start` got the
+development app and a 404 on `/`. The file no longer sets `NODE_ENV`, and an unset value now
+resolves to production rather than development: `azeroth dev` already declares development for
+its children, so anything that did not come from the dev command is a deploy. That direction is
+also the safe one, since a deployment that forgot the variable used to open dev-only gates.
+Reproduced from a fresh scaffold against packed tarballs (404 before, 200 after, with
+`npm run dev` still reporting `development` and attaching the bridge).
+
+### Fixed (release) - a stale build artifact could be published
+
+Five packages - `devtools`, `eslint-plugin`, `kit`, `language-server`, `typescript-plugin` -
+had no `prebuild` clean, and `release.mjs` runs locally where `dist/` survives between builds,
+so a file deleted from source kept its compiled artifact and `npm pack` shipped it. Reproduced
+by planting `dist/__stale-probe.js` in `kit` and watching it arrive in the tarball. They now
+run the same `clean` step the other ten already used, and a guard asserts that every published
+package shipping `dist` has one.
+
+### Fixed (http) - edge middleware silently dropped every header set through `response.headers` - SECURITY
+
+A response holds its headers in one of two places: the record it was constructed with, or the
+`headers` view once anything touches it. `PayloadResponse.withHeaders` - which EVERY edge
+middleware calls - rebuilt from the construction-time record alone, so the moment a single
+middleware ran, everything written through the standard `response.headers.set/append` API was
+discarded. `raw()` handled this correctly one method above; the two answered the same question
+differently, and only one of them was right.
+
+Reproduced on Node and Bun alike, through `pipeline(app, requestId())` - the shape every
+scaffolded template ships:
+
+```
+BARE   cache-control: no-store | x-custom: kept | cookies: 2
+PIPED  cache-control: null     | x-custom: null | cookies: 0
+```
+
+So a login that set a session cookie, or a handler that set `Cache-Control: no-store` on a
+sensitive reply, lost it in production while every in-process test still passed. The cookie
+loss is loud (auth visibly breaks); the `no-store` loss is the dangerous one, because the
+response stays correct and merely becomes cacheable by browsers and proxies.
+
+Both methods now read one private helper, so a third cannot answer it differently again.
+
+### Added (http) - `toFetchHandler` bridges the kernel to Bun, Deno, Workers and Vercel Edge
+
+The kernel's `app.handle` returns a `PayloadResponse` - a deliberate optimisation, measured at
+**35x cheaper than `new Response()` on Node** - which satisfies `instanceof Response` so nothing
+in user code can tell. But a standard Fetch host checks the internal slot, not the prototype:
+`Bun.serve` answered `Expected a Response object` and `Deno.serve`, `must be a Response
+constructed via the Response constructor in this realm`. The framework could not serve on
+either, for any route.
+
+`toFetchHandler(app)` materialises kernel responses into native ones at that single boundary
+and passes an already-native response (a stream, an `sse()` body) straight through:
+
+```ts
+export default { fetch: toFetchHandler(app) };   // Workers, Vercel Edge
+Bun.serve({ fetch: toFetchHandler(app) });
+Deno.serve(toFetchHandler(app));
+```
+
+Materialising costs only 1.2x on Deno and 2.4x on Bun - both runtimes have cheap `Response`
+constructors - and Node never calls it, so its fast path is untouched. `toNativeResponse` is
+exported for anyone bridging by hand.
+
+An earlier release removed `toFetchHandler` as BREAKING on the grounds that it "was
+`app.handle.bind(app)` and nothing else". That was true and precisely the bug: neither form
+worked on the runtimes it advertised. The guard that should have caught it asserted only
+`.status` and `.json()` - both of which the broken value satisfies - so it passed while the
+claim was false. It now asserts what a host actually enforces, and `runtime-compat.spec.ts`
+runs real Bun and Deno servers over real sockets, skipping honestly when a runtime is absent.
+
 ### Fixed (http) - a rate-limited client can no longer clear its own counter - SECURITY
 
 `MemoryRateStore` evicted the oldest bucket when it hit its entry cap, and eviction is

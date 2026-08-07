@@ -562,6 +562,27 @@ describe('the devtools bridge secret outlives the process', () =>
         expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toContain('.env');
     });
 
+    // The generated .env used to carry `NODE_ENV=development`, copied from the example so the
+    // token could be injected. That pinned the mode for `npm start` too, which the README calls
+    // the production command - so the documented `npm run build && npm start` served the dev app
+    // and answered the homepage with a 404. `azeroth dev` declares development for its own
+    // children, so the file must not decide the mode.
+    it('does not pin NODE_ENV, so `npm start` is production and `azeroth dev` is development', () =>
+    {
+        const dir = target();
+        scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'shop', '^2.0.0');
+
+        const local = readFileSync(join(dir, 'server', '.env'), 'utf8');
+        const example = readFileSync(join(dir, 'server', '.env.example'), 'utf8');
+        expect(/^NODE_ENV=/m.test(local)).toBe(false);
+        expect(/^NODE_ENV=/m.test(example)).toBe(false);
+
+        // And an unset NODE_ENV must resolve to production, not development: anything that did
+        // not come from `azeroth dev` is a deploy.
+        const main = readFileSync(join(dir, 'server', 'src', 'main.ts'), 'utf8');
+        expect(/oneOf\('NODE_ENV'[^)]*default:\s*'production'/.test(main)).toBe(true);
+    });
+
     it('gives two projects different secrets - never a shared constant', () =>
     {
         const a = target();
