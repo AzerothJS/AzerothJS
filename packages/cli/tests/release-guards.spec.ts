@@ -10,7 +10,7 @@
 // include is `packages/*/tests/**`, and the release script is what publishes this CLI.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -236,5 +236,45 @@ describe('release notes fit a GitHub release body', () =>
         const run = notes('9.9.9-beta.1');
         expect(run.status).toBe(0);
         expect(run.body).toContain('npm install azerothjs@9.9.9-beta.1');
+    });
+});
+
+describe('every published package wipes dist before building', () =>
+{
+    it('a package that ships dist/ must clean it first, or a deleted source file still ships', () =>
+    {
+        // `release.mjs` runs LOCALLY, where dist/ survives between builds. Five packages had
+        // no prebuild step, so a source file deleted since the last build left its compiled
+        // artifact behind - and `npm pack` shipped it. Reproduced end to end: a planted
+        // dist/__stale-probe.js arrived in the tarball as package/dist/__stale-probe.js.
+        // A fresh CI checkout hides this, which is exactly why it needs a guard.
+        const packagesDir = join(ROOT, 'packages');
+        const offenders: string[] = [];
+
+        for (const name of readdirSync(packagesDir))
+        {
+            const manifestPath = join(packagesDir, name, 'package.json');
+            if (!existsSync(manifestPath))
+            {
+                continue;
+            }
+            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+                private?: boolean;
+                files?: string[];
+                scripts?: Record<string, string>;
+            };
+            const scripts = manifest.scripts ?? {};
+            const shipsDist = (manifest.files ?? []).some((entry) => entry === 'dist' || entry.startsWith('dist/'));
+            if (manifest.private === true || scripts.build === undefined || !shipsDist)
+            {
+                continue;
+            }
+            if (scripts.prebuild === undefined && scripts.clean === undefined)
+            {
+                offenders.push(name);
+            }
+        }
+
+        expect(offenders).toEqual([]);
     });
 });

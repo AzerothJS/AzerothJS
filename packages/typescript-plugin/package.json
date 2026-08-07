@@ -9,6 +9,8 @@
         "!dist/**/*.map"
     ],
     "scripts": {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
         "build": "node esbuild.mjs",
         "prepack": "node ../../scripts/prepack.mjs"
     },

@@ -36,6 +36,8 @@
     ],
     "sideEffects": false,
     "scripts": {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "prepack": "node ../../scripts/prepack.mjs"
     },

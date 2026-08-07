@@ -56,6 +56,8 @@
         "!dist/**/*.map"
     ],
     "scripts": {
+        "clean": "node ../../scripts/clean.mjs dist",
+        "prebuild": "npm run clean",
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
         "test": "vitest run",
         "prepack": "node ../../scripts/prepack.mjs"
