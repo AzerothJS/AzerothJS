@@ -34,7 +34,7 @@
         "clean": "node ../../scripts/clean.mjs dist",
         "prebuild": "npm run clean",
         "build": "node ../../scripts/tsc7.mjs -p tsconfig.build.json",
-        "prepublishOnly": "npm run build"
+        "prepack": "node ../../scripts/prepack.mjs"
     },
     "publishConfig": {
         "access": "public"

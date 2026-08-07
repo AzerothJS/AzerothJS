@@ -150,6 +150,52 @@ console.log('import OK:', Object.keys(azerothjs).length, 'azerothjs exports,', O
     }
     console.log(`bin targets OK: ${ checkedBins } across the installed packages`);
 
+    // No installed file may reference a sourcemap: the tarballs exclude
+    // `dist/**/*.map`, so ANY surviving `sourceMappingURL` comment is a dangling
+    // reference that consumer tooling (vitest stack mapping, editors) chases into
+    // ENOENT errors on every run. The publish-time strip lives in tsc7.mjs; this
+    // is the gate that keeps it honest against the real packed artifact.
+    let scannedFiles = 0;
+    const dangling = [];
+    const scanForMapRefs = (dir, packageName) =>
+    {
+        for (const entry of readdirSync(dir, { withFileTypes: true }))
+        {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory())
+            {
+                scanForMapRefs(full, packageName);
+            }
+            else if (/\.(js|cjs|mjs|ts|cts|mts)$/.test(entry.name))
+            {
+                scannedFiles++;
+                if (/^\/\/# sourceMappingURL=/m.test(readFileSync(full, 'utf8')))
+                {
+                    dangling.push(`${ packageName }: ${ path.relative(dir, full) || entry.name }`);
+                }
+            }
+        }
+    };
+    for (const dir of installed)
+    {
+        const manifestPath = path.join(dir, 'package.json');
+        if (!existsSync(manifestPath))
+        {
+            continue;
+        }
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        scanForMapRefs(dir, manifest.name);
+    }
+    if (scannedFiles === 0)
+    {
+        throw new Error('no files were scanned for sourcemap references - the installed package walk found none');
+    }
+    if (dangling.length > 0)
+    {
+        throw new Error(`dangling sourceMappingURL references ship in: ${ dangling.slice(0, 8).join(', ') }${ dangling.length > 8 ? ` and ${ dangling.length - 8 } more` : '' }`);
+    }
+    console.log(`sourcemap references OK: none across ${ scannedFiles } shipped files`);
+
     console.log('\nsmoke: published artifacts install, resolve, and import correctly.');
 }
 finally

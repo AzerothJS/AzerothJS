@@ -10,7 +10,7 @@
     ],
     "scripts": {
         "build": "node esbuild.mjs",
-        "prepublishOnly": "npm run build"
+        "prepack": "node ../../scripts/prepack.mjs"
     },
     "keywords": [
         "azeroth",
