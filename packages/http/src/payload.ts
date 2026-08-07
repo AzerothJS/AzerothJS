@@ -72,40 +72,50 @@ export class PayloadResponse implements Response
     }
 
     /**
+     * @internal The response's CURRENT headers, split into a plain record plus the cookies a
+     * record cannot hold. The single answer to "what headers do I actually have", because
+     * there are two possible truths and reading the wrong one loses data silently.
+     *
+     * When the `headers` VIEW has been materialised it IS the truth: a caller writing
+     * `response.headers.set(...)` - the web-standard way, and what middleware naturally does -
+     * must reach the wire. Reading the construction-time record instead reports the header
+     * through `app.handle()` (so a test passes) while the socket never carries it, which drops
+     * a Set-Cookie or a Cache-Control: no-store in production only.
+     *
+     * Both {@link raw} and {@link withHeaders} read through here. They used to answer this
+     * question separately and `withHeaders` got it wrong, so ANY edge middleware silently
+     * discarded every header set through the view - session cookies and `no-store` included.
+     */
+    #currentHeaders(): { record: Record<string, string>; cookies: string[] }
+    {
+        if (this.#headers === null)
+        {
+            return { record: this.#headerRecord, cookies: [...this.#setCookies] };
+        }
+        const record: Record<string, string> = {};
+        for (const [name, value] of this.#headers)
+        {
+            if (name !== 'set-cookie')
+            {
+                record[name] = value;
+            }
+        }
+        return { record, cookies: this.#headers.getSetCookie() };
+    }
+
+    /**
      * The adapter's fast path: everything a socket write needs, no undici. A string payload
      * is returned AS a string - `res.end(string)` encodes natively during the write, which
      * beats encoding in JS first. @internal
      */
-    public raw(): { status: number; headers: Record<string, string | string[]>; payload: Uint8Array | string }
+    public raw(): { status: number; headers: Record<string, string | string[]>; payload: Uint8Array<ArrayBuffer> | string }
     {
-        // When the `headers` VIEW was materialised it becomes the truth: a caller writing
-        // `response.headers.set(...)` - the web-standard way, and what middleware naturally does -
-        // must reach the wire. Reading the record instead would report the header through
-        // app.handle() (so a test passes) while the socket never carries it, which silently drops
-        // a Set-Cookie or a Cache-Control: no-store in production only.
-        if (this.#headers !== null)
-        {
-            const headers: Record<string, string | string[]> = {};
-            for (const [name, value] of this.#headers)
-            {
-                if (name !== 'set-cookie')
-                {
-                    headers[name] = value;
-                }
-            }
-            const cookies = this.#headers.getSetCookie();
-            if (cookies.length > 0)
-            {
-                headers['set-cookie'] = cookies;
-            }
-            return { status: this.#status, headers, payload: this.#payload };
-        }
-
+        const { record, cookies } = this.#currentHeaders();
         // A multi-cookie response re-joins the array under `set-cookie`; Node's writeHead
         // accepts a string[] value and emits one header line per entry.
-        const headers: Record<string, string | string[]> = this.#setCookies.length > 0
-            ? { ...this.#headerRecord, 'set-cookie': [...this.#setCookies] }
-            : this.#headerRecord;
+        const headers: Record<string, string | string[]> = cookies.length > 0
+            ? { ...record, 'set-cookie': cookies }
+            : record;
         return { status: this.#status, headers, payload: this.#payload };
     }
 
@@ -117,8 +127,12 @@ export class PayloadResponse implements Response
      */
     public withHeaders(extra: Record<string, string>): PayloadResponse
     {
-        const record: Record<string, string> = { ...this.#headerRecord };
-        const cookies = [...this.#setCookies];
+        // Reads the CURRENT headers, not the construction-time record: a response whose
+        // `headers` view was written to carries its state there, and rebuilding from the
+        // record would silently discard it.
+        const base = this.#currentHeaders();
+        const record: Record<string, string> = { ...base.record };
+        const cookies = base.cookies;
         for (const [name, value] of Object.entries(extra))
         {
             // A set-cookie added here JOINS the carried cookies rather than clobbering the
@@ -229,7 +243,10 @@ export class PayloadResponse implements Response
 
     public clone(): Response
     {
-        return new PayloadResponse(this.#payload, this.#status, { ...this.#headerRecord }, this.#setCookies);
+        // Through #currentHeaders, or a clone silently drops everything the `headers` view
+        // carries - the same loss `withHeaders` used to have.
+        const { record, cookies } = this.#currentHeaders();
+        return new PayloadResponse(this.#payload, this.#status, { ...record }, cookies);
     }
 
     public get redirected(): boolean
@@ -252,8 +269,9 @@ export class PayloadResponse implements Response
     {
         if (this.#real === null)
         {
-            const headers = new Headers(this.#headerRecord);
-            for (const cookie of this.#setCookies)
+            const current = this.#currentHeaders();
+            const headers = new Headers(current.record);
+            for (const cookie of current.cookies)
             {
                 headers.append('set-cookie', cookie);
             }

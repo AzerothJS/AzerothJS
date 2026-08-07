@@ -8,7 +8,77 @@
 //   2. Both lost the PayloadResponse fast path the Node adapter uses (writeHead + end, no
 //      web-stream), so the two most common bodyless replies were the slowest to write.
 import { describe, expect, it } from 'vitest';
-import { App, expireCookie, noContent, redirect, serializeCookie } from '@azerothjs/http';
+import { App, expireCookie, noContent, redirect, serializeCookie, pipeline, requestId, securityHeaders, text, toFetchHandler } from '@azerothjs/http';
+
+// A response carries its headers in one of TWO places: the construction-time record, or the
+// `headers` view once someone touched it. `withHeaders` - which every edge middleware calls -
+// rebuilt from the record alone, so ANY middleware silently discarded everything written
+// through the standard `response.headers.set/append` API. `raw()` handled this correctly, one
+// method above; the two answered the same question differently. Both now read one helper.
+describe('edge middleware preserves headers written through the `headers` view', () =>
+{
+    const withViewHeaders = (): App =>
+    {
+        const app = new App({ dev: true });
+        app.get('/h', () =>
+        {
+            const response = text('ok');
+            response.headers.set('cache-control', 'no-store');
+            response.headers.set('x-custom', 'kept');
+            response.headers.append('set-cookie', 'session=abc; Path=/');
+            response.headers.append('set-cookie', 'csrf=xyz; Path=/');
+            return response;
+        });
+        return app;
+    };
+
+    it('a single edge middleware keeps no-store, custom headers, and every cookie', async () =>
+    {
+        // `Cache-Control: no-store` vanishing is the quiet one: the response stays correct
+        // while becoming cacheable by proxies and browsers.
+        const piped = pipeline(withViewHeaders(), requestId());
+        const response = await piped.handle(new Request('http://x/h'));
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        expect(response.headers.get('x-custom')).toBe('kept');
+        expect(response.headers.getSetCookie()).toEqual(['session=abc; Path=/', 'csrf=xyz; Path=/']);
+    });
+
+    it('the full production pipeline keeps them too, and so does the Fetch adapter', async () =>
+    {
+        // This is the shape every scaffolded template ships.
+        const piped = pipeline(withViewHeaders(), requestId(), securityHeaders());
+        const direct = await piped.handle(new Request('http://x/h'));
+        expect(direct.headers.getSetCookie()).toEqual(['session=abc; Path=/', 'csrf=xyz; Path=/']);
+        expect(direct.headers.get('cache-control')).toBe('no-store');
+
+        const viaFetch = await toFetchHandler(piped)(new Request('http://x/h'));
+        expect(viaFetch.headers.getSetCookie()).toEqual(['session=abc; Path=/', 'csrf=xyz; Path=/']);
+        expect(viaFetch.headers.get('cache-control')).toBe('no-store');
+        expect(viaFetch.headers.get('x-content-type-options')).toBe('nosniff');
+    });
+
+    it('a middleware-added header still merges with the view ones, not over them', async () =>
+    {
+        const piped = pipeline(withViewHeaders(), requestId());
+        const response = await piped.handle(new Request('http://x/h'));
+        expect(response.headers.get('x-request-id')).toBeTruthy(); // added by the middleware
+        expect(response.headers.get('x-custom')).toBe('kept');     // and the view's survived
+    });
+
+    it('clone() carries the view headers too', () =>
+    {
+        // `withHeaders` was not the only method reading the construction-time record: `clone`
+        // and the lazily-materialised real Response did the same, so the same loss reappeared
+        // through a different door. All three now read one helper.
+        const response = text('ok');
+        response.headers.set('cache-control', 'no-store');
+        response.headers.append('set-cookie', 'session=abc');
+
+        const cloned = response.clone();
+        expect(cloned.headers.get('cache-control')).toBe('no-store');
+        expect(cloned.headers.getSetCookie()).toEqual(['session=abc']);
+    });
+});
 
 describe('bodyless responses carry cookies', () =>
 {

@@ -112,6 +112,78 @@ export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebH
 }
 
 /**
+ * Bridges a kernel handler to a standard Fetch host - `Bun.serve`, `Deno.serve`, Cloudflare
+ * Workers, Vercel Edge, or anything else whose contract is `(Request) => Response`:
+ *
+ * ```ts
+ * export default { fetch: toFetchHandler(app) };          // Workers / Vercel Edge
+ * Bun.serve({ fetch: toFetchHandler(app) });
+ * Deno.serve(toFetchHandler(app));
+ * ```
+ *
+ * It exists because those hosts do not accept the kernel's {@link PayloadResponse}. That class
+ * is a deliberate optimisation - constructing a real `Response` costs ~35x more than it on Node,
+ * measured - and it satisfies `instanceof Response`, so nothing in user code can tell. But a
+ * host checks the INTERNAL slot, not the prototype: Bun answers `Expected a Response object` and
+ * Deno `must be a Response constructed via the Response constructor in this realm`. This adapter
+ * is the one place that difference is paid for, and only for kernel-built responses - a handler
+ * that already returned a native `Response` (a stream, an `sse()` body) passes straight through
+ * untouched. The Node adapter never calls this, so its fast path is unaffected.
+ *
+ * @param target - An `App`, a composed `pipeline(...)`, or any `{ handle }` - a bare function is
+ *   accepted too, so `toFetchHandler(app.handle.bind(app))` works.
+ * @returns A fetch function returning a native `Response` on every path.
+ */
+export function toFetchHandler(target: WebHandler | ((request: Request) => Response | Promise<Response>)): (request: Request) => Promise<Response>
+{
+    const handle = typeof target === 'function' ? target : target.handle.bind(target);
+    return async (request: Request): Promise<Response> =>
+    {
+        const response = await handle(request);
+        return response instanceof PayloadResponse ? toNativeResponse(response) : response;
+    };
+}
+
+/**
+ * Materialises a kernel {@link PayloadResponse} into a `Response` built by this realm's own
+ * constructor. Reads through `raw()`, which is also what the Node adapter writes, so a header a
+ * middleware set through the `headers` view reaches the wire here exactly as it does there -
+ * including repeated `Set-Cookie`, which a plain header record cannot carry and which a naive
+ * `new Headers(record)` would collapse to one (session OR csrf, silently lost).
+ *
+ * A null-body status (204/304) must be constructed with a null body or the `Response`
+ * constructor throws.
+ *
+ * @param response - Any response; a native one is returned unchanged.
+ * @returns A native `Response` with the same status, headers, and bytes.
+ */
+export function toNativeResponse(response: Response): Response
+{
+    if (!(response instanceof PayloadResponse))
+    {
+        return response;
+    }
+    const raw = response.raw();
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(raw.headers))
+    {
+        if (Array.isArray(value))
+        {
+            for (const entry of value)
+            {
+                headers.append(name, entry);
+            }
+        }
+        else
+        {
+            headers.set(name, value);
+        }
+    }
+    const bodyless = raw.status === 204 || raw.status === 304 || raw.status === 205 || raw.status < 200;
+    return new Response(bodyless ? null : raw.payload, { status: raw.status, statusText: response.statusText, headers });
+}
+
+/**
  * Returns a response with `extra` headers merged in (names lowercased, overwriting). Uses the
  * PayloadResponse fast path when possible - mutating the `headers` view alone would not reach
  * the record the Node adapter writes, so a kernel-built response is rebuilt over the same

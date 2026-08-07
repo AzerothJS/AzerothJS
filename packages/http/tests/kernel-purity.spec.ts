@@ -111,15 +111,102 @@ describe('the fetch-standard kernel', () =>
         }
     });
 
-    it('an App is a bare WinterCG fetch function by binding handle', async () =>
+    it('app.handle answers in-process, but its response is NOT what a Fetch host accepts', async () =>
     {
-        // `toFetchHandler(app)` was `app.handle.bind(app)` and nothing else, so it is gone.
+        // This is the honest statement of the kernel's own contract, and it is why
+        // `toFetchHandler` exists. `app.handle` returns a PayloadResponse: it satisfies
+        // `instanceof Response` (so middleware and tests cannot tell), and the Node adapter
+        // writes it straight to the socket. But a standard Fetch host checks the INTERNAL
+        // slot, not the prototype - Bun answers `Expected a Response object`, Deno
+        // `must be a Response constructed via the Response constructor in this realm`.
+        //
+        // The previous version of this test was named "an App is a bare WinterCG fetch
+        // function" and asserted only `.status` and `.json()` - both of which a
+        // PayloadResponse satisfies. It passed while the WinterCG claim was false on every
+        // non-Node runtime. Asserting the shape is not asserting the contract.
         const { App, json } = await import('../src/index.ts');
+        const { PayloadResponse } = await import('../src/payload.ts');
         const app = new App();
         app.get('/hello', () => json({ hi: true }));
-        const fetchFn = app.handle.bind(app);
-        const response = await fetchFn(new Request('http://edge.local/hello'));
+
+        const response = await app.handle.bind(app)(new Request('http://edge.local/hello'));
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ hi: true });
+        expect(response instanceof Response).toBe(true);        // indistinguishable to user code
+        expect(response instanceof PayloadResponse).toBe(true); // ...but not host-acceptable
+    });
+
+    it('toFetchHandler returns a response a standard Fetch host will accept', async () =>
+    {
+        const { App, json, text, toFetchHandler } = await import('../src/index.ts');
+        const { PayloadResponse } = await import('../src/payload.ts');
+        const app = new App();
+        app.get('/hello', () => json({ hi: true }));
+        app.get('/plain', () => text('plain'));
+
+        const fetchFn = toFetchHandler(app);
+        for (const [path, expected] of [['/hello', '{"hi":true}'], ['/plain', 'plain']] as const)
+        {
+            const response = await fetchFn(new Request('http://edge.local' + path));
+            // The invariant a host actually enforces: constructed by THIS realm's Response.
+            expect(response instanceof PayloadResponse).toBe(false);
+            expect(Object.getPrototypeOf(response)).toBe(Response.prototype);
+            expect(response.status).toBe(200);
+            expect(await response.text()).toBe(expected);
+        }
+    });
+
+    it('toFetchHandler preserves repeated Set-Cookie, which a header record cannot carry', async () =>
+    {
+        // A plain `Record<string, string>` holds one value per name, so a naive rebuild
+        // collapses two cookies into one - session OR csrf, silently lost in production only.
+        const { App, text, toFetchHandler } = await import('../src/index.ts');
+        const app = new App();
+        app.get('/login', () =>
+        {
+            const response = text('ok');
+            response.headers.append('set-cookie', 'session=abc; Path=/');
+            response.headers.append('set-cookie', 'csrf=xyz; Path=/');
+            return response;
+        });
+
+        const response = await toFetchHandler(app)(new Request('http://edge.local/login'));
+        expect(Object.getPrototypeOf(response)).toBe(Response.prototype);
+        expect(response.headers.getSetCookie()).toEqual(['session=abc; Path=/', 'csrf=xyz; Path=/']);
+    });
+
+    it('toFetchHandler leaves an already-native response alone, streams included', async () =>
+    {
+        // Only kernel-built responses pay the materialisation; a streaming body must be
+        // forwarded by reference, never buffered.
+        const { App, toFetchHandler } = await import('../src/index.ts');
+        const app = new App();
+        const streamed = new Response(new ReadableStream({
+            start(controller)
+            {
+                controller.enqueue(new TextEncoder().encode('chunk'));
+                controller.close();
+            }
+        }), { status: 202 });
+        app.get('/stream', () => streamed);
+
+        const response = await toFetchHandler(app)(new Request('http://edge.local/stream'));
+        expect(response).toBe(streamed); // same object - not rebuilt
+        expect(response.status).toBe(202);
+        expect(await response.text()).toBe('chunk');
+    });
+
+    it('toFetchHandler builds a null-body status without throwing', async () =>
+    {
+        // `new Response(body, { status: 204 })` throws unless the body is null.
+        const { App, toFetchHandler } = await import('../src/index.ts');
+        const { noContent } = await import('../src/index.ts');
+        const app = new App();
+        app.get('/none', () => noContent());
+
+        const response = await toFetchHandler(app)(new Request('http://edge.local/none'));
+        expect(Object.getPrototypeOf(response)).toBe(Response.prototype);
+        expect(response.status).toBe(204);
+        expect(response.body).toBeNull();
     });
 });

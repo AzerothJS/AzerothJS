@@ -52,7 +52,7 @@ export type { EncodableSchema, EncoderMeta } from './encode-json.ts';
 export { readRaw, readText, readJson, readForm, readValidated, mediaTypeOf, DEFAULT_BODY_LIMIT } from './body.ts';
 export type { ReadOptions, SchemaLike, StandardSchemaLike } from './body.ts';
 
-export { pipeline, withResponseHeaders, requestId, requestIdOf, edge, isEdge } from './edge.ts';
+export { pipeline, withResponseHeaders, requestId, requestIdOf, edge, isEdge, toFetchHandler, toNativeResponse } from './edge.ts';
 export type { HandlerWrapper, EdgeMiddleware, RequestIdOptions, WebHandler } from './edge.ts';
 
 export { securityHeaders } from './security.ts';

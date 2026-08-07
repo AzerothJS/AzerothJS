@@ -34,10 +34,15 @@ npm install @azerothjs/http azerothjs
 ## 📖 Overview
 
 Handlers are `(context) => Response` on WHATWG types - one context carries the request, params, URL, and middleware additions. Node's `http`/`http2`
-appear only in edge adapters, which buys three things at once: the same app runs on any
-fetch-shaped runtime, `app.handle(new Request(...))` is the entire integration-testing story
+appear only in edge adapters, which buys three things at once: the same app serves on any
+fetch-shaped runtime through [`toFetchHandler`](#-other-runtimes---bun-deno-workers-vercel-edge),
+`app.handle(new Request(...))` is the entire integration-testing story
 (no sockets, no inject shim), and "headers already sent" or double-send are unrepresentable -
 a handler returns exactly one `Response`.
+
+> `app.handle` itself returns the kernel's fast internal response, not a host-constructed
+> `Response`. It is the right thing to call in a test; a non-Node runtime needs
+> `toFetchHandler(app)`, which is one line. See the runtimes section below.
 
 ```ts
 import { App, json, readJson } from '@azerothjs/http';
@@ -169,6 +174,43 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
   seeking and download resume), negotiated compression (br/gzip/deflate, event streams
   and partial responses exempt), typed env config that reports every problem in ONE boot error,
   structured logging as an interface, graceful shutdown, HTTP/1.1 + h2c adapters.
+
+---
+
+## 🌐 Other runtimes - Bun, Deno, Workers, Vercel Edge
+
+The `.` entry is a pure fetch-standard kernel (one sanctioned `node:` import, the
+AsyncLocalStorage request-root seam, which Bun, Deno and workerd all implement). To serve on a
+runtime other than Node, hand its own primitive a `toFetchHandler`:
+
+```ts
+import { App, json, toFetchHandler } from '@azerothjs/http';
+
+const app = new App();
+app.get('/healthz', () => json({ ok: true }));
+
+Bun.serve({ fetch: toFetchHandler(app) });
+Deno.serve(toFetchHandler(app));
+export default { fetch: toFetchHandler(app) };   // Cloudflare Workers, Vercel Edge
+```
+
+`toFetchHandler` is required, not decoration. `app.handle` returns the kernel's
+`PayloadResponse` - a measured optimisation that satisfies `instanceof Response` but is not
+built by the host realm's constructor, which `Bun.serve` and `Deno.serve` both reject. The
+adapter materialises kernel responses at that one boundary and forwards an already-native
+response (a stream, an `sse()` body) untouched. Node's `serve()` never calls it.
+
+One caveat worth knowing before you deploy: `rateLimit` keys on the client IP, and only the
+Node adapter can expose a socket address. On any other runtime it refuses loudly rather than
+silently sharing one global bucket, so give it the key that runtime does provide:
+
+```ts
+Bun.serve({ fetch: (request, server) => toFetchHandler(
+    pipeline(app, rateLimit({ limit: 100, windowMs: 60_000, key: () => server.requestIP(request)?.address ?? 'unknown' }))
+)(request) });
+```
+
+Verified by `runtime-compat.spec.ts`, which boots real Bun and Deno servers over real sockets.
 
 ---
 
