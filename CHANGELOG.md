@@ -10,6 +10,8 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+## [2.1.0-beta.1] - 2026-08-08
+
 ### Added - the production-completeness pass: SSG enumeration, ISR, streaming SSR, server actions, images
 
 Five capabilities, each riding the pipeline that already existed rather than a parallel one:
@@ -3602,7 +3604,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v2.1.0-beta.1...HEAD
+[2.1.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.2...v2.1.0-beta.1
 [2.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.1...v2.0.0-beta.2
 [2.0.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...v2.0.0-beta.1
 [1.1.0]: https://github.com/AzerothJS/AzerothJS/compare/v1.0.0...v1.1.0
