@@ -20,6 +20,8 @@
  * call - essential for a long-lived server process serving many requests.
  */
 
+import type { StreamSession } from './stream-session.ts';
+
 /**
  * The active rendering strategy. See the module header for each mode's semantics.
  */
@@ -39,6 +41,7 @@ interface ModeFrame
 {
     mode: RenderMode;
     markers: boolean;
+    session: StreamSession | null;
 }
 
 /** The render-context stack; empty means 'dom', no markers. @internal */
@@ -57,6 +60,19 @@ export function ssrMarkersActive(): boolean
     return frames[frames.length - 1]?.markers ?? false;
 }
 
+/**
+ * The streaming session of the current render window, or null outside one. This IS the
+ * documented "ONE accessor" seam: every serialization window is synchronous, so the
+ * session rides the frame stack - no per-async-context storage needed.
+ *
+ * @internal
+ * @returns The active {@link StreamSession}, or null for buffered/client renders.
+ */
+export function currentStreamSession(): StreamSession | null
+{
+    return frames[frames.length - 1]?.session ?? null;
+}
+
 /** Options for {@link runInMode}. */
 export interface RunInModeOptions
 {
@@ -67,6 +83,13 @@ export interface RunInModeOptions
      * one render keep the render's choice), false at the top level.
      */
     markers?: boolean;
+
+    /**
+     * The streaming session this window serializes under. Like `markers`, an omitted
+     * value inherits the enclosing frame's, so nested mode switches inside one render
+     * keep the render's session; null at the top level.
+     */
+    session?: StreamSession | null;
 }
 
 /**
@@ -206,7 +229,11 @@ export function isHydrating(): boolean
  */
 export function runInMode<T>(mode: RenderMode, fn: () => T, options?: RunInModeOptions): T
 {
-    frames.push({ mode, markers: options?.markers ?? ssrMarkersActive() });
+    frames.push({
+        mode,
+        markers: options?.markers ?? ssrMarkersActive(),
+        session: options?.session !== undefined ? options.session : currentStreamSession()
+    });
 
     try
     {

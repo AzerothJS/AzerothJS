@@ -10,12 +10,9 @@ describe('css', () =>
 {
     beforeEach(() =>
     {
-        // Isolate each test: clear the registry and remove injected <style> tags.
+        // Isolate each test: clear the registry and drop adopted sheets.
         resetStyleSheet();
-        for (const style of Array.from(document.head.querySelectorAll('style[data-azeroth-css]')))
-        {
-            style.remove();
-        }
+        document.adoptedStyleSheets = [];
     });
 
     it('returns a map whose properties resolve to scoped class names', () =>
@@ -58,18 +55,27 @@ describe('css', () =>
         expect(a.x).not.toBe(b.x);
     });
 
-    it('injects exactly one <style data-azeroth-css> per scope into <head>', () =>
+    it('adopts exactly one constructable stylesheet per scope', () =>
     {
+        const before = document.adoptedStyleSheets.length;
         const s = css('.inject { padding: 1px; }');
-        const tags = document.head.querySelectorAll('style[data-azeroth-css]');
-        expect(tags.length).toBe(1);
-        const scope = s.inject?.split('_')[1];
-        expect(tags[0]?.getAttribute('data-azeroth-css')).toBe(scope);
-        expect(tags[0]?.textContent).toContain(`.${ s.inject }`);
+        expect(document.adoptedStyleSheets.length).toBe(before + 1);
+        const sheet = document.adoptedStyleSheets[document.adoptedStyleSheets.length - 1];
+        expect(sheet?.cssRules[0]?.cssText).toContain(`.${ s.inject }`);
 
-        // Re-evaluating identical CSS does not inject a second tag.
+        // Re-evaluating identical CSS does not adopt a second sheet.
         css('.inject { padding: 1px; }');
-        expect(document.head.querySelectorAll('style[data-azeroth-css]').length).toBe(1);
+        expect(document.adoptedStyleSheets.length).toBe(before + 1);
+    });
+
+    it('never creates an inline <style> element, which a strict CSP would silently refuse', () =>
+    {
+        // The regression this pins: an injected <style> is blocked by any policy without
+        // `style-src 'unsafe-inline'`, and a blocked element still sits in the DOM carrying the
+        // right rule text while painting nothing - so only a computed style reveals the failure.
+        // A constructable sheet is CSSOM and outside CSP entirely.
+        css('.csp-safe { color: rebeccapurple; }');
+        expect(document.head.querySelectorAll('style[data-azeroth-css]').length).toBe(0);
     });
 
     it('leaves non-class selectors (element/id) unscoped', () =>
@@ -116,10 +122,7 @@ describe('collectStyleSheet / resetStyleSheet', () =>
     beforeEach(() =>
     {
         resetStyleSheet();
-        for (const style of Array.from(document.head.querySelectorAll('style[data-azeroth-css]')))
-        {
-            style.remove();
-        }
+        document.adoptedStyleSheets = [];
     });
 
     it('returns an empty string when nothing is registered', () =>
@@ -157,5 +160,40 @@ describe('collectStyleSheet cannot close the style element it is embedded in', (
         expect(sheet).not.toMatch(/<\/style/i);
         // `\3c` inside a CSS string is still `<`, so the declaration keeps its meaning.
         expect(sheet).toContain('\\3c/style>');
+    });
+});
+
+describe('resetStyleSheet and the adopted-sheet registry stay in step', () =>
+{
+    // Found by an adversarial audit of the constructable-stylesheet change: `css()` deduped
+    // through TWO independent tables - css.ts's `injectedScopes` and adopt-style.ts's own map -
+    // and `resetStyleSheet()` cleared only the first. So a reset followed by the same `css()`
+    // adopted NOTHING: the id was still remembered, the rules were silently gone, and a test or
+    // a per-request module re-import lost its styles with no error.
+    it('the same css() adopts again after a reset', () =>
+    {
+        document.adoptedStyleSheets = [];
+        resetStyleSheet();
+        css('.reset-probe { color: rgb(5, 5, 5); }');
+        expect(document.adoptedStyleSheets.length).toBe(1);
+
+        resetStyleSheet();
+        css('.reset-probe { color: rgb(5, 5, 5); }');
+        expect(document.adoptedStyleSheets.length).toBe(1);
+    });
+
+    it('a reset removes only the framework sheets, never one the app adopted', () =>
+    {
+        document.adoptedStyleSheets = [];
+        const appSheet = new CSSStyleSheet();
+        appSheet.replaceSync('.app-owned { color: rgb(6, 6, 6); }');
+        document.adoptedStyleSheets = [appSheet];
+
+        css('.framework-owned { color: rgb(7, 7, 7); }');
+        expect(document.adoptedStyleSheets.length).toBe(2);
+
+        resetStyleSheet();
+        // The app's sheet survives; only the framework's is gone.
+        expect(document.adoptedStyleSheets).toEqual([appSheet]);
     });
 });

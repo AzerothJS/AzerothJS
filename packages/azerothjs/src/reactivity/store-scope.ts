@@ -225,3 +225,28 @@ export function runInStoreScope<T>(fn: () => T): T
         currentScope = previous;
     }
 }
+
+/**
+ * Runs `fn` under a SPECIFIC existing scope - the streaming-continuation seam: a boundary
+ * continuation must see the same store instances its main pass created, and the explicit
+ * synchronous scope wins over the async-context resolver by getStoreScope's precedence.
+ *
+ * @internal
+ * @typeParam T - fn's return type.
+ * @param scope - The scope object captured by the render's main pass.
+ * @param fn - The work to run under it.
+ * @returns Whatever `fn` returns.
+ */
+export function runInExistingStoreScope<T>(scope: object, fn: () => T): T
+{
+    const previous = currentScope;
+    currentScope = scope;
+    try
+    {
+        return fn();
+    }
+    finally
+    {
+        currentScope = previous;
+    }
+}

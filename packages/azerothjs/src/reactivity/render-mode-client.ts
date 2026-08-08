@@ -29,6 +29,18 @@ export function isHydrating(): boolean
     return false;
 }
 
+/** Client-only build: markers are an SSR concern that never arises. */
+export function ssrMarkersActive(): boolean
+{
+    return false;
+}
+
+/** Client-only build: no streaming session ever exists. */
+export function currentStreamSession(): null
+{
+    return null;
+}
+
 /**
  * Client-only build: `renderToString`/`hydrate` cannot run (their mode switch is compiled out).
  * Throwing keeps a misconfigured app loud instead of silently rendering wrong.

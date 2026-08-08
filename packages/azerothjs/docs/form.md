@@ -36,11 +36,11 @@ export default component SignIn
         onSubmit: async (values) => { await signIn(values); }
     };
 
-    <form onSubmit={login.handleSubmit}>
-        <input type="email" bind:value={login.email} />
-        <Show when={login.touched().email}><span>{login.errors().email}</span></Show>
-        <input type="password" bind:value={login.password} />
-        <button disabled={login.submitting()}>{login.submitting() ? 'Signing in...' : 'Sign in'}</button>
+    <form onSubmit={ login.handleSubmit }>
+        <input type="email" bind:value={ login.email } />
+        <Show when={ login.touched().email }><span>{ login.errors().email }</span></Show>
+        <input type="password" bind:value={ login.password } />
+        <button disabled={ login.submitting() }>{ login.submitting() ? 'Signing in...' : 'Sign in' }</button>
     </form>
 }
 ```
@@ -116,14 +116,12 @@ form items[] = { description: '', qty: 1 } with {
     validateArray: (rows) => rows.length === 0 ? 'Add at least one item' : null
 };
 
-<For each={items.rows()} key={(item) => item.key}>
-    {(item, i) =>
-        <fieldset>
-            <input bind:value={item.description} />
-            <input type="number" bind:value={item.qty} />
-            <button type="button" onClick={() => items.remove(i())}>Remove</button>
-        </fieldset>
-    }
+<For each={ items.rows() } key={ (item) => item.key } let={ item } index={ i }>
+    <fieldset>
+        <input bind:value={ item.description } />
+        <input type="number" bind:value={ item.qty } />
+        <button type="button" onClick={ () => items.remove(i) }>Remove</button>
+    </fieldset>
 </For>
 ```
 

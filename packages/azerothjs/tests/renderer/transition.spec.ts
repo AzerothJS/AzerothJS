@@ -307,11 +307,17 @@ describe('Transition - a leaving element stops being interactive', () =>
         expect(container.querySelector('.box')).toBe(box);
         expect(box.hasAttribute(LEAVING)).toBe(true);
 
-        const styleEl = document.querySelector(`style[${ LEAVING }]`);
-        expect(styleEl).not.toBeNull();
-        expect(styleEl!.textContent).toBe(`[${ LEAVING }]{pointer-events:none}`);
+        // The rule arrives as a constructable stylesheet rather than an injected <style>: an
+        // inline element is refused by any strict CSP while still sitting in the DOM with the
+        // right text, so the suppression would silently stop working.
+        const rules = document.adoptedStyleSheets
+            .flatMap((sheet) => Array.from(sheet.cssRules).map((rule) => rule.cssText));
+        const leaving = rules.find((rule) => rule.includes(LEAVING));
+        expect(leaving).toBeDefined();
+        expect(leaving).toContain('pointer-events: none');
         // Author-level, so an app can override it, and the element's own styles are untouched.
-        expect(styleEl!.textContent).not.toContain('!important');
+        expect(leaving).not.toContain('!important');
+        expect(document.querySelector(`style[${ LEAVING }]`)).toBeNull();
         expect(box.getAttribute('style')).toBeNull();
         // The handler is still bound (the marker is what stops the click, not a teardown).
         expect(clicks).toBe(0);
@@ -339,7 +345,10 @@ describe('Transition - a leaving element stops being interactive', () =>
         setOn(false);
         await settle();
 
-        expect(document.querySelectorAll(`style[${ LEAVING }]`).length).toBe(1);
+        const leavingRules = document.adoptedStyleSheets
+            .flatMap((sheet) => Array.from(sheet.cssRules).map((rule) => rule.cssText))
+            .filter((rule) => rule.includes(LEAVING));
+        expect(leavingRules.length).toBe(1);
         container.remove();
     });
 

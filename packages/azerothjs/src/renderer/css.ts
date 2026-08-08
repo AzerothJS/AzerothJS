@@ -17,6 +17,7 @@
 
 import { isStringMode, getStoreScope } from '../reactivity/index.ts';
 
+import { adoptStyleSheet, resetAdoptedStyleSheets } from './adopt-style.ts';
 import { STYLE_BREAKOUT } from './ssr.ts';
 
 /** Scope ids already injected into the document, so injection happens once per scope. @internal */
@@ -271,10 +272,7 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
     if (typeof document !== 'undefined' && !injectedScopes.has(scope))
     {
         injectedScopes.add(scope);
-        const styleEl = document.createElement('style');
-        styleEl.setAttribute('data-azeroth-css', scope);
-        styleEl.textContent = scopedCss;
-        document.head.appendChild(styleEl);
+        adoptStyleSheet(`css:${ scope }`, scopedCss, 'data-azeroth-css', scope);
     }
 
     // Proxy so a missing key returns the key itself (degrade gracefully).
@@ -380,4 +378,9 @@ export function resetStyleSheet(): void
     injectedScopes.clear();
     frameCss = null;
     frameOwner = null;
+    // The adopted-sheet registry is a SECOND dedupe table, and two tables that can disagree are
+    // a bug waiting to happen: clearing only this module's left `adopt-style` still remembering
+    // every scope, so a reset followed by the same css() adopted nothing and the rules were
+    // silently gone. Reset is one operation across both.
+    resetAdoptedStyleSheets();
 }

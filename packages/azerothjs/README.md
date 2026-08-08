@@ -30,8 +30,8 @@ export default component Counter(props: { start?: number })
     state count = props.start ?? 0;
     derived parity = count % 2 === 0 ? 'even' : 'odd';
 
-    <button class="btn" class:positive={count > 0} onClick={() => count++}>
-        Count: {count} ({parity})
+    <button class="btn" class:positive={ count > 0 } onClick={ () => count++ }>
+        Count: { count } ({ parity })
     </button>
 }
 ```
@@ -100,9 +100,9 @@ form login = { email: '', password: '' } with {
     onSubmit: async (values) => { await signIn(values); }
 };
 
-<form onSubmit={login.handleSubmit}>
-    <input type="email" bind:value={login.email} />
-    <button disabled={login.submitting()}>Sign in</button>
+<form onSubmit={ login.handleSubmit }>
+    <input type="email" bind:value={ login.email } />
+    <button disabled={ login.submitting() }>Sign in</button>
 </form>
 ```
 
@@ -161,20 +161,20 @@ Conditional, list, async, relocated, and error rendering are components, used in
 markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `ErrorBoundary`.
 
 ```azeroth
-<Show when={user()} let={ user } fallback={<a href="/login">Sign in</a>}>
-    <p>Welcome, {user.name}</p>
+<Show when={ user() } let={ user } fallback={ <a href="/login">Sign in</a> }>
+    <p>Welcome, { user.name }</p>
 </Show>
 
-<For each={items()} key={(item) => item.id} let={ item } index={ i }>
-    <li>{i + 1}. {item.label}</li>
+<For each={ items() } key={ (item) => item.id } let={ item } index={ i }>
+    <li>{ i + 1 }. { item.label }</li>
 </For>
 
-<Switch fallback={<NotFound />}>
-    <Match when={tab() === 'home'}><Home /></Match>
-    <Match when={tab() === 'about'}><About /></Match>
+<Switch fallback={ <NotFound /> }>
+    <Match when={ tab() === 'home' }><Home /></Match>
+    <Match when={ tab() === 'about' }><About /></Match>
 </Switch>
 
-<ErrorBoundary fallback={(error, reset) => <button onClick={reset}>Retry ({String(error)})</button>}>
+<ErrorBoundary fallback={ (error, reset) => <button onClick={ reset }>Retry ({ String(error) })</button> }>
     <Profile />
 </ErrorBoundary>
 ```
@@ -242,7 +242,7 @@ const router = createRouter({
 ```
 
 ```azeroth
-<RouterProvider router={router}>
+<RouterProvider router={ router }>
     <nav><Link to="/users/42">Profile</Link></nav>
     <Routes />
 </RouterProvider>
@@ -270,6 +270,53 @@ consumes, and a server validation failure's field map drops straight into a brow
 `setError`.
 
 ---
+
+## 🌊 Streaming SSR and `<Suspense>`
+
+`renderToStream` sends everything that needs no waiting NOW and the rest the moment it
+exists: the shell flushes with each pending `<Suspense>` boundary's fallback in place,
+resources fetch eagerly on the server, and every settled boundary streams as an
+out-of-order chunk that swaps in before hydration - which then adopts the final DOM with
+zero refetches (each chunk carries its resources' data as seeds). A boundary that fails
+or times out degrades to exactly the buffered behavior: fallback markup, client fetch
+after hydration.
+
+A boundary names the resources it waits on, so nothing has to infer which reads are async:
+
+```azeroth
+resource orders = () => fetchOrders(userId);
+resource offers = () => fetchOffers(userId);
+
+<Suspense fallback={ <p>Loading your account...</p> } on={ [orders, offers] }>
+    <OrderList rows={ orders.data() ?? [] } />
+    <OfferList rows={ offers.data() ?? [] } />
+</Suspense>
+```
+
+`on` is required and captured once at construction: pass a stable list of resource
+references, not an array built from a signal. An empty list renders the children
+immediately. The fallback shows while ANY listed resource is loading.
+
+```ts
+import { renderToStream } from 'azerothjs';
+
+const stream = renderToStream(() => App({ url }), { signal: request.signal });
+return new Response(stream, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+```
+
+With `@azerothjs/kit`, one route field does all of it: `render: 'stream'`.
+
+## 🖼️ `<Image>`
+
+The responsive image element: `srcset`/`sizes` math over a fixed width ladder, lazy
+loading, async decoding, width/height reserved (no layout shift). Without an endpoint it
+is an honest `<img>` passthrough; with one (`optimize`, or an `ImageConfig` provider) the
+URLs target the kit's `/_image` endpoint, which negotiates AVIF/WebP per browser - and
+ships no codec dependency to do it.
+
+```azeroth
+<Image src="/hero.png" alt="Hero" width={ 1200 } sizes="100vw" optimize={ true } />
+```
 
 ## 🧭 Editor support
 

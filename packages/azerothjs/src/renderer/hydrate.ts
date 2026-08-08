@@ -12,7 +12,7 @@
 
 import { createRoot, runInMode } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { isHydrationNode, HydrationCursor, HydrationMismatchError } from '../reactivity/internal.ts';
+import { isHydrationNode, HydrationCursor, HydrationMismatchError, resetSeedScopes } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
@@ -79,6 +79,9 @@ import { render } from './render.ts';
  */
 export function hydrate(component: () => MountNode, container: HTMLElement): void
 {
+    // A streamed page's seed ids count from zero per hydration pass.
+    resetSeedScopes();
+
     // Tear down any previous mount on this container first.
     const previousDispose = containerDisposers.get(container);
     if (previousDispose)

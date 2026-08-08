@@ -31,7 +31,7 @@ import { ErrorBoundary } from 'azerothjs';
 
 component App
 {
-    <ErrorBoundary fallback={(err, reset) => <button onClick={reset}>Retry - {String(err)}</button>}>
+    <ErrorBoundary fallback={ (err, reset) => <button onClick={ reset }>Retry - { String(err) }</button> }>
         <RiskyThing />
     </ErrorBoundary>
 }

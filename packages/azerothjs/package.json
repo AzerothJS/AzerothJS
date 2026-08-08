@@ -1,6 +1,6 @@
 {
     "name": "azerothjs",
-    "version": "2.0.0-beta.2",
+    "version": "2.1.0-beta.1",
     "engines": {
         "node": ">=22"
     },
@@ -29,6 +29,7 @@
     },
     "files": [
         "dist",
+        "docs",
         "!dist/**/*.map"
     ],
     "sideEffects": false,
@@ -39,7 +40,7 @@
         "prepack": "node ../../scripts/prepack.mjs"
     },
     "dependencies": {
-        "@azerothjs/schema": "^2.0.0-beta.2"
+        "@azerothjs/schema": "^2.1.0-beta.1"
     },
     "keywords": [
         "framework",

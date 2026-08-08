@@ -30,6 +30,7 @@ import type { HydrationCursor as HydrationCursorType } from '../reactivity/inter
 import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, appendToCo, adoptCoRange } from '../component/index.ts';
+import { adoptStyleSheet } from './adopt-style.ts';
 import { hydrateChild, resolveReactive } from './h.ts';
 
 /**
@@ -99,14 +100,7 @@ export const LEAVING_ATTR = 'data-azeroth-transition-leaving';
  */
 export function ensureLeavingStyle(): void
 {
-    if (typeof document === 'undefined' || document.querySelector(`style[${ LEAVING_ATTR }]`))
-    {
-        return;
-    }
-    const styleEl = document.createElement('style');
-    styleEl.setAttribute(LEAVING_ATTR, '');
-    styleEl.textContent = `[${ LEAVING_ATTR }]{pointer-events:none}`;
-    document.head.appendChild(styleEl);
+    adoptStyleSheet(LEAVING_ATTR, `[${ LEAVING_ATTR }]{pointer-events:none}`, LEAVING_ATTR);
 }
 
 /**

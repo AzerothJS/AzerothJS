@@ -409,8 +409,12 @@ describe('route-change focus', () =>
             // Fallback region: tagged for the overridable ring-suppression rule, inline style untouched.
             expect(fallback?.hasAttribute('data-azeroth-route-focus-fallback')).toBe(true);
             expect(fallback?.style.outline).toBe('');
-            expect(document.querySelector('style[data-azeroth-route-focus-fallback]')?.textContent)
-                .toBe('[data-azeroth-route-focus-fallback]{outline:none}');
+            // The rule arrives as a constructable stylesheet, not an injected <style>: an inline
+            // element is refused by any strict CSP while still sitting in the DOM looking correct.
+            const adopted = document.adoptedStyleSheets
+                .flatMap((sheet) => Array.from(sheet.cssRules).map((rule) => rule.cssText));
+            expect(adopted.some((rule) => rule.includes('data-azeroth-route-focus-fallback'))).toBe(true);
+            expect(document.querySelector('style[data-azeroth-route-focus-fallback]')).toBeNull();
 
             router.navigate('/marked');
             await flush();

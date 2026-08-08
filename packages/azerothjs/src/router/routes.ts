@@ -23,6 +23,7 @@ import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, unt
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode } from '../component/index.ts';
 import { playTransitionClasses } from '../renderer/transition-classes.ts';
+import { adoptStyleSheet } from '../renderer/adopt-style.ts';
 import { hydrateChild } from '../renderer/h.ts';
 import type { RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';
@@ -409,14 +410,11 @@ const ROUTE_FOCUS_FALLBACK_ATTR = 'data-azeroth-route-focus-fallback';
  */
 function ensureRouteFocusStyle(): void
 {
-    if (typeof document === 'undefined' || document.querySelector(`style[${ ROUTE_FOCUS_FALLBACK_ATTR }]`))
-    {
-        return;
-    }
-    const styleEl = document.createElement('style');
-    styleEl.setAttribute(ROUTE_FOCUS_FALLBACK_ATTR, '');
-    styleEl.textContent = `[${ ROUTE_FOCUS_FALLBACK_ATTR }]{outline:none}`;
-    document.head.appendChild(styleEl);
+    adoptStyleSheet(
+        ROUTE_FOCUS_FALLBACK_ATTR,
+        `[${ ROUTE_FOCUS_FALLBACK_ATTR }]{outline:none}`,
+        ROUTE_FOCUS_FALLBACK_ATTR
+    );
 }
 
 /**

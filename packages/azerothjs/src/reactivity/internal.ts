@@ -26,7 +26,14 @@ export {
 export type { HydrationNode } from './hydration.ts';
 
 // Adapter seam: async-context-backed store scoping (@azerothjs/http's request root).
-export { setStoreScopeResolver } from './store-scope.ts';
+export { setStoreScopeResolver, runInExistingStoreScope, getStoreScope } from './store-scope.ts';
+
+// Streaming SSR: the per-render session (rides the mode frame) and its hydrate-side seeds.
+export { currentStreamSession } from './render-mode.ts';
+export { StreamSession } from './stream-session.ts';
+export type { PendingBoundary, ServerFetch } from './stream-session.ts';
+export { allocateSeedId, popSeedScope, pushSeedScope, resetSeedScopes, takeStreamSeed } from './stream-seeds.ts';
+export type { StreamSeed } from './stream-seeds.ts';
 
 // Test probe: live subscriber count for leak assertions (@azerothjs/testing's leakGuard).
 export { subscriberCount } from './create-signal.ts';

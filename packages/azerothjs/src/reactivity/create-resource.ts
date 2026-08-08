@@ -26,6 +26,9 @@ import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
 import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
+import { currentStreamSession, isHydrating, isStringMode } from './render-mode.ts';
+import { allocateSeedId, takeStreamSeed } from './stream-seeds.ts';
+import { untrack } from './untrack.ts';
 
 /**
  * The reactive shape returned by {@link createResource}.
@@ -192,8 +195,9 @@ export function createResource<T, S>(
     }
 
     // Start a fetch under `controller`: loading flips true synchronously; data/error are
-    // settled by the promise (superseded results dropped via signal.aborted).
-    function startFetch(controller: AbortController, sourceValue: S | undefined): void
+    // settled by the promise (superseded results dropped via signal.aborted). Returns the
+    // settle chain - the streaming driver awaits it; the effect path ignores it.
+    function startFetch(controller: AbortController, sourceValue: S | undefined): Promise<void>
     {
         // Batch the synchronous "before" updates so subscribers never see loading=true
         // with the previous error still set.
@@ -226,7 +230,7 @@ export function createResource<T, S>(
         // reaction with nothing downstream, i.e. an unhandled rejection (a process kill on
         // Node). Route it through the effect error ladder instead. This never swallows a
         // FETCHER failure - a rejection is already captured in error() by the arm above.
-        pending.then(
+        return pending.then(
             (result) =>
             {
                 // May resolve AFTER a newer fetch aborted us - drop superseded results.
@@ -259,6 +263,90 @@ export function createResource<T, S>(
         {
             routeAsyncError(err, settleErrorHandler, options?.name);
         });
+    }
+
+    const resource: Resource<T> = {
+        data,
+        loading,
+        error,
+        refetch(): void
+        {
+            setTick(t => t + 1);
+        }
+    };
+
+    if (isStringMode())
+    {
+        // STREAMING SSR: effects never run in string mode, so inside a streaming session
+        // the fetch starts HERE, eagerly at creation - fetch time overlaps serialization.
+        // The session records the settle promise under a scoped-ordinal id; Suspense awaits
+        // it and the chunk carries the id so hydration seeds this same resource.
+        const session = currentStreamSession();
+        if (session !== null)
+        {
+            const id = session.allocateResourceId();
+            if (!pendingInitial)
+            {
+                const sourceValue = source !== null ? untrack(source) : undefined;
+                if (source === null || !isSkipValue(sourceValue))
+                {
+                    const controller = new AbortController();
+                    if (session.signal !== undefined)
+                    {
+                        if (session.signal.aborted)
+                        {
+                            controller.abort();
+                        }
+                        else
+                        {
+                            session.signal.addEventListener('abort', () => controller.abort(), { once: true });
+                        }
+                    }
+                    const promise = startFetch(controller, sourceValue as S | undefined);
+                    session.registerFetch(resource, {
+                        promise,
+                        controller,
+                        id,
+                        read: (): { d?: unknown; e?: string } =>
+                        {
+                            const failure = untrack(error);
+                            if (failure !== null)
+                            {
+                                // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the wire seed is documented LOSSY: a non-Error failure degrades to its string form, visibly
+                                return { e: failure instanceof Error ? failure.message : String(failure) };
+                            }
+                            return { d: untrack(data) };
+                        }
+                    });
+                }
+            }
+        }
+        dtExitPrimitive(frame);
+        return resource;
+    }
+
+    if (isHydrating())
+    {
+        // A streamed page merged this resource's outcome into the seed store under the same
+        // scoped-ordinal id the server allocated. The id ticks UNCONDITIONALLY so counting
+        // stays aligned; a miss (or a non-streamed page) is plain normal behavior.
+        const id = allocateSeedId();
+        if (!pendingInitial)
+        {
+            const seed = takeStreamSeed(id);
+            if (seed !== undefined)
+            {
+                if ('d' in seed)
+                {
+                    setData(() => seed.d as T);
+                }
+                else if (seed.e !== undefined)
+                {
+                    setError(() => new Error(seed.e));
+                }
+                pendingInitial = true;
+            }
+        }
     }
 
     // The reactive heart: reads `tick` and `source`; on either change the previous run's
@@ -296,20 +384,12 @@ export function createResource<T, S>(
         }
 
         const controller = new AbortController();
-        startFetch(controller, sourceValue);
+        void startFetch(controller, sourceValue);
 
         // Aborting on the next re-run (or root dispose) is the cancellation guarantee.
         onCleanup(() => controller.abort());
     }, { name: 'fetch' });
     dtExitPrimitive(frame);
 
-    return {
-        data,
-        loading,
-        error,
-        refetch(): void
-        {
-            setTick(t => t + 1);
-        }
-    };
+    return resource;
 }

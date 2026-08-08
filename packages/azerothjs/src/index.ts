@@ -26,6 +26,10 @@ export * from './reactivity/index.ts';
 // renderer builds on, which is framework infrastructure, not application API.
 export { destroyComponent, ErrorBoundary } from './component/index.ts';
 export type { ErrorBoundaryProps } from './component/index.ts';
+// Image sits outside the component barrel: it builds markup through the renderer's h(),
+// and the barrel stays renderer-free by layering.
+export { DEVICE_WIDTHS, Image, ImageConfig } from './component/image.ts';
+export type { ImageProps } from './component/image.ts';
 export * from './renderer/index.ts';
 // The render-safety gate's escape hatches. They live beside the gate itself (renderer/ssr.ts,
 // which both render modes call) rather than in the renderer's own barrel, whose exports are all

@@ -15,8 +15,12 @@
  */
 
 import type { Resource } from '../reactivity/index.ts';
-import { createMemo, isStringMode } from '../reactivity/index.ts';
-import { serializeChild, wrapContentsAnchored } from '../reactivity/internal.ts';
+import { createMemo, getOwner, isHydrating, isStringMode, runWithOwner, untrack } from '../reactivity/index.ts';
+import {
+    currentStreamSession, hydrationNode, popSeedScope, pushSeedScope,
+    serializeChild, wrapContentsAnchored
+} from '../reactivity/internal.ts';
+import type { HydrationCursor, HydrationNode, ServerFetch } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { Show } from './show.ts';
 
@@ -104,11 +108,99 @@ export interface SuspenseProps
  */
 export function Suspense(props: SuspenseProps): MountNode
 {
-    // SSR: resources don't resolve within a synchronous render, so emit the fallback (async
-    // SSR is a later phase); the client resolves them and swaps in children after hydration.
     if (isStringMode())
     {
+        const session = currentStreamSession();
+        if (session !== null)
+        {
+            // STREAMING SSR: a boundary whose resources are pending emits its fallback under
+            // an ID-SUFFIXED marker and registers a continuation; the driver streams the
+            // children as an out-of-order chunk once the session's fetches settle. A boundary
+            // whose resources already settled renders its children inline under the bare
+            // marker - byte-identical to a buffered render of the settled state.
+            const pending: ServerFetch[] = [];
+            for (const resource of props.on)
+            {
+                if (untrack(resource.loading))
+                {
+                    const entry = session.fetchOf(resource);
+                    if (entry !== undefined)
+                    {
+                        pending.push(entry);
+                    }
+                }
+            }
+            if (pending.length === 0)
+            {
+                return wrapContentsAnchored('suspense', serializeChild(props.children())) as unknown as MountNode;
+            }
+            const id = session.allocateBoundaryId();
+            const owner = getOwner();
+            const fallbackHtml = session.inScope(`${ id }f`, () => serializeChild(props.fallback()));
+            session.registerBoundary({
+                id,
+                entries: pending,
+                render: (): string => runWithOwner(owner, () => session.inScope(String(id), () => serializeChild(props.children())))
+            });
+            return wrapContentsAnchored(`suspense:${ id }`, fallbackHtml) as unknown as MountNode;
+        }
+        // Buffered SSR: resources don't resolve within a synchronous render, so emit the
+        // fallback; the client resolves them and swaps in children after hydration.
         return wrapContentsAnchored('suspense', serializeChild(props.fallback())) as unknown as MountNode;
+    }
+
+    if (isHydrating())
+    {
+        // A streamed boundary's marker carries its id; push the matching seed scope around
+        // the children so their resources re-derive the server's ids and adopt the seeds.
+        // The scope is LATE-BOUND from the adopted marker (peeked, not consumed - Show's
+        // own adoption claims it), while the memo and Show build eagerly so construction
+        // ownership matches every other mode. Bare markers: no scope, behavior unchanged.
+        let seedScope: string | null = null;
+        const children = (): MountNode =>
+        {
+            if (seedScope === null)
+            {
+                return props.children();
+            }
+            pushSeedScope(seedScope);
+            try
+            {
+                return props.children();
+            }
+            finally
+            {
+                popSeedScope();
+            }
+        };
+        const anyLoading = createMemo<boolean>(() =>
+        {
+            for (const resource of props.on)
+            {
+                if (resource.loading())
+                {
+                    return true;
+                }
+            }
+            return false;
+        });
+        const shown = Show({
+            when: () => !anyLoading(),
+            fallback: props.fallback,
+            children
+        }) as unknown as HydrationNode;
+        return hydrationNode((cursor: HydrationCursor): void =>
+        {
+            const open = cursor.peek();
+            const match = open !== null && open.nodeType === 8
+                ? /^azc:suspense:(\d+)$/.exec((open as Comment).data)
+                : null;
+            if (match !== null)
+            {
+                seedScope = match[1] as string;
+            }
+            shown.hydrate(cursor);
+        }) as unknown as MountNode;
     }
 
     // Collapse N loading getters into one boolean. Show re-evaluates `when` on signal change;

@@ -15,6 +15,8 @@
 
 export { renderToString } from './render-to-string.ts';
 export type { RenderToStringOptions } from './render-to-string.ts';
+export { renderToStream } from './render-to-stream.ts';
+export type { RenderToStreamOptions } from './render-to-stream.ts';
 export { renderToDocument } from './render-to-document.ts';
 export type { RenderToDocumentOptions } from './render-to-document.ts';
 export { island } from './island.ts';
