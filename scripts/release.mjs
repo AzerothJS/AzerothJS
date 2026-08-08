@@ -531,6 +531,52 @@ function promoteChangelog(nextVersion)
     }
 }
 
+/**
+ * Reads back the regenerated editor lockfile and reports any `@azerothjs/*` entry that did not
+ * land on `nextVersion`.
+ *
+ * npm exits 0 after resolving against a stale base, so "the command succeeded" is not evidence
+ * that the lockfile is current - the release that shipped a lockfile a full minor behind exited
+ * 0 at every step. Non-fatal by the same reasoning as the regeneration itself: everything is
+ * already published by this point, and a stale lockfile costs a CI job, not the release.
+ *
+ * @param editorDir   The extension directory holding package-lock.json.
+ * @param nextVersion The version every workspace package was just published at.
+ * @param syncArgs    The npm arguments to quote back in the remedy line.
+ */
+function guardEditorLockfile(editorDir, nextVersion, syncArgs)
+{
+    if (dryRun)
+    {
+        return;
+    }
+    let lock;
+    try
+    {
+        lock = JSON.parse(readFileSync(path.join(editorDir, 'package-lock.json'), 'utf8'));
+    }
+    catch
+    {
+        log('  WARNING: no readable editors/vscode/package-lock.json after the sync');
+        return;
+    }
+    const stale = Object.entries(lock.packages ?? {})
+        .filter(([name, entry]) => /(^|\/)(@azerothjs\/|azerothjs$)/.test(name) && typeof entry.version === 'string')
+        .filter(([, entry]) => entry.version !== nextVersion);
+    if (stale.length === 0)
+    {
+        log(`  editors/vscode lockfile pins ${ nextVersion }`);
+        return;
+    }
+    log(`  WARNING: the editor lockfile still pins ${ stale.length } package(s) off ${ nextVersion }:`);
+    for (const [name, entry] of stale.slice(0, 5))
+    {
+        log(`    ${ name } -> ${ entry.version }`);
+    }
+    log('  The Release workflow\'s editor jobs will fail on this. Run:');
+    log(`    cd editors/vscode && rm -rf node_modules package-lock.json && npm ${ syncArgs.join(' ') }`);
+}
+
 // Recognized pre-release channels, in increasing maturity order. The channel is
 // the alphabetic id at the start of the `-prerelease` suffix (1.2.0-beta.3 ->
 // `beta`) and becomes the npm dist-tag. `next`/`canary` are rolling pointers, not
@@ -1004,7 +1050,16 @@ const expectedBranch = defaultBranch();
 // `next` with no tag. Detect that and RESUME - commit and tag the existing bump
 // - instead of refusing ("version is already next") or, under `--no-bump`,
 // trying to push a tag that was never created.
-const resuming = !options.noBump && current === next && !tagExists;
+// A tag that exists but names an EARLIER commit than HEAD is the aftermath of a run that tagged
+// before the editor lockfile sync: the release is half-landed and the tag has to catch up. That
+// state had no path through this script - `--no-bump` refused it (the tag is not at HEAD) and a
+// plain run refused it (the tag exists) - so finishing meant moving the tag by hand.
+const tagBehindHead = tagExists && revisionOf(tag) !== revisionOf('HEAD');
+
+const resuming = !options.noBump && current === next && (!tagExists || tagBehindHead);
+
+/** Set when an existing tag had to be re-pointed, so the push knows it must force. */
+let tagMoved = false;
 
 // Promote `latest` only when this run actually publishes a prerelease, or when
 // the operator explicitly asked to move it (`--promote-only`). A bare
@@ -1028,7 +1083,7 @@ const willPromoteLatest = options.promoteLatest
     && (options.promoteOnly || (!options.noPublish && distTag(next) !== 'latest'));
 
 log(`\nRelease ${ current } -> ${ next }`);
-log(`  git tag:   ${ tag }${ tagExists ? ' (already exists)' : '' }`);
+log(`  git tag:   ${ tag }${ tagExists ? (tagBehindHead ? ' (exists, behind HEAD - will be moved)' : ' (already exists)') : '' }`);
 log(`  npm tag:   ${ distTag(next) }`);
 log(`  latest:    ${ willPromoteLatest
     ? 'promote -> ' + next
@@ -1059,7 +1114,9 @@ if ((!options.noBump || !options.noPush) && branch !== expectedBranch && !option
         + ' - release from it, or pass --allow-branch if that is deliberate');
 }
 
-if (!options.noBump && tagExists)
+// An existing tag ALREADY AT HEAD means there is nothing left to bump or tag, only to publish
+// and push - which is what --no-bump is for. An existing tag behind HEAD is a resume (above).
+if (!options.noBump && tagExists && !resuming)
 {
     fail(`tag ${ tag } already exists; use --no-bump to push and publish it`);
 }
@@ -1120,17 +1177,26 @@ if (!options.noBump && !resuming)
     log('\nBumping versions');
     bumpFiles(current, next);
     guardBumpedManifests(next);
-    if (options.changelog)
-    {
-        log('\nPromoting the changelog');
-        promoteChangelog(next);
-    }
     log('\nUpdating lockfile');
     act('npm', ['install', '--package-lock-only', '--no-audit', '--no-fund']);
 }
 else if (resuming)
 {
-    log(`\nVersion files already at ${ next }; resuming - committing and tagging the existing bump`);
+    log(`\nVersion files already at ${ next }; resuming - tagging the existing bump`);
+}
+
+// The changelog is promoted on the RESUMING path too, not just the bumping one. The GitHub
+// Release body is the `## [version]` section (scripts/release-notes.mjs), so a resumed release
+// that skipped this shipped release notes containing the install block and nothing else - the
+// whole hand-written section left sitting under [Unreleased]. promoteChangelog is idempotent:
+// it returns early when there is no [Unreleased] heading and when the version already has a
+// section, so calling it on both paths cannot double-promote. `--no-bump` is deliberately
+// excluded: it contracts for a clean tree at an existing tag, and writing here would break its
+// own guard.
+if (!options.noBump && options.changelog)
+{
+    log('\nPromoting the changelog');
+    promoteChangelog(next);
 }
 
 if (!options.skipChecks)
@@ -1156,12 +1222,25 @@ else if (!options.noPublish)
     log('\n  ! --skip-checks: nothing is rebuilt, so every dist/ on disk is published AS IS');
 }
 
+// Commit, but do not TAG yet: the editor lockfile can only be regenerated once the versions
+// exist on the registry, so its sync commit lands after the publish. Tagging here would leave
+// the tag pointing one commit behind it, and CI builds the TAG - which is exactly how a release
+// shipped with an editor lockfile that could not install (see the tag step below the sync).
 if (!options.noBump)
 {
-    log('\nCommitting and tagging');
+    log('\nCommitting');
     act('git', ['add', '-A']);
-    act('git', ['commit', '-m', `chore(release): ${ tag }`]);
-    act('git', ['tag', '-a', tag, '-m', tag]);
+    // A bump that was already committed by hand leaves nothing staged, and `git commit` exits
+    // non-zero on an empty commit - which killed a release outright. Committing only when the
+    // tree is dirty makes "already committed, not yet tagged" a state the script can finish.
+    if (query('git', ['status', '--porcelain']))
+    {
+        act('git', ['commit', '-m', `chore(release): ${ tag }`]);
+    }
+    else
+    {
+        log('  nothing to commit - the bump is already committed');
+    }
 }
 
 // Publish BEFORE pushing: the pushed commit/tag triggers CI that builds the editor
@@ -1228,7 +1307,18 @@ if (!options.noPublish)
         // versions and their old ranges, then reports the conflict as unresolvable) - and npm
         // offers only --force/--legacy-peer-deps to push past it, both of which write a tree
         // that does not match the manifest. From no base, the published graph resolves exactly.
+        //
+        // node_modules goes with it. Deleting only the lockfile does NOT give a clean base:
+        // arborist loads the INSTALLED tree too and resolves against that, so a stale install
+        // kept reporting the old graph's conflict no matter how many times this retried. The
+        // versions only have to satisfy each other within one prerelease tuple, so this stayed
+        // invisible across beta-to-beta releases (2.0.0-beta.2 satisfies ^2.0.0-beta.1) and
+        // surfaced the first time a minor moved (2.1.0-beta.1 does NOT satisfy ^2.0.0-beta.2).
         const editorDir = path.join(ROOT, 'editors', 'vscode');
+        if (!dryRun)
+        {
+            rmSync(path.join(editorDir, 'node_modules'), { recursive: true, force: true });
+        }
         if (!dryRun)
         {
             rmSync(path.join(editorDir, 'package-lock.json'), { force: true });
@@ -1261,13 +1351,16 @@ if (!options.noPublish)
                     }
                     log('  WARNING: lockfile regeneration still failing - continuing WITHOUT it.');
                     log('  The Release workflow\'s editor step will fail until this is fixed. Run:');
-                    log(`    cd editors/vscode && rm package-lock.json && npm ${ syncArgs.join(' ') }`);
+                    log(`    cd editors/vscode && rm -rf node_modules package-lock.json && npm ${ syncArgs.join(' ') }`);
                     break;
                 }
                 log(`  registry not caught up yet (attempt ${ attempt }/${ attempts }); retrying in 15s`);
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15_000);
             }
         }
+        // A regeneration that "succeeded" against a stale base still writes the OLD versions, and
+        // that is indistinguishable from success until CI fails on it. Read back what was written.
+        guardEditorLockfile(editorDir, next, syncArgs);
         const lockDirty = query('git', ['status', '--porcelain', 'editors/vscode/package-lock.json']);
         if (lockDirty)
         {
@@ -1277,11 +1370,36 @@ if (!options.noPublish)
     }
 }
 
+// Tagged LAST, so the tag names the tree CI will build - editor lockfile sync included. Tagging
+// before the sync left the tag one commit behind it, and the release workflow checks out the tag,
+// so it built a tree whose `npm install` could not resolve.
+if (!options.noBump)
+{
+    const tagRevision = revisionOf(tag);
+    const headRevision = revisionOf('HEAD');
+    if (tagRevision === null)
+    {
+        log('\nTagging');
+        act('git', ['tag', '-a', tag, '-m', tag]);
+    }
+    else if (tagRevision !== headRevision)
+    {
+        // A resume whose sync added a commit. The tag would otherwise name a tree that cannot
+        // install, so move it - and remember that it may already be on the remote.
+        log(`\nMoving ${ tag } to HEAD (it pointed at ${ String(tagRevision).slice(0, 9) }, before the lockfile sync)`);
+        act('git', ['tag', '-f', '-a', tag, '-m', tag]);
+        tagMoved = true;
+    }
+}
+
 if (!options.noPush)
 {
     log('\nPushing to GitHub');
     act('git', ['push', 'origin', 'HEAD']);
-    act('git', ['push', 'origin', tag]);
+    // A moved tag may already be on the remote from the run this one is finishing, and a plain
+    // push refuses to update it. Forcing is correct only here: the tag being replaced names a
+    // tree whose editor install cannot resolve, and the replacement is the same release.
+    act('git', ['push', 'origin', tag, ...(tagMoved ? ['--force'] : [])]);
 }
 
 // Dist-tag policy: `npm publish --tag beta` does NOT move `latest`, so a plain
