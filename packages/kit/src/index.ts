@@ -17,26 +17,49 @@
  * story is the router's loaders (matchAndLoad) - assembly, not invention.
  */
 
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import type { Route } from 'azerothjs';
-import type { App } from '@azerothjs/http';
-import { html as htmlResponse } from '@azerothjs/http';
+import type { App, Handler, RequestContext } from '@azerothjs/http';
+import { html as htmlResponse, NotFoundError } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
 import type { PageRenderer } from './ssr.ts';
+import { MemoryPageCache, pageResponse, registerIsr } from './isr.ts';
+import type { KitErrorObserver, PageCache } from './isr.ts';
+import { imageHandler } from './image.ts';
+import type { ImageHandlerOptions } from './image.ts';
 
 /** A route with the kit's per-route rendering mode. */
 export interface PageRoute extends Route
 {
     /**
-     * How this path renders in production: `'server'` (SSR per request),
-     * `'static'` (prerendered at build), `'client'` (SPA shell). Defaults to
-     * `'server'` when {@link KitOptions.renderer} is provided, else `'client'`.
+     * How this path renders in production: `'server'` (SSR per request), `'static'`
+     * (prerendered at build), `'client'` (SPA shell), `'stream'` (streaming SSR: the
+     * shell flushes immediately, Suspense boundaries follow as they settle). Defaults
+     * to `'server'` when {@link KitOptions.renderer} is provided, else `'client'`.
      */
-    render?: 'server' | 'static' | 'client';
+    render?: 'server' | 'static' | 'client' | 'stream';
+
+    /**
+     * Enumerates the param sets a parameterized `'static'` route prerenders - the build
+     * renders one file per set, and `mountPages` serves those files with unlisted params
+     * falling through to the live renderer. The route table ships to the browser, so the
+     * closure must stay browser-safe: inline data, or a dynamic import the client bundle
+     * never follows eagerly.
+     */
+    staticParams?: () => Promise<Array<Record<string, string>>>;
+
+    /**
+     * ISR: how many seconds a cached copy of this `'static'` page stays fresh. Within the
+     * window requests serve the cache; past it the stale copy is served WHILE one background
+     * regeneration renders a replacement. Inherits down `children` like `render`.
+     */
+    revalidate?: number;
 
     /** Nested routes may carry modes too. */
     children?: PageRoute[];
@@ -65,6 +88,38 @@ export interface KitOptions
      * back to fetching.
      */
     manifest?: Manifest;
+
+    /** Where ISR pages live (default: one in-process {@link MemoryPageCache} per mount). */
+    cache?: PageCache;
+
+    /**
+     * Enables GET /_image over the client dist: `true` for the defaults (no adapter -
+     * cached originals), or the handler options minus `root`/`onError`, which this mount
+     * provides. The endpoint registers BEFORE the asset fallback.
+     */
+    images?: true | Omit<ImageHandlerOptions, 'root' | 'onError'>;
+
+    /**
+     * Hears background failures (a failed ISR regeneration, a broken image transform) -
+     * work with no request to answer. Default: console.error; kit carries no logger dep.
+     */
+    onError?: KitErrorObserver;
+
+    /**
+     * Supplies the per-request CSP nonce for the inline script and style tags a page emits.
+     * Return the SAME nonce this request's Content-Security-Policy header carries, and list it
+     * in BOTH directives - `script-src` and `style-src` - because it stamps both:
+     *
+     * - `render: 'stream'` inline scripts. REQUIRED under any `script-src` without
+     *   `'unsafe-inline'`, or the browser blocks the swap runtime, every boundary sits on its
+     *   fallback until hydration refetches, and the streamed bytes are wasted.
+     * - the scoped-CSS `<style>` a server-rendered page carries. REQUIRED under any
+     *   `style-src` without `'unsafe-inline'`, or the page paints unstyled until hydration.
+     *
+     * A policy that lists the nonce only under `script-src` leaves `style-src` falling back to
+     * `default-src`, which refuses the stylesheet.
+     */
+    scriptNonce?: (context: RequestContext) => string | undefined;
 }
 
 /**
@@ -81,24 +136,49 @@ function withoutTrailingSlashes(value: string): string
     return value.slice(0, end);
 }
 
-/** @internal Flattens the page tree to absolute paths with their effective modes. */
-export function flattenPages(routes: PageRoute[], base = '', inherited?: PageRoute['render']): Array<{ path: string; render: PageRoute['render'] }>
+/** One flattened page: the absolute path plus the effective per-route kit fields. */
+export interface FlatPage
 {
-    const out: Array<{ path: string; render: PageRoute['render'] }> = [];
+    path: string;
+    render: PageRoute['render'];
+
+    /** Leaf-only: enumeration never inherits - a parent's param list means nothing to a child. */
+    staticParams?: PageRoute['staticParams'];
+    revalidate?: number;
+}
+
+/** @internal Flattens the page tree to absolute paths with their effective modes. */
+export function flattenPages(
+    routes: PageRoute[],
+    base = '',
+    inherited: { render?: PageRoute['render'] | undefined; revalidate?: number | undefined } = {}
+): FlatPage[]
+{
+    const out: FlatPage[] = [];
     for (const route of routes)
     {
         const child = route.path.startsWith('/') ? route.path.slice(1) : route.path;
         const full = base === ''
             ? withoutTrailingSlashes(`/${ child }`) || '/'
             : withoutTrailingSlashes(`${ base }/${ child }`);
-        const mode = route.render ?? inherited;
+        const mode = route.render ?? inherited.render;
+        const revalidate = route.revalidate ?? inherited.revalidate;
         if (route.children !== undefined && route.children.length > 0)
         {
-            out.push(...flattenPages(route.children, full === '/' ? '' : full, mode));
+            out.push(...flattenPages(route.children, full === '/' ? '' : full, { render: mode, revalidate }));
         }
         else
         {
-            out.push({ path: full, render: mode });
+            const page: FlatPage = { path: full, render: mode };
+            if (route.staticParams !== undefined)
+            {
+                page.staticParams = route.staticParams;
+            }
+            if (revalidate !== undefined)
+            {
+                page.revalidate = revalidate;
+            }
+            out.push(page);
         }
     }
     return out;
@@ -150,18 +230,76 @@ export function mountPages(app: App, options: KitOptions): void
         ? loadShell(options.clientDir)
         : loadShell(options.clientDir).then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
 
+    // Which build this process serves, hashed ONCE from the shell. A persistent page cache
+    // outlives the deploy that filled it, and the HTML it holds names the previous build's
+    // content-hashed assets - files the new build deleted - so ISR discards any entry stamped
+    // with a different id. The shell is the right thing to hash because it CARRIES those asset
+    // URLs: it changes exactly when they do.
+    const buildIdPromise = shellPromise
+        .then((shell) => createHash('sha256').update(shell).digest('hex').slice(0, 16))
+        .catch(() => randomUUID());
+
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
+    const seedFile = (key: string): string | null =>
+    {
+        const file = resolve(options.clientDir, prerenderFileFor(key));
+        const root = resolve(options.clientDir);
+        return file.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`) ? file : null;
+    };
+    let isrCache: PageCache | undefined;
 
     for (const page of flattenPages(options.routes))
     {
         const mode = page.render ?? defaultMode;
+        if (page.revalidate !== undefined)
+        {
+            if (mode !== 'static')
+            {
+                throw new Error(`kit mountPages: "${ page.path }" sets revalidate but renders '${ mode }' - `
+                    + 'revalidate only means something for a static page.');
+            }
+            if (!Number.isFinite(page.revalidate) || page.revalidate <= 0)
+            {
+                throw new Error(`kit mountPages: "${ page.path }" revalidate must be a positive number of seconds, `
+                    + `got ${ page.revalidate }.`);
+            }
+            if (options.renderer === undefined)
+            {
+                throw new Error(`kit mountPages: "${ page.path }" sets revalidate but no renderer was provided - `
+                    + 'ISR regenerates through the SSR bundle\'s renderer.');
+            }
+            isrCache ??= options.cache ?? new MemoryPageCache();
+            registerIsr({
+                app,
+                path: page.path,
+                revalidate: page.revalidate,
+                cache: isrCache,
+                renderer: options.renderer,
+                shell: shellPromise,
+                seedFile,
+                buildId: buildIdPromise,
+                onError: options.onError ?? ((error, context): void =>
+                {
+                    console.error(`kit ${ context.phase } failed for ${ context.path }:`, error);
+                })
+            });
+            continue;
+        }
         if (page.path.includes(':') || page.path.includes('*'))
         {
-            // A parameterized page cannot prerender one file: a declared (or
-            // inherited) 'static' downgrades to per-request SSR when a renderer
-            // exists, else to the shell.
-            registerDynamic(app, page.path, mode === 'static' ? defaultMode : mode, options, shellPromise);
+            if (mode === 'static' && !page.path.includes('*'))
+            {
+                // An enumerated static page: try the prerendered file for the matched
+                // params first, live-render anything the enumeration did not list.
+                registerStaticFirst(app, page.path, options, shellPromise, assets);
+            }
+            else
+            {
+                // A wildcard cannot prerender one file: 'static' downgrades to
+                // per-request SSR when a renderer exists, else to the shell.
+                registerDynamic(app, page.path, mode === 'static' ? defaultMode : mode, options, shellPromise);
+            }
             continue;
         }
         if (mode === 'static')
@@ -175,11 +313,51 @@ export function mountPages(app: App, options: KitOptions): void
         }
     }
 
-    // Everything else is an asset (hashed js/css, favicons, images).
+    if (options.images !== undefined)
+    {
+        app.get('/_image', imageHandler({
+            root: options.clientDir,
+            ...(options.onError !== undefined ? { onError: options.onError } : {}),
+            ...(options.images === true ? {} : options.images)
+        }));
+    }
+
+    // Vite's hashed build output is immutable by construction - the second mount
+    // StaticOptions documents, with the headers the hashes earn.
+    const assetsDir = join(options.clientDir, 'assets');
+    if (existsSync(assetsDir))
+    {
+        app.get('/assets/*path', staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' }));
+    }
+
+    // Everything else is an asset (favicons, prerendered files, public/ copies).
     app.get('/*path', assets);
 }
 
-/** @internal An SSR-or-shell handler for one path. */
+/** @internal The SSR-or-shell response for one request - shared by every dynamic path. */
+async function renderOrShell(
+    context: RequestContext,
+    mode: PageRoute['render'],
+    options: KitOptions,
+    shell: string
+): Promise<Response>
+{
+    if (mode === 'server' && options.renderer !== undefined)
+    {
+        // The nonce reaches the buffered path too, not just the streamed one: a server-rendered
+        // page carries the scoped-CSS <style>, and without the nonce a strict `style-src`
+        // refuses it and the page paints unstyled until hydration.
+        const nonce = options.scriptNonce?.(context);
+        const result = await options.renderer(
+            context.url.pathname + context.url.search,
+            shell,
+            nonce === undefined ? undefined : { scriptNonce: nonce });
+        return pageResponse(result, shell);
+    }
+    return htmlResponse(shell);
+}
+
+/** @internal An SSR-or-shell handler for one path; `'stream'` answers a streaming Response. */
 function registerDynamic(
     app: App,
     path: string,
@@ -191,23 +369,83 @@ function registerDynamic(
     app.get(path, async (context) =>
     {
         const shell = await shellPromise;
-        if (mode === 'server' && options.renderer !== undefined)
+        if (mode === 'stream' && options.renderer !== undefined)
         {
-            const result = await options.renderer(context.url.pathname + context.url.search, shell);
-            if (result.kind === 'redirect')
+            // HEAD gets the buffered path: the kernel strips the body anyway, and a plain
+            // string-mode render starts no server fetches at all.
+            if (context.request.method === 'HEAD')
             {
-                return new Response(null, { status: 302, headers: { location: result.to } });
+                return renderOrShell(context, 'server', options, shell);
             }
-            // A vetoed route renders NOTHING: serve the plain shell (so the client can boot
-            // and show its own 403 UI) with the guard's status - never the protected page.
-            if (result.kind === 'blocked')
+            const nonce = options.scriptNonce?.(context);
+            const result = await options.renderer(
+                context.url.pathname + context.url.search,
+                shell,
+                {
+                    stream: true,
+                    signal: context.request.signal,
+                    ...(nonce !== undefined ? { scriptNonce: nonce } : {})
+                });
+            if (result.kind === 'stream')
             {
-                return htmlResponse(shell, { status: result.status });
+                // A genuine web Response: Node's adapter pumps it with backpressure and
+                // Bun/Deno's bridges pass it through untouched. Never a content-length.
+                //
+                // `x-accel-buffering: no` carries the anti-buffering intent. Deliberately NOT
+                // `no-transform`: that directive is a per-response opt-out an APPLICATION sets,
+                // and compressResponse honours it - so setting it here silently opted every
+                // streamed page out of the per-chunk-flushed compression that exists for
+                // precisely this response shape, with no header revealing the loss.
+                return new Response(result.stream, {
+                    status: result.status,
+                    headers: {
+                        'content-type': 'text/html; charset=utf-8',
+                        'cache-control': 'no-cache',
+                        'x-accel-buffering': 'no'
+                    }
+                });
             }
-            return htmlResponse(result.html, { status: result.status });
+            // A renderer unaware of the streaming option (or a redirect/veto, which stay
+            // buffered by design) answered with an ordinary result: serve it as such.
+            return pageResponse(result, shell);
         }
-        return htmlResponse(shell);
+        return renderOrShell(context, mode, options, shell);
     });
 }
 
-export type { PageRenderer, PageResult } from './ssr.ts';
+/** @internal A prerendered-file-first handler for an enumerated static pattern. */
+function registerStaticFirst(
+    app: App,
+    path: string,
+    options: KitOptions,
+    shellPromise: Promise<string>,
+    assets: Handler
+): void
+{
+    const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
+    app.get(path, async (context) =>
+    {
+        try
+        {
+            // context.path is the router's decoded matched path - the exact string the
+            // prerender pass resolved, so the lookup and the write agree by construction.
+            // A fresh object (not a merge) carries the file path, so staticFiles' full
+            // machinery (containment, ETag, ranges) serves the prerendered bytes.
+            return await assets({ ...context, params: { path: prerenderFileFor(context.path) } });
+        }
+        catch (error)
+        {
+            if (!(error instanceof NotFoundError))
+            {
+                throw error;
+            }
+        }
+        return renderOrShell(context, dynamicMode, options, await shellPromise);
+    });
+}
+
+export { FilePageCache, MemoryPageCache } from './isr.ts';
+export type { KitErrorObserver, PageCache, PageEntry } from './isr.ts';
+export { MemoryImageCache, imageHandler } from './image.ts';
+export type { ImageAdapter, ImageCache, ImageCacheEntry, ImageHandlerOptions } from './image.ts';
+export type { PageRenderOptions, PageRenderer, PageResult } from './ssr.ts';
