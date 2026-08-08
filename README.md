@@ -42,8 +42,8 @@ export default component Counter(props: { start?: number })
     state count = props.start ?? 0;
     derived parity = count % 2 === 0 ? 'even' : 'odd';
 
-    <button class="btn" class:positive={count > 0} onClick={() => count++}>
-        Count: {count} ({parity})
+    <button class="btn" class:positive={ count > 0 } onClick={ () => count++ }>
+        Count: { count } ({ parity })
     </button>
 }
 ```
@@ -187,8 +187,9 @@ types, and reactivity as the spine - **every request runs inside a reactive root
 request-isolated across `await` exactly as they are under SSR, and cleanup always runs.
 
 ```ts
-import { App, serve, json, readValidated } from '@azerothjs/http';
-import { createAccount } from './schema';   // an @azerothjs/schema declaration
+import { App, json, readValidated } from '@azerothjs/http';
+import { serve } from '@azerothjs/http/node';   // adapters live on the /node subpath
+import { createAccount } from './schema';       // an @azerothjs/schema declaration
 
 const app = new App();
 app.get('/accounts/:id', (context) => json({ id: context.params.id })); // params typed from the pattern

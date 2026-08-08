@@ -10,6 +10,76 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Added - the production-completeness pass: SSG enumeration, ISR, streaming SSR, server actions, images
+
+Five capabilities, each riding the pipeline that already existed rather than a parallel one:
+
+- **SSG over parameterized routes** (`@azerothjs/kit`): `staticParams` on a `render: 'static'`
+  route enumerates the param sets the build prerenders; `mountPages` serves the written files
+  static-first with unlisted params falling through to live SSR. Invalid param values fail the
+  BUILD, never become a path segment.
+- **ISR** (`@azerothjs/kit`): `revalidate: seconds` on a static route serves from a pluggable
+  page cache (`MemoryPageCache` default, `FilePageCache` atomic-on-disk) - fresh within the
+  window, stale-while-revalidate past it with single-flight regeneration; build output seeds
+  the cache through file mtimes; failures keep the old copy; redirect/veto/404 outcomes drop
+  the entry so a guard is never masked. Responses carry `age` and `x-azeroth-cache`.
+  The cache key is the request path plus its query, so `?q=a` and `?q=b` are different pages
+  and `useSearch()`/`useQuery()` read what the visitor actually sent; parameter ORDER is
+  normalised, so `?a=1&b=2` and `?b=2&a=1` share one entry. Only a request with no query can
+  be seeded from a prerendered file, because that file was rendered without one. Both caches
+  are bounded (`maxEntries`, default 1000; `FilePageCache` evicts oldest-first by mtime) since
+  a query-aware key makes cardinality a function of traffic. Entries are stamped with the
+  build's identity, so a deploy never serves the previous build's HTML. `FilePageCache`
+  creates its directory, and re-creates it if it is removed while the server runs.
+- **Streaming SSR** (`azerothjs` + `@azerothjs/kit`): `renderToStream` flushes the shell with
+  `<Suspense>` fallbacks in place, fetches resources eagerly on the server, and streams each
+  settled boundary as an out-of-order swap chunk carrying its data seeds - hydration adopts
+  the final DOM with zero refetches. `render: 'stream'` is the kit's one-field form; redirects,
+  vetoes, and HEAD stay buffered. Failures and timeouts degrade to exactly the buffered
+  behavior. A streamed response carries `x-accel-buffering: no` and `cache-control: no-cache`
+  but NOT `no-transform`, so `compressResponse` can encode it: the per-chunk flush keeps the
+  shell decodable within milliseconds instead of holding it until the last boundary settles.
+- **Server actions** (`@azerothjs/http`): `routes.action(path, spec, handler)` - POST-only,
+  param-free, wire-identical to JSON routes - surfaces on the typed client as a directly
+  callable function. New `csrfCookie`/`csrfProtect` (double-submit cookie + origin policy,
+  web-crypto only, zero deps) guard browser mutations, the client auto-mirrors the token, and
+  `applyFieldErrors` lands a 422's field map on a form in one call.
+- **Images** (`azerothjs` + `@azerothjs/kit`): `<Image>` emits ladder-snapped responsive
+  markup (no layout shift, lazy by default); the kit's `/_image` endpoint serves it with
+  content-hash keys, immutable caching, ETag revalidation, and static-serving's path
+  containment. The framework ships NO codec: without an adapter the endpoint is a caching
+  passthrough; `ImageAdapter` is the one-method seam for apps that want transforms.
+- **`date()`** (`@azerothjs/schema`): the Date wire codec - ISO 8601 string on the wire, Date
+  at both ends, the OpenAPI document says `format: date-time`, and the typed client's returns
+  say `string` through the new `Wire<T>` projection.
+
+Alongside the pass: `mountPages` now serves `/assets` with `public, max-age=31536000,
+immutable` (hashed build output earns it), and the `ssr: false` client substitution gained
+the missing `ssrMarkersActive` export parity in `render-mode-client.ts` - a latent resolve
+failure fixed in passing.
+
+### Changed (http, language-server, azerothjs) - the linked guides now ship to npm
+
+`packages/http/README.md` links `./docs/api.md`, the most complete account of the typed API
+surface, and `@azerothjs/language-server`'s README links its own guide - but `files` listed only
+`dist`, so `docs/` never entered the tarball and both links were dead for anyone reading the
+package on npm. `docs/` now ships for `@azerothjs/http`, `@azerothjs/language-server` and
+`azerothjs` (6 files, the `.azeroth` language reference among them).
+
+### Fixed (docs) - published examples that could not run
+
+Copied literally into a clean project, several documented snippets failed. The root README and
+`packages/http/README.md` imported `serve` and `handleShutdownSignals` from `@azerothjs/http`,
+where they do not exist - the adapters live on the `/node` subpath, and the import threw
+`SyntaxError: does not provide an export named 'serve'`. `azerothjs/docs/form.md` used the
+`<For>` callback child that 2.0 removed, in place of `let=`/`index=`. Nine of the twenty-one
+`.azeroth` blocks across the documentation - including the hero snippet in BOTH top-level
+READMEs - emitted `azeroth/interpolation-spacing` warnings, so a first-time user's first build
+was never clean. `<Suspense>`'s required `on` prop had no code example anywhere, and
+`packages/http/docs/api.md` presented "four route kinds" as authoritative without mentioning
+server actions. Every example is now executed from a clean project against the packed tarballs
+rather than only re-read.
+
 ### Fixed (create-azeroth) - `npm start` served a 404 homepage on a fresh fullstack scaffold
 
 The generated `server/.env` carried `NODE_ENV=development`, copied from the example so the
