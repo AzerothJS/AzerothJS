@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/devtools",
-    "version": "2.0.0-beta.2",
+    "version": "2.1.0-beta.1",
     "engines": {
         "node": ">=22"
     },
@@ -42,8 +42,8 @@
         "prepack": "node ../../scripts/prepack.mjs"
     },
     "peerDependencies": {
-        "azerothjs": "^2.0.0-beta.2",
-        "@azerothjs/ws": "^2.0.0-beta.2"
+        "azerothjs": "^2.1.0-beta.1",
+        "@azerothjs/ws": "^2.1.0-beta.1"
     },
     "peerDependenciesMeta": {
         "@azerothjs/ws": {

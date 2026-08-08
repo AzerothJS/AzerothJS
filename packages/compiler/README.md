@@ -114,7 +114,7 @@ resolved at compile time with a tiny runtime.
 ```azeroth
 component Greeting(props: { name: string })
 {
-    <p>Hello {props.name}</p>
+    <p>Hello { props.name }</p>
 }
 ```
 
