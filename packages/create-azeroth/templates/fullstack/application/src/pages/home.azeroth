@@ -1,5 +1,8 @@
-// The `render: 'static'` route: prerendered at build time, adopted by the browser instead
-// of rebuilt - view-source on / shows real content. Fully reactive after hydration.
+// The `render: 'static'` route with ISR: prerendered at build time, served from the page
+// cache, and regenerated in the background past its window - view-source on / shows real
+// content. Fully reactive after hydration.
+import { Image } from 'azerothjs';
+
 export default component Home()
 {
     state count = 0;
@@ -32,6 +35,7 @@ export default component Home()
     };
 
     <section class="page">
+        <Image src="/apple-touch-icon.png" alt="{{name}}" width={ 64 } height={ 64 } optimize={ true } />
         <h1>{{name}}</h1>
         <p class="claim">
             application/ (compiled components on vite) + server/ (@azerothjs/http) -

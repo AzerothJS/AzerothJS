@@ -17,7 +17,8 @@ export default defineConfig({
         {
             // The whole dev wiring to the server half; in production the server itself
             // serves the built client (one origin) - see server/src/app.ts.
-            '/api': 'http://localhost:3000'
+            '/api': 'http://localhost:3000',
+            '/_image': 'http://localhost:3000'
         }
     },
     test:

@@ -1,8 +1,12 @@
-import { App, json, type ErrorObserver, type RequestObserver } from '@azerothjs/http';
+import { App, csrfProtect, json, type CsrfOptions, type ErrorObserver, type RequestObserver } from '@azerothjs/http';
 import { feature, manifestOf, register } from '@azerothjs/http/api';
-import { mountPages, type KitOptions } from '@azerothjs/kit';
+import { imageHandler, mountPages, type KitOptions } from '@azerothjs/kit';
 import { array } from '@azerothjs/schema';
 import { entry, entryInput, type Entry } from './schemas.ts';
+
+// One options value feeds csrfCookie (main.ts), csrfProtect (the sign action), and the
+// typed client's auto-header. Plain-http dev drops the Secure/__Host- contract.
+export const csrf: CsrfOptions = process.env.NODE_ENV === 'development' ? { secure: false } : {};
 
 const ASSISTANT_REPLY = 'Streaming works: each word arrived as its own server-sent event, appended to one reactive string.';
 
@@ -15,9 +19,11 @@ let nextId = 1;
 export const api = {
     guestbook: feature('/guestbook', (routes) => ({
         list: routes.get('/', { output: array(entry) }, () => entries),
-        sign: routes.post('/', { input: entryInput, output: entry }, ({ input }) =>
+        // A server ACTION: the typed client calls it as a plain function -
+        // `client.guestbook.sign(values)` - and csrfProtect guards the browser mutation.
+        sign: routes.with(csrfProtect(csrf)).action('/sign', { input: entryInput, output: entry }, ({ input }) =>
         {
-            const created: Entry = { id: nextId++, ...input, at: new Date().toISOString() };
+            const created: Entry = { id: nextId++, ...input, at: new Date() };
             entries.unshift(created);
             return created;
         })
@@ -71,6 +77,12 @@ export function buildApp(options: AppOptions): App
     if (options.pages !== undefined)
     {
         mountPages(app, options.pages);
+    }
+    else
+    {
+        // Dev: vite serves the client and proxies /_image here, so <Image optimize> works
+        // in both modes. Production gets the endpoint through mountPages' `images` option.
+        app.get('/_image', imageHandler({ root: '../application/public' }));
     }
 
     return app;

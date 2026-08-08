@@ -1,3 +1,5 @@
+import { Image } from 'azerothjs';
+
 export default component Home()
 {
     state count = 0;
@@ -30,6 +32,7 @@ export default component Home()
     };
 
     <section class="page">
+        <Image src="/apple-touch-icon.png" alt="{{name}}" width={ 64 } height={ 64 } optimize={ true } class="mb-4 rounded-xl" />
         <h1 class="font-mono font-semibold tracking-tight text-[clamp(1.6rem,5vw,2.1rem)] mb-3">{{name}}</h1>
         <p class="text-faint leading-relaxed mb-8">
             application/ (compiled components on vite) + server/ (@azerothjs/http) -

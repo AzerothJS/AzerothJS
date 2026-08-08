@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-import { pipeline, requestId, securityHeaders, rateLimit, logRequests, loadConfig, num, oneOf, str } from '@azerothjs/http';
+import { csrfCookie, pipeline, requestId, securityHeaders, rateLimit, logRequests, loadConfig, num, oneOf, str } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 import type { PageRenderer, PageRoute } from '@azerothjs/kit';
 import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
@@ -8,7 +8,7 @@ import { fileSink } from '@azerothjs/logger/node';
 
 import { manifestOf } from '@azerothjs/http/api';
 
-import { api, buildApp } from './app.ts';
+import { api, buildApp, csrf } from './app.ts';
 
 try
 {
@@ -52,13 +52,15 @@ const app = buildApp({
             log.error('unhandled error', { status: mapped.status, error });
         }
     },
-    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api) }
+    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api), images: true }
 });
 
 const handler = pipeline(
     app,
     requestId(),
     securityHeaders(),
+    // Mints the readable CSRF token cookie the sign action's guard checks.
+    csrfCookie(csrf),
     rateLimit({ limit: 200, windowMs: 60_000 })
 );
 

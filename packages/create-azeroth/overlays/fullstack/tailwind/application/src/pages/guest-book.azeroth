@@ -1,4 +1,4 @@
-import { client, entryInput, type Entry } from '../api.ts';
+import { applyFieldErrors, client, entryInput, type Entry } from '../api.ts';
 
 export default component GuestBook()
 {
@@ -31,13 +31,17 @@ export default component GuestBook()
         {
             try
             {
-                const created = await client.guestbook.sign({ input: values });
+                const created = await client.guestbook.sign(values);
                 entries = [created, ...entries];
                 sign.reset();
             }
-            catch
+            catch (error)
             {
-                sign.setError('message', 'Could not reach the server - try again.');
+                // A 422's field map lands on the form; anything else is a transport problem.
+                if (!applyFieldErrors(sign, error))
+                {
+                    sign.setError('message', 'Could not reach the server - try again.');
+                }
             }
         }
     };
