@@ -78,6 +78,6 @@
         "url": "https://github.com/AzerothJS/AzerothJS/issues"
     },
     "devDependencies": {
-        "@seriousme/openapi-schema-validator": "^2.9.0"
+        "@seriousme/openapi-schema-validator": "^2.9.1"
     }
 }
