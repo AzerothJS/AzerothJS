@@ -171,7 +171,7 @@ interface Collector
  */
 export interface SchemaMeta
 {
-    kind: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'literal' | 'enum' | 'record' | 'union';
+    kind: 'string' | 'number' | 'boolean' | 'date' | 'array' | 'object' | 'literal' | 'enum' | 'record' | 'union';
     /** object: the declared field schemas, in declaration order. */
     shape?: Record<string, Schema<unknown>>;
     /** array: the item schema; record: the value schema. */
@@ -182,7 +182,7 @@ export interface SchemaMeta
     /** Set by .nullable(): null is accepted and passes through. */
     nullable?: boolean;
     /** The combinator's options object - the same reference the validator reads. */
-    constraints?: StringOptions | NumberOptions | BooleanOptions | ArrayOptions;
+    constraints?: StringOptions | NumberOptions | BooleanOptions | DateOptions | ArrayOptions;
     /** literal: the expected value. */
     value?: string | number | boolean;
     /** enum: the allowed values, in declaration order. */
@@ -657,6 +657,67 @@ export function boolean(options: BooleanOptions = {}): Schema<boolean>
         }
         return value;
     }, { kind: 'boolean', constraints: options });
+}
+
+/**
+ * Constraints for {@link date}: instant bounds. min/max compare epoch milliseconds, so a
+ * bound written as one instant and a value sent in another offset still compare correctly.
+ */
+export interface DateOptions extends RuleOverrides
+{
+    /** Earliest accepted instant (inclusive). */
+    min?: Date;
+
+    /** Latest accepted instant (inclusive). */
+    max?: Date;
+}
+
+/**
+ * A Date - THE Date wire codec of the framework. JSON cannot carry a Date, so the wire shape
+ * is the ISO 8601 string `JSON.stringify` already produces; parsing turns it back into a
+ * Date instance, and a Date instance (the in-process case) passes through. The string gate
+ * is the same `datetime` format rule `string({ format: 'datetime' })` runs - Date.parse
+ * alone is too lenient to trust ('Jan 1 2026' is not a wire shape).
+ */
+export function date(options: DateOptions = {}): Schema<Date>
+{
+    return base((value, path, collector) =>
+    {
+        if (isMissing(value))
+        {
+            return reject(collector, path, options, 'required', 'Required');
+        }
+        let out: Date;
+        if (value instanceof Date)
+        {
+            if (Number.isNaN(value.getTime()))
+            {
+                return reject(collector, path, options, 'type', 'Expected a valid date');
+            }
+            out = value;
+        }
+        else if (typeof value === 'string')
+        {
+            if (!DATETIME_PATTERN.test(value) || Number.isNaN(Date.parse(value)))
+            {
+                return reject(collector, path, options, 'format', FORMAT_MESSAGES['datetime'] ?? 'Invalid format');
+            }
+            out = new Date(value);
+        }
+        else
+        {
+            return reject(collector, path, options, 'type', 'Expected a date');
+        }
+        if (options.min !== undefined && out.getTime() < options.min.getTime())
+        {
+            return reject(collector, path, options, 'min', `Must not be before ${ options.min.toISOString() }`);
+        }
+        if (options.max !== undefined && out.getTime() > options.max.getTime())
+        {
+            return reject(collector, path, options, 'max', `Must not be after ${ options.max.toISOString() }`);
+        }
+        return out;
+    }, { kind: 'date', constraints: options });
 }
 
 /** Exactly `expected` (a literal type). */

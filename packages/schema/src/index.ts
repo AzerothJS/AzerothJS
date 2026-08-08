@@ -13,13 +13,13 @@
  */
 
 export {
-    string, number, boolean, literal, enumOf, array, object, record, union,
+    string, number, boolean, date, literal, enumOf, array, object, record, union,
     SchemaError
 } from './schema.ts';
 export type {
     Schema, Infer, ShapeType, Refinement, FieldValidator, FieldErrors, ParseResult,
     Issue, ParseOptions, RuleOverrides, RefineOptions, StringOptions, NumberOptions,
-    BooleanOptions, ArrayOptions, SchemaMeta, StandardSchemaV1, StandardResult
+    BooleanOptions, DateOptions, ArrayOptions, SchemaMeta, StandardSchemaV1, StandardResult
 } from './schema.ts';
 
 export {

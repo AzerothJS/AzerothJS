@@ -146,6 +146,22 @@ app.post('/accounts', async (request) => json(await readValidated(request, creat
 
 ---
 
+## 🗓️ Dates on the wire - `date()`
+
+JSON cannot carry a Date, so `date()` IS the codec: the wire shape is the ISO 8601 string
+`JSON.stringify` already produces, parsing turns it back into a Date instance, and a Date
+instance passes through untouched. The gate is the same ISO rule as
+`string({ format: 'datetime' })` - `Date.parse` alone is too lenient to trust.
+
+```ts
+const event = object({ title: string(), at: date({ min: new Date() }) });
+event.parse({ title: 'launch', at: '2026-08-07T12:30:00Z' }).at.getUTCHours(); // 12
+```
+
+Server handlers store and return real Dates; the OpenAPI document says
+`{ type: 'string', format: 'date-time' }`; the typed client's return types say `string`
+(`Wire<T>`) because the manifest carries no schemas to revive them with.
+
 ## 🧩 Combinators and validators
 
 Combinators: `string` `number` `boolean` `literal` `enumOf` `array` `object` `record` `union`,
