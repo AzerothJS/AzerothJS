@@ -24,8 +24,14 @@
 import type { Schema, SchemaMeta, StringOptions, NumberOptions, ArrayOptions } from '@azerothjs/schema';
 import type { App, AzerothPlugin } from '../index.ts';
 
-import type { AnyDecl, Feature, RouteDocs } from './declare.ts';
+import type { AnyDecl, Feature, RouteDocs, RouteKind } from './declare.ts';
 import { pathOf, responseSchemaFor } from './declare.ts';
+
+/** @internal The kinds whose request body is validated JSON - 'action' IS 'json' on the wire. */
+function jsonBodied(kind: RouteKind): boolean
+{
+    return kind === 'json' || kind === 'action';
+}
 import { renderExplorerHtml, renderScalarHtml } from './explorer.ts';
 
 /** @internal Reason phrases for the per-status response descriptions. */
@@ -236,6 +242,9 @@ function fromMeta(meta: SchemaMeta): Record<string, unknown>
         }
         case 'boolean':
             return { type: 'boolean' };
+        case 'date':
+            // JSON Schema has no date bounds; min/max stay a validation-only concern.
+            return { type: 'string', format: 'date-time' };
         case 'literal':
             return { const: meta.value };
         case 'enum':
@@ -301,7 +310,7 @@ export function toOpenApi(features: Record<string, Feature>, options: ToOpenApiO
     const uses = new Map<Schema<unknown>, { count: number; name: string; path: string }>();
     for (const { name, decl } of flat)
     {
-        for (const [role, node] of [['Input', decl.kind === 'json' ? decl.spec.input : undefined], ['Output', decl.spec.output]] as const)
+        for (const [role, node] of [['Input', jsonBodied(decl.kind) ? decl.spec.input : undefined], ['Output', decl.spec.output]] as const)
         {
             if (node === undefined)
             {
@@ -464,12 +473,12 @@ export function toOpenApi(features: Record<string, Feature>, options: ToOpenApiO
                 content: { 'application/json': { schema: resolve(statusSchema as Schema<unknown>) } }
             };
         }
-        const validatesBody = decl.kind === 'form' ? decl.spec.fields !== undefined : (decl.kind === 'json' && decl.spec.input !== undefined);
+        const validatesBody = decl.kind === 'form' ? decl.spec.fields !== undefined : (jsonBodied(decl.kind) && decl.spec.input !== undefined);
         if (validatesBody || decl.spec.query !== undefined)
         {
             responses['422'] = { description: 'Validation failed', content: { 'application/json': { schema: ERROR_REF } } };
         }
-        if (decl.kind === 'form' || (decl.kind === 'json' && decl.spec.input !== undefined))
+        if (decl.kind === 'form' || (jsonBodied(decl.kind) && decl.spec.input !== undefined))
         {
             responses['415'] = {
                 description: decl.kind === 'form' ? 'Unsupported content type (multipart/form-data required)' : 'Unsupported content type (JSON required)',

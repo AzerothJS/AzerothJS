@@ -13,7 +13,7 @@
 
 export { feature, guard, manifestOf } from './feature.ts';
 export { manifestScript, readManifest } from './manifest-handoff.ts';
-export type { Verbs, AdditionsOf, BodySpec, BodylessSpec, FormSpec, RawSpec, StreamSpec, StreamConnection } from './feature.ts';
+export type { Verbs, AdditionsOf, ActionSpec, BodySpec, BodylessSpec, FormSpec, RawSpec, StreamSpec, StreamConnection } from './feature.ts';
 
 export { register } from './register.ts';
 export type { RegisterOptions } from './register.ts';
@@ -28,5 +28,5 @@ export type {
 export { toOpenApi, openapiPlugin, uncontracted } from './openapi.ts';
 export type { OpenApiDocument, ToOpenApiOptions, OpenApiPluginOptions } from './openapi.ts';
 
-export { createClient, ApiError } from './client.ts';
-export type { ClientOf, FeatureClient, ClientOptions, Call, CallArgs } from './client.ts';
+export { createClient, ApiError, applyFieldErrors } from './client.ts';
+export type { ClientOf, FeatureClient, ClientOptions, ActionCall, Call, CallArgs, Wire } from './client.ts';

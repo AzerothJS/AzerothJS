@@ -144,6 +144,11 @@ function compileKind(meta: EncoderMeta): Encode
             return (value): string => (typeof value === 'number' && Number.isFinite(value) ? String(value) : fallback(value));
         case 'boolean':
             return (value): string => (value === true ? 'true' : value === false ? 'false' : fallback(value));
+        case 'date':
+            // JSON.stringify serializes a Date via toJSON as its ISO string; an invalid Date
+            // stringifies as null - the fallback covers both oddities byte-identically.
+            return (value): string =>
+                (value instanceof Date && !Number.isNaN(value.getTime()) ? '"' + value.toISOString() + '"' : fallback(value));
         case 'array': {
             const item = compile(meta.item);
             return (value): string =>

@@ -144,19 +144,33 @@ A guard's additions are merged the same way the kernel merges middleware additio
 only, and never `request`, `params` or `url` - a guard that returns parsed request data cannot
 replace the path params a handler authorises on.
 
-## Four route kinds, all inside the system
+## Five route kinds, all inside the system
 
 | Kind | Builder | What it is |
 | --- | --- | --- |
 | JSON | `r.get` / `r.post` / `r.put` / `r.patch` / `r.del` / `r.query` / `r.method` | Validated input/query in, validated JSON out - the typed-client routes. |
+| Action | `routes.action(path, { input, output }, handler)` | A POST-only, param-free JSON route whose client surface is a directly-callable function. Same wire behavior as JSON; the call site differs - see below. |
 | Form | `routes.form(path, { fields, limit, maxParts, maxFileSize }, handler)` | multipart/form-data: text fields validated like a JSON body (same 422 map), files buffered within declared caps; a JSON body posted to it is a 415. |
 | Raw | `routes.raw(method, path, spec, handler)` | The handler owns the whole exchange and returns a `Response`: uploads beyond form scale (`streamMultipart`), webhooks verifying raw bytes, downloads, `conditional()` 304s. |
 | Stream | `routes.stream(path, spec, open)` | Server-Sent Events; `open` receives the guarded context and the live connection. |
 
-The last three exist so those routes stay INSIDE the feature: they inherit its guard chain and
-appear in the manifest and the OpenAPI document, instead of degrading to hand-mounted
+Form, Raw and Stream exist so those routes stay INSIDE the feature: they inherit its guard chain
+and appear in the manifest and the OpenAPI document, instead of degrading to hand-mounted
 `app.get` calls that re-implement authorization and vanish from the spec. An unauthenticated
 request to the SSE route is refused by the SAME guard the JSON routes use.
+
+**An action's call shape differs from a JSON route's**, which is the one place the two kinds are
+not interchangeable. A JSON route takes a request object whose validated body sits under `input`;
+an action IS the function, so its input is the argument:
+
+```ts
+const key     = await client.keys.create({ input: { label: 'ci' } });  // JSON route
+const created = await client.posts.create({ title: 'hello' });         // action
+```
+
+Everything else - validation, the 422 field map, guards, the manifest - is identical. Actions are
+POST-only and take no path parameters; pair one with `csrfProtect` when a browser calls it
+(`routes.with(csrfProtect(csrf)).action(...)`).
 
 ## The enforcement points
 

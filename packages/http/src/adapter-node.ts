@@ -279,15 +279,21 @@ function manage<S extends Server | Http2Server>(
         server.once('error', reject);
         server.listen(port, hostname, () =>
         {
-            // Under load, address() can momentarily be null even inside the listening
-            // callback (seen on Windows). Falling back to the REQUESTED port would hand an
-            // ephemeral-port caller port 0 - an unusable address - so retry a few ticks and
-            // fail loudly rather than resolve with a lie.
+            // Under load, address() can momentarily fail to report a bound port even inside the
+            // listening callback (seen on Windows): it returns null, OR an address object whose
+            // `port` is still 0. Either way the socket is not yet usable, and resolving would
+            // hand an ephemeral-port caller port 0 - `http://127.0.0.1:0` - which every client
+            // rejects outright. A bound socket always reports a non-zero port, so 0 is only ever
+            // this transient state and is safe to retry on. Retry a few ticks, then fail loudly
+            // rather than resolve with a lie.
             let attempts = 0;
             const settle = (): void =>
             {
                 const address = server.address();
-                if (typeof address !== 'object' || address === null)
+                const bound = typeof address === 'object' && address !== null && address.port !== 0
+                    ? address.port
+                    : null;
+                if (bound === null)
                 {
                     if (++attempts > 50)
                     {
@@ -297,7 +303,7 @@ function manage<S extends Server | Http2Server>(
                     setImmediate(settle);
                     return;
                 }
-                finish(address.port);
+                finish(bound);
             };
             settle();
         });

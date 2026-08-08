@@ -4,9 +4,9 @@
 // server's features plus the projected manifest - no schemas, no handlers, no codegen. If the
 // types here stop inferring, the design's core claim is false and everything downstream stops.
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import { object, string, number } from '@azerothjs/schema';
+import { object, string, number, date } from '@azerothjs/schema';
 import { feature, guard, manifestOf } from '../../src/api/feature.ts';
-import { createClient, ApiError } from '../../src/api/client.ts';
+import { createClient, ApiError, type Wire } from '../../src/api/client.ts';
 
 const inviteInput = object({ email: string(), role: string() });
 const invite = object({ id: number(), email: string(), role: string() });
@@ -37,6 +37,35 @@ const orgs = feature('/orgs/:slug', [requireAuth], (routes) => ({
 
 const api = { orgs };
 const manifest = manifestOf(api);
+
+describe('Wire: the client-side projection of declared types', () =>
+{
+    it('maps Date to string, recursively, and leaves everything else alone', () =>
+    {
+        expectTypeOf<Wire<Date>>().toEqualTypeOf<string>();
+        expectTypeOf<Wire<{ at: Date; n: number }>>().toEqualTypeOf<{ at: string; n: number }>();
+        expectTypeOf<Wire<{ items: Array<{ at: Date }> }>>().toEqualTypeOf<{ items: Array<{ at: string }> }>();
+        expectTypeOf<Wire<string[]>>().toEqualTypeOf<string[]>();
+        expectTypeOf<Wire<number>>().toEqualTypeOf<number>();
+        expectTypeOf<Wire<{ maybe?: Date }>>().toEqualTypeOf<{ maybe?: string }>();
+    });
+
+    it('a route output containing a Date types the client call return as string', async () =>
+    {
+        const stamped = feature('/stamped', (routes) => ({
+            now: routes.get('/', { output: object({ at: date() }) }, () => ({ at: new Date() }))
+        }));
+        const client = createClient<{ stamped: typeof stamped }>(manifestOf({ stamped }), {
+            baseUrl: '/api',
+            fetch: () => Promise.resolve(new Response(JSON.stringify({ at: '2026-08-07T00:00:00.000Z' }), {
+                headers: { 'content-type': 'application/json' }
+            }))
+        });
+        const result = await client.stamped.now();
+        expectTypeOf(result).toEqualTypeOf<{ at: string }>();
+        expect(result.at).toBe('2026-08-07T00:00:00.000Z');
+    });
+});
 
 describe('the typed client from typeof + manifest', () =>
 {

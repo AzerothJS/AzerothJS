@@ -221,9 +221,8 @@ Cross-cutting response concerns wrap the whole app as composable EDGE middleware
 `pipeline()` composes them into a `WebHandler` you hand straight to `serve()`:
 
 ```ts
-import {
-    App, serve, pipeline, requestId, securityHeaders, cors, rateLimit, handleShutdownSignals
-} from '@azerothjs/http';
+import { App, pipeline, requestId, securityHeaders, cors, rateLimit } from '@azerothjs/http';
+import { serve, handleShutdownSignals } from '@azerothjs/http/node';
 
 const app = new App();
 // ... routes ...
@@ -272,6 +271,127 @@ is emitted only over a connection proven secure.
 
 ---
 
+## 🎬 Server actions
+
+A server action is a POST-only, param-free route kind whose typed client surface is a
+directly-callable function. The wire behavior is exactly a JSON route - input validated
+into the 422 field map, output checked against the contract, guards composing through the
+ordinary chain - but the call site reads like the function it is:
+
+```ts
+// server
+export const api = {
+    posts: feature('/posts', (routes) => ({
+        create: routes.with(csrfProtect(csrf)).action('/create',
+            { input: postInput, output: post },
+            ({ input }) => db.posts.create(input))
+    }))
+};
+
+// client - typed end to end from `typeof api`, zero server code in the bundle
+const created = await client.posts.create({ title: 'hello' });
+```
+
+A declared `Date` arrives client-side as its ISO string, and the call's return type says
+so (`Wire<T>`). Validation failures land on a form with one call:
+
+```ts
+catch (error)
+{
+    if (!applyFieldErrors(form, error))
+    {
+        form.setError('title', 'Could not reach the server - try again.');
+    }
+}
+```
+
+## 🔐 CSRF
+
+Browser-facing mutations pair `csrfCookie` (edge middleware minting a READABLE token
+cookie - readability is the point of double submit) with `csrfProtect` (a guard checking
+Sec-Fetch-Site/Origin plus the mirrored `x-azeroth-csrf` header). The typed client mirrors
+the cookie automatically on action calls. Non-browser callers hold no ambient cookies, so
+they mint their own pair or use token auth without the guard:
+
+```ts
+const csrf: CsrfOptions = {};                       // { secure: false } for plain-http dev
+const handler = pipeline(app, requestId(), securityHeaders(), csrfCookie(csrf));
+// then guard any mutating route: feature('/x', [csrfProtect(csrf)], ...) or routes.with(...)
+```
+
+The decision rules, spelled out because "checks the Origin" leaves the interesting cases open:
+
+| Request | Outcome |
+| --- | --- |
+| `Sec-Fetch-Site: same-origin` or `none`, token matches | allowed |
+| `Sec-Fetch-Site: cross-site` or `same-site` | refused - `same-site` is a SIBLING subdomain, not this origin |
+| `Origin` present and not this origin | refused, however the token looks |
+| `Origin` absent, `Sec-Fetch-Site` absent, token matches | allowed - the non-browser lane |
+| token missing, empty, short, or off by one character | refused |
+| cookie present, header absent (or the reverse) | refused |
+
+Safe methods (GET/HEAD/OPTIONS) skip the guard entirely, so a mutation must never live behind
+one. `allowedOrigins` re-admits a named cross-origin caller; nothing else does.
+
+## 🌊 Streaming and response-wrapping middleware
+
+Edge middleware can turn a streaming response into a buffered one, and **nothing on the wire
+says so**. A wrapper that reads the body and rebuilds still answers `transfer-encoding: chunked`
+with no `content-length`, and `response.body` is still a `ReadableStream` - so neither the
+client nor the application can tell. Only time-to-first-byte moves, measured here on a route
+whose last chunk is 400 ms late:
+
+| middleware shape | TTFB | streaming? |
+|---|---|---|
+| no middleware | 22 ms | yes |
+| headers only (`requestId`, `securityHeaders`, `csrfCookie`) | 2 ms | yes |
+| `response.clone()`, clone unread | 4 ms | yes |
+| `response.clone()`, clone fully read | 2 ms | yes |
+| `compressResponse` | 2 ms to first DECODABLE content | yes, but see below |
+| `await response.text()` then rebuild | **407 ms** | **no** |
+| `await response.arrayBuffer()` then rebuild | **404 ms** | **no** |
+
+The rule is simply: **reading the body buffers it; everything else does not.** `text()`,
+`arrayBuffer()`, `json()` and `blob()` must have the whole body before they resolve, so every
+byte then waits for the slowest chunk - a ~200x TTFB regression on the measurement above.
+
+**Compression is measured at the decoder, not the socket.** `compressResponse` pipes rather than
+collects, so raw bytes leave early - but the compressor holds them in its window, and what
+matters is when the client can DECODE the shell. Measured against a route holding its last chunk
+for 300 ms, with no per-chunk flush: brotli produced no decodable content before the hold at any
+size from 3 KB to 256 KB, and gzip only when the shell was both large and incompressible. The
+shell reached the socket in 2 ms and painted at 300 ms, and no header said so. `compressResponse`
+therefore flushes per chunk on a streamed response (one with no `content-length`), which puts
+first decodable content at 1-14 ms across every size and both encodings. The flush costs about
+9-20% of encoded size on real page HTML - roughly 80-110 bytes a page - and buffered responses
+keep the tighter encoding, since they have nothing to gain.
+
+`clone()` is the useful surprise: it tees, so an audit or logging sink can read a complete copy
+without costing the client its first byte. Prefer it whenever you need to observe a body.
+
+To transform streamed HTML, transform it INSIDE the render rather than around the response, or
+skip the routes that stream. `@azerothjs/kit` marks a `render: 'stream'` response with
+`x-accel-buffering: no` (its purpose is telling nginx not to buffer, and it doubles as the
+signal that reading this body would defeat the point):
+
+```ts
+const brand = (next) => ({
+    handle: async (request) =>
+    {
+        const response = await next.handle(request);
+        // A streamed page is exactly the one you must not read here.
+        if (response.headers.get('x-accel-buffering') === 'no')
+        {
+            return response;
+        }
+        return new Response((await response.text()).replace('%TITLE%', title), response);
+    }
+});
+```
+
+The behaviour is pinned in `tests/streaming-middleware-contract.spec.ts`, including the case
+proving a buffered response is indistinguishable by inspection.
+
 ## 🔎 The QUERY method (RFC 10008)
 
 > [!IMPORTANT]
@@ -285,13 +405,13 @@ QUERY method is the answer: SAFE and IDEMPOTENT like GET, but with a request bod
 so responses can be cached and requests retried.
 
 ```ts
-import { readJson, queryResult } from '@azerothjs/http';
+import { readJson, json } from '@azerothjs/http';
 
 app.query('/products/search', async ({ request }) =>
 {
     const filter = await readJson(request); // Content-Type is enforced; a missing one is a 415
     const results = await search(filter);    // MUST NOT mutate state - that is what makes QUERY safe
-    return queryResult({ results }, { contentLocation: '/products/search/results/abc' });
+    return json({ results }, { headers: { 'content-location': '/products/search/results/abc' } });
 });
 ```
 

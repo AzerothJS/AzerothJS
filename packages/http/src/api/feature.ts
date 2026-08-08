@@ -100,6 +100,19 @@ export interface BodySpec<In, Out, Query, Responses extends Record<number, unkno
     input?: RouteSchema<In>;
 }
 
+/**
+ * The spec half of a server action: the input object carries everything, so there is no
+ * `query` - and the path carries no params, which is what makes the client call directly
+ * callable.
+ */
+export interface ActionSpec<In, Out, Responses extends Record<number, unknown>>
+{
+    input?: RouteSchema<In>;
+    output?: RouteSchema<Out>;
+    responses?: { [S in keyof Responses]: RouteSchema<Responses[S]> };
+    docs?: RouteDocs;
+}
+
 /** The spec half of a `form` route: field validation plus the multipart caps. */
 export interface FormSpec<Fields, Out, Responses extends Record<number, unknown>>
 {
@@ -222,6 +235,19 @@ export interface Verbs<Add, Prefix extends string>
     ): Decl<P, In, Out, Query, Add, 'json'>;
 
     /**
+     * `routes.action('/create', { input, output }, handler)` - a server action. POST-only
+     * and PARAM-FREE (the input object carries everything), so the typed client surfaces it
+     * as a directly-callable function: `client.posts.create(input)`. Wire behavior is
+     * exactly a JSON POST: input validated (422 field map), output contract-checked,
+     * guards composing through the ordinary chain - pair with `csrfProtect` for
+     * browser-facing mutations.
+     */
+    action<P extends string, In = undefined, Out = unknown, Responses extends Record<number, unknown> = Record<never, never>>(
+        path: P, spec: ActionSpec<In, Out, Responses>,
+        handler: (context: HandlerContext<`${ Prefix }${ P }`, In, undefined> & Add) => HandlerResult<Out, Responses>
+    ): Decl<P, In, Out, undefined, Add, 'action'>;
+
+    /**
      * `routes.form('/files', { fields, maxFileSize }, handler)` - the multipart/form-data route.
      * The handler's `input` is `{ fields, files }`: fields validated against the schema (422 on
      * failure, the same field map as JSON routes), files buffered within the caps. A
@@ -307,6 +333,15 @@ function verbs(inherited: ReadonlyArray<AnyGuard>, scoped: ReadonlyArray<AnyGuar
         query: make('json', 'QUERY'),
         method: (method: string, path: string, spec: unknown, handler: unknown): AnyDecl =>
             make('json', method.toUpperCase())(path, spec, handler),
+        action: (path: string, spec: unknown, handler: unknown): AnyDecl =>
+        {
+            if (path.includes(':') || path.includes('*'))
+            {
+                throw new Error(`routes.action("${ path }"): an action path cannot carry params - `
+                    + 'the input object is the whole argument; move the value into the input schema.');
+            }
+            return make('action', 'POST')(path, spec, handler);
+        },
         form: make('form', 'POST'),
         raw: (method: string, path: string, spec: unknown, handler: unknown): AnyDecl =>
             make('raw', method.toUpperCase())(path, spec, handler),

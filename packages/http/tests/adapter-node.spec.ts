@@ -419,3 +419,37 @@ describe('trusted-proxy scheme and host (X-Forwarded-Proto / X-Forwarded-Host)',
         expect(new URL(toWebRequest(incoming, { trustProxy: { host: true } }).url).href).toBe('http://app.example.com/x');
     });
 });
+
+describe('serve() never hands back an unusable address', () =>
+{
+    // A full-suite run failed once with undici's "bad port" from
+    // `fetch('http://127.0.0.1:0/...')`. Cause: the listening callback retried while
+    // `server.address()` was NULL but accepted an address object whose `port` was still 0 -
+    // the very "unusable address" the guard exists to prevent. A bound socket always reports a
+    // non-zero port, so 0 can only be the transient state.
+    it('resolves with a usable port every time, under concurrent binds', async () =>
+    {
+        const servers = await Promise.all(Array.from({ length: 24 }, async () =>
+        {
+            const app = new App();
+            app.get('/ping', () => text('ok'));
+            return serve(app);
+        }));
+        try
+        {
+            for (const served of servers)
+            {
+                expect(served.port).toBeGreaterThan(0);
+                // And the port is genuinely reachable, not merely non-zero.
+                const response = await fetch(`http://127.0.0.1:${ served.port }/ping`);
+                expect(response.status).toBe(200);
+            }
+            // Every bind got its own port.
+            expect(new Set(servers.map((served) => served.port)).size).toBe(servers.length);
+        }
+        finally
+        {
+            await Promise.all(servers.map((served) => served.shutdown({ gracePeriodMs: 500 })));
+        }
+    });
+});

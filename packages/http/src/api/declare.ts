@@ -56,11 +56,14 @@ export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'QUERY';
  *   buffered form, webhooks verifying raw bytes, files, 304s via `conditional`).
  * - 'stream': a Server-Sent-Events route; the handler drives the connection.
  *
+ * - 'action': a server action - POST-only and param-free, so the typed client surfaces it
+ *   as a directly-callable function; the wire behavior is exactly 'json'.
+ *
  * The kinds beyond 'json' exist so those routes stay INSIDE the system: they inherit the
  * feature's guard and appear in the manifest and the OpenAPI document, instead of degrading to
  * hand-mounted `app.get` calls that re-implement authorization and vanish from the spec.
  */
-export type RouteKind = 'json' | 'form' | 'raw' | 'stream';
+export type RouteKind = 'json' | 'form' | 'raw' | 'stream' | 'action';
 
 /**
  * Display-only documentation for one route. NOTHING here affects registration, validation,
@@ -362,8 +365,9 @@ export interface Feature<Prefix extends string = string, R extends Routes = Rout
 
 /**
  * One manifest row: everything a typed client needs at RUNTIME. Two fields for a JSON route;
- * `kind` appears only on routes the JSON client must refuse (form/raw/stream), so the refusal
- * is loud at the call instead of a silently mis-encoded request.
+ * `kind` appears on every non-'json' route: form/raw/stream so the JSON client's refusal
+ * is loud at the call instead of a silently mis-encoded request, and 'action' so the client
+ * surfaces the route as a directly-callable function.
  */
 export interface ManifestEntry
 {
@@ -372,7 +376,7 @@ export interface ManifestEntry
     /** The full feature-prefixed path (registration prefix excluded - that is the baseUrl). */
     path: string;
 
-    kind?: 'form' | 'raw' | 'stream';
+    kind?: 'form' | 'raw' | 'stream' | 'action';
 }
 
 /** The manifest for a whole registered record: feature key -> route key -> entry. */

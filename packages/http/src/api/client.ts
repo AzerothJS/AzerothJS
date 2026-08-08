@@ -66,14 +66,34 @@ export type CallArgs<Path extends string, In, Query> =
     & (undefined extends Query ? unknown : { query: Query });
 
 /**
+ * The wire projection of a declared type. The manifest carries no schemas, so the client
+ * cannot revive what JSON flattened: a declared `Date` arrives as its ISO string, and the
+ * call's return type says so instead of lying. Everything JSON keeps intact maps to itself.
+ */
+export type Wire<T> =
+    T extends Date ? string
+        : T extends ReadonlyArray<infer U> ? Array<Wire<U>>
+            : T extends object ? { [K in keyof T]: Wire<T[K]> }
+                : T;
+
+/**
  * One route as a client call. A route that declared no params, input or query takes NO argument -
  * so `client.health.ping()` rather than `client.health.ping({})` - and every other route takes
  * exactly the parts it declared, which is what makes a forgotten `input` a compile error.
  */
 export type Call<Path extends string, In, Out, Query> =
     IsEmpty<CallArgs<Path, In, Query> & object> extends true
-        ? () => Promise<Out>
-        : (args: CallArgs<Path, In, Query>) => Promise<Out>;
+        ? () => Promise<Wire<Out>>
+        : (args: CallArgs<Path, In, Query>) => Promise<Wire<Out>>;
+
+/**
+ * A server action as a client call: the input object IS the whole argument (an action path
+ * carries no params by declaration), so `client.posts.create({ title })` - no args wrapper.
+ */
+export type ActionCall<In, Out> =
+    undefined extends In
+        ? () => Promise<Wire<Out>>
+        : (input: In) => Promise<Wire<Out>>;
 
 /**
  * One feature as a client namespace: its JSON routes become calls (the full path - feature
@@ -83,13 +103,16 @@ export type Call<Path extends string, In, Out, Query> =
 export type FeatureClient<F> =
     F extends Feature<infer Prefix, infer R>
         ? {
-            [K in keyof R as R[K] extends Decl<string, unknown, unknown, unknown, Record<never, never>, 'json'> ? K
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variance-erasing match; json-kind filter
-                : R[K] extends Decl<any, any, any, any, any, 'json'> ? K : never]:
+            [K in keyof R as R[K] extends Decl<string, unknown, unknown, unknown, Record<never, never>, 'json' | 'action'> ? K
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variance-erasing match; json/action-kind filter
+                : R[K] extends Decl<any, any, any, any, any, 'json' | 'action'> ? K : never]:
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- inference through the variance-erased view
             R[K] extends Decl<infer P, infer In, infer Out, infer Query, any, 'json'>
                 ? Call<`${ Prefix }${ P }`, In, Out, Query>
-                : never;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- inference through the variance-erased view
+                : R[K] extends Decl<any, infer In, infer Out, any, any, 'action'>
+                    ? ActionCall<In, Out>
+                    : never;
         }
         : never;
 
@@ -114,6 +137,13 @@ export interface ClientOptions
      * An unbounded `response.json()` is a memory-exhaustion primitive handed to whatever answered.
      */
     maxResponseBytes?: number;
+
+    /**
+     * CSRF auto-header for ACTION calls: in a browser the client mirrors the readable token
+     * cookie (`__Host-azcsrf`, then `azcsrf`) into `x-azeroth-csrf` automatically. Pass
+     * names to match a renamed `csrfCookie`/`csrfProtect` pair, or `false` to disable.
+     */
+    csrf?: false | { cookie?: string; header?: string };
 }
 
 /** @internal The client's default response cap, matching the server's own body limit. */
@@ -185,7 +215,33 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
     const baseUrl = options.baseUrl.endsWith('/') ? options.baseUrl.slice(0, -1) : options.baseUrl;
     const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 
-    const call = async (method: string, template: string, args: RawArgs): Promise<unknown> =>
+    // The double-submit mirror for action calls: read the token cookie the page's own JS is
+    // meant to read (that readability IS the defense) and echo it in the header. Outside a
+    // browser there is no document and no ambient cookie jar - nothing to mirror.
+    const readCsrfToken = (): string | undefined =>
+    {
+        if (options.csrf === false)
+        {
+            return undefined;
+        }
+        const jar = (globalThis as { document?: { cookie?: string } }).document?.cookie;
+        if (jar === undefined)
+        {
+            return undefined;
+        }
+        const names = options.csrf?.cookie !== undefined ? [options.csrf.cookie] : ['__Host-azcsrf', 'azcsrf'];
+        for (const name of names)
+        {
+            const part = jar.split('; ').find((candidate) => candidate.startsWith(`${ name }=`));
+            if (part !== undefined)
+            {
+                return decodeURIComponent(part.slice(name.length + 1));
+            }
+        }
+        return undefined;
+    };
+
+    const call = async (method: string, template: string, args: RawArgs, action = false): Promise<unknown> =>
     {
         let path = template;
         for (const [name, value] of Object.entries((args.params ?? {})))
@@ -225,6 +281,15 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             init.body = JSON.stringify(args.input);
             init.headers = { ...init.headers as Record<string, string>, 'content-type': 'application/json' };
         }
+        if (action)
+        {
+            const token = readCsrfToken();
+            if (token !== undefined)
+            {
+                const header = (options.csrf !== false ? options.csrf?.header : undefined) ?? 'x-azeroth-csrf';
+                init.headers = { ...init.headers as Record<string, string>, [header]: token };
+            }
+        }
 
         // A relative baseUrl ('/api') resolves against an inert origin - the transport only
         // ever sees the absolute form, exactly as a server would.
@@ -256,6 +321,13 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
         const namespace: Record<string, unknown> = {};
         for (const [name, entry] of Object.entries(entries))
         {
+            if (entry.kind === 'action')
+            {
+                // Directly callable: the input object is the whole argument.
+                namespace[name] = (input?: unknown): Promise<unknown> =>
+                    call(entry.method, entry.path, input === undefined ? {} : { input }, true);
+                continue;
+            }
             namespace[name] = entry.kind !== undefined
                 ? (): never =>
                 {
@@ -300,4 +372,52 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             });
         }
     }) as ClientOf<Features>;
+}
+
+/**
+ * Lands an {@link ApiError}'s field map on a form. Nested wire paths land on their first
+ * dot segment - `items.0.email` on `items` - matching the form's own schema-overlay rule;
+ * the first message per field wins. Returns false (form untouched) for anything that is
+ * not an ApiError carrying fields, so the caller keeps one honest branch for "the server
+ * did not speak validation":
+ *
+ * ```ts
+ * catch (error)
+ * {
+ *     if (!applyFieldErrors(form, error))
+ *     {
+ *         form.setError('title', 'Could not reach the server - try again.');
+ *     }
+ * }
+ * ```
+ *
+ * `setError` is declared in METHOD syntax deliberately: method parameters check
+ * bivariantly, which is what lets a FormApi whose setError takes `keyof T` assign here.
+ */
+export function applyFieldErrors(
+    form: { setError(name: string, message: string | null): void },
+    error: unknown
+): boolean
+{
+    if (!(error instanceof ApiError))
+    {
+        return false;
+    }
+    const entries = Object.entries(error.fields);
+    if (entries.length === 0)
+    {
+        return false;
+    }
+    const seen = new Set<string>();
+    for (const [path, message] of entries)
+    {
+        const field = path.split('.', 1)[0] ?? path;
+        if (field === '' || seen.has(field))
+        {
+            continue;
+        }
+        seen.add(field);
+        form.setError(field, message);
+    }
+    return true;
 }

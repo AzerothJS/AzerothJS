@@ -34,7 +34,7 @@ const HAS_DENO = has('deno');
  * The program each runtime executes: build an app, serve it on that runtime's own primitive
  * through `toFetchHandler`, then assert over real HTTP. Prints one JSON line.
  */
-function program(port: number): string
+function program(): string
 {
     return `
 import { App, pipeline, requestId, securityHeaders, rateLimit, json, text, noContent, toFetchHandler } from ${ JSON.stringify(KERNEL) };
@@ -64,12 +64,16 @@ const handler = pipeline(app, requestId(), securityHeaders(),
     rateLimit({ limit: 500, windowMs: 60000, key: () => 'probe' }));
 const fetchHandler = toFetchHandler(handler);
 
+// Port 0: the OS picks a free one and the runtime reports it back. A hardcoded port makes an
+// occupied port look like a broken framework contract - with a squatter on the old fixed port,
+// every check below fetched the SQUATTER and reported false.
 const isDeno = typeof Deno !== 'undefined';
 const server = isDeno
-    ? Deno.serve({ port: ${ port }, onListen: () => undefined }, fetchHandler)
-    : Bun.serve({ port: ${ port }, fetch: fetchHandler });
+    ? Deno.serve({ port: 0, onListen: () => undefined }, fetchHandler)
+    : Bun.serve({ port: 0, fetch: fetchHandler });
 
-const base = 'http://localhost:${ port }';
+const port = isDeno ? server.addr.port : server.port;
+const base = 'http://localhost:' + port;
 const out = {};
 let r = await fetch(base + '/healthz');
 out.routing = r.status === 200 && (await r.text()) === '{"ok":true}';
@@ -93,7 +97,7 @@ if (isDeno) { await server.shutdown(); } else { server.stop(true); }
 `;
 }
 
-function runOn(runtime: 'bun' | 'deno', port: number): Record<string, boolean>
+function runOn(runtime: 'bun' | 'deno'): Record<string, boolean>
 {
     // The probe lives INSIDE the repo: `request-root.ts` imports the bare specifier
     // `azerothjs/internal`, which only resolves from a directory that can walk up to this
@@ -103,14 +107,19 @@ function runOn(runtime: 'bun' | 'deno', port: number): Record<string, boolean>
     try
     {
         const file = join(dir, 'probe.mjs');
-        writeFileSync(file, program(port));
+        writeFileSync(file, program());
         // Deno needs to be told to use the node_modules directory it just walked up to.
         const args = runtime === 'deno' ? ['run', '-A', '--node-modules-dir=manual', file] : [file];
         const result = spawnSync(runtime, args, { encoding: 'utf8', shell: true, timeout: 60_000 });
         const line = result.stdout.split('\n').find((l) => l.startsWith('RESULT'));
         if (line === undefined)
         {
-            throw new Error(`${ runtime } produced no result.\nstdout: ${ result.stdout }\nstderr: ${ result.stderr }`);
+            // Say WHY. A single "produced no result" hides a spawn failure, a timeout, and a
+            // genuine contract break behind one string, and the first two are not framework news.
+            const why = result.error !== undefined ? `spawn failed: ${ result.error.message }`
+                : result.signal !== null ? `killed by ${ result.signal } (timeout is 60s)`
+                    : `exit code ${ result.status }`;
+            throw new Error(`${ runtime } produced no result - ${ why }.\nstdout: ${ result.stdout }\nstderr: ${ result.stderr }`);
         }
         return JSON.parse(line.slice('RESULT'.length)) as Record<string, boolean>;
     }
@@ -124,7 +133,7 @@ describe('the kernel serves on a standard Fetch runtime', () =>
 {
     it.skipIf(!HAS_BUN)('Bun.serve accepts toFetchHandler and every contract holds', () =>
     {
-        const checks = runOn('bun', 9411);
+        const checks = runOn('bun');
         expect(checks).toEqual({
             routing: true, typedApiAndGuard: true, onlyUnguarded: true, notFound: true,
             nullBody: true, repeatedSetCookie: true, viewHeaderSurvives: true,
@@ -134,7 +143,7 @@ describe('the kernel serves on a standard Fetch runtime', () =>
 
     it.skipIf(!HAS_DENO)('Deno.serve accepts toFetchHandler and every contract holds', () =>
     {
-        const checks = runOn('deno', 9412);
+        const checks = runOn('deno');
         expect(checks).toEqual({
             routing: true, typedApiAndGuard: true, onlyUnguarded: true, notFound: true,
             nullBody: true, repeatedSetCookie: true, viewHeaderSurvives: true,

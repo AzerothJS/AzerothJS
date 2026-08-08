@@ -12,10 +12,15 @@
  *   - responses that carry `Cache-Control: no-transform`.
  *
  * Compression STREAMS: the body pipes through the zlib transform, so a large SSR document
- * compresses as it is produced. Content-Length is dropped (the encoded size is unknown ahead
- * of time) and `Vary: Accept-Encoding` is appended so caches key correctly - forgetting Vary
- * is how one client's gzip lands on another's curl. The encoded body is a DIFFERENT
- * representation, so it gets its own ETag and drops Accept-Ranges.
+ * compresses as it is produced. Piping is not enough on its own, though - the compressor holds
+ * bytes in its window, so a streamed response also flushes per chunk or the client cannot
+ * DECODE the shell until the last chunk arrives (measured: brotli held everything from 3 KB to
+ * 256 KB). A response declaring Content-Length is not streaming and keeps the tighter encoding.
+ *
+ * Content-Length is dropped (the encoded size is unknown ahead of time) and
+ * `Vary: Accept-Encoding` is appended so caches key correctly - forgetting Vary is how one
+ * client's gzip lands on another's curl. The encoded body is a DIFFERENT representation, so it
+ * gets its own ETag and drops Accept-Ranges.
  */
 
 import { constants, createBrotliCompress, createDeflate, createGzip } from 'node:zlib';
@@ -166,19 +171,34 @@ export function compressResponse(request: Request, response: Response, options: 
         return response;
     }
 
+    // A STREAMED response needs a flush per chunk or compression silently defeats streaming.
+    //
+    // The compressor holds bytes in its window until the window fills or the stream ends, so
+    // although this pipes rather than buffers, a CLIENT cannot DECODE anything until enough
+    // bytes accumulate. Measured on a shell followed by a 300 ms hold: brotli produced no
+    // decodable content before the hold in ANY size tested, and gzip only when the shell was
+    // both large and incompressible. So the shell arrived on the wire immediately and still
+    // painted late - the exact regression streaming exists to avoid, invisible to every header.
+    //
+    // Flushing costs ratio, so it is spent only where it buys something: a response with no
+    // content-length is the streaming one. A buffered response keeps the tighter encoding.
+    const streaming = response.headers.get('content-length') === null;
     let transform: Transform;
     if (encoding === 'br')
     {
         // TEXT mode tunes brotli's context modeling for what we compress (see isCompressible).
-        transform = createBrotliCompress({ params: { [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT } });
+        transform = createBrotliCompress({
+            params: { [constants.BROTLI_PARAM_MODE]: constants.BROTLI_MODE_TEXT },
+            ...(streaming ? { flush: constants.BROTLI_OPERATION_FLUSH } : {})
+        });
     }
     else if (encoding === 'gzip')
     {
-        transform = createGzip();
+        transform = createGzip(streaming ? { flush: constants.Z_SYNC_FLUSH } : {});
     }
     else
     {
-        transform = createDeflate();
+        transform = createDeflate(streaming ? { flush: constants.Z_SYNC_FLUSH } : {});
     }
 
     const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);

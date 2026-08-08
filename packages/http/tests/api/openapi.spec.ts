@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { Validator } from '@seriousme/openapi-schema-validator';
-import { object, string, number, boolean, array, literal, enumOf, record, union } from '@azerothjs/schema';
+import { object, string, number, boolean, date, array, literal, enumOf, record, union } from '@azerothjs/schema';
 import { App } from '../../src/app.ts';
 import { feature } from '../../src/api/feature.ts';
 import { register } from '../../src/api/register.ts';
@@ -72,6 +72,19 @@ describe('schema -> JSON Schema mapping (MAPPING.md rows)', () =>
     {
         expect(properties.kind).toEqual({ const: 'user' });
         expect(properties.role).toEqual({ type: 'string', enum: ['admin', 'member'] });
+    });
+
+    it('date maps to string with date-time format', () =>
+    {
+        const dated = {
+            probe: feature('/probe', (routes) => ({
+                run: routes.post('/', { input: object({ at: date(), bounded: date({ min: new Date('2026-01-01T00:00:00Z') }) }) }, () => ({}))
+            }))
+        };
+        const doc = toOpenApi(dated, { info: INFO });
+        const props = schemaOf(doc, '/api/probe', 'post').properties as Record<string, Record<string, unknown>>;
+        expect(props.at).toEqual({ type: 'string', format: 'date-time' });
+        expect(props.bounded).toMatchObject({ type: 'string', format: 'date-time' });
     });
 
     it('array, record, and union map structurally', () =>

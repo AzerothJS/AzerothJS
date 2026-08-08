@@ -11,9 +11,9 @@
  * sides; only the client VALUE here is browser-specific.
  */
 
-export { createClient, ApiError } from './client.ts';
+export { createClient, ApiError, applyFieldErrors } from './client.ts';
 export { manifestScript, readManifest } from './manifest-handoff.ts';
-export type { ClientOf, FeatureClient, ClientOptions, Call, CallArgs } from './client.ts';
+export type { ClientOf, FeatureClient, ClientOptions, ActionCall, Call, CallArgs, Wire } from './client.ts';
 
 export type {
     Decl, AnyDecl, Routes, Feature, Manifest, ManifestEntry, RouteKind, RouteDocs, ApiMethod,

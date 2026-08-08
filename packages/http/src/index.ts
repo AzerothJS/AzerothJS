@@ -73,5 +73,8 @@ export type { MultipartBody, MultipartOptions, StreamMultipartOptions, UploadedF
 export { parseCookies, serializeCookie, expireCookie } from './cookies.ts';
 export type { CookieOptions } from './cookies.ts';
 
+export { csrfCookie, csrfProtect, csrfToken } from './csrf.ts';
+export type { CsrfOptions } from './csrf.ts';
+
 export { sse } from './sse.ts';
 export type { SseConnection, SseOptions, SseSendOptions } from './sse.ts';
