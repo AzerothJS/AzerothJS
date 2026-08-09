@@ -114,7 +114,10 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
                 + 'a page path cannot contain \'..\'; fix the route table.');
         }
         mkdirSync(dirname(file), { recursive: true });
-        emitted.push({ file, previous: existsSync(file) ? readFileSync(file, 'utf8') : null });
+        // Read directly and catch the read's own failure rather than asking existsSync first: a
+        // separate existence check leaves a window in which the file can be removed or replaced
+        // before the read, and "absent" is exactly what the null means here anyway.
+        emitted.push({ file, previous: readPrevious(file) });
         writeFileSync(file, result.html);
     }
 
@@ -141,6 +144,25 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         throw failure;
     }
     return written;
+}
+
+/**
+ * @internal A file's current contents for the rollback record, or null when there are none.
+ *
+ * The read IS the existence check. Asking `existsSync` first and reading after describes the file
+ * twice and can get two different answers, and every failure mode - absent, unreadable, replaced
+ * by a directory - means the same thing to the caller: there is nothing here to restore.
+ */
+function readPrevious(file: string): string | null
+{
+    try
+    {
+        return readFileSync(file, 'utf8');
+    }
+    catch
+    {
+        return null;
+    }
 }
 
 /** @internal The page walk itself; `prerender` wraps it so a throw can roll back what it wrote. */

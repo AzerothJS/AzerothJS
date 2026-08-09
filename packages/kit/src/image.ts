@@ -16,7 +16,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { open, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
 import { BadRequestError, ForbiddenError, NotFoundError, matchesEtag } from '@azerothjs/http';
@@ -199,33 +199,52 @@ export function imageHandler(options: ImageHandlerOptions): Handler
         {
             throw new NotFoundError();
         }
-        const info = await stat(target).catch(() => null);
-        if (info === null || !info.isFile())
-        {
-            throw new NotFoundError();
-        }
-        if (info.size > maxSourceBytes)
-        {
-            throw new BadRequestError('Source image exceeds the size limit.', { code: 'image-too-large' });
-        }
         // The logical check above cannot see symlinks; the real path can. Real compares
-        // against real - Windows hands out 8.3 aliases the logical root never matches.
+        // against real - Windows hands out 8.3 aliases the logical root never matches. This
+        // stays BEFORE the open: a handle proves the bytes match the size that was checked, not
+        // that the path was ever allowed to be served.
         const realRoot = await realpath(root).catch(() => null);
         const real = await realpath(target).catch(() => null);
         if (realRoot === null || real === null || (real !== realRoot && !real.startsWith(realRoot + sep)))
         {
             throw new NotFoundError();
         }
-        const identity = `${ target }:${ info.size }:${ info.mtimeMs }`;
-        const bytes = new Uint8Array(await readFile(target));
-        let hash = sourceHashes.get(identity);
-        if (hash === undefined)
+        // ONE handle for the size check and the read. Stat-then-read describes one file and
+        // returns another when the path is repointed in between, so the size limit bound a file
+        // that was never the one served. Everything below reads through `handle`, never `target`.
+        const handle = await open(target, 'r').catch(() => null);
+        if (handle === null)
         {
-            hash = createHash('sha256').update(bytes).digest('hex');
-            sourceHashes.set(identity, hash);
+            throw new NotFoundError();
         }
-        const extension = target.slice(target.lastIndexOf('.') + 1).toLowerCase();
-        return { bytes, hash, contentType: CONTENT_TYPES[extension] ?? 'application/octet-stream' };
+        try
+        {
+            const info = await handle.stat();
+            if (!info.isFile())
+            {
+                throw new NotFoundError();
+            }
+            if (info.size > maxSourceBytes)
+            {
+                throw new BadRequestError('Source image exceeds the size limit.', { code: 'image-too-large' });
+            }
+            const identity = `${ target }:${ info.size }:${ info.mtimeMs }`;
+            const bytes = new Uint8Array(await handle.readFile());
+            let hash = sourceHashes.get(identity);
+            if (hash === undefined)
+            {
+                hash = createHash('sha256').update(bytes).digest('hex');
+                sourceHashes.set(identity, hash);
+            }
+            const extension = target.slice(target.lastIndexOf('.') + 1).toLowerCase();
+            return { bytes, hash, contentType: CONTENT_TYPES[extension] ?? 'application/octet-stream' };
+        }
+        finally
+        {
+            // Every exit closes it, the refusals included: without this an oversized-image flood
+            // turns a size guard into a descriptor leak.
+            await handle.close();
+        }
     }
 
     async function readRemote(source: string): Promise<{ bytes: Uint8Array; hash: string; contentType: string }>

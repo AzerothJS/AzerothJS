@@ -33,7 +33,21 @@ describe('manifest handoff wire', () =>
     it('returns undefined with no tag (plain client start) and on malformed content', () =>
     {
         expect(readManifest()).toBeUndefined();
-        document.head.innerHTML = manifestScript(manifestOf(api)).replace('{', 'not json {');
+
+        // Deliberately malformed, built rather than patched: a lone `replace` on the real script
+        // reads as a failed attempt to escape something, both to a human and to a static
+        // analyser. Written out, the tag has to be the one `readManifest` actually looks for -
+        // so this asserts the well-formed spelling parses FIRST. Without that, a drifted id
+        // would make the malformed case pass for the wrong reason: no tag found, rather than a
+        // tag whose body is not JSON.
+        document.head.innerHTML = '<script type="application/json" id="azeroth-api-manifest">{"routes":{}}</script>';
+        expect(readManifest()).toEqual({ routes: {} });
+
+        document.head.innerHTML = '<script type="application/json" id="azeroth-api-manifest">not json {</script>';
+        // Undefined FOR THE INTENDED REASON: the tag is right there and was found, so the failure
+        // is the body not being JSON. Without this the assertion above would pass just as well
+        // against a tag that does not exist at all, which tests nothing about malformed content.
+        expect(document.getElementById('azeroth-api-manifest')).not.toBeNull();
         expect(readManifest()).toBeUndefined();
     });
 

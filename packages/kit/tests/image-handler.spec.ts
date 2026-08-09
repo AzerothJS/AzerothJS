@@ -183,3 +183,44 @@ describe('mountPages image wiring', () =>
         expect(await shell.text()).toContain('<div id="root">');
     });
 });
+
+describe('the source size limit is enforced against the file that is actually read', () =>
+{
+    // CodeQL js/file-system-race: the limit used to be checked with a standalone `stat` and the
+    // bytes fetched by a separate `readFile`, so the size that was approved and the file that was
+    // served did not have to be the same one. Both now go through a single open handle.
+
+    it('refuses over the limit, serves exactly AT it, and keeps serving after a refusal', async () =>
+    {
+        const root = makeRoot();
+        dirs.push(root);
+        const limit = 1024;
+        // Exactly at the limit and one byte past it: an off-by-one is where a size guard breaks,
+        // and `>` vs `>=` is invisible to a test that only tries 4 KB against 1 KB.
+        writeFileSync(join(root, 'exact.png'), new Uint8Array(limit));
+        writeFileSync(join(root, 'over.png'), new Uint8Array(limit + 1));
+        const { app } = serve({ root, maxSourceBytes: limit });
+
+        const refused = await get(app, 'src=%2Fover.png');
+        expect(refused.status).toBe(400);
+        expect((await refused.json() as { error: { code: string } }).error.code).toBe('image-too-large');
+
+        const atLimit = await get(app, 'src=%2Fexact.png');
+        expect(atLimit.status).toBe(200);
+        expect((await atLimit.arrayBuffer()).byteLength).toBe(limit);
+
+        // The handler is still healthy after a refusal, so the refusal path released whatever it
+        // opened. This is weaker than a descriptor-count assertion and is not offered as one.
+        const served = await get(app, 'src=%2Fhero.png');
+        expect(served.status).toBe(200);
+        expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG);
+    });
+
+    // NOT TESTED HERE: that the refusal path closes its handle. A descriptor-exhaustion test is
+    // not portable (the limit is high and platform-specific), and the version of this test that
+    // flooded the endpoint with refusals passed just as happily with `handle.close()` deleted -
+    // so it asserted nothing. Verified by planting instead: removing the close makes Node raise
+    // "A FileHandle object was closed during garbage collection ... is now considered an error"
+    // on stderr. That is the real backstop; it does not fail vitest, so the `finally` is held in
+    // place by review rather than by this file.
+});

@@ -187,12 +187,27 @@ function seedEnvFiles(target: string): void
     for (const example of findFiles(target, '.env.example'))
     {
         const local = join(dirname(example), '.env');
-        if (existsSync(local))
-        {
-            continue;
-        }
         const text = readFileSync(example, 'utf8').replace(/^DEVTOOLS_TOKEN=$/m, `DEVTOOLS_TOKEN=${ randomUUID() }`);
-        writeFileSync(local, text);
+        try
+        {
+            // `wx` fails when the file already exists, so "never overwrite someone's .env" is
+            // enforced by the write itself rather than by a check that answers for a moment which
+            // has passed by the time the write lands - and the file it would clobber is the one
+            // holding their secrets.
+            //
+            // DEFENCE IN DEPTH, and deliberately untested: `scaffold` refuses a non-empty target
+            // before it ever reaches here, and no template ships a literal `.env`, so nothing
+            // supported can present an existing file to this write. Testing it would mean
+            // exporting this helper or faking a state the public API cannot produce.
+            writeFileSync(local, text, { flag: 'wx' });
+        }
+        catch (error)
+        {
+            if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST')
+            {
+                throw error;
+            }
+        }
     }
 }
 

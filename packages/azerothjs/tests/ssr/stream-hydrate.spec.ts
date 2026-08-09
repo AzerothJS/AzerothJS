@@ -29,7 +29,17 @@ async function streamAll(stream: ReadableStream<Uint8Array>): Promise<string[]>
     return chunks;
 }
 
-/** Applies one wire chunk the way a browser would: inert insert, then the swap call. */
+/**
+ * Applies one wire chunk the way a browser would: inert insert, then the swap call.
+ *
+ * The strip is NOT sanitization and guards nothing: innerHTML never executes scripts, and the
+ * harness calls `__AZS(n)` by hand below. It removes ONE thing - the bare `<script>` holding that
+ * call - and the narrowness is deliberate. Widening it to the attribute-tolerant, case-insensitive
+ * form a sanitizer would need also eats `<script type="application/json" data-azs-seed=...>`,
+ * which is the boundary's data seed; hydration reads those, so removing them makes every resource
+ * refetch. CodeQL flags this as a bad tag filter (js/bad-tag-filter). It is matching this
+ * framework's own emitter, not untrusted input, and matching MORE breaks the test.
+ */
 function applyChunk(container: HTMLElement, chunk: string): void
 {
     const holder = document.createElement('div');
