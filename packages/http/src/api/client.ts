@@ -161,14 +161,51 @@ async function readJsonBounded(response: Response, maxBytes: number): Promise<un
         throw new ApiError(response.status, 'response-too-large',
             `The response declares ${ declared } bytes, over the ${ maxBytes }-byte limit.`, undefined);
     }
-    const text = await response.text();
-    // The declared length can lie or be absent, so the real size decides.
-    if (text.length > maxBytes)
+    // The declared length can lie or be absent, so the real size decides - but it has to be
+    // decided WHILE reading. `response.text()` is exactly as unbounded as the `response.json()`
+    // this function exists to replace: it drains the whole body into one string first, so the
+    // ceiling was enforced only after the memory had already been spent. The stream is cancelled
+    // at the first byte over, which also stops the upstream transfer.
+    //
+    // Counting `byteLength` also makes the option mean what it says. The previous check used
+    // `text.length` - UTF-16 code units - so a body of 3-byte UTF-8 characters could reach three
+    // times the configured cap before tripping it.
+    const body = response.body;
+    if (body === null)
     {
-        throw new ApiError(response.status, 'response-too-large',
-            `The response exceeds the ${ maxBytes }-byte limit.`, undefined);
+        return undefined;
     }
-    return text === '' ? undefined : JSON.parse(text);
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;)
+    {
+        const { done, value } = await reader.read();
+        if (done)
+        {
+            break;
+        }
+        total += value.byteLength;
+        if (total > maxBytes)
+        {
+            await reader.cancel();
+            throw new ApiError(response.status, 'response-too-large',
+                `The response exceeds the ${ maxBytes }-byte limit.`, undefined);
+        }
+        chunks.push(value);
+    }
+    if (total === 0)
+    {
+        return undefined;
+    }
+    const joined = new Uint8Array(total);
+    let at = 0;
+    for (const chunk of chunks)
+    {
+        joined.set(chunk, at);
+        at += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder().decode(joined));
 }
 
 /**

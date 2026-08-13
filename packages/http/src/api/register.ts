@@ -111,7 +111,18 @@ function installRoute(app: App, declaration: AnyDecl, fullPath: string, guards: 
         {
             // The kernel's SSE machinery drives the wire (heartbeats, backpressure, done
             // marker); the handler receives the guarded context plus the live connection.
-            return sse(context.request, (connection) => void handler(context, connection));
+            //
+            // RETURN the handler's result rather than voiding it. A stream handler is declared
+            // `void | Promise<void>`, and `void handler(...)` threw the promise away: sse() then
+            // saw a producer that returned undefined, so its .catch() had nothing to attach to.
+            // An async handler that rejected therefore ended nowhere - no error hook fired, the
+            // response body never terminated, and heartbeats kept the dead connection alive
+            // indefinitely while the rejection surfaced only as an unhandled rejection. Handing
+            // the promise back puts async failures on the same path a synchronous throw already
+            // took.
+            // The cast restores what feature.ts:281 already declares - `void | Promise<void>` -
+            // after line 88 widened every kind's handler to `unknown` for the shared call sites.
+            return sse(context.request, (connection) => handler(context, connection) as void | Promise<void>);
         }
 
         const shaped = context as { input?: unknown; query?: unknown };
