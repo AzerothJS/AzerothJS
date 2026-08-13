@@ -1,5 +1,5 @@
 /**
- * MODULE: http/payload - the lazy Response the kernel's own constructors return
+ * The lazy Response the kernel's own constructors return.
  *
  * `new Response(...)` (undici) costs URL-less but still substantial internal setup - Headers
  * normalization, web-stream wrapping of the body - none of which matters when the kernel
@@ -22,6 +22,11 @@
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
 
+/**
+ * A Response that keeps its payload in the shape the adapter will write, so the common path
+ * never round-trips through a stream. It satisfies the full Response interface, so a handler
+ * or middleware holding one cannot tell the difference.
+ */
 export class PayloadResponse implements Response
 {
     readonly #status: number;

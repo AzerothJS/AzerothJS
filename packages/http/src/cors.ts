@@ -1,5 +1,5 @@
 /**
- * MODULE: http/cors - Cross-Origin Resource Sharing at the edge
+ * Cross-Origin Resource Sharing at the edge.
  *
  * CORS is two responsibilities and this middleware owns both. A preflight (an OPTIONS with an
  * Access-Control-Request-Method) is answered HERE with 204 and the negotiated headers, but it

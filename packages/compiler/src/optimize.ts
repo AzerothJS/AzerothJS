@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/optimize - IR optimization passes
- *
- * Every optimization is a PASS over the Render Plan IR - never logic smuggled into codegen (ACP). A
+ * IR optimization passes. Every optimization is a PASS over the Render Plan IR - never logic smuggled into codegen (ACP). A
  * pass is `(source, plan) -> plan`; `optimize` runs them in sequence, so future passes (dead-binding
  * elimination, expression simplification, ...) slot in here without touching lowering or codegen.
  *
@@ -22,51 +20,17 @@ import { CONTENT_PROPERTIES, isAriaStateAttribute, isChildResolvedProperty } fro
 import { parseExpressionSlice } from './ts-slice.ts';
 
 /**
- * optimize
+ * Runs the optimization passes over a render plan.
  *
- * PURPOSE:
- * Runs the IR optimization pipeline over a render plan and returns the optimized plan.
+ * Passes MUST be pure IR-to-IR transforms; new ones are appended here, so the pipeline grows
+ * without lowering or codegen changing. Constant folding, the only pass today, handles
+ * literal arithmetic and concatenation exclusively - it never evaluates an identifier, a call
+ * or anything with a side effect.
  *
- * WHY IT EXISTS:
- * It keeps optimizations as discrete, testable IR->IR passes (per ACP) rather than ad-hoc logic
- * embedded in codegen, so passes compose and can be reasoned about in isolation.
- *
- * COMPILER / RUNTIME ROLE:
- * Compiler; runs after lowerComponent and before codegen emits (generateComponent calls it).
- *
- * INPUT CONTRACT:
- * - source: the original `.azeroth` text (needed to evaluate binding spans).
- * - plan: the lowered {@link RenderPlan}.
- *
- * OUTPUT CONTRACT:
- * - A RenderPlan - the same instance when nothing was foldable, or a new plan with folded bindings
- *   removed and their values baked into the template.
- *
- * WHY THIS DESIGN:
- * A plain sequence of passes (today just constant folding). New passes are appended here, so the
- * pipeline grows without lowering or codegen changing.
- *
- * WHEN TO USE:
- * Between lowering and emit for a component's top-level plan.
- *
- * WHEN NOT TO USE:
- * Expression-embedded markup plans (codegen emits those directly without this pipeline).
- *
- * EDGE CASES:
- * - Returns the input plan unchanged when no binding folds.
- *
- * PERFORMANCE NOTES:
- * One walk of the bindings per pass.
- *
- * DEVELOPER WARNING:
- * Passes MUST be pure IR->IR transforms. Constant folding only handles literal arithmetic/concat - it
- * never evaluates identifiers, calls, or anything with side effects.
- *
- * @param source - The original `.azeroth` source
- * @param plan - The lowered render plan
- * @returns The optimized render plan
+ * @param source - The original source, needed to read binding spans.
+ * @param plan - The lowered plan.
+ * @returns The optimized plan, or the input unchanged when nothing folded.
  * @see {@link foldConstants}
- *
  * @internal
  */
 export function optimize(source: string, plan: RenderPlan): RenderPlan

@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/upgrade - `azeroth upgrade [target]`
+ * `azeroth upgrade [target]`.
  *
  * Moves every AzerothJS pin in the project to one target version, in three visible
  * steps: rewrite the manifests, `npm install`, then the doctor. The rewrite is a

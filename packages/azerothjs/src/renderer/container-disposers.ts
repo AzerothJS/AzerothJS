@@ -1,10 +1,10 @@
 /**
- * MODULE: renderer/container-disposers (internal)
+ * The dispose function for each container's mounted tree, so a later render or hydrate on the
+ * same container tears the previous mount down first.
  *
- * Tracks the dispose function for each container's mounted tree, so a later render()/hydrate()
- * on the same container tears down the previous mount first. Shared between render and hydrate -
- * either can dispose the other's mount (e.g. a hydration-mismatch fallback that re-renders).
- * Keyed weakly so a discarded container does not retain its disposer.
+ * Shared between the two: either can dispose the other's mount, which is what a
+ * hydration-mismatch fallback does when it re-renders. Keyed weakly, so a discarded container
+ * does not retain its disposer.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';

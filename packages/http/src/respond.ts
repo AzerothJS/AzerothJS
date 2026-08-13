@@ -1,5 +1,5 @@
 /**
- * MODULE: http/respond - response constructors
+ * Response constructors.
  *
  * Thin, typed constructors for the common response shapes. They exist for correctness, not
  * ceremony: each sets the right Content-Type WITH charset (a plain `new Response(json)` is

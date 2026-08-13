@@ -1,8 +1,6 @@
 /**
- * MODULE: renderer/transition-group
- *
- * <TransitionGroup> is the keyed-list counterpart of <Transition>: items ENTER with the
- * 6-class family when their key joins the list and LEAVE with it when their key departs -
+ * The keyed-list counterpart of Transition: items ENTER with the six-class family when their
+ * key joins the list and LEAVE with it when their key departs -
  * the removal deferred until the leave animation completes. This is the primitive a toast
  * stack, a notification tray, or any animated list needs; hand-rolling it means tracking
  * per-item "leaving" flags and deferred removal around <For>, which every app gets subtly
@@ -88,31 +86,25 @@ function createRowIndex(initial: number): { get: () => number; set: (next: numbe
 }
 
 /**
- * TransitionGroup
+ * A keyed list whose items animate in when added and animate out when removed, their removal
+ * deferred until the leave finishes, using the same class convention as {@link Transition}.
  *
- * PURPOSE:
- * Renders a keyed list whose items animate in when added and animate out - removal
- * deferred - when removed, via the `<Transition>` class convention.
+ * For toast stacks, notification trays and animated results - any list where items join and
+ * depart while the rest stays put. A list that never animates wants `<For>`, and a single
+ * conditional element wants `<Transition>`.
  *
- * WHEN TO USE:
- * Toast stacks, notification trays, animated search results - any list where items
- * join and depart while the rest stays put.
- *
- * WHEN NOT TO USE:
- * A list that never animates (`<For>` - keyed reuse with minimal moves) or a single
- * conditional element (`<Transition>`).
+ * Under SSR the items serialize once and statically, there being no browser to animate
+ * against; hydration adopts those rows, and later changes animate.
  *
  * @typeParam T - The item type.
- * @param props - {@link TransitionGroupProps}: `each`, `key`, `children`, `name`, `duration`.
- * @returns An HTMLElement-typed control-flow handle owning the rows.
+ * @param props - See {@link TransitionGroupProps}.
+ * @returns A control-flow handle owning the rows, typed as a node.
  * @see {@link Transition}
- * @see {@link For}
  */
 export function TransitionGroup<T>(props: TransitionGroupProps<T>): MountNode
 {
     const renderItem = props.children;
 
-    // SSR: items serialize once, statically - there is no browser to animate against.
     if (isStringMode())
     {
         const items = untrack(() => resolveReactive(props.each)) as T[];
@@ -124,7 +116,6 @@ export function TransitionGroup<T>(props: TransitionGroupProps<T>): MountNode
         return wrapContentsAnchored('tgroup', inner) as unknown as MountNode;
     }
 
-    // Hydration: adopt the server rows; later changes animate.
     if (isHydrating())
     {
         return hydrationNode((cursor: HydrationCursorType): void =>

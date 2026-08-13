@@ -1,12 +1,10 @@
 /**
- * MODULE: router/types
+ * Shared router type contracts. Component-specific prop types live with their components,
+ * and the Router object's own shape lives next to createRouter.
  *
- * Shared router type contracts. Component-specific prop types (LinkProps, RoutesProps, OutletProps)
- * live with their components; the Router object's shape lives next to createRouter.
- *
- * MENTAL MODEL: the browser URL is the source of truth. The HistoryAdapter wraps it so changes can
- * be subscribed to; the router parses each URL into a RouteLocation snapshot exposed as a reactive
- * signal, and composables (useParams, useQuery) derive narrower memos from it.
+ * The browser URL is the source of truth. The HistoryAdapter wraps it so changes can be
+ * subscribed to, the router parses each URL into a {@link RouteLocation} snapshot exposed as
+ * a reactive signal, and the composables derive narrower memos from that.
  */
 
 import type { MountNode } from '../component/index.ts';

@@ -1,6 +1,4 @@
 /**
- * MODULE: server/render-to-stream
- *
  * Streaming SSR over the SAME serializer renderToString runs. The main pass executes
  * synchronously inside the call - a top-level throw propagates to the caller before any
  * byte exists, so error pages stay ordinary buffered responses - and emits the shell with
@@ -45,42 +43,34 @@ export interface RenderToStreamOptions
 const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
 
 /**
- * renderToStream
- *
- * PURPOSE:
  * Renders a component as a streaming HTML response: the shell flushes immediately with
  * Suspense fallbacks in place, and each pending boundary's settled children follow as an
  * out-of-order swap chunk.
  *
- * WHY IT EXISTS:
- * A buffered render's first byte waits for the SLOWEST data. Streaming sends everything
- * that needs no waiting now, and the rest the moment it exists - time-to-first-byte
- * becomes serialization cost, not data cost.
+ * A buffered render's first byte waits for the SLOWEST piece of data. Streaming sends
+ * everything that needs no waiting now and the rest the moment it exists, which makes
+ * time-to-first-byte a serialization cost rather than a data cost.
  *
- * INPUT CONTRACT:
- * - `component`: a THUNK building the tree (same contract as renderToString). Suspense
- *   boundaries with pending `on` resources become streamed chunks; everything else
- *   serializes exactly as the buffered render would.
- * - `options`: see {@link RenderToStreamOptions}.
+ * A top-level throw propagates from THIS call, before a single byte has flushed, so an error
+ * page stays an ordinary buffered response. A throw in a continuation instead drops that one
+ * boundary's chunk - its fallback stays and the client refetches after hydration - reports
+ * through `onError`, and lets the stream continue.
  *
- * OUTPUT CONTRACT:
- * - A `ReadableStream<Uint8Array>` of UTF-8 HTML. The first chunk is the full shell;
- *   later chunks are template/seed/swap triplets. The stream always terminates validly:
- *   settle, timeout, abort, and cancel all funnel into one idempotent finalize.
+ * The stream always terminates validly: settling, timing out, an abort and a transport
+ * cancel all funnel into one idempotent finalize.
  *
- * EDGE CASES:
- * - A top-level throw propagates from THIS call - zero bytes ever flush.
- * - A continuation throw drops that boundary's chunk (fallback stays; the client
- *   refetches after hydration) and reports through `onError`; the stream continues.
- * - Markers are always on: a streamed page exists to hydrate.
+ * Markers are always on, since a streamed page exists in order to hydrate.
  *
- * @param component - A thunk that builds the root element.
- * @param options - Streaming behavior; see {@link RenderToStreamOptions}.
- * @returns The HTML byte stream.
- * @see {@link renderToString} for the buffered form.
+ * @param component - A thunk building the root element, as renderToString takes. Suspense
+ *                    boundaries with pending resources become streamed chunks; everything
+ *                    else serializes exactly as a buffered render would.
+ * @param options - Streaming behaviour, including `signal` and `onError`.
+ * @returns A stream of UTF-8 HTML: the shell first, then template, seed and swap triplets.
  * @example
  * const stream = renderToStream(() => App({ url }), { signal: request.signal });
  * return new Response(stream, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+ *
+ * @see {@link renderToString} for the buffered form.
  */
 export function renderToStream(
     component: () => HTMLElement | DocumentFragment,

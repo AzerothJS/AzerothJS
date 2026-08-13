@@ -1,14 +1,11 @@
 /**
- * MODULE: renderer/show
+ * Conditional rendering with a disposal scope. The obvious alternative - a reactive ternary
+ * inside a hole - rebuilds BOTH branches on every flip and gives neither one a scope, so
+ * effects created in a branch leak across toggles. Show builds only the active branch,
+ * inside its own root, and swapping disposes the outgoing subtree as a unit.
  *
- * <Show> renders its children when a condition is true and an optional fallback (or
- * nothing) when false, swapping the active branch reactively. It exists because the
- * obvious alternative - an inline reactive ternary inside h() - rebuilds BOTH branches
- * on every flip and gives the inactive branch no disposal scope. Show builds only the
- * active branch, inside its own createRoot, so swapping disposes the old subtree's
- * effects/components as one unit. On swap, branch nodes are removed one at a time (not
- * via innerHTML) so a MutationObserver can observe the removal - Portal auto-cleanup
- * relies on this.
+ * On a swap the branch's nodes are removed one at a time rather than through innerHTML, so
+ * a MutationObserver can observe each removal. Portal's automatic cleanup depends on that.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -22,109 +19,70 @@ import type { Child } from './types.ts';
 /**
  * Props for {@link Show}.
  *
- * @typeParam W - The type of the `when` value. Defaults to `boolean` for the plain conditional form;
- *   when `when` is a value/getter of some other type, the children callback receives an accessor to its
- *   NARROWED (non-nullish) value.
+ * @typeParam W - The `when` value's type. Defaults to `boolean` for the plain conditional
+ *                form; for any other type the children callback receives an accessor to the
+ *                NARROWED, non-nullish value.
  */
 export interface ShowProps<W = boolean>
 {
     /**
-     * Reactive condition. A value, or a getter (thunk/signal) for reactivity. The
-     * compiler emits a getter-object prop (`{ get when() { return cond; } }`); a manual
-     * caller may pass `() => cond` or a signal. resolveReactive unwraps it on each read.
-     * The branch is shown while this is TRUTHY; a change that keeps it truthy does NOT
-     * rebuild the branch (only a truthy<->falsy flip does).
+     * The condition: a value, or a getter for reactivity. The branch is shown while this is
+     * TRUTHY, and only a truthy-to-falsy flip rebuilds - a change that stays truthy leaves the
+     * mounted branch alone, preserving its focus, scroll and uncontrolled input state.
      */
     when: W | (() => W);
 
     /**
-     * Optional fallback rendered when `when` is falsy. Nothing is rendered if omitted OR if the thunk
-     * returns a nullish value, so a conditionally-present fallback (`fallback={maybeNode}`) is valid.
+     * Rendered while `when` is falsy. Nothing renders if it is omitted or if the thunk returns
+     * a nullish value, so a conditionally-present fallback is valid.
      */
     fallback?: () => MountNode | null | undefined;
 
     /**
-     * Content shown while `when` is truthy. Two forms, both built lazily (only while visible):
-     *   - a plain thunk `() => node` (the common conditional case), or
-     *   - a CALLBACK `(value) => node` that receives an ACCESSOR to the narrowed, non-nullish `when`
-     *     value: `<Show when={user()}>{(user) => <Avatar name={user().name}/>}</Show>`. The accessor
-     *     stays reactive and never yields null while the branch is mounted - no `!`, no snapshot IIFE.
-     * A plain thunk simply ignores the accessor argument, so both forms share this one signature.
+     * Content shown while `when` is truthy, built lazily and only while visible. Either a
+     * plain thunk, or a callback receiving an ACCESSOR to the narrowed non-nullish `when`
+     * value:
+     *
+     * ```
+     * <Show when={user()}>{(user) => <Avatar name={user().name}/>}</Show>
+     * ```
+     *
+     * The accessor stays reactive and does not yield null while the branch is mounted, so
+     * neither a `!` nor a snapshot IIFE is needed. A plain thunk ignores the argument, which
+     * is why both forms share one signature.
      */
     children: (value: () => NonNullable<W>) => MountNode | MountNode[];
 }
 
 /**
- * Show
+ * Renders `children` while `when` is truthy and `fallback` otherwise, swapping branches as
+ * the condition flips.
  *
- * PURPOSE:
- * Reactively renders `children` when `when` is true, else `fallback` (or nothing),
- * swapping the active branch whenever the condition flips.
+ * Only the active branch is ever built, and it runs inside its own root, so one dispose
+ * tears the whole outgoing subtree down. The branch factory is read under untrack, so a
+ * signal read INSIDE the branch does not rebuild it - which is what preserves focus, scroll
+ * position and uncontrolled input state across unrelated updates. Reactive children within
+ * the branch still track under their own effects.
  *
- * WHY IT EXISTS:
- * A JS ternary inside a reactive hole works for trivial cases but (1) re-evaluates and
- * rebuilds BOTH arms whenever the hole re-runs, (2) gives neither arm a disposal scope,
- * so effects created in a branch leak across flips, and (3) loses DOM state (focus,
- * scroll, uncontrolled inputs) because nodes are recreated. Show builds ONLY the active
- * branch, in its own root, and swaps surgically.
+ * The returned handle is a pair of comment markers rather than a wrapper element, so a Show
+ * is legal directly inside `<table>`, `<select>` and `<ul>`, where the parser would hoist a
+ * stray element out.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; a control-flow component. `<Show>` in `.azeroth` lowers
- * to a `component` binding at a `slot` marker (its co-range); its `children`/`fallback`
- * become render-function sub-plans. At runtime it is mode-dispatched: DOM swap on the
- * client, single-branch serialization for SSR, and adoption during hydration.
+ * Under SSR `when` is evaluated exactly once and only the active branch is emitted. While
+ * hydrating, the server's branch is adopted on the first effect run and later toggles are
+ * ordinary DOM swaps; a leftover server node in the range is a mismatch and trips the
+ * hydration fallback.
  *
- * INPUT CONTRACT:
- * - props.when: boolean or getter; read reactively via resolveReactive.
- * - props.children / props.fallback: thunks returning an HTMLElement; built lazily, only
- *   while their branch is active.
- *
- * OUTPUT CONTRACT:
- * - Returns an HTMLElement-typed handle: a comment-marker co-range on the client (so
- *   Show is legal directly inside <table>/<select>/<ul>), a serialized contents-anchor in
- *   SSR, or a hydration descriptor while hydrating.
- *
- * WHY THIS DESIGN:
- * The branch runs inside createRoot so one dispose tears the whole subtree down on swap.
- * The factory is read under untrack so only `when` drives the swap effect - a signal read
- * inside the branch must not rebuild the entire branch (which would drop focus/scroll);
- * inner reactive children still track under their own effects. Comment markers (not a
- * wrapper element) keep the branch a direct child of the real parent.
- *
- * WHEN TO USE:
- * For conditionally mounting a subtree, especially one with effects, components, or DOM
- * state that must be created/destroyed as a unit on toggle.
- *
- * WHEN NOT TO USE:
- * For toggling a single attribute/class (bind that reactively instead). For choosing
- * among many cases, use {@link Switch}/{@link Match}.
- *
- * EDGE CASES:
- * - No fallback + false: renders nothing (an empty co-range).
- * - SSR evaluates `when` exactly once (no live effect) and emits only the active branch.
- * - Hydration adopts the server branch on the first effect run; later toggles use the
- *   normal DOM swap. A leftover server node in the range is a SSR/CSR mismatch and trips
- *   the hydrate fallback.
- *
- * PERFORMANCE NOTES:
- * Only the active branch is built. A flip disposes the old branch (O(subtree)) and builds
- * the new one once; a `when` change that does not flip the boolean does not rebuild.
- *
- * DEVELOPER WARNING:
- * Replacing <Show> with a raw ternary reintroduces double-build, effect leaks, and lost
- * DOM state. Keep `children`/`fallback` as thunks - calling them eagerly defeats the
- * lazy, single-branch construction.
- *
- * @param props - {@link ShowProps}: `when`, `children`, optional `fallback`.
- * @returns An HTMLElement-typed control-flow handle.
- * @see {@link Switch}
- * @see {@link For}
+ * @param props - See {@link ShowProps}.
+ * @returns A control-flow handle, typed as a node so it composes like one.
  * @example
  * Show({
- *   when: isLoggedIn,
- *   fallback: () => h('p', {}, 'Please log in'),
- *   children: () => h('button', { onClick: logout }, 'Logout')
+ *     when: isLoggedIn,
+ *     fallback: () => h('p', {}, 'Please log in'),
+ *     children: () => h('button', { onClick: logout }, 'Logout')
  * });
+ *
+ * @see {@link Switch} to choose among several cases.
  */
 export function Show<W>(props: ShowProps<W>): MountNode
 {

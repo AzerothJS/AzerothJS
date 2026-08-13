@@ -1,15 +1,14 @@
 /**
- * MODULE: azerothjs/internal - framework plumbing, NOT application API
+ * Framework plumbing, not application API: the machinery the framework's own packages share
+ * across package boundaries - SSR child serialization, the hydration adoption protocol, the
+ * store-scope adapter seam, and the test-only subscriber probe.
  *
- * The machinery the framework's own packages (renderer, component, router, server,
- * http, testing) share across package boundaries: SSR child serialization, the
- * hydration adoption protocol, the store-scope adapter seam, and the test-only
- * subscriber probe. These symbols may change in ANY release without a major bump -
- * the semver contract covers the "." entry alone. If application code needs something
- * here, that is a missing public API: open an issue instead of importing this path.
+ * These symbols may change in ANY release without a major bump; the semver contract covers
+ * the "." entry alone. If application code needs something here, that is a missing public
+ * API - open an issue rather than importing this path.
  */
 
-// THE thunk-chain unwrap every 'call while it is a function' site shares.
+// The thunk-chain unwrap every "call while it is a function" site shares.
 export { resolveThunks } from './resolve-thunks.ts';
 
 // SSR serialization shared by every control-flow serializer.

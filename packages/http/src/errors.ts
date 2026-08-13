@@ -1,5 +1,5 @@
 /**
- * MODULE: http/errors - the one error path
+ * The one error path.
  *
  * Every throw in the stack - sync or async, handler or middleware, kernel or app code - ends
  * up in exactly one place: `errorResponse`, which turns ANY thrown value into a Response with

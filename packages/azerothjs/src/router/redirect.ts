@@ -1,13 +1,14 @@
 /**
- * MODULE: router/redirect - the navigation-control sentinel
+ * The navigation-control sentinel: the value a loader THROWS, or a guard returns, to turn
+ * the in-flight navigation into a different one.
  *
- * `redirect(target)` builds the value a loader THROWS (or a guard returns) to turn the
- * in-flight navigation into a different one. The router recognizes it wherever it
- * surfaces - a guard verdict, a loader rejection, even a loader rejection observed
- * server-side by `matchAndLoad` (which surfaces it so the SSR layer can answer with a
- * real 302). It REPLACES by default: under the immediate-URL model the interrupted
- * navigation already wrote its entry, and a redirect should not leave that dead URL on
- * the back stack; pass `{ replace: false }` to push instead.
+ * The router recognizes it wherever it surfaces - a guard verdict, a loader rejection, even a
+ * loader rejection observed server-side by matchAndLoad, which surfaces it so the SSR layer
+ * can answer with a real 302.
+ *
+ * It REPLACES by default. Under the immediate-URL model the interrupted navigation has
+ * already written its entry, and a redirect should not leave that dead URL on the back stack.
+ * Pass `{ replace: false }` to push instead.
  */
 
 import type { NavigateTarget } from './types.ts';

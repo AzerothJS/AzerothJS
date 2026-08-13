@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/keyword-spec - single source of truth for reactive keyword -> runtime mapping
- *
- * Every reactive component-body keyword maps to exactly one runtime helper. Three emitters consult that
+ * The single source of truth for the reactive-keyword to runtime mapping. Every reactive component-body keyword maps to exactly one runtime helper. Three emitters consult that
  * mapping (and the kind categories they branch on):
  *   - codegen.ts        emits the runtime JS call (`createSignal(...)`);
  *   - project.ts        emits the type-equivalent TS for the projection;

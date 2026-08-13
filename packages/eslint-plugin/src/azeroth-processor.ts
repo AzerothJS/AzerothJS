@@ -323,6 +323,7 @@ function markupLint(projection: Projection): Linter.LintMessage[]
     });
 }
 
+/** Presents a `.azeroth` file to ESLint as TypeScript, mapping findings back to the original. */
 export const azerothProcessor: Linter.Processor =
 {
     meta: { name: '@azerothjs/eslint-plugin/azeroth', version: packageVersion },

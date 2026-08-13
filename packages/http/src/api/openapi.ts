@@ -1,5 +1,5 @@
 /**
- * MODULE: api/openapi - the feature record's third exporter
+ * The feature record's third exporter.
  *
  * A feature record already produces a server registration and a typed client from one
  * declaration; this module produces the OpenAPI 3.1 document from the same declaration -

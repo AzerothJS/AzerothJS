@@ -1,5 +1,5 @@
 /**
- * MODULE: context-merge - how a middleware's or guard's additions reach the context
+ * How a middleware's or guard's additions reach the context.
  *
  * ONE rule, one implementation. Middleware (the kernel's `App.route` composition) and
  * feature guards (`register`'s per-route chain) both let a function return an object

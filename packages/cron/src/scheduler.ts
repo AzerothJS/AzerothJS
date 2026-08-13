@@ -1,5 +1,5 @@
 /**
- * MODULE: cron/scheduler - named jobs over the expression engine
+ * Named jobs over the expression engine.
  *
  * What a hand-rolled setInterval gets wrong, fixed by construction:
  *

@@ -1,12 +1,11 @@
 /**
- * MODULE: renderer/transition-classes (internal)
+ * The one implementation of the six-class enter and leave play that Transition,
+ * TransitionGroup and the router's animated Routes all drive: add `{name}-{dir}-from` and
+ * `-active`, force a reflow, swap `-from` for `-to` on the next frame, and settle on
+ * transitionend - with a duration backstop, so a missing CSS transition can never wedge a
+ * state machine.
  *
- * The one implementation of the 6-class enter/leave play that <Transition>,
- * <TransitionGroup>, and the router's <Routes transition> all drive: add
- * `{name}-{dir}-from` + `-active`, force a reflow, swap `-from` for `-to` on the
- * next frame, and settle on transitionend - with a duration backstop so a missing
- * CSS transition can never wedge a state machine. Exposed as @internal runtime for
- * the framework's own animated components; not application API.
+ * Internal runtime for the framework's own animated components, not application API.
  */
 
 import { DEV } from '../reactivity/dev.ts';

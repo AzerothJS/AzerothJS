@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/dep - pure data types for reactive analysis
- *
- * Kept in their own module, free of any `typescript` import, so data layers like the Render Plan IR
+ * Pure data types for reactive analysis, kept in their own module, free of any `typescript` import, so data layers like the Render Plan IR
  * (ir.ts) can use {@link Dep} / {@link ReactiveSources} without pulling the TypeScript compiler into
  * their dependency graph.
  *

@@ -1,21 +1,19 @@
 /**
- * MODULE: renderer/virtual - windowed rendering without the re-slice trap
+ * Windowed rendering: ten thousand rows cost ten thousand rows, while a viewport shows
+ * thirty. The visible window plus overscan is rendered inside a spacer that preserves the
+ * scrollbar, and rows are repositioned as the user scrolls.
  *
- * Rendering ten thousand rows costs ten thousand rows; a viewport shows thirty. A
- * virtualizer renders the visible window (plus overscan) inside a spacer that preserves the
- * scrollbar, repositioning rows as the user scrolls.
+ * The trap this exists to remove is the re-slice. A hand-rolled virtualizer derives its
+ * window from the raw scroll position, which changes every frame, so the window memo
+ * invalidates and the list re-slices and reconciles on every scrolled pixel even when the
+ * same thirty rows are visible. The fix is an EQUALITY-GUARDED range memo - the same start
+ * and end is the same value, so no downstream work happens - and that is precisely the piece
+ * hand-rolled versions ship without.
  *
- * THE TRAP THIS EXISTS TO REMOVE: a hand-rolled virtualizer derives its window from the raw
- * scroll position - which changes EVERY FRAME - so the window memo invalidates and the list
- * re-slices and reconciles on every scrolled pixel, even when the visible rows are the same
- * thirty. The fix is an EQUALITY-GUARDED range memo (same start/end = same value, no
- * downstream work), which is exactly the subtle piece users ship without. createVirtualizer
- * owns that memo; <VirtualList> packages the whole scroller.
- *
- * V1 SCOPE, DELIBERATE: fixed `itemSize` and an explicit viewport size - no dynamic
- * per-item measurement (a measurement cache is a future surface, and fixed-size covers
- * tables, feeds, and logs). Everything is plain CSS positioning: an outer scroller, a
- * spacer carrying the total height, absolutely-positioned rows.
+ * Deliberately fixed `itemSize` and an explicit viewport size, with no per-item measurement:
+ * a measurement cache is a future surface, and fixed sizing already covers tables, feeds and
+ * logs. Positioning is plain CSS - an outer scroller, a spacer carrying the total height, and
+ * absolutely positioned rows.
  */
 
 import { createMemo, createSignal, type Getter } from '../reactivity/index.ts';
@@ -137,25 +135,17 @@ export interface VirtualListProps<T>
 }
 
 /**
- * VirtualList
+ * A windowed vertical list: only the visible rows plus overscan are rendered, inside a real
+ * scrollbar, and the list reconciles only when the window actually moves - not on every
+ * scrolled pixel.
  *
- * PURPOSE:
- * A windowed vertical list: renders only the visible rows (plus overscan) of a large
- * array inside a real scrollbar, reconciling ONLY when the window actually moves.
- *
- * WHEN TO USE:
- * Any list long enough that rendering it all is wasteful - feeds, tables, logs,
- * search results in the thousands.
- *
- * WHEN NOT TO USE:
- * Short lists (<For> alone is simpler) or rows of genuinely variable height (v1 is
- * fixed-size; measure-and-cache is a future surface).
+ * Rows must be a fixed `itemHeight`. Genuinely variable-height rows are not supported;
+ * measure-and-cache is a future surface. For a short list, `<For>` alone is simpler.
  *
  * @typeParam T - The item type.
- * @param props - {@link VirtualListProps}.
+ * @param props - See {@link VirtualListProps}.
  * @returns The scroller element.
- * @see {@link createVirtualizer}
- * @see {@link For}
+ * @see {@link createVirtualizer} for the headless core, when you need your own markup.
  */
 export function VirtualList<T>(props: VirtualListProps<T>): MountNode
 {
@@ -166,8 +156,8 @@ export function VirtualList<T>(props: VirtualListProps<T>): MountNode
         overscan: props.overscan ?? 5
     });
 
-    // Sliced ONLY when the window moves or the array identity changes - never
-    // per scrolled pixel. Rows carry their absolute index for keying/positioning.
+    // Sliced only when the window moves or the array identity changes, never per scrolled
+    // pixel. Rows carry their absolute index, for keying and positioning.
     const windowed = createMemo(() =>
     {
         const { start, end } = virtualizer.range();

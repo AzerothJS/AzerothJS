@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/record - the wire contract
+ * The wire contract.
  *
  * One log event is a LEVEL, a MESSAGE, a TIME, and a flat FIELDS object - nothing else.
  * Everything in the package is a function over that record: the logger produces them, a

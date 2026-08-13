@@ -1,20 +1,18 @@
 /**
- * MODULE: reactivity/hydration
+ * Hydration adopts server-rendered DOM instead of recreating it.
  *
- * Hydration ADOPTS server-rendered DOM instead of recreating it. The core problem:
- * h() evaluates children inside-out (an inner h() runs before its outer one), so a
- * child cannot claim its server node top-down while it is being built. The fix: in
- * 'hydrate' mode, h() and the control-flow components return a lightweight
- * {@link HydrationNode} descriptor instead of building DOM. Once the whole tree of
- * descriptors exists, hydrate() walks it TOP-DOWN against the server DOM through a
+ * The obstacle is evaluation order: h() evaluates children inside-out, an inner call
+ * completing before its outer one, so a child cannot claim its server node top-down while
+ * the tree is still being built. So in 'hydrate' mode h() and the control-flow components
+ * return a lightweight {@link HydrationNode} descriptor instead of DOM. Once the whole tree
+ * of descriptors exists, hydrate() walks it top-down against the server DOM through a
  * {@link HydrationCursor}, claiming each existing node and wiring listeners and effects
  * onto it.
  *
- * These are the DOM-free primitives shared by the renderer (h, control-flow) and
- * azerothjs (ErrorBoundary). The element-specific adoption (applyProps,
- * reactive-hole text patching) lives in the renderer. On any structural mismatch a
- * {@link HydrationMismatchError} is thrown and hydrate() falls back to a full client
- * render, so the app always boots.
+ * These are the DOM-free primitives shared by the renderer and the component layer;
+ * element-specific adoption lives in the renderer. Any structural mismatch throws
+ * {@link HydrationMismatchError}, and hydrate() falls back to a full client render, so the
+ * app always boots.
  */
 
 /**
@@ -30,22 +28,16 @@ export interface HydrationNode
     hydrate(cursor: HydrationCursor): void;
 }
 
-/**
- * Type guard: whether `x` is a {@link HydrationNode} descriptor.
- *
- * @param x - Any value.
- * @returns true if `x` is a hydration descriptor.
- */
+/** Whether `x` is a {@link HydrationNode} descriptor. */
 export function isHydrationNode(x: unknown): x is HydrationNode
 {
     return typeof x === 'object' && x !== null && (x as { __hydrate?: unknown }).__hydrate === true;
 }
 
 /**
- * Wraps an adoption function as a {@link HydrationNode}.
+ * Wraps an adoption routine as a {@link HydrationNode}.
  *
- * @param hydrate - The adoption routine that claims nodes from a cursor.
- * @returns A hydration descriptor.
+ * @param hydrate - Claims nodes from a cursor.
  */
 export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): HydrationNode
 {
@@ -67,12 +59,9 @@ export class HydrationMismatchError extends Error
 }
 
 /**
- * Copies symbol-keyed properties (e.g. the destroy hooks azerothjs attaches)
- * from a descriptor onto the real element it was adopted into, so destroyComponent()
- * finds them on the live node after hydration.
- *
- * @param from - The descriptor that carried the symbols.
- * @param to - The adopted real element.
+ * Copies symbol-keyed properties - the destroy hooks the component layer attaches - from a
+ * descriptor onto the real element it was adopted into, so teardown finds them on the live
+ * node after hydration.
  */
 export function transferCarriedSymbols(from: object, to: object): void
 {
@@ -83,15 +72,15 @@ export function transferCarriedSymbols(from: object, to: object): void
 }
 
 /**
- * HydrationCursor
+ * A read cursor over a parent's children, adopting server-rendered DOM in source order.
  *
- * A read cursor over a parent node's children, used to adopt server-rendered DOM in
- * source order. It snapshots `childNodes` at construction so later DOM mutations (a
- * control-flow swap, anchor removal) do not shift it. The take* methods claim the next
- * node and advance; a mismatch throws {@link HydrationMismatchError}. The cursor
- * understands two marker schemes: reactive-hole anchors (comment data `[` / `]`) and
- * balanced control-flow anchors (`azc:type` / `/azc`), which use distinct sigils so
- * nesting resolves correctly.
+ * It snapshots `childNodes` at construction, so a later DOM mutation - a control-flow swap,
+ * an anchor removal - cannot shift it. Each `take*` method claims the next node and
+ * advances, throwing {@link HydrationMismatchError} on anything unexpected.
+ *
+ * Two marker schemes are understood, with distinct sigils so nesting resolves correctly:
+ * reactive-hole anchors (comment data `[` and `]`) and balanced control-flow anchors
+ * (`azc:type` and `/azc`).
  *
  * @example
  * // <div id="root"><p>hi</p>text</div>
@@ -101,22 +90,19 @@ export function transferCarriedSymbols(from: object, to: object): void
  */
 export class HydrationCursor
 {
-    /** The parent node whose children are being adopted (used for live DOM ops). */
+    /** The parent whose children are being adopted; also the target of live DOM operations. */
     public readonly parent: Node;
 
-    /** Snapshot of the parent's children at construction time. @internal */
     readonly #nodes: ChildNode[];
 
-    /** Index of the next unclaimed child. @internal */
     #index: number = 0;
 
     /**
-     * @param parent - The node whose children are adopted (used for live DOM ops, e.g.
-     *                 patching a reactive hole).
-     * @param nodes - An explicit node list to walk instead of `parent`'s live children;
-     *                used to hydrate a control-flow component's content (the slice
-     *                between its comment markers), whose nodes are siblings of the
-     *                markers in `parent`, not a separate child list.
+     * @param parent - The node whose children are adopted, and the target for live DOM
+     *                 operations such as patching a reactive hole.
+     * @param nodes - An explicit list to walk instead of `parent`'s live children. Used for a
+     *                control-flow component's content, the slice between its comment markers,
+     *                whose nodes are siblings of those markers rather than a child list.
      */
     constructor(parent: Node, nodes?: ChildNode[])
     {
@@ -124,21 +110,13 @@ export class HydrationCursor
         this.#nodes = nodes ?? Array.from(parent.childNodes);
     }
 
-    /**
-     * Returns the next unclaimed node without advancing.
-     *
-     * @returns The next node, or null at the end.
-     */
+    /** The next unclaimed node, or null at the end. Does not advance. */
     public peek(): ChildNode | null
     {
         return this.#nodes[this.#index] ?? null;
     }
 
-    /**
-     * Returns the next unclaimed node if it is an element, without advancing.
-     *
-     * @returns The element, or null if the next node is not an element.
-     */
+    /** The next unclaimed node if it is an element, otherwise null. Does not advance. */
     public peekElement(): HTMLElement | null
     {
         const node = this.peek();
@@ -146,20 +124,18 @@ export class HydrationCursor
     }
 
     /**
-     * Claims the next node, which must be an element (optionally of `expectedTag`).
+     * Claims the next node, which must be an element.
      *
-     * @param expectedTag - If given, the element's tag must match (case-insensitive).
-     * @returns The claimed element.
-     * @throws {@link HydrationMismatchError} if the next node is not the expected element.
+     * @param expectedTag - When given, the tag must match case-insensitively.
+     * @throws {@link HydrationMismatchError} If the next node is not that element.
      */
     public takeElement(expectedTag?: string): HTMLElement
     {
-        // Implicit <tbody>: the HTML parser wraps a <table>'s <tr>/<td> rows in a <tbody> that the
-        // client build (programmatic DOM) never creates, so a server row sits one level deeper than
-        // the descriptor expects. When a NON-tbody element is expected but the cursor is at an
-        // implicit <tbody>, splice its children into the walk so the row is adopted directly. An
-        // EXPLICIT <tbody> is expected as 'tbody' and matches below without unwrapping, so only the
-        // parser-inserted one is flattened.
+        // The HTML parser wraps a table's rows in a <tbody> that the client's programmatic DOM
+        // never creates, so a server row sits one level deeper than the descriptor expects. When
+        // a non-tbody element is expected but the cursor is at one, splice its children into the
+        // walk so the row is adopted directly. An EXPLICIT <tbody> is expected as 'tbody' and
+        // matches below without unwrapping, so only the parser-inserted one is flattened.
         if (expectedTag !== undefined && expectedTag.toLowerCase() !== 'tbody')
         {
             const at = this.#nodes[this.#index];
@@ -188,10 +164,9 @@ export class HydrationCursor
     }
 
     /**
-     * Claims the next node, which must be a text node.
+     * Claims the next node, which must be text.
      *
-     * @returns The claimed text node.
-     * @throws {@link HydrationMismatchError} if the next node is not text.
+     * @throws {@link HydrationMismatchError} If the next node is not text.
      */
     public takeText(): Text
     {
@@ -207,9 +182,9 @@ export class HydrationCursor
     }
 
     /**
-     * Claims the opening reactive-hole anchor (comment `<!--[-->`).
+     * Claims the opening reactive-hole anchor, the comment `<!--[-->`.
      *
-     * @throws {@link HydrationMismatchError} if the next node is not the open anchor.
+     * @throws {@link HydrationMismatchError} If the next node is not that anchor.
      */
     public takeOpenAnchor(): void
     {
@@ -224,11 +199,10 @@ export class HydrationCursor
     }
 
     /**
-     * Claims everything up to and including the closing reactive-hole anchor
-     * (`<!--]-->`).
+     * Claims everything up to and including the closing reactive-hole anchor `<!--]-->`.
      *
-     * @returns The content nodes between the anchors, plus the close anchor.
-     * @throws {@link HydrationMismatchError} if no close anchor is found.
+     * @returns The content between the anchors, plus the close anchor itself.
+     * @throws {@link HydrationMismatchError} If no close anchor is found.
      */
     public takeUntilCloseAnchor(): { content: ChildNode[]; closeAnchor: Comment }
     {
@@ -256,11 +230,11 @@ export class HydrationCursor
     }
 
     /**
-     * Claims a control-flow OPEN anchor (`<!--azc:type-->`), returned as the live start
-     * marker the component reuses for later swaps.
+     * Claims a control-flow open anchor `<!--azc:type-->`.
      *
-     * @returns The open-anchor comment node.
-     * @throws {@link HydrationMismatchError} if the next node is not a control-flow open anchor.
+     * @returns The comment node, which the component keeps as the live start marker it
+     *          reuses for later swaps.
+     * @throws {@link HydrationMismatchError} If the next node is not such an anchor.
      */
     public takeCoOpen(): Comment
     {
@@ -276,14 +250,16 @@ export class HydrationCursor
     }
 
     /**
-     * Claims everything up to (not including) the BALANCED control-flow close anchor
-     * (`<!--/azc-->`), then consumes that close. Balanced means nested control-flow
-     * ranges are skipped: each `azc:*` raises depth, each `/azc` lowers it, so the close
-     * returned matches the open already claimed by {@link takeCoOpen}. Reactive-hole
-     * anchors (`[`/`]`) use a different sigil and count as ordinary content.
+     * Claims everything up to the balanced control-flow close anchor `<!--/azc-->`, then
+     * consumes that close.
      *
-     * @returns The content nodes between the markers, plus the matching close marker.
-     * @throws {@link HydrationMismatchError} if no matching close anchor is found.
+     * Balanced means nested ranges are skipped: each `azc:*` raises the depth and each
+     * `/azc` lowers it, so the close returned matches the open already claimed by
+     * {@link takeCoOpen}. Reactive-hole anchors use a different sigil and count as ordinary
+     * content.
+     *
+     * @returns The content between the markers, plus the matching close marker.
+     * @throws {@link HydrationMismatchError} If no matching close anchor is found.
      */
     public takeCoBalanced(): { content: ChildNode[]; end: Comment }
     {
@@ -325,12 +301,12 @@ export class HydrationCursor
     }
 
     /**
-     * Asserts every node in this cursor's range has been claimed. A leftover node means
-     * the server rendered MORE than the client expects - a mismatch the take* methods
-     * cannot catch (they only detect a missing or wrong node, never an extra one).
+     * Asserts every node in this cursor's range was claimed. A leftover means the server
+     * rendered MORE than the client expects, which the take* methods cannot catch on their
+     * own: they detect a missing or wrong node, never an extra one.
      *
-     * @param context - A short label for the mismatch message (e.g. `<div>`).
-     * @throws {@link HydrationMismatchError} if any node remains unclaimed.
+     * @param context - Short label for the mismatch message, such as `<div>`.
+     * @throws {@link HydrationMismatchError} If any node remains unclaimed.
      */
     public assertExhausted(context: string): void
     {
@@ -342,13 +318,7 @@ export class HydrationCursor
     }
 }
 
-/**
- * A short human-readable label for a node, used in mismatch messages.
- *
- * @internal
- * @param node - The node to describe (or null/undefined for end-of-children).
- * @returns A label like `<div>`, `text node`, or `comment "[..]"`.
- */
+/** A short label for a node in mismatch messages: `<div>`, `text node`, `comment "["`. */
 function describe(node: ChildNode | null | undefined): string
 {
     if (!node)

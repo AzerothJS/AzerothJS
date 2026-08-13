@@ -1,5 +1,5 @@
 /**
- * MODULE: kit/ssr - the page renderer (runs in the SSR bundle)
+ * The page renderer (runs in the SSR bundle).
  *
  * `createPageRenderer(App, routes)` is the one line an application's SSR entry
  * needs. The returned function renders ONE url to a full HTML document, doing

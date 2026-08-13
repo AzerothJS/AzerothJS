@@ -1,5 +1,5 @@
 /**
- * MODULE: http/router - the radix-tree route matcher
+ * The radix-tree route matcher.
  *
  * Routing is a pure data structure with no HTTP in it: insert (method, pattern, value) pairs
  * at startup, then match (method, path) per request. Three design decisions do the heavy

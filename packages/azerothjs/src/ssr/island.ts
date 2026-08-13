@@ -1,7 +1,5 @@
 /**
- * MODULE: server/island
- *
- * island() marks a component as an interactivity boundary in an otherwise static
+ * Marks a component as an interactivity boundary in an otherwise static
  * server-rendered page. The page shell ships as plain HTML and is never hydrated; each island's
  * ROOT ELEMENT carries the anchor attributes (module specifier + JSON props) - no wrapper node,
  * so an island is valid anywhere its own root is (a `<tr>` island sits directly in a `<tbody>`) -
@@ -20,72 +18,34 @@ import { isStringMode, isHydrating, escapeAttr, ssr } from '../reactivity/index.
 import { serializeChild } from '../reactivity/internal.ts';
 
 /**
- * island
+ * Marks a component as an interactivity boundary in an otherwise static page.
  *
- * PURPOSE:
- * Wraps a component as an island: on the server it emits the island anchor (carrying the module
- * specifier and serialized props) around the component's markup; in a client/CSR run it renders
- * the component inline (transparent).
+ * `src` MUST match the key in the client's hydrateIslands registry, or the island simply
+ * stays static - there is no error for a mismatch on this side.
  *
- * WHY IT EXISTS:
- * Islands architecture ships a mostly-static page and hydrates only interactive regions, so client
- * JS and hydration cost scale with the islands, not the whole page. island() is how the SERVER
- * marks those boundaries - emitting the anchor + props that hydrateIslands() later matches and
- * revives - while keeping the shell pure HTML.
+ * Props cross the boundary as JSON in a data attribute, so pass ids and values and let the
+ * island build its own state from them. A function, symbol or bigint throws a descriptive
+ * error rather than being silently dropped and surfacing as `undefined` on the client.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, server; the SSR half of islands (its client half is hydrateIslands in
- * azerothjs). Mode-dispatched: 'string' emits the anchor wrapper; 'dom' is transparent
- * (inline render); 'hydrate' throws, because the shell is not hydrated.
+ * In a pure client run it renders inline and is completely transparent, so one page component
+ * serves both SSR and a CSR dev run unchanged. Reaching it while hydrating throws: the shell
+ * is deliberately not hydrated, and reviving islands is hydrateIslands's job. Islands do not
+ * nest.
  *
- * INPUT CONTRACT:
- * - src: the module specifier the CLIENT registry resolves (the key handed to hydrateIslands),
- *   e.g. '/islands/counter.azeroth'.
- * - component: the island component (its module's default export).
- * - props: JSON-serializable props, embedded in the markup; a non-JSON value throws.
- *
- * OUTPUT CONTRACT:
- * - string mode: an SSRNode of the component's markup with the anchor attributes riding on
- *   its root element (no wrapper node). dom mode: the component rendered inline. hydrate
- *   mode: throws with guidance to use hydrateIslands().
- *
- * WHY THIS DESIGN:
- * Props travel as JSON because they cross the server->client boundary in a data attribute; the
- * serializer throws on functions/symbols/bigints so a signal or callback is not silently dropped
- * (surfacing as undefined on the client). The dom-mode transparency lets ONE page component serve
- * both SSR and pure-CSR dev without change.
- *
- * WHEN TO USE:
- * For server pages that are mostly static with a few interactive widgets (counter, search box,
- * cart) you want revived independently.
- *
- * WHEN NOT TO USE:
- * For a fully interactive app (render the whole tree and hydrate it). Do not nest islands.
- *
- * EDGE CASES:
- * - A prop that JSON cannot carry (function/symbol/bigint/undefined) throws a descriptive error.
- * - Reaching it in hydrate mode throws (the shell is not hydrated; use hydrateIslands()).
- *
- * PERFORMANCE NOTES:
- * One anchor wrapper + inline serialization per island; client revival cost scales with the
- * number/size of islands, not the page.
- *
- * DEVELOPER WARNING:
- * `src` MUST match the key in the client's hydrateIslands registry, or the island stays static.
- * Props must be plain JSON data (ids/values), not signals/handlers - the island builds its own
- * state from them.
- *
- * @typeParam P - The island's props (JSON-serializable by contract).
- * @param src - The client-registry module specifier.
- * @param component - The island component.
- * @param props - JSON-serializable props embedded in the markup.
- * @returns An island-anchor SSRNode (string mode) or the inline component (dom mode).
- * @see hydrateIslands (in azerothjs)
+ * @typeParam P - The props, JSON-serializable by contract.
+ * @param src - The module specifier the client registry resolves.
+ * @param component - The island component, its module's default export.
+ * @param props - Embedded in the markup as JSON.
+ * @returns The component's markup with the anchor attributes on its ROOT element, so an
+ *          island is valid anywhere its own root is - a `<tr>` island sits directly in a
+ *          `<tbody>`.
+ * @throws {Error} If a prop cannot be represented as JSON, or if called while hydrating.
  * @example
  * const Page = () => h('main', {},
- *   h('h1', {}, 'Mostly static'),
- *   island('/islands/counter', Counter, { start: 5 })
+ *     h('h1', {}, 'Mostly static'),
+ *     island('/islands/counter', Counter, { start: 5 })
  * );
+ *
  * const html = renderToDocument(() => Page(), { title: 'Islands' });
  */
 export function island<P extends Record<string, unknown>>(

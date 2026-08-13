@@ -1,5 +1,5 @@
 /**
- * MODULE: http/security - baseline response security headers
+ * Baseline response security headers.
  *
  * The zero-dependency answer to helmet: a set of well-understood response headers, safe
  * defaults on, each one overridable or removable. A DEFAULT applies only where the response

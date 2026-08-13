@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/ir - the Render Plan IR
- *
- * A target-INDEPENDENT description of how a component's output is built and updated. This is the
+ * The Render Plan IR: a target-independent description of how a component's output is built and updated. This is the
  * single source of truth: one IR is lowered to the DOM target, to SSR, and to hydration - so the
  * framework never hand-syncs two emitters again.
  *

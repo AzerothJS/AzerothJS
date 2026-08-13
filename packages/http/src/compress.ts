@@ -1,5 +1,5 @@
 /**
- * MODULE: http/compress - negotiated response compression via node:zlib
+ * Negotiated response compression via node:zlib.
  *
  * `compressResponse(request, response)` returns the response compressed with the best
  * encoding the client accepts (brotli > gzip > deflate), or the response untouched when

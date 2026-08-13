@@ -1,6 +1,4 @@
 /**
- * MODULE: schema/validators
- *
  * Built-in field validators - the framework's ONE set of rules, shared by the browser form
  * (createForm's `validate` option), this package's `refine`, and anywhere else a
  * `(value) => message | null` check fits. Each factory returns a FieldValidator<V>, optionally

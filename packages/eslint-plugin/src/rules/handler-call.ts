@@ -28,6 +28,7 @@ function isBareReference(node: AstNode | undefined): boolean
     return false;
 }
 
+/** Reports an `on*` handler that runs at setup rather than on the event. */
 export const handlerCall: Rule.RuleModule = {
     meta:
     {

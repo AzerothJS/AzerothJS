@@ -1,9 +1,8 @@
 /**
- * MODULE: router/use-loader
+ * The live Resource holding a route level's loader output.
  *
- * useLoader returns the live Resource holding a route level's loader output. The router
- * keeps ONE resource per matched-chain level (all levels load in parallel); this
- * composable answers "which level do you mean" three ways:
+ * The router keeps ONE resource per matched-chain level, and all levels load in parallel.
+ * This composable answers "which level do you mean" in three ways:
  *
  *   - `useLoader()` inside a route component - THIS component's level (the construction
  *     frame `<Routes>` provides), falling back to the nearest ANCESTOR level that
@@ -59,34 +58,40 @@ function deepestLoaderLevel(router: Router): number | null
 }
 
 /**
- * useLoader
+ * The loader {@link Resource} for a route level, typed by the handle it is given.
  *
- * PURPOSE:
- * Returns the loader {@link Resource} (data/loading/error/refetch) for a route level -
- * this component's own level, a handle's level (typed), or the deepest loading level.
+ * Call it during component CONSTRUCTION, at the top of the body, like every composable. The
+ * resource it returns stays live for reads afterwards.
  *
- * INPUT CONTRACT:
- * - `useLoader()` (no arguments) inside a route component body: this level. Outside a
- *   component build it needs a router from `<RouterProvider>` context and reads the
- *   deepest loading level.
- * - `useLoader(handle, router?)`: that handle's level, `Resource<Data>` - no cast.
- * - `useLoader(router)`: explicit router, deepest loading level (the v1 shape).
+ * The returned getters are views over the router's shared per-level resources, so every
+ * consumer of a level sees one coordinated state and one refetch. A level with no loader, or
+ * no matching route, reads as idle: data undefined and loading false.
  *
- * OUTPUT CONTRACT:
- * - Getters over the router's shared per-level resources: consumers see one
- *   coordinated state and one refetch() per level. Idle (data undefined, loading
- *   false) when the level has no loader or no route matches.
+ * The bare-generic form `useLoader<T>(router)` is an unchecked cast; prefer a handle when you
+ * want the typing actually verified.
  *
- * DEVELOPER WARNING:
- * Call it during component CONSTRUCTION (the top of the component body), like every
- * composable; the returned resource stays live for later reads. The bare-generic cast
- * (`useLoader<T>(router)`) remains unchecked - prefer a handle for checked typing.
- *
+ * @param handle - The route handle whose level to read.
+ * @param router - Optional explicit router. Resolved from context when omitted.
+ * @returns A resource typed from the handle's loader.
  * @example
- * const user = useLoader(userRoute);            // Resource<User> - typed by the handle
+ * const user = useLoader(userRoute); // Resource<User>
+ *
  * h('div', {}, () => user.loading() ? 'Loading...' : (user.data()?.name ?? 'No data'));
  */
 export function useLoader<Path extends string, Data, Search>(handle: RouteHandle<Path, Data, Search>, router?: Router): Resource<Data>;
+/**
+ * Untyped form. Called with no arguments inside a route component body it reads THIS
+ * component's level, falling back to the nearest ancestor level that declares a loader - which
+ * is how a leaf reads its layout's data. Anywhere else it reads the deepest level with a
+ * loader, tracking navigation.
+ *
+ * `T` is an unchecked cast: nothing verifies the loader actually returns it. Pass a route
+ * handle instead when you want the typing verified.
+ *
+ * @typeParam T - Asserted data type, unchecked.
+ * @param router - Optional explicit router. Resolved from context when omitted.
+ * @returns The level's resource, idle when that level has no loader.
+ */
 export function useLoader<T = unknown>(router?: Router): Resource<T>;
 export function useLoader(
     first?: Router | RouteHandle<string, unknown, unknown>, second?: Router

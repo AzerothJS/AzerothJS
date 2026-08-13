@@ -1,5 +1,5 @@
 /**
- * MODULE: csrf - double-submit cookie plus origin policy
+ * Double-submit cookie plus origin policy.
  *
  * The browser threat CSRF names: a hostile page making the victim's browser send a
  * state-changing request with the victim's AMBIENT credentials (cookies). Two independent

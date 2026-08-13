@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/vite-logger - the framework's face on vite's own output
+ * The framework's face on Vite's own output.
  *
  * Vite's dev chatter is three different things at once: an identity block (the
  * `VITE vX ready` line, the URL list, the shortcuts hint), per-change HMR notices,

@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/parser - the component-pipeline parser
- *
- * Splits a `.azeroth` source into opaque JS/TS regions and `component` declarations, and parses each
+ * The component-pipeline parser. Splits a `.azeroth` source into opaque JS/TS regions and `component` declarations, and parses each
  * component body into items - state/derived declarations, effect blocks, the markup output, and opaque
  * statement runs.
  *
@@ -168,65 +166,28 @@ export function step(source: string, i: number, prevChar: string, prevWord: stri
 }
 
 /**
- * parseModule
+ * Parses a source into its module-level structure: opaque regions and component declarations,
+ * each with its parsed body items. The items TILE the source - every byte lands in exactly one
+ * region or component - and inner JS and TS is left as spans rather than parsed.
  *
- * PURPOSE:
- * Parses a `.azeroth` source into its module-level structure: opaque regions and `component`
- * declarations, each with its parsed body items.
+ * It is total and NEVER throws. Malformed input still yields a module, with the troublesome
+ * stretch left as an opaque region, so a build or an editor degrades rather than aborting.
  *
- * WHY IT EXISTS:
- * It is the front of the component pipeline - the step that finds the components and carves the body
- * into the items analyze/lower/codegen consume, while passing ordinary TS/JS through as opaque spans.
+ * That has a consequence worth internalising: a parse problem surfaces as an opaque region,
+ * not an error. "No component found" is therefore not proof the source is component-free - it
+ * can equally mean the shape was not recognised. diagnoseModule's
+ * `azeroth/malformed-component` names those cases for authors, so run it wherever silence
+ * would hurt.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, parsing stage; the first call in generateModule (and diagnoseModule), feeding
- * analyzeComponent and lowerComponent.
- *
- * INPUT CONTRACT:
- * - source: the `.azeroth` module text.
- *
- * OUTPUT CONTRACT:
- * - A {@link Module} whose items TILE the whole source (every byte is in exactly one opaque region or
- *   component). Inner JS/TS is left as spans, not parsed.
- *
- * WHY THIS DESIGN:
- * It is TOTAL and allocation-light and NEVER throws - malformed input still yields a module (with the
- * troublesome stretch as an opaque region), so the build/tooling degrades gracefully rather than
- * aborting. The single `step` routine consuming whole markup regions is what keeps brace/terminator
- * scanning correct across interleaved JS and markup.
- *
- * WHEN TO USE:
- * The start of any component-pipeline operation (compile, diagnose).
- *
- * WHEN NOT TO USE:
- * Parsing a lone markup region (use {@link parseMarkup}); parsing expression interiors (left to
- * TypeScript via ts-slice).
- *
- * EDGE CASES:
- * - `export`/`export default` before `component` stays in the preceding opaque region (a known limit).
- * - `component Foo<T> {` (type params) is not yet recognized as a component.
- * - A `<` that is neither valid markup nor a generic arrow is treated as an operator.
- *
- * PERFORMANCE NOTES:
- * A single pass over the source via `step`; inner JS/TS is not parsed here.
- *
- * DEVELOPER WARNING:
- * Because it never throws, a parse problem surfaces as an OPAQUE region rather than an error - don't
- * treat "no component found" as proof the source is component-free; it can mean the shape wasn't
- * recognized (see Known Limitations in the module header). diagnoseModule's
- * `azeroth/malformed-component` names those cases for authors - run it wherever silence would hurt.
- *
- * @param source - The `.azeroth` module source
- * @returns The {@link Module}; module-level items tile the whole source.
- * @see {@link parseMarkup}
- * @see {@link Module}
- *
+ * @param source - The module source.
+ * @returns The parsed module.
  * @example
- * ```ts
- * const m = parseModule('component A { state n = 0; <p>{n}</p> }');
- * (m.items[0] as { body: { kind: string }[] }).body.map(b => b.kind);
+ * const module = parseModule('component A { state n = 0; <p>{n}</p> }');
+ *
+ * (module.items[0] as { body: { kind: string }[] }).body.map(b => b.kind);
  * // ['state', 'markup']
- * ```
+ *
+ * @see {@link parseMarkup} for a lone markup region.
  */
 export function parseModule(source: string): Module
 {
@@ -369,9 +330,8 @@ function tryParseComponent(source: string, keywordStart: number, keywordEnd: num
 }
 
 /**
- * Parses the interior of a component body `[bodyStart, bodyEnd)` into body
- * items. Reactive declarations, effects, and the props block are recognized at
- * the body's top level (depth 0) at statement start; markup regions become the
+ * Parses the interior of a component body into body items. Reactive declarations and effects
+ * are recognized at the body's top level, at statement start; markup regions become the
  * output; everything else accumulates into opaque statement runs.
  *
  * @internal

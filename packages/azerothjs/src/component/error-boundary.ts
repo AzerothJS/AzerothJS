@@ -1,7 +1,5 @@
 /**
- * MODULE: component/error-boundary
- *
- * <ErrorBoundary> wraps a child factory and swaps to a fallback when the child throws - sugar
+ * Wraps a child factory and swaps to a fallback when the child throws - sugar
  * over catchError from azerothjs, catching BOTH synchronous setup errors and errors
  * thrown later by effects/memos created inside the child subtree.
  *
@@ -58,70 +56,35 @@ interface ErrorState
 }
 
 /**
- * ErrorBoundary
+ * Catches errors thrown inside `children` and renders `fallback(error, reset)` in their place.
  *
- * PURPOSE:
- * Catches errors thrown inside `children` - synchronously during children(), and from
- * effects/memos created in the subtree even on much later signal changes - and renders
- * `fallback(error, reset)` in their place, with reset() to re-attempt children.
+ * Both the synchronous throw during construction and a throw from an effect or memo created
+ * in the subtree are caught, however much later that happens. What is NOT caught: async
+ * data-fetch failures, which you observe through `Resource.error()` at the call site, and
+ * errors in event handlers or promise rejections.
  *
- * WHY IT EXISTS:
- * A throw in a child effect/memo otherwise bubbles up and tears down the surrounding subtree.
- * Doing catchError() + a manual content swap by hand is verbose and offers no retry.
- * ErrorBoundary declares fallback + children, catches at the boundary, swaps the branch, and
- * hands the fallback a reset(), so recoverable error UI is one component.
+ * Keep the fallback safe. It is deliberately NOT wrapped in the boundary's own handler, so a
+ * fallback that throws escapes to a parent boundary or the page - which is what stops a
+ * broken fallback from re-triggering its own boundary forever.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, component; a control-flow brancher built on catchError. Mode-dispatched: a plain
- * try/catch in SSR (no later effect runs; reset is a no-op in static HTML), a localized rebuild
- * on hydration, and catchError + co-range swap on the client.
+ * A thrown `null` or `undefined` is still caught, because the captured error is stored
+ * wrapped rather than as a bare value. `reset()` with nothing captured is a no-op.
  *
- * INPUT CONTRACT:
- * - fallback: (error, reset) => HTMLElement; renders the error UI.
- * - children: () => HTMLElement; the protected subtree, re-evaluated on each reset.
+ * Nest boundaries freely: the innermost catches first, the outer ones are the safety net.
  *
- * OUTPUT CONTRACT:
- * - Returns a co-range handle holding either the children subtree or the fallback, swapping
- *   reactively as errors are caught and reset.
- *
- * WHY THIS DESIGN:
- * children() runs in catchError inside a per-branch createRoot, so the whole failing subtree
- * disposes on swap. The captured error lives in a `{ value } | null` signal so a thrown
- * null/undefined is distinguishable from "no error". The fallback is deliberately NOT wrapped in
- * catchError, so a broken fallback escapes to a parent boundary instead of looping.
- *
- * WHEN TO USE:
- * Around any subtree that may throw and should degrade to recoverable error UI; nest boundaries
- * so an inner one catches first and the outer is a safety net.
- *
- * WHEN NOT TO USE:
- * For async data-fetch errors (observe Resource.error() at the call site - they do NOT route
- * here). For ordinary conditional rendering (use {@link Show}). It does not catch event-handler
- * or promise-rejection errors.
- *
- * EDGE CASES:
- * - A thrown null/undefined is still caught (the `{ value }` wrapper distinguishes it).
- * - A throw inside the fallback propagates outside the boundary (no loop).
- * - reset() with no captured error is a no-op.
- *
- * PERFORMANCE NOTES:
- * One branch alive at a time; a swap happens only when an error is caught or reset is called.
- *
- * DEVELOPER WARNING:
- * Keep the fallback safe - if it can throw, the error escapes to a parent boundary or the page.
- * Only reactive throws (setup + effect/memo) are caught; route async failures through Resource.
- *
- * @param props - {@link ErrorBoundaryProps}: `fallback`, `children`.
- * @returns A co-range handle that swaps children/fallback on error and reset.
- * @see {@link Show}
+ * @param props - `fallback` renders the error UI and receives `reset`; `children` is the
+ *                protected subtree, re-evaluated on every reset.
+ * @returns A handle that swaps between children and fallback.
  * @example
  * ErrorBoundary({
- *   fallback: (err, reset) => h('div', { class: 'error' },
- *     h('p', {}, `Something broke: ${ String(err) }`),
- *     h('button', { onClick: reset }, 'Try again')
- *   ),
- *   children: () => RiskyComponent({})
+ *     fallback: (error, reset) => h('div', { class: 'error' },
+ *         h('p', {}, `Something broke: ${ String(error) }`),
+ *         h('button', { onClick: reset }, 'Try again')
+ *     ),
+ *     children: () => RiskyComponent({})
  * });
+ *
+ * @see {@link Show} for ordinary conditional rendering.
  */
 export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
 {

@@ -1,5 +1,5 @@
 /**
- * MODULE: api/client - the fully inferred client over a feature's type plus its manifest
+ * The fully inferred client over a feature's type plus its manifest.
  *
  * `createClient<typeof features>(manifest, { baseUrl })` yields a call surface mirroring the
  * registered record: `client.keys.create({ input })` - argument and return types inferred from

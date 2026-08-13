@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/ts-slice - slice parsing for the semantic pass
+ * Slice parsing for the semantic pass.
  *
  * The inner JS/TS of a component body is parsed by TypeScript, NOT a hand-written parser. This parses
  * ONE slice at a time (a declaration, an effect block, or a markup hole/attribute expression) rather

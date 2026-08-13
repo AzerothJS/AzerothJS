@@ -1,14 +1,14 @@
 /**
- * MODULE: reactivity/render-mode-client (internal)
+ * The client-only drop-in for ./render-mode.ts, substituted by the Vite plugin when an app
+ * compiles with `ssr: false`. Every mode getter returns a constant, so a minifier folds the
+ * runtime's `isStringMode()` and `isHydrating()` branches to dead code and the SSR and
+ * hydration machinery behind them leaves the bundle.
  *
- * CLIENT-ONLY drop-in for ./render-mode.ts, substituted by the Vite plugin when the app compiles
- * with `ssr: false`. The mode getters return constants, so a minifier folds every
- * `if (isStringMode() || isHydrating())` branch in the runtime to dead code and the SSR/hydration
- * machinery those branches reference drops out of the bundle. Keep the export surface IDENTICAL
- * to ./render-mode.ts - the substitution is by module id, not by name.
+ * Keep the export surface IDENTICAL to ./render-mode.ts: the substitution is by module id,
+ * so a missing export here becomes a runtime failure in a client-only build only.
  */
 
-/** Mirror of ./render-mode.ts's RenderMode; only 'dom' ever occurs client-only. */
+/** Mirrors ./render-mode.ts. Only 'dom' ever occurs in a client-only build. */
 export type RenderMode = 'dom' | 'string' | 'hydrate';
 
 /** Client-only build: the mode is always 'dom'. */

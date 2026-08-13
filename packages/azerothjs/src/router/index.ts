@@ -1,6 +1,4 @@
 /**
- * MODULE: azerothjs - public API
- *
  * A manual-first client router: an explicit Router instance from createRouter, the
  * <Link>/<Routes>/<Outlet> components, the useRoute/useParams/useQuery/useNavigate/useLoader
  * composables, and the path/query/history utilities. Routes are DATA (passed to createRouter), not

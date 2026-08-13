@@ -1,20 +1,18 @@
 /**
- * MODULE: reactivity/batch
+ * The write-flush scheduler that makes every write glitch-free, and the public batch()
+ * that extends the same guarantee across a group of writes.
  *
- * The write-flush scheduler: the machinery that makes every write GLITCH-FREE, and the
- * public batch() that extends the same guarantee across a group of writes.
+ * Every top-level write runs inside an implicit flush ({@link notifyWrite}): the
+ * notification wave only marks memos and queues affected effects, and once the wave has
+ * fully propagated the queued effects run exactly once against settled memos. Without it,
+ * a diamond - one signal feeding two memos read by one effect - fired the effect once per
+ * branch, the first time on mixed-generation state with one memo fresh and the other
+ * stale. The flush is synchronous: by the time a setter returns, every affected effect has
+ * run.
  *
- * EVERY top-level write runs inside an implicit flush ({@link notifyWrite}): the
- * notification wave only MARKS memos and QUEUES affected effects; when the wave has
- * fully propagated, the queued effects run exactly once, validating their dependencies
- * against settled memos. Without this, a diamond (one signal feeding two memos read by
- * one effect) fired the effect once per branch - the first time on mixed-generation
- * state (one memo fresh, the other stale). The flush is fully SYNCHRONOUS: by the time
- * a setter returns, every affected effect has run.
- *
- * batch() extends the same window across MULTIPLE writes: two setters that share a
- * downstream effect run it once per setter when unbatched (each on consistent state),
- * and once in total inside batch().
+ * batch() widens that window across multiple writes. Two setters sharing a downstream
+ * effect run it twice when unbatched (each time on consistent state) and once inside a
+ * batch.
  */
 
 import type { Producer, Subscriber } from './types.ts';
@@ -43,23 +41,13 @@ let solo: Subscriber | null = null;
  */
 const MAX_FLUSH_ROUNDS = 1000;
 
-/**
- * Whether a batch is currently open. createEffect reads this to decide run-now vs queue.
- *
- * @internal
- * @returns True if inside an open batch().
- */
+/** Whether a batch is open; createEffect reads it to decide run-now vs queue. @internal */
 export function isBatching(): boolean
 {
     return batching;
 }
 
-/**
- * Queues an effect to run when the current batch flushes.
- *
- * @internal
- * @param subscriber - The effect to defer.
- */
+/** Queues an effect to run when the current batch flushes. @internal */
 export function queueEffect(subscriber: Subscriber): void
 {
     if (solo === null && queue.size === 0)
@@ -80,14 +68,13 @@ export function queueEffect(subscriber: Subscriber): void
 }
 
 /**
- * A top-level write's notification entry: opens an implicit flush window, propagates
- * the wave (memos mark, effects queue), then drains - so every affected effect runs
- * exactly once, AFTER the whole wave, on settled state. This is what makes a plain
- * unbatched write glitch-free. A write landing inside an open window (a batch(), a
- * flushing effect's own write, or another write's wave) just emits into it.
+ * A top-level write's notification entry: opens an implicit flush window, propagates the
+ * wave (memos mark, effects queue), then drains, so every affected effect runs exactly
+ * once after the whole wave on settled state. This is what makes an unbatched write
+ * glitch-free. A write landing inside an open window - a batch, a flushing effect's own
+ * write, another write's wave - simply emits into it.
  *
  * @internal
- * @param producer - The producer whose value changed.
  */
 export function notifyWrite(producer: Producer): void
 {
@@ -110,11 +97,8 @@ export function notifyWrite(producer: Producer): void
 }
 
 /**
- * Runs the queued effects in rounds until the queue settles (a flushed effect's own
- * writes queue into the next round). The single-effect round - the dominant
- * fine-grained shape, one binding per write - skips the snapshot copy.
- *
- * @internal
+ * Runs queued effects in rounds until the queue settles; a flushed effect's own writes
+ * land in the next round. The single-effect round skips the snapshot copy.
  */
 function drainQueue(): void
 {
@@ -198,68 +182,47 @@ function drainQueue(): void
 }
 
 /**
- * batch
+ * Runs `fn` with effect execution deferred: writes inside it apply immediately, but the
+ * effects that depend on them run once at the end instead of once per write.
  *
- * PURPOSE:
- * Runs `fn` with effect execution deferred, so signal writes inside it apply
- * eagerly but dependent effects run once afterwards instead of once per write.
+ * Only writes made SYNCHRONOUSLY inside `fn` are coalesced. Anything written after an
+ * `await` lands outside the window and flushes on its own. Nesting is safe: an inner
+ * batch just runs its body, and only the outermost call flushes.
  *
- * WHY IT EXISTS:
- * Each individual write is already glitch-free (its own implicit flush; effects see
- * settled state), but a SEQUENCE of related writes still runs a shared dependent
- * effect once per write. batch collapses that to a single run over the final values,
- * which avoids the wasted intermediate runs and keeps multi-field transitions atomic
- * from the observer's point of view.
+ * Memos are unaffected - they settle on read, so reading one inside the batch returns a
+ * value computed from the writes that have already landed. Effects disposed during the
+ * batch are skipped at flush time.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity scheduling. Used around multi-field state transitions (form
- * resets, applying a server payload). It is explicit - the runtime does not
- * auto-batch arbitrary code.
+ * If `fn` throws, the flush still runs and the error is rethrown afterwards, so effects
+ * observe whatever writes landed before the throw.
  *
- * INPUT CONTRACT:
- * - fn performs the writes synchronously. Only synchronous writes inside fn are
- *   batched. Nesting is allowed: an inner batch() just runs its body; only the
- *   outermost batch flushes.
- *
- * OUTPUT CONTRACT:
- * - Returns fn's return value. After the outermost fn returns, each affected
- *   (non-disposed) effect executes exactly once.
- *
- * WHY THIS DESIGN:
- * A Set dedupes effects triggered by several writes. The queue is copied and cleared
- * before the flush so iteration is over a stable list. Only the outermost call
- * flushes, which makes nested batches compose without double-flushing.
- *
- * WHEN TO USE:
- * Whenever you write multiple signals that share downstream effects and want a single
- * consistent update.
- *
- * WHEN NOT TO USE:
- * For a single write (no benefit). Do not expect it to span async work - writes made
- * after an `await` inside fn are no longer batched.
- *
- * EDGE CASES:
- * - Effects disposed during the batch are skipped at flush.
- * - Reading a memo inside the batch still returns a value computed from current
- *   inputs (memos settle on read, independent of the effect queue).
- *
- * PERFORMANCE NOTES:
- * O(writes) to enqueue (deduped) and O(unique affected effects) to flush. The win is
- * eliminating redundant effect runs and intermediate-state renders.
- *
- * DEVELOPER WARNING:
- * Only synchronous writes inside fn are coalesced. An exception thrown by fn still
- * triggers the flush (it runs in finally), so effects see whatever writes landed
- * before the throw.
- *
- * @param fn - A function performing one or more signal writes.
- * @returns void
- * @see {@link createEffect}
+ * @typeParam T - `fn`'s return type.
+ * @param fn - Performs one or more signal writes, synchronously.
+ * @returns Whatever `fn` returns.
+ * @throws {TypeError} If `fn` is not a function.
+ * @throws The error `fn` threw, rethrown after the flush completes.
+ * @throws {Error} If the flush fails to settle within 1000 rounds, which means an effect
+ *                 keeps writing a signal it depends on.
  * @example
  * const [first, setFirst] = createSignal('Jane');
  * const [last, setLast] = createSignal('Smith');
  * createEffect(() => console.log(`${ first() } ${ last() }`));
- * batch(() => { setFirst('John'); setLast('Doe'); }); // logs "John Doe" once
+ *
+ * batch(() =>
+ * {
+ *     setFirst('John');
+ *     setLast('Doe');
+ * }); // logs "John Doe" once, not "John Smith" then "John Doe"
+ *
+ * @example
+ * // The return value passes through.
+ * const total = batch(() =>
+ * {
+ *     setItems(next);
+ *     return next.length;
+ * });
+ *
+ * @see {@link createEffect}
  */
 export function batch<T>(fn: () => T): T
 {

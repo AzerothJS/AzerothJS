@@ -1,15 +1,16 @@
 /**
- * MODULE: component/image
+ * The responsive image element, deliberately two components in one. With no endpoint in
+ * reach it is an honest `<img>` passthrough, so an app needs no image server to use it; with
+ * one - `optimize`, or an {@link ImageConfig} provider - src and srcset target the transform
+ * endpoint.
  *
- * <Image> - the framework's responsive image element. It is deliberately TWO components in
- * one: with no endpoint in reach it is an honest <img> passthrough (an app needs no image
- * server to use it), and with one - `optimize`, or an {@link ImageConfig} provider - src and
- * srcset target the transform endpoint (`/_image?src&w&q`). Requested widths snap UP the
- * {@link DEVICE_WIDTHS} ladder so the endpoint's cache stays bounded: a thousand distinct
- * layout widths still produce a handful of files. The format never rides the URL - the
- * endpoint negotiates it from the Accept header, so one URL serves avif, webp, or the
- * original per browser. Width/height pass through as attributes so the browser reserves
- * the box before bytes arrive (no layout shift); loading defaults lazy, decoding async.
+ * Requested widths snap UP the {@link DEVICE_WIDTHS} ladder, which is what keeps the
+ * endpoint's cache bounded: a thousand distinct layout widths still produce a handful of
+ * files. The format never rides the URL either - the endpoint negotiates it from the Accept
+ * header, so one URL serves avif, webp or the original depending on the browser.
+ *
+ * Width and height pass through as attributes so the browser reserves the box before the
+ * bytes arrive, avoiding layout shift. Loading defaults to lazy and decoding to async.
  */
 
 import type { Context } from '../reactivity/index.ts';
@@ -84,23 +85,17 @@ function transformUrl(endpoint: string, source: string, width: number | undefine
 }
 
 /**
- * Image
+ * One responsive `<img>`: endpoint-backed src and srcset when optimization is enabled, a
+ * verbatim passthrough when it is not, with the same markup contract either way.
  *
- * PURPOSE:
- * Renders one responsive <img>: endpoint-backed src/srcset when optimization is enabled,
- * a verbatim passthrough when it is not - the same markup contract either way.
+ * What srcset it emits depends on what it is told. With `sizes` and `width` it is a
+ * w-descriptor set over the ladder up to twice the width; with `width` alone, a 1x and 2x
+ * density pair; with neither, just the transform URL, which still gets format negotiation.
  *
- * INPUT CONTRACT:
- * - See {@link ImageProps}. `alt` is required by type. A function `src` stays reactive.
+ * `alt` is required by the type. A function `src` stays reactive.
  *
- * OUTPUT CONTRACT:
- * - One `<img>` element (SSR-serializable through the ordinary h() path). With `sizes` +
- *   `width`: a w-descriptor srcset over the ladder up to twice the width. With `width`
- *   alone: a 1x/2x density pair. Without `width`: the bare transform URL (format
- *   negotiation only).
- *
- * @param props - {@link ImageProps}.
- * @returns The image element.
+ * @param props - See {@link ImageProps}.
+ * @returns The image element, serializable through the ordinary SSR path.
  * @example
  * Image({ src: '/hero.png', alt: 'Hero', width: 1200, sizes: '100vw', optimize: true });
  */

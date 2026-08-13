@@ -1,5 +1,5 @@
 /**
- * MODULE: schema - THE validation package of AzerothJS, frontend and backend
+ * THE validation package of AzerothJS, frontend and backend.
  *
  * One home for every rule: the schema combinators whose TypeScript types are INFERRED from
  * the declaration (schema.ts), the single-argument field validators the browser form's

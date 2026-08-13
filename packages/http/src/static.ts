@@ -1,5 +1,5 @@
 /**
- * MODULE: http/static - file serving with traversal safety, etags, and conditional requests
+ * File serving with traversal safety, etags, and conditional requests.
  *
  * `staticFiles(root)` returns a Handler for a wildcard route. A wildcard needs at least one
  * segment (the router's documented semantics), so a mount that should also answer at its own

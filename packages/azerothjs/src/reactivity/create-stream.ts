@@ -1,33 +1,24 @@
 /**
- * MODULE: reactivity/create-stream
+ * A chunked response as a reactive container: `partial()` grows as each chunk arrives and
+ * `done()` flips when the stream ends. Where createResource resolves once and exposes
+ * `data()`, this resolves incrementally, and the two share their error capture,
+ * cancellation and refetch shapes.
  *
- * createStream wraps a chunked-response fetcher (typically fetch()) into a reactive
- * container that updates partial() as each chunk arrives and flips done() when the
- * stream ends - the token-by-token shape AI chat products use, as a one-line primitive.
+ * Parse modes: `'text'` appends each chunk verbatim; `'sse'` strips the `data:` prefix,
+ * skips `:` comments and terminates on `data: [DONE]`; `'ndjson'` parses each line and
+ * extracts `.text`, `.content` or `.delta` when present, otherwise stringifying the parsed
+ * value; a function does whatever it likes. Built-in modes buffer across reads, so a delta
+ * split over two chunks - `data: he` then `llo\n\n` - is reassembled into one event.
  *
- * RELATIONSHIP TO createResource: createResource resolves once and exposes data();
- * createStream resolves incrementally and exposes partial() that updates per chunk. Both
- * share loading-style flags, error capture, cancellation, and refetch, so the two feel
- * like family.
+ * cancel() aborts the request in flight, preserving `partial()` and flipping `done()`
+ * without setting an error. refetch() cancels, resets `partial()` to `initial`, and starts
+ * again on the same source value. Both converge on the driving effect's cleanup.
  *
- * PARSE MODES:
- *   'text'   - each chunk appended verbatim.
- *   'sse'    - Server-Sent Events: strips the data: prefix, skips :-comments, terminates
- *              on data: [DONE].
- *   'ndjson' - newline-delimited JSON; extracts .text/.content/.delta if present, else
- *              stringifies the parsed value.
- *   custom   - a function (chunk: string) => string.
- * Built-in modes buffer across reads, so a delta split across two chunks (`data: he`
- * then `llo\n\n`) is reassembled into one event.
- *
- * CANCELLATION: cancel() aborts the in-flight fetch (partial() preserved, done() flips
- * true, no error set). refetch() cancels, resets partial() to `initial`, and starts a
- * new request (same source value if provided). All paths converge on the driving
- * effect's onCleanup -> controller.abort().
- *
- * The parser machinery and driving-effect internals below carry their own implementation
- * comments (the abort-race and chunk-buffering logic is subtle); the public surface is
- * createStream plus the StreamParseMode / StreamOptions / Stream types.
+ * Doing this by hand means driving a reader loop, decoding with `{ stream: true }` so
+ * multi-byte UTF-8 split across reads is not corrupted, reassembling deltas across chunk
+ * boundaries, and getting the abort race right so a superseded stream cannot keep writing.
+ * The parser and driving-effect internals below carry their own comments; that logic is
+ * subtle enough to be worth reading before changing.
  */
 
 import type { Getter } from './types.ts';
@@ -38,104 +29,74 @@ import { batch } from './batch.ts';
 import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
-/**
- * Built-in parse mode names. Pass a function instead for full
- * control over how each chunk is converted to appendable text.
- */
+/** Built-in parse modes. Pass a function instead for full control over each chunk. */
 export type StreamParseMode = 'text' | 'sse' | 'ndjson';
 
 /**
- * Options for createStream. The `source` and `fetcher` shapes
- * mirror createResource so the two primitives feel like family.
+ * Options for {@link createStream}. The `source` and `fetcher` shapes mirror createResource.
  *
- * @typeParam S - The source value's type (when `source` is set)
+ * @typeParam S - The source value type, when `source` is set.
  */
 export interface StreamOptions<S = void>
 {
     /**
-     * Optional source signal. When the source changes the stream
-     * cancels its current request and starts a new one.
-     *
-     * Returning `null`, `undefined`, or `false` skips the fetch
-     * entirely - same convention as `createResource`. Use this
-     * for "wait until the user is logged in" patterns.
+     * Changing this cancels the current request and starts a new one. Returning `null`,
+     * `undefined` or `false` skips the fetch entirely, which is how "wait until the user is
+     * logged in" is expressed.
      */
     source?: () => S | false | null | undefined;
 
     /**
-     * Returns a `Response` whose body is a ReadableStream.
-     * Receives the resolved source value (or `undefined` when
-     * `source` is omitted) and an AbortSignal that fires on
-     * cancel/refetch/source-change.
+     * Returns a Response whose body is a ReadableStream. Receives the resolved source value,
+     * or `undefined` when `source` is omitted, and a signal that fires on cancel, refetch and
+     * source change.
      */
     fetcher: (args: { source: S; signal: AbortSignal }) => Promise<Response>;
 
     /**
-     * How to interpret incoming chunks. Default: `'text'`.
-     *
-     * Pass a function for full control - it receives the
-     * already-decoded chunk string and returns the text to
-     * append to `partial()`.
+     * How to interpret incoming chunks. Defaults to `'text'`. A function receives the
+     * already-decoded chunk and returns the text to append.
      */
     parse?: StreamParseMode | ((chunk: string) => string);
 
-    /**
-     * Initial value for `partial()` before any chunks arrive,
-     * and the value `partial()` resets to on `refetch()`.
-     * Default: `''`.
-     */
+    /** `partial()`'s value before any chunk arrives, and what refetch resets it to. Default `''`. */
     initial?: string;
 
-    /** Debug name surfaced to devtools; groups the stream's partial/done/error/drive nodes. */
+    /** Debug name for devtools; groups the stream's partial, done, error and drive nodes. */
     name?: string;
 }
 
-/**
- * The reactive shape returned by `createStream`.
- */
+/** The reactive shape returned by {@link createStream}. */
 export interface Stream
 {
-    /**
-     * The accumulated text so far. Updates after every chunk
-     * the parser converts to non-empty output.
-     */
+    /** The accumulated text, updated after every chunk the parser turns into output. */
     partial: Getter<string>;
 
     /**
-     * `true` when the stream has ended - successfully (close /
-     * SSE `[DONE]`), via cancellation, or via error. Pair with
-     * `error()` to distinguish.
+     * True once the stream has ended, whether by normal close, cancellation or error. Read
+     * `error()` to tell which.
      */
     done: Getter<boolean>;
 
     /**
-     * The most recent error, or `null`. Set when the fetcher
-     * throws, the response body errors, or the stream is
-     * interrupted by something other than cancellation.
-     * Cancellation does NOT populate this.
+     * The most recent failure, or null. Set when the fetcher throws, the body errors, or the
+     * stream breaks for any reason other than cancellation - cancelling never populates it.
      */
     error: Getter<unknown>;
 
     /**
-     * Aborts the in-flight stream. `partial()` is preserved at
-     * its current value; `done()` flips to true. No-op if the
-     * stream has already ended.
+     * Aborts the stream in flight. `partial()` keeps whatever it had and `done()` flips true.
+     * A no-op once the stream has ended.
      */
     cancel: () => void;
 
-    /**
-     * Cancels the current stream, resets `partial()` to
-     * `initial`, and starts a new request with the current
-     * source value (if any).
-     */
+    /** Cancels, resets `partial()` to `initial`, and starts again on the current source value. */
     refetch: () => void;
 }
 
-// Parser machinery.
-//
-// Each parser is a stateful transformer: `feed` accepts a raw chunk and
-// returns whatever is appendable plus a termination flag (for SSE's
-// `[DONE]`). `finish` runs once at end-of-stream to flush any buffered tail.
+// Each parser is a stateful transformer: `feed` takes a raw chunk and returns what is
+// appendable plus a termination flag for SSE's `[DONE]`; `finish` runs once at end-of-stream
+// to flush a buffered tail.
 
 interface ParserStream
 {
@@ -451,110 +412,101 @@ function normalizeStreamOptions<S>(
     return { ...tail, fetcher: ({ signal }) => fetcher(signal) };
 }
 
-/**
- * createStream
- *
- * PURPOSE:
- * Wraps a chunked-response fetcher into a reactive {@link Stream}: partial() accumulates
- * text as chunks arrive, done() flips when the stream ends, error() captures failures,
- * and cancel()/refetch() control it.
- *
- * WHY IT EXISTS:
- * Consuming a streamed response by hand means driving a reader loop, decoding bytes with
- * `{ stream: true }` so multi-byte UTF-8 split across reads is not corrupted, reassembling
- * SSE/ndjson deltas split across chunk boundaries, and getting the abort race right so a
- * superseded stream cannot keep writing. createStream packages all of that as reactive
- * getters, with built-in parsers for the common shapes.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity stage. A client-side data primitive (it drives a network reader and
- * timers); it has no role in synchronous SSR. Must run inside a createRoot (a component or
- * render() provides one) so the in-flight abort and the internal effect clean up on unmount.
- *
- * INPUT CONTRACT:
- * - options.fetcher: returns a Response whose body is a ReadableStream; receives the
- *   resolved source value and an AbortSignal.
- * - options.source: optional getter; a change cancels and restarts. Falsy (false/null/
- *   undefined) skips the fetch (0 and '' are valid keys).
- * - options.parse: 'text' (default) | 'sse' | 'ndjson' | a (chunk) => string function.
- * - options.initial: partial()'s starting value and its reset value on refetch (default '').
- *
- * OUTPUT CONTRACT:
- * - Returns a {@link Stream}: partial() (accumulated text), done() (boolean), error()
- *   (unknown | null), cancel(), refetch(). All getters are reactive.
- *
- * WHY THIS DESIGN:
- * A single driving effect reads `source` and an internal `tick`; cancel/refetch/source-
- * change all route through it, and its onCleanup aborts the previous controller. The
- * consume loop checks signal.aborted before appending so a stale read never writes the new
- * stream's partial, and a late-rejecting old fetch deliberately does NOT touch done() (the
- * effect already set it for whatever caused the abort) - this is what avoids the classic
- * streaming race where an old request clobbers a fresh one.
- *
- * WHEN TO USE:
- * For incremental/streamed responses: LLM token streams (SSE/ndjson), live logs, any
- * chunked transfer where partial output should render as it arrives.
- *
- * WHEN NOT TO USE:
- * For one-shot fetches (use {@link createResource}). Not in SSR, where the reader loop does
- * not run within the synchronous render.
- *
- * EDGE CASES:
- * - Falsy source skips the fetch and resets to initial/done.
- * - cancel() preserves partial() and sets done() without an error; refetch() resets
- *   partial() to initial first.
- * - Malformed ndjson lines are skipped rather than failing the whole stream; SSE without a
- *   trailing `\n\n` drops the last event (matching native EventSource).
- *
- * PERFORMANCE NOTES:
- * One effect + four signals + one live AbortController/reader per stream. Built-in parsers
- * buffer only the incomplete tail between reads.
- *
- * DEVELOPER WARNING:
- * Must be created inside a root/component scope, or the reader loop and pending abort leak
- * on unmount. The fetcher should honor its AbortSignal; otherwise cancellation drops output
- * but does not stop the network work.
- *
- * @typeParam S - The source value type (when `source` is set).
- * @param options - The {@link StreamOptions}: fetcher (required), source, parse, initial.
- * @returns A reactive {@link Stream}.
- * @see {@link createResource}
- * @example
- * const [prompt, setPrompt] = createSignal('');
- * const reply = createStream({
- *     source: () => prompt(),
- *     fetcher: ({ source, signal }) => fetch('/api/chat', {
- *         method: 'POST', body: JSON.stringify({ prompt: source }), signal
- *     }),
- *     parse: 'sse'
- * });
- * h('div', {}, () => reply.partial());
- */
 /** A positional fetcher with a source: receives the resolved source value and the abort signal. */
 type PositionalSourceFetcher<S> = (source: S, signal: AbortSignal) => Promise<Response>;
 
 /** A positional fetcher with no source: receives only the abort signal. */
 type PositionalStandaloneFetcher = (signal: AbortSignal) => Promise<Response>;
 
-/** The `parse`/`initial` tail shared by the positional forms (source + fetcher live in the args). */
+/** The `parse` and `initial` tail shared by the positional forms. */
 type StreamTail<S> = Omit<StreamOptions<S>, 'fetcher' | 'source'>;
 
 /**
- * Positional form with a source - `createStream(source, fetcher, options?)`. This is the form
- * the `stream` keyword lowers to (parallel to `createResource(source, fetcher)`); the fetcher
- * receives the resolved source value and the signal.
+ * Wraps a chunked-response fetcher into a reactive {@link Stream}: `partial()` accumulates
+ * text as chunks arrive, `done()` flips when the stream ends, `error()` captures failures,
+ * and `cancel()` / `refetch()` control it.
+ *
+ * This positional form is what the `stream` keyword lowers to, mirroring
+ * `createResource(source, fetcher)`. A source change cancels the current request and starts
+ * a new one; a source returning `false`, `null` or `undefined` skips the fetch entirely and
+ * resets to `initial`, while `0` and `''` remain valid keys.
+ *
+ * Create it inside a scope, or the reader loop and pending abort leak on unmount. The
+ * fetcher should honour its AbortSignal - otherwise cancelling drops the output but does
+ * not stop the network work.
+ *
+ * A superseded stream cannot write over a fresh one: the consume loop checks the abort
+ * before appending, and a late-rejecting old request deliberately leaves `done()` alone,
+ * since the effect has already set it for whatever caused the abort.
+ *
+ * Client-side only. The reader loop does not run inside a synchronous SSR render.
+ *
+ * @typeParam S - The source value type.
+ * @param source - Getter for the fetch key. Falsy values skip the fetch.
+ * @param fetcher - Returns a Response whose body is a ReadableStream.
+ * @param options - Optional settings.
+ * @param options.parse - `'text'` (default), `'sse'`, `'ndjson'`, or a `(chunk) => string`
+ *                        function. Built-in parsers buffer across reads, so a delta split
+ *                        over two chunks is reassembled into one event.
+ * @param options.initial - `partial()`'s starting value, and what refetch resets it to.
+ *                          Defaults to `''`.
+ * @param options.name - Debug name for devtools.
+ * @returns A reactive {@link Stream}.
+ * @example
+ * const [prompt, setPrompt] = createSignal('');
+ *
+ * const reply = createStream(
+ *     () => prompt(),
+ *     (text, signal) => fetch('/api/chat', {
+ *         method: 'POST',
+ *         body: JSON.stringify({ prompt: text }),
+ *         signal
+ *     }),
+ *     { parse: 'sse' }
+ * );
+ *
+ * h('div', {}, () => reply.partial()); // repaints per token
+ *
+ * @see {@link createResource} for one-shot fetches.
  */
 export function createStream<S>(
     source: () => S | false | null | undefined,
     fetcher: PositionalSourceFetcher<S>,
     options?: StreamTail<S>
 ): Stream;
-/** Positional form with no source - `createStream(fetcher, options?)`. */
+/**
+ * Source-free positional form: the stream starts once, on creation.
+ *
+ * @param fetcher - Returns a Response whose body is a ReadableStream.
+ * @param options - `parse`, `initial` and `name`, as in the source form.
+ * @returns A reactive {@link Stream}.
+ * @example
+ * const logs = createStream((signal) => fetch('/api/logs', { signal }));
+ * logs.partial(); // grows as lines arrive
+ * logs.cancel();  // stops reading; partial() keeps what it had, done() flips true
+ */
 export function createStream(
     fetcher: PositionalStandaloneFetcher,
     options?: StreamTail<void>
 ): Stream;
-/** Options-object form - `createStream({ source, fetcher, parse, initial })`. */
+/**
+ * Options-object form, where the fetcher receives `{ source, signal }` as one argument.
+ *
+ * @typeParam S - The source value type.
+ * @param options - Must include `fetcher`; `source`, `parse`, `initial` and `name` are
+ *                  optional and behave as in the positional form.
+ * @returns A reactive {@link Stream}.
+ * @example
+ * const reply = createStream({
+ *     source: () => prompt(),
+ *     fetcher: ({ source, signal }) => fetch('/api/chat', {
+ *         method: 'POST',
+ *         body: JSON.stringify({ prompt: source }),
+ *         signal
+ *     }),
+ *     parse: 'sse'
+ * });
+ */
 export function createStream<S = void>(options: StreamOptions<S>): Stream;
 export function createStream<S = void>(
     a: StreamOptions<S> | (() => S | false | null | undefined) | PositionalStandaloneFetcher,

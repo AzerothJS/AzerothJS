@@ -1,17 +1,15 @@
 /**
- * MODULE: renderer/h
+ * The hyperscript core. h() builds real DOM directly: no virtual DOM, no intermediate
+ * nodes, no diffing. It returns a live element and wires reactive effects immediately, so a
+ * signal change mutates that node in place rather than re-rendering a subtree.
  *
- * h() is the hyperscript core: it builds REAL DOM directly - no virtual DOM, no
- * intermediate VNodes, no diffing. Where React's createElement returns a VNode a
- * reconciler later diffs and patches, h() returns a live HTMLElement and wires reactive
- * effects immediately; when a signal changes, the effect mutates that node in place. This
- * file also hosts the shared child/attribute machinery and the compiler-emitted runtime
- * (setProp / bindProps / bindHole / bindSlot) plus the hydration adopters - all three
- * render modes (dom build, SSR serialize, hydrate adopt) funnel through here.
+ * This module also hosts the shared child and attribute machinery, the compiler-emitted
+ * runtime (setProp, bindProps, bindHole, bindSlot) and the hydration adopters. All three
+ * render modes - build, serialize, adopt - funnel through here.
  *
- * DOM PROPERTIES vs ATTRIBUTES: some props must be set as DOM properties (el.value = x)
- * rather than attributes (setAttribute) - attributes seed initial state, properties carry
- * live state (an <input>'s el.value vs its initial value attribute). See DOM_PROPERTIES.
+ * Attributes seed initial state; DOM properties carry live state. An `<input>`'s
+ * `el.value` and its `value` attribute are different things, so some props must be assigned
+ * as properties rather than set as attributes. See DOM_PROPERTIES.
  */
 
 import type { Props, Child } from './types.ts';
@@ -39,78 +37,44 @@ import {
 import { createElementByTag } from './namespace.ts';
 
 /**
- * h
+ * Creates a real DOM element with the given props and children, wiring every reactive prop
+ * and child to an effect that updates the node in place. This is both the manual element
+ * API and the runtime target the compiler lowers markup to.
  *
- * PURPOSE:
- * Creates a real DOM element with the given attributes/events/DOM-properties and children,
- * wiring any reactive (function) prop or child to an effect that updates the node in place.
+ * REACTIVITY IS BY FUNCTION. A function value on a non-event prop is a reactive attribute,
+ * and a function child is a reactive hole; passing a value eagerly binds it once and it
+ * never updates again. A reactive child patches a text node's data in place where it can
+ * and rebuilds only when the value's shape changes, and each one runs in its own root, so
+ * nested effects are owned and torn down on swap.
  *
- * WHY IT EXISTS:
- * It is the runtime target the compiler lowers markup to, and the manual rendering API. A
- * no-VDOM design needs a primitive that both builds a node AND establishes its fine-grained
- * bindings at creation, so an update touches exactly the changed attribute/text rather than
- * re-rendering and diffing a subtree.
+ * Children may be elements, strings, numbers, arrays, or functions. `null`, `undefined` and
+ * `false` render nothing, which is what makes `cond && <x/>` work. A DocumentFragment child
+ * - how `<For>` returns its rows - is moved in directly, so the rows become this element's
+ * own children with no wrapper.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer core. Mode-dispatched at the top of every call: 'string' mode
- * serializes to HTML (no document); 'hydrate' mode returns a descriptor that adopts the
- * matching server node; otherwise it builds DOM. Compiled `.azeroth` output calls h() (and,
- * on the template-clone path, setProp/bindProps/bindHole/bindSlot) for element-rooted regions.
+ * Event handlers use the language's single attachment model: bubbling types share one
+ * document listener per type, identically for h(), compiled markup and hydration.
  *
- * INPUT CONTRACT:
- * - tag: an HTML tag name.
- * - props: attributes, handler-form event handlers (`onClick`; the reserved lowercase
- *   spellings of the on* namespace are refused), DOM properties, and `ref`. A FUNCTION value
- *   on a non-event key is a reactive attribute (re-applied in an effect); `ref` is a callback
- *   or a createRef object.
- * - children: elements, strings/numbers, arrays, null/undefined/false (skipped), or
- *   functions (reactive holes).
+ * The call is mode-dispatched. In string mode it serializes to HTML with no document; in
+ * hydrate mode it returns a descriptor that adopts the matching server node. Both are cast
+ * to HTMLElement so they compose exactly like a built element.
  *
- * OUTPUT CONTRACT:
- * - Returns an HTMLElement with all bindings active. (In string/hydrate modes an
- *   SSRNode/hydration descriptor is cast to HTMLElement so it composes identically.)
- *
- * WHY THIS DESIGN:
- * Building the node and its effects together is what makes updates fine-grained and
- * VDOM-free: a reactive child patches one text node in place (fast path) and rebuilds only
- * on a type change; a reactive attribute re-applies just that attribute. Each reactive child
- * runs in a per-run root so its nested effects are owned and torn down on swap (no leaks).
- *
- * WHEN TO USE:
- * As the manual element API, or wherever you build DOM imperatively. In `.azeroth` files you
- * write markup and the compiler emits h() for you.
- *
- * WHEN NOT TO USE:
- * For control flow - use {@link Show}/{@link Switch}/{@link For}/{@link Dynamic}, which
- * manage mounting/disposal and SSR/hydration markers.
- *
- * EDGE CASES:
- * - A function prop is always a reactive attribute; a function child is always a reactive
- *   hole. false/null/undefined children render nothing.
- * - A DocumentFragment child (a <For>) is moved in directly, so its rows become this
- *   element's own children (no wrapper).
- *
- * PERFORMANCE NOTES:
- * Direct DOM, no diff. The reactive-child fast path mutates a text node's `.data` instead of
- * swapping nodes; props are applied in a single for-in pass per element.
- *
- * DEVELOPER WARNING:
- * A reactive attribute/child MUST be passed as a function (`() => expr`); passing the value
- * eagerly binds it once. Event handlers follow the language's single attachment model
- * (see semantics DELEGATED_EVENTS): bubbling types share one document listener per type,
- * identical for h(), compiled markup, and hydration.
- *
- * @param tag - The HTML tag name ('div', 'p', 'span', ...).
- * @param props - Attributes, on* handlers, DOM properties, and `ref`.
+ * @param tag - An HTML tag name.
+ * @param props - Attributes, `on*` handlers, DOM properties, and `ref`, which takes a
+ *                callback or a ref object. Pass null for none.
  * @param children - Zero or more children to append.
- * @returns A real HTMLElement with all bindings active.
- * @see {@link Show}
- * @see {@link For}
+ * @returns The element, with every binding already active.
+ * @throws {Error} If the tag or an attribute is refused by the safety rules - an executable
+ *                 tag, a reserved lowercase `on*` spelling, children on a void element, or
+ *                 children alongside a content property.
  * @example
  * h('div', { class: () => isActive() ? 'on' : 'off' },
- *   h('span', {}, () => `Count: ${ count() }`),
- *   h('button', { onClick: () => setCount(n => n + 1) }, 'Inc')
+ *     h('span', {}, () => `Count: ${ count() }`),
+ *     h('button', { onClick: () => setCount(n => n + 1) }, 'Inc')
  * );
+ *
+ * @see {@link Show} and {@link For} for control flow, which manage mounting, disposal and
+ *      the SSR markers h() does not.
  */
 export function h(tag: string, props: Props | null, ...children: Child[]): HTMLElement
 {
@@ -179,35 +143,30 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
 }
 
 /**
- * Applies properties, attributes, and event handlers to a DOM element.
- * Dispatches each prop by the language's name-domain rules: ref, handler-form
- * event (via the shared attachment model), reactive attribute (function value),
- * or static attribute. Reserved on* names are refused - the same rule the
- * compiler and the serializer enforce, so no entry path accepts them.
- *
- * @param el - The real DOM element to apply props to
- * @param props - The props object passed to h()
+ * Dispatches each prop by the language's name-domain rules: ref, handler-form event,
+ * reactive attribute, or static attribute. Reserved `on*` names are refused here exactly as
+ * the compiler and the serializer refuse them, so no entry path accepts one.
  *
  * @internal
  */
 function applyProps(el: HTMLElement, props: Props): void
 {
-    // for...in over Object.entries: this runs once per element created, and
-    // entries() allocates an array of [key, value] tuples each call.
+    // for...in rather than Object.entries: this runs once per element created, and entries()
+    // allocates an array of tuples each call.
     for (const key in props)
     {
-        // for...in also walks INHERITED enumerable keys, so a single prototype-pollution
-        // gadget (`Object.prototype.onclick = '...'`) would inject its attribute onto every
-        // element ever created. Own properties only, matching the serializer's Object.entries.
+        // for...in also walks INHERITED enumerable keys, so one prototype-pollution gadget
+        // (`Object.prototype.onclick = '...'`) would inject its attribute onto every element ever
+        // created. Own properties only, matching the serializer.
         if (!Object.hasOwn(props, key))
         {
             continue;
         }
 
         const value = props[key];
-        // `ref` is never a DOM attribute: it hands the freshly-created element
-        // back to the caller. Must run before the reactive-function branch
-        // below, or a ref callback would be mistaken for a reactive attribute.
+        // `ref` is never a DOM attribute: it hands the element back to the caller. Must run
+        // before the reactive-function branch below, or a ref callback would be mistaken for a
+        // reactive attribute.
         if (key === 'ref')
         {
             applyRef(el, value);
@@ -225,7 +184,6 @@ function applyProps(el: HTMLElement, props: Props): void
             throw new TypeError(reservedHostAttributeMessage(key));
         }
 
-        // Reactive attribute: re-apply whenever the signals it reads change.
         if (typeof value === 'function')
         {
             createEffect(() =>
@@ -241,50 +199,36 @@ function applyProps(el: HTMLElement, props: Props): void
 }
 
 /**
- * Resolves a reactive value to its final, concrete form by calling it while it
- * is still a function. The common case is a single `() =>` wrapper, but the
- * compiler wraps every compound/call attribute or child expression that way,
- * and some of those expressions ALREADY evaluate to a getter:
- * `classList()` / `styleMap()` return `() => string`, and a hole like
- * `{ p.title }` (where `p.title` is itself a getter) compiles to `() => (p.title)`.
- * Calling only once would hand the inner function to setProperty / buildNode,
- * which stringify it - rendering `() => t("...")` source text into the DOM.
- * Calling through to a non-function value fixes that.
+ * Calls a reactive value while it is still a function, down to a concrete result.
  *
- * Reads happen inside the caller's effect, so every signal touched on the way
- * down is tracked and the binding stays fine-grained. The bound is a guard
- * against a pathological getter that returns a function forever; real chains
- * are one or two deep.
+ * One `() =>` wrapper is the common case, but some wrapped expressions already evaluate to
+ * a getter themselves - `classList()` returns `() => string`, and `{ p.title }` where
+ * `p.title` is a getter compiles to `() => (p.title)`. Calling once would hand the inner
+ * function to setProperty or buildNode, which stringify it, rendering source text into the
+ * DOM.
+ *
+ * Reads happen inside the caller's effect, so every signal touched on the way down is
+ * tracked and the binding stays fine-grained.
  *
  * @internal
  */
 export const resolveReactive: (value: unknown) => unknown = resolveThunks;
 
 /**
- * Wires up a `ref` prop, handing the created element back to the caller.
- * Supports two forms:
+ * Hands the created element back to the caller, through a ref object's `.current` or a
+ * callback. A ref is never rendered as an attribute.
  *
- *   - A ref object from `createRef()` -> sets its `.current`.
- *   - A callback `(el) => void` -> invoked with the element.
- *
- * Anything else is ignored; a ref is never rendered as an attribute.
- *
- * TIMING: the ref fires at CONSTRUCTION, before the element is inserted into the
- * document - layout reads here return zeros and connection-dependent widgets fail.
- * Capture the element in the ref, do connected-time work in `onMount` (reactivity),
- * which runs once the synchronous render has finished inserting.
- *
- * @param el - The freshly-created DOM element
- * @param ref - The value passed as the `ref` prop
+ * It fires at CONSTRUCTION, before the element is inserted, so layout reads here return
+ * zeros and connection-dependent widgets fail. Capture the element in the ref and do
+ * connected-time work in onMount, which runs once the synchronous render has inserted it.
  *
  * @internal
  */
 function applyRef(el: HTMLElement, ref: unknown): void
 {
-    // The handler-value convention holds for refs too: null/undefined/false are "no ref",
-    // so a conditional ref (`ref={ open && cb }`) needs no ternary - and anything else
-    // throws the same rule text the serializer uses, so no mode accepts a program another
-    // refuses. attachEvent is the pattern being mirrored.
+    // The handler-value convention holds for refs too: null, undefined and false all mean "no
+    // ref", so a conditional ref needs no ternary. Anything else throws the same rule text the
+    // serializer uses, so no mode accepts a program another refuses.
     if (ref === null || ref === undefined || ref === false)
     {
         return;

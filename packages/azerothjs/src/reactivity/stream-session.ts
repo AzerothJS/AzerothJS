@@ -1,61 +1,62 @@
 /**
- * MODULE: reactivity/stream-session (internal)
+ * The per-render state of one streaming server render.
  *
- * The per-render state of one STREAMING server render. It rides the render-mode frame
- * (see render-mode.ts) so every synchronous serialization window - the main pass and each
- * boundary continuation - reads its own session through one accessor; awaits happen only
- * BETWEEN windows, so the module-global frame stack stays sound under concurrency.
+ * It rides the render-mode frame, so every synchronous serialization window - the main pass
+ * and each boundary continuation - reads its own session through a single accessor. Awaits
+ * happen only BETWEEN windows, which is what keeps the module-global frame stack sound
+ * under concurrency.
  *
- * What it tracks:
- *   - eager server fetches started by createResource inside the session, keyed by the
- *     resource object, each with a stable SCOPED-ORDINAL id (`scope:ordinal`) the client
- *     re-derives during hydration to seed the same resource without refetching;
- *   - pending Suspense boundaries: id, the fetch entries gating them, and the
- *     continuation closure that serializes children once those settle;
- *   - finalization: root disposal is DEFERRED to stream completion, and finalize() also
- *     aborts every fetch no boundary consumed. Idempotent - the driver, a timeout, a
- *     client abort, and transport cancel may all race into it.
+ * It tracks the eager server fetches createResource started inside the session, keyed by
+ * resource and each carrying the scoped-ordinal id the client re-derives at hydration to
+ * seed the same resource without refetching; the pending Suspense boundaries, with the
+ * fetches gating them and the continuation that serializes their children; and
+ * finalization, which defers root disposal to stream completion and aborts every fetch no
+ * boundary consumed.
+ *
+ * finalize() is idempotent because the driver, a timeout, a client abort and a transport
+ * cancel may all race into it.
  */
 
-/** @internal One eager server fetch a streaming render started. */
+/** One eager server fetch a streaming render started. */
 export interface ServerFetch
 {
     /** Settles when the resource's signals settled (data or error applied). */
     promise: Promise<void>;
     controller: AbortController;
 
-    /** The scoped-ordinal seed id, e.g. ':0' (root) or '7:2' (boundary 7, third resource). */
+    /** The scoped-ordinal seed id: `':0'` at the root, `'7:2'` for boundary 7's third resource. */
     id: string;
 
-    /** Reads the settled outcome as a wire seed; meaningful once `promise` settled. */
+    /** The settled outcome as a wire seed. Only meaningful once `promise` has settled. */
     read: () => { d?: unknown; e?: string };
 }
 
-/** @internal One pending Suspense boundary awaiting its resources. */
+/** One pending Suspense boundary awaiting its resources. */
 export interface PendingBoundary
 {
     id: number;
     entries: ServerFetch[];
 
-    /** Serializes the children under the captured owner/scopes; runs in a continuation window. */
+    /** Serializes the children under the captured owner and scopes, in a continuation window. */
     render: () => string;
 
     /**
-     * The value of the nearest enclosing `<select>`, when this boundary's content sits inside one.
+     * The value of the nearest enclosing `<select>`, when this boundary's content sits inside
+     * one.
      *
-     * A select serializes its children BEFORE it knows they contain a pending boundary's fallback,
-     * and the boundary's real options are emitted later, in a continuation chunk. Recording the
-     * value here is what lets that chunk mark the right option: without it the swapped-in options
+     * A select serializes its children BEFORE it can know they contain a pending boundary's
+     * fallback, and the real options arrive later in a continuation chunk. Recording the value
+     * here is what lets that chunk mark the right option. Without it the swapped-in options
      * carry no `selected`, and a page whose chunk lands before hydration paints the browser's
      * default until the client repairs it.
      */
     select?: { desired: string | readonly string[]; multiple: boolean };
 }
 
-/** @internal The per-render state of one streaming SSR session. */
+/** The per-render state of one streaming SSR session. */
 export class StreamSession
 {
-    /** The AbortSignal the whole render is tied to (client disconnect), if any. */
+    /** The signal the whole render is tied to, typically a client disconnect. */
     public readonly signal: AbortSignal | undefined;
 
     /** The store scope captured inside the main pass; continuations re-enter it. */
@@ -127,7 +128,7 @@ export class StreamSession
         this.#boundariesById.set(boundary.id, boundary);
     }
 
-    /** A boundary by id, whether or not the driver has taken it yet. @internal */
+    /** A boundary by id, whether or not the driver has taken it yet. */
     public boundaryOf(id: number): PendingBoundary | undefined
     {
         return this.#boundariesById.get(id);

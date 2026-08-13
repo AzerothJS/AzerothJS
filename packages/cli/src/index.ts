@@ -1,5 +1,5 @@
 /**
- * MODULE: cli - the azeroth command line, programmatically
+ * The azeroth command line, programmatically.
  *
  * The bin (`azeroth`) is a thin dispatcher over these exports: shape detection
  * (detect.ts), command planning (plan.ts), plan execution (run.ts), diagnosis

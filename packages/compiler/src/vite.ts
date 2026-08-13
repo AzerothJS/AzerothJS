@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/vite - the AzerothJS Vite plugin
- *
- * Teaches Vite to load `.azeroth` files: generateModule() turns a component module into the unified
+ * The Vite plugin. Teaches Vite to load `.azeroth` files: generateModule() turns a component module into the unified
  * runtime output, then Vite strips any TS (via oxc), yielding a normal JS module. Runs with
  * `enforce: 'pre'` so it sees the raw source before Vite's other transforms.
  *

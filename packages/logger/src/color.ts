@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/color - ANSI styling with honest capability detection
+ * ANSI styling with honest capability detection.
  *
  * Zero-dependency means owning the color layer: a Style is a (text) => text function pair
  * of escape codes, built once per detected capability tier. The rules are the ecosystem's

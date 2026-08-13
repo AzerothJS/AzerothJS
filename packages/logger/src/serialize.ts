@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/serialize - field shaping and the fast NDJSON line
+ * Field shaping and the fast NDJSON line.
  *
  * Two jobs, both correctness-critical:
  *

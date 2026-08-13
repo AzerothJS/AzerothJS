@@ -1,9 +1,10 @@
 /**
- * MODULE: compiler/ast - the unified AST for the component pipeline
+ * The unified AST for the component pipeline, covering the module level and the component
+ * body items.
  *
- * Covers the MODULE level and the component BODY items. Inner JS/TS (declaration initializers, effect
- * bodies, props type members, opaque statement runs) is left as SPANS; the semantic pass hands those
- * to TypeScript rather than re-parsing them here.
+ * Inner JS and TS - declaration initializers, effect bodies, props type members, opaque
+ * statement runs - is left as SPANS; the semantic pass hands those to TypeScript rather than
+ * re-parsing them here.
  *
  * Spans reuse the `Span` convention from ./types.ts: `start` inclusive, `end` exclusive, offsets into
  * the original source.

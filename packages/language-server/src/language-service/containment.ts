@@ -1,5 +1,5 @@
 /**
- * MODULE: language-service/containment - the editor's trust boundary
+ * The editor's trust boundary.
  *
  * A `.azeroth` file inside a repository someone cloned is untrusted input, exactly like a request
  * path. A module resolver that hands `path.resolve(dirname(importer), specifier)` straight to

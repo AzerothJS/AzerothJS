@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/analyze - reactive analysis driver
- *
- * Walks a component's body and produces, for each reactive scope (a `derived` initializer, an
+ * The reactive analysis driver. Walks a component's body and produces, for each reactive scope (a `derived` initializer, an
  * `effect` body, or a markup binding), the set of reactive sources it reads - the dependency sets the
  * IR (lower) turns into targeted update code.
  *
@@ -82,65 +80,39 @@ export interface ReactiveAnalysis
 }
 
 /**
- * analyzeComponent
+ * Analyzes a component's reactivity: its declared sources, whether it takes props, and, for
+ * every reactive scope, the dependency set that scope reads.
  *
- * PURPOSE:
- * Analyzes a component's reactivity: its declared sources (state/derived), whether it takes props,
- * and, for every reactive scope, the dependency set it reads.
+ * Knowing which sources an expression reads is what lets each binding choose between a
+ * targeted effect and a set-once value. Computing it once, up front, is what lets lowering
+ * wire dependency sets by span and codegen emit surgical updates rather than re-running
+ * everything.
  *
- * WHY IT EXISTS:
- * The compiler must know WHICH reactive sources each expression reads to decide, per binding, between
- * a targeted effect and a set-once value. Computing that once, up front, is what lets lowering wire
- * dependency sets by span and codegen emit surgical updates instead of re-running everything.
+ * Each expression is parsed as a real TypeScript slice, so scope and shadowing are sound: a
+ * lambda parameter named like a state correctly shadows it, and a read of a shadowed name is
+ * NOT a dependency. Markup inside a hole is projected to a read-only array of its dynamic
+ * sub-expressions through the shared lowerer first, so one parse covers the whole expression
+ * and the collector sees every embedded sub-expression with its scope intact.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, analysis stage; runs per component before lowerComponent. Uses the TypeScript API (the
- * compiler's `typescript` peer dep) for slice parsing and scope-aware read collection.
+ * `pure` is CONSERVATIVE: any call, `new`, `await`, assignment or increment marks a scope
+ * impure.
  *
- * INPUT CONTRACT:
- * - source: the original `.azeroth` text.
- * - component: the {@link ComponentDecl} from parseModule.
+ * The spans in the result index into THIS `source` and are what lowering's dependency lookup
+ * keys on. Pair the analysis with the same source passed to lowerComponent, or the
+ * dependencies mis-map.
  *
- * OUTPUT CONTRACT:
- * - A {@link ReactiveAnalysis}: `sources` (each state/derived with its name span), `hasProps`, and
- *   `scopes` (one per derived/effect/text/attribute, each with its deps and conservative `pure` flag).
- *
- * WHY THIS DESIGN:
- * Each expression is parsed as a real TypeScript slice so scope and shadowing are sound (a lambda
- * param named like a state correctly shadows it). Markup inside a hole is projected to a `[e1, e2, ...]`
- * read-only array via the shared lowerMarkup, so one slice parse covers the whole expression and the
- * read collector sees every embedded dynamic sub-expression with its scope intact.
- *
- * WHEN TO USE:
- * Codegen's per-component path, paired with the matching lowerComponent call.
- *
- * WHEN NOT TO USE:
- * For diagnostics-only flows that don't need dep sets (those build their own slices via diagnostics).
- *
- * EDGE CASES:
- * - `pure` is CONSERVATIVE: any call/new/await/assignment/++/-- marks a scope impure.
- * - Shadowing is respected, so a read of a name shadowed by a local/param is NOT a source dep.
- *
- * PERFORMANCE NOTES:
- * One slice parse per reactive construct; markup projection adds a lower pass but no extra TS parse.
- *
- * DEVELOPER WARNING:
- * Spans in the result key lowering's dep lookup - they index into THIS `source`. Pair the analysis
- * with the same source you pass to lowerComponent, or deps mis-map.
- *
- * @param source - The original `.azeroth` source
- * @param component - The component declaration (from `parseModule`)
- * @returns The component's {@link ReactiveAnalysis}
- * @see {@link lowerComponent}
- * @see {@link ReactiveAnalysis}
- *
+ * @param source - The original source.
+ * @param component - The declaration from parseModule.
+ * @returns The component's sources, `hasProps`, and one scope per derived, effect, text and
+ *          attribute.
  * @example
- * ```ts
- * const m = parseModule('component C { state n = 0; derived d = n * 2; <p>{d}</p> }');
- * const a = analyzeComponent(src, m.items[0] as ComponentDecl);
- * a.scopes.find(s => s.origin === 'derived')!.deps; // [{ kind: 'source', name: 'n' }]
- * ```
+ * const module = parseModule('component C { state n = 0; derived d = n * 2; <p>{d}</p> }');
+ * const analysis = analyzeComponent(source, module.items[0] as ComponentDecl);
  *
+ * analysis.scopes.find(s => s.origin === 'derived')!.deps;
+ * // [{ kind: 'source', name: 'n' }]
+ *
+ * @see {@link lowerComponent}
  * @internal
  */
 export function analyzeComponent(source: string, component: ComponentDecl): ReactiveAnalysis

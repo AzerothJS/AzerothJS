@@ -1,8 +1,4 @@
-/**
- * MODULE: component/types
- *
- * Type contracts for azerothjs.
- */
+/** Type contracts for the component runtime. */
 
 /**
  * A teardown callback stashed on a rendered element (via setDestroyHooks) and run by

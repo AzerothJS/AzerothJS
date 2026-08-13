@@ -1,6 +1,4 @@
 /**
- * MODULE: compiler/markup-parser - the markup region parser
- *
  * Parses one markup region (an element or fragment) starting at a `<` into the AST from types.ts.
  * Expression holes (`{ ... }`) and attribute expressions are captured as RAW source - nested markup
  * inside them is handled later by lowering/codegen, which recursively compiles the hole text. That
@@ -705,64 +703,28 @@ class MarkupParser
 }
 
 /**
- * parseMarkup
+ * Parses the element or fragment beginning at `start` into an AST node. This is the single
+ * markup grammar, shared by codegen, lint and lowering, so all three see the same tree.
  *
- * PURPOSE:
- * Parses the markup element/fragment beginning at `start` (the `<`) into an AST node, returning the
- * node and the offset just after it.
+ * Expression holes and attribute expressions are captured as RAW spans rather than parsed
+ * here; nested markup inside them is compiled later. Keeping this to pure markup structure is
+ * what leaves TypeScript as the one grammar responsible for expression interiors.
  *
- * WHY IT EXISTS:
- * Once the scanner locates a region, something must turn its `<...>` text into structure. This is that
- * step - the single markup grammar, shared by codegen, lint, and lowering, so they all see the same
- * tree.
- *
- * COMPILER / RUNTIME ROLE:
- * Compiler, parsing stage; consumes a {@link findMarkupStart} index and produces a {@link MarkupElement}
- * or {@link MarkupFragment}.
- *
- * INPUT CONTRACT:
- * - src: the module source.
- * - start: the offset of the region's opening `<`.
- *
- * OUTPUT CONTRACT:
- * - `{ node, end }`: the parsed markup node and the offset just past the region. Throws
- *   {@link CompileError} (with a source offset) on malformed markup.
- *
- * WHY THIS DESIGN:
- * Expression holes and attribute expressions are captured as RAW spans, not recursively parsed here -
- * nested markup inside them is lowered/compiled later. Keeping the parser to pure markup structure
- * makes it small and keeps the one JS grammar (TypeScript) responsible for expression interiors.
- *
- * WHEN TO USE:
- * Parsing a region whose start you got from {@link findMarkupStart}.
- *
- * WHEN NOT TO USE:
- * Locating a region (that's findMarkupStart); parsing a whole module's components (that's parseModule).
- *
- * EDGE CASES:
- * - Mismatched/unclosed tags throw {@link CompileError} with the offending offset.
- * - Whitespace-only text between tags is dropped.
- *
- * PERFORMANCE NOTES:
- * A single recursive-descent pass over the region; hole/attribute interiors are sliced, not parsed.
- *
- * DEVELOPER WARNING:
- * `start` MUST point at the opening `<` - calling it elsewhere throws or mis-parses. Callers that scan
- * a module should catch {@link CompileError} (lintSource does) so a half-typed region doesn't abort.
+ * Whitespace-only text between tags is dropped.
  *
  * @param src - The module source.
- * @param start - The offset of the opening `<`.
- * @returns The parsed markup node and the offset just after the region.
- * @see {@link findMarkupStart}
- * @see {@link CompileError}
- *
+ * @param start - MUST be the offset of the opening `<`. Anywhere else throws or mis-parses.
+ * @returns The parsed node, and the offset just past the region.
+ * @throws {CompileError} On malformed markup - a mismatched or unclosed tag - carrying the
+ *                        offending offset. A caller scanning a whole module should catch it,
+ *                        as lintSource does, so a half-typed region does not abort the scan.
  * @example
- * ```ts
  * const { node, end } = parseMarkup('<h1>Hi</h1>', 0);
  * node.kind; // 'element'
  * node.tag;  // 'h1'
- * end;       // 11 (offset just past '</h1>')
- * ```
+ * end;       // 11, just past '</h1>'
+ *
+ * @see {@link findMarkupStart}, which supplies `start`.
  */
 export function parseMarkup(src: string, start: number): { node: MarkupElement | MarkupFragment; end: number }
 {

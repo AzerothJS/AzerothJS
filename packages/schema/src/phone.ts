@@ -1,6 +1,4 @@
 /**
- * MODULE: schema/phone
- *
  * phone() validator: checks phone numbers in E.164 international format. Pragmatic scope - starts
  * with `+`, total digit count 8-15, and (optionally) the calling-code prefix matches one of a
  * supplied country list.

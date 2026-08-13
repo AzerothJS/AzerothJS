@@ -1,5 +1,5 @@
 /**
- * MODULE: http/rate-limit - request rate limiting at the edge
+ * Request rate limiting at the edge.
  *
  * A fixed-window limiter over a small store interface. The default store is an in-memory Map
  * with lazy eviction - correct for a single process and the common case - and the RateStore

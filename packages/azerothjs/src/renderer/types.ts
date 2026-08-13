@@ -1,8 +1,4 @@
-/**
- * MODULE: renderer/types
- *
- * Input types for {@link h}, the function that builds real DOM elements.
- */
+/** The input types {@link h} accepts. */
 
 /**
  * The props object for h() elements: HTML attributes, on* event handlers, DOM properties,

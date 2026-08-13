@@ -1,5 +1,5 @@
 /**
- * MODULE: http/adapter-node - the edge where web-standard meets node:http
+ * The edge where web-standard meets node:http.
  *
  * The kernel speaks WHATWG Request/Response only; this module is the ONLY place Node's
  * IncomingMessage/ServerResponse exist. Three jobs:

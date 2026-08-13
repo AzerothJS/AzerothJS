@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * MODULE: create-azeroth/cli - `npm create azeroth@latest`
+ * `npm create azeroth@latest`.
  *
  * The day-one path, interrogation-free: at most two questions (a name if none was
  * given, a shape if --template was not passed), asked in the framework's interaction

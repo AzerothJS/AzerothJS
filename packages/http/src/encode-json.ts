@@ -1,5 +1,5 @@
 /**
- * MODULE: http/encode-json - responses compiled from a schema declaration
+ * Responses compiled from a schema declaration.
  *
  * `json(data)` walks the value at runtime - JSON.stringify introspects every key of every
  * response. But an API route's response shape is usually DECLARED already (the same

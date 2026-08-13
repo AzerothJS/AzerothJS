@@ -1,5 +1,5 @@
 /**
- * MODULE: ws/handshake - the RFC 6455 opening handshake (section 4)
+ * The RFC 6455 opening handshake (section 4).
  *
  * A WebSocket begins as an HTTP/1.1 GET carrying Upgrade headers; the server proves it
  * speaks WebSocket (and is not an HTTP cache blindly replaying bytes) by hashing the

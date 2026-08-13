@@ -1,12 +1,7 @@
 /**
- * MODULE: reactivity/on-cleanup
- *
- * onCleanup() registers a teardown callback inside an effect. It runs before the
- * effect re-runs (on a dependency change) and when the effect is disposed. Returning
- * a cleanup from the effect body handles the single case, but an effect can return
- * only one function; onCleanup lets a run register any number of independent
- * cleanups, including conditionally - a cleanup registered only when a branch is
- * taken fires only for that branch.
+ * Registers teardown work with whatever reactive scope is running. An effect body can
+ * return only one cleanup function; onCleanup lets a single run register any number of
+ * them, including conditionally, so each teardown sits next to the setup it undoes.
  */
 
 import type { CleanupFn } from './types.ts';
@@ -14,67 +9,36 @@ import { currentCleanups } from './graph.ts';
 import { registerDisposer } from './create-root.ts';
 
 /**
- * onCleanup
+ * Registers a cleanup function with the enclosing reactive scope. Where it attaches, and
+ * therefore when it runs, depends on where it is called:
  *
- * PURPOSE:
- * Registers a cleanup function on the currently-running effect. It runs before that
- * effect's next run and on its disposal. May be called any number of times.
+ * - Inside an effect run, it joins that run's cleanups and fires before the effect's NEXT
+ *   run as well as on disposal. Each run starts from a clean slate, so a cleanup must undo
+ *   exactly what its own run set up.
+ * - Inside a createRoot body or a component body, with no effect running, it attaches to
+ *   that scope and fires when the scope is disposed.
+ * - Outside every scope it is a no-op rather than a throw, so a component that calls it
+ *   does not explode when rendered in a bare unit test.
  *
- * WHY IT EXISTS:
- * An effect body can return at most one cleanup, which is awkward when a run sets up
- * several resources, or sets one up only inside a conditional. onCleanup colocates
- * each teardown with its setup and scales to many, without forcing one closure to
- * remember everything.
+ * Must be called synchronously. A call made after an `await` has lost the scope it meant
+ * to register with.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity stage. Reads the active effect's cleanup array (a live binding
- * from ./graph via create-effect); it is meaningful only during an effect run.
- *
- * INPUT CONTRACT:
- * - fn is the cleanup callback. Must be called synchronously within an effect run to
- *   attach to that effect.
- *
- * OUTPUT CONTRACT:
- * - Returns void. Pushes fn onto the active effect's cleanup list. Called outside any
- *   effect run it is a safe no-op (nothing is registered).
- *
- * WHY THIS DESIGN:
- * Registering against the active run's cleanup array (rather than returning a value)
- * is what enables multiple and conditional cleanups; the no-op-outside-effect rule
- * keeps call sites safe in code that may run both inside and outside a reactive scope.
- *
- * WHEN TO USE:
- * To release a resource acquired during an effect run: timers, listeners,
- * subscriptions, observers - especially when there are several or they are conditional.
- *
- * WHEN NOT TO USE:
- * Not outside an effect (it does nothing there). Not for cleanup that must run on a
- * schedule unrelated to the effect's lifecycle.
- *
- * EDGE CASES:
- * - Calling it outside an effect run is a deliberate no-op, not an error.
- * - Cleanups registered in a run fire before that effect's NEXT run, not only on final
- *   disposal, so each run starts from a clean slate.
- *
- * PERFORMANCE NOTES:
- * O(1): a single array push onto the active effect's cleanup list.
- *
- * DEVELOPER WARNING:
- * Each registered cleanup runs before every re-run, not just on dispose - make them
- * idempotent-safe and ensure they undo exactly what the run set up.
- *
- * @param fn - The cleanup function to register on the active effect.
- * @returns void
- * @see {@link createEffect}
+ * @param fn - The teardown callback.
  * @example
- * createEffect(() => {
+ * createEffect(() =>
+ * {
  *     const id = setInterval(tick, 1000);
  *     onCleanup(() => clearInterval(id));
- *     if (isPolling()) {
- *         const p = setInterval(poll, 3000);
- *         onCleanup(() => clearInterval(p)); // only registered when polling
+ *
+ *     if (isPolling())
+ *     {
+ *         const poller = setInterval(poll, 3000);
+ *         onCleanup(() => clearInterval(poller)); // registered only on this branch
  *     }
  * });
+ *
+ * @see {@link createEffect}
+ * @see {@link createRoot}
  */
 export function onCleanup(fn: CleanupFn): void
 {
@@ -84,11 +48,7 @@ export function onCleanup(fn: CleanupFn): void
         return;
     }
     // No run in progress, but there may still be a scope: a createRoot body, or a component body
-    // executing inside one. Registering with the owner makes the callback fire when that scope is
-    // disposed, which is what `packages/azerothjs/README.md` has always described. Previously this
-    // fell through and registered nowhere, so the documented pattern silently did nothing.
-    //
-    // Outside every scope it remains a no-op rather than a throw - a component that calls
-    // onCleanup must not explode when someone renders it in a bare unit test.
+    // executing inside one. Registering with the owner makes the callback fire when that scope
+    // is disposed. Falling through instead left the documented pattern silently doing nothing.
     registerDisposer(fn);
 }

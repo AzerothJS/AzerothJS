@@ -1,5 +1,5 @@
 /**
- * MODULE: kit/client - the browser boot (client-safe entry)
+ * The browser boot (client-safe entry).
  *
  * `bootClient(App)` is the whole client entry: a page that arrived WITH markup
  * (an SSR'd or prerendered route) is ADOPTED via hydrate(); an empty shell (the

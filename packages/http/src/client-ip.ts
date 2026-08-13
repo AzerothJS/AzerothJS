@@ -1,5 +1,5 @@
 /**
- * MODULE: http/client-ip - the real client address, with an explicit trust boundary
+ * The real client address, with an explicit trust boundary.
  *
  * `X-Forwarded-For` is client-controlled: a request that reaches the server directly can put
  * anything in it. Trusting it blindly (the Express `req.ip` footgun) lets a caller spoof its

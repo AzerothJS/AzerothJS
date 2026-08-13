@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/info - the bug-report block
+ * The bug-report block.
  *
  * One paste-able block for every issue: CLI + node + platform, the detected shape, and
  * the azeroth/vite/typescript versions each half actually has installed (read from

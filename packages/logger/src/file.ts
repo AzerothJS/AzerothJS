@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/file - persistence: buffered file/folder streams with rotation
+ * Persistence: buffered file/folder streams with rotation.
  *
  * A FileStream is a WritableLike over a file or a folder, so it plugs into BOTH logger
  * routes: `createLogger({ stream: fileStream('logs/') })` rides the fused NDJSON fast

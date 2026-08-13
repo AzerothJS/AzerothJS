@@ -1,5 +1,5 @@
 /**
- * MODULE: http/multipart - a from-scratch multipart/form-data reader
+ * A from-scratch multipart/form-data reader.
  *
  * Parses the format browsers post when a form carries files (RFC 7578 over the RFC 2046
  * framing), with none of the incumbents' bolt-on baggage: limits are ON by default (total

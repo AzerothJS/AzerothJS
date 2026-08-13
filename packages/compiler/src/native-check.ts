@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/native-check - the type-check backends running on the NATIVE TypeScript compiler.
+ * The type-check backends running on the NATIVE TypeScript compiler.
  *
  * Mirrors the two classic backends in typecheck-ts (the one-shot Program and the incremental
  * LanguageService) on top of the native API loaded by native-ts. The projection, the diagnostic

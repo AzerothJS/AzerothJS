@@ -1,5 +1,5 @@
 /**
- * MODULE: kit - per-route rendering over @azerothjs/http (the node adapter)
+ * Per-route rendering over @azerothjs/http (the node adapter).
  *
  * `mountPages(app, options)` is the assembled car's server half. It reads the SAME
  * route table the client router uses - code-first, nothing to learn - plus one

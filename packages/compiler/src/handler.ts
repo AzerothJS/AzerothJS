@@ -1,7 +1,7 @@
 /**
- * MODULE: compiler/handler - event-handler shape classification
+ * Event-handler shape classification.
  *
- * NORMATIVE RULE: an `on*` handler value must be a FUNCTION (the listener run on the event);
+ * The normative rule: an `on*` handler value must be a FUNCTION (the listener run on the event);
  * an expression of non-function type is invalid in handler position. That rule belongs to the
  * type system. isSetupHandler is the CONSERVATIVE, type-free SUBSET of it the compiler can
  * enforce syntactically: it returns true only for expressions provably recognizable, without

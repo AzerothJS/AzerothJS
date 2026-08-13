@@ -1,5 +1,5 @@
 /**
- * MODULE: api/declare - the client-safe half of the colocated API
+ * The client-safe half of the colocated API.
  *
  * The types and small values BOTH sides of the wire read: the route declaration shape
  * ({@link Decl}), the projected {@link Manifest} a typed client is built from, path-parameter
@@ -150,6 +150,18 @@ export interface StatusReply<S extends number = number, B = unknown>
  * type to check.
  */
 export function reply<S extends number>(status: S): StatusReply<S, undefined>;
+/**
+ * Body form: the status plus a typed body, and optional headers.
+ *
+ * The status must appear in the route's `responses` map - or be 200 with `output` - for the
+ * body type to check against anything.
+ *
+ * @typeParam S - The status code, held as a literal.
+ * @typeParam B - The body type, checked against the declared response for `S`.
+ * @param status - The HTTP status.
+ * @param body - Serialized according to the route's declaration.
+ * @param headers - Merged into the response.
+ */
 export function reply<S extends number, B>(status: S, body: B, headers?: Record<string, string>): StatusReply<S, B>;
 export function reply<S extends number, B>(status: S, body?: B, headers?: Record<string, string>): StatusReply<S, B | undefined>
 {

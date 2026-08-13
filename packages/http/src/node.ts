@@ -1,5 +1,5 @@
 /**
- * MODULE: @azerothjs/http/node - the Node.js half
+ * The Node.js half.
  *
  * Everything that touches node:* at module load lives behind THIS subpath: the socket
  * adapters (serve/serveH2c, graceful shutdown, keep-alive tuning), filesystem static

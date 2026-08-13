@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/sinks - the two faces over one record
+ * The two faces over one record.
  *
  * A sink is one function from record to nowhere; these are the built-in three:
  *

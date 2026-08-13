@@ -1,19 +1,12 @@
 /**
- * MODULE: azerothjs - public API
+ * The reactive core: signals, memos and effects, plus the primitives every other package
+ * builds on - scheduling, tracking control, lifetimes, error handling, render-mode
+ * dispatch, per-render store scope, and the SSR and hydration helpers.
  *
- * The reactive core of the framework: signals (atomic state), memos (cached
- * derivations), and effects (reactions), plus the supporting primitives every other
- * package builds on - scheduling (batch), tracking control (untrack, on), lifetimes
- * (createRoot, onCleanup, onRootDispose), error handling (catchError,
- * onUncaughtError), render-mode dispatch, per-render store scope, and the SSR /
- * hydration helpers.
- *
- * This is the package's only public entry; its `exports` map exposes "." alone, so
- * every symbol re-exported here is the supported surface and is documented at its
- * definition (this file just collects them). Internal wiring shared between the
- * primitives - currentSubscriber/setCurrentSubscriber, isBatching/queueEffect, and the
- * graph link machinery - is deliberately NOT re-exported; the primitives import it
- * directly from their modules.
+ * Everything re-exported here is supported surface, documented at its definition. The
+ * wiring the primitives share between themselves - the current-subscriber slot, the batch
+ * queue, the graph link machinery - is deliberately absent; those modules import it
+ * directly from each other.
  */
 
 // Core primitives: state, derivation, reaction.
@@ -53,8 +46,8 @@ export { getStoreScope, runInStoreScope } from './store-scope.ts';
 export { createStore } from './create-store.ts';
 export type { StoreOptions } from './create-store.ts';
 
-// SSR string-emission helpers (the raw-HTML brand and the escapes; the framework's
-// own serializers live in ./internal - plumbing, not application API).
+// SSR string emission: the raw-HTML brand and the escapes. The framework's own serializers
+// live in ./internal, being plumbing rather than application API.
 export { isSSRNode, ssr, escapeText, escapeAttr } from './ssr.ts';
 export type { SSRNode } from './ssr.ts';
 

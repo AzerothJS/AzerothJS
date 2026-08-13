@@ -1,5 +1,5 @@
 /**
- * MODULE: kit/image - the transform endpoint behind <Image>
+ * The transform endpoint behind <Image>.
  *
  * GET /_image?src&w&q answers content-addressed image bytes: every parameter (source
  * content hash, snapped width, quality, negotiated format) rides the cache key, so the

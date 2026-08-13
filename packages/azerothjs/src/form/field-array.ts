@@ -1,7 +1,5 @@
 /**
- * MODULE: form/field-array
- *
- * createFieldArray manages a DYNAMIC LIST of repeated sub-forms - invoice line items, multiple phone
+ * Manages a DYNAMIC LIST of repeated sub-forms - invoice line items, multiple phone
  * numbers, survey answers - by composing one {@link createForm} per row. It owns the add/remove/reorder
  * operations plus the per-row reactive lifecycle, and exposes aggregated values()/isValid()/error() so the
  * list joins a parent submit as a single unit.
@@ -115,51 +113,31 @@ export interface FieldArrayApi<T extends object>
 }
 
 /**
- * createFieldArray
+ * Manages a dynamic list of repeated sub-forms, one {@link createForm} per row, with add,
+ * remove and reorder plus aggregated `values()`, `isValid()` and `error()`.
  *
- * PURPOSE:
- * Manages a dynamic list of repeated sub-forms, one {@link createForm} per row, with add/remove/reorder and
- * aggregated values()/isValid()/error().
+ * Each row is a full form with its own validation effects, and each gets its own scope, so
+ * remove() disposes exactly that row. Anything still present when the surrounding scope
+ * unmounts is torn down with it. That lifecycle is the whole reason this exists: a plain
+ * `createSignal<FormApi[]>` cannot dispose a removed row, because the row forms live in the
+ * parent scope, outside any `<For>`'s per-key disposal.
  *
- * WHY IT EXISTS:
- * A repeating sub-form needs each row independently validated yet the whole list submitted together, and
- * every removed row's validation effects disposed so they do not leak. Hand-rolling that is the awkward,
- * error-prone part; createFieldArray owns the per-row createRoot/dispose lifecycle and the aggregation
- * memos, leaving authoring to `<For>` + `register`.
+ * Row keys are stable and monotonic, so `<For>` reuses DOM across reorder and removal.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, form; pure composition over createForm + signals/memos. It adds no new validation concepts - row
- * validators are the same `validate`/`validateForm`/`validateAsync` as a flat form.
+ * Bind row fields with `{...row.form.register('field')}`. The `bind:value` sugar is
+ * recognised for a top-level `form` declaration only, since a row form here is an ordinary
+ * runtime object.
  *
- * INPUT CONTRACT:
- * - config.blank: factory for a new row.
- * - config.initial?: starting rows (default none).
- * - config.validate?/validateForm?/validateAsync?: per-row validators, forwarded to each row's createForm.
- * - config.validateArray?: array-level rule over all row values.
+ * Row validators are the same `validate`, `validateForm` and `validateAsync` a flat form
+ * takes; no new concepts. validateAll() is synchronous, and async row validators resolve into
+ * each row's own errors independently.
  *
- * OUTPUT CONTRACT:
- * - A {@link FieldArrayApi}: rows()/values()/isValid()/error() getters plus append/remove/move/validateAll/
- *   reset.
- *
- * WHY THIS DESIGN:
- * Each row gets its own createRoot so remove() can dispose exactly that row; an onRootDispose tears down any
- * rows still present when the surrounding scope unmounts. Stable monotonic keys let `<For>` reuse DOM across
- * reorder and removal.
- *
- * WHEN TO USE:
- * A list of repeated, individually-validated sub-forms.
- *
- * WHEN NOT TO USE:
- * A flat form (use the `form` keyword / createForm). A fixed, non-repeating group (just more fields).
- *
- * EDGE CASES:
- * - Bind row fields with `{...row.form.register('field')}` - the `bind:value` sugar is form-keyword only.
- * - validateAll() is synchronous; async row validators resolve into each row's errors independently.
- *
- * @typeParam T - The shape of one row, inferred from `blank`.
- * @param config - The field-array configuration.
- * @returns A {@link FieldArrayApi}.
- *
+ * @typeParam T - One row's shape, inferred from `blank`.
+ * @param config - Field-array configuration.
+ * @param config.blank - Builds a new row.
+ * @param config.initial - Starting rows. Defaults to none.
+ * @param config.validateArray - Array-level rule over all row values.
+ * @returns The {@link FieldArrayApi}.
  * @example
  * ```ts
  * const items = createFieldArray({

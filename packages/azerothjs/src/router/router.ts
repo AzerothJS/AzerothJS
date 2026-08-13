@@ -1,22 +1,20 @@
 /**
- * MODULE: router/router
+ * createRouter is the orchestrator. Every other router export is a thin reactive layer over
+ * the Router it returns.
  *
- * createRouter is the orchestrator; every other router export (Link, Routes, Outlet, useRoute,
- * useParams, useQuery, useLoader) is a thin reactive layer over the Router it returns.
+ * The flow is one-way: navigate() pushes or replaces on the HistoryAdapter, the adapter's
+ * subscription updates a single internal state signal, and the `location` and `match` memos
+ * derive from that. A URL is therefore matched once per change, and every downstream read is
+ * a near-free structural read.
  *
- * FLOW: navigate() pushes/replaces on the HistoryAdapter; the adapter's subscribe callback updates
- * one internal state signal; the `location` and `match` memos derive from it - so the URL is
- * matched once per change and downstream reads are near-free structural reads.
+ * The history subscription is registered with the surrounding scope, so it - and, if it was
+ * the last subscriber, the native popstate listener - is torn down on unmount. createRouter
+ * MUST therefore run inside a root: render() wraps the tree in one, so a top-level component
+ * is covered, but standalone use in a test has to wrap it explicitly.
  *
- * LIFECYCLE: the history subscription is registered with the surrounding createRoot via
- * onRootDispose, so it (and, if it was the last subscriber, the native popstate listener) is torn
- * down on unmount. createRouter therefore MUST run inside a createRoot - render() wraps the tree
- * in one, so a top-level component is covered; standalone use (tests) must wrap it explicitly.
- *
- * MATCHING: at construction the (possibly nested) route tree is flattened to one entry per leaf
- * (a compiled full-path matcher + the root-to-leaf chain for <Outlet>); matching is a linear
- * first-hit scan, so config order defines priority - matching every other router on the web. The
- * leaf/path/base/state internals below carry their own comments.
+ * At construction the route tree is flattened to one entry per leaf, each a compiled
+ * full-path matcher plus the root-to-leaf chain Outlet needs. Matching is a linear first-hit
+ * scan, so configuration order defines priority, as it does in every other router on the web.
  */
 
 import type { Getter, Resource } from '../reactivity/index.ts';
@@ -546,68 +544,38 @@ function freshKey(): string
 }
 
 /**
- * createRouter
+ * Builds a {@link Router} from a route config: the reactive `location`, `match` and `loader`,
+ * plus the imperative navigate, replace, back, forward and href.
  *
- * PURPOSE:
- * Builds a {@link Router} from a route config: reactive `location`/`match`/`loader` plus imperative
- * navigate/replace/back/forward/href.
+ * MUST be created inside a root, or the history subscription and the native popstate listener
+ * leak. render() provides one, so a top-level component is covered; a test has to wrap it.
  *
- * WHY IT EXISTS:
- * Hand-rolling client routing means wiring the popstate listener, push/replace, URL matching,
- * nested layouts, loader cancellation, base-path handling, AND remembering to tear it all down -
- * fiddly and leak-prone. createRouter packages all of it as reactive signals with automatic
- * cleanup tied to the surrounding root.
+ * Route ORDER is priority - the first matching leaf wins - so put specific routes before
+ * catch-alls.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; the orchestrator the components ({@link Link}/Routes/Outlet) and composables
- * (useRoute/useParams/useQuery/useLoader) read. Must run inside a createRoot so the history
- * subscription is disposed on unmount (render() provides one).
+ * The URL is matched once per change and `match` compares structurally, so a cosmetic change
+ * such as a new hash does not invalidate anything downstream. The loader is a resource keyed
+ * on the match, which is where its cancellation and race guard come from for free. A `base`
+ * is prefixed on write and stripped on read, so routes, params and `<Link to>` all stay
+ * base-relative; a URL outside the configured base simply does not match, though `location`
+ * still reflects the raw pathname.
  *
- * INPUT CONTRACT:
- * - config.routes: a (possibly nested) route tree; order defines match priority.
- * - config.base: optional base path; the router works in base-relative space internally.
- * - config.history: optional HistoryAdapter (defaults to browser history); config.mode is reserved.
+ * navigate runs untracked, so calling it inside an effect adds no subscriptions.
  *
- * OUTPUT CONTRACT:
- * - A Router: `location()`/`match()` getters, a `loader` resource, and navigate/replace/back/
- *   forward/href methods. Cleanup is automatic when the surrounding root disposes.
- *
- * WHY THIS DESIGN:
- * One internal state signal updated by the history listener matches the URL once per change; the
- * `match` memo uses structural equality so cosmetic URL changes (e.g. hash-only) do not invalidate
- * downstream; the loader is a createResource keyed on `match` (free cancellation + race guard);
- * base is handled by prefix-on-write / strip-on-read, so routes, params, and <Link to> stay
- * base-relative.
- *
- * WHEN TO USE:
- * At the app root (or a subtree) to drive client-side routing.
- *
- * WHEN NOT TO USE:
- * For a single external link (use a plain <a>). Never call it outside a createRoot - the popstate
- * subscription would leak.
- *
- * EDGE CASES:
- * - A URL outside the configured base does not match (location still reflects the raw pathname).
- * - No match, or a matched route without a loader, leaves `loader` in the idle (no-key) state.
- * - Route order is priority: the first matching leaf wins.
- *
- * PERFORMANCE NOTES:
- * The URL is matched once per change; `location`/`match` are structural memo reads; navigate runs
- * untracked so calling it inside an effect adds no subscriptions.
- *
- * DEVELOPER WARNING:
- * Must be created inside a createRoot or the history subscription (and native popstate listener)
- * leaks. Route order matters - put more specific routes before catch-alls.
- *
- * @param config - The {@link RouterConfig}: routes (nested), optional base/history/mode.
- * @returns A {@link Router}.
- * @see {@link Link}
+ * @param config - Routes, and optionally `base`, `history` and `mode`.
+ * @returns The {@link Router}. It cleans up when the surrounding root disposes.
  * @example
  * const router = createRouter({
- *   routes: [{ path: '/', component: Home }, { path: '/users/:id', component: UserPage }]
+ *     routes: [
+ *         { path: '/', component: Home },
+ *         { path: '/users/:id', component: UserPage }
+ *     ]
  * });
+ *
  * router.navigate('/users/42');
  * router.location().params.id; // '42'
+ *
+ * @see {@link Link} and {@link Routes}, which read the router this returns.
  */
 export function createRouter(config: RouterConfig): Router
 {

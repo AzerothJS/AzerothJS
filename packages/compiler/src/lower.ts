@@ -1,10 +1,9 @@
 /**
- * MODULE: compiler/lower - lowering
+ * Lowering: markup AST plus ReactiveAnalysis into a {@link RenderPlan}.
  *
- * Markup AST + ReactiveAnalysis -> {@link RenderPlan}. Walks the component's markup output, builds the
- * static template tree (each node gets an id; dynamic insertion points become `hole`s or `slot`s), and
- * emits one Binding per dynamic point - wiring in the dependency sets analysis computed (looked up by
- * source span):
+ * Walks the component's markup output, builds the static template tree - each node gets an id,
+ * and dynamic insertion points become holes or slots - then emits one binding per dynamic
+ * point, wiring in the dependency sets analysis computed, looked up by source span:
  *   - host elements -> `element` nodes with static attrs and dynamic attr/event/spread/ref bindings;
  *   - expression holes -> `text` bindings at `hole` nodes;
  *   - components and built-in control-flow -> `component` bindings at `slot` nodes (the co-range
@@ -58,66 +57,30 @@ interface Ctx
 }
 
 /**
- * lowerComponent
+ * Lowers a component's markup OUTPUT into a {@link RenderPlan}. Where several markup items
+ * exist, the LAST is the output.
  *
- * PURPOSE:
- * Lowers a component's markup OUTPUT (its last markup body item) into a {@link RenderPlan},
- * or null when the component declares no markup output.
+ * This is the bridge from a parsed and analyzed component to the target-independent IR, which
+ * is what separates "what to build and update" from "how to emit it" and lets one IR drive
+ * the DOM, SSR and hydration backends alike.
  *
- * WHY IT EXISTS:
- * It is the bridge from a parsed + analyzed component to the target-independent IR that codegen emits.
- * Keeping it separate from codegen splits "what to build and update" (lowering) from "how to emit it"
- * (the DOM/SSR/hydrate backends), so one IR drives all three.
+ * `analysis` MUST match this `source` and `component`. Dependency sets are keyed by each
+ * analyzed expression's source START, so every binding looks up its deps by span - which
+ * keeps the two stages in lock-step through one shared key, but also means a stale analysis
+ * silently mis-wires reactivity instead of erroring.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, lower stage; runs per component between analyzeComponent and codegen's emit
- * (generateComponent).
- *
- * INPUT CONTRACT:
- * - source: the original `.azeroth` text.
- * - component: the {@link ComponentDecl} from parseModule.
- * - analysis: the {@link ReactiveAnalysis} from analyzeComponent for THIS source + component.
- *
- * OUTPUT CONTRACT:
- * - A RenderPlan (static template + bindings), or null when there is no markup output to lower.
- *
- * WHY THIS DESIGN:
- * Dependency sets are indexed by each analyzed expression's source start, so every lowered binding
- * looks up its deps by span - decoupling lowering from re-running analysis and keeping the two stages
- * in lock-step through one shared key (the span).
- *
- * WHEN TO USE:
- * Codegen's per-component path.
- *
- * WHEN NOT TO USE:
- * For markup embedded inside an expression - use {@link lowerMarkup}, which skips analysis.
- *
- * EDGE CASES:
- * - Returns null for a component with no markup output.
- * - If several markup items exist, the LAST one is the output.
- *
- * PERFORMANCE NOTES:
- * A single walk of the markup; deps are looked up O(1) by span.
- *
- * DEVELOPER WARNING:
- * The `analysis` MUST match `source` + `component` - deps are keyed by span, so a stale analysis
- * silently mis-wires reactivity rather than erroring.
- *
- * @param source - The original `.azeroth` source
- * @param component - The component declaration (from `parseModule`)
- * @param analysis - The reactive analysis (from `analyzeComponent`)
- * @returns The lowered {@link RenderPlan}, or null when the component has no markup output
- * @see {@link lowerMarkup}
- * @see {@link RenderPlan}
- *
+ * @param source - The original source.
+ * @param component - The declaration from parseModule.
+ * @param analysis - From analyzeComponent, over the same source and component.
+ * @returns The plan, or null when the component has no markup output.
  * @example
- * ```ts
- * const m = parseModule('component C { state n = 0; <p>{n}</p> }');
- * const c = m.items[0] as ComponentDecl;
- * const plan = lowerComponent(src, c, analyzeComponent(src, c));
- * plan!.bindings[0].kind; // 'text'
- * ```
+ * const module = parseModule('component C { state n = 0; <p>{n}</p> }');
+ * const component = module.items[0] as ComponentDecl;
  *
+ * const plan = lowerComponent(source, component, analyzeComponent(source, component));
+ * plan!.bindings[0].kind; // 'text'
+ *
+ * @see {@link lowerMarkup} for markup embedded inside an expression.
  * @internal
  */
 export function lowerComponent(source: string, component: ComponentDecl, analysis: ReactiveAnalysis): RenderPlan | null
@@ -152,55 +115,22 @@ export function lowerComponent(source: string, component: ComponentDecl, analysi
 }
 
 /**
- * lowerMarkup
+ * Lowers markup embedded inside an expression - `fallback={<p/>}`, `{cond ? <a/> : <b/>}`,
+ * `{items.map(i => <li/>)}` - with no component analysis.
  *
- * PURPOSE:
- * Lowers an arbitrary markup node - markup embedded inside an expression (`fallback={<p/>}`,
- * `{cond ? <a/> : <b/>}`, `{items.map(i => <li/>)}`) - into a {@link RenderPlan} with NO component
- * analysis.
+ * Such markup lives inside arbitrary JS, so it can never be a clone template. Routing it
+ * through the SAME lowerer and emitter is what keeps the compiler to one markup emitter
+ * rather than a second, drifting markup-to-h() path.
  *
- * WHY IT EXISTS:
- * Expression-embedded markup lives inside arbitrary JS (a ternary, a `.map`, a prop value), so it can
- * NEVER be a clone template. Routing it through the SAME lowerer + emitNode is what lets the compiler
- * keep ONE markup emitter instead of a second markup->h() path (the single-source-of-truth goal).
+ * The resulting bindings carry EMPTY dependency sets, because no component scope was
+ * consulted. Reactivity for them is decided by codegen's shape heuristic at emit time, which
+ * also means {@link isReactive} is not meaningful on a plan from this function - do not read
+ * IR reactivity off one.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, lower stage; called by codegen's projectMarkup (to emit) and analyze's projectMarkup (to
- * collect reads).
- *
- * INPUT CONTRACT:
- * - source: the original `.azeroth` text.
- * - node: the embedded {@link MarkupElement} or {@link MarkupFragment}.
- *
- * OUTPUT CONTRACT:
- * - A RenderPlan whose bindings carry EMPTY dependency sets (no component scope was consulted).
- *
- * WHY THIS DESIGN:
- * No component scope is available for embedded markup, so deps are empty and codegen's wrapDynamic
- * heuristic decides reactivity at emit time. Reusing createLowerer with an empty scope map avoids a
- * second markup walker that would drift from this one.
- *
- * WHEN TO USE:
- * Lowering markup found inside an expression.
- *
- * WHEN NOT TO USE:
- * A component's top-level output - use {@link lowerComponent}, which wires real dependency sets.
- *
- * EDGE CASES:
- * - Empty deps means each binding's reactivity is decided by wrapDynamic, not by dep analysis.
- *
- * PERFORMANCE NOTES:
- * One walk; no analysis pass.
- *
- * DEVELOPER WARNING:
- * Because deps are empty, {@link isReactive} is NOT meaningful for these bindings - reactivity rests
- * entirely on codegen's heuristic. Don't read IR reactivity off a lowerMarkup plan.
- *
- * @param source - The original `.azeroth` source
- * @param node - The embedded markup element or fragment
- * @returns A {@link RenderPlan} with empty-dep bindings
- * @see {@link lowerComponent}
- *
+ * @param source - The original source.
+ * @param node - The embedded element or fragment.
+ * @returns A plan whose bindings have empty dependency sets.
+ * @see {@link lowerComponent} for a component's top-level output, which wires real deps.
  * @internal
  */
 export function lowerMarkup(source: string, node: MarkupElement | MarkupFragment): RenderPlan

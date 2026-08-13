@@ -1,5 +1,5 @@
 /**
- * MODULE: http/adapter-request - the lazy Request the Node adapter hands to the kernel
+ * The lazy Request the Node adapter hands to the kernel.
  *
  * Constructing a real (undici) Request per request is the single largest fixed cost on the
  * hot path: URL parsing, Headers normalization, internal-state setup - none of which a

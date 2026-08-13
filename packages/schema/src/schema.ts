@@ -1,5 +1,5 @@
 /**
- * MODULE: schema - validators that infer their TypeScript types
+ * Validators that infer their TypeScript types.
  *
  * The anti-"schemas divorced from types": one declaration drives runtime validation AND the
  * compile-time type. `object({ email: string() })` validates unknown input and `Infer<...>`

@@ -1,7 +1,6 @@
 /**
- * MODULE: compiler/scanner - context-aware lexing helpers
- *
- * Finds markup inside arbitrary JS/TS WITHOUT a full parser. Two jobs:
+ * Context-aware lexing helpers that find markup inside arbitrary JS/TS without a full parser.
+ * Two jobs:
  *   1. Skip non-code spans correctly - line/block comments, single/double quoted strings, template
  *      literals (with nested `${ ... }`), and regex literals - so a `<`, `{`, or `}` inside them is
  *      never mistaken for syntax.
@@ -618,63 +617,26 @@ function tryGenericArrow(src: string, i: number): number
 }
 
 /**
- * findMarkupStart
+ * The next `<` that opens markup in EXPRESSION position, skipping every non-code span on the
+ * way. This is how consumers step through a module's regions: start at 0, then pass the
+ * previous region's end.
  *
- * PURPOSE:
- * Finds the next `<` that begins a markup element/fragment in EXPRESSION position, scanning from
- * `from` and correctly skipping all non-code spans. Returns its index, or -1 if there is no more
- * markup.
+ * Expression position is decided from the previous significant token, the way hand-written
+ * markup transforms do it, and the skip helpers jump over strings, templates, comments and
+ * regex so nothing inside those is ever mistaken for a tag.
  *
- * WHY IT EXISTS:
- * Markup is embedded in arbitrary JS/TS, so the compiler must locate a region's start without a full
- * JS grammar - and without false-positiving on `a < b`, a `<` inside a string/comment/regex, or a
- * generic. This is the scanner's entry that all markup-region consumers (codegen, lint, lower) call
- * to step through a module's regions.
- *
- * COMPILER / RUNTIME ROLE:
- * Compiler, scanning stage; the front of the markup pipeline (its result feeds parseMarkup).
- *
- * INPUT CONTRACT:
- * - src: the module source.
- * - from: the index to start scanning at (callers loop, passing the previous region's end).
- *
- * OUTPUT CONTRACT:
- * - The index of the next markup-opening `<`, or -1 when none remains.
- *
- * WHY THIS DESIGN:
- * It tracks the previous significant character/word so it can decide expression position (markup vs
- * less-than) the way hand-written transforms do, and it reuses the skip* helpers to jump over strings,
- * templates, comments, and regex - so syntax inside those is never mistaken for a tag.
- *
- * WHEN TO USE:
- * Iterating the markup regions of a module (`from` = 0, then the prior region's end each time).
- *
- * WHEN NOT TO USE:
- * Parsing the region itself - that's {@link parseMarkup}, which takes this index.
- *
- * EDGE CASES:
- * - `a < b` (operator), a `<` inside a string/comment/regex, and (heuristically) generics return -1
- *   at that position.
- * - Returns -1 at end of input.
- *
- * PERFORMANCE NOTES:
- * A single left-to-right scan; skip helpers advance in O(span length).
- *
- * DEVELOPER WARNING:
- * Expression-position detection is HEURISTIC (token-based, not a real parser). It is tuned for the
- * markup the language accepts; exotic generic/operator combinations could in principle misclassify.
+ * The detection is HEURISTIC rather than a real parse. It is tuned for the markup the language
+ * accepts, and an exotic generic or operator combination could in principle misclassify.
  *
  * @param src - The module source.
- * @param from - The index to start scanning from.
- * @returns The index of the next markup-opening `<`, or -1.
- * @see {@link parseMarkup}
- *
+ * @param from - Where to start scanning.
+ * @returns The index of the next markup-opening `<`, or -1 when none remains.
  * @example
- * ```ts
- * findMarkupStart('return <h1>Hi</h1>;', 0); // 7 (the '<' of <h1>)
- * findMarkupStart('a < b', 0);               // -1 (a less-than operator, not markup)
- * findMarkupStart('const s = "<p>";', 0);    // -1 (the '<' is inside a string)
- * ```
+ * findMarkupStart('return <h1>Hi</h1>;', 0); // 7, the '<' of <h1>
+ * findMarkupStart('a < b', 0);               // -1, a less-than operator
+ * findMarkupStart('const s = "<p>";', 0);    // -1, inside a string
+ *
+ * @see {@link parseMarkup}, which takes this index.
  */
 export function findMarkupStart(src: string, from: number): number
 {

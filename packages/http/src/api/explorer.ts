@@ -1,5 +1,5 @@
 /**
- * MODULE: api/explorer - the house API explorer
+ * The house API explorer.
  *
  * A fully SELF-CONTAINED documentation page: one HTML string, inline CSS and JS, zero
  * external requests - it works offline, inside locked-down networks, and forever

@@ -1,6 +1,4 @@
 /**
- * MODULE: server/render-to-document
- *
  * Wraps a component's body HTML in a full HTML document and flushes the scoped CSS collected
  * during render into a <style> in the <head>. The body is rendered FIRST so every css`` call in
  * the tree has registered its scope before collectStyleSheet() reads the registry.
@@ -32,63 +30,27 @@ export interface RenderToDocumentOptions
 }
 
 /**
- * renderToDocument
+ * Renders a component into a complete HTML document, flushing the scoped CSS the render
+ * collected into a `<style>` in the head.
  *
- * PURPOSE:
- * Renders a component into a COMPLETE HTML document string, with the scoped CSS collected during
- * render flushed into a <head> <style>.
+ * The body is rendered BEFORE the CSS is collected, which is the ordering that matters:
+ * css`` registers its scopes during the render, so reading the registry any earlier yields an
+ * empty stylesheet. With no css`` in the tree, no `<style>` is emitted at all.
  *
- * WHY IT EXISTS:
- * A server response needs the full doctype/html/head/body shell, AND the scoped CSS must be read
- * AFTER the body renders (css`` registers its scopes during render). Hand-assembling that in the
- * right order is easy to get wrong (collecting CSS too early yields an empty stylesheet). This
- * does the ordering and the <style> flush for you.
+ * `head` and `bodyAttrs` are inserted RAW, so never pass unescaped user input through them.
+ * `title` and `lang` are escaped for you.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, server; the top-level SSR entry that produces a whole page. Delegates the body to
- * {@link renderToString} and the CSS flush to collectStyleSheet().
- *
- * INPUT CONTRACT:
- * - component: a thunk building the root element.
- * - options: document-level settings ({@link RenderToDocumentOptions}) - head, title, lang,
- *   bodyAttrs, and `static` to render marker-free.
- *
- * OUTPUT CONTRACT:
- * - A full `<!doctype html>` document string: charset, optional title, the collected scoped CSS,
- *   any extra head HTML, then the rendered body.
- *
- * WHY THIS DESIGN:
- * Rendering the body before collecting CSS is the crucial ordering - collectStyleSheet() reads the
- * registry css`` populated during the render, so an early read would miss styles. title/lang are
- * escaped to avoid injection; head/bodyAttrs are raw (caller-controlled).
- *
- * WHEN TO USE:
- * As the server response builder for a full page (hydration-ready by default, or `static: true`
- * for non-hydrated pages).
- *
- * WHEN NOT TO USE:
- * When you only need a fragment (use {@link renderToString}) or are assembling the shell yourself.
- *
- * EDGE CASES:
- * - `static: true` emits marker-free body HTML (not hydratable).
- * - With no css`` used, no <style> is emitted.
- *
- * PERFORMANCE NOTES:
- * One body render plus a string concat of the shell; the CSS is a single registry read.
- *
- * DEVELOPER WARNING:
- * `head` and `bodyAttrs` are inserted RAW - do not pass unescaped user input into them. Use
- * `title` for the document title (it is escaped for you).
- *
- * @param component - A thunk that builds the root element.
- * @param options - Document-level {@link RenderToDocumentOptions}.
- * @returns A full `<!doctype html>` document string.
- * @see {@link renderToString}
+ * @param component - A thunk building the root element.
+ * @param options - Document-level settings. `static: true` emits marker-free body HTML, which
+ *                  is not hydratable.
+ * @returns A full `<!doctype html>` document.
  * @example
  * const html = renderToDocument(() => App({}), {
- *   title: 'My App',
- *   head: '<meta name="viewport" content="width=device-width, initial-scale=1">'
+ *     title: 'My App',
+ *     head: '<meta name="viewport" content="width=device-width, initial-scale=1">'
  * });
+ *
+ * @see {@link renderToString} when you only need the body.
  */
 export function renderToDocument(component: () => HTMLElement | DocumentFragment, options: RenderToDocumentOptions = {}): string
 {

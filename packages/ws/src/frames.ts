@@ -1,5 +1,5 @@
 /**
- * MODULE: ws/frames - the RFC 6455 frame codec
+ * The RFC 6455 frame codec.
  *
  * The byte-level heart of the WebSocket implementation: an incremental parser that turns an
  * arbitrary chunking of the TCP stream into frames, and a serializer for the server's own.

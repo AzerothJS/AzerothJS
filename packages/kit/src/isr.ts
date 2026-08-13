@@ -1,5 +1,5 @@
 /**
- * MODULE: kit/isr - incremental static regeneration over the page renderer
+ * Incremental static regeneration over the page renderer.
  *
  * A `render: 'static'` page with `revalidate` serves from a {@link PageCache}: fresh
  * within the window, stale-WHILE-revalidate past it - the old copy answers immediately

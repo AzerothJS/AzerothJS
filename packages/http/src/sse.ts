@@ -1,5 +1,5 @@
 /**
- * MODULE: http/sse - Server-Sent Events, the frontend stream keyword's server peer
+ * Server-Sent Events, the frontend stream keyword's server peer.
  *
  * `sse(request, producer)` returns a `text/event-stream` Response whose body a producer
  * drives through a small typed connection - the exact wire format the frontend's `stream`

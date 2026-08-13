@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/types - the AST for one markup region
+ * The AST for one markup region.
  *
  * The compiler transforms markup embedded in a JS/TS module into runtime calls; these types describe
  * what the markup parser produces. Everything OUTSIDE markup is left as opaque source text (the

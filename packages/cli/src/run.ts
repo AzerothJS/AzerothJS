@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/run - plan execution
+ * Plan execution.
  *
  * Two executors, one honest contract: they run EXACTLY the plan's steps.
  * `runToCompletion` (check/build) runs steps sequentially with inherited stdio -

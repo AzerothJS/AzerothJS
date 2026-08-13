@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/markers - intermediate marker identifiers for nested-scope reactive lowering
+ * Intermediate marker identifiers for nested-scope reactive lowering.
  *
  * The `state`/`derived`/`effect` keywords lower to `createSignal`/`createMemo`/`createEffect`. At the
  * component-body top level codegen emits those calls directly. INSIDE a nested scope (a render

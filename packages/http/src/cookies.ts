@@ -1,5 +1,5 @@
 /**
- * MODULE: http/cookies - cookie parsing and Set-Cookie serialization
+ * Cookie parsing and Set-Cookie serialization.
  *
  * Two small, strict functions. `parseCookies` reads the request's Cookie header into a plain
  * record (first value wins on duplicates, matching every server's observable behavior).

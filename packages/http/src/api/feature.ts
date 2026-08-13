@@ -1,5 +1,5 @@
 /**
- * MODULE: api/feature - the colocated route declaration
+ * The colocated route declaration.
  *
  * ONE concept declares an API: `feature(prefix, guards, (routes) => ({ ... }))`. Everything a route
  * is - method, path, schemas, guard, handler, docs - is written once, in one place, and three
@@ -370,6 +370,16 @@ export function feature<Prefix extends string, R extends Routes>(
     prefix: Prefix,
     build: (routes: Verbs<Record<never, never>, Prefix>) => R
 ): Feature<Prefix, R>;
+/**
+ * Guarded form: every route the feature declares runs behind `guards`, and the context
+ * additions those guards contribute are visible - typed - on each handler.
+ *
+ * @typeParam Prefix - The path prefix, held as a literal so route paths stay typed.
+ * @typeParam G - The guard tuple, whose context additions flow into the handlers.
+ * @param prefix - Prepended to every route in the feature.
+ * @param guards - Run in order before any handler.
+ * @param build - Declares the routes, receiving verb helpers already carrying the additions.
+ */
 export function feature<Prefix extends string, const G extends ReadonlyArray<AnyGuard>, R extends Routes>(
     prefix: Prefix,
     guards: G,

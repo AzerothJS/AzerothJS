@@ -1,5 +1,5 @@
 /**
- * MODULE: http/request-root - a request is a reactive root
+ * A request is a reactive root.
  *
  * Runs each request inside an AsyncLocalStorage context carrying two things:
  *

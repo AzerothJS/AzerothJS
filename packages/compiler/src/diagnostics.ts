@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/diagnostics - first-class semantic diagnostics for `component` syntax
- *
- * These are the mistakes the TYPE system cannot see - they fall out of the reactive analysis and the
+ * First-class semantic diagnostics for `component` syntax: the mistakes the TYPE system cannot see - they fall out of the reactive analysis and the
  * markup AST:
  *   - azeroth/constant-derived     - a `derived` with no reactive dependencies AND no calls/side
  *                                    effects (a call may read a store accessor the analysis can't see);
@@ -87,58 +85,28 @@ export interface AzerothDiagnostic
 }
 
 /**
- * diagnoseModule
+ * Every semantic diagnostic for every component in a module: the reactive and structural
+ * mistakes the type checker cannot see - an inert effect, a constant derived, a handler that
+ * runs at setup, a bind target that can never wire.
  *
- * PURPOSE:
- * Produces the AzerothJS semantic diagnostics for every component in a module.
+ * It reuses the SAME analysis and walk machinery codegen uses, so a diagnostic and the
+ * compiled output can never disagree about what is reactive.
  *
- * WHY IT EXISTS:
- * It surfaces reactive and structural mistakes the type checker can't see (inert effects, constant
- * deriveds, setup-time event handlers, duplicate props blocks), at build time where they reach every
- * contributor.
+ * Severities include 'error', but this function never throws and never fails a build itself;
+ * the caller decides. The compile path treats an error-severity finding as fatal, while the
+ * editor and the ESLint processor surface the same findings as squiggles.
  *
- * COMPILER / RUNTIME ROLE:
- * Build-time, compiler; called by the Vite plugin's transform (findings become build warnings) and
- * usable by any tooling. Uses the `typescript` peer dep.
+ * A handler-factory call WITH arguments, `onClick={makeHandler(id)}`, is deliberately not
+ * flagged: that is the factory idiom, not a setup-time call.
  *
- * INPUT CONTRACT:
- * - source: the module text.
- *
- * OUTPUT CONTRACT:
- * - An {@link AzerothDiagnostic}[]: one entry per finding across all components, each with a stable
- *   `code`, `severity`, `message`, and source span.
- *
- * WHY THIS DESIGN:
- * It reuses the SAME analyze/walk machinery codegen uses, so a diagnostic and the compiled output can
- * never disagree about what is reactive. Findings carry spans so callers map them to file:line:col.
- *
- * WHEN TO USE:
- * Diagnosing a `.azeroth` module (the plugin path) or in editor/CI tooling.
- *
- * WHEN NOT TO USE:
- * Type errors (TypeScript handles those); pure markup syntax slips (that's {@link lintSource}).
- *
- * EDGE CASES:
- * - A module with no component returns an empty array.
- * - A handler-factory call WITH arguments (onClick={makeHandler(id)}) is intentionally NOT flagged.
- *
- * PERFORMANCE NOTES:
- * One parse plus per-component analysis.
- *
- * DEVELOPER WARNING:
- * Severities include 'error', but diagnoseModule never throws or fails a build itself - the caller
- * decides what to do (the Vite plugin emits them as warnings).
- *
- * @param source - The module source to diagnose.
- * @returns Every semantic diagnostic found, across all components.
- * @see {@link AzerothDiagnostic}
- * @see {@link lintSource}
- *
+ * @param source - The module source.
+ * @returns One entry per finding, each with a stable code, a severity, a message and a source
+ *          span. Empty for a module containing no component.
  * @example
- * ```ts
  * diagnoseModule('component C { derived d = 1 + 2; <p>{d}</p> }')[0].code;
  * // 'azeroth/constant-derived'
- * ```
+ *
+ * @see {@link lintSource} for markup syntax slips, which are a separate layer.
  */
 export function diagnoseModule(source: string): AzerothDiagnostic[]
 {
@@ -560,8 +528,8 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
         //      position and reports `kind: 'markup'`; findAbsorbedMarkup points at it. (Markup
         //      at bracket depth 0 in a value is never valid - it would emit raw, untransformed
         //      markup into the JS.)
-        //   2. `state count = 0` then `<div>…` - the value `0` makes `<` a COMPARISON to `step`
-        //      (`0 < div > …`), so the markup is not seen as markup; instead the whole thing runs
+        //   2. `state count = 0` then `<div>...` - the value `0` makes `<` a COMPARISON to `step`
+        //      (`0 < div > ...`), so the markup is not seen as markup; instead the whole thing runs
         //      to the component body end with no `;`. An unterminated value-declaration is the
         //      tell: statementEnd only returns a non-`;` end when it hit the body limit.
         const absorbedMarkup = findAbsorbedMarkup(source, decl.nameEnd, decl.valueEnd);
@@ -595,7 +563,7 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
 
 /**
  * @internal Scans `[from, to)` for a markup region at bracket depth 0 - markup absorbed into a
- * declaration value because a `;` was missing (`state count = 0` then `<div>…`). Returns its
+ * declaration value because a `;` was missing (`state count = 0` then `<div>...`). Returns its
  * offset, or -1. `step` only reports `kind: 'markup'` in expression position with a real tag/
  * fragment start, so a `<` comparison operator (`a < b`) is never mistaken for markup; and markup
  * nested inside brackets (depth > 0) is skipped, leaving only the top-level absorbed case.

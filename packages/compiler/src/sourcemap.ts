@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/sourcemap - a minimal Source Map v3 generator (zero dependency)
+ * A minimal, zero-dependency Source Map v3 generator.
  *
  * Only LINE-LEVEL mappings are produced - what stack traces use: one segment at the start of each
  * generated line, pointing back into the `.azeroth` source. This is accurate because the transform

@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/lint - markup lint
- *
- * Catches the SYNTAX-level slips in a markup region that neither the TYPE system nor the
+ * Markup lint: catches the SYNTAX-level slips in a markup region that neither the TYPE system nor the
  * component-semantic diagnostics catch. (A handler that runs at setup - onClick={save()} - is
  * diagnoseModule's azeroth/handler-not-function; duplicate attributes and lowercase on* names
  * are diagnoseModule's error-severity GRAMMAR 6.6 rules - none of those are duplicated here.)
@@ -348,7 +346,7 @@ function isIdentStart(ch: string | undefined): boolean
  *
  * Deliberately NOT `/[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\(\s*\)/` run over the whole
  * string: a self-repeating group with a flexible run of whitespace on each side is a textbook
- * polynomial-regex shape, AND (independent of that) any unanchored `.match(/…/g)` whose pattern
+ * polynomial-regex shape, AND (independent of that) any unanchored `.match(/.../g)` whose pattern
  * can consume a long prefix before failing costs O(n) per start position it's retried at - O(n^2)
  * together on adversarial input (a large `.azeroth` source is exactly "uncontrolled data" here:
  * it can arrive from an untrusted PR built in CI, or a file opened in an editor). Finding every
@@ -484,56 +482,24 @@ function unsafeNarrowWarning(guarded: string, start: number, end: number): LintW
 }
 
 /**
- * lintSource
+ * Lints every parseable top-level markup region in a module.
  *
- * PURPOSE:
- * Lints every parseable top-level markup region in a module and returns all findings.
+ * Lint is WARNING-only and never fails a build; it surfaces conventions rather than blocking
+ * bad markup. The rules that DO block - duplicate attributes, reserved lowercase event names,
+ * handlers that run at setup - live in diagnoseModule and are not duplicated here.
  *
- * WHY IT EXISTS:
- * It is the build-time lint entry the Vite plugin runs before compiling, so syntax slips (duplicate
- * attributes, lowercase event names) surface as warnings where they reliably reach every contributor.
+ * An unparseable region is SKIPPED, and the scan stops there on the assumption that the rest
+ * is mid-edit. A half-typed region's parse error is reported as a compile diagnostic
+ * elsewhere, and should not also spray lint noise.
  *
- * COMPILER / RUNTIME ROLE:
- * Build-time, compiler; called by the Vite plugin's transform, and usable by any tooling.
- *
- * INPUT CONTRACT:
- * - source: the module text (JS/TS that may embed markup regions).
- *
- * OUTPUT CONTRACT:
- * - A {@link LintWarning}[] aggregated across regions, each with a stable `code`, a `message`, and a
- *   source span.
- *
- * WHY THIS DESIGN:
- * It scans for markup starts and lints each region, but SKIPS unparseable ones - a half-typed markup's
- * parse error is reported elsewhere (a CompileError diagnostic), and shouldn't also spray lint noise.
- * Spans let callers map findings to file:line:col.
- *
- * WHEN TO USE:
- * Linting a whole `.azeroth`/JS module.
- *
- * WHEN NOT TO USE:
- * A single already-parsed region - use {@link lintMarkup}.
- *
- * EDGE CASES:
- * - The scan stops at the first region that fails to parse (the rest is assumed mid-edit).
- * - Clean source returns an empty array.
- *
- * PERFORMANCE NOTES:
- * A linear scan; pure and allocation-light.
- *
- * DEVELOPER WARNING:
- * Lint is WARNING-only - it never fails a build. Don't rely on it to block bad markup; use it to
- * surface conventions.
- *
- * @param source - The module source to lint.
- * @returns All lint warnings found, across every parseable markup region.
- * @see {@link lintMarkup}
- *
+ * @param source - The module source.
+ * @returns Every warning found, each with a stable code, a message and a source span. Empty
+ *          for clean source.
  * @example
- * ```ts
  * lintSource('const x = <button label={f}>go</button>;')[0].code;
  * // 'azeroth/interpolation-spacing'
- * ```
+ *
+ * @see {@link lintMarkup} for a single already-parsed region.
  */
 export function lintSource(source: string, options?: LintOptions): LintWarning[]
 {

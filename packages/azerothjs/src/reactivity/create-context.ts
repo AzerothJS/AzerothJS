@@ -1,17 +1,13 @@
 /**
- * MODULE: reactivity/create-context
+ * Dependency injection over the owner tree. {@link provideContext} writes a value onto the
+ * ACTIVE owner and {@link useContext} reads by walking the owner chain upward, so a value
+ * provided in an outer scope reaches everything created inside it, an inner provide shadows
+ * an outer one, and sibling scopes stay isolated. It is how theming, localization or a
+ * router thread through a tree without module-level singletons, which leak across SSR
+ * requests.
  *
- * Owner-tree dependency injection: a context is a typed key; {@link provideContext}
- * writes a value onto the ACTIVE owner, and {@link useContext} reads by walking the
- * owner chain upward - so a value provided in an outer scope is visible to everything
- * created inside it, an inner provide shadows an outer one, and sibling scopes are
- * isolated. This is the primitive that lets component libraries thread theming,
- * localization, or a router without module-level singletons (which leak across SSR
- * requests - the exact hazard scoped stores exist to patch for one package).
- *
- * Reads are CREATION-TIME: useContext resolves against the owner chain active when it
- * is called (component/root setup), not reactively. Provide a SIGNAL as the context
- * value when the consumers must react to changes.
+ * Reads resolve at CALL time, against the owner chain active during setup, and are not
+ * reactive. Provide a signal as the value when consumers must react to changes.
  */
 
 import { getOwner, type Owner } from './create-root.ts';
@@ -35,24 +31,25 @@ export interface Context<T>
 }
 
 /**
- * Creates a context key.
+ * Creates a typed key that pairs {@link provideContext} writes with {@link useContext}
+ * reads across the ownership tree. The key carries no value itself and can be shared
+ * freely, including at module scope.
  *
- * PURPOSE:
- * A typed identity that pairs {@link provideContext} writes with {@link useContext}
- * reads across the ownership tree.
- *
- * @typeParam T - The value type the context carries.
- * @param defaultValue - Returned by useContext when nothing provided the context.
- * @param name - Optional diagnostic name (appears in error messages).
+ * @typeParam T - The value type this context carries.
+ * @param defaultValue - Returned by useContext when no scope in the chain provided one.
+ * @param name - Diagnostic name; appears in error messages.
  * @returns The context key.
+ * @example
+ * const Theme = createContext<'light' | 'dark'>('light', 'Theme');
+ *
+ * createRoot(() =>
+ * {
+ *     provideContext(Theme, 'dark');
+ *     createRoot(() => useContext(Theme)); // 'dark', read from the outer scope
+ * });
+ *
  * @see {@link provideContext}
  * @see {@link useContext}
- * @example
- * const Theme = createContext<'light' | 'dark'>('light');
- * createRoot(() => {
- *     provideContext(Theme, 'dark');
- *     createRoot(() => useContext(Theme)); // 'dark' - read from the outer scope
- * });
  */
 export function createContext<T>(defaultValue?: T, name?: string): Context<T>
 {
@@ -60,14 +57,18 @@ export function createContext<T>(defaultValue?: T, name?: string): Context<T>
 }
 
 /**
- * Provides `value` for `context` on the ACTIVE owner: visible to useContext calls in
- * this scope and every scope created inside it; shadowed by a nearer provide; freed
- * when the owner disposes. Requires an active owner - providing outside any root has
- * nowhere to scope the value to and throws.
+ * Provides `value` for `context` on the ACTIVE owner. It is visible to useContext calls in
+ * this scope and every scope created inside it, shadowed by a nearer provide, and freed
+ * when the owner disposes.
+ *
+ * Only scopes created AFTER this call see the value, since resolution walks the owner chain
+ * at read time.
  *
  * @typeParam T - The context's value type.
  * @param context - The key from {@link createContext}.
- * @param value - The value to provide.
+ * @param value - Stored as given, not copied.
+ * @throws {Error} If called outside every ownership scope, where there is nothing to scope
+ *                 the value to.
  * @see {@link useContext}
  */
 export function provideContext<T>(context: Context<T>, value: T): void
@@ -84,14 +85,17 @@ export function provideContext<T>(context: Context<T>, value: T): void
 }
 
 /**
- * Reads the nearest provided value for `context` by walking the active owner chain
- * upward; falls back to the context's default when no scope provided one. Resolution
- * happens at CALL time (setup), so capture the result - or provide a signal and read
- * that reactively.
+ * Reads the nearest provided value for `context`, walking the active owner chain upward and
+ * falling back to the context's default when no scope provided one.
+ *
+ * Resolution happens at CALL time, so call it during setup and capture the result. Calling
+ * it later, from an async callback or a detached handler, resolves against whatever owner
+ * is active then - usually none.
  *
  * @typeParam T - The context's value type.
  * @param context - The key from {@link createContext}.
- * @returns The nearest provided value, else the default (undefined if none).
+ * @returns The nearest provided value, otherwise the default, which is `undefined` when the
+ *          context was created without one.
  * @see {@link provideContext}
  */
 export function useContext<T>(context: Context<T>): T | undefined

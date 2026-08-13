@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/lower-reactive - nested-scope lowering for the state/derived/effect keywords
+ * Nested-scope lowering for the state, derived and effect keywords.
  *
  * The component-body TOP LEVEL lowers `state`/`derived`/`effect` to createSignal/createMemo/
  * createEffect directly in codegen. This module lowers the SAME keywords when they appear in a NESTED

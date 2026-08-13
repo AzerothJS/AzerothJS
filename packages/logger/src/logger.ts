@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/logger - the core, and the face selection
+ * The core, and the face selection.
  *
  * createLogger() builds a logger over a sink. The design promises exactly two things:
  *

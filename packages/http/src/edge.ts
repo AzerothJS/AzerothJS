@@ -1,5 +1,5 @@
 /**
- * MODULE: http/edge - cross-cutting concerns that wrap the whole app
+ * Cross-cutting concerns that wrap the whole app.
  *
  * The app's own middleware (app.use) runs BEFORE the handler: it accumulates typed context or
  * short-circuits, and it never sees the response - which is exactly right for auth, parsed

@@ -1,5 +1,5 @@
 /**
- * MODULE: @azerothjs/logger/node - the Node-only surface
+ * The Node-only surface.
  *
  * The main `@azerothjs/logger` entry is browser-safe: `createLogger`, the sinks
  * (`prettySink`/`ndjsonSink`/`consoleSink`/`teeSink`), the banner, serialization, and the

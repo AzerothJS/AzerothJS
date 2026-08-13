@@ -1,6 +1,6 @@
 /**
- * MODULE: compiler/mapping - bidirectional offset mapping between an original `.azeroth` source and the
- * virtual TypeScript module the projection produces.
+ * Bidirectional offset mapping between an original `.azeroth` source and the virtual
+ * TypeScript module the projection produces.
  *
  * The mapping is a list of VERBATIM segments - spans of user-authored text that appear byte-for-byte in
  * both documents (the script outside markup, the code inside `{ ... }` holes, attribute expressions,

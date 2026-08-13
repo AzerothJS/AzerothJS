@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/terminal - the CLI presentation layer
+ * The CLI presentation layer.
  *
  * Every character the CLI shows a human goes through here - and every color comes
  * from @azerothjs/logger's palette, the framework's ONE source of ANSI codes and

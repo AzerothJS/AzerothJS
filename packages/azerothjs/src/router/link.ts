@@ -1,24 +1,22 @@
 /**
- * MODULE: router/link
+ * A SPA link that behaves like a normal anchor for everything a user expects - copy link,
+ * open in a new tab, screen-reader announcement - and intercepts only the clicks where
+ * in-app navigation is clearly intended:
  *
- * <Link> is a SPA link that behaves like a normal <a> for everything the user expects
- * (right-click "Copy link", middle-click "Open in new tab", screen-reader announcement) and
- * intercepts ONLY the clicks where in-app navigation is clearly intended:
- *
- *   default primary click                 -> router.navigate(to)
- *   modifier (ctrl/meta/shift/alt)        -> pass through
- *   middle-click (event.button !== 0)     -> pass through
- *   target other than _self               -> pass through
- *   defaultPrevented upstream             -> pass through
- *   external URL (mailto:, https://, ...) -> pass through
+ *     default primary click                 -> router.navigate(to)
+ *     modifier (ctrl/meta/shift/alt)        -> pass through
+ *     middle-click (button !== 0)           -> pass through
+ *     target other than _self               -> pass through
+ *     defaultPrevented upstream             -> pass through
+ *     external URL (mailto:, https://, ...) -> pass through
  *
  * Handling that whole bail-out table is what avoids the usual "this router broke ctrl-click"
- * complaints.
+ * complaint.
  *
- * ACCESSIBILITY: the rendered element is a real <a href>, not a div+onclick, giving native
- * keyboard focus, the context menu, screen-reader semantics, and a crawlable destination URL.
- * With activeClass set, aria-current="page" toggles in lockstep so assistive tech announces the
- * current location correctly.
+ * The rendered element is a real `<a href>` rather than a div with a click handler, so it
+ * keeps native keyboard focus, the context menu, screen-reader semantics and a crawlable
+ * destination. With `activeClass` set, `aria-current="page"` toggles in lockstep so assistive
+ * technology announces the current location correctly.
  */
 
 import { h } from '../renderer/index.ts';
@@ -116,62 +114,29 @@ function targetPathname(target: NavigateTarget): string
 }
 
 /**
- * Link
+ * A real `<a href>` that intercepts only plain in-app clicks, with optional reactive
+ * active-link styling and `aria-current`.
  *
- * PURPOSE:
- * Renders a real `<a href>` that intercepts only plain in-app clicks and routes them through the
- * router, with optional reactive active-link styling and aria-current.
+ * Your `onClick` runs BEFORE interception, so calling preventDefault in it cancels the
+ * navigation entirely. After that comes the bail-out table - modifier and middle clicks, a
+ * target other than `_self`, external URLs - and anything on it passes through to the
+ * browser untouched, which is what keeps copy-link, open-in-new-tab and external links
+ * working.
  *
- * WHY IT EXISTS:
- * A hand-rolled anchor that preventDefaults every click breaks ctrl-click, middle-click,
- * copy-link, external URLs, and accessibility. Link renders a true anchor and intercepts
- * surgically, so all the native affordances keep working while in-app navigation stays SPA-fast.
+ * Active matching is path-level: query and hash are ignored, and it is prefix-based unless
+ * `end` asks for an exact match.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; a component over h('a'). The href is computed via router.href() (the configured
- * base prefix is applied to internal targets, external URLs left untouched).
+ * Any attribute that is not one of Link's own props passes straight through to the anchor.
  *
- * INPUT CONTRACT:
- * - to: a NavigateTarget (string fullPath or structured), or a FUNCTION of one for a reactive destination.
- * - router: the Router to drive.
- * - replace/scroll/target/activeClass/onClick/class/children, plus any other anchor attribute
- *   (id, style, aria-*, data-*) which passes through to the <a>.
- *
- * OUTPUT CONTRACT:
- * - An <a> element. Clicks that match the bail-out table pass through to the browser; otherwise
- *   navigation is intercepted (push, or replace when `replace`).
- *
- * WHY THIS DESIGN:
- * The click handler runs the user's onClick first (which may preventDefault to cancel), then the
- * bail-out table (modifier/middle/target/external) so the browser handles new-tab/copy/external.
- * activeClass and aria-current are wired as reactive getters so h() updates them on location
- * change; own props are stripped so only real anchor attributes reach the element.
- *
- * WHEN TO USE:
- * For in-app navigation links.
- *
- * WHEN NOT TO USE:
- * A purely external link can be a plain <a> (Link will pass it through anyway).
- *
- * EDGE CASES:
- * - Modifier/middle clicks, target!=_self, external URLs, and an upstream preventDefault all pass
- *   through untouched.
- * - Active matching is path-level (query and hash are ignored), prefix-by-default (`end` for exact).
- *
- * PERFORMANCE NOTES:
- * With a plain `to`, href is computed once; the function form adds one reactive attribute.
- * Active bindings are effects only when activeClass is set.
- *
- * DEVELOPER WARNING:
- * The user `onClick` runs BEFORE interception; calling preventDefault() in it cancels
- * navigation entirely.
- *
- * @param props - {@link LinkProps}: `to`, `router`, and optional styling/behavior + pass-through attrs.
- * @returns An <a> element wired for SPA navigation.
- * @see {@link createRouter}
+ * @param props - See {@link LinkProps}. `to` may be a function for a reactive destination.
+ * @returns The anchor element.
  * @example
- * Link({ to: '/users/42', router, activeClass: 'is-active', children: 'View User 42' });
+ * Link({ to: '/users/42', router, activeClass: 'is-active', children: 'View user 42' });
+ *
+ * @example
  * Link({ to: { pathname: '/search', query: { q: 'azeroth js' } }, router, children: 'Search' });
+ *
+ * @see {@link createRouter}
  */
 export function Link(props: LinkProps): HTMLElement
 {

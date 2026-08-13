@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/banner - the framework's face at startup
+ * The framework's face at startup.
  *
  * One block, printed once, recognizable from across the room - the terminal echo of the
  * AzerothJS mark (the A with the dragon): the triangle glyph in the brand ice blue, the

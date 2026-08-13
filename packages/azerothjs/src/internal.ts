@@ -1,5 +1,5 @@
 /**
- * MODULE: azerothjs/internal - the compiled-output runtime contract + framework plumbing
+ * The compiled-output runtime contract, and the framework plumbing that rides with it.
  *
  * Every import in generated `.azeroth` output resolves HERE, and only here - the
  * compiler's RUNTIME_MODULE points at this subpath. That makes this file the single

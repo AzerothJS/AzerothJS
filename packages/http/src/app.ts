@@ -1,5 +1,5 @@
 /**
- * MODULE: http/app - the kernel dispatcher
+ * The kernel dispatcher.
  *
  * The smallest complete server: register routes, then `handle(request)` maps any web-standard
  * Request to exactly one Response. Everything the architecture promises about the hot path is

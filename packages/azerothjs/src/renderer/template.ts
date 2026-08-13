@@ -1,13 +1,12 @@
 /**
- * MODULE: renderer/template (internal)
+ * tmpl() backs the compiler's `dom` target: a region's static structure is parsed once into a
+ * `<template>` and instantiated per use with cloneNode, one native clone instead of
+ * createElement plus per-element attribute wiring. The dynamic parts are bound into the clone
+ * afterwards.
  *
- * tmpl() backs the compiler's `dom` target: a region's static structure is parsed ONCE into a
- * <template> and instantiated per use with cloneNode - one native clone instead of
- * createElement + per-element attribute wiring. Dynamic parts are bound into the clone
- * afterwards via bindProps/bindHole (see ./h). Client-only by design: SSR string mode has no
- * DOM to clone and hydration adopts existing nodes, so the compiler keeps those paths on the
- * universal h() output (the Vite plugin forces it for SSR transforms); reaching tmpl() in
- * either mode is a build misconfiguration, so it throws rather than render nothing.
+ * Client-only by design. String mode has no DOM to clone and hydration adopts existing nodes,
+ * so the compiler keeps both paths on the universal h() output. Reaching tmpl() in either
+ * mode is a build misconfiguration, and it throws rather than rendering nothing.
  */
 
 import { isStringMode, isHydrating } from '../reactivity/index.ts';

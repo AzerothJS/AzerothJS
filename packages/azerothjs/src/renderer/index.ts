@@ -1,16 +1,12 @@
 /**
- * MODULE: azerothjs - public API
+ * The DOM layer. h() builds real elements directly; render, hydrate and hydrateIslands
+ * mount, adopt and partially hydrate trees; the control-flow components cover conditional,
+ * list, async and relocated rendering; and the bindings cover element refs and reactive
+ * styling. Every symbol re-exported here is documented at its definition.
  *
- * The DOM layer of the framework. h() builds real elements directly (no virtual DOM);
- * render()/hydrate()/hydrateIslands() mount, adopt, and partially-hydrate trees; the
- * control-flow components (Show, For, Switch/Match, Dynamic, Suspense, Transition, Portal)
- * cover conditional, list, async, and relocated rendering; and the bindings (createRef,
- * classList, styleMap, css) cover element refs and reactive styling. Every symbol re-exported
- * here is documented at its definition.
- *
- * The compiler-emitted runtime (bindHole/bindSlot/bindProps/setProp/hydrateChild/tmpl) lives
- * exported ONLY so generated `.azeroth` output can resolve it; it is @internal and may change
- * between releases - not part of the application API.
+ * The compiler-emitted runtime - bindHole, bindSlot, bindProps, setProp, hydrateChild, tmpl
+ * - is exported only so generated output can resolve it. It is internal and may change
+ * between releases.
  */
 
 // Core: element creation and mounting.

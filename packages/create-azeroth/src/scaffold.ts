@@ -1,5 +1,5 @@
 /**
- * MODULE: create-azeroth/scaffold - the copy engine
+ * The copy engine.
  *
  * Scaffolding is a recursive copy with two substitutions and a rename table, nothing
  * more: `{{name}}` and `{{version}}` are replaced in every file (the version is this

@@ -1,22 +1,20 @@
 /**
- * MODULE: reactivity/devtools - the stable, versioned runtime-debugging hook
+ * The supported way for an external tool - the in-page panel, a browser-extension agent, a
+ * test harness - to observe the live reactive graph. It is deliberately small and explicitly
+ * versioned, so an agent can compare {@link DEVTOOLS_PROTOCOL_VERSION} and the snapshot's
+ * `version` field against what it was built for and degrade rather than misread data.
  *
- * This is the ONE supported way for an external tool (the in-page panel in `@azerothjs/devtools`, a
- * browser-extension agent, a test harness) to observe the live reactive graph. It is deliberately small
- * and explicitly VERSIONED so the protocol can evolve without silently breaking consumers: a hook
- * declares nothing, but {@link DEVTOOLS_PROTOCOL_VERSION} and the snapshot's `version` field let an agent
- * detect a mismatch.
+ * Until {@link setDevtoolsHook} installs a hook, every instrumentation point is a single
+ * null comparison: no ids are minted, no registry grows, no events fire. The consequence is
+ * that nodes created BEFORE a hook attaches are invisible to it, so install before mounting
+ * to see them. That trade is what keeps the production hot path free of bookkeeping.
  *
- * ZERO-COST WHEN DETACHED: until {@link setDevtoolsHook} installs a hook, every instrumentation point is
- * a single `hook === null` comparison and nothing else - no ids are minted, no registry grows, no events
- * fire. Nodes created BEFORE a hook attaches are invisible to it (install before mounting to see them),
- * which is what keeps the production hot path free of bookkeeping. While a hook IS attached the registry
- * holds references to live nodes; it is pruned on every dispose, so it never outlives the page's nodes
- * (the agent is a dev-only tool, tree-shaken from production builds).
+ * While a hook is attached the registry holds references to live nodes and is pruned on
+ * every dispose, so it never outlives the page's nodes.
  *
- * WHAT IT EXPOSES: lifecycle events (created / disposed / run / write) with the owning root and, for the
- * graph view, a point-in-time {@link GraphSnapshot} of every live node plus its dependency edges, and
- * {@link peekNode}/{@link pokeNode} to read or set a signal's current value from the panel.
+ * Exposed: lifecycle events (created, disposed, run, write) with the owning root; a
+ * point-in-time {@link GraphSnapshot} of every live node and its dependency edges; and
+ * {@link peekNode} / {@link pokeNode} to read or set a signal's value from the panel.
  */
 
 import type { Producer, Subscriber } from './types.ts';

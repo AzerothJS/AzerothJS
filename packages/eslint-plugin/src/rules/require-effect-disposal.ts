@@ -8,6 +8,7 @@
 import type { Rule } from 'eslint';
 import { type AstNode, isCallTo } from '../ast.ts';
 
+/** Reports a createEffect whose disposer is dropped outside any owning scope, which leaks it. */
 export const requireEffectDisposal: Rule.RuleModule =
 {
     meta:

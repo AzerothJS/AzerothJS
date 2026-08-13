@@ -4,6 +4,7 @@
 
 import type { SessionSnapshot } from './agent.ts';
 
+/** Where the server connection stands. `retrying` is a reconnect in progress, not a failure. */
 export type ServerLinkStatus = 'idle' | 'connecting' | 'retrying' | 'open' | 'error' | 'closed';
 
 /** The live server connection the Server view drives. */

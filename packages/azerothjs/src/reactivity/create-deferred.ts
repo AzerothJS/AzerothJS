@@ -1,13 +1,7 @@
 /**
- * MODULE: reactivity/create-deferred
- *
- * createDeferred() wraps a signal getter and returns a new getter whose updates are
- * debounced: subscribers see the new value only after a quiet period (no further source
- * changes) has elapsed. It exists to keep expensive downstream work - filtering large
- * lists, re-rendering a chart, refetching - off the rapid-update path, e.g. filtering
- * only once the user stops typing. It holds the deferred value in an internal signal,
- * watches the source with an effect, and (re)starts a timer on each change; when the
- * timer fires undisturbed it writes the internal signal, re-running its subscribers.
+ * A debounced view of a getter: the deferred value lives in an internal signal, an effect
+ * watches the source and restarts a timer on every change, and only an undisturbed timer
+ * writes the signal. Keeps expensive downstream work off the rapid-update path.
  */
 
 import type { Getter } from './types.ts';
@@ -16,96 +10,56 @@ import { createEffect } from './create-effect.ts';
 import { untrack } from './untrack.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 
-/**
- * Options for {@link createDeferred}.
- */
+/** Options for {@link createDeferred}. */
 export interface DeferredOptions
 {
     /**
-     * Debounce delay in milliseconds: the deferred value updates only after this many ms
-     * have passed since the LAST source change. Named `delay` (not `timeout`) because it is
-     * a quiet-period debounce, not an abort deadline.
-     *
-     * @default 150
+     * Quiet period in milliseconds. The deferred value updates only once this long has
+     * passed since the LAST source change, so it is a debounce window and not an abort
+     * deadline. Defaults to 150.
      */
     delay?: number;
 
-    /** Debug name surfaced to devtools; labels the deferred value and groups its internals. */
+    /** Debug name for devtools; labels the deferred value and groups its internals. */
     name?: string;
 }
 
 /**
- * createDeferred
+ * Returns a debounced view of `source`: a getter whose value updates only after `delay`
+ * milliseconds pass with no further change. A burst of changes produces exactly one update
+ * at the end of the burst.
  *
- * PURPOSE:
- * Returns a debounced version of `source`. The new getter's value updates only after
- * `delay` ms with no further source change; the initial value is available
- * immediately (no first-read delay).
+ * The initial value is seeded immediately, so the first read costs nothing - only
+ * subsequent changes are delayed.
  *
- * WHY IT EXISTS:
- * Reacting to every keystroke (or other rapid signal) re-runs expensive consumers far
- * more than needed. Debouncing by hand means a setTimeout/clearTimeout dance in an
- * effect plus a separate held signal - easy to get wrong (leaked timers, stale writes
- * after unmount). createDeferred packages that correctly behind one getter.
+ * Create it inside a scope. The pending timer is cancelled by the internal effect's
+ * cleanup, which runs both on a debounce reset and on disposal; unowned, a trailing timer
+ * can still fire after teardown.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity stage. A derived primitive built on createSignal + createEffect;
- * it is timer-driven, so it is a client-side convenience (timers do not advance during
- * synchronous SSR).
- *
- * INPUT CONTRACT:
- * - source: a getter to debounce. Read reactively inside the internal effect.
- * - options.delay: debounce window in ms (default 150).
- *
- * OUTPUT CONTRACT:
- * - Returns a getter for the debounced value, seeded with source's current value and
- *   thereafter trailing it by the delay.
- *
- * WHY THIS DESIGN:
- * The value lives in an internal signal so existing reactivity machinery (subscription,
- * equality) applies unchanged. The effect's cleanup is the single place a pending timer
- * is cancelled, so both a debounce reset (re-run) and unmount (dispose) clear it - no
- * leaked timers, no write after teardown.
- *
- * WHEN TO USE:
- * To gate costly downstream work on a quiet period: search-as-you-type filtering,
- * chart redraws, autosave, debounced fetches.
- *
- * WHEN NOT TO USE:
- * When every change must be observed (use the source directly). Not meaningful in SSR,
- * where timers do not fire within the synchronous render.
- *
- * EDGE CASES:
- * - First read returns the seeded current value with no delay; only subsequent changes
- *   are debounced.
- * - Rapid changes keep resetting the timer, so the value updates once after the burst.
- *
- * PERFORMANCE NOTES:
- * One internal signal + one effect + at most one live timer. Downstream consumers run
- * at most once per quiet period rather than once per source change.
- *
- * DEVELOPER WARNING:
- * Must be created inside a root/component scope so its internal effect (and any pending
- * timer) is disposed on unmount; otherwise a trailing timer can fire after teardown.
+ * Timer-driven, so it has no effect during synchronous SSR - the timer never fires within
+ * the render and consumers see the seeded value.
  *
  * @typeParam T - The source value type.
- * @param source - A signal getter to debounce.
- * @param options - Optional settings; `options.delay` is the debounce window (ms).
- * @returns A getter returning the debounced value.
- * @see {@link createSignal}
- * @see {@link createEffect}
+ * @param source - The getter to debounce.
+ * @param options - Optional settings.
+ * @param options.delay - Quiet period in milliseconds. Defaults to 150.
+ * @param options.name - Debug name for devtools.
+ * @returns A getter for the debounced value.
  * @example
  * const [search, setSearch] = createSignal('');
  * const deferredSearch = createDeferred(search, { delay: 300 });
+ *
+ * // Filters once the typing stops, not on every keystroke.
  * createEffect(() => renderResults(filterItems(deferredSearch())));
+ *
+ * @see {@link createSignal}
  */
 export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions): Getter<T>
 {
     const delay = options?.delay ?? 150;
     const frame = dtEnterPrimitive('deferred', options?.name);
 
-    // Seed the internal signal with the current source value (no delay); untrack keeps
-    // this read from subscribing any enclosing effect.
+    // untrack keeps the seeding read from subscribing any enclosing effect.
     const [deferred, setDeferred] = createSignal<T>(untrack(() => source()), { name: options?.name });
 
     let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -115,7 +69,7 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
     {
         const current = source();
 
-        // First run: the value was already seeded in createSignal above.
+        // Already seeded by createSignal above.
         if (isFirst)
         {
             isFirst = false;
@@ -128,9 +82,8 @@ export function createDeferred<T>(source: Getter<T>, options?: DeferredOptions):
             setDeferred(() => current);
         }, delay);
 
-        // The single place a pending timer is cancelled. Runs (1) before a re-run when
-        // the source changed again (debounce reset, right before scheduling the next
-        // timer) and (2) on dispose (stops a stale setDeferred after unmount).
+        // The single place a pending timer is cancelled: before a re-run, which is the
+        // debounce reset, and on dispose, which stops a stale write after unmount.
         return () =>
         {
             if (timerId !== null)

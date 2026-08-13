@@ -1,5 +1,5 @@
 /**
- * MODULE: @azerothjs/testing - testing utilities for AzerothJS apps
+ * Testing utilities for AzerothJS apps.
  *
  * Every test against a reactive tree repeats the same shape: mount inside a root, mutate signals,
  * assert DOM, dispose. Forgetting the disposal is the common failure - the leaked effects keep running

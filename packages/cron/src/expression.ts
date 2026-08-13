@@ -1,5 +1,5 @@
 /**
- * MODULE: cron/expression - the 5-field cron parser and the next-occurrence engine
+ * The 5-field cron parser and the next-occurrence engine.
  *
  * `parseExpression` turns `minute hour day-of-month month day-of-week` (ranges, steps, lists,
  * month/day names, and the @daily-style aliases) into sets of allowed values, VALIDATING at

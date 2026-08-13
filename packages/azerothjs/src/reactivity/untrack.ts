@@ -1,79 +1,36 @@
 /**
- * MODULE: reactivity/untrack
- *
- * untrack() reads reactive sources without subscribing the active consumer. It is
- * the escape hatch for "I need this value now, but I do not want to re-run when it
- * changes" - reading peripheral state for a side effect, or calling a setter from
- * inside an effect without forming a feedback loop. It works by clearing the
- * current-subscriber slot for the duration of `fn`, so getters called inside see no
- * subscriber and register no dependency.
+ * Reading reactive sources without subscribing to them, by clearing the current-subscriber
+ * slot for the duration of the call.
  */
 
 import { currentSubscriber, setCurrentSubscriber } from './graph.ts';
 import { assertFunction } from './validate.ts';
 
 /**
- * untrack
+ * Runs `fn` with dependency tracking suspended: signals and memos read inside it do not
+ * subscribe the surrounding effect or memo, so changing them will not re-run it.
  *
- * PURPOSE:
- * Runs `fn` with dependency tracking suspended and returns its result. Signals/memos
- * read inside `fn` do not subscribe the active effect or memo.
+ * Only reading is affected. A write inside `fn` notifies other subscribers exactly as it
+ * normally would - which is what makes untrack the way to call a setter from inside an
+ * effect without the effect re-triggering itself.
  *
- * WHY IT EXISTS:
- * Tracking is automatic: every reactive read inside a consumer subscribes it. That is
- * usually what you want, but sometimes a consumer must observe a value's current
- * state without taking a dependency on it - otherwise it re-runs on changes it should
- * ignore, or a setter call re-triggers the very effect making it (a feedback loop).
+ * The boundary is the callback, not the value: everything read inside is untracked, nothing
+ * outside is affected, and the previous subscriber is restored even if `fn` throws. Nesting
+ * is fine.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity stage. A tracking-scope control, orthogonal to the render
- * pipeline; used inside effects/memos to carve out non-reactive reads.
- *
- * INPUT CONTRACT:
- * - fn is run immediately with the current subscriber cleared. It may read or write
- *   signals; reads do not subscribe.
- *
- * OUTPUT CONTRACT:
- * - Returns fn's return value. The previous subscriber is restored afterwards, even
- *   if fn throws.
- *
- * WHY THIS DESIGN:
- * Clearing the single current-subscriber slot (rather than per-signal opt-outs) makes
- * the boundary explicit and exact: everything read inside the callback is untracked,
- * nothing outside it is affected, and restoration in `finally` keeps tracking correct
- * across exceptions.
- *
- * WHEN TO USE:
- * To read peripheral/contextual state inside an effect without re-running on it, or to
- * call a setter from inside an effect/memo without self-triggering.
- *
- * WHEN NOT TO USE:
- * Not as a blanket performance hack - untracking a value you actually depend on makes
- * the consumer miss legitimate updates and go stale.
- *
- * EDGE CASES:
- * - Nested untrack() is fine; the innermost restores to the previous (already-cleared)
- *   state.
- * - Writes inside fn still notify other subscribers normally; only the act of reading
- *   is non-subscribing.
- *
- * PERFORMANCE NOTES:
- * O(1) overhead: one save and one restore of the subscriber slot around fn.
- *
- * DEVELOPER WARNING:
- * Anything read inside fn is invisible to the dependency graph - if the consumer
- * should react to it, do not untrack it.
- *
- * @typeParam T - fn's return type.
- * @param fn - The function to run with tracking suspended.
+ * @typeParam T - `fn`'s return type.
+ * @param fn - Runs immediately, with tracking suspended.
  * @returns Whatever `fn` returns.
- * @see {@link createEffect}
- * @see {@link createMemo}
+ * @throws {TypeError} If `fn` is not a function.
  * @example
- * createEffect(() => {
+ * createEffect(() =>
+ * {
  *     log(count());                      // tracked: re-runs when count changes
  *     untrack(() => sendMetric(user())); // user changes do NOT re-run this effect
  * });
+ *
+ * @see {@link createEffect}
+ * @see {@link on} to declare dependencies explicitly instead.
  */
 export function untrack<T>(fn: () => T): T
 {

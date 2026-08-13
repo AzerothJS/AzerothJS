@@ -1,10 +1,9 @@
 /**
- * MODULE: router/shallow-equal
+ * One shallow record-equality check, shared by the router's match, params and query memos, so
+ * a navigation producing an equivalent object does not re-fire downstream effects.
  *
- * One shallow record-equality check, shared by the router's match/params/query memos so a navigation
- * that produces an equivalent params/query object does not re-fire downstream effects. It handles both
- * single-string values (route params) and string|string[] values (query keys, where `?tags=a&tags=b`
- * parses to an array). The `a === b` and null checks are cheap defensive short-circuits.
+ * It covers both single-string values, as route params are, and `string | string[]` values,
+ * as query keys are once `?tags=a&tags=b` has parsed to an array.
  */
 
 /** A record value: a single string (route params) or a repeated-key array (query keys). */

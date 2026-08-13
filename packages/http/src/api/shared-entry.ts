@@ -1,5 +1,5 @@
 /**
- * MODULE: api/shared-entry - the half both sides import ('@azerothjs/http/api/shared')
+ * The half both sides import ('@azerothjs/http/api/shared').
  *
  * A browser needs exactly two things from the API layer: the erased TYPE of the server's
  * features (`import type { api } from ...`) and the projected manifest value. This entry is

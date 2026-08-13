@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/doctor - environment diagnosis
+ * Environment diagnosis.
  *
  * Every check here is traceable to a real incident that cost real debugging hours:
  * strip-only Node meeting a decorator ORM, the TS2591 flood from a missing @types/node,

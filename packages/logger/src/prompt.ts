@@ -1,5 +1,5 @@
 /**
- * MODULE: logger/prompt - the interactive terminal primitives
+ * The interactive terminal primitives.
  *
  * The framework's face when it asks a question: a clack-class select and text input,
  * plus the intro/outro pieces that connect a multi-step flow into one visual column

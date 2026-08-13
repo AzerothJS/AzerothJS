@@ -1,6 +1,4 @@
 /**
- * MODULE: renderer/adopt-style
- *
  * The one way framework code puts a stylesheet into the live document.
  *
  * It uses a constructable stylesheet rather than an injected `<style>` element because CSSOM is

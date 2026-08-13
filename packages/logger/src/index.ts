@@ -1,5 +1,5 @@
 /**
- * MODULE: logger - public surface (browser-safe)
+ * Public surface (browser-safe).
  *
  * One zero-dependency logger with two faces - colored, iconed developer output on a TTY
  * and byte-clean NDJSON for production - plus the banner every AzerothJS process starts

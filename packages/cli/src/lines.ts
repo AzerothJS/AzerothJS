@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/lines - the dev conductor's line discipline
+ * The dev conductor's line discipline.
  *
  * Pure functions between a child's raw output and the frame the developer sees.
  * Three jobs, all honest: classify what kind of child a step spawns, rewrite the

@@ -1,5 +1,5 @@
 /**
- * MODULE: http/logger - the request-logging observer
+ * The request-logging observer.
  *
  * The kernel does not log; it OBSERVES. `logRequests(logger)` is the one logging concern that
  * belongs to this package - one structured line per completed request - and it writes through

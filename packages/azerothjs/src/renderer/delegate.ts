@@ -1,14 +1,15 @@
 /**
- * MODULE: renderer/delegate (internal)
+ * The one event-attachment path for every render surface. Compiled template clones, h() and
+ * hydration all wire handlers through {@link attachEvent}, which makes the attachment model
+ * part of the language contract rather than a per-path choice.
  *
- * The ONE event-attachment path for every render surface - compiled template clones, h(),
- * and hydration all wire handlers through {@link attachEvent}, so the attachment model is
- * part of the language contract rather than a per-path choice. Types in the semantics
- * module's DELEGATED_EVENTS set share one document-level listener per type, with
- * per-element handlers stored on the elements themselves (compiled rows stop paying an
- * addEventListener per handler per row); every other type gets a per-element listener.
- * The document listeners are never removed (at most one per type for the page's life;
- * removal bookkeeping would cost more than the listeners do).
+ * Types in the semantics module's DELEGATED_EVENTS set share one document-level listener per
+ * type, with the per-element handlers stored on the elements themselves, so compiled rows
+ * stop paying an addEventListener per handler per row. Every other type gets a per-element
+ * listener.
+ *
+ * The document listeners are never removed: at most one per type for the page's life, and
+ * the removal bookkeeping would cost more than the listeners do.
  */
 
 import { isDelegatedEvent, canonicalHandlerName, handlerValueMessage } from '../semantics.ts';

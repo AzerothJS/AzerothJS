@@ -1,60 +1,48 @@
 /**
- * MODULE: renderer/dynamic
+ * Renders a component chosen at runtime: tab panels, role-based views, plugin slots, wizard
+ * steps, nullable modals. A hand-rolled version - a reactive child that re-selects and
+ * re-invokes the component - rebuilds the whole subtree whenever any signal it reads
+ * changes, because the selection and the props share one tracking scope. Dynamic tracks only
+ * the selection, so a prop change never tears the tree down.
  *
- * <Dynamic> renders a component chosen by a reactive getter; the component itself can
- * change at runtime (tab panels, role-based views, plugin slots, wizard steps, nullable
- * modals). The hand-rolled alternative - a reactive child that re-selects and re-invokes
- * the component - rebuilds the whole subtree (losing its state) whenever ANY signal it
- * reads changes, because the selection and the props share one tracking scope. Dynamic
- * tracks only the `component` selection, so a prop change does not tear down and rebuild
- * the component tree.
+ * The invariants below are the public contract. A reimplementation that preserves them
+ * passes every public test; everything else in this file is implementation detail, and the
+ * contract matrix in the renderer tests is the executable form.
  *
- * INVARIANTS - the public contract. A reimplementation that preserves these passes every
- * public test; everything else in this file is implementation detail. The contract matrix
- * in the renderer tests is the executable form.
- *
- *  1. SELECTION: `component` is a callable returning a component function, an element tag
- *     string, or a falsy value. Markup `component={ expr }` and the manual API present
- *     this SAME callable shape - how markup arrives at it is the compiler's business, not
- *     part of this contract. The selection callable may be invoked ANY number of times
- *     and must therefore be side-effect free. The component function it returns is
- *     invoked AT MOST ONCE per mounted selection, with the resolved props as its only
- *     argument; nothing else may invoke it.
- *  2. EQUALITY: the rendered tree is disposed (its owned effects torn down, its DOM
- *     removed) and rebuilt exactly when the selection VALUE changes under Object.is
- *     semantics - never because a dependency of the selection re-fired to the same value.
- *     State inside an unchanged selection survives its dependencies re-firing. Forcing a
- *     remount of an unchanged selection is deliberately impossible today; if ever wanted,
- *     it arrives as an additive `key` prop folded into this equality, never by weakening
- *     it.
- *  3. TAGS: a string selection renders an element OBSERVABLY IDENTICAL to the same
- *     element written by hand in this framework: namespace placement (SVG/MathML),
- *     attribute and DOM-property semantics, and the function-valued reactive-prop
- *     behavior may not differ in any way a user can detect. A string never names a
- *     component: AzerothJS has no component registry; imports are the registry.
- *  4. FALSY / INVALID: null, undefined, and false all render nothing, and a later valid
- *     selection renders normally in the same position; any other non-function,
- *     non-string selection throws an error naming <Dynamic>.
- *  5. PROPS: one value-or-thunk channel whose MOUNT-TIME SHAPE picks the mode: an object
- *     is a caller-owned snapshot; a thunk makes the channel LIVE per property read, with
- *     the key set fixed per mounted selection. Live reads route through the CURRENT
- *     `props` value - swapping the thunk itself is as live as the values inside one -
- *     and evaluate in the READER's scope, so a component child gets exactly the liveness
- *     direct markup props give. Prop changes never rebuild; only the selection does.
- *     Child props always ride `props`: spreads on <Dynamic> itself configure Dynamic,
- *     and this stays so - the Solid-style spread-through was considered and declined
- *     (manual-API-first, no reserved-name carve-outs).
- *  6. ASYNC IS NOT DYNAMIC'S CONCERN: suspension is declared on Suspense (`on:`), so a
- *     lazy/async component is a stable component identity whose body reads a resource -
- *     the selection contract never learns about promises.
- *  7. MODES: on the server, selection and props are read exactly once and the rendered
- *     output is serialized inside the 'dynamic' co-range comment markers - that marker
- *     format is wire contract, because a hydrating client adopts the server's DOM for
- *     that range in place (no re-creation) and FAILS LOUDLY when the range does not match
- *     its own first render. In the DOM, the rendered output participates directly in its
- *     parent's flow - no wrapper element exists (it must work as a direct child of
- *     <table>, <select>, <ul>). Beyond the markers, NO artifact of the mechanism is
- *     observable - a user program that detects the internals is out of contract.
+ *  1. SELECTION. `component` is a callable returning a component function, an element tag
+ *     string, or a falsy value; markup and the manual API present the same callable shape.
+ *     It may be invoked any number of times and must therefore be side-effect free. The
+ *     component function it returns is invoked at most once per mounted selection, with the
+ *     resolved props as its only argument.
+ *  2. EQUALITY. The rendered tree is disposed and rebuilt exactly when the selection VALUE
+ *     changes under Object.is, never because a dependency re-fired to the same value, so
+ *     state inside an unchanged selection survives. Forcing a remount of an unchanged
+ *     selection is deliberately impossible; if it is ever wanted it arrives as an additive
+ *     `key` prop folded into this equality, not by weakening it.
+ *  3. TAGS. A string selection renders an element observably identical to the same element
+ *     written by hand: namespace placement, attribute and DOM-property semantics, and
+ *     function-valued reactive props may not differ in any detectable way. A string never
+ *     names a component - there is no component registry, imports are the registry.
+ *  4. FALSY AND INVALID. null, undefined and false render nothing, and a later valid
+ *     selection renders normally in the same position. Any other non-function, non-string
+ *     selection throws an error naming Dynamic.
+ *  5. PROPS. One value-or-thunk channel whose mount-time shape picks the mode: an object is
+ *     a caller-owned snapshot, while a thunk is live per property read with its key set
+ *     fixed per mounted selection. Live reads route through the CURRENT `props` value and
+ *     evaluate in the READER's scope, so a component child gets exactly the liveness direct
+ *     markup props give. Prop changes never rebuild. Child props always ride `props`;
+ *     spreads on Dynamic itself configure Dynamic, and the Solid-style spread-through was
+ *     considered and declined.
+ *  6. ASYNC IS NOT DYNAMIC'S CONCERN. Suspension is declared on Suspense, so a lazy or async
+ *     component is a stable identity whose body reads a resource, and the selection contract
+ *     never learns about promises.
+ *  7. MODES. On the server, selection and props are read exactly once and the output is
+ *     serialized inside 'dynamic' co-range markers. That marker format is wire contract,
+ *     because a hydrating client adopts the server's DOM for the range in place and fails
+ *     loudly when it does not match its own first render. In the DOM the output participates
+ *     directly in its parent's flow with no wrapper element, so it works as a direct child of
+ *     `<table>`, `<select>` and `<ul>`. Beyond the markers, no artifact of the mechanism is
+ *     observable.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -160,72 +148,28 @@ function resolveProps(dynamicProps: DynamicProps): Record<string, unknown>
 }
 
 /**
- * Dynamic
+ * Renders the component the `component` getter returns, swapping only when that selection
+ * actually changes.
  *
- * PURPOSE:
- * Renders the component returned by `component()`, swapping it whenever that getter
- * returns a different component (or null to render nothing). Props from `props()` are
- * passed through.
+ * Only the selection is tracked; props are read untracked. That is the whole point - prop
+ * churn cannot rebuild the tree, and the component is responsible for tracking its own
+ * props, which it gets for free when they arrive through a thunk.
  *
- * WHY IT EXISTS:
- * Choosing a component by hand inside a reactive hole (`() => view()(props())`) couples
- * the selection and the props into one tracking scope: any prop change rebuilds the whole
- * subtree, discarding its state. Dynamic isolates the swap to the `component` signal and
- * leaves prop reactivity to the component, so only an actual component change rebuilds.
+ * Storing a component in a signal needs the wrap-in-arrow idiom, since a setter treats a
+ * bare function argument as an updater.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; a control-flow component. `<Dynamic>` lowers to a
- * `component` binding at a `slot` co-range; the chosen component is resolved at runtime.
- * Mode-dispatched: DOM swap on the client, single-resolution serialization for SSR,
- * adoption during hydration.
- *
- * INPUT CONTRACT:
- * - props.component: getter returning a component function or null; read reactively (the
- *   sole swap trigger).
- * - props.props: optional getter for the component's props; read untracked.
- *
- * OUTPUT CONTRACT:
- * - Returns an HTMLElement-typed handle: a comment-marker co-range on the client, a
- *   serialized contents-anchor in SSR, or a hydration descriptor while hydrating.
- *
- * WHY THIS DESIGN:
- * Tracking only `component()` (props read under untrack) is what prevents prop churn from
- * rebuilding the tree. Each component renders in its own createRoot so a swap disposes the
- * previous one as a unit. Comment markers keep the component a direct child of the parent.
- *
- * WHEN TO USE:
- * When the component to render is data-driven and changes at runtime: tabs, role/plugin
- * dispatch, steppers, nullable modals.
- *
- * WHEN NOT TO USE:
- * For a fixed two-way condition (use {@link Show}) or a fixed set of cases
- * ({@link Switch}). For passing props that should update in place, let the component read
- * them reactively rather than forcing a swap.
- *
- * EDGE CASES:
- * - component() returning null renders nothing (empty co-range).
- * - Storing a component IN a signal needs the wrap-in-arrow idiom (setView(() => Cmp)),
- *   since a setter treats a bare function argument as an updater.
- * - SSR resolves the component + props once; hydration adopts on the first effect run.
- *
- * PERFORMANCE NOTES:
- * A prop change does NOT rebuild (untracked); only a component change disposes the old
- * tree and builds the new one once.
- *
- * DEVELOPER WARNING:
- * Reading a signal inside the component's synchronous setup does not re-subscribe Dynamic
- * (props are untracked) - so do not rely on Dynamic to re-run the component on prop
- * changes; the component must track its own props. Remember the wrap-in-arrow rule when
- * putting a component in a signal.
- *
- * @param dynamicProps - {@link DynamicProps}: `component`, optional `props`.
- * @returns An HTMLElement-typed control-flow handle.
- * @see {@link Show}
- * @see {@link Switch}
+ * @param dynamicProps - See {@link DynamicProps}.
+ * @returns A control-flow handle, typed as a node.
+ * @throws {Error} If the selection resolves to something that is neither a component
+ *                 function, a tag string, nor falsy.
  * @example
  * const [view, setView] = createSignal(Home);
- * Dynamic({ component: view, props: () => ({ title: 'Tab' }) });
- * setView(() => About); // wrap in arrow: a setter treats a bare function as an updater
+ *
+ * Dynamic({ component: view, props: () => ({ title: tab() }) });
+ *
+ * setView(() => About); // wrapped: a setter treats a bare function as an updater
+ *
+ * @see {@link Show} for a fixed two-way condition and {@link Switch} for a fixed set of cases.
  */
 export function Dynamic(dynamicProps: DynamicProps): MountNode
 {

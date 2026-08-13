@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/declarations - emits a `.d.ts` for an `.azeroth` module.
+ * Emits a `.d.ts` for an `.azeroth` module.
  *
  * TypeScript has no resolver for `.azeroth` files: a `.ts` file that imports `./X.component` cannot see
  * the component's type, so `tsc` and editors report "Cannot find module './X.component'". This emitter

@@ -48,6 +48,7 @@ export const CompletionItemKind =
     Component: 7
 } as const;
 
+/** One of the {@link CompletionItemKind} values. */
 export type CompletionItemKindValue = (typeof CompletionItemKind)[keyof typeof CompletionItemKind];
 
 /** A single completion suggestion. */
@@ -161,6 +162,7 @@ export const SymbolKind = {
     Object: 19
 } as const;
 
+/** One of the {@link SymbolKind} values. */
 export type SymbolKindValue = (typeof SymbolKind)[keyof typeof SymbolKind];
 
 /** A hierarchical document symbol. */
@@ -222,6 +224,7 @@ export const DiagnosticSeverity =
     Hint: 4
 } as const;
 
+/** One of the {@link DiagnosticSeverity} values. */
 export type DiagnosticSeverityValue = (typeof DiagnosticSeverity)[keyof typeof DiagnosticSeverity];
 
 /** A secondary location that explains a diagnostic (e.g. "'x' is declared here"). */
@@ -335,6 +338,7 @@ export const SEMANTIC_TOKEN_TYPES = [
     'parameter', 'variable', 'property', 'enumMember', 'function', 'method'
 ] as const;
 
+/** A token type name from the legend, whose index is its wire encoding. */
 export type SemanticTokenType = (typeof SEMANTIC_TOKEN_TYPES)[number];
 
 /**
@@ -350,4 +354,5 @@ export const SEMANTIC_TOKEN_MODIFIERS = [
     'declaration', 'readonly', 'static', 'async', 'defaultLibrary', 'local', 'reactive'
 ] as const;
 
+/** A token modifier name from the legend, whose index is its bit position. */
 export type SemanticTokenModifier = (typeof SEMANTIC_TOKEN_MODIFIERS)[number];

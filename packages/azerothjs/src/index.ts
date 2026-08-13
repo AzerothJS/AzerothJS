@@ -1,7 +1,6 @@
 /**
- * MODULE: azerothjs - THE frontend framework, one real package
- *
- * Everything the client half of an AzerothJS app is made of, in one install:
+ * The frontend framework as one real package: everything the client half of an app is made
+ * of, in a single install.
  *
  *   ./reactivity  - signals, memos, effects, owner tree + context, stores, resources,
  *                   streams, error handling, render-mode dispatch

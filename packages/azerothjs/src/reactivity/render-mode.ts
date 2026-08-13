@@ -1,41 +1,32 @@
 /**
- * MODULE: reactivity/render-mode
+ * The framework renders in one of three modes, read at the top of h() and every
+ * control-flow component to decide how output is materialised:
  *
- * The framework renders in one of three modes. h() and every control-flow component
- * read the active mode at the top of each call to decide how to materialise output:
+ *   'dom'     - the default. Build real DOM and wire live effects.
+ *   'string'  - SSR. Emit HTML: no document, and no live effects, so a reactive getter is
+ *               read exactly once.
+ *   'hydrate' - client adoption of server HTML. Walk the existing nodes and attach
+ *               listeners and effects in place rather than creating anything.
  *
- *   'dom'     - default. Build real DOM (document.createElement) and wire live effects.
- *   'string'  - SSR. Emit an HTML string: no document, no live effects (reactive
- *               getters are read exactly once). Used by azerothjs.
- *   'hydrate' - client adoption of server HTML. Walk existing nodes and attach
- *               listeners/effects in place instead of creating new ones.
+ * The mode lives here, beneath both the renderer and the component layer, because both
+ * must read it and the component layer does not depend on the renderer.
  *
- * WHY IT LIVES IN azerothjs:
- * Both the renderer (h, Show, For) and azerothjs (ErrorBoundary) must read
- * the mode, and component does not depend on the renderer - reactivity is the only
- * package beneath both, so the mode flag lives here.
- *
- * The mode is a STACK so it nests and resets correctly: runInMode pushes on entry and
- * pops in a finally, so a thrown render can never leak a non-'dom' mode into the next
- * call - essential for a long-lived server process serving many requests.
+ * It is a stack so it nests and resets correctly: runInMode pushes on entry and pops in a
+ * finally, so a render that throws can never leak a non-'dom' mode into the next call -
+ * essential in a long-lived server process serving many requests.
  */
 
 import type { StreamSession } from './stream-session.ts';
 
-/**
- * The active rendering strategy. See the module header for each mode's semantics.
- */
+/** The active rendering strategy. See the module header for each mode's semantics. */
 export type RenderMode = 'dom' | 'string' | 'hydrate';
 
 /**
- * One entry of the render-context stack: the mode plus the render-scoped flags that
- * ride with it. Markers are PART of the mode entry (renderToString = 'string' with
- * markers, `{ markers: false }` = 'string' without) - not a separate mutable global,
- * so a thrown render can never leak marker state into the next request, and backing
- * this stack with per-async-context storage later (streaming SSR) is a change to ONE
- * accessor, not a hunt for scattered globals.
- *
- * @internal
+ * One entry of the render-context stack: the mode plus the render-scoped flags riding with
+ * it. Markers are part of the entry rather than a separate mutable global, so a render that
+ * throws cannot leak marker state into the next request, and backing this stack with
+ * per-async-context storage later would be a change to one accessor rather than a hunt for
+ * scattered globals.
  */
 interface ModeFrame
 {
@@ -44,7 +35,7 @@ interface ModeFrame
     session: StreamSession | null;
 }
 
-/** The render-context stack; empty means 'dom', no markers. @internal */
+/** Empty means 'dom' with no markers. */
 const frames: ModeFrame[] = [];
 
 /**
@@ -90,11 +81,8 @@ export interface HydrationPass
 let activePass: HydrationPass | null = null;
 
 /**
- * The active pass, but only while it is still open - a closed pass is deliberately
+ * The active pass, but only while it is still open. A closed pass is deliberately
  * indistinguishable from no pass, so a captured reference cannot resurrect adoption.
- *
- * @internal
- * @returns The open {@link HydrationPass}, or null.
  */
 function currentHydrationPass(): HydrationPass | null
 {
@@ -106,8 +94,7 @@ function currentHydrationPass(): HydrationPass | null
  * {@link settleHydrationPass}.
  *
  * @internal
- * @param onMismatch - Handler for a failure during deferred adoption.
- * @returns The new pass.
+ * @param onMismatch - Handles a failure during deferred adoption.
  */
 export function beginHydrationPass(onMismatch: (error: unknown) => void): HydrationPass
 {
@@ -124,10 +111,7 @@ export function beginHydrationPass(onMismatch: (error: unknown) => void): Hydrat
  * fallback is about to replace.
  *
  * @internal
- * @typeParam T - fn's return type.
- * @param pass - The pass to enter.
- * @param fn - The work to run under it.
- * @returns fn's value, or undefined when the mismatch handler absorbed a throw.
+ * @returns `fn`'s value, or undefined when the mismatch handler absorbed a throw.
  */
 export function runInPass<T>(pass: HydrationPass, fn: () => T): T | undefined
 {
@@ -200,7 +184,6 @@ export function deferHydration(): { pass: HydrationPass; release: () => void } |
  * again as each ticket is released, so whichever finishes last is the one that closes it.
  *
  * @internal
- * @param pass - The pass to settle.
  */
 export function settleHydrationPass(pass: HydrationPass): void
 {
@@ -211,12 +194,11 @@ export function settleHydrationPass(pass: HydrationPass): void
 }
 
 /**
- * Whether hydration markers are active for the current render - true only inside a
- * `runInMode('string', fn, { markers: true })` window. Read by the SSR serializers
- * when emitting hole/control-flow comment anchors.
+ * Whether hydration markers are active for this render: true only inside a
+ * `runInMode('string', fn, { markers: true })` window. Read by the SSR serializers when
+ * emitting hole and control-flow comment anchors.
  *
  * @internal
- * @returns true when the active frame carries markers.
  */
 export function ssrMarkersActive(): boolean
 {
@@ -224,12 +206,11 @@ export function ssrMarkersActive(): boolean
 }
 
 /**
- * The streaming session of the current render window, or null outside one. This IS the
- * documented "ONE accessor" seam: every serialization window is synchronous, so the
- * session rides the frame stack - no per-async-context storage needed.
+ * The streaming session of the current render window, or null for a buffered or client
+ * render. Every serialization window is synchronous, so the session rides the frame stack
+ * and needs no per-async-context storage.
  *
  * @internal
- * @returns The active {@link StreamSession}, or null for buffered/client renders.
  */
 export function currentStreamSession(): StreamSession | null
 {
@@ -240,81 +221,42 @@ export function currentStreamSession(): StreamSession | null
 export interface RunInModeOptions
 {
     /**
-     * Emit hydration markers (hole anchors, control-flow ranges) while serializing.
-     * Meaningful with mode 'string': renderToString passes its `markers` option, which
-     * false. Defaults to the ENCLOSING frame's setting (so nested mode switches inside
-     * one render keep the render's choice), false at the top level.
+     * Emit hydration markers - hole anchors and control-flow ranges - while serializing.
+     * Only meaningful in `'string'` mode. Omitted, it inherits the enclosing frame's
+     * setting, so a nested mode switch inside one render keeps that render's choice; false
+     * at the top level.
      */
     markers?: boolean;
 
     /**
-     * The streaming session this window serializes under. Like `markers`, an omitted
-     * value inherits the enclosing frame's, so nested mode switches inside one render
-     * keep the render's session; null at the top level.
+     * The streaming session this window serializes under. Like `markers`, an omitted value
+     * inherits the enclosing frame's; null at the top level.
      */
     session?: StreamSession | null;
 }
 
 /**
- * getRenderMode
+ * The active render mode, and 'dom' outside every {@link runInMode} call.
  *
- * PURPOSE:
- * Returns the currently active render mode (top of the mode stack).
+ * Meaningful only during a render. Do not cache it across an async boundary, where the mode
+ * that was active has since been popped. Application logic should not branch on it at all.
  *
- * WHY IT EXISTS:
- * One read point for the mode lets every mode-aware primitive (h, control-flow,
- * ErrorBoundary) branch on a single source of truth instead of each tracking its own.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, render dispatch. Read at the top of h() and control-flow components to pick
- * DOM construction vs string serialization vs hydration adoption.
- *
- * INPUT CONTRACT:
- * - None.
- *
- * OUTPUT CONTRACT:
- * - The active {@link RenderMode}; 'dom' when no mode is pushed.
- *
- * WHY THIS DESIGN:
- * A stack (rather than a single mutable flag) is what makes nesting and exception-safe
- * restoration possible; this getter just reads its top.
- *
- * WHEN TO USE:
- * Inside render-time code that must behave differently per mode and needs the exact
- * mode (not just the string/hydrate booleans).
- *
- * WHEN NOT TO USE:
- * In application logic - app code should not branch on render mode.
- *
- * EDGE CASES:
- * - Outside any runInMode call it returns 'dom' (the stack bottom), i.e. plain client
- *   behavior.
- *
- * PERFORMANCE NOTES:
- * O(1): one array index read. It is on the render hot path, so it stays this cheap.
- *
- * DEVELOPER WARNING:
- * The value is only meaningful during a render; do not cache it across async
- * boundaries, where the active mode may have been popped.
- *
- * @returns The active {@link RenderMode}; 'dom' when no mode is pushed.
- * @see {@link runInMode}
+ * @returns The active {@link RenderMode}.
  * @example
- * getRenderMode();                              // 'dom'
- * runInMode('string', () => getRenderMode());   // 'string'
+ * getRenderMode();                            // 'dom'
+ * runInMode('string', () => getRenderMode()); // 'string'
+ *
+ * @see {@link runInMode}
  */
 export function getRenderMode(): RenderMode
 {
-    // An empty stack IS the documented outside-any-runInMode semantic: plain 'dom'.
     return frames[frames.length - 1]?.mode ?? 'dom';
 }
 
 /**
- * Whether the framework is currently emitting an HTML string (SSR). Hot-path predicate
- * read at the top of h() and control-flow components; delegates to {@link getRenderMode}.
+ * Whether the framework is currently emitting an HTML string, which is the SSR path.
  *
- * @returns true when the active mode is 'string'.
- * @see {@link runInMode}
+ * @returns True when the active mode is `'string'`.
  */
 export function isStringMode(): boolean
 {
@@ -322,11 +264,9 @@ export function isStringMode(): boolean
 }
 
 /**
- * Whether the framework is currently hydrating server-rendered DOM. Delegates to
- * {@link getRenderMode}.
+ * Whether the framework is currently adopting server-rendered DOM.
  *
- * @returns true when the active mode is 'hydrate'.
- * @see {@link runInMode}
+ * @returns True when the active mode is `'hydrate'`.
  */
 export function isHydrating(): boolean
 {
@@ -334,61 +274,25 @@ export function isHydrating(): boolean
 }
 
 /**
- * runInMode
+ * Runs `fn` with `mode` active, restoring the previous mode afterwards even if `fn` throws.
+ * This is the only sanctioned way to enter a non-'dom' mode: the exception safety is what
+ * stops a failed render from leaving a server stuck in `'string'` mode for the next request.
  *
- * PURPOSE:
- * Runs `fn` with `mode` active and restores the previous mode afterwards, even if `fn`
- * throws.
+ * Nesting is safe - the inner pop restores the outer mode.
  *
- * WHY IT EXISTS:
- * It is the only sanctioned way to enter a non-'dom' mode. The server's renderToString
- * and the client's hydrate() wrap their work in it so the rest of the render tree reads
- * the right mode, and so the mode is guaranteed to reset when the work completes or
- * fails.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, render dispatch. The boundary that establishes string/hydrate mode for an
- * entire render subtree.
- *
- * INPUT CONTRACT:
- * - mode: the {@link RenderMode} to activate for the duration of fn.
- * - fn: the work to run in that mode.
- *
- * OUTPUT CONTRACT:
- * - Returns fn's return value. The previous mode is restored in a finally, so it is
- *   restored on both normal return and throw.
- *
- * WHY THIS DESIGN:
- * Push/pop on a stack (in try/finally) makes modes nest and self-heal: a render that
- * throws cannot leave a server stuck in 'string' mode for the next request.
- *
- * WHEN TO USE:
- * At an SSR or hydration entry point (or a test) that must run a subtree in a specific
- * mode.
- *
- * WHEN NOT TO USE:
- * In ordinary client rendering - 'dom' is already the default; wrapping needlessly only
- * adds a push/pop.
- *
- * EDGE CASES:
- * - Re-entrant/nested calls are safe; the inner pop restores to the outer mode.
- * - If fn throws, the mode is still popped before the throw propagates.
- *
- * PERFORMANCE NOTES:
- * O(1): one push and one pop around fn.
- *
- * DEVELOPER WARNING:
- * Do not push a mode by mutating the stack directly - always use runInMode, or the
- * finally-based restoration (and thus exception safety) is lost.
- *
- * @typeParam T - fn's return type.
- * @param mode - The mode to activate for the duration of fn.
- * @param fn - The work to run in that mode.
- * @param options - Render-scoped flags for the window; see {@link RunInModeOptions}.
+ * @typeParam T - `fn`'s return type.
+ * @param mode - Active for the duration of `fn`.
+ * @param fn - The work to run.
+ * @param options - Render-scoped flags for this window.
+ * @param options.markers - Emit hydration markers while serializing. Inherits the enclosing
+ *                          frame when omitted.
+ * @param options.session - The streaming session to serialize under. Inherits the enclosing
+ *                          frame when omitted.
  * @returns Whatever `fn` returns.
- * @see {@link getRenderMode}
  * @example
  * const html = runInMode('string', () => (App({}) as unknown as SSRNode).html, { markers: true });
+ *
+ * @see {@link getRenderMode}
  */
 export function runInMode<T>(mode: RenderMode, fn: () => T, options?: RunInModeOptions): T
 {

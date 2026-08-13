@@ -1,17 +1,16 @@
 /**
- * MODULE: renderer/ssr (internal)
+ * The element-specific half of server-side rendering: an h() call as an HTML string.
  *
- * The element-specific half of server-side rendering: turning an h() call into an HTML string.
- * It mirrors, branch for branch, what applyProps/setProperty/appendChild do in h.ts's DOM path,
- * so the markup the server produces is structurally identical to what the browser would build -
- * which is what lets hydration adopt it node-for-node. The generic DOM-free pieces (escaping,
- * child serialization, the SSRNode wrapper) live in azerothjs's ssr; this file owns
- * the HTML-element specifics (tag names, void elements, attribute-vs-property rules). These
- * serializers are package-internal (consumed by h.ts in string mode), not public API.
+ * It mirrors the DOM path branch for branch, so the markup the server produces is
+ * structurally identical to what the browser would build - which is exactly what lets
+ * hydration adopt it node for node. The DOM-free pieces (escaping, child serialization, the
+ * SSRNode wrapper) live in the reactivity layer; what belongs here is the HTML-element
+ * specifics: tag names, void elements, and the attribute-versus-property rules.
  *
- * It also owns the render-safety gate - assertSafeTag / assertSafeAttribute - which BOTH
- * render modes call, so a tag or a value one mode refuses can never be written by the other.
- * The only public symbols here are the two escape hatches that opt a single value out of it.
+ * This module also owns the render-safety gate, assertSafeTag and assertSafeAttribute, which
+ * BOTH render modes call. A tag or value one mode refuses can therefore never be written by
+ * the other. The only public symbols here are the two escape hatches that opt a single value
+ * out of that gate.
  */
 
 import type { Props, Child } from './types.ts';
@@ -52,6 +51,8 @@ import {
  * @internal
  */
 const SCRIPT_BREAKOUT = /<(?=\/script|script|!--)/gi;
+
+/** The `<` opening a `</style` sequence, which would close a style element mid-content. */
 export const STYLE_BREAKOUT: RegExp = /<(?=\/style)/gi;
 
 /** Applies the raw-text breakout transform for one element. @internal */
@@ -225,36 +226,30 @@ function unbrand(value: unknown, kind: UnsafeKind): string | null
 }
 
 /**
- * unsafeUrl
+ * Marks one URL as author-vetted, so the render-safety gate writes it verbatim into a URL
+ * attribute - `href`, `src`, `action`, `formaction`, `poster`, `xlink:href`, `data` - even
+ * when its scheme is one the framework otherwise refuses, and into `srcdoc`, which is
+ * refused outright.
  *
- * PURPOSE:
- * Marks one URL string as author-vetted, so the render-safety gate writes it verbatim into a
- * URL attribute (`href`, `src`, `action`, `formaction`, `poster`, `xlink:href`, `data`) even
- * when its scheme is one the framework otherwise refuses, and into `srcdoc`, which is refused
- * outright.
+ * The gate blocks `javascript:`, `vbscript:` and non-image `data:` URLs because a value
+ * reaching them is almost always user data that was never meant to be code. Almost always is
+ * not always: a bookmarklet builder, a generated SVG document, a legacy `javascript:void(0)`
+ * anchor are all real. Those get an explicit, greppable opt-in at the one call site that
+ * needs it, rather than a global switch that disarms the gate everywhere.
  *
- * WHY IT EXISTS:
- * The gate refuses `javascript:`, `vbscript:` and non-image `data:` URLs because a value that
- * reaches them is almost always user data that was never meant to be code. "Almost always" is
- * not "always": a bookmarklet builder, a generated SVG document, a legacy `javascript:void(0)`
- * anchor are real. Those get an explicit, greppable opt-in at the ONE call site that needs it,
- * instead of a global switch that turns the gate off for the whole app.
+ * Use it when the URL is a literal in your own source, or one you built from values you
+ * validated. NEVER use it on anything that came from a request, a database, a file or a
+ * user: there is no vetting left in the call, so it simply reinstates the vulnerability the
+ * gate exists to stop.
  *
- * WHEN TO USE:
- * When the URL is a literal in your own source, or you built it yourself from values you
- * validated.
- *
- * WHEN NOT TO USE:
- * On anything that came from a request, a database, a file, or a user - there is no vetting
- * left in the call, so this simply reinstates the vulnerability the gate exists to stop.
- *
- * @param value - The URL to write verbatim.
+ * @param value - Written verbatim, with no further checking.
  * @returns An opaque marker that stringifies to `value`, typed as `string` so it drops into a
  *          prop unchanged.
- * @see {@link unsafeTag}
  * @example
  * h('a', { href: unsafeUrl('javascript:void(0)') }, 'legacy anchor');
  * h('img', { src: unsafeUrl(`data:image/svg+xml,${ encodeURIComponent(chart) }`) });
+ *
+ * @see {@link unsafeTag}
  */
 export function unsafeUrl(value: string): string
 {
@@ -262,32 +257,25 @@ export function unsafeUrl(value: string): string
 }
 
 /**
- * unsafeTag
+ * Marks one tag name as author-vetted, so h() creates it even when the render-safety gate
+ * refuses it: an executing `<script>`, or `<base>`, `<object>` and `<embed>`.
  *
- * PURPOSE:
- * Marks one tag name as author-vetted, so h() creates it even when it is a tag the
- * render-safety gate refuses: an executing `<script>`, or `<base>` / `<object>` / `<embed>`.
+ * Those four are how injected markup gets from content to code, so they are refused by
+ * default and an app that genuinely needs one - a third-party loader, an analytics snippet -
+ * names itself at the call site. A NON-executing script, `type="application/ld+json"` or any
+ * other data block, needs no opt-in at all.
  *
- * WHY IT EXISTS:
- * Those four tags are how injected markup gets from "content" to "code", so h() refuses them by
- * default. An app that genuinely needs one - injecting a third-party loader, an analytics
- * snippet - names itself at the call site rather than the framework leaving the door open for
- * everyone. A NON-executing script (`type="application/ld+json"` and any other data block) is
- * allowed without this.
+ * Use it with a literal tag name for content you control. NEVER use it with a tag name that
+ * came from data: a `<script>` whose content is also data is remote code execution in the
+ * visitor's session, however the tag name was spelled.
  *
- * WHEN TO USE:
- * With a literal tag name for content you control.
- *
- * WHEN NOT TO USE:
- * With a tag name that came from data. A `<script>` whose content is also data is remote code
- * execution in the visitor's session, no matter how the tag name was spelled.
- *
- * @param name - The tag name to create.
- * @returns An opaque marker that stringifies to `name`, typed as `string` so it drops into h()
- *          unchanged.
- * @see {@link unsafeUrl}
+ * @param name - Created with no further checking.
+ * @returns An opaque marker that stringifies to `name`, typed as `string` so it drops into
+ *          h() unchanged.
  * @example
  * h(unsafeTag('script'), { src: 'https://cdn.example.com/widget.js', async: true });
+ *
+ * @see {@link unsafeUrl}
  */
 export function unsafeTag(name: string): string
 {
@@ -575,9 +563,9 @@ function resolveValue(value: unknown): unknown
  *   - `true` -> boolean attribute (`disabled=""`)
  *   - everything else -> `key="<escaped value>"`
  *
- * Note: `value` / `checked` / `selected` / `disabled` are DOM properties on
- * the client, but server-side their correct initial representation IS the
- * matching attribute, which these general rules already produce.
+ * `value`, `checked`, `selected` and `disabled` are DOM properties on the client, but their
+ * correct initial representation on the server IS the matching attribute, which these rules
+ * already produce.
  *
  * @param props - The props passed to h()
  * @returns The serialized attribute string (may be empty)

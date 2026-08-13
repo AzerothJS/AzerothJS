@@ -1,12 +1,10 @@
 /**
- * MODULE: renderer/switch
+ * Mutually exclusive branches: exactly one Match case is mounted at a time. An if/else-if
+ * chain inside a reactive hole does the same job but hides the exclusivity, rebuilds on
+ * every re-evaluation and gives no branch a disposal scope.
  *
- * <Switch> renders the first matching <Match> case - a switch/case for reactive UI where
- * exactly one branch is mounted at a time. The hand-rolled alternative, an if/else-if
- * chain inside a reactive hole, works but hides that the branches are mutually exclusive,
- * rebuilds on every re-evaluation, and gives no branch a disposal scope. Switch makes
- * exclusivity explicit, mounts only the winning case in its own root, and short-circuits
- * at the first match so a lower case's condition is only tracked while no higher case wins.
+ * Evaluation short-circuits at the first match, so a lower case's condition is tracked only
+ * while no higher case wins.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -29,69 +27,44 @@ export interface MatchCase
     render: () => MountNode | MountNode[];
 }
 
-/**
- * Props for {@link Match}.
- */
+/** Props for {@link Match}. */
 export interface MatchProps<W = boolean>
 {
     /**
-     * Condition: a value or a getter (thunk/signal). The compiler emits a getter-object prop;
-     * Match re-wraps it via resolveReactive into the case thunk Switch calls. Like `Show`'s
-     * `when`, any type is accepted and the case matches while the value is TRUTHY - so
-     * `phase() === 'connected' && activeConfig()` works without an explicit boolean coercion.
+     * The condition: a value or a getter. Any type is accepted and the case matches while
+     * the value is TRUTHY, so `phase() === 'connected' && activeConfig()` works without an
+     * explicit boolean coercion.
      */
     when: W | (() => W);
 
     /**
-     * Content builder. Two forms, matching {@link ShowProps.children}: a plain thunk, or a
-     * CALLBACK `(value) => node` receiving an ACCESSOR to the narrowed, non-nullish `when`
-     * value (the compiled `<Match when={...} let={x}>` form). A thunk simply ignores the
-     * accessor argument, so both forms share this one signature.
+     * Content builder, in the same two forms as {@link ShowProps.children}: a plain thunk,
+     * or a callback receiving an accessor to the narrowed non-nullish `when` value, which is
+     * what `<Match when={...} let={x}>` compiles to.
      */
     children: (value: () => NonNullable<W>) => MountNode | MountNode[];
 }
 
 /**
- * Match
+ * Normalizes a `{ when, children }` pair into the uniform case shape {@link Switch}
+ * evaluates in priority order. `when` stays lazy, so the case remains reactive.
  *
- * PURPOSE:
- * Wraps a `{ when, children }` pair into a normalized {@link MatchCase} for use inside
- * {@link Switch}.
+ * Match renders nothing itself. Used outside a Switch it has no effect at all, because
+ * nothing consumes the case it returns.
  *
- * WHY IT EXISTS:
- * Switch needs each case as a uniform `{ when: () => boolean, render }` it can evaluate in
- * priority order. Match normalizes the authoring shape (where `when` may be a value,
- * thunk, or signal, and content is a prop) into that internal form, keeping `when` lazy so
- * it stays reactive.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer. `<Match>` inside `<Switch>` lowers to entries the Switch consumes;
- * Match itself just builds the case descriptor (it does not render).
- *
- * INPUT CONTRACT:
- * - props.when: value or getter; re-read lazily through resolveReactive so it tracks.
- * - props.children: thunk building the case element.
- *
- * OUTPUT CONTRACT:
- * - Returns a {@link MatchCase}. It does NOT render on its own; only Switch mounts it.
- *
- * EDGE CASES:
- * - Using Match outside a Switch has no effect (nothing consumes the returned case).
- *
- * @param props - {@link MatchProps}: `when`, `children`.
- * @returns A {@link MatchCase} for {@link Switch}.
- * @see {@link Switch}
+ * @param props - See {@link MatchProps}.
+ * @returns A case for {@link Switch} to evaluate.
  * @example
  * Match({ when: () => status() === 'loading', children: () => h('div', {}, 'Loading...') });
  */
 export function Match<W = boolean>(props: MatchProps<W>): MatchCase
 {
-    // A value CALLBACK (arity >= 1, the compiled `let=` form) receives an accessor to the
-    // narrowed `when` value, under the same contract as Show's: PULL-derived, so a read
-    // recomputes from the same `when` state the match decision observed - never a racing
-    // side channel (see driveShow for why a pushing effect cannot provide this). The
-    // memo is created inside the case's build, which Switch runs inside the branch's
-    // createRoot, so it is disposed with the branch on every swap.
+    // A value callback - arity >= 1, the compiled `let=` form - receives an accessor to the
+    // narrowed `when` value under the same contract as Show's: PULL-derived, so a read
+    // recomputes from the same `when` state the match decision observed rather than through a
+    // racing side channel (driveShow explains why a pushing effect cannot provide this). The
+    // memo is built inside the case, which Switch runs inside the branch's root, so it is
+    // disposed with the branch on every swap.
     const render = props.children.length >= 1
         ? (): MountNode | MountNode[] =>
         {
@@ -111,13 +84,11 @@ export function Match<W = boolean>(props: MatchProps<W>): MatchCase
 
             return props.children(narrowed as () => NonNullable<W>);
         }
-        // Thunk form: pass through untouched, exactly as before - a zero-arity children
-        // never reads its accessor argument, so none is manufactured for it.
+        // A zero-arity children never reads an accessor, so none is manufactured for it.
         : (props.children as unknown as () => MountNode | MountNode[]);
 
     return {
-        // props.when may be a value (getter-object prop) or a function; resolveReactive
-        // unwraps it. Re-read lazily so the case stays reactive when Switch calls it.
+        // Re-read lazily, so the case stays reactive when Switch calls it.
         when: () => Boolean(resolveReactive(props.when)),
         render
     };
@@ -128,74 +99,35 @@ export function Match<W = boolean>(props: MatchProps<W>): MatchCase
  */
 export interface SwitchProps
 {
-    /** Cases in priority order (first match wins). An array (manual API) or a thunk returning one/many - the latter is what compiled `<Switch><Match/>...</Switch>` produces. */
+    /**
+     * Cases in priority order, first match winning. An array for the manual API, or a thunk
+     * returning one or many, which is what compiled markup produces.
+     */
     children: MatchCase | MatchCase[] | (() => MatchCase[] | MatchCase);
 
-    /** Optional content when no case matches; nothing renders if omitted or the thunk returns nullish. */
+    /** Rendered when no case matches. Nothing renders if omitted or if the thunk returns nullish. */
     fallback?: () => MountNode | null | undefined;
 }
 
 /**
- * Switch
+ * Renders the first case whose `when` is truthy, otherwise the fallback, swapping as
+ * conditions change. Exactly one case is mounted at a time.
  *
- * PURPOSE:
- * Renders the first {@link MatchCase} whose `when` is true (else the optional fallback),
- * swapping reactively when conditions change. Only one case is mounted at a time.
+ * The selection loop stops at the first match, so a lower case's `when` is only read - and
+ * therefore only subscribed - while no higher case wins. A change to it cannot trigger a
+ * pointless re-render behind an active higher case.
  *
- * WHY IT EXISTS:
- * An if/else-if chain in a reactive hole rebuilds all branches on re-run, makes
- * exclusivity implicit in statement order, and leaks branch effects. Switch evaluates
- * cases in order, mounts only the winner in its own root, and ties each case's reactivity
- * to whether a higher-priority case already won.
+ * The winning case mounts in its own root and is disposed as a unit on swap, and the case's
+ * render is read under untrack, so a signal read inside it does not rebuild the branch.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; a control-flow component. `<Switch>` lowers to a
- * `component` binding at a `slot` co-range; nested `<Match>` become its cases.
- * Mode-dispatched: DOM swap on the client, single-case serialization for SSR, adoption on
- * hydration.
+ * The case LIST is fixed at construction. Returning a different set of cases from a
+ * `children` thunk on a later run is not observed.
  *
- * INPUT CONTRACT:
- * - props.children: a MatchCase[] or a thunk returning one/many cases. Cases are
- *   normalized once at construction (building cases reads no signals; only their `when`
- *   getters do, inside the effect).
- * - props.fallback: optional thunk rendered when no case matches.
- *
- * OUTPUT CONTRACT:
- * - Returns an HTMLElement-typed handle: a comment-marker co-range on the client, a
- *   serialized contents-anchor in SSR, or a hydration descriptor while hydrating.
- *
- * WHY THIS DESIGN:
- * The selection loop stops at the first match, so a lower case's `when` is read (and thus
- * subscribed) only when no higher case wins - changes to it cannot trigger a pointless
- * re-render while a higher case is active. The winning case mounts in createRoot (disposed
- * as a unit on swap), and the factory is read under untrack so a signal inside a case's
- * render does not rebuild the branch.
- *
- * WHEN TO USE:
- * For more than two mutually exclusive branches keyed off conditions (status machines,
- * route-like dispatch).
- *
- * WHEN NOT TO USE:
- * For a single two-way condition (use {@link Show}); for a runtime-selected component
- * (use {@link Dynamic}).
- *
- * EDGE CASES:
- * - No case matches and no fallback: renders nothing.
- * - SSR emits the first true case (or fallback) once; hydration adopts on the first effect run.
- *
- * PERFORMANCE NOTES:
- * Only the winning case is built; a condition change rebuilds only when it changes which
- * case wins. First-match short-circuit limits how many `when` getters are tracked.
- *
- * DEVELOPER WARNING:
- * Cases are normalized once - returning a DIFFERENT set of cases from a `children` thunk
- * on later runs is not observed (the case list is fixed at construction). Keep render
- * thunks lazy.
- *
- * @param props - {@link SwitchProps}: `children` (cases), optional `fallback`.
- * @returns An HTMLElement-typed control-flow handle.
- * @see {@link Match}
- * @see {@link Show}
+ * @param props - See {@link SwitchProps}.
+ * @returns A control-flow handle, typed as a node.
+ * @see {@link Match} to build a case.
+ * @see {@link Show} for a single two-way condition, and {@link Dynamic} for a
+ *      runtime-selected component.
  * @example
  * Switch({
  *   fallback: () => h('div', {}, 'Idle'),

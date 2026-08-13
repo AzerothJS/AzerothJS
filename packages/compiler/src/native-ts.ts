@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/native-ts - loader for the NATIVE TypeScript compiler's API.
+ * Loader for the NATIVE TypeScript compiler's API.
  *
  * TypeScript 7 ships the type checker as a native executable whose JS-facing API lives under
  * `typescript/unstable/sync`: a synchronous client that spawns the native server and exposes

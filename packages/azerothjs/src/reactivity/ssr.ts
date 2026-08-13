@@ -1,38 +1,29 @@
 /**
- * MODULE: reactivity/ssr
+ * The DOM-free half of server-side rendering: helpers that build HTML strings without ever
+ * touching `document`, so they run on a bare server. Element-specific serialization - tag
+ * names, void elements, attribute rules - lives in the renderer; what sits here is what the
+ * component layer needs too, which is why it lives beneath both.
  *
- * The DOM-free half of server-side rendering: helpers that build HTML strings without
- * ever touching `document`, so they run on a bare server. Element-specific
- * serialization (tag names, void elements, attribute rules) lives in
- * azerothjs; the pieces here are the ones azerothjs also needs
- * (ErrorBoundary serializes its children; every control-flow component wraps its output
- * in anchored contents), which is why they sit in reactivity - the only package beneath
- * both renderer and component.
+ * In string mode h() returns an {@link SSRNode} rather than a real element. It carries
+ * already-serialized, already-escaped HTML plus a brand, so a serializer can tell finished
+ * markup from user text that still needs escaping.
  *
- * SSRNode WRAPPER:
- * In string mode h() returns an SSRNode (cast to HTMLElement) instead of a real
- * element. It carries already-serialized, already-escaped HTML plus a `__ssr` brand, so
- * serializers can tell finished element markup apart from user text that still needs
- * escaping.
- *
- * HYDRATION MARKERS:
- * When on (renderToString), reactive holes are wrapped in paired comment anchors
- * `<!--[-->...<!--]-->` and control-flow wrappers in `<!--azc:type-->...<!--/azc-->`,
- * so the client hydrator can locate the exact nodes a getter owns. When off
- * (`{ markers: false }`) the output is clean HTML with no framework bookkeeping.
+ * With markers on, reactive holes are wrapped in paired comment anchors
+ * `<!--[-->...<!--]-->` and control-flow output in `<!--azc:type-->...<!--/azc-->`, so the
+ * client hydrator can locate the exact nodes a getter owns. With markers off the output is
+ * clean HTML carrying no framework bookkeeping.
  */
 
 import { untrack } from './untrack.ts';
 import { resolveThunks } from './resolve-thunks.ts';
 import { ssrMarkersActive } from './render-mode.ts';
 
-/** @internal Cycle bound for the child graph; see serializeChild. */
+/** Cycle bound for the child graph; see serializeChild. */
 const MAX_CHILD_DEPTH = 512;
 
 /**
- * A serialized node produced in 'string' render mode. `html` is fully serialized and
- * already HTML-escaped; the `__ssr` brand lets {@link isSSRNode} distinguish it from raw
- * user text.
+ * A serialized node produced in string render mode. `html` is finished and already
+ * escaped; the brand is what lets {@link isSSRNode} tell it from raw user text.
  */
 export interface SSRNode
 {
@@ -40,23 +31,17 @@ export interface SSRNode
     html: string;
 }
 
-/**
- * Type guard: whether `x` is an {@link SSRNode} (finished markup) rather than a
- * primitive child needing escaping.
- *
- * @param x - Any value.
- * @returns true if `x` is an SSRNode.
- */
+/** Whether `x` is finished markup rather than a primitive child that still needs escaping. */
 export function isSSRNode(x: unknown): x is SSRNode
 {
     return typeof x === 'object' && x !== null && (x as { __ssr?: unknown }).__ssr === true;
 }
 
 /**
- * Brands already-serialized, already-escaped HTML as an {@link SSRNode}.
+ * Brands a string as finished markup, exempting it from escaping downstream.
  *
- * @param html - Finished, escaped HTML markup.
- * @returns The branded node.
+ * @param html - Must already be serialized AND escaped. Passing unescaped user input here
+ *               is an injection.
  */
 export function ssr(html: string): SSRNode
 {
@@ -64,10 +49,10 @@ export function ssr(html: string): SSRNode
 }
 
 /**
- * Escapes a string for HTML TEXT content (`&`, `<`, `>`).
+ * Escapes `&`, `<` and `>` for HTML text content between tags.
  *
- * @param value - Raw text.
- * @returns Text safe to place between tags.
+ * Not sufficient for an attribute value, which also needs the quote escaped: use
+ * {@link escapeAttr} there.
  */
 export function escapeText(value: string): string
 {
@@ -78,10 +63,9 @@ export function escapeText(value: string): string
 }
 
 /**
- * Escapes a string for a double-quoted HTML ATTRIBUTE value (`&`, `"`, `<`, `>`).
- *
- * @param value - Raw attribute value.
- * @returns Value safe inside "...".
+ * Escapes `&`, `"`, `<` and `>` for a DOUBLE-QUOTED attribute value. Single-quoted or
+ * unquoted attributes are not covered, and neither is a URL context, where a
+ * `javascript:` scheme survives escaping intact.
  */
 export function escapeAttr(value: string): string
 {
@@ -93,50 +77,28 @@ export function escapeAttr(value: string): string
 }
 
 /**
- * serializeChild
+ * Serializes one child value to HTML, mirroring the DOM path's child handling exactly. The
+ * two must agree on which nodes exist and in what order, or hydration mismatches, which is
+ * why this mapping is defined once and shared.
  *
- * PURPOSE:
- * Serializes one child value to HTML, mirroring h()'s DOM-path child handling so SSR
- * output structurally matches what the client would build - which is what makes
- * hydration align node-for-node.
+ * `null`, `undefined` and `false` all serialize to nothing, so `cond && <x/>` emits nothing
+ * when false. An SSRNode contributes its markup, an array serializes item by item, a
+ * function is a reactive hole, and anything else is escaped text.
  *
- * WHY IT EXISTS:
- * SSR and the DOM renderer must agree on exactly which nodes exist and in what order, or
- * hydration mismatches. Centralizing child serialization here (shared by renderer,
- * server, and component) guarantees one definition of that mapping.
+ * A hole is read through untrack - there are no subscriptions on the server - and resolved
+ * while it is a function, so a getter returning a getter collapses to its concrete value
+ * instead of serializing function source. Resolving here rather than recursing is what
+ * keeps exactly one anchor pair per hole, matching the single span the hydrator adopts.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, SSR string mode. Consumes the same child shapes h() accepts and emits the
- * string form, including the reactive-hole anchors the hydrator looks for.
- *
- * INPUT CONTRACT:
- * - child: any h() child - null/undefined/false (skipped), SSRNode (its html), array
- *   (each item serialized), function (a reactive hole), or a primitive (escaped text).
- *
- * OUTPUT CONTRACT:
- * - The child's HTML string. Reactive holes are wrapped in `<!--[-->...<!--]-->` when
- *   markers are on, matching the single span the client hydrator adopts.
- *
- * WHY THIS DESIGN:
- * A reactive hole is read via untrack (no subscription/effect on the server) and
- * resolved WHILE it is a function, so a getter-returning-a-getter collapses to its
- * concrete value instead of serializing inner function source; resolving here (rather
- * than recursing) keeps exactly one anchor pair per hole, matching the DOM.
- *
- * EDGE CASES:
- * - The getter-chain unwrap is depth-capped (16) to avoid a pathological loop.
- * - false is skipped (like null/undefined) so `cond && <x/>` serializes nothing when false.
- *
- * PERFORMANCE NOTES:
- * Linear in the serialized output size; arrays concatenate, holes read once.
- *
- * @param child - The child value to serialize.
- * @returns The child's HTML string.
- * @see {@link wrapContentsAnchored}
+ * @param child - Any value h() accepts as a child.
+ * @param depth - Recursion depth, bounded to stop a self-referencing child array.
+ * @returns The child's HTML.
  * @example
  * serializeChild('a < b');         // 'a &lt; b'
  * serializeChild(ssr('<b>x</b>')); // '<b>x</b>'
  * serializeChild(null);            // ''
+ *
+ * @see {@link wrapContentsAnchored}
  */
 export function serializeChild(child: unknown, depth = 0): string
 {
@@ -150,10 +112,9 @@ export function serializeChild(child: unknown, depth = 0): string
         return child.html;
     }
 
-    // Structural bound for the child GRAPH, which the array branch below walks. A child array
-    // that contains itself is a cycle, and nothing else here would ever stop. Element nesting
-    // does not pay this: a nested element is an SSRNode and returned above. 512 is far past any
-    // real array nesting and far below the stack.
+    // Bounds the child GRAPH the array branch walks: an array containing itself is a cycle
+    // nothing else here would stop. Element nesting does not pay for this, since a nested
+    // element is an SSRNode returned above. 512 is far past real nesting and far below the stack.
     if (depth >= MAX_CHILD_DEPTH)
     {
         return '';
@@ -171,17 +132,12 @@ export function serializeChild(child: unknown, depth = 0): string
 
     if (typeof child === 'function')
     {
-        // Reactive hole: read the value WITHOUT subscribing (no live effect on the
-        // server). Resolve WHILE it is a function so a getter-returning-a-getter (e.g. a
-        // `{ p.title }` hole emitted as `() => (p.title)`, where p.title is `() =>
-        // string`) collapses to its concrete value rather than serializing inner source.
-        // Resolving here (not recursing) keeps a SINGLE `<!--[-->...<!--]-->` pair,
-        // matching the one span the client hydrator adopts.
         const value = untrack(() => resolveThunks(child));
-        // resolveThunks returns the value STILL AS A FUNCTION when its own depth bound is hit -
-        // a getter that returns a getter forever. Recursing on that lands straight back in this
-        // branch and resolves to a function again, so the bound guarded nothing. There is no
-        // value to serialize, and a function's source text must never reach the document.
+        // resolveThunks returns the value STILL AS A FUNCTION when its own depth bound is hit,
+        // which means a getter that returns a getter forever. Recursing on that lands straight
+        // back in this branch and resolves to a function again, so the bound would guard
+        // nothing. There is no value to serialize, and function source must never reach the
+        // document.
         const inner = typeof value === 'function' ? '' : serializeChild(value, depth + 1);
         return ssrMarkersActive() ? `<!--[-->${ inner }<!--]-->` : inner;
     }
@@ -191,47 +147,27 @@ export function serializeChild(child: unknown, depth = 0): string
 }
 
 /**
- * wrapContentsAnchored
+ * Wraps a control-flow component's inner HTML in comment anchors, producing the start and
+ * end markers the client adopts and reuses for later swaps.
  *
- * PURPOSE:
- * Wraps a control-flow component's inner HTML in comment-node anchors (not a wrapper
- * element), producing the start/end markers the client adopts and reuses for later swaps.
+ * Comments rather than a wrapper element because the range must be legal in every HTML
+ * context: inside `<table>`, `<select>` or `<ul>` the parser would hoist a stray `<span>`
+ * out of the table and corrupt the tree, while a comment is valid anywhere.
  *
- * WHY IT EXISTS:
- * Control-flow output must be locatable on the client AND legal in every HTML context.
- * Comments are valid inside `<table>`/`<tbody>`, `<select>`, and `<ul>`, where the parser
- * would hoist a stray `<span>` out of the table; an element wrapper would corrupt the
- * tree. Comment anchors avoid that while still marking the live range.
+ * The open anchor carries the kind for debuggability and the close is a bare `/azc`. That
+ * sigil is distinct from the reactive-hole anchors, so the two schemes never collide, and
+ * the hydrator matches them by balanced depth so nested control flow adopts correctly.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, SSR string mode. Emitted by control-flow components (Show/For/Switch/...) so
- * the hydrator can find and re-drive their ranges.
+ * With markers off the content is returned verbatim, since there is nothing to hydrate.
  *
- * INPUT CONTRACT:
- * - coType: the control-flow kind ('show', 'for', 'switch', ...).
- * - inner: the already-serialized inner HTML.
- *
- * OUTPUT CONTRACT:
- * - Markers off: just `inner` (no anchors - nothing to hydrate).
- * - Markers on: `<!--azc:coType-->inner<!--/azc-->`, returned as an {@link SSRNode}.
- *
- * WHY THIS DESIGN:
- * The open anchor carries the kind (for debugging); the close is a bare `/azc`. The
- * `azc` sigil is distinct from reactive-hole anchors (`[`/`]`) so the two never collide,
- * and the hydrator matches them by BALANCED depth so nested control-flow adopts correctly.
- *
- * EDGE CASES:
- * - With markers off the result is an SSRNode wrapping `inner` verbatim (static markup).
- *
- * PERFORMANCE NOTES:
- * O(1) string wrap around already-serialized content.
- *
- * @param coType - The control-flow kind.
- * @param inner - The already-serialized inner HTML.
- * @returns The anchored content as an {@link SSRNode}.
- * @see {@link serializeChild}
+ * @param coType - The control-flow kind, such as `'show'` or `'for'`.
+ * @param inner - Already-serialized inner HTML.
  * @example
- * wrapContentsAnchored('for', '<li>a</li>').html; // '<!--azc:for--><li>a</li><!--/azc-->' (markers on)
+ * wrapContentsAnchored('for', '<li>a</li>').html;
+ * // markers on:  '<!--azc:for--><li>a</li><!--/azc-->'
+ * // markers off: '<li>a</li>'
+ *
+ * @see {@link serializeChild}
  */
 export function wrapContentsAnchored(coType: string, inner: string): SSRNode
 {

@@ -1,13 +1,12 @@
 /**
- * MODULE: renderer/hydrate
+ * Brings server-rendered markup to life without recreating it. The component runs in
+ * 'hydrate' mode, so h() and the control-flow components return adoption descriptors instead
+ * of DOM; the descriptor tree is then walked against the existing nodes, attaching listeners
+ * and effects in place.
  *
- * hydrate() brings server-rendered markup to life WITHOUT recreating it. It runs the
- * component in 'hydrate' mode (so h()/control-flow return adoption descriptors instead of
- * building DOM), then walks the descriptor tree against the existing DOM in `container`,
- * attaching event listeners and reactive effects onto the live nodes. If the server and
- * client trees diverge, it throws internally and falls back to a full client render() - so
- * the app always boots. render()-ing into an SSR container instead would clear the markup
- * and rebuild (a flash, and lost focus/scroll/input state).
+ * When the server and client trees diverge it falls back to a full client render, so the app
+ * always boots. Calling render() on an SSR container instead would clear the markup and
+ * rebuild it, costing a flash and the page's focus, scroll and input state.
  */
 
 import { createRoot } from '../reactivity/index.ts';
@@ -18,71 +17,31 @@ import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
 
 /**
- * hydrate
+ * Adopts the server-rendered DOM in `container`, attaching listeners and effects to the
+ * existing nodes rather than clearing and rebuilding them.
  *
- * PURPOSE:
- * Adopts the server-rendered DOM in `container`, wiring listeners and reactive effects onto
- * the existing nodes instead of clearing and rebuilding them.
+ * The client tree must match the server's structurally. A mismatch is not fatal - it warns
+ * in development, disposes the partial mount and falls back to a clean {@link render} - but
+ * it silently costs the no-flash benefit, so keep SSR and client rendering the same tree for
+ * the same inputs. That fallback also covers a root component that produces no hydratable
+ * node, and it fires for a deferred mismatch, such as a route still waiting on a lazy chunk,
+ * exactly as it does for a synchronous one.
  *
- * WHY IT EXISTS:
- * SSR ships HTML the user already sees; re-rendering it on the client would flash and
- * discard DOM state. Hydration must instead claim those nodes top-down and attach behavior -
- * which the inside-out evaluation of h() cannot do directly, hence the descriptor-tree
- * approach this function drives.
+ * A previous mount on the same container, from either render or hydrate, is disposed first.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; the client entry point for server-rendered pages. Runs the tree in
- * runInMode('hydrate'), so the same component code produces adoption descriptors that walk
- * the server DOM via a HydrationCursor.
- *
- * INPUT CONTRACT:
- * - component: the same thunk used for {@link render}; in hydrate mode it returns a
- *   descriptor tree, not real DOM.
- * - container: the element holding the server-rendered markup.
- *
- * OUTPUT CONTRACT:
- * - Returns void. On success the existing DOM is adopted and live; on a structural mismatch
- *   it disposes the partial mount and falls back to {@link render} (clean client render).
- *
- * WHY THIS DESIGN:
- * Wrapping the walk in createRoot gives the adopted tree the same disposal scope render()
- * provides. The mismatch -> full-render fallback guarantees the app boots even when SSR and
- * CSR disagree; the cursor's assertExhausted catches "server rendered more than expected".
- *
- * WHEN TO USE:
- * On the client, once, to revive a page rendered by renderToString/renderToDocument.
- *
- * WHEN NOT TO USE:
- * For a purely client-rendered app (use {@link render}). Do not call it on a container whose
- * markup was not produced by this framework's SSR (it will mismatch and fall back).
- *
- * EDGE CASES:
- * - Root component not producing a hydratable node, or any structural mismatch, triggers a
- *   dev warning and a clean render() fallback.
- * - A previous mount on the same container (from render or hydrate) is disposed first.
- *
- * PERFORMANCE NOTES:
- * No DOM construction on the happy path - only listener/effect attachment over existing
- * nodes. The fallback path pays for a full client render only when SSR/CSR diverged.
- *
- * DEVELOPER WARNING:
- * The client tree must match the server output structurally; a mismatch silently degrades to
- * a full re-render (losing the no-flash benefit). Keep SSR and CSR rendering the same tree
- * for the same inputs.
- *
- * @param component - A thunk that builds the root element (same as render's).
+ * @param component - The same thunk {@link render} takes. In hydrate mode it returns a
+ *                    descriptor tree rather than DOM.
  * @param container - The element holding the server-rendered markup.
- * @returns void
- * @see {@link render}
  * @example
  * hydrate(() => App({}), document.getElementById('app')!);
+ *
+ * @see {@link render} for a purely client-rendered app.
  */
 export function hydrate(component: () => MountNode, container: HTMLElement): void
 {
     // A streamed page's seed ids count from zero per hydration pass.
     resetSeedScopes();
 
-    // Tear down any previous mount on this container first.
     const previousDispose = containerDisposers.get(container);
     if (previousDispose)
     {
@@ -91,15 +50,11 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
     }
 
     /**
-     * Structural mismatch: dev-warn and fall back to a clean client render so the app boots
-     * regardless. Dispose the partial hydrate root first; render() then clears the container
-     * and mounts fresh.
-     *
-     * This is also the pass's completion barrier. Adoption is not always finished when the
-     * call below returns - a route waiting on a lazy chunk adopts from a later effect run -
-     * and a failure there used to escape as an unhandled rejection, leaving the server's
-     * markup on screen and inert. The pass calls this instead, so a deferred mismatch ends
-     * the same way a synchronous one does.
+     * Also the pass's completion barrier. Adoption is not always finished when the call below
+     * returns - a route waiting on a lazy chunk adopts from a later effect run - and a failure
+     * there would otherwise escape as an unhandled rejection, leaving the server's markup on
+     * screen and inert. The pass calls this instead, so a deferred mismatch ends the same way
+     * a synchronous one does.
      */
     function fallBackToClientRender(error: unknown): void
     {
@@ -133,7 +88,6 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
             {
                 containerDisposers.set(container, dispose);
 
-                // In hydrate mode the component returns a descriptor tree.
                 const root = component() as unknown;
                 if (!isHydrationNode(root))
                 {

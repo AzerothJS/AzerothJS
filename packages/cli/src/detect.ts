@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/detect - project-shape detection
+ * Project-shape detection.
  *
  * The CLI never asks what a project is; it looks. A directory with a package.json
  * classifies as FRONTEND (a vite config plus the azeroth compiler or umbrella package),

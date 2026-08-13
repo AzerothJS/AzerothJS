@@ -1,5 +1,5 @@
 /**
- * MODULE: api - the typed, colocated API layer
+ * The typed, colocated API layer.
  *
  * Declare a FEATURE once - routes, schemas, guards, handlers, docs, colocated - register the
  * record on the app, and three consumers read the same declaration: the server (`register`),

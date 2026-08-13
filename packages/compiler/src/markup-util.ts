@@ -1,6 +1,4 @@
 /**
- * MODULE: compiler/markup-util - shared codegen string/markup utilities
- *
  * The small shared EMITTER helpers (codegen and the type projection consult them). Language
  * FACTS - the event namespace, content properties, factory props, builtins - live in
  * `azerothjs/semantics`, the one owner every backend imports; this module keeps only the

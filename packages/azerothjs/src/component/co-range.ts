@@ -1,6 +1,4 @@
 /**
- * MODULE: component/co-range
- *
  * The shared "control-flow range" (co-range): the placement abstraction every control-flow
  * component (Show, Switch, Dynamic, For, ErrorBoundary) uses for its DOM output, on both the
  * client render and hydration paths.

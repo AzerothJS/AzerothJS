@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/rewrite - the R2 reactive rewrite
- *
- * Rewrites an expression's source so reactive reads/writes become signal getter/setter calls - the
+ * The reactive rewrite. Rewrites an expression's source so reactive reads/writes become signal getter/setter calls - the
  * core compile-time-reactivity transform:
  *   - a read of a `state`/`derived` `x` becomes `x()`;
  *   - a `props.f` read is left as-is (props is a getter OBJECT - reading the property runs its getter,
@@ -96,64 +94,36 @@ function memberAccess(key: string): string
 }
 
 /**
- * rewriteReactive
+ * Rewrites the reactive reads and writes in one expression, returning transformed source.
  *
- * PURPOSE:
- * Rewrites reactive reads and writes in an expression's source, returning the transformed source text.
+ * The output is byte-identical to the input except at reactive positions, because edits are
+ * spliced by position rather than re-printed from the AST. Formatting, comments and
+ * non-reactive sub-expressions survive exactly, which is what keeps source maps accurate.
+ * Scope-awareness leaves a shadowing local untouched.
  *
- * WHY IT EXISTS:
- * It is the core compile-time-reactivity transform - turning ordinary-looking reads/writes of state
- * into signal getter/setter calls so authored code stays plain while the output is fine-grained.
+ * A `props.f` read is left alone - props is a getter object, so reading the property already
+ * runs its getter - and only state and derived reads gain a call.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, codegen-support; called by codegen for every emitted expression (state/derived
- * initializers, attribute/text holes, prop values).
+ * The rewrite is NON-IDEMPOTENT: running it twice yields `x()()`. Codegen's raw mode exists
+ * precisely to guarantee it runs exactly once over projected markup, so never re-run it on
+ * already-rewritten output.
  *
- * INPUT CONTRACT:
- * - code: the expression source (no wrapping parens; they're added internally for parsing).
- * - sources: the component's reactive-source set (names + hasProps).
+ * `sources` must be complete, or a genuinely reactive read is emitted as a plain identifier
+ * and silently stops updating.
  *
- * OUTPUT CONTRACT:
- * - The rewritten expression source, byte-identical except at reactive read/write positions.
- *
- * WHY THIS DESIGN:
- * It splices position-based edits into the original slice rather than re-printing the AST, so
- * formatting, comments, and non-reactive sub-expressions are preserved exactly - which keeps source
- * maps accurate. Scope-awareness (via walk.ts) leaves shadowing locals untouched.
- *
- * WHEN TO USE:
- * Rewriting a single expression (the common codegen path).
- *
- * WHEN NOT TO USE:
- * A statement list (effect bodies, opaque setup) - use {@link rewriteStatements}.
- *
- * EDGE CASES:
- * - `props.f` reads are left as-is (getter-object reactivity); only state/derived reads get `()`.
- * - The rewrite is NON-IDEMPOTENT: running it twice yields `x()()`. Codegen's `raw` mode exists to
- *   ensure it runs exactly once over projected markup.
- *
- * PERFORMANCE NOTES:
- * One parse + one edit-splice pass per expression.
- *
- * DEVELOPER WARNING:
- * Never re-run this on already-rewritten output (non-idempotent). `sources` must be complete or a real
- * reactive read is emitted as a plain identifier.
- *
- * @param code - The expression source
- * @param sources - The component's reactive sources
- * @param offset
- * @returns The rewritten expression source
- * @see {@link rewriteStatements}
- * @see {@link setterName}
- *
+ * @param code - The expression source, without wrapping parens; they are added for parsing.
+ * @param sources - The component's reactive-source names, and whether it takes props.
+ * @param offset - Base offset for the emitted edit positions.
+ * @returns The rewritten source.
+ * @throws {CompileError} On a write to a read-only source, such as a derived.
  * @example
- * ```ts
  * rewriteReactive('count + 1', { names: new Set(['count']), hasProps: false });
  * // 'count() + 1'
+ *
  * rewriteReactive('count = 5', { names: new Set(['count']), hasProps: false });
  * // 'setCount(5)'
- * ```
  *
+ * @see {@link rewriteStatements} for an effect body or opaque setup.
  * @internal
  */
 export function rewriteReactive(code: string, sources: ReactiveSources, offset = 0): string

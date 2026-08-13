@@ -1,20 +1,20 @@
 /**
- * MODULE: router/routes
+ * The bridge between a Router and the DOM: read the match reactively, render the matched
+ * chain with layouts wrapping leaves, and swap cleanly when the match changes. There is no
+ * `<Route>` component, because routes are data passed to createRouter, so this is the only
+ * DOM-side dispatcher needed.
  *
- * <Routes> is the bridge between a Router and the DOM: it reads router.match() reactively, renders
- * the matched route chain (layouts wrapping leaves), and swaps content cleanly when the match
- * changes. There is no <Route> component - routes are data, defined in createRouter({ routes }),
- * so <Routes> is the only DOM-side dispatcher needed.
+ * A match of `[UsersLayout, UserProfile]` renders as
+ * `UsersLayout({ children: UserProfile({}) })`: the chain is walked leaf to root, and each
+ * layout places its `children`, typically through an `<Outlet>`. Params are NOT props -
+ * components read them with useParams - which keeps the route-component contract down to
+ * `{ children? }`.
  *
- * CHAIN WRAPPING: a match [UsersLayout, UserProfile] renders as
- * UsersLayout({ children: UserProfile({}) }) - the chain is walked leaf-to-root, each layout
- * placing its `children` (typically via <Outlet>). Params are NOT props; components read them via
- * useParams(router), keeping the route-component contract ({ children? }) tiny and uniform.
- *
- * SWAP PATTERN: the same co-range one as <Show>/<Switch>/<Dynamic> - comment-marker range, one
- * branch alive at a time, each branch in its own createRoot so effects/onDestroy fire on swap.
- * Because router.match is a structural-equality memo, the effect re-runs only when the match truly
- * changes (route or params), not on cosmetic URL updates (same path, different hash/query).
+ * The swap is the same comment-marker range Show, Switch and Dynamic use, with one branch
+ * alive at a time and each branch in its own root, so effects and destroy hooks fire on swap.
+ * Since the match is a structural-equality memo, the effect re-runs only when the route or
+ * its params genuinely change, not for a cosmetic URL update carrying the same path with a
+ * different hash or query.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -84,58 +84,28 @@ export interface RoutesProps
 }
 
 /**
- * Routes
+ * Renders the router's currently matched route chain, swapping content and disposing the
+ * previous branch when the match changes.
  *
- * PURPOSE:
- * Renders the router's currently-matched route chain into the DOM, automatically swapping content
- * (and disposing the previous branch) when the match changes.
+ * A layout route MUST place its `children`, normally through an {@link Outlet}, or the deeper
+ * levels never appear. Params reach components through useParams, never as props.
  *
- * WHY IT EXISTS:
- * A hand-rolled match effect can swap the matched component but leaks the old branch's effects and
- * does not wrap nested layouts. Routes reads match() reactively, wraps the full layout chain, and
- * tears the previous branch down on every swap - the routing-aware counterpart of a control-flow swap.
+ * Place it once per dispatch point, typically inside the top-level layout. Several Routes for
+ * the same router are legal but mean several independent dispatch points.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; a control-flow dispatcher built on the co-range. Mode-dispatched: SSR emits the
- * matched chain once, hydration adopts the server range on the first effect run, the client swaps.
+ * The effect re-runs only when the route or its params change, so a hash- or query-only URL
+ * change leaves the rendered tree completely intact. Each branch builds in its own root and
+ * is disposed on swap, and the build is read under untrack, so a route component's own signal
+ * reads never rebuild the whole branch.
  *
- * INPUT CONTRACT:
- * - router: the Router whose match() drives the dispatch.
- * - fallback: optional thunk rendered when no route matches (404/catch-all); nothing if absent.
- *
- * OUTPUT CONTRACT:
- * - A co-range handle holding the currently rendered route chain, swapping reactively on match change.
- *
- * WHY THIS DESIGN:
- * router.match's structural equality means the effect re-runs only when route or params change, not
- * on cosmetic URL updates. Each branch builds in its own createRoot (disposed on swap); renderChain
- * wraps the matched chain leaf-to-root so layouts nest; the build is read under untrack so a route
- * component's signal reads do not rebuild the whole branch.
- *
- * WHEN TO USE:
- * Exactly once in the tree (typically inside the top-level layout) to render the active route.
- *
- * WHEN NOT TO USE:
- * For non-route conditional content (use {@link Show}). Do not place multiple <Routes> for the same
- * router unless you intend independent dispatch points.
- *
- * EDGE CASES:
- * - No match and no fallback renders nothing.
- * - Cosmetic URL changes (hash/query only) leave the rendered tree intact.
- *
- * PERFORMANCE NOTES:
- * Re-renders only when the match changes, not on every URL update; one branch alive at a time.
- *
- * DEVELOPER WARNING:
- * A layout route MUST place its `children` (via {@link Outlet}) or deeper levels will not appear.
- * Params reach components through useParams(router), not as props.
- *
- * @param props - {@link RoutesProps}: `router`, optional `fallback`.
- * @returns A co-range handle holding the rendered route chain.
- * @see {@link createRouter}
- * @see {@link Outlet}
+ * @param props - See {@link RoutesProps}. `fallback` renders when nothing matches; without
+ *                one, nothing renders.
+ * @returns A handle holding the rendered chain.
  * @example
  * Routes({ router, fallback: () => h('h1', {}, '404') });
+ *
+ * @see {@link createRouter}
+ * @see {@link Outlet}
  */
 export function Routes(props: RoutesProps): MountNode
 {

@@ -1,26 +1,26 @@
 /**
- * MODULE: reactivity/types
+ * The reactive system's type contracts. The dependency relationship is held in both
+ * directions - a producer tracks the consumers that read it, a consumer tracks the
+ * producers it reads - which is what makes cleanup exact: a disposed consumer detaches
+ * from precisely the producers it read, and nothing else.
  *
- * The reactive system's type contracts. The defining relationship is two-way: a
- * producer (signal/memo) tracks which consumers depend on it, and each consumer tracks
- * which producers it reads. Holding both directions is what makes precise, O(degree)
- * cleanup possible - a disposed consumer detaches from exactly the producers it read.
- *
- * The user-facing aliases (Getter/Setter/Signal/EffectFn/DisposeFn/EqualsFn and the
- * options interfaces) describe the public API shapes. The graph types (Producer, Link,
- * Subscriber) are @internal: they are the link-bookkeeping contract shared across the
- * primitive modules, exposed only because those modules pass them around.
+ * Producer, Link and Subscriber are internal link bookkeeping, exposed only because the
+ * primitive modules pass them between themselves.
  */
 
 /**
- * A cleanup function returned from an effect (or registered via onCleanup). Runs before
- * the effect's next run and on its disposal.
+ * A cleanup function returned from an effect, or registered with onCleanup. Runs before the
+ * effect's next run and again when it is disposed, so every run tears down what the
+ * previous one set up.
  *
  * @example
- * createEffect(() => {
+ * createEffect(() =>
+ * {
  *     const id = setInterval(tick, 1000);
- *     return () => clearInterval(id); // a CleanupFn
+ *     return () => clearInterval(id);
  * });
+ *
+ * @see {@link EffectFn}
  */
 export type CleanupFn = () => void;
 
@@ -56,18 +56,16 @@ export interface Producer
 }
 
 /**
- * One edge of the reactive graph, held by BOTH sides: the consumer keeps its links in
- * read order, the producer in subscription order, and the link records its slot in
- * producer.subs for O(1) removal.
+ * One edge of the reactive graph, held by both sides: the consumer keeps its links in read
+ * order, the producer in subscription order, and the link records its own slot in
+ * producer.subs so removal is a swap rather than a scan.
  *
  * @internal
  */
 export interface Link
 {
-    /** The producer this edge subscribes to. */
     producer: Producer;
 
-    /** The consumer this edge notifies. */
     consumer: Subscriber;
 
     /** This link's index in producer.subs. */
@@ -121,65 +119,73 @@ export interface Subscriber
 }
 
 /**
- * Reads and returns a signal/memo's current value. Called inside an effect or memo it
- * subscribes that consumer, which then re-runs when the value changes.
+ * Reads a signal or memo's current value. Called inside an effect or memo it also
+ * subscribes that consumer, which then re-runs when the value changes; called anywhere
+ * else it is a plain read and subscribes nothing.
  *
  * @typeParam T - The value type.
+ * @returns The current value.
  * @example
  * const [count] = createSignal(0);
- * count(); // 0 (also subscribes any active consumer)
+ * count(); // 0, and subscribes the active consumer if there is one
  */
 export type Getter<T> = () => T;
 
 /**
- * Updates a signal's value. Accepts a new value directly, or a function that receives
- * the previous value. NOTE: to store a function AS the value, wrap it
- * (setView(() => MyComponent)) - the setter cannot tell "store this function" from
- * "use this function to compute the next value".
+ * Writes a signal: either the next value, or a function computing it from the previous
+ * one. A function argument is ALWAYS taken as that updater, so storing a function as the
+ * value means wrapping it.
  *
  * @typeParam T - The value type.
+ * @param newValue - The next value, or `(prev) => next`.
  * @example
- * const [count, setCount] = createSignal(0);
- * setCount(5);                // direct value
- * setCount(prev => prev + 1); // function updater
+ * setCount(5);                     // direct
+ * setCount(prev => prev + 1);      // updater
+ * setView(() => MyComponent);      // stores the function itself
  */
 export type Setter<T> = (newValue: T | ((prev: T) => T)) => void;
 
 /**
- * The tuple returned by createSignal: [getter, setter].
+ * The `[getter, setter]` pair returned by createSignal.
  *
  * @typeParam T - The value type.
+ * @example
+ * const [count, setCount]: Signal<number> = createSignal(0);
  */
 export type Signal<T> = [Getter<T>, Setter<T>];
 
 /**
- * The function passed to createEffect. May return a {@link CleanupFn} that runs before
- * the next run and on dispose.
+ * The function passed to createEffect. May return a {@link CleanupFn} that runs before the
+ * next run and on dispose.
  *
- * An `async` body is accepted and its rejection is routed to the enclosing error handler
- * (`catchError`, an ErrorBoundary, else `onUncaughtError`), so it cannot escape as an unhandled
- * rejection. It still tracks only the reads that happen SYNCHRONOUSLY: anything read after the
- * first `await` is invisible to the graph, so the effect will not re-run when it changes. An
- * async body also cannot register a cleanup, because the returned promise is not a
- * {@link CleanupFn}. Prefer `createResource` for async data.
+ * An `async` body is accepted and its rejection routed to the enclosing error handler
+ * (`catchError`, an ErrorBoundary, else `onUncaughtError`), so it cannot escape as an
+ * unhandled rejection. It still tracks only the reads that happen SYNCHRONOUSLY: anything
+ * read after the first `await` is invisible to the graph and will not re-run the effect.
+ * An async body cannot register a cleanup either, since the returned promise is not a
+ * {@link CleanupFn}. Prefer createResource for async data.
  */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- the void union IS the contract: a plain void-bodied arrow must remain assignable, which `undefined | CleanupFn` would forbid
 export type EffectFn = () => void | CleanupFn | Promise<void>;
 
 /**
- * Disposes an effect: stops it running and unsubscribes it from every source.
+ * Stops an effect: it will not run again, and it is unsubscribed from every source.
+ * Idempotent - calling it twice is not an error.
  *
  * @example
  * const dispose = createEffect(() => console.log(count()));
- * dispose(); // effect stops, unsubscribed from all sources
+ * dispose();
  */
 export type DisposeFn = () => void;
 
 /**
- * Custom equality for signals/memos. The value is treated as unchanged (no
- * notification) when this returns true.
+ * Custom equality for signals and memos. Returning true means "unchanged", so no consumer
+ * is notified; a comparator that wrongly reports equal silently freezes every dependent.
  *
  * @typeParam T - The value type.
+ * @param prev - The current value.
+ * @param next - The incoming value.
+ * @returns True to suppress the notification.
  * @example
  * const [price, setPrice] = createSignal(9.99, {
  *     equals: (a, b) => Math.round(a) === Math.round(b)
@@ -188,40 +194,37 @@ export type DisposeFn = () => void;
 export type EqualsFn<T> = (prev: T, next: T) => boolean;
 
 /**
- * Options for {@link Getter}-producing factories (createSignal, createMemo).
+ * Options shared by createSignal and createMemo.
  *
  * @typeParam T - The value type.
  */
 export interface SignalOptions<T>
 {
-    /** Custom equality; defaults to Object.is. */
+    /** Change comparator. Defaults to `Object.is`. */
     equals?: EqualsFn<T>;
 
-    /** Optional debug name. Explicit undefined is equivalent to absent. */
+    /** Debug name for devtools and error messages. Explicit `undefined` is the same as absent. */
     name?: string | undefined;
 }
 
-/**
- * Options for createEffect.
- */
+/** Options for createEffect. */
 export interface EffectOptions
 {
-    /** Optional debug name, surfaced by error tooling. Explicit undefined is equivalent to absent. */
+    /** Debug name, surfaced by error tooling. Explicit `undefined` is the same as absent. */
     name?: string | undefined;
 }
 
 /**
- * Options for {@link createSelector}. An options object (rather than a positional `equals`) so the
- * selector matches the call shape of the other reactive factories - `createSignal`/`createMemo` take
- * `{ equals }`, and so does this; passing `{ equals }` to all three is the same everywhere.
+ * Options for createSelector. An options object rather than a positional `equals`, so
+ * `{ equals }` means the same thing here as it does to createSignal and createMemo.
  *
  * @typeParam T - The selected value type.
  */
 export interface SelectorOptions<T>
 {
-    /** Custom equality for detecting a selection change; defaults to Object.is. */
+    /** Comparator deciding whether the selection changed. Defaults to `Object.is`. */
     equals?: EqualsFn<T>;
 
-    /** Debug name surfaced to devtools; labels the selector's watcher effect. */
+    /** Debug name for devtools; labels the selector's watcher effect. */
     name?: string;
 }

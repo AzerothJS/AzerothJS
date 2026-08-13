@@ -1,98 +1,60 @@
 /**
- * MODULE: reactivity/graph (internal)
+ * The reactive graph's link machinery, shared by signals, memos, effects and selectors.
+ * Producers and consumers are joined by {@link Link} records held in plain arrays on both
+ * sides, each link recording its slot in the producer's list so removal is one swap.
  *
- * The reactive graph's link machinery, shared by signals, memos, effects, and
- * selectors. Producers (signals, memos, selector keys) and consumers (effects, memos)
- * are connected by {@link Link} records held in plain arrays on BOTH sides, each link
- * knowing its slot in the producer's list so removal is one swap.
+ * A re-run does not tear the dependency list down and rebuild it. A consumer keeps its
+ * links in read order behind a cursor: beginTrack resets the cursor, each tracked read
+ * advances it (matching the previous run's link at the same position with one pointer
+ * compare), and endTrack unlinks only the tail the run left untouched. A run that reads
+ * the same producers in the same order therefore allocates nothing; a branch flip swaps an
+ * existing link into place, and a genuinely new read appends one. Resubscribing every
+ * dependency on every run, the obvious alternative, dominated write-heavy profiles.
  *
- * DEPENDENCY-TRACKING MODEL (why this module exists):
- * The defining property is what a re-run does NOT do - it does not tear the dependency
- * list down and rebuild it. A consumer keeps its links in read order with a cursor:
- * beginTrack resets the cursor, each tracked read advances it (matching the previous
- * run's link at the same position with one pointer compare), and endTrack unlinks only
- * the tail the run left untouched. So a run that reads the same producers in the same
- * order - the overwhelmingly common case in fine-grained UI - costs one comparison per
- * read and allocates nothing. Branch changes (a read that appears/disappears) are
- * handled by a swap-into-place search, and genuinely new dependencies append a link.
- * The previous design unsubscribed and resubscribed every dependency on every run,
- * which dominated write-heavy profiles.
- *
- * Every export here is @internal: it is the bookkeeping contract the primitive modules
- * pass between themselves, not public API.
+ * Every export here is internal bookkeeping passed between the primitive modules.
  */
 
 import type { Subscriber, Producer, Link, CleanupFn } from './types.ts';
 
-/**
- * The effect/memo currently running, or null outside any tracked run. Read by track()
- * to know whom to subscribe.
- *
- * @internal
- */
+/** The effect or memo currently running; null outside a tracked run. @internal */
 export let currentSubscriber: Subscriber | null = null;
 
-/**
- * Sets the active subscriber (used by run setup/teardown and untrack).
- *
- * @internal
- * @param sub - The subscriber to make active, or null.
- */
+/** @internal */
 export function setCurrentSubscriber(sub: Subscriber | null): void
 {
     currentSubscriber = sub;
 }
 
-/**
- * The cleanup array for the currently running consumer, or null. onCleanup() pushes here.
- *
- * @internal
- */
+/** Cleanup array of the running consumer; where onCleanup() pushes. @internal */
 export let currentCleanups: CleanupFn[] | null = null;
 
-/**
- * Sets the active cleanup array (used by run setup/teardown).
- *
- * @internal
- * @param cleanups - The active run's cleanup array, or null.
- */
+/** @internal */
 export function setCurrentCleanups(cleanups: CleanupFn[] | null): void
 {
     currentCleanups = cleanups;
 }
 
 /**
- * Global run counter. Each tracked run gets a fresh stamp, so a producer can detect
- * "already tracked by this consumer in this run" with two compares, not a set lookup.
- *
- * @internal
+ * Every tracked run gets a fresh stamp, so a producer can decide "already tracked by this
+ * consumer in this run" with two compares instead of a set lookup.
  */
 let runClock = 0;
 
-/**
- * Creates an empty producer node.
- *
- * @internal
- * @returns A fresh {@link Producer} with no subscribers and version 0.
- */
+/** @internal */
 export function createProducer(): Producer
 {
-    // All optional fields are initialised here (to null) rather than added later by
-    // memo/selector. Adding a property after construction would give memo producers a
-    // different V8 hidden class from signal producers, making `producer.pull` in the
-    // hot depsChanged loop a polymorphic (slow) property access. One stable shape keeps
-    // it monomorphic.
+    // Optional fields are initialised to null here rather than added later by memo/selector:
+    // adding a property after construction would give memo producers a different hidden class
+    // from signal producers, making `producer.pull` in the hot depsChanged loop a polymorphic
+    // property access.
     return { subs: [], seenConsumer: null, seenRun: 0, version: 0, pull: null, onUnsubscribed: null };
 }
 
 /**
- * Subscribes the running consumer (if any) to `producer`. Idempotent within a run, and
- * allocation-free when the consumer's dependency order is unchanged from its last run
- * (fast path: same producer at the same cursor position; otherwise swap an existing
- * link into place, or append a genuinely new one).
+ * Subscribes the running consumer, if any, to `producer`. Idempotent within a run and
+ * allocation-free while the consumer's read order is unchanged from its last run.
  *
  * @internal
- * @param producer - The producer being read.
  */
 export function track(producer: Producer): void
 {
@@ -161,10 +123,10 @@ export function track(producer: Producer): void
 
 /**
  * Starts a tracked run: stamps the run and resets the dependency cursor. Pair with
- * {@link endTrack} in a finally.
+ * {@link endTrack} in a finally, or the consumer keeps a live cursor into a run that
+ * already ended.
  *
  * @internal
- * @param consumer - The consumer about to run.
  */
 export function beginTrack(consumer: Subscriber): void
 {
@@ -173,11 +135,10 @@ export function beginTrack(consumer: Subscriber): void
 }
 
 /**
- * Ends a tracked run: unlink every dependency the run did not touch (anything at or
- * past the cursor), keep the rest untouched.
+ * Ends a tracked run, unlinking every dependency the run did not touch (anything at or
+ * past the cursor) and leaving the rest in place.
  *
  * @internal
- * @param consumer - The consumer whose run just finished.
  */
 export function endTrack(consumer: Subscriber): void
 {
@@ -197,13 +158,7 @@ export function endTrack(consumer: Subscriber): void
     consumer.cursor = -1;
 }
 
-/**
- * Detaches one link from its producer (swap-remove, O(1)); fires onUnsubscribed when
- * the producer's last subscriber leaves.
- *
- * @internal
- * @param link - The link to detach.
- */
+/** Swap-removes one link from its producer, firing onUnsubscribed when the last one leaves. */
 function unlink(link: Link): void
 {
     const subs = link.producer.subs;
@@ -225,12 +180,7 @@ function unlink(link: Link): void
     }
 }
 
-/**
- * Detaches a consumer from every producer it subscribes to (disposal path).
- *
- * @internal
- * @param consumer - The consumer to fully unsubscribe.
- */
+/** Detaches a consumer from every producer it reads. The disposal path. @internal */
 export function unlinkAll(consumer: Subscriber): void
 {
     const deps = consumer.deps;
@@ -246,17 +196,16 @@ export function unlinkAll(consumer: Subscriber): void
 }
 
 /**
- * Notifies every consumer of `producer`. Memo consumers (those with notifyDirty) are
- * only MARKED (they recompute on read); effect consumers execute (and validate
- * versions first, which preserves "a memo that recomputes equal does not re-run its
- * readers"). The single-subscriber case (one binding per signal, the dominant
- * fine-grained shape) avoids the fan-out snapshot; fan-out snapshots because a consumer
- * may (un)subscribe others, or itself, as it runs.
+ * Notifies every consumer of `producer`. A memo consumer is only MARKED and recomputes on
+ * read; an effect consumer executes, validating versions first, which is what preserves
+ * "a memo that recomputes equal does not re-run its readers".
+ *
+ * Fan-out iterates a snapshot because a consumer may subscribe or unsubscribe others, or
+ * itself, while it runs. The single-subscriber case skips the snapshot.
  *
  * @internal
- * @param producer - The producer whose value changed.
- * @param viaMemo - True when the change is propagating through a memo (passed to
- *                  notifyDirty so the consumer goes maybe-dirty rather than dirty).
+ * @param viaMemo - True when the change arrives through a memo, which makes the consumer
+ *                  maybe-dirty rather than dirty.
  */
 export function notify(producer: Producer, viaMemo = false): void
 {
@@ -304,14 +253,12 @@ export function notify(producer: Producer, viaMemo = false): void
 }
 
 /**
- * Whether anything `consumer` reads has actually changed since its last run: settles
- * memo dependencies (pull), then compares each producer's version against the link's
- * recorded one. The cheap gate that lets an effect notified through a memo chain skip
- * its body when every recompute came out equal.
+ * Whether anything `consumer` reads actually changed since its last run: settles memo
+ * dependencies through `pull`, then compares each producer's version against the version
+ * the link recorded. This is the gate that lets an effect notified through a memo chain
+ * skip its body when every recompute came out equal.
  *
  * @internal
- * @param consumer - The consumer to validate.
- * @returns True if at least one dependency's version advanced.
  */
 export function depsChanged(consumer: Subscriber): boolean
 {

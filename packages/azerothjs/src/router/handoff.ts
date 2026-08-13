@@ -1,10 +1,9 @@
 /**
- * MODULE: router/handoff - the SSR loader handoff, both directions
+ * The SSR loader handoff, both directions.
  *
- * When the server renders a route it also runs the matched chain's loaders; the results
- * must reach the hydrating client so it does not refetch what the server just loaded.
- * This module owns that handoff end to end - one file defines the wire format, so the
- * two sides cannot drift:
+ * When the server renders a route it also runs the matched chain's loaders, and those
+ * results must reach the hydrating client so it does not refetch what the server just
+ * loaded. One file defines the wire format for both sides, so they cannot drift:
  *
  *   - `matchAndLoad(routes, url)` - SERVER: match the URL against the same route table
  *     the client uses, pre-resolve any lazy chunks in the chain (the subsequent render

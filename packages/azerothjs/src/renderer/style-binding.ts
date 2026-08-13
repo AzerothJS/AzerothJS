@@ -1,16 +1,10 @@
 /**
- * MODULE: renderer/style-binding
- *
- * styleMap() converts an object of CSS properties into a reactive inline-style getter,
- * replacing fragile manual concatenation (where a missing semicolon silently drops the rest
- * of the declaration). Each property may be static or a getter, so properties update
- * independently; camelCase names are converted to kebab-case automatically.
+ * CSS properties as a reactive inline-style getter, in place of manual concatenation where a
+ * missing semicolon silently drops the rest of the declaration. Each property may be static
+ * or a getter, so they update independently, and camelCase names become kebab-case.
  */
 
-/**
- * A style value: a static string/number, a getter for reactivity, or null/undefined to omit
- * the property.
- */
+/** A static value, a getter, or null and undefined to omit the property entirely. */
 type StyleValue = string | number | null | undefined | (() => string | number | null | undefined);
 
 /**
@@ -22,21 +16,18 @@ type StyleValue = string | number | null | undefined | (() => string | number | 
 export type StyleObject = Record<string, StyleValue>;
 
 /**
- * A CSS property name after kebab-case conversion: an optional `-`/`--` prefix (vendor or
- * custom property) then a letter-led identifier. A name outside this shape (spaces, `;`,
- * `:`) came from data and would open its own declaration inside the style attribute.
- *
- * @internal
+ * A CSS property name after kebab conversion: an optional `-` or `--` prefix for a vendor or
+ * custom property, then a letter-led identifier. A name outside this shape - carrying spaces,
+ * `;` or `:` - came from data and would open its own declaration inside the style attribute.
  */
 const CSS_PROPERTY_NAME = /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/;
 
 /**
- * Rejects a style VALUE whose text could terminate its declaration and start another
- * (`10px; background: url(//evil)` is an exfiltration primitive). `;` is legal INSIDE a
- * quoted string or a url() body (data: URIs carry them), so those regions are blanked
- * before the test rather than banning the character outright.
+ * Rejects a style VALUE whose text could terminate its declaration and start another:
+ * `10px; background: url(//evil)` is an exfiltration primitive.
  *
- * @internal
+ * `;` is legal inside a quoted string or a url() body, which data URIs rely on, so those
+ * regions are blanked before the test rather than the character being banned outright.
  */
 function assertSafeStyleValue(property: string, resolved: string | number): void
 {
@@ -56,65 +47,34 @@ function assertSafeStyleValue(property: string, resolved: string | number): void
 }
 
 /**
- * styleMap
+ * Turns a {@link StyleObject} into a `() => string` getter for the `style` prop, recomputing
+ * when a reactive value changes. camelCase keys become kebab-case.
  *
- * PURPOSE:
- * Turns a {@link StyleObject} into a `() => string` inline-style getter for the `style` prop,
- * recomputing when its reactive values change. camelCase keys become kebab-case;
- * null/undefined values drop their property.
+ * Pass the getter and do not call it when binding, or the style stops being reactive.
  *
- * WHY IT EXISTS:
- * Hand-built style strings are brittle - one missing separator breaks the whole declaration,
- * and reactive recomputation must be wired manually. styleMap declares properties as an
- * object so separators are automatic and each property is independently reactive.
+ * A `null` or `undefined` value omits its property entirely, which is how a property is
+ * conditionally removed. Numbers are stringified with NO implicit unit, so write
+ * `` () => `${ n() }px` `` rather than `() => n()`.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; an authoring helper. Returns a getter that h()'s attribute effect
- * unwraps (via resolveReactive), so reading a signal value tracks it.
+ * A property name outside the CSS identifier shape, or a value carrying `;` or `}` outside a
+ * string or url() body, throws: either would open a second declaration inside the style
+ * attribute, which is an injection.
  *
- * INPUT CONTRACT:
- * - styles: a StyleObject; values are strings/numbers, getters, or null/undefined.
- *
- * OUTPUT CONTRACT:
- * - Returns a `() => string` of `prop: value` pairs joined by `; `, with camelCase keys
- *   converted and null/undefined properties omitted.
- *
- * WHY THIS DESIGN:
- * Returning a getter keeps it reactive in h(); the object form makes properties addressable
- * and individually conditional, and the kebab-case conversion lets authors use JS-style
- * camelCase keys.
- *
- * WHEN TO USE:
- * For inline styles that depend on state (dynamic color/size/opacity/transform), or to toggle
- * a property off via null.
- *
- * WHEN NOT TO USE:
- * For static, reusable styling - prefer scoped classes via {@link css} and
- * {@link classList}. Heavy per-frame style churn is better done with a class swap.
- *
- * EDGE CASES:
- * - null/undefined value omits the property entirely (used to conditionally remove one).
- * - Numeric values are stringified as-is (no unit is added - write `() => `${ n() }px``).
- * - A property name outside the CSS identifier shape, or a value carrying a `;`/`}`
- *   outside a string or url() body, throws: either would open a second declaration
- *   inside the style attribute.
- *
- * PERFORMANCE NOTES:
- * O(number of properties) per evaluation; runs only when a value signal changes (one
- * attribute effect in h()).
- *
- * DEVELOPER WARNING:
- * Pass the getter (`style: styleMap({...})`) - do not call it when binding, or it stops being
- * reactive. Remember numbers carry no implicit unit.
- *
- * @param styles - A {@link StyleObject}.
+ * @param styles - CSS properties, in kebab-case or camelCase.
  * @returns A getter resolving to the inline-style string.
- * @see {@link classList}
- * @see {@link css}
+ * @throws {Error} On a data-shaped property name, or a value that could escape its
+ *                 declaration.
  * @example
  * h('p', {
- *   style: styleMap({ color, 'font-size': () => `${ size() }px`, display: () => hidden() ? 'none' : null })
+ *     style: styleMap({
+ *         color,
+ *         'font-size': () => `${ size() }px`,
+ *         display: () => hidden() ? 'none' : null
+ *     })
  * }, 'Styled');
+ *
+ * @see {@link classList} and {@link css} for static, reusable styling, which is preferable
+ *      to heavy per-frame style churn.
  */
 export function styleMap(styles: StyleObject): () => string
 {
@@ -126,20 +86,19 @@ export function styleMap(styles: StyleObject): () => string
         {
             const resolved = typeof value === 'function' ? value() : value;
 
-            // null/undefined means "drop this property".
             if (resolved === null || resolved === undefined)
             {
                 continue;
             }
 
-            // fontSize -> font-size, backgroundColor -> background-color
+            // fontSize -> font-size
             const cssProperty = property.replace(
                 /[A-Z]/g,
                 (match) => `-${ match.toLowerCase() }`
             );
 
-            // A data-driven property name is a declaration injection: reject it the same
-            // way an invalid attribute name is rejected, identically on server and client.
+            // A data-driven property name is a declaration injection, refused the same way an
+            // invalid attribute name is, identically on server and client.
             if (!CSS_PROPERTY_NAME.test(cssProperty))
             {
                 throw new Error(`azeroth: invalid style property name ${ JSON.stringify(property) } - names must be `

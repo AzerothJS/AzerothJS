@@ -1,5 +1,5 @@
 /**
- * MODULE: api/register - installing declared features on the HTTP app
+ * Installing declared features on the HTTP app.
  *
  * `register(app, { keys, orgs })` walks each feature's declarations and installs one endpoint
  * per route with the guard chain and validation AT the boundary, so a handler's `input`/`query`

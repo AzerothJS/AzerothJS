@@ -1,91 +1,48 @@
 /**
- * MODULE: renderer/ref
+ * The imperative escape hatch: direct access to an element for the tasks that genuinely need
+ * the live node - focusing an input, measuring dimensions, drawing on a canvas, attaching a
+ * chart or map library.
  *
- * A ref is the imperative escape hatch out of the declarative model: direct access to a DOM element
- * after it is created, for the tasks that genuinely need the live node - focusing an input, measuring
- * dimensions, drawing on a canvas, or attaching a third-party library (charts, maps).
+ * The callback form is primary: `<input ref={el => el.focus()} />` hands the element straight
+ * to the function, needs no import and is typed from the element. The box form,
+ * {@link createRef}, exists for when the element must be read LATER, from an effect or after
+ * mount.
  *
- * There are two forms, and the callback is the PRIMARY one:
- *
- *   1. Callback (preferred): `<input ref={el => el.focus()} />`. The element is handed to your function
- *      at creation. No import, fully typed from the element, ideal for fire-once access.
- *   2. Box (when you must read the element LATER): `const input = createRef<HTMLInputElement>();`
- *      `<input ref={input} />`; then `input.current?.focus()` inside an effect / after mount.
- *
- * WHY ref IS A RUNTIME HELPER, NOT A KEYWORD:
- * AzerothJS keywords (state/derived/effect/resource/store/selector/...) all declare REACTIVE constructs:
- * the compiler rewrites their reads/initializers and binds their lifecycle to the component's reactive
- * root. A ref does none of that - `current` is a plain read, there is no reactive initializer, no
- * dependency tracking, and nothing to dispose; it is assigned imperatively by h(). The only compiler
- * involvement is routing the `ref` prop off the reactive-attribute path (handled at the markup-binding
- * layer, alongside class/style/spread). So ref stays an ordinary runtime primitive + a `ref` prop -
- * keeping "keyword = reactive construct" true and the language smaller.
+ * ref is a runtime helper and not a keyword because keywords declare REACTIVE constructs -
+ * the compiler rewrites their reads and binds their lifetime to the component's root. A ref
+ * does none of that: `current` is a plain read with no tracking and nothing to dispose. The
+ * only compiler involvement is routing the `ref` prop off the reactive-attribute path, which
+ * keeps "keyword means reactive construct" true and the language smaller.
  */
 
 /**
- * A ref object holding a reference to a DOM element.
+ * A box holding a reference to a DOM element.
  *
- * @typeParam T - The element type (defaults to HTMLElement; SVG elements are equally boxable).
+ * @typeParam T - The element type. Defaults to HTMLElement; SVG elements box equally well.
  */
 export interface Ref<T extends Element = HTMLElement>
 {
-    /** The referenced element; null until assigned by h() at creation. */
+    /** The referenced element, null until h() assigns it at creation. */
     current: T | null;
 }
 
 /**
- * createRef
+ * Creates a `{ current: null }` box that h() fills with the element when the box is passed
+ * as the `ref` prop.
  *
- * PURPOSE:
- * Creates a `{ current: null }` box that h() populates with the element when the ref is
- * passed via the `ref` prop, giving imperative access to that node.
- *
- * WHY IT EXISTS:
- * A no-VDOM framework wires the DOM declaratively, but some tasks are inherently imperative
- * (focus, measurement, canvas drawing, third-party widget mounting) and need the live node.
- * createRef is the typed escape hatch that hands it back without breaking the declarative flow.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer. The `ref` prop is consumed by h()/applyProps (see applyRef in h.ts);
- * createRef just allocates the box the element is written into.
- *
- * INPUT CONTRACT:
- * - None.
- *
- * OUTPUT CONTRACT:
- * - Returns a {@link Ref} whose `current` is null until the element it is attached to is
- *   created, then the element thereafter.
- *
- * WHY THIS DESIGN:
- * A mutable box (rather than only a callback) lets you read `.current` later, at the moment
- * you need it; h() also accepts the callback form for fire-once access. Both avoid querying
- * the DOM by id/selector.
- *
- * WHEN TO USE:
- * For imperative access to a specific element: el.focus(), getBoundingClientRect(), canvas
- * contexts, attaching a non-AzerothJS library to a node.
- *
- * WHEN NOT TO USE:
- * For reactive content or attributes - bind those with getters/signals instead of reading a
- * ref and mutating by hand.
- *
- * EDGE CASES:
- * - current is null before the element is created; it is NOT auto-nulled when the element is
- *   later removed, so do not assume a stale ref still points at a live node.
- *
- * PERFORMANCE NOTES:
- * O(1): allocates one object.
- *
- * DEVELOPER WARNING:
- * Reading current during component setup (before the element exists) returns null - read it
- * in an effect or after mount. A ref is never rendered as an attribute.
+ * `current` is null until that element is created, so reading it during component setup
+ * gives null - read it from an effect or after mount. It is NOT nulled again when the
+ * element is later removed, so a stale ref can outlive the node it points at.
  *
  * @typeParam T - The element type.
  * @returns A {@link Ref} with `current: null`.
  * @example
- * const inputRef = createRef<HTMLInputElement>();
- * h('input', { type: 'text', ref: inputRef });
- * // later: inputRef.current?.focus();
+ * const input = createRef<HTMLInputElement>();
+ * h('input', { type: 'text', ref: input });
+ *
+ * onMount(() => input.current?.focus());
+ *
+ * @see {@link Ref} for the callback form, which needs no box at all.
  */
 export function createRef<T extends Element = HTMLElement>(): Ref<T>
 {

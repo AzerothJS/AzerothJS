@@ -1,18 +1,16 @@
 /**
- * MODULE: router/provider - the context that lets composables drop the router argument
+ * The context that lets composables drop their router argument.
  *
- * `<RouterProvider router={router}>` publishes the router on the ownership tree
- * (createContext); every composable (`useRoute`, `useParams`, `useLoader`, ...) and
- * component (`Link`, `Routes`, `Outlet`) resolves it from there when no explicit router
- * is passed. The explicit-argument forms REMAIN as overrides - tests and nested routers
- * keep working - so adopting the provider only ever deletes an argument.
+ * `<RouterProvider router={router}>` publishes the router on the ownership tree, and every
+ * composable and router component resolves it from there when none is passed explicitly. The
+ * explicit forms remain as overrides, so tests and nested routers keep working and adopting
+ * the provider only ever deletes an argument.
  *
- * Beside the owner-based router context lives a CONSTRUCTION-TIME level frame:
- * `<Routes>` wraps each chain level's component call in `withRouteLevel(router, i)`, so
- * a `useLoader()` call in a component body knows which level's resource it means without
- * threading indexes through props. The frame is synchronous by design - composables are
- * called during component construction (the same rule every hook system has); the
- * OBJECTS they return (resources, getters) stay live afterwards.
+ * Beside that owner-based context sits a CONSTRUCTION-TIME level frame: Routes wraps each
+ * chain level's component call in `withRouteLevel`, so a `useLoader()` in a component body
+ * knows which level's resource it means without threading indexes through props. The frame is
+ * synchronous by design - composables are called during construction, the rule every hook
+ * system has - while the objects they return stay live afterwards.
  */
 
 import { createContext, provideContext, useContext } from '../reactivity/index.ts';
@@ -33,25 +31,16 @@ export interface RouterProviderProps
 }
 
 /**
- * RouterProvider
- *
- * PURPOSE:
- * Publishes `router` on the ownership tree so descendants resolve it from context:
- * `useRoute()` instead of `useRoute(router)`, `Link({ to })` instead of
+ * Publishes `router` on the ownership tree, so descendants resolve it from context:
+ * `useRoute()` rather than `useRoute(router)`, `Link({ to })` rather than
  * `Link({ to, router })`.
  *
- * WHY IT EXISTS:
- * Threading the router through every call was the v1 shape; the composables' docs
- * promised the context evolution ("only the call drops the router argument") - this
- * component is that promise kept, before 1.0 freezes call shapes.
+ * Must run inside an ownership scope, which render() provides; outside one, providing the
+ * context throws loudly.
  *
- * INPUT CONTRACT:
- * - Must run inside an ownership scope (render() provides one) - provideContext throws
- *   outside one, loudly.
- * - `children` may be the usual lazy thunk (compiled `.azeroth` children holes) or an
- *   eager MountNode; only thunked/compiled children constructed AFTER this component
- *   body can see the context (eager children were already built - pass a thunk when
- *   composing manually with h()).
+ * `children` may be a lazy thunk, as compiled markup produces, or an eager node. Only
+ * children constructed AFTER this component body can see the context - an eager child was
+ * already built - so pass a thunk when composing manually.
  *
  * @example
  * render(() => RouterProvider({ router, children: () => App({}) }), document.body);

@@ -1,73 +1,40 @@
 /**
- * MODULE: router/query
+ * Conversion between a `?key=value` fragment and the framework's Query shape, which
+ * collapses repeated keys into arrays:
  *
- * Two pure functions converting between a `?key=value` URL fragment and the framework's `Query`
- * shape, which collapses repeated keys into arrays:
- *   '?page=2&sort=desc' <-> { page: '2', sort: 'desc' }
- *   '?tags=a&tags=b'    <-> { tags: ['a', 'b'] }
- *   '?flag'             <-> { flag: '' }   (no value -> empty string)
+ *     '?page=2&sort=desc' <-> { page: '2', sort: 'desc' }
+ *     '?tags=a&tags=b'    <-> { tags: ['a', 'b'] }
+ *     '?flag'             <-> { flag: '' }
  *
- * URL en/decoding is delegated to URLSearchParams; this module adds the two things it does not do:
- * coalesce repeated keys into arrays (in parseQuery, after decoding) and tolerate a leading `?`.
- * Shape contract: one occurrence -> string; two or more -> string[] (insertion order); no/empty
- * value -> ''. parseQuery accepts and discards a leading `?`; stringifyQuery never emits one (the
- * caller adds it), keeping the empty case clean (stringifyQuery({}) === '').
+ * Encoding and decoding are delegated to URLSearchParams. What this adds is the two things
+ * it does not do: coalescing repeated keys into arrays, and tolerating a leading `?`.
+ *
+ * The shape contract is exact - one occurrence gives a string, two or more give an array in
+ * insertion order, and a valueless key gives `''`. parseQuery accepts and discards a leading
+ * `?`; stringifyQuery never emits one, leaving that to the caller, which keeps the empty case
+ * clean.
  */
 
 import type { Query } from './types.ts';
 
 /**
- * parseQuery
+ * Parses a query string into a {@link Query}, collapsing repeated keys into arrays in
+ * first-appearance order.
  *
- * PURPOSE:
- * Parses a URL query string into a {@link Query} object, collapsing repeated keys into arrays.
+ * A key appearing ONCE is a string, not a one-element array, so handle both shapes - or read
+ * through useQuery, whose memo compares both.
  *
- * WHY IT EXISTS:
- * URLSearchParams decodes values but exposes repeated keys awkwardly and does not give the
- * array-or-string shape the router uses for params/query memoization. parseQuery produces that
- * canonical shape in one call and tolerates input with or without a leading `?`.
+ * The result has a NULL prototype, so a URL key like `__proto__` is plain data: it can
+ * neither rewrite the object's prototype nor vanish from the parse.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; pure helper used to build RouteLocation.query and by useQuery.
- *
- * INPUT CONTRACT:
- * - search: a query string with or without a leading `?`. '' and '?' both yield {}.
- *
- * OUTPUT CONTRACT:
- * - A Query where a single-occurrence key is a string, a repeated key is a string[] in insertion
- *   order, and a no-value/empty key is ''.
- *
- * WHY THIS DESIGN:
- * Repeated keys are grouped via `new Set(params.keys())`, which dedupes while preserving first-
- * appearance order - matching what users expect when displaying or re-serializing. Delegating
- * decoding to URLSearchParams keeps escaping correct and standard.
- *
- * WHEN TO USE:
- * To turn a location.search into structured query data.
- *
- * WHEN NOT TO USE:
- * For path params (those come from the route matcher), or for parsing a full URL (split it first).
- *
- * EDGE CASES:
- * - '' / '?' -> {}. '?flag' and '?flag=' both -> { flag: '' }.
- * - Order is preserved by first appearance of each key.
- * - The result has a NULL prototype, so a URL key like `__proto__` is plain data - it can
- *   neither rewrite the object's prototype nor vanish from the parse.
- *
- * PERFORMANCE NOTES:
- * O(query length); one URLSearchParams pass plus a getAll per distinct key.
- *
- * DEVELOPER WARNING:
- * A key that appears once is a string, not a one-element array - handle both shapes (or use the
- * useQuery memo, which compares both).
- *
- * @param search - Query string with or without leading `?`.
- * @returns The parsed {@link Query}.
- * @see {@link stringifyQuery}
+ * @param search - With or without a leading `?`. Both `''` and `'?'` give `{}`.
+ * @returns The parsed query.
  * @example
  * parseQuery('?page=2&sort=desc');    // { page: '2', sort: 'desc' }
  * parseQuery('tags=a&tags=b&tags=c'); // { tags: ['a', 'b', 'c'] }
  * parseQuery('?flag');                // { flag: '' }
+ *
+ * @see {@link stringifyQuery}
  */
 export function parseQuery(search: string): Query
 {
@@ -101,50 +68,21 @@ export function parseQuery(search: string): Query
 }
 
 /**
- * stringifyQuery
+ * Serializes a {@link Query} back to a query string, array values becoming repeated keys so
+ * the round trip through {@link parseQuery} is exact.
  *
- * PURPOSE:
- * Serializes a {@link Query} object to a URL query string (array values -> repeated keys), with no
- * leading `?`.
+ * No leading `?` is emitted - the caller adds it when joining to a path - which is what keeps
+ * the empty case `''` rather than `'?'`. An empty-array value drops its key, and spaces
+ * encode as `+`.
  *
- * WHY IT EXISTS:
- * The inverse of parseQuery, needed to build navigation targets and <Link> hrefs from structured
- * query data, with consistent encoding and the same array<->repeated-key contract.
- *
- * COMPILER / RUNTIME ROLE:
- * Runtime, router; pure helper used by targetToFullPath when building a URL from a structured target.
- *
- * INPUT CONTRACT:
- * - query: a Query; values are strings or string[] (an empty array drops the key).
- *
- * OUTPUT CONTRACT:
- * - The serialized query string with NO leading `?` (the caller adds it when joining to a path),
- *   so stringifyQuery({}) === ''.
- *
- * WHY THIS DESIGN:
- * Omitting the leading `?` keeps the empty case clean ('' not '?') and lets the caller decide
- * placement. URLSearchParams handles encoding; array values append repeated keys to round-trip
- * with parseQuery.
- *
- * WHEN TO USE:
- * To build the search portion of a URL from query data.
- *
- * WHEN NOT TO USE:
- * When you already hold a raw search string (pass it through).
- *
- * EDGE CASES:
- * - {} -> ''. An empty-array value omits its key. Spaces encode as '+'.
- *
- * PERFORMANCE NOTES:
- * O(number of entries); one URLSearchParams build.
- *
- * @param query - The {@link Query} to serialize.
- * @returns The serialized query string (no leading `?`).
- * @see {@link parseQuery}
+ * @param query - Values are strings or arrays of strings.
+ * @returns The query string, with no leading `?`.
  * @example
  * stringifyQuery({ page: '2', sort: 'desc' }); // 'page=2&sort=desc'
  * stringifyQuery({ tags: ['a', 'b'] });        // 'tags=a&tags=b'
  * stringifyQuery({});                          // ''
+ *
+ * @see {@link parseQuery}
  */
 export function stringifyQuery(query: Query): string
 {

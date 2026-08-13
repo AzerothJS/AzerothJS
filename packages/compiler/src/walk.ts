@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/walk - the shared scope-aware reactive traversal
+ * The shared scope-aware reactive traversal.
  *
  * Both the dependency collector (resolve.ts) and the R2 rewriter (rewrite.ts) walk a TypeScript
  * expression the SAME way - tracking lexical scopes so a local binding shadows a reactive source of
@@ -68,57 +68,24 @@ function isAssignmentOperator(kind: ts.SyntaxKind): boolean
 }
 
 /**
- * traverseReactive
+ * Walks `root`, invoking `hooks` for every reactive reference, with lexical scoping: a local
+ * binding shadows a reactive source of the same name.
  *
- * PURPOSE:
- * Walks `root`, invoking `hooks` for every reactive reference, with correct lexical scoping (locals
- * shadow reactive sources of the same name).
+ * A shadow stack of locally-bound names is pushed per scope, so a parameter, const or
+ * destructured name that shadows a source suppresses the reactive event for reads of that
+ * name inside the scope. That syntactic shadow tracking is what makes compile-time reactivity
+ * sound.
  *
- * WHY IT EXISTS:
- * The dependency collector and the rewriter must agree on "which references here are reactive". A
- * single shared, scope-aware traversal makes divergence impossible - each consumer just supplies
- * different hooks.
+ * Scope tracking is lexical ONLY. It does not resolve imports or consult types, so a name
+ * present in `sources` is assumed to BE that source unless lexically shadowed. It is likewise
+ * a scope walk, not data-flow analysis.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler analysis primitive; backs both {@link traverseReactive}'s consumers - resolve.collectReads
- * (deps) and rewrite (getter/setter edits).
+ * A bare `props` read is reported with field `'*'`, a whole-bag dependency. A write target
+ * fires `write` and never `read`, so a pure write is not mistaken for a dependency.
  *
- * INPUT CONTRACT:
- * - root: a parsed expression/statements node (e.g. a `ts.SourceFile` from ts-slice.ts).
- * - sources: the component's reactive-source set (names + hasProps).
- * - hooks: {@link ReactiveHooks} - read / propsRead / write callbacks (all optional).
- *
- * OUTPUT CONTRACT:
- * - None; it is a visitor. All output flows through the hooks.
- *
- * WHY THIS DESIGN:
- * A shadow stack of locally-bound names is pushed per scope, so an inner binding (param, const,
- * destructure) that shadows a source name suppresses the reactive event for reads of that name within
- * the scope. That syntactic shadow tracking is what makes compile-time reactivity sound.
- *
- * WHEN TO USE:
- * Any pass that needs "which reactive refs does this code contain" with scope correctness.
- *
- * WHEN NOT TO USE:
- * Cross-statement data-flow reasoning - this is a syntactic scope walk, not a type/flow analysis.
- *
- * EDGE CASES:
- * - A bare `props` read is reported as field '*' (a whole-bag dependency).
- * - Destructuring patterns bind every introduced name into the current shadow scope.
- * - Write targets fire `write`, never `read`.
- *
- * PERFORMANCE NOTES:
- * A single AST walk, O(nodes).
- *
- * DEVELOPER WARNING:
- * Scope tracking is lexical/syntactic only - it does not resolve imports or types. A name present in
- * `sources` is assumed to BE that source unless lexically shadowed.
- *
- * @param root - The parsed expression/statements (e.g. a `ts.SourceFile`)
- * @param sources - The component's reactive sources
- * @param hooks - What to do on each read / props-read / write
- * @see {@link ReactiveHooks}
- *
+ * @param root - A parsed expression or statement list.
+ * @param sources - The component's reactive-source names, and whether it takes props.
+ * @param hooks - Read, props-read and write callbacks, all optional.
  * @internal
  */
 export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks: ReactiveHooks): void

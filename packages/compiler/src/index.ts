@@ -1,6 +1,4 @@
 /**
- * MODULE: @azerothjs/compiler - public API
- *
  * Compiles `.azeroth` files - JS/TS modules written with `component` syntax and AzerothJS markup -
  * into plain modules that call the runtime with fine-grained reactive bindings, e.g.
  * `<h1>Count: {count()}</h1>` becomes a mode-dispatched body (clone in the DOM, serialize for SSR,

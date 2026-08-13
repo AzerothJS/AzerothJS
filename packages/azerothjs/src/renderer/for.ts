@@ -1,20 +1,19 @@
 /**
- * MODULE: renderer/for
+ * Keyed list rendering. A list change creates and removes only the rows that changed and
+ * REUSES the rest, so a surviving row keeps its DOM along with its focus, scroll, IME and
+ * uncontrolled-input state. Mapping a signal array straight into h() re-creates every
+ * element on every change instead.
  *
- * <For> renders a keyed list, tracking which items were added, removed, or reordered so a
- * list change creates/removes only the changed rows and REUSES the rest - preserving each
- * surviving row's DOM and its focus/scroll/IME/uncontrolled-input state. Mapping a signal
- * array straight into h() instead re-creates every element on every change.
+ * The diff is one key per item:
  *
- * KEYED-DIFF MODEL (one key per item):
- *   Old: [A, B, C, D]  keys 1,2,3,4
- *   New: [A, C, D, E]  keys 1,3,4,5
- *   -> B removed, E created, A/C/D kept (same elements, no re-creation).
- * Reordering is reconciled with the minimum insertBefore moves: survivors on the longest
- * increasing subsequence of old positions stay put; everything else is inserted before its
- * already-placed right neighbour (see reconcileChildren / longestIncreasingRun below). Each
- * row owns a lazily-allocated reactive index so its position updates live on reorder
- * without rebuilding the element. The reconcile internals below carry their own comments.
+ *     old: [A, B, C, D]  keys 1,2,3,4
+ *     new: [A, C, D, E]  keys 1,3,4,5
+ *     ->   B removed, E created, A/C/D kept as the same elements
+ *
+ * Reordering uses the minimum number of moves: survivors on the longest increasing
+ * subsequence of old positions stay where they are, and everything else is inserted before
+ * its already-placed right neighbour. Each row owns a lazily allocated reactive index, so a
+ * reorder updates positions live without rebuilding elements.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
@@ -27,65 +26,49 @@ import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adopt
 import { hydrateChild, resolveReactive } from './h.ts';
 
 /**
- * Props for the For component.
+ * Props for {@link For}.
  *
- * @typeParam T - The type of items in the list
+ * @typeParam T - The item type.
  */
 export interface ForProps<T>
 {
     /**
-     * The items to render: an array, or a getter (thunk/signal) for reactivity.
-     * The compiler emits a getter-object prop; a manual caller may pass `() => arr`
-     * or a signal. `resolveReactive` unwraps it on each read, so the effect tracks
-     * whatever it touches.
+     * The items: an array, or a getter for reactivity. A nullish value renders nothing, so
+     * `each={data()}` is safe before the data has loaded.
      */
     each: T[] | (() => T[]);
 
     /**
-     * A function that returns a unique key for each item.
+     * Returns a unique key per item, which is what identity tracking across updates is built
+     * on: the same key reuses the element, a new key creates one, and a key that disappears
+     * removes its element and disposes its scope.
      *
-     * Receives the item and its index. Keys are used to track
-     * identity across updates:
-     *   - Same key: same item (reuse DOM element)
-     *   - New key: new item (create DOM element)
-     *   - Missing key: removed item (remove DOM element)
-     *
-     * Keys must be unique within the list.
+     * Keys MUST be unique within the list. Duplicates make the reconciler lose track of which
+     * element belongs to which item.
      */
     key: (item: T, index: number) => string | number;
 
     /**
-     * Per-item render function. Receives REACTIVE getters for the item
-     * and the index: a row whose key survives while its item is REPLACED
-     * (the immutable-update pattern every store produces) updates in
-     * place, and a reorder updates `index()` - neither rebuilds the
-     * element.
+     * Builds one row, receiving REACTIVE getters rather than values. A row whose key survives
+     * while its item is REPLACED - the immutable-update pattern every store produces -
+     * updates in place, and a reorder updates `index()`; neither rebuilds the element.
      *
-     * The getter is the load-bearing half of the keyed contract. Under
-     * the old by-value form, a stable key froze the row on the values it
-     * was built from - the single highest-frequency defect found across
-     * applications built on this framework. In `.azeroth` markup the
-     * compiler emits the call, so a row body still reads `item.name`.
+     * The getters are the load-bearing half of the keyed contract. With by-value parameters a
+     * stable key froze the row on the values it was first built from, which was the single
+     * most frequent defect found across applications built on this framework. In markup the
+     * compiler emits the calls, so a row body still reads `item.name`.
      *
-     * Named `children` and passed as a prop so the manual API
-     * matches the compiled `.azeroth` form:
-     * `<For each={...} key={...}>{(item, i) => ...}</For>`.
-     *
-     * Each row MUST render exactly one element (not a fragment-rooted
-     * control-flow region): the reconciler tracks and moves rows by
-     * element identity, and a DocumentFragment empties itself on
-     * insertion, which would break both.
+     * Each row MUST render exactly one element, never a fragment-rooted control-flow region:
+     * the reconciler tracks and moves rows by element identity, and a DocumentFragment empties
+     * itself on insertion, which breaks both.
      */
     children: (item: () => T, index: () => number) => HTMLElement;
 }
 
 /**
- * Coerces a resolved `each` value to a real array. A nullish `each` - the common
- * not-yet-loaded `each={data()}` that starts `null`/`undefined` - renders NOTHING rather
- * than crashing on `.entries()`; a non-array, non-nullish value is a caller mistake surfaced
- * with a clear message instead of the cryptic `Cannot read properties of null (reading 'entries')`.
- *
- * @internal
+ * A nullish `each` - the not-yet-loaded `each={data()}` - renders nothing rather than
+ * crashing on `.entries()`. A non-array, non-nullish value is a caller mistake, surfaced
+ * clearly instead of as "Cannot read properties of null".
  */
 function asItemArray<T>(value: unknown): T[]
 {
@@ -101,42 +84,26 @@ function asItemArray<T>(value: unknown): T[]
 }
 
 /**
- * Per-key tracking: the rendered element plus the createRoot
- * dispose for any reactive primitives the renderItem function
- * created. Disposing the root tears down those effects when the
- * key leaves the list - without this, removed items leak forever.
- *
- * @internal
+ * Per-key tracking: the row's element plus the dispose for whatever reactive work its render
+ * created. Disposing when the key leaves the list is what stops removed rows leaking.
  */
 interface KeyEntry<T>
 {
     el: HTMLElement;
     dispose: DisposeFn;
 
-    /**
-     * Pushes the item's current position into its reactive index
-     * signal. Called when a reused item shifts to a new index on
-     * reorder, so any `index()`-dependent binding updates without
-     * the element being rebuilt.
-     */
+    /** Publishes a new position after a reorder, so `index()` bindings update in place. */
     setIndex: (index: number) => void;
 
-    /**
-     * Pushes the item's current value into its reactive cell. Called when a
-     * reused key's item is REPLACED (new object, same key), so any binding
-     * reading `item()` updates without the element being rebuilt.
-     */
+    /** Publishes a replacement item under the same key, so `item()` bindings update in place. */
     setItem: (item: T) => void;
 }
 
 /**
- * A row's reactive slot for its item or index, allocated lazily: many render
- * functions never read one or the other, so the signal and its graph
- * bookkeeping are only created on the first call. Until then (and for rows
- * that never ask) a reconcile just updates the plain value, which the signal
- * picks up as its initial value if a first read comes later.
- *
- * @internal
+ * A row's reactive slot, allocated lazily: many render functions never read the item or the
+ * index, so the signal and its graph bookkeeping are created on the first read. Until then a
+ * reconcile just updates the plain value, which the signal adopts as its initial value if a
+ * read arrives later.
  */
 function createRowCell<V>(initial: V): { get: () => V; set: (next: V) => void }
 {
@@ -165,79 +132,42 @@ function createRowCell<V>(initial: V): { get: () => V; set: (next: V) => void }
 }
 
 /**
- * For
+ * Renders a keyed list, creating and removing only the rows that changed and reusing the DOM
+ * of the survivors.
  *
- * PURPOSE:
- * Renders a reactive list keyed by props.key, creating/removing only the rows that changed
- * and reusing the DOM of survivors. The per-row render receives a reactive index getter.
+ * `items().map(row)` inside a reactive hole rebuilds EVERY row on any list change,
+ * discarding each one's focus, scroll, IME and uncontrolled-input state and re-running its
+ * effects. For diffs by key instead, so only genuine insertions, removals and moves reach
+ * the DOM.
  *
- * WHY IT EXISTS:
- * `items().map(i => row)` inside a reactive hole rebuilds EVERY row on any list change -
- * discarding DOM and its focus/scroll/IME/uncontrolled-input state and re-running every
- * row's effects. For diffs by key so unchanged rows are untouched and only real
- * insertions, removals, and moves reach the DOM.
+ * Keys must be unique AND stable. Using the array index as the key defeats the diff on
+ * reorder and loses exactly the row state For exists to protect. A duplicate key warns once,
+ * and the displaced row is torn down on the next reconcile - kept until then so its scope is
+ * not leaked.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, renderer; the keyed list-control component. `<For>` lowers to a
- * `component` binding at a `slot` co-range; its `{(item, i) => ...}` render-function child
- * becomes a render sub-plan. Mode-dispatched: keyed reconcile on the client, one-pass
- * serialization for SSR, row-by-row adoption on hydration.
+ * Only `each` is tracked. The key and render functions, and any signals they read, run
+ * untracked, so a row's own reactivity never re-triggers the whole reconcile. Each row
+ * builds in its own root, disposed when its key leaves the list.
  *
- * INPUT CONTRACT:
- * - props.each: T[] or a getter; read reactively and the sole reconcile trigger.
- * - props.key: (item, index) => string|number; MUST be unique within the list.
- * - props.children: (itemGetter, indexGetter) => HTMLElement; the per-row builder.
- *   Both arguments are reactive getters: a replaced item (same key, new object)
- *   and a reorder each update the live bindings without rebuilding the element.
+ * The rows sit between two comment markers with NO wrapper element, so a For works directly
+ * inside `<table>`, `<select>` and `<ul>`.
  *
- * OUTPUT CONTRACT:
- * - Returns an HTMLElement-typed handle; on the client the rows sit between two comment
- *   markers with NO wrapper element, so For works directly inside <table>/<tbody>,
- *   <select>, and <ul>.
- *
- * WHY THIS DESIGN:
- * Only `each` is tracked; key/render and any signals they read run untracked, so a row's
- * own reactivity never retriggers the whole reconcile. Each row builds in its own
- * createRoot (disposed when its key leaves the list). Reorders are minimized via a longest
- * increasing subsequence so a swap is O(moves), not O(n); the reactive index is allocated
- * lazily because most rows never read it.
- *
- * WHEN TO USE:
- * For any list whose rows have identity and may be inserted/removed/reordered, where
- * preserving per-row DOM state and avoiding full rebuilds matters.
- *
- * WHEN NOT TO USE:
- * For a fixed list that never changes (a plain map is fine). If there is no stable key,
- * fix the data model first - an index-as-key defeats the diff on reorder.
- *
- * EDGE CASES:
- * - Duplicate keys: warned once; the displaced row is torn down on the next reconcile (it
- *   is kept until then so its root is not leaked).
- * - Empty list: all rows removed; the comment markers remain.
- * - SSR maps each item once (index is static within a render); hydration adopts the server
- *   rows in order and a leftover row trips the hydrate fallback.
- *
- * PERFORMANCE NOTES:
- * Reuse is O(1) per surviving key; moves are minimized via LIS; the diff trims common
- * prefix/suffix so append/prepend/local-splice collapse to a tiny window. Survivors are
- * snapshotted via nextSibling to avoid O(n)-per-access live-NodeList indexing.
- *
- * DEVELOPER WARNING:
- * Keys MUST be unique and stable; a non-stable key (e.g. the array index) forces rebuilds
- * on reorder and loses row state - exactly what For prevents. Keep `children` a function
- * and read `item()`/`index()` inside reactive holes rather than capturing initial values.
+ * Under SSR each item is mapped once, with a static index. While hydrating, the server's
+ * rows are adopted in order, and a leftover row trips the hydration fallback.
  *
  * @typeParam T - The item type.
- * @param props - {@link ForProps}: `each`, `key`, `children`.
- * @returns An HTMLElement-typed control-flow handle owning the rows.
- * @see {@link Show}
- * @see {@link Switch}
+ * @param props - See {@link ForProps}.
+ * @returns A control-flow handle owning the rows, typed as a node.
+ * @throws {TypeError} If `key` is missing, or if `each` resolves to a non-array,
+ *                     non-nullish value.
  * @example
  * For({
- *   each: items,
- *   key: (i) => i.id,
- *   children: (item, index) => h('li', {}, () => `${ index() + 1 }. ${ item().name }`)
+ *     each: items,
+ *     key: (item) => item.id,
+ *     children: (item, index) => h('li', {}, () => `${ index() + 1 }. ${ item().name }`)
  * });
+ *
+ * @see {@link Show} and {@link Switch} for conditional branches.
  */
 export function For<T>(props: ForProps<T>): MountNode
 {

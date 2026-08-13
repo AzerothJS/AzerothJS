@@ -1,5 +1,5 @@
 /**
- * MODULE: ws/attach - mounting WebSockets on a Node HTTP server
+ * Mounting WebSockets on a Node HTTP server.
  *
  * WebSocket upgrades arrive on the HTTP server's 'upgrade' event, BEFORE any request
  * listener - so this attaches beside @azerothjs/http's serve() rather than through it:

@@ -1,5 +1,5 @@
 /**
- * MODULE: http - the AzerothJS server kernel
+ * The AzerothJS server kernel.
  *
  * A zero-dependency HTTP stack for Node >= 22 built on web-standard Request/Response:
  * handlers are `(context) => Response`, the Node adapters (node:http/https/http2) live

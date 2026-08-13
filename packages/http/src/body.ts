@@ -1,5 +1,5 @@
 /**
- * MODULE: http/body - request body readers with limits ON by default
+ * Request body readers with limits ON by default.
  *
  * Express ships body parsing as an external middleware with no limit unless configured;
  * unbounded bodies are a one-request memory DoS. Here reading a body is an explicit, typed,
@@ -28,8 +28,13 @@ import { BadRequestError, PayloadTooLargeError, UnsupportedMediaTypeError, Valid
 // computed member keys under isolatedDeclarations. Symbol.for() returns plain `symbol`
 // (the registry lookup is what makes them work across package instances), so the value
 // needs the never-cast to inhabit the declared type - the runtime identity is unchanged.
+/** Capability key: case-insensitive single-header reads without building a Headers object. */
 export const fastHeaderLookup: unique symbol = Symbol.for('azerothjs.http.fastHeaderLookup') as never;
+
+/** Capability key: the already-buffered request body, skipping a re-read of the stream. */
 export const fastRawBody: unique symbol = Symbol.for('azerothjs.http.fastRawBody') as never;
+
+/** Capability key: the peer address, which the web-standard Request does not expose. */
 export const socketAddress: unique symbol = Symbol.for('azerothjs.http.socketAddress') as never;
 
 /** The shapes behind the capability symbols. */

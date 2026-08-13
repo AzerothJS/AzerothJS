@@ -1,24 +1,7 @@
 /**
- * MODULE: reactivity/create-signal
- *
- * Signals are the atomic unit of reactive state. A signal is a [getter, setter]
- * pair over a single value cell: reading the getter inside a tracking scope
- * records a dependency edge, and writing the setter propagates a change to every
- * consumer that read it.
- *
- * ARCHITECTURE:
- * A signal owns a producer record (see {@link Producer} in ./types, built by
- * ./graph). The producer holds a subscriber list of link records; each link is
- * shared with the consuming effect or memo, which holds the same link in read
- * order. This shared double-linked structure is what makes teardown
- * O(subscriptions): disposing a consumer walks its links and detaches itself from
- * every producer, so a torn-down consumer leaves no dangling entry in any signal's
- * subscriber list. Without it, disposed consumers would accumulate in subscriber
- * lists, leak memory, and keep receiving notifications.
- *
- * This module owns value storage and change detection (the equality gate on the
- * write path). Edge bookkeeping (createProducer/track/notify) lives in ./graph;
- * this module is the value cell layered on top of that graph.
+ * The value cell layered over the reactive graph: this module owns storage and change
+ * detection (the equality gate on the write path), while edge bookkeeping - createProducer,
+ * track, notify - lives in ./graph.
  */
 
 import type { Getter, Setter, Signal, SignalOptions, EqualsFn } from './types.ts';
@@ -26,25 +9,16 @@ import { createProducer, track } from './graph.ts';
 import { notifyWrite } from './batch.ts';
 import { dtRegister, dtWrite, dtEnabled } from './devtools.ts';
 
-/**
- * Symbol key under which a getter exposes its live subscriber count. Symbol-keyed
- * so it never collides with user properties and stays invisible to enumeration.
- *
- * @internal Not exported.
- */
+/** Symbol-keyed so the probe never collides with user properties or shows up in enumeration. */
 const SUBSCRIBER_COUNT = Symbol('azeroth_subscriber_count');
 
 /**
- * Reports a signal getter's live subscriber count, or -1 if the function is not a
- * signal getter. Used by leak/lifecycle tests to assert that disposal detached
- * every consumer; the count is read through a Symbol-keyed probe so it never
- * collides with user state. Returns -1 (not 0) so "not a signal" is
- * distinguishable from "a signal with zero subscribers".
+ * A signal getter's live subscriber count, or -1 for any function that is not one. Leak and
+ * lifecycle tests use it to assert that disposal detached every consumer, which is why the
+ * miss returns -1 rather than 0: "not a signal" has to be distinguishable from "a signal
+ * nobody reads".
  *
  * @internal
- * @param getter - A signal getter (any other function yields -1).
- * @returns The live subscriber count, or -1 if `getter` carries no probe.
- * @see {@link attachSubscriberProbe}
  */
 export function subscriberCount(getter: Getter<unknown>): number
 {
@@ -53,14 +27,10 @@ export function subscriberCount(getter: Getter<unknown>): number
 }
 
 /**
- * Installs the subscriber-count probe onto a signal getter so {@link
- * subscriberCount} can read it later. Called once per signal at construction; the
- * probe must be a pure read, since it runs during leak assertions.
+ * Installs the probe {@link subscriberCount} reads. Called once per signal at construction;
+ * `count` must be a pure read, since it runs inside leak assertions.
  *
  * @internal
- * @param getter - The signal getter to annotate.
- * @param count - A pure thunk returning the getter's current subscriber count.
- * @see {@link subscriberCount}
  */
 export function attachSubscriberProbe(getter: Getter<unknown>, count: () => number): void
 {
@@ -68,88 +38,49 @@ export function attachSubscriberProbe(getter: Getter<unknown>, count: () => numb
 }
 
 /**
- * createSignal
+ * Creates a reactive value cell and returns its `[getter, setter]` pair.
  *
- * PURPOSE:
- * Allocates a reactive value cell and returns a [getter, setter] pair. The getter
- * returns the current value and, inside a tracking scope, subscribes that scope to
- * future changes. The setter assigns a new value and, only when it differs by the
- * equality function, bumps the producer version and notifies subscribers.
+ * Reading the getter inside an effect or memo subscribes that consumer, so the read site
+ * is the subscription site and there is no separate subscribe call to forget. Reading it
+ * anywhere else returns the value and subscribes nothing.
  *
- * WHY IT EXISTS:
- * It is the primitive every other reactive construct is built on - memo, effect,
- * store, resource, and the renderer's bindings. Fine-grained updates require state
- * that knows its own readers; a signal is the smallest object that carries both a
- * value and its subscriber set, so a write can update exactly the readers that
- * depend on it instead of re-running a component or diffing a tree.
+ * Writing runs the equality gate first: when `equals(current, next)` holds, the write is a
+ * complete no-op - no version bump, no notification. Otherwise the value is replaced and
+ * every subscriber is notified synchronously, unless the write happens inside `batch`, in
+ * which case notification is deferred to the flush.
  *
- * COMPILER / RUNTIME ROLE:
- * Runtime, reactivity stage. Compiled `.azeroth` `state` declarations lower to
- * createSignal calls; the getter is invoked inside renderer bindings and memos,
- * which is how the dependency graph is populated. In SSR/string mode the getter
- * still returns the value, but no subscription outlives the synchronous render.
+ * `initialValue` is stored by reference and never cloned, so mutating an object in place
+ * and setting the same reference back changes nothing under the default `Object.is`
+ * comparator. Set a fresh reference, or supply an `equals` that compares contents.
  *
- * INPUT CONTRACT:
- * - initialValue is the starting value; stored by reference, never cloned.
- * - options.equals is optional, defaults to Object.is; must be pure and reflexive
- *   and decides whether a write is a no-op.
- *
- * OUTPUT CONTRACT:
- * - Returns a tuple [getter, setter].
- * - getter(): returns the current value; subscribes the active scope if any.
- * - setter(next | (prev) => next): assigns; the functional form receives the
- *   current value. Returns void. Notifies only when equals(old, new) is false.
- *
- * WHY THIS DESIGN:
- * A getter/setter pair (rather than a mutable property) makes the read site the
- * subscription site: there is no separate subscribe call to forget, and tracking
- * is automatic and exact. Object.is as the default stops idempotent writes from
- * cascading; a custom equals allows coarser change semantics without touching call
- * sites.
- *
- * WHEN TO USE:
- * For any independently writable piece of state. Pair with {@link createMemo} for
- * derived values and {@link createEffect} for side effects.
- *
- * WHEN NOT TO USE:
- * Not for values fully derived from other signals - use {@link createMemo}, which
- * caches and recomputes only on dependency change. Not for per-render throwaway
- * values.
- *
- * EDGE CASES:
- * - Functional setter: a function argument is always treated as an updater; to
- *   store a function AS the value, wrap it (setter(() => fn)).
- * - Equality short-circuit: mutating an object in place and setting the same
- *   reference is a no-op under Object.is; pass a fresh reference or a custom equals.
- * - Reading outside any tracking scope returns the value without subscribing.
- *
- * PERFORMANCE NOTES:
- * getter is O(1) plus one link insert when tracking. setter is O(1) on a no-op
- * (equality check only) and O(subscribers) on a real change. The subscriber-list
- * check skips notify() entirely when nothing is listening.
- *
- * DEVELOPER WARNING:
- * The equality function gates ALL notifications - a comparator that wrongly reports
- * equal silently freezes every dependent. The functional-setter detection keys off
- * typeof === 'function', so a function stored as a value must be wrapped.
- *
- * @typeParam T - The signal's value type.
- * @param initialValue - The starting value.
- * @param options - Optional settings; `options.equals` overrides the default
- *                   Object.is comparator.
- * @returns A [getter, setter] tuple ({@link Signal}).
- * @see {@link createMemo}
- * @see {@link createEffect}
+ * @typeParam T - The value type.
+ * @param initialValue - The starting value, stored as given.
+ * @param options - Optional settings.
+ * @param options.equals - Change comparator; must be pure. Defaults to `Object.is`. A
+ *                         comparator that wrongly reports equal silently freezes every
+ *                         dependent.
+ * @param options.name - Debug name shown in devtools.
+ * @returns A {@link Signal}: `[getter, setter]`.
  * @example
  * const [count, setCount] = createSignal(0);
- * setCount(n => n + 1);
- * count(); // 1
+ * setCount(5);              // direct
+ * setCount(n => n + 1);     // updater, receives the current value
+ * count();                  // 6
  *
- * // Custom equality: only notify when the integer part changes.
+ * @example
+ * // A function argument is always the updater, so a function VALUE must be wrapped.
+ * const [view, setView] = createSignal<() => Element>(Home);
+ * setView(() => About);
+ *
+ * @example
+ * // Coarser change semantics without touching any call site.
  * const [price, setPrice] = createSignal(9.99, {
  *     equals: (a, b) => Math.floor(a) === Math.floor(b)
  * });
- * setPrice(9.50); // no notification
+ * setPrice(9.50); // no notification: same integer part
+ *
+ * @see {@link createMemo} for values derived from other signals.
+ * @see {@link createEffect} for reacting to them.
  */
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Signal<T>
 {

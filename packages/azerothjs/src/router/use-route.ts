@@ -1,19 +1,18 @@
 /**
- * MODULE: router/use-route
+ * Five composables handing back the slice of a Router the caller actually cares about:
  *
- * Five small composables that wrap a Router and hand the user the slice they care about:
- *   useRoute(router)    -> the full RouteLocation snapshot
- *   useMatch(router)    -> the matched route + chain (or null)
- *   useParams(router)   -> just the path params, slice-memoized
- *   useQuery(router)    -> just the query, slice-memoized
- *   useNavigate(router) -> the imperative navigation API as one (destructurable) object
+ *     useRoute    -> the full RouteLocation snapshot
+ *     useMatch    -> the matched route and chain, or null
+ *     useParams   -> the path params, slice-memoized
+ *     useQuery    -> the query, slice-memoized
+ *     useNavigate -> the imperative navigation API, as one destructurable object
  *
- * WHY they exist when router.location already does it: (1) SLICE MEMOIZATION - useParams/useQuery
- * re-fire only when their slice actually changes (navigating /users/42 -> /users/42#bio updates the
- * location signal but leaves params identical, so useParams stays quiet); (2) a FUTURE CONTEXT API
- * - <RouterProvider> HAS landed: every composable resolves the router from context when the
- * argument is omitted; the explicit argument remains as an override (tests, nested routers). Each
- * composable is a thin wrapper; its contract is documented at its definition below.
+ * They exist rather than reading `router.location` directly for slice memoization: navigating
+ * from `/users/42` to `/users/42#bio` updates the location signal but leaves the params
+ * identical, so useParams stays quiet where a raw location read would re-fire.
+ *
+ * Each resolves the router from context when its argument is omitted, and the explicit
+ * argument remains an override for tests and nested routers.
  */
 
 import type { Getter } from '../reactivity/index.ts';

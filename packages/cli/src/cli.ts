@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * MODULE: cli/cli - the `azeroth` bin
+ * The `azeroth` bin.
  *
  * A thin dispatcher: parse argv, detect the project's shape, hand the command its plan.
  * Exit codes are the contract - 0 success, 1 a gate or child failed, 2 usage or

@@ -29,6 +29,7 @@ interface EffectFrame
     writes: { node: CallNode; setterName: string }[];
 }
 
+/** Reports an effect that reads a state and also assigns it, a synchronous feedback loop. */
 export const noSelfWriteInEffect: Rule.RuleModule = {
     meta:
     {

@@ -1,14 +1,11 @@
 /**
- * MODULE: router/use-search
+ * The current query string VALIDATED through a route's `search` schema: coerced, so
+ * `number({ coerce: true })` turns `?page=2` into `2`, stripped of undeclared keys, and typed
+ * when read through a route handle. The raw query stays available on useQuery; this is the
+ * contractual view of it.
  *
- * useSearch returns the current query string VALIDATED through a route's `search`
- * schema: coerced (`number({ coerce: true })` turns `?page=2` into `2`), stripped of
- * undeclared keys, and typed when read through a {@link RouteHandle}. The raw query
- * stays available on `useQuery`/`location().query`; this is the contractual view.
- *
- * DEGRADATION: an invalid query never crashes a route the user reached by URL - the
- * memo returns `{}` (declare search fields optional/defaulted) and warns on the
- * console, once per offending query string.
+ * An invalid query never crashes a route the user reached by URL. The memo returns `{}` and
+ * warns once per offending query string, so declare search fields optional or defaulted.
  */
 
 import type { Getter } from '../reactivity/index.ts';
@@ -50,27 +47,29 @@ function validated(router: Router, schema: SearchSchemaLike | undefined): Getter
 }
 
 /**
- * useSearch
+ * A getter for the validated, coerced search params, typed through the given route handle.
  *
- * PURPOSE:
- * Returns a getter for the validated, coerced search params - typed via a
- * {@link RouteHandle}, or shaped by the current route's `search` schema.
+ * It is a memo over the query, so it re-fires only when the query genuinely changes. An
+ * invalid query degrades to `{}` with one console warning rather than throwing, because the
+ * user may simply have typed the URL.
  *
- * INPUT CONTRACT:
- * - `useSearch(handle, router?)`: validates through the HANDLE's schema; `Getter<Search>`.
- * - `useSearch()` inside a route component: this level's route `search` schema (raw
- *   query passthrough when the route declares none).
- * - `useSearch(router)`: the matched LEAF route's schema, tracking navigation.
- *
- * OUTPUT CONTRACT:
- * - A memo: re-fires when the validated value's inputs change (the query), returning
- *   the schema's value type. Invalid queries degrade to `{}` with one console warning.
- *
+ * @param handle - The route handle whose `search` schema validates the query.
+ * @param router - Optional explicit router. Resolved from context when omitted.
+ * @returns A getter for the schema's value type.
  * @example
- * const search = useSearch(userRoute);      // Getter<{ tab?: 'posts' | 'bio' }>
+ * const search = useSearch(userRoute); // Getter<{ tab?: 'posts' | 'bio' }>
+ *
  * h('span', {}, () => search().tab ?? 'posts');
  */
 export function useSearch<Path extends string, Data, Search>(handle: RouteHandle<Path, Data, Search>, router?: Router): Getter<Search>;
+/**
+ * Untyped form, validating through whichever route's `search` schema applies: this level's
+ * inside a route component body, otherwise the matched leaf's, tracking navigation. A route
+ * declaring no schema passes the raw query through.
+ *
+ * @param router - Optional explicit router. Resolved from context when omitted.
+ * @returns A getter for the validated query, `{}` when validation fails.
+ */
 export function useSearch(router?: Router): Getter<Record<string, unknown>>;
 export function useSearch(
     first?: Router | RouteHandle<string, unknown, unknown>, second?: Router

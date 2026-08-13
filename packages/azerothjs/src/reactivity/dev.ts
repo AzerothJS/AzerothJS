@@ -1,15 +1,13 @@
 /**
- * MODULE: reactivity/dev
+ * The one development-mode gate for the runtime, computed at module load off `globalThis` so
+ * a browser with no `process` reads `undefined` and lands on the DEV side.
  *
- * The ONE development-mode gate for the runtime. Computed once at module load, off `globalThis`
- * so browsers without a `process` global read `undefined` and land on the DEV side.
- *
- * This is a RUNTIME gate, deliberately: the package ships plain readable module output with no
- * compile-time constant replacement, so the branch travels into the published files and costs one
- * boolean check. It is NOT foldable by a bundler's `define` of `process.env.NODE_ENV` - that
- * replacement matches the bare token, never a `globalThis` probe - so nothing here claims to
- * disappear from a production bundle. What production gets is the BEHAVIOR switch: diagnostics,
- * warnings, and their supporting probes run only when DEV is true.
+ * Deliberately a RUNTIME gate. The package ships plain readable modules with no compile-time
+ * constant replacement, so the branch travels into the published files and costs one boolean
+ * check. A bundler's `define` of `process.env.NODE_ENV` will not fold it either, since that
+ * replacement matches the bare token and not a `globalThis` probe. What production gets is
+ * the behaviour switch, not dead-code elimination: diagnostics, warnings and their
+ * supporting probes run only when DEV is true.
  *
  * @internal Not exported from any public entry.
  */

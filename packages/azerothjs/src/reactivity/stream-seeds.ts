@@ -1,13 +1,15 @@
 /**
- * MODULE: reactivity/stream-seeds (internal)
+ * The hydrate-side counterpart of the streaming session's resource seeds.
  *
- * The hydrate-side counterpart of the streaming session's resource seeds. A streamed page's
- * swap chunks merged every boundary's resolved data into `globalThis.__AZS_S`, keyed by
- * SCOPED ORDINALS (`scope:ordinal`) - and this module re-derives the same ids during
- * hydration: the scope stack is pushed by Suspense around its children (the boundary id
- * from the adopted marker), and the ordinal ticks per createResource call. A seed hit
- * seeds the resource settled (no refetch); a miss means normal behavior. Zero-cost on
- * non-streamed pages: the global is absent and every lookup answers undefined.
+ * A streamed page's swap chunks merged every boundary's resolved data into
+ * `globalThis.__AZS_S`, keyed by scoped ordinals of the form `scope:ordinal`. This module
+ * re-derives the same ids while hydrating: Suspense pushes the scope around its children,
+ * taking the boundary id from the adopted marker, and the ordinal ticks once per
+ * createResource call. A hit seeds that resource as already settled, so it does not
+ * refetch; a miss is ordinary behaviour.
+ *
+ * Costs nothing on a page that was never streamed - the global is absent and every lookup
+ * answers undefined.
  */
 
 /** @internal One streamed resource outcome: resolved data or a (lossy, stringified) error. */

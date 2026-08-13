@@ -1,5 +1,5 @@
 /**
- * MODULE: ws - the AzerothJS WebSocket server
+ * The AzerothJS WebSocket server.
  *
  * RFC 6455 from scratch, zero dependencies: the opening handshake (handshake.ts), the
  * frame codec with every section-5 rule as a typed close code (frames.ts), the message

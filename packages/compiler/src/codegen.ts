@@ -1,7 +1,5 @@
 /**
- * MODULE: compiler/codegen - DOM codegen (the unified IR backend)
- *
- * Compiles a `.azeroth` module to JavaScript. Each `component` becomes a factory function; opaque
+ * The unified IR backend. Compiles a `.azeroth` module to JavaScript. Each `component` becomes a factory function; opaque
  * regions are copied verbatim; the runtime names used are auto-imported. e.g.
  * `<h1>Count: {count()}</h1>` becomes `h('h1', {}, 'Count: ', () => (count()))`.
  *
@@ -180,67 +178,29 @@ function handlerSource(source: string, handler: Span): string
 }
 
 /**
- * generateModule
+ * The emit entry point: a whole `.azeroth` module to JavaScript plus a source map.
  *
- * PURPOSE:
- * Compiles a whole `.azeroth` module (written with `component` syntax) to JavaScript plus a source map.
+ * Module items are walked in order. Opaque regions are pushed verbatim, so ordinary TS and JS
+ * - imports, helpers, types - passes through untouched, and each component is emitted through
+ * generateComponent. The runtime names used and the templates hoisted are collected DURING
+ * emission, then a single import line and the `const _tmpl$N = tmpl(...)` declarations are
+ * prepended.
  *
- * WHY IT EXISTS:
- * It is the compiler's emit entry point - it turns a parsed module (a sequence of components and
- * opaque non-component regions) into a runnable JS module, wiring the runtime import and the hoisted
- * template consts. The Vite plugin calls it once per `.azeroth` file.
+ * Templates are interned, so identical markup anywhere in the module hoists to one shared
+ * constant, and `tmpl` is imported only when at least one exists.
  *
- * COMPILER / RUNTIME ROLE:
- * Compiler, codegen; the top of the emit stage. Drives parseModule -> per-component
- * analyze/lower/optimize -> emit, then assembles imports + hoisted tmpl() consts.
+ * Emitted code imports from `azerothjs`: the output is NOT standalone, it needs the runtime.
  *
- * INPUT CONTRACT:
- * - source: the `.azeroth` module text.
- * - filename: used only for the source map's `sources` (default 'module.azeroth').
- *
- * OUTPUT CONTRACT:
- * - { code, map }: emitted JS and its SourceMapV3. `map` is null when the module contained NO
- *   component (nothing component-shaped to map; the text is returned essentially as-is).
- *
- * WHY THIS DESIGN:
- * Module items are walked in order: opaque regions are pushed verbatim (so ordinary TS/JS - imports,
- * helpers, types - passes through untouched) and each component is emitted via generateComponent.
- * Used runtime names and hoisted templates are collected DURING emission, then a single import line
- * plus the `const _tmpl$N = tmpl(...)` consts are prepended. A piece table maps emitted ranges back
- * to source for the map.
- *
- * WHEN TO USE:
- * Compiling a `.azeroth` file (the plugin path), or programmatically to inspect emitted output.
- *
- * WHEN NOT TO USE:
- * For markup embedded inside an expression (handled internally by projectMarkup); for diagnostics
- * without emission (use diagnoseModule).
- *
- * EDGE CASES:
- * - A module with no component returns its concatenated output with map=null.
- * - Templates are interned, so identical markup hoists to one shared `_tmpl$N`; tmpl is imported only
- *   when at least one template exists.
- *
- * PERFORMANCE NOTES:
- * One parse, then per-component analyze/lower/optimize; template interning dedupes repeated markup.
- *
- * DEVELOPER WARNING:
- * Emitted code imports from 'azerothjs' - the output is NOT standalone; it needs the runtime.
- * This is a compiler-internal entry (not re-exported from the package index), so treat its output
- * shape as an implementation detail.
- *
- * @param source - The `.azeroth` module source
- * @param filename - Used in the source map (default 'module.azeroth')
- * @returns The compiled JS and its source map (map is null when nothing component-shaped was emitted)
- * @see {@link parseModule}
- * @see {@link CompileResult}
- *
+ * @param source - The module source.
+ * @param filename - Used only for the source map's `sources`.
+ * @returns The compiled JS and its source map. `map` is null when the module contained no
+ *          component at all, since there is nothing component-shaped to map.
+ * @throws {CompileError} On malformed markup, or a semantic rule the emitter refuses.
  * @example
- * ```ts
  * const { code } = generateModule('component Hi { <h1>hi</h1> }');
  * // code contains: function Hi(props) { ... return _tmpl$1(); }
- * ```
  *
+ * @see {@link parseModule}
  * @internal
  */
 export function generateModule(source: string, filename = 'module.azeroth', options: GenerateOptions = {}): CompileResult

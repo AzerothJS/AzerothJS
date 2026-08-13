@@ -1,6 +1,4 @@
 /**
- * MODULE: azerothjs - public API
- *
  * The component-runtime layer beneath the renderer: destroyComponent() (node-bound subtree
  * teardown), <ErrorBoundary> (catch errors in a subtree and render a fallback), and the
  * co-range helpers (comment-marker placement ranges) the renderer's control-flow components

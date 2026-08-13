@@ -1,11 +1,10 @@
 /**
- * MODULE: router/define-route - typed route handles
+ * Typed route handles: the typed layer over plain route objects, the same move the backend
+ * contract made with its route factories.
  *
- * `defineRoute(path, config)` is the typed layer over plain route objects - the same
- * move the backend contract made with its route factories. The returned HANDLE is a
- * real `Route` (drop it straight into `createRouter({ routes })`) that additionally
- * carries the path's param types, the loader's data type, and the search schema's
- * value type, so:
+ * The returned handle IS a real route - drop it straight into `createRouter({ routes })` -
+ * that additionally carries the path's param types, the loader's data type and the search
+ * schema's value type, so:
  *
  *   - `handle.to({ id: '42' }, { search: { tab: 'bio' } })` - a missing or extra param
  *     is a COMPILE error; search keys and value types check against the schema.
@@ -106,16 +105,16 @@ export interface DefineRouteConfig<Path extends string, Data, Search>
 }
 
 /**
- * defineRoute
+ * Declares one route with full type flow: params typed from the pattern, data typed from the
+ * loader, search typed from the schema. The result is a real {@link Route} that also carries
+ * `.to()`.
  *
- * PURPOSE:
- * Declares one route with full type flow: pattern-typed params, loader-typed data,
- * schema-typed search. The result is a real {@link Route} plus `.to()`.
+ * Untyped routing fails exactly where it hurts - a renamed param or a mistyped query key
+ * surfaces at runtime, inside a click path. This moves both to compile time without imposing
+ * a whole-tree ceremony, so it can be adopted one route at a time.
  *
- * WHY IT EXISTS:
- * Untyped routing costs exactly where it hurts - a renamed param or a mistyped query
- * key fails at runtime in a click path. The handle moves those to compile time without
- * imposing a whole-tree type ceremony: adopt it route by route.
+ * `.to()` requires an ABSOLUTE path. A handle nested as a child route carries a relative
+ * pattern that cannot address a navigation, and the guard throws with the fix.
  *
  * @example
  * const userRoute = defineRoute('/users/:id', {

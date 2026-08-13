@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/project - the SINGLE Azeroth -> TypeScript projection.
+ * The single Azeroth to TypeScript projection.
  *
  * This is the one and only place a parsed `.azeroth` module is lowered to TypeScript. Every tool that
  * needs to see a `.azeroth` file as TypeScript - the type checker ({@link typeCheckModuleTS}), the editor

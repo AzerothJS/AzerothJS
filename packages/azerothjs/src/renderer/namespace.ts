@@ -1,14 +1,14 @@
 /**
- * MODULE: renderer/namespace (internal) - which tags are foreign content, in one place
+ * Which tags are foreign content, in one place.
  *
- * SVG and MathML elements only paint when they are created in their own namespace. Two
- * code paths create elements from a tag name - h() builds them one at a time, tmpl()
- * parses a whole region as HTML text - and they must agree, or the SAME component renders
- * differently depending on which path the compiler chose for it (fresh client render goes
- * through tmpl, SSR and hydration through h). This module is the one place that knows.
+ * SVG and MathML elements only paint when created in their own namespace. Two code paths
+ * create elements from a tag name - h() one at a time, tmpl() by parsing a whole region as
+ * HTML - and they must agree, or the same component renders differently depending on which
+ * path the compiler chose: a fresh client render goes through tmpl, while SSR and hydration
+ * go through h.
  *
- * The rule is by TAG NAME rather than parent context because h() builds children before
- * their parent: there is no parent to consult. The known tag sets give every element in a
+ * The rule keys on TAG NAME rather than parent context because h() builds children before
+ * their parent, so there is no parent to consult. The known tag sets give every element in a
  * foreign subtree the right namespace independently.
  */
 

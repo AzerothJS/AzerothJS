@@ -1,17 +1,16 @@
 /**
- * MODULE: renderer/stream-swap
+ * The browser half of streaming SSR: the small runtime a streamed page carries inline.
  *
- * The browser half of streaming SSR: the tiny runtime a streamed page carries inline. Each
- * out-of-order chunk calls `__AZS(id)` to (1) merge the chunk's resource seeds into the
- * global seed store hydration reads, and (2) swap the boundary's fallback DOM (the range
- * between `<!--azc:suspense:ID-->` and its BALANCED `<!--/azc-->`) for the template's
- * settled children. Post-swap the DOM is byte-equal to a buffered render of the settled
- * state, which is what lets hydrate() adopt it node-for-node.
+ * Each out-of-order chunk calls `__AZS(id)`, which merges the chunk's resource seeds into
+ * the global store hydration reads, then swaps the boundary's fallback DOM - the range
+ * between `<!--azc:suspense:ID-->` and its BALANCED `<!--/azc-->` - for the template's
+ * settled children. After the swap the DOM is byte-equal to a buffered render of that
+ * settled state, which is what lets hydration adopt it node for node.
  *
- * CONSTRAINT: {@link azsRuntime} must stay SELF-CONTAINED - no imports, no outer captures,
- * no TS-only syntax that survives erasure - because it ships via Function.prototype.toString
- * into an inline script. Tests invoke the same exported function happy-dom-side, so the code
- * browsers run IS the code under test.
+ * {@link azsRuntime} must stay SELF-CONTAINED: no imports, no outer captures, and no
+ * TypeScript-only syntax that survives erasure, because it ships through
+ * Function.prototype.toString into an inline script. The tests invoke the same exported
+ * function, so the code browsers run is the code under test.
  */
 
 /** @internal The window shape the runtime installs onto. */

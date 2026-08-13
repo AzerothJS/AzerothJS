@@ -1,5 +1,5 @@
 /**
- * MODULE: kit/prerender - the build-time static pass
+ * The build-time static pass.
  *
  * Renders every `render: 'static'` page through the SSR bundle's renderer and
  * writes it into the client dist, after preserving the pristine SPA shell as

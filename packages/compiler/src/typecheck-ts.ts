@@ -1,5 +1,5 @@
 /**
- * MODULE: compiler/typecheck-ts - the type-checking layer (real TypeScript Program backend).
+ * The type-checking layer, over a real TypeScript Program.
  *
  * A genuine TypeScript-backed checker. It lowers an `.azeroth` module to TypeScript through the SINGLE
  * shared projection ({@link generateVirtualCode} - the same one the editor language service, the

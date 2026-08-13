@@ -1,6 +1,4 @@
 /**
- * MODULE: azerothjs - public API
- *
  * Pure string-emitter SSR: no DOM shim required - components run in 'string' render mode and emit
  * HTML directly. renderToString/renderToDocument produce hydration-ready markup (carrying the
  * markers the client adopts with hydrate(); `{ markers: false }`

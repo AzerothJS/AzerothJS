@@ -1,5 +1,5 @@
 /**
- * MODULE: cli/plan - command planning
+ * Command planning.
  *
  * Every orchestrating command computes a Plan - the exact child invocations it would
  * run - before anything executes. `--print` prints the plan and exits; the runner

@@ -1,5 +1,5 @@
 /**
- * MODULE: ws/socket - the connection state machine over a raw TCP socket
+ * The connection state machine over a raw TCP socket.
  *
  * frames.ts guarantees every frame is individually well-formed; this module enforces the
  * rules BETWEEN frames (RFC 6455 sections 5.4-5.5 and 7):

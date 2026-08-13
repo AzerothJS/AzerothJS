@@ -1,5 +1,5 @@
 /**
- * MODULE: http/config - typed configuration, loud at boot
+ * Typed configuration, loud at boot.
  *
  * The anti-`app.set('trust proxy', ...)`: configuration is a TYPED OBJECT built once at
  * startup from declared variables, not a string-keyed bag consulted at runtime. Three rules:

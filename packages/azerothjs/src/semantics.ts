@@ -1,7 +1,5 @@
 /**
- * MODULE: semantics - the language's shared vocabulary
- *
- * The single owner of every markup fact that more than one implementation consumes: the
+ * The language's shared vocabulary: the single owner of every markup fact that more than one implementation consumes: the
  * compiler (lowering, diagnostics, the editor projection), the runtime (h(), the SSR
  * serializer, hydration, delegation), and the tooling satellites (language server, ESLint
  * plugin). A rule defined here is defined NOWHERE else; two backends that each restate a
