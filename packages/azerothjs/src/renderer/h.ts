@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The hyperscript core. h() builds real DOM directly: no virtual DOM, no intermediate
  * nodes, no diffing. It returns a live element and wires reactive effects immediately, so a
  * signal change mutates that node in place rather than re-rendering a subtree.

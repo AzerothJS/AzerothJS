@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Conversion between a `?key=value` fragment and the framework's Query shape, which
  * collapses repeated keys into arrays:
  *

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The small shared EMITTER helpers (codegen and the type projection consult them). Language
  * FACTS - the event namespace, content properties, factory props, builtins - live in
  * `azerothjs/semantics`, the one owner every backend imports; this module keeps only the

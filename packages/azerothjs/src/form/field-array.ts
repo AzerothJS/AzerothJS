@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Manages a DYNAMIC LIST of repeated sub-forms - invoice line items, multiple phone
  * numbers, survey answers - by composing one {@link createForm} per row. It owns the add/remove/reorder
  * operations plus the per-row reactive lifecycle, and exposes aggregated values()/isValid()/error() so the

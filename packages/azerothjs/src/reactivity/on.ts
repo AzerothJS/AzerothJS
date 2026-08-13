@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * An effect with an explicit dependency list instead of automatic tracking, whose callback
  * also receives the previous values, so it can react to a transition rather than to the
  * mere fact that something changed.

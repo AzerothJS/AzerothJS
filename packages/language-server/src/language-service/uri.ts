@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Minimal file-URI <-> path conversion. The language server speaks `file://`
 // URIs; the TypeScript host and the compiler speak OS paths. Keeping this tiny
 // and dependency-free avoids pulling `vscode-uri` into the core.

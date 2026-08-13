@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A memo is a cached derived value, and both a consumer (it reads signals and memos) and a
  * producer (effects and other memos subscribe to it exactly as they would a signal).
  *

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Pure string-emitter SSR: no DOM shim required - components run in 'string' render mode and emit
  * HTML directly. renderToString/renderToDocument produce hydration-ready markup (carrying the
  * markers the client adopts with hydrate(); `{ markers: false }`

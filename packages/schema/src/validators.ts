@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Built-in field validators - the framework's ONE set of rules, shared by the browser form
  * (createForm's `validate` option), this package's `refine`, and anywhere else a
  * `(value) => message | null` check fits. Each factory returns a FieldValidator<V>, optionally

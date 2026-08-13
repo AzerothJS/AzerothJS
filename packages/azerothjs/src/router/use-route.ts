@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Five composables handing back the slice of a Router the caller actually cares about:
  *
  *     useRoute    -> the full RouteLocation snapshot

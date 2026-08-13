@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Wraps a child factory and swaps to a fallback when the child throws - sugar
  * over catchError from azerothjs, catching BOTH synchronous setup errors and errors
  * thrown later by effects/memos created inside the child subtree.

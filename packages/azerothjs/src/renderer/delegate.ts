@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The one event-attachment path for every render surface. Compiled template clones, h() and
  * hydration all wire handlers through {@link attachEvent}, which makes the attachment model
  * part of the language contract rather than a per-path choice.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * How a middleware's or guard's additions reach the context.
  *
  * ONE rule, one implementation. Middleware (the kernel's `App.route` composition) and

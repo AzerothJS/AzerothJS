@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The responsive image element, deliberately two components in one. With no endpoint in
  * reach it is an honest `<img>` passthrough, so an app needs no image server to use it; with
  * one - `optimize`, or an {@link ImageConfig} provider - src and srcset target the transform

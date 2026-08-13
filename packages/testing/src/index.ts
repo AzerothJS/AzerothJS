@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Testing utilities for AzerothJS apps.
  *
  * Every test against a reactive tree repeats the same shape: mount inside a root, mutate signals,

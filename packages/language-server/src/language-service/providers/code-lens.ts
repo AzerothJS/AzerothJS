@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Code lenses: a "N references" annotation over each top-level component /
 // function declaration. The initial pass (getCodeLenses) reuses the
 // document-symbol navigation tree to place a lens on every eligible declaration,

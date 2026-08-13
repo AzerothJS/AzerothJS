@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Conditional rendering with CSS-class-driven enter and leave animations. The swap pattern is
  * Show's, except the element is removed only AFTER its leave animation finishes - that
  * deferred removal is the part that is genuinely hard to build by hand around Show.

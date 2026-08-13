@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A SPA link that behaves like a normal anchor for everything a user expects - copy link,
  * open in a new tab, screen-reader announcement - and intercepts only the clicks where
  * in-app navigation is clearly intended:

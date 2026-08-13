@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Opt-in performance instrumentation. Disabled by default so the hot path stays
 // allocation-free: when `enabled` is false every measurement is a single boolean
 // read and nothing is recorded. Callers (the service facade) flip the flag via

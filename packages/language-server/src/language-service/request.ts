@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Per-request context and the glue that translates TypeScript results (which
 // live in virtual-file offsets) back into the original `.azeroth` document
 // (line/character ranges). Every provider takes a RequestContext and leans on

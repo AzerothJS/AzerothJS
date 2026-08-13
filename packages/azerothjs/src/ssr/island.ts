@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Marks a component as an interactivity boundary in an otherwise static
  * server-rendered page. The page shell ships as plain HTML and is never hydrated; each island's
  * ROOT ELEMENT carries the anchor attributes (module specifier + JSON props) - no wrapper node,

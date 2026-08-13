@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Maps a stack-frame position back through the served module's source map.
 //
 // `Error.stack` is never source-mapped - browsers apply maps when PRINTING a

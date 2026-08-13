@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The imperative escape hatch: direct access to an element for the tasks that genuinely need
  * the live node - focusing an input, measuring dimensions, drawing on a canvas, attaching a
  * chart or map library.

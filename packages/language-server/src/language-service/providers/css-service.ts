@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // CSS intelligence for inline `style="..."` values, via `vscode-css-languageservice`
 // (the engine behind VS Code's CSS support). An inline style is a declaration
 // list, not a full stylesheet, so we wrap it in a synthetic rule `*{ ... }` and

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Routing reactive errors to a handler instead of the page. This is the primitive under
  * <ErrorBoundary>, exposed directly for error handling at the reactive layer.
  *

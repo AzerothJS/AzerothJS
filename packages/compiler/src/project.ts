@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The single Azeroth to TypeScript projection.
  *
  * This is the one and only place a parsed `.azeroth` module is lowered to TypeScript. Every tool that

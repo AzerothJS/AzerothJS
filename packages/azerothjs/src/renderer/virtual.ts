@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Windowed rendering: ten thousand rows cost ten thousand rows, while a viewport shows
  * thirty. The visible window plus overscan is rendered inside a spacer that preserves the
  * scrollbar, and rows are repositioned as the user scrolls.

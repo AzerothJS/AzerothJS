@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Tiny imperative DOM builders for the panel. The panel deliberately is NOT built with the
 // framework it observes (the observer must not perturb the observed graph), so these helpers
 // keep raw-DOM view code terse without pulling in any dependency.

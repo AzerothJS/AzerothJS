@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The unified IR backend. Compiles a `.azeroth` module to JavaScript. Each `component` becomes a factory function; opaque
  * regions are copied verbatim; the runtime names used are auto-imported. e.g.
  * `<h1>Count: {count()}</h1>` becomes `h('h1', {}, 'Count: ', () => (count()))`.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The bridge between a Router and the DOM: read the match reactively, render the matched
  * chain with layouts wrapping leaves, and swap cleanly when the match changes. There is no
  * `<Route>` component, because routes are data passed to createRouter, so this is the only

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * tmpl() backs the compiler's `dom` target: a region's static structure is parsed once into a
  * `<template>` and instantiated per use with cloneNode, one native clone instead of
  * createElement plus per-element attribute wiring. The dynamic parts are bound into the clone

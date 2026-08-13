@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The passthrough a layout uses to declare WHERE its nested route's content goes.
  *
  * Routes walks the matched chain and renders `Layout({ children: NextLevel({}) })`, so every

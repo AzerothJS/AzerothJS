@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * First-class semantic diagnostics for `component` syntax: the mistakes the TYPE system cannot see - they fall out of the reactive analysis and the
  * markup AST:
  *   - azeroth/constant-derived     - a `derived` with no reactive dependencies AND no calls/side

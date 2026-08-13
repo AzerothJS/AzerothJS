@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Event-handler shape classification.
  *
  * The normative rule: an `on*` handler value must be a FUNCTION (the listener run on the event);

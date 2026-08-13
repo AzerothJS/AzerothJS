@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Wraps a component's body HTML in a full HTML document and flushes the scoped CSS collected
  * during render into a <style> in the <head>. The body is rendered FIRST so every css`` call in
  * the tree has registered its scope before collectStyleSheet() reads the registry.

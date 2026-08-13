@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // An ESLint processor that makes `.azeroth` a first-class lint target.
 //
 // A `.azeroth` file is not valid TypeScript on its own (it has component/markup syntax), so it can't be

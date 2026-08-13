@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Brings server-rendered markup to life without recreating it. The component runs in
  * 'hydrate' mode, so h() and the control-flow components return adoption descriptors instead
  * of DOM; the descriptor tree is then walked against the existing nodes, attaching listeners

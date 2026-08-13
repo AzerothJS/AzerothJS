@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The hydrate-side counterpart of the streaming session's resource seeds.
  *
  * A streamed page's swap chunks merged every boundary's resolved data into

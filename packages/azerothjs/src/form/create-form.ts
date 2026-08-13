@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Reactive form state: per-field signals, sync validation, a submit lifecycle, and
  * registration helpers for inputs - the same authoring style as createSignal and
  * createResource, with no class hierarchy and no schema layer.

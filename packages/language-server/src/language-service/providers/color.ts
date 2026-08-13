@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Document colors: render a swatch next to every CSS color literal in a
 // `.azeroth` file, in the three places CSS appears - a static `style="..."`
 // attribute (a declaration list), a css`` template (a full stylesheet), and the

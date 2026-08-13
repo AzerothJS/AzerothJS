@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive system's type contracts. The dependency relationship is held in both
  * directions - a producer tracks the consumers that read it, a consumer tracks the
  * producers it reads - which is what makes cleanup exact: a disposed consumer detaches

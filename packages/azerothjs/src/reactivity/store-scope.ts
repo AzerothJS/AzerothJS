@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Store scopes isolate lazy-singleton store instances. createStore caches each instance
  * under the ACTIVE scope: on the client there is one stable scope for the whole JS context,
  * so a store is an app-wide singleton, while the server runs each render in its own scope

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // azeroth-tsc: a combined `.ts` + `.azeroth` type-checker, the vue-tsc
 // equivalent for this framework. `tsc` itself cannot parse `.azeroth` markup, so
 // this driver builds ONE TypeScript program containing both the project's real

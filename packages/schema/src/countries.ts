@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Country dataset for phone validation: ISO 3166-1 alpha-2 codes paired with their ITU-T E.164
  * calling codes. Used by phone() to filter accepted numbers, and exported for direct consumption
  * (e.g. to populate a country-select dropdown).

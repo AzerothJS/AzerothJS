@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Emits a `.d.ts` for an `.azeroth` module.
  *
  * TypeScript has no resolver for `.azeroth` files: a `.ts` file that imports `./X.component` cannot see

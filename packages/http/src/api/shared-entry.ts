@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The half both sides import ('@azerothjs/http/api/shared').
  *
  * A browser needs exactly two things from the API layer: the erased TYPE of the server's

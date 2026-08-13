@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Parses one markup region (an element or fragment) starting at a `<` into the AST from types.ts.
  * Expression holes (`{ ... }`) and attribute expressions are captured as RAW source - nested markup
  * inside them is handled later by lowering/codegen, which recursively compiles the hole text. That

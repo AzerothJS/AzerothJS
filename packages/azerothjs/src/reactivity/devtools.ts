@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The supported way for an external tool - the in-page panel, a browser-extension agent, a
  * test harness - to observe the live reactive graph. It is deliberately small and explicitly
  * versioned, so an agent can compare {@link DEVTOOLS_PROTOCOL_VERSION} and the snapshot's

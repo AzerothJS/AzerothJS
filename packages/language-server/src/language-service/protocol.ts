@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Editor-agnostic result types for the language service. They mirror the
 // Language Server Protocol shapes closely (and reuse its numeric enums) so the
 // `@azerothjs/language-server` adapter is a near-passthrough, but the core

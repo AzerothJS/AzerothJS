@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The context that lets composables drop their router argument.
  *
  * `<RouterProvider router={router}>` publishes the router on the ownership tree, and every

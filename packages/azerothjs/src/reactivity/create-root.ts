@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Ownership scopes: how reactivity gets a lifetime. Every effect and memo created while a
  * root is active registers its disposer there, so one dispose() tears the whole group down.
  * Component boundaries dispose their subtree on unmount, control-flow branches dispose the

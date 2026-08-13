@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The fully inferred client over a feature's type plus its manifest.
  *
  * `createClient<typeof features>(manifest, { baseUrl })` yields a call surface mirroring the

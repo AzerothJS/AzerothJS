@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The type-check backends running on the NATIVE TypeScript compiler.
  *
  * Mirrors the two classic backends in typecheck-ts (the one-shot Program and the incremental

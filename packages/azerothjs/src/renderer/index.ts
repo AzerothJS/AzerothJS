@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The DOM layer. h() builds real elements directly; render, hydrate and hydrateIslands
  * mount, adopt and partially hydrate trees; the control-flow components cover conditional,
  * list, async and relocated rendering; and the bindings cover element refs and reactive

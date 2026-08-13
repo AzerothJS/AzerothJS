@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The client mount entry point. render() owns the mount's reactive root, so a second render
  * into the same container disposes the previous tree's effects first. Mounting by hand -
  * clearing innerHTML and appending - has no scope ownership and leaks the prior mount's

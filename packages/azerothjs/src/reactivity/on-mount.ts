@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The post-connection hook. Effects run DURING construction and `ref` fires before the
  * element is inserted, so measuring layout or initializing a third-party widget from either
  * one observes a detached node.

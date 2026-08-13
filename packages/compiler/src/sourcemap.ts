@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A minimal, zero-dependency Source Map v3 generator.
  *
  * Only LINE-LEVEL mappings are produced - what stack traces use: one segment at the start of each

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Framework plumbing, not application API: the machinery the framework's own packages share
  * across package boundaries - SSR child serialization, the hydration adoption protocol, the
  * store-scope adapter seam, and the test-only subscriber probe.

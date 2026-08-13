@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // CSS intelligence for the reactive `styleMap({ ... })` helper, the JS-side
 // counterpart to a static `style="..."`. Its object keys are CSS property names
 // written camelCase (`fontWeight`, converted to `font-weight` at runtime) and

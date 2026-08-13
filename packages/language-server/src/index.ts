@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // @azerothjs/language-server
 //
 // A Language Server Protocol front-end for `.azeroth` files. The CLI binary

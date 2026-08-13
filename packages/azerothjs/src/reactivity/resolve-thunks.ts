@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The one thunk-chain unwrap, behind every "call while it is a function" site.
  *
  * The compiler wraps each compound or call expression in `() =>`, and some of those

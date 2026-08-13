@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive rewrite. Rewrites an expression's source so reactive reads/writes become signal getter/setter calls - the
  * core compile-time-reactivity transform:
  *   - a read of a `state`/`derived` `x` becomes `x()`;

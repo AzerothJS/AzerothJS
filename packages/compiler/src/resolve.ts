@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive-read collector. Given a parsed slice and the component's closed reactive-source set, it returns the dependency set:
  * which reactive sources the slice reads. This is what makes compile-time fine-grained reactivity
  * sound.

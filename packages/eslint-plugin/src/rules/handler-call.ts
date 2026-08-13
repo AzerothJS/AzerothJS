@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // azeroth/handler-call: the hyperscript twin of the compiler's
 // azeroth/handler-call markup rule. `h('button', { onClick: save() })`
 // calls save() while BUILDING the element and passes its result as the

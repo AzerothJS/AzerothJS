@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Bidirectional offset mapping between an original `.azeroth` source and the virtual
  * TypeScript module the projection produces.
  *

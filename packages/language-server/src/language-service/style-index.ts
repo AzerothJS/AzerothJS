@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // A workspace-wide index of CSS class selectors, so a `class="..."` (or a
 // `classList({ ... })` key, or any string in a `class={ ... }` expression) in a
 // `.azeroth` file can complete, hover, and go-to-definition against the classes

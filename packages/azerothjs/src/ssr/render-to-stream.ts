@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Streaming SSR over the SAME serializer renderToString runs. The main pass executes
  * synchronously inside the call - a top-level throw propagates to the caller before any
  * byte exists, so error pages stay ordinary buffered responses - and emits the shell with

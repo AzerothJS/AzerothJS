@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Thin wrapper over `vscode-html-languageservice` - the same HTML engine VS
 // Code ships - applied to the embedded HTML view of a `.azeroth` file
 // (html-source.ts). It answers host-element completion (tags, attributes, and

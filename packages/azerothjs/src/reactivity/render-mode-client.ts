@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The client-only drop-in for ./render-mode.ts, substituted by the Vite plugin when an app
  * compiles with `ssr: false`. Every mode getter returns a constant, so a minifier folds the
  * runtime's `isStringMode()` and `isHydrating()` branches to dead code and the SSR and

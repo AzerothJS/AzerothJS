@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Markup lint: catches the SYNTAX-level slips in a markup region that neither the TYPE system nor the
  * component-semantic diagnostics catch. (A handler that runs at setup - onClick={save()} - is
  * diagnoseModule's azeroth/handler-not-function; duplicate attributes and lowercase on* names

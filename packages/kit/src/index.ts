@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Per-route rendering over @azerothjs/http (the node adapter).
  *
  * `mountPages(app, options)` is the assembled car's server half. It reads the SAME

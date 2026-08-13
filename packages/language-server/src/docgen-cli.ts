@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // azeroth-docgen: renders a markdown API reference for every `.azeroth`
 // component under a directory. It builds the same combined program azeroth-tsc
 // uses (so prop types resolve against the project's REAL tsconfig types), opens

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The in-page devtools panel: a plain-DOM shell over the agent (agent.ts), which is the only
 // code that touches the framework. The panel renders the agent's model/graph/timeline and never
 // observes itself: it is deliberately NOT built with AzerothJS (the observer must not perturb

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Scoped CSS through a tagged template, with no build step. The rule text is hashed into a
  * short scope suffix, every `.name` selector is rewritten to `.name_<scope>`, and the
  * returned map resolves `styles.name` to the scoped name.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * IR optimization passes. Every optimization is a PASS over the Render Plan IR - never logic smuggled into codegen (ACP). A
  * pass is `(source, plan) -> plan`; `optimize` runs them in sequence, so future passes (dead-binding
  * elimination, expression simplification, ...) slot in here without touching lowering or codegen.

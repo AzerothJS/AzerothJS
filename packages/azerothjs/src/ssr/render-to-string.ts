@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Entry points for turning a component into an HTML string on the server. There is no DOM shim:
  * the render runs in 'string' mode (see azerothjs render-mode), where h() and the
  * control-flow components emit HTML directly instead of building DOM.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Pure data types for reactive analysis, kept in their own module, free of any `typescript` import, so data layers like the Render Plan IR
  * (ir.ts) can use {@link Dep} / {@link ReactiveSources} without pulling the TypeScript compiler into
  * their dependency graph.

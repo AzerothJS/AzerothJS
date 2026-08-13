@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Which tags are foreign content, in one place.
  *
  * SVG and MathML elements only paint when created in their own namespace. Two code paths

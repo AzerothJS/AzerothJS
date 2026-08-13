@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The NATIVE diagnostics backend for AzerothProject - the same virtual project the classic
 // language service checks, mirrored onto the native TypeScript compiler. Opt-in per project
 // instance (the command-line checker turns it on; the editor stays on the classic service,

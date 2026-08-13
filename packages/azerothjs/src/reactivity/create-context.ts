@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Dependency injection over the owner tree. {@link provideContext} writes a value onto the
  * ACTIVE owner and {@link useContext} reads by walking the owner chain upward, so a value
  * provided in an outer scope reaches everything created inside it, an inner provide shadows

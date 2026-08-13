@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * ANSI styling with honest capability detection.
  *
  * Zero-dependency means owning the color layer: a Style is a (text) => text function pair

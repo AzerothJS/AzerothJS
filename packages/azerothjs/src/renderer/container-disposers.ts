@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The dispose function for each container's mounted tree, so a later render or hydrate on the
  * same container tears the previous mount down first.
  *

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The panel's design system: one class-based stylesheet injected into the shadow root, plus the
 // kind/primitive color maps the views share. The shadow boundary already isolates the panel from
 // host CSS; classes (instead of per-element inline styles) keep every surface consistent and make

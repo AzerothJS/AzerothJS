@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The panel's views: Components (primitive-aware, virtualized), Timeline (burst-grouped),
 // Graph (neighborhood + adjacency), Performance (health + hotspots), and the Inspector pane.
 // Each view renders into the main scroll container from the shared PanelCtx; the shell owns

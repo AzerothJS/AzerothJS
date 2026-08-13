@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The real client address, with an explicit trust boundary.
  *
  * `X-Forwarded-For` is client-controlled: a request that reaches the server directly can put

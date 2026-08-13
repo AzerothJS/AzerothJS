@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Binary entry point for `azeroth-tsc`. Runs one batch type-check and exits
 // non-zero when any `.azeroth` file has an error, so it drops into CI and
 // pre-commit the same way `tsc --noEmit` does. All behaviour lives in the

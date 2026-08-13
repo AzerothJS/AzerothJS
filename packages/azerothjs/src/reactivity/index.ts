@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive core: signals, memos and effects, plus the primitives every other package
  * builds on - scheduling, tracking control, lifetimes, error handling, render-mode
  * dispatch, per-render store scope, and the SSR and hydration helpers.

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Result-span remapping for the tsserver plugin. The host decoration (decorate.ts) serves each
 // `.azeroth` file's COMPILED virtual TypeScript as its content, so every span tsserver computes for
 // a `.azeroth` file is a VIRTUAL offset. The editor, however, renders spans against the on-disk

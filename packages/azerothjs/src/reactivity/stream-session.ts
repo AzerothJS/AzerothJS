@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The per-render state of one streaming server render.
  *
  * It rides the render-mode frame, so every synchronous serialization window - the main pass

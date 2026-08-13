@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * phone() validator: checks phone numbers in E.164 international format. Pragmatic scope - starts
  * with `+`, total digit count 8-15, and (optionally) the calling-code prefix matches one of a
  * supplied country list.

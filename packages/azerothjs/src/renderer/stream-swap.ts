@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The browser half of streaming SSR: the small runtime a streamed page carries inline.
  *
  * Each out-of-order chunk calls `__AZS(id)`, which merges the chunk's resource seeds into

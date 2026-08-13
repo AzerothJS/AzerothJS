@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * CSS properties as a reactive inline-style getter, in place of manual concatenation where a
  * missing semicolon silently drops the rest of the declaration. Each property may be static
  * or a getter, so they update independently, and camelCase names become kebab-case.

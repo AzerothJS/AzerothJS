@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Document links: make a relative import specifier in a `.azeroth` file
 // clickable, so Ctrl/Cmd-clicking the path jumps to the imported file. Only
 // relative specifiers (`./`, `../`, `/`) are linked - bare module specifiers

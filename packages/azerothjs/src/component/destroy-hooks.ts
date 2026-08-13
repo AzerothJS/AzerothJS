@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Storage for element teardown hooks. A teardown hook is stashed directly on the
  * rendered DOM element under a unique Symbol key, so destroyComponent(el) can find and run it
  * regardless of where the element ends up in the tree; the Symbol key never collides with user

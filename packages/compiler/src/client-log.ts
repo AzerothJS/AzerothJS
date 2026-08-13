@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The `client` lane over Vite's console forwarding: the missing half of a fullstack dev session: the server's request lines reach the
  * terminal, but a browser-side crash lives only in the devtools console. Vite 8
  * ships the transport - `server.forwardConsole` hooks the page's console and error

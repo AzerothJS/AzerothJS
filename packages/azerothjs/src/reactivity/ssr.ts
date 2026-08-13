@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The DOM-free half of server-side rendering: helpers that build HTML strings without ever
  * touching `document`, so they run on a bare server. Element-specific serialization - tag
  * names, void elements, attribute rules - lives in the renderer; what sits here is what the

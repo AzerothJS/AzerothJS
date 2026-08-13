@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Mounting WebSockets on a Node HTTP server.
  *
  * WebSocket upgrades arrive on the HTTP server's 'upgrade' event, BEFORE any request

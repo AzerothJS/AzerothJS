@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Offset <-> line/character conversion. The compiler and TypeScript both work
 // in byte offsets; LSP speaks line/character. A LineIndex precomputes the start
 // offset of every line so conversions in either direction are a binary search,

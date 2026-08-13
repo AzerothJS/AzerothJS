@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Shared router type contracts. Component-specific prop types live with their components,
  * and the Router object's own shape lives next to createRouter.
  *

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive analysis driver. Walks a component's body and produces, for each reactive scope (a `derived` initializer, an
  * `effect` body, or a markup binding), the set of reactive sources it reads - the dependency sets the
  * IR (lower) turns into targeted update code.

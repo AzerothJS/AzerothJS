@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * createForm(config) builds a reactive form whose state is exposed as standard signal getters; use
  * form.register(name) to spread props onto an <input> and form.handleSubmit straight on
  * <form onSubmit>. State is signals and memos underneath - the same composition story as the rest of

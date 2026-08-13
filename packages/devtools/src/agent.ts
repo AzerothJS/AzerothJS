@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The devtools agent: the only code that touches the framework. It installs
 // the reactivity hook, keeps a live model of nodes (pruned on dispose so it
 // reflects the CURRENT page), buffers a bounded event timeline, and answers

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The keyed-list counterpart of Transition: items ENTER with the six-class family when their
  * key joins the list and LEAVE with it when their key departs -
  * the removal deferred until the leave animation completes. This is the primitive a toast

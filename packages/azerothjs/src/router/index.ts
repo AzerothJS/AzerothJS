@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A manual-first client router: an explicit Router instance from createRouter, the
  * <Link>/<Routes>/<Outlet> components, the useRoute/useParams/useQuery/useNavigate/useLoader
  * composables, and the path/query/history utilities. Routes are DATA (passed to createRouter), not

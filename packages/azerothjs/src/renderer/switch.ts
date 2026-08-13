@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Mutually exclusive branches: exactly one Match case is mounted at a time. An if/else-if
  * chain inside a reactive hole does the same job but hides the exclusivity, rebuilds on
  * every re-evaluation and gives no branch a disposal scope.

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Inlay hints - the inline parameter-name and inferred-type annotations TS
 // shows (`createSignal(initialValue: 0)`, `const x: number = ...`). A direct
 // TypeScript query over the virtual module, with each hint's position mapped

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Go-to-definition, type-definition, find-references, and rename. All four are
 // pure TypeScript queries against the virtual module, with results translated
 // back to original ranges (in this file or others). Because component tags and

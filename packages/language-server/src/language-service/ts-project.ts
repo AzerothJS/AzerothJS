@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The TypeScript bridge. A `.azeroth` file is a TS module with markup regions;
 // once the markup is compiled to `h(...)` calls (virtual-code.ts) the result is
 // ordinary TypeScript, so the authoritative engine for type inference,

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Context-aware completion. The markup model says where the caret is; that
 // decides which vocabulary to offer:
 //   - tag name      -> HTML elements, built-in components, and in-scope

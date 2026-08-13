@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Renders a component chosen at runtime: tab panels, role-based views, plugin slots, wizard
  * steps, nullable modals. A hand-rolled version - a reactive child that re-selects and
  * re-invokes the component - rebuilds the whole subtree whenever any signal it reads

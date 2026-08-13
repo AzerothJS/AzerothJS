@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The AST for one markup region.
  *
  * The compiler transforms markup embedded in a JS/TS module into runtime calls; these types describe

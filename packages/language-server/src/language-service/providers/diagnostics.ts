@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Diagnostics from three sources:
 //   1. The compiler's own parser - a CompileError (mismatched/closing tag,
 //      missing attribute value, ...) is reported at its exact offset.

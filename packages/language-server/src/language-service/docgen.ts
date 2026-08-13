@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Documentation extraction. Renders a GitHub-flavoured markdown
 // API reference for the component a `.azeroth` file exports, read from the file's
 // REAL TypeScript types: the same engine hover/symbols query. We resolve the

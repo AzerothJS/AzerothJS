@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Loader for the NATIVE TypeScript compiler's API.
  *
  * TypeScript 7 ships the type checker as a native executable whose JS-facing API lives under

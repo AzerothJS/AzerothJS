@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // @azerothjs/eslint-plugin: the reactivity foot-guns for plain `.ts` files, plus a `.azeroth` processor
 // that surfaces the compiler's own `.azeroth` diagnostics (the authority on the language's semantics) as
 // ESLint messages - so `eslint .` reports `.azeroth` issues without ESLint ever parsing `.azeroth` syntax

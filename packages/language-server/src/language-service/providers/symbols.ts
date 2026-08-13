@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Document symbols (the outline) and workspace symbols (project-wide search).
 // Both come from TypeScript's navigation APIs over the virtual module; spans
 // are mapped back to the original `.azeroth` source, and any symbol whose span

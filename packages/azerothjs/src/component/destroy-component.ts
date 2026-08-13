@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Tears down a rendered subtree, running any teardown hooks attached to its
  * elements. The renderer's control-flow components (Show, For, Switch, Portal, Transition,
  * ErrorBoundary, and the router's Routes) call it on the nodes they remove on a swap/unmount.

@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // A pool of AzerothProjects, one per resolved workspace root (the directory of the nearest tsconfig).
 //
 // This is how type-aware ESLint rules work on `.azeroth` without building a SECOND TypeScript program:

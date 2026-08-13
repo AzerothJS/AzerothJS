@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Server-Sent Events, the frontend stream keyword's server peer.
  *
  * `sse(request, producer)` returns a `text/event-stream` Response whose body a producer

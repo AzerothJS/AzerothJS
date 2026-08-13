@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The core of the TypeScript language-service plugin: it teaches an existing
 // `ts.LanguageServiceHost` to resolve and load `.azeroth` modules as real
 // TypeScript. With this in place, a `.ts` file that does

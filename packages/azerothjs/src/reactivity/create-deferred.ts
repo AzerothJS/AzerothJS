@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A debounced view of a getter: the deferred value lives in an internal signal, an effect
  * watches the source and restarts a timer on every change, and only an undisturbed timer
  * writes the signal. Keeps expensive downstream work off the rapid-update path.

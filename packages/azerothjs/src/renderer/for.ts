@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Keyed list rendering. A list change creates and removes only the rows that changed and
  * REUSES the rest, so a surviving row keeps its DOM along with its focus, scroll, IME and
  * uncontrolled-input state. Mapping a signal array straight into h() re-creates every

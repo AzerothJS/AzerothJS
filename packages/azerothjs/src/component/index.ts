@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The component-runtime layer beneath the renderer: destroyComponent() (node-bound subtree
  * teardown), <ErrorBoundary> (catch errors in a subtree and render a fallback), and the
  * co-range helpers (comment-marker placement ranges) the renderer's control-flow components

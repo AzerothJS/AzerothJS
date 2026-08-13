@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The server-side devtools bridge: attaches a dev-only WebSocket endpoint to a Node server that
 // streams the SERVER's reactive graph to the in-page panel. Requests are reactive roots in
 // @azerothjs/http, so the same agent, session shape, and panel views that inspect a browser app

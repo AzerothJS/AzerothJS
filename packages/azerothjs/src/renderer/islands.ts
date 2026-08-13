@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The client half of islands architecture: find every island anchor the server emitted, load
  * its module through the caller's registry, and hydrate that subtree alone. The shell around
  * the islands stays exactly the HTML the server sent, with no framework code touching it.

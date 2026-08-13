@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // CSS class intelligence inside markup: completion, hover, and go-to-definition
 // for the class names a `.azeroth` file references. The names come from the
 // project's own stylesheets and css`` templates via the workspace StyleIndex;

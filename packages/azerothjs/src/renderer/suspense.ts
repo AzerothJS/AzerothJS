@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * One coordinated pending state over several resources: the fallback shows while any watched
  * resource is loading, and the children take over once all settle. The alternative is
  * threading each resource's loading() through a Show by hand and re-editing that condition

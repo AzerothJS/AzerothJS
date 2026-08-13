@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The wire contract.
  *
  * One log event is a LEVEL, a MESSAGE, a TIME, and a flat FIELDS object - nothing else.

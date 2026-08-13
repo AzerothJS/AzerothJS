@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The reactive graph's link machinery, shared by signals, memos, effects and selectors.
  * Producers and consumers are joined by {@link Link} records held in plain arrays on both
  * sides, each link recording its slot in the producer's list so removal is one swap.

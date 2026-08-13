@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Renders children into a different part of the DOM, outside the component's own hierarchy:
  * an invisible placeholder stays where the Portal was declared while the real content is
  * appended to a target, `document.body` by default. This is how modals, tooltips, dropdowns

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The one development-mode gate for the runtime, computed at module load off `globalThis` so
  * a browser with no `process` reads `undefined` and lands on the DEV side.
  *

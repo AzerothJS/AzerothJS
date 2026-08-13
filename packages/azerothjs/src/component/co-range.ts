@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The shared "control-flow range" (co-range): the placement abstraction every control-flow
  * component (Show, Switch, Dynamic, For, ErrorBoundary) uses for its DOM output, on both the
  * client render and hydration paths.

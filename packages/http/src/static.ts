@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * File serving with traversal safety, etags, and conditional requests.
  *
  * `staticFiles(root)` returns a Handler for a wildcard route. A wildcard needs at least one

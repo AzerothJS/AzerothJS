@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Semantic highlighting for a `.azeroth` file. Two sources are merged: the
 // markup layer (component vs. host tags, event vs. plain attributes - the
 // parser-derived distinctions a TextMate grammar can't make reliably), and the

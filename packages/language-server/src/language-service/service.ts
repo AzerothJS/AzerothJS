@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The public facade. One AzerothLanguageService per workspace owns an
 // AzerothProject (the TypeScript bridge) and exposes one method per editor
 // feature. Callers speak `.azeroth` document URIs and line/character positions;

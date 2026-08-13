@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The single source of truth for the reactive-keyword to runtime mapping. Every reactive component-body keyword maps to exactly one runtime helper. Three emitters consult that
  * mapping (and the kind categories they branch on):
  *   - codegen.ts        emits the runtime JS call (`createSignal(...)`);

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Nested-scope lowering for the state, derived and effect keywords.
  *
  * The component-body TOP LEVEL lowers `state`/`derived`/`effect` to createSignal/createMemo/

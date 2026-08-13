@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Selection tracking for large lists. Having every row subscribe to a shared "selected key"
  * signal makes one selection change re-run all N row effects; a selector keeps a Map of key
  * to producer instead, and isSelected(key) subscribes the calling effect to THAT key's

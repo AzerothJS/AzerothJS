@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * An async fetcher wrapped into reactive data, loading and error signals plus an imperative
  * refetch. This is the primitive behind route loaders, manual resource calls and suspense.
  *

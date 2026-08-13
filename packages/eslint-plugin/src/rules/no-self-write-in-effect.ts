@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // azeroth/no-self-write-in-effect: inside one createEffect callback, calling
 // a signal's setter while also reading its getter is the synchronous
 // feedback loop - the write re-runs the effect that is currently running.

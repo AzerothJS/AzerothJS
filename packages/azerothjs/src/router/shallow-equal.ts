@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * One shallow record-equality check, shared by the router's match, params and query memos, so
  * a navigation producing an equivalent object does not re-fire downstream effects.
  *

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The language's shared vocabulary: the single owner of every markup fact that more than one implementation consumes: the
  * compiler (lowering, diagnostics, the editor projection), the runtime (h(), the SSR
  * serializer, hydration, delegation), and the tooling satellites (language server, ESLint

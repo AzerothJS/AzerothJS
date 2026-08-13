@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The one implementation of the six-class enter and leave play that Transition,
  * TransitionGroup and the router's animated Routes all drive: add `{name}-{dir}-from` and
  * `-active`, force a reflow, swap `-from` for `-to` on the next frame, and settle on

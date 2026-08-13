@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Minimal structural AST types and helpers shared by the rules. The rules
 // are deliberately SYNTACTIC: they track signals from
 // `const [x, setX] = createSignal(...)` destructuring by name, the same

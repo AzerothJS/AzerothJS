@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Understands *where* a caret sits inside a `.azeroth` file so the providers
 // can ask the right question: a tag-name position wants element/component
 // suggestions, an attribute-name position wants the tag's attributes, and an

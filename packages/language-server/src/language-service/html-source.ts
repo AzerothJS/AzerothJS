@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Produces a *virtual HTML document* for the markup in a `.azeroth` file, so the
 // HTML language service (the engine behind VS Code's HTML support) can answer
 // tag/attribute/value completion and MDN-backed hover for host elements.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A store is a factory wrapped in lazy-singleton and reactive-ownership behaviour. There is
  * no reducer protocol, no Proxy deep reactivity and no this-binding: the factory returns a
  * plain object, usually of signal getters, memo getters and methods, so the return type IS

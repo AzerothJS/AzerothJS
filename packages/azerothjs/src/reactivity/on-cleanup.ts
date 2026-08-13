@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Registers teardown work with whatever reactive scope is running. An effect body can
  * return only one cleanup function; onCleanup lets a single run register any number of
  * them, including conditionally, so each teardown sits next to the setup it undoes.

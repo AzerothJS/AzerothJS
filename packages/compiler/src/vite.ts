@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The Vite plugin. Teaches Vite to load `.azeroth` files: generateModule() turns a component module into the unified
  * runtime output, then Vite strips any TS (via oxc), yielding a normal JS module. Runs with
  * `enforce: 'pre'` so it sees the raw source before Vite's other transforms.

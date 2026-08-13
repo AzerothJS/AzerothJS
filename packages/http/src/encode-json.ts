@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Responses compiled from a schema declaration.
  *
  * `json(data)` walks the value at runtime - JSON.stringify introspects every key of every

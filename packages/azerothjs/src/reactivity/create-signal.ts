@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The value cell layered over the reactive graph: this module owns storage and change
  * detection (the equality gate on the write path), while edge bookkeeping - createProducer,
  * track, notify - lives in ./graph.

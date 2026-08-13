@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A from-scratch multipart/form-data reader.
  *
  * Parses the format browsers post when a form carries files (RFC 7578 over the RFC 2046

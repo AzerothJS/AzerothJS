@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The Render Plan IR: a target-independent description of how a component's output is built and updated. This is the
  * single source of truth: one IR is lowered to the DOM target, to SSR, and to hydration - so the
  * framework never hand-syncs two emitters again.

@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Argument guards shared by the reactive primitives, so a mistaken call throws at the call
  * site instead of surfacing as `x is not a function` from deep inside the graph machinery
  * after a node was half built.

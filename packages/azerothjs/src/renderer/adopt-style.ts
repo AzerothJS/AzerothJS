@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The one way framework code puts a stylesheet into the live document.
  *
  * It uses a constructable stylesheet rather than an injected `<style>` element because CSSOM is

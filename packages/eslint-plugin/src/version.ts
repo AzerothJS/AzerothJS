@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The plugin's own package version, read from its manifest at load time so the ESLint
  * `meta.version` surfaces can never drift from the published version. `../package.json`
  * resolves to the package root from BOTH `src/` (the repo's src-aliased test runs) and

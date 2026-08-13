@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * `<select>.value` is the one DOM property whose value is decided by the element's CHILDREN
  * (see `isChildResolvedProperty` in azerothjs/semantics). Assigning it while no matching
  * `<option>` exists is a SILENT no-op, and in a real browser assigning a value that matches

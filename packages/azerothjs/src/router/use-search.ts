@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * The current query string VALIDATED through a route's `search` schema: coerced, so
  * `number({ coerce: true })` turns `?page=2` into `2`, stripped of undeclared keys, and typed
  * when read through a route handle. The raw query stays available on useQuery; this is the

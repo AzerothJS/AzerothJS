@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Call hierarchy: prepare a node at the caret, then walk its callers (incoming)
 // or callees (outgoing). Like navigation.ts, every query runs against the
 // virtual module and every span TypeScript hands back is mapped to the original

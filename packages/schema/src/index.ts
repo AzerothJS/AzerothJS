@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * THE validation package of AzerothJS, frontend and backend.
  *
  * One home for every rule: the schema combinators whose TypeScript types are INFERRED from

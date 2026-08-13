@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // The panel's client for the server bridge: one WebSocket to `attachDevtools`' endpoint,
 // holding the latest streamed session. The Server view renders that session through the same
 // components/inspector machinery as the browser graph - this module is transport only.

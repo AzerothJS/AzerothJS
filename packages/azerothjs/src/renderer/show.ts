@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Conditional rendering with a disposal scope. The obvious alternative - a reactive ternary
  * inside a hole - rebuilds BOTH branches on every flip and gives neither one a scope, so
  * effects created in a branch leak across toggles. Show builds only the active branch,

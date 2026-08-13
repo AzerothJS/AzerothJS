@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Validators that infer their TypeScript types.
  *
  * The anti-"schemas divorced from types": one declaration drives runtime validation AND the

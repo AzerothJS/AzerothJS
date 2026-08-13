@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * A chunked response as a reactive container: `partial()` grows as each chunk arrives and
  * `done()` flips when the stream ends. Where createResource resolves once and exposes
  * `data()`, this resolves incrementally, and the two share their error capture,

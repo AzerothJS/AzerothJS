@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // azeroth/require-effect-disposal: a bare `createEffect(...)` statement at
 // MODULE scope has no owner - no root collects its disposer and the caller
 // discarded it, so the effect runs for the life of the page. Inside

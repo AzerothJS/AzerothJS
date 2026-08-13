@@ -1,4 +1,11 @@
 /**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
  * Context-aware lexing helpers that find markup inside arbitrary JS/TS without a full parser.
  * Two jobs:
  *   1. Skip non-code spans correctly - line/block comments, single/double quoted strings, template
