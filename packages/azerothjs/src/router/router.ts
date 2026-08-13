@@ -873,7 +873,11 @@ export function createRouter(config: RouterConfig): Router
     const [match, setMatch] = createSignal<RouteMatch | null>(null, { equals: matchEquals });
     const [guarding, setGuarding] = createSignal(false);
     let guardRun = 0;
-    let lastAcceptedFull: string | null = null;
+    // BASE-RELATIVE, like every other path the router holds internally. It is fed straight back
+    // to performNavigate on a veto, and commitNavigate -> resolve() applies the base prefix
+    // itself - storing it pre-prefixed made a veto under base '/app' write '/app/app/other'
+    // into history, and the router then read that back as the base-relative '/app/other'.
+    let lastAcceptedPath: string | null = null;
     let lastAcceptedLocation: RouteLocation | null = null;
 
     createEffect(() =>
@@ -892,19 +896,19 @@ export function createRouter(config: RouterConfig): Router
         const accept = (value: RouteMatch | null): void =>
         {
             finish();
-            lastAcceptedFull = applyBase(s.fullPath);
+            lastAcceptedPath = s.fullPath;
             lastAcceptedLocation = untrack(location);
             setMatch(value);
         };
         const veto = (): void =>
         {
             finish();
-            if (lastAcceptedFull !== null)
+            if (lastAcceptedPath !== null)
             {
                 // Restore the previous URL in place: the vetoed entry never renders and
                 // does not survive on the stack. The restored route's guards re-run and
                 // pass again (they passed before) - guards must be side-effect-free.
-                untrack(() => performNavigate(lastAcceptedFull as string, { replace: true }));
+                untrack(() => performNavigate(lastAcceptedPath as string, { replace: true }));
             }
             else
             {
@@ -1048,6 +1052,14 @@ export function createRouter(config: RouterConfig): Router
         return flightSlots;
     }
 
+    // The raw search string, isolated so loaders can depend on it WITHOUT depending on the
+    // whole location. `match` is deliberately query-blind (a structural memo over the matched
+    // chain), so a source that read only match never re-evaluated for `?q=a` -> `?q=b` and the
+    // loader never re-ran - even though `query` is part of its documented arguments. Reading
+    // state() directly instead would re-run loaders on hash-only changes too; a memo over the
+    // string collapses those, because equal strings do not propagate.
+    const searchString = createMemo(() => state().search);
+
     // One resource per level; each level with a loader starts the moment the match
     // changes - all levels IN PARALLEL by construction. createResource handles
     // cancellation and race-guarding per level, exactly as it did for the old
@@ -1059,12 +1071,14 @@ export function createRouter(config: RouterConfig): Router
             () =>
             {
                 const m = match();
+                // Tracked: a query-only navigation must produce a fresh trigger.
+                const search = searchString();
                 const route = m?.matched[level];
                 if (m === null || route === undefined || !route.loader)
                 {
                     return null;
                 }
-                return { match: m, level, loader: route.loader, params: m.params, query: parseQuery(untrack(state).search) };
+                return { match: m, level, loader: route.loader, params: m.params, query: parseQuery(search) };
             },
             async (trigger, signal) =>
             {

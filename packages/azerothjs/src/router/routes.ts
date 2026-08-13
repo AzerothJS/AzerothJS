@@ -20,7 +20,8 @@
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
-import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
+import { serializeChild, wrapContentsAnchored, hydrationNode, deferHydration, runInPass } from '../reactivity/internal.ts';
+import type { HydrationPass } from '../reactivity/internal.ts';
 import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode } from '../component/index.ts';
 import { playTransitionClasses } from '../renderer/transition-classes.ts';
 import { adoptStyleSheet } from '../renderer/adopt-style.ts';
@@ -184,6 +185,14 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
     let firstRun = hydrateFirstRun;
     let mounted = false;
 
+    // Held while this <Routes> still owes the hydration pass an adoption. Taken when the
+    // first run cannot proceed (an unresolved lazy chunk) and released the moment the range
+    // is adopted or abandoned. It carries the pass itself because the adopting re-run is
+    // scheduled by the reactive system, long after hydrate()'s synchronous window closed:
+    // without re-entering the pass that run would build fresh DOM over the server's markup
+    // and leave the page inert.
+    let deferred: { pass: HydrationPass; release: () => void } | null = null;
+
     // The current branch's SINGLE root element, when it has one - the thing a
     // transition's classes can land on. null for fragment-rooted branches.
     let currentEl: HTMLElement | null = null;
@@ -233,6 +242,12 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         // the branch, where an <ErrorBoundary> catches it.
         if (matchResult !== null && !router.chainReady())
         {
+            // Adoption is owed but cannot happen yet: keep the pass open across the wait so
+            // the re-run that lands the chunk still adopts instead of rebuilding.
+            if (firstRun && deferred === null)
+            {
+                deferred = deferHydration();
+            }
             return;
         }
 
@@ -247,19 +262,47 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
             firstRun = false;
             mounted = true;
             previousMatch = matchResult;
-            if (factory)
-            {
-                const build = factory;
-                createRoot((dispose) =>
-                {
-                    branchDispose = dispose;
-                    hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
-                });
-            }
 
-            // Every server node in this range must be claimed by the adopted
-            // route chain; a leftover means SSR/CSR diverged. hydrate() recovers.
-            hydrationCursor?.assertExhausted('<Routes> content');
+            /** Claims the server range for the matched chain. Runs under the pass. */
+            const adopt = (): void =>
+            {
+                if (factory)
+                {
+                    const build = factory;
+                    createRoot((dispose) =>
+                    {
+                        branchDispose = dispose;
+                        hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
+                    });
+                }
+
+                // Every server node in this range must be claimed by the adopted
+                // route chain; a leftover means SSR/CSR diverged. hydrate() recovers.
+                hydrationCursor?.assertExhausted('<Routes> content');
+            };
+
+            const resume = deferred;
+            try
+            {
+                // Straight through on the synchronous first run (already inside the pass);
+                // through runInPass when the chunk made us wait, which both restores
+                // 'hydrate' and routes a mismatch to hydrate()'s fallback instead of letting
+                // it escape as an unhandled rejection.
+                if (resume !== null)
+                {
+                    runInPass(resume.pass, adopt);
+                }
+                else
+                {
+                    adopt();
+                }
+            }
+            finally
+            {
+                // Adopted, or failed trying - either way this <Routes> owes the pass nothing more.
+                resume?.release();
+                deferred = null;
+            }
             return;
         }
 
