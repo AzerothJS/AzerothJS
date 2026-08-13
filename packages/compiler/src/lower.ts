@@ -32,7 +32,7 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { hostEventType, bindWriteBack, isBindingAttr, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
+import { hostEventType, bindWriteBack, isBindingAttr, isChildResolvedProperty, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -317,7 +317,12 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
                 // A content property has no attribute form (see CONTENT_PROPERTIES), so it goes to the
                 // binding list even though its value is a literal; a static AFTER a spread goes there
                 // too (the source-order rule above); everything else bakes into the template.
-                if (CONTENT_PROPERTIES.has(name) || seenSpread)
+                //
+                // A child-resolved property (`<select value>`) joins them for a sharper reason: baked
+                // into the template it leaves NO writer at all, and `value` is not a content attribute
+                // of <select>, so the clone would carry an inert attribute and show the wrong option.
+                // As a binding it becomes a setProp the runtime applies once the options exist.
+                if (CONTENT_PROPERTIES.has(name) || isChildResolvedProperty(name, node.tag) || seenSpread)
                 {
                     ctx.bindings.push({ kind: 'property', target: id, name, value });
                 }

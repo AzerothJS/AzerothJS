@@ -27,6 +27,12 @@ export interface ReactiveSources
     writable?: ReadonlySet<string>;
 
     /**
+     * Source name -> declaring keyword (`state`/`derived`/`deferred`), so a read-only-write
+     * rejection can name what the target actually is instead of calling everything `derived`.
+     */
+    kinds?: ReadonlyMap<string, string>;
+
+    /**
      * Destructured prop aliases from a `component Name({ a, b = default }: P)` signature: each local
      * binding name maps to the EXPRESSION a bare read of it lowers to - `props.a`, or `(props.a ?? default)`
      * for a defaulted binding, or `props.orig` for a rename `{ orig: a }`. So a destructured prop stays

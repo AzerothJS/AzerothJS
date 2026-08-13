@@ -71,6 +71,12 @@ export interface ReactiveAnalysis
     propAliases?: ReadonlyMap<string, string> | undefined;
     /** `form` declarations: form name -> its field-key set (drives the `NAME.field` read/write rewrite). */
     forms: ReadonlyMap<string, ReadonlySet<string>>;
+    /** Forms whose field-key set is NOT exhaustive (non-literal initializer, spread, computed key). */
+    openForms?: ReadonlySet<string>;
+    /** Array-form (`form name[]`) declarations: name -> blank-row key set. */
+    arrayForms?: ReadonlyMap<string, ReadonlySet<string>>;
+    /** Row variables iterating an OPEN array form: their field binds cannot be wired. */
+    openRows?: ReadonlySet<string>;
     /** Array-form `<For>` row variables: row name -> blank-row keys (drives the `row.field` rewrite). */
     rowForms: ReadonlyMap<string, ReadonlySet<string>>;
 }
@@ -154,6 +160,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
 
     const forms = new Map<string, ReadonlySet<string>>();
     const arrayForms = new Map<string, ReadonlySet<string>>();
+    const openForms = new Set<string>();
     for (const item of component.body)
     {
         if (item.kind === 'state' || item.kind === 'derived' || item.kind === 'deferred')
@@ -166,7 +173,12 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
             // A flat form registers its field keys for the `NAME.field` access sugar. An array-form has no
             // top-level field sugar (its NAME is read explicitly, like a factory), but its blank-row keys are
             // used to sugar the `<For>` row variable's field access (collected from the markup below).
-            (item.isArray ? arrayForms : forms).set(item.name, new Set(formFieldKeys(source, item)));
+            const fields = formFieldKeys(source, item);
+            (item.isArray ? arrayForms : forms).set(item.name, new Set(fields.keys));
+            if (fields.open)
+            {
+                openForms.add(item.name);
+            }
         }
     }
 
@@ -179,7 +191,18 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         {
             if (item.kind === 'markup')
             {
-                collectRowForms(item.node, arrayForms, rowForms);
+                collectRowForms(source, item.node, arrayForms, rowForms);
+            }
+            else if (item.kind === 'opaque-statements')
+            {
+                // A <For> held in a statement (`const frag = <For .../>`) compiles through the
+                // same emitter; skipping it here left its rows unregistered - holes rendered
+                // silently empty and binds were rejected with a rename that could fix nothing.
+                collectEmbeddedRowForms(source, item.start, item.end, arrayForms, rowForms);
+            }
+            else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
+            {
+                collectEmbeddedRowForms(source, item.bodyStart, item.bodyEnd, arrayForms, rowForms);
             }
         }
     }
@@ -212,7 +235,20 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
         }
     }
 
-    return { sources, hasProps, scopes, paramName: param.identName, hasRestProp: param.hasRest, propAliases, forms, rowForms };
+    // A row variable inherits its array form's openness. The linkage is the SHARED key-set
+    // instance collectRowForms copies out of arrayForms - identity, not equality, on purpose.
+    const openRows = new Set<string>();
+    for (const [row, keys] of rowForms)
+    {
+        for (const [name, formKeys] of arrayForms)
+        {
+            if (keys === formKeys && openForms.has(name))
+            {
+                openRows.add(row);
+            }
+        }
+    }
+    return { sources, hasProps, scopes, paramName: param.identName, hasRestProp: param.hasRest, propAliases, forms, openForms, arrayForms, openRows, rowForms };
 }
 
 /**
@@ -224,6 +260,7 @@ export function analyzeComponent(source: string, component: ComponentDecl): Reac
  * @internal
  */
 function collectRowForms(
+    source: string,
     node: MarkupElement | MarkupFragment,
     arrayForms: ReadonlyMap<string, ReadonlySet<string>>,
     rowForms: Map<string, ReadonlySet<string>>
@@ -262,9 +299,191 @@ function collectRowForms(
     {
         if (child.kind === 'element' || child.kind === 'fragment')
         {
-            collectRowForms(child, arrayForms, rowForms);
+            collectRowForms(source, child, arrayForms, rowForms);
+        }
+        else if (child.kind === 'expression')
+        {
+            // A <For> inside an expression hole compiles through the same emitter and its row
+            // fields wire through the same name-keyed registry - leaving it unregistered made
+            // the row sugar position-dependent: valid-looking binds emitted raw, dead code.
+            collectEmbeddedRowForms(source, child.start + 1, child.end - 1, arrayForms, rowForms);
         }
     }
+    for (const attr of node.kind === 'element' ? node.attributes : [])
+    {
+        if (!attr.spread && attr.name !== null && attr.value.kind === 'expression')
+        {
+            collectEmbeddedRowForms(source, source.indexOf('{', attr.start) + 1, attr.end - 1, arrayForms, rowForms);
+        }
+    }
+}
+
+/** Runs {@link collectRowForms} over every markup region embedded in a TS slice. */
+function collectEmbeddedRowForms(
+    source: string,
+    start: number,
+    end: number,
+    arrayForms: ReadonlyMap<string, ReadonlySet<string>>,
+    rowForms: Map<string, ReadonlySet<string>>
+): void
+{
+    let pos = start;
+    for (;;)
+    {
+        const at = findMarkupStart(source, pos);
+        if (at === -1 || at >= end)
+        {
+            return;
+        }
+        try
+        {
+            const parsed = parseMarkup(source, at);
+            collectRowForms(source, parsed.node, arrayForms, rowForms);
+            pos = parsed.end;
+        }
+        catch
+        {
+            return;
+        }
+    }
+}
+
+/**
+ * The array-form NAME when `code` is `NAME` or `NAME.rows()` and NAME is an array-form; else
+ * null. The one reading of the `each=` shape, shared with the bind-target diagnostic so the
+ * lexical row-form linkage there can never disagree with the registration here.
+ */
+export function arrayFormEachName(
+    code: string,
+    arrayForms: ReadonlyMap<string, ReadonlySet<string>>
+): string | null
+{
+    let expr = parsedExpression(code);
+    if (expr === undefined)
+    {
+        return null;
+    }
+    // Wrappers spell the same iteration; leaving them unlinked silently severed the row sugar
+    // while the same wrappers on a bind TARGET are loudly rejected.
+    const unwrap = (node: ts.Expression): ts.Expression =>
+    {
+        let current = node;
+        while (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current))
+        {
+            current = current.expression;
+        }
+        return current;
+    };
+    expr = unwrap(expr);
+    // Array methods that RESELECT rows without replacing them: every element of the result is an
+    // element of the receiver, so each row is still the same `{ key, form }` record and its
+    // fields wire exactly as they do on the whole list. Sorting a list for display or filtering
+    // out completed items is the ordinary reason to have an array form at all, and leaving those
+    // spellings unlinked emitted a DEAD write onto the record while the projection kept typing
+    // the field as present. `map`/`flatMap` are absent on purpose (they replace elements), and so
+    // is `concat` (it can mix in rows from elsewhere).
+    const RESELECTING = new Set(['filter', 'slice', 'toSorted', 'toReversed']);
+    const receiverOf = (node: ts.Expression): ts.Expression | null =>
+    {
+        if (ts.isCallExpression(node))
+        {
+            const callee = unwrap(node.expression);
+            if (ts.isPropertyAccessExpression(callee) && RESELECTING.has(callee.name.text))
+            {
+                return unwrap(callee.expression);
+            }
+            // `toSpliced(start, deleteCount)` only REMOVES, and is identity-preserving like the
+            // rest; `toSpliced(start, deleteCount, ...items)` INSERTS whatever it is given, and
+            // treating those inserted elements as rows wires form sugar onto objects that have no
+            // form - which throws at first render rather than merely reading nothing.
+            if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'toSpliced'
+                && node.arguments.length <= 2)
+            {
+                return unwrap(callee.expression);
+            }
+        }
+        // A guarded or defaulted list is the same list: `cond ? rows.rows() : []`,
+        // `rows.rows() ?? []`, `rows.rows() || []`. Every element still belongs to the form, so
+        // the rows wire; only the EMPTY alternative is admitted, because any other branch could
+        // contribute foreign elements.
+        const isEmptyArray = (candidate: ts.Expression): boolean =>
+            ts.isArrayLiteralExpression(unwrap(candidate)) && unwrap(candidate).getChildCount() >= 0
+            && (unwrap(candidate) as ts.ArrayLiteralExpression).elements.length === 0;
+        if (ts.isConditionalExpression(node))
+        {
+            const whenTrue = unwrap(node.whenTrue);
+            const whenFalse = unwrap(node.whenFalse);
+            if (isEmptyArray(whenFalse))
+            {
+                return whenTrue;
+            }
+            if (isEmptyArray(whenTrue))
+            {
+                return whenFalse;
+            }
+        }
+        if (ts.isBinaryExpression(node)
+            && (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+                || node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+            && isEmptyArray(node.right))
+        {
+            return unwrap(node.left);
+        }
+        // `[...NAME.rows()]` - a copy of the same elements.
+        if (ts.isArrayLiteralExpression(node) && node.elements.length === 1)
+        {
+            const only = node.elements[0];
+            if (only !== undefined && ts.isSpreadElement(only))
+            {
+                return unwrap(only.expression);
+            }
+        }
+        return null;
+    };
+    // Chained reselections (`rows.rows().filter(a).slice(0, 3)`) peel one at a time. The bound is
+    // a guard against a pathological chain, not a real depth.
+    for (let depth = 0; depth < 16; depth += 1)
+    {
+        const receiver = receiverOf(expr);
+        if (receiver === null)
+        {
+            break;
+        }
+        expr = receiver;
+    }
+    let base: string | undefined;
+    if (ts.isIdentifier(expr))
+    {
+        // NOT the bare handle: `each={rows}` passes the FieldArrayApi itself, which is neither an
+        // array nor a getter, so <For> throws "expected an array, received object" at first
+        // render. Linking it emitted working row sugar onto a list that never renders - the same
+        // standard the inserting-toSpliced case is rejected by. `rows.rows()` is the spelling.
+        base = arrayForms.has(expr.text) ? undefined : expr.text;
+    }
+    else if (ts.isCallExpression(expr))
+    {
+        const callee = unwrap(expr.expression);
+        if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'rows')
+        {
+            const object = unwrap(callee.expression);
+            if (ts.isIdentifier(object))
+            {
+                base = object.text;
+            }
+        }
+    }
+    else if (ts.isPropertyAccessExpression(expr) && expr.name.text === 'rows')
+    {
+        // The DETACHED getter (`each={rows.rows}`, no call): For accepts `T[] | (() => T[])`,
+        // so this renders identically to `rows.rows()` - leaving it unlinked severed the row
+        // sugar on a spelling the runtime happily accepts.
+        const object = unwrap(expr.expression);
+        if (ts.isIdentifier(object))
+        {
+            base = object.text;
+        }
+    }
+    return base !== undefined && arrayForms.has(base) ? base : null;
 }
 
 /** The blank-row keys when `code` is `NAME` or `NAME.rows()` and NAME is an array-form; else undefined. */
@@ -273,22 +492,8 @@ function arrayFormEachKeys(
     arrayForms: ReadonlyMap<string, ReadonlySet<string>>
 ): ReadonlySet<string> | undefined
 {
-    const expr = parsedExpression(code);
-    if (expr === undefined)
-    {
-        return undefined;
-    }
-    let base: string | undefined;
-    if (ts.isIdentifier(expr))
-    {
-        base = expr.text;
-    }
-    else if (ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)
-        && ts.isIdentifier(expr.expression.expression) && expr.expression.name.text === 'rows')
-    {
-        base = expr.expression.expression.text;
-    }
-    return base !== undefined ? arrayForms.get(base) : undefined;
+    const name = arrayFormEachName(code, arrayForms);
+    return name !== null ? arrayForms.get(name) : undefined;
 }
 
 /** The first parameter NAME of an arrow-function expression `(row, i) => ...`, or null. */

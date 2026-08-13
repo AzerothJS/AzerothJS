@@ -14,7 +14,7 @@ describe('codegen invariants', () =>
 {
     it('codegen is deterministic (identical output for identical input)', () =>
     {
-        const src = 'component C { state a = 0; state b = 0; <div><span>{a}</span><For each={list} let={ i }><li>{i}</li></For></div> }';
+        const src = 'component C { state a = 0; state b = 0; <div><span>{a}</span><For each={list} key={(i) => i} let={ i }><li>{i}</li></For></div> }';
         expect(code(src)).toBe(code(src));
     });
 
@@ -142,7 +142,7 @@ describe('IR validation before codegen', () =>
 
     it('determinism holds with IR validation in the pipeline', () =>
     {
-        const src = 'component C { state a = 0; <ul><For each={list} let={ i }><li>{i}</li></For></ul> }';
+        const src = 'component C { state a = 0; <ul><For each={list} key={(i) => i} let={ i }><li>{i}</li></For></ul> }';
         expect(code(src)).toBe(code(src));
     });
 });
@@ -185,6 +185,16 @@ describe('correctness - derived mutation (caught in BOTH phases, every context)'
     it('the semantic phase (diagnoseModule) reports assign-to-derived in a handler', () =>
     {
         expect(codes(withDerived('<button onClick={() => d = 5}>{d}</button>'))).toContain('error:azeroth/assign-to-derived');
+    });
+
+    it('names a `deferred` a deferred, not a derived', () =>
+    {
+        // One guard covers every read-only source; its message must name the actual keyword or
+        // the suggested fix ("compute it from state") points at the wrong declaration.
+        const src = 'component C { state n = 0; deferred slow = n; <button onClick={() => slow = 5}>{slow}</button> }';
+        const found = diagnoseModule(src).find((d) => d.code === 'azeroth/assign-to-derived');
+        expect(found?.message).toContain('`deferred` value');
+        expect(found?.message).not.toContain('`derived` value');
     });
 
     it('...in an effect body', () =>

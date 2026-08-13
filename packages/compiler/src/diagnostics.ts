@@ -53,6 +53,8 @@ import type { ReactiveSources } from './dep.ts';
 
 import { parseModule, step, skipTrivia } from './parser.ts';
 import { parseMarkup } from './markup-parser.ts';
+import { findConstructs } from './lower-reactive.ts';
+import { arrayFormEachName } from './analyze.ts';
 import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 import {
     hostEventType,
@@ -141,11 +143,15 @@ export interface AzerothDiagnostic
 export function diagnoseModule(source: string): AzerothDiagnostic[]
 {
     const diagnostics: AzerothDiagnostic[] = [];
-    for (const item of parseModule(source).items)
+    const items = parseModule(source).items;
+    // Imports and module-scope variables, resolved once: a bind target that names one is a
+    // silent half-dead binding (or a TypeError on the first keystroke, for an import).
+    const moduleScope = moduleBindScope(source, items);
+    for (const item of items)
     {
         if (item.kind === 'component')
         {
-            diagnoseComponent(source, item, diagnostics);
+            diagnoseComponent(source, item, diagnostics, moduleScope);
         }
         else
         {
@@ -153,6 +159,17 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
             walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(diagnostics));
+            // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
+            // per-component pass and compiled to the same silent half-dead binding. A synthetic
+            // one-item body reuses the whole resolver with module scope only.
+            diagnoseBindTargets(
+                source,
+                { body: [{ kind: 'opaque-statements', start: item.start, end: item.end }] } as unknown as ComponentDecl,
+                { sources: [], hasProps: false, scopes: [], forms: new Map(), rowForms: new Map() },
+                diagnostics,
+                moduleScope,
+                true
+            );
         }
     }
     return diagnostics;
@@ -649,7 +666,7 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
     return -1;
 }
 
-function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
+function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope): void
 {
     diagnoseKeywordShadows(source, component, out);
     diagnoseDeclarationSlips(source, component, out);
@@ -717,16 +734,31 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     // azeroth/assign-to-derived (semantic phase). The reactive rewrite ALSO rejects this
     // (the codegen-time backstop), so derived mutation is caught in both phases.
     diagnoseDerivedWrites(source, component, analysis, out);
+    diagnoseBindTargets(source, component, analysis, out, moduleScope);
+    diagnoseReusedMarkupValues(source, component, out);
 
     // azeroth/handler-not-function, plus the GRAMMAR 6.6 markup rules (duplicate-attr,
     // duplicate-prop, reserved-event-name, content-property-children) - both walk the SAME
     // deep markup traversal, embedded expression markup included.
+    //
+    // Statement and effect/watch/wrapper bodies are walked too: markup held in a statement
+    // (`const frag = <For .../>`) compiles through the same emitter, so leaving it out made
+    // EVERY rule in this family position-dependent - a duplicate attribute, a reserved event
+    // name, or a keyless <For> was an error in markup position and silent one line above.
     for (const item of component.body)
     {
         if (item.kind === 'markup')
         {
             diagnoseEventHandlers(source, item.node, out);
             walkMarkupDeep(source, item.node, markupRuleVisitor(out));
+        }
+        else if (item.kind === 'opaque-statements')
+        {
+            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(out));
+        }
+        else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
+        {
+            walkEmbeddedMarkup(source, item.bodyStart, item.bodyEnd, markupRuleVisitor(out));
         }
     }
 
@@ -824,10 +856,1318 @@ function diagnoseSelfWriteEffects(source: string, component: ComponentDecl, reac
  * expressions (handlers, attributes, holes). A derived has no setter, so a write is a
  * compile-time error (the reactive rewrite enforces the same thing during codegen).
  */
+/**
+ * The message for a `bind:` whose target is a plain local rather than reactive state.
+ *
+ * Deliberately parallel to {@link assignToDerivedMessage}: that one covers a target that is
+ * reactive but not writable, this one a target that is writable but not reactive. Between them
+ * they are the two halves of GRAMMAR's "requires a writable reactive lvalue".
+ */
+export function bindTargetNotReactiveMessage(name: string): string
+{
+    return `\`bind:\` needs a writable reactive value, but \`${ name }\` is a plain variable. `
+        + 'Writing to it cannot update the DOM, so the binding would only work one way. '
+        + `Declare it as \`state ${ name }\` if it must change.`;
+}
+
+/**
+ * Names a markup element introduces for its subtree: `let={row}` and `index={i}`.
+ *
+ * These are accessors, not variables, so they are neither a plain local nor a component-level
+ * source - and a bind target must be judged against the scope it actually resolves in.
+ */
+function markupBoundNames(el: MarkupElement): string[]
+{
+    const names: string[] = [];
+    for (const attr of el.attributes)
+    {
+        // The SAME gate the lowerer applies. Without it, a plain `<div let="x">` or any author
+        // attribute happening to be called `let`/`index` was treated as a row binding, which
+        // shadowed a real component local and rejected programs that used to build. Semantics owns
+        // which attributes bind on which tag; this rule must not re-decide it - `isBindingAttr`
+        // already answers for the tag, so no separate built-in test is needed.
+        if (attr.spread || attr.name === null || attr.value.kind !== 'expression'
+            || !isBindingAttr(el.tag, attr.name))
+        {
+            continue;
+        }
+        const text = attr.value.code.trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(text))
+        {
+            names.push(text);
+        }
+    }
+    return names;
+}
+
+/** An array-form linkage carried LEXICALLY with a row name: which form, its keys, its openness. */
+interface RowFormLink
+{
+    form: string;
+    keys: ReadonlySet<string>;
+    open: boolean;
+}
+
+/** The lexical scope a bind target resolves in: rows (with any form linkage), region locals, nested keywords. */
+interface BindScope
+{
+    rows: ReadonlyMap<string, RowFormLink | null>;
+    region: ReadonlyMap<string, 'param' | 'local'>;
+    keywords: ReadonlySet<string>;
+}
+
+/**
+ * The complete bind-target rule. GRAMMAR: `bind:p={lvalue}` requires a WRITABLE REACTIVE lvalue.
+ * The writable reactive lvalues are exactly: a `state` name, a `form` field path
+ * (`login.email`), and an array-form row field (`row.qty`). A STORE is none of these: the
+ * handle is a function (`box()`) and its state is written through its own setters, so a dotted
+ * "store path" is a compile-silent mount crash and is rejected here.
+ *
+ * Resolution is scope-ordered, innermost first, and row-form linkage is LEXICAL: each `<For>`
+ * binds its own row to its own array form, carried through the walk beside the row name. The
+ * EMITTER wires row fields by NAME, component-wide - so wherever the lexical linkage and the
+ * name-keyed registry disagree (two rows sharing a name, a plain row shadowing an array-form
+ * row), the bind would wire the wrong form and is rejected with a rename.
+ *
+ * Dotted targets are classified from the AST and canonicalized, never pattern-matched: spacing,
+ * comments, and line-wrapped dots spell the same chain. Wrapper spellings (parentheses, a
+ * non-null assertion, bracket access) defeat the emitter rewrite even when the chain under them
+ * is valid, so they are rejected with the plain spelling. What the rule cannot resolve it
+ * leaves alone: an unsuppressable false positive is worse than a silent defect.
+ */
+function diagnoseBindTargets(
+    source: string, component: ComponentDecl, analysis: ReactiveAnalysis,
+    out: AzerothDiagnostic[], moduleScope: ModuleBindScope, moduleLevel = false
+): void
+{
+    const IDENT = /^[A-Za-z_$][\w$]*$/;
+
+    const stateNames = new Set<string>();
+    const readOnlyKinds = new Map<string, string>();
+    for (const src of analysis.sources)
+    {
+        if (src.kind === 'state')
+        {
+            stateNames.add(src.name);
+        }
+        else
+        {
+            readOnlyKinds.set(src.name, src.kind);
+        }
+    }
+    const handleKinds = new Map<string, string>();
+    for (const item of component.body)
+    {
+        if (item.kind === 'form' || item.kind === 'store' || item.kind === 'resource'
+            || item.kind === 'stream' || item.kind === 'selector')
+        {
+            handleKinds.set(item.name, item.kind);
+        }
+    }
+    const propAliases = analysis.propAliases ?? new Map<string, string>();
+    const paramName = analysis.hasProps ? analysis.paramName ?? null : null;
+    const openForms = analysis.openForms ?? new Set<string>();
+    const arrayForms = analysis.arrayForms ?? new Map<string, ReadonlySet<string>>();
+    const rowFormsGlobal = analysis.rowForms;
+
+    // At module level "declare it as state" is illegal advice; the module remedy is the truth.
+    const plainMessage = (name: string): string => moduleLevel
+        ? '`bind:` needs a writable reactive value, but `' + name + '` is a module-scope '
+            + 'variable, which no component tracks - the input would never update when it changes. '
+            + 'Move it into the component as `state`.'
+        : bindTargetNotReactiveMessage(name);
+
+    // Plain variables the component body declares at statement level, destructured included.
+    const plainLocals = new Set<string>();
+    for (const item of component.body)
+    {
+        if (item.kind !== 'opaque-statements')
+        {
+            continue;
+        }
+        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        for (const statement of sourceFile.statements)
+        {
+            if (ts.isVariableStatement(statement))
+            {
+                for (const declaration of statement.declarationList.declarations)
+                {
+                    collectBoundNames(declaration.name, plainLocals);
+                }
+            }
+            else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+                && statement.name !== undefined)
+            {
+                plainLocals.add(statement.name.text);
+            }
+        }
+    }
+
+    const remedy = 'Bind a `state` instead, or handle the event yourself with an onInput handler.';
+    const propsMessage = (read: string): string =>
+        '`bind:` needs a writable reactive value, but `' + read + '` is a prop, and props are '
+        + 'read-only in the child - the parent owns the value. `bind:` it where this component '
+        + 'is used and call the write-back callback the parent passes, or copy it into local `state`.';
+    const renameMessage = (text: string, head: string, why: string): string =>
+        '`' + text + '` cannot be wired reliably: ' + why + ' The compiler wires array-form row '
+        + 'fields by NAME across the whole component, so this bind cannot be proven to reach '
+        + 'the right row. Rename one `let={ ' + head + ' }`.';
+    const depthMessage = (text: string, field: string): string =>
+        '`' + text + '` goes deeper than the field: `bind:` wires exactly one level (`' + field
+        + '`), and a deeper write mutates the values snapshot without notifying anything. Bind '
+        + '`' + field + '`, or handle the event yourself with an onInput handler.';
+    const notValidMessage = (text: string): string =>
+        '`bind:` needs a writable reactive value, but `' + text + '` is not a valid target '
+        + 'expression. Bind a `state` name or a `form` field, or handle the event yourself '
+        + 'with an onInput handler.';
+    const notAssignableMessage = (text: string): string =>
+        '`bind:` needs a writable reactive value, but `' + text + '` is not an assignable '
+        + 'expression. Bind a `state` name or a `form` field, or handle the event yourself '
+        + 'with an onInput handler.';
+    const thisMessage = (text: string): string =>
+        '`bind:` needs a writable reactive value, but `' + text + '` is never one: a component '
+        + 'is a plain function, so `this` is undefined at runtime. Bind a `state` name instead.';
+    const wrappedMessage = (canonical: string): string =>
+        '`bind:` rewrites its target to wire the write-back, and parentheses, a non-null '
+        + 'assertion, or bracket access around it defeat the rewrite - the binding would read '
+        + 'and write raw, unwired values. Write the target plainly as `' + canonical + '`.';
+
+    /** The message for a resolved-invalid bare target, or null when the target is valid/unknown. */
+    const resolveBare = (name: string, scope: BindScope): string | null =>
+    {
+        // A reactive keyword declared INSIDE the embedded region (a nested `state` in a callback
+        // is a real scoped source) shadows every outer meaning of the name. The region scan cannot
+        // place it in an exact function scope, so the name is left ALONE rather than resolved -
+        // silence over a wrong rejection.
+        if (scope.keywords.has(name))
+        {
+            return null;
+        }
+        if (name === 'this')
+        {
+            return thisMessage('this');
+        }
+        if (scope.rows.has(name))
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is a row binding, '
+                + 'which is read-only. Bind to the state the row came from, or handle the '
+                + 'event yourself with an onInput handler.';
+        }
+        const local = scope.region.get(name);
+        if (local === 'param')
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is a function '
+                + 'parameter, which nothing reactive tracks - the input could never update. ' + remedy;
+        }
+        if (local === 'local')
+        {
+            return plainMessage(name);
+        }
+        if (stateNames.has(name))
+        {
+            return null;
+        }
+        const roKind = readOnlyKinds.get(name);
+        if (roKind !== undefined)
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is a `' + roKind
+                + '` value, which is read-only. Bind the `state` it is computed from, or handle '
+                + 'the event yourself with an onInput handler.';
+        }
+        const handle = handleKinds.get(name);
+        if (handle === 'form')
+        {
+            // Never recommend a spelling the compiler itself would reject: an array form has no
+            // direct fields, an open form has no knowable ones, an empty form none at all.
+            const rowKeys = arrayForms.get(name);
+            if (rowKeys !== undefined)
+            {
+                const opening = '`bind:` needs a writable reactive value, but `' + name + '` is '
+                    + 'the `form ' + name + '[]` handle itself, which has no fields of its own';
+                if (openForms.has(name))
+                {
+                    return opening + ', and its row fields are not knowable at compile time. '
+                        + 'Inline the blank-row fields in the `form ' + name + '[]` literal, or '
+                        + 'handle the event yourself with an onInput handler.';
+                }
+                const first = [...rowKeys].find(key => isSpellableField(key));
+                if (first === undefined)
+                {
+                    return opening + ', and its blank row declares no fields `bind:` can wire. '
+                        + 'Handle the event yourself with an onInput handler.';
+                }
+                return opening + '. Iterate its rows and bind a row field there '
+                    + '(`<For each={' + name + '.rows()} key={(row) => row.key} let={ row }>` '
+                    + 'with `bind:value={row.' + first + '}`).';
+            }
+            const fields = analysis.forms.get(name) ?? new Set<string>();
+            if (openForms.has(name) || fields.size === 0)
+            {
+                return '`bind:` needs a writable reactive value, but `' + name + '` is the '
+                    + '`form` handle itself, which is not assignable' + (openForms.has(name)
+                    ? ', and its fields are not knowable at compile time. Inline the fields '
+                            + 'in the initial object literal to bind them, or handle the event '
+                            + 'yourself with an onInput handler.'
+                    : ', and it declares no fields.');
+            }
+            const first = [...fields].find(key => isSpellableField(key));
+            if (first === undefined)
+            {
+                return '`bind:` needs a writable reactive value, but `' + name + '` is the '
+                    + '`form` handle itself, which is not assignable, and none of its field names '
+                    + 'is an identifier `bind:` can wire. Handle the event yourself with an '
+                    + 'onInput handler.';
+            }
+            return '`bind:` needs a writable reactive value, but `' + name + '` is the `form` '
+                + 'handle itself, which is not assignable. Bind one of its fields instead '
+                + '(`' + name + '.' + first + '`).';
+        }
+        if (handle === 'store')
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is the `store` '
+                + 'handle itself, which is not assignable. A store is read as `' + name + '()` and '
+                + 'written through its own setters - bind a `state` instead, or write through a '
+                + 'store method in an onInput handler.';
+        }
+        if (handle !== undefined)
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is a `' + handle
+                + '` handle, which is read-only. Copy its value into `state` to edit it, or '
+                + 'handle the event yourself with an onInput handler.';
+        }
+        if (propAliases.has(name))
+        {
+            return propsMessage(name);
+        }
+        if (plainLocals.has(name))
+        {
+            return plainMessage(name);
+        }
+        if (moduleScope.imports.has(name))
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is an import, '
+                + 'and an imported binding cannot be assigned. Own the value as `state`, or write '
+                + 'back through a function the module exports.';
+        }
+        if (moduleScope.vars.has(name))
+        {
+            return '`bind:` needs a writable reactive value, but `' + name + '` is a module-scope '
+                + 'variable, which no component tracks - the input would never update when it changes. '
+                + 'Move it into the component as `state`.';
+        }
+        return null;
+    };
+
+    /** The message for a resolved-invalid dotted target (canonical spelling), or null when valid/unknown. */
+    const resolveDotted = (text: string, scope: BindScope): string | null =>
+    {
+        const segments = text.split('.');
+        const head = segments[0] as string;
+        if (scope.keywords.has(head))
+        {
+            return null;
+        }
+        if (scope.rows.has(head))
+        {
+            const link = scope.rows.get(head) ?? null;
+            const field = segments[1] as string;
+            // The emitter sugars row fields BY FIELD NAME, component-wide, and routes through the
+            // row object's OWN `.form` - so which <For> registered a shared row name never
+            // matters when both agree the FIELD is a row field. The only mis-wires are per field:
+            // the registry claims a field this row does not carry (sugar on the wrong shape), or
+            // drops a field this row needs (raw, dead).
+            const sugared = rowFormsGlobal.get(head)?.has(field) ?? false;
+            if (link === null)
+            {
+                if (sugared)
+                {
+                    return renameMessage(text, head, '`' + head + '` names a plain row here, but '
+                        + 'an array-form row elsewhere in this component claims `' + field + '` '
+                        + 'as a row field, so the emitter would wire it as one.');
+                }
+                // Property writes through a plain row alias are the author's business.
+                return null;
+            }
+            if (link.open)
+            {
+                return '`' + text + '` cannot be wired: `' + head + '` iterates an array form '
+                    + 'whose row fields are not knowable at compile time, because its initial '
+                    + 'object does not declare them all literally. Inline the blank-row fields in '
+                    + 'the `form ..[]` literal, or handle the event yourself with an onInput handler.';
+            }
+            if (!link.keys.has(field))
+            {
+                return '`' + text + '` is not a row field of `form ' + link.form + '[]` - its '
+                    + 'row fields are ' + [...link.keys].map(k => '`' + k + '`').join(', ') + '.';
+            }
+            if (!sugared)
+            {
+                return renameMessage(text, head, 'another <For> row named `' + head + '` decides '
+                    + 'which fields wire by name, and it does not carry `' + field + '` - the '
+                    + 'bind would emit raw and dead.');
+            }
+            if (segments.length > 2)
+            {
+                return depthMessage(text, head + '.' + field);
+            }
+            return null;
+        }
+        // A param or a local as the head may ALIAS something writable: property writes through
+        // an alias are the author's business. Only precisely classified heads are rejected.
+        if (scope.region.has(head))
+        {
+            return null;
+        }
+        if (head === 'this')
+        {
+            return thisMessage(text);
+        }
+        if (paramName !== null && head === paramName)
+        {
+            return propsMessage(text);
+        }
+        // A destructured prop is precisely classified, unlike a plain local alias: the alias
+        // exists ONLY as a props read, so a path through it is a write into the parent's object.
+        if (propAliases.has(head))
+        {
+            return propsMessage(text);
+        }
+        const fields = analysis.forms.get(head);
+        if (fields !== undefined)
+        {
+            const field = segments[1] as string;
+            if (fields.has(field))
+            {
+                return segments.length > 2 ? depthMessage(text, head + '.' + field) : null;
+            }
+            // An OPEN key set (non-literal initializer, spread, computed key) means the compiler
+            // cannot wire the field even though createForm may create it at runtime - and cannot
+            // list "the fields" honestly either.
+            if (openForms.has(head))
+            {
+                return '`' + text + '` cannot be wired: the fields of `form ' + head + '` are '
+                    + 'not knowable at compile time, because its initial object does not declare '
+                    + 'them all literally. Inline the field in the initial object literal, or '
+                    + 'handle the event yourself with an onInput handler.';
+            }
+            if (fields.size === 0)
+            {
+                return '`' + text + '` is not a field of `form ' + head + '`, which declares no fields.';
+            }
+            return '`' + text + '` is not a field of `form ' + head + '` - its fields are '
+                + [...fields].map(k => '`' + k + '`').join(', ') + '.';
+        }
+        // The array-form HANDLE has no fields of its own - a dotted bind through it targets the
+        // FieldArrayApi record and is dead in both directions.
+        const rowKeys = arrayForms.get(head);
+        if (rowKeys !== undefined)
+        {
+            const opening = '`' + text + '` reads the `form ' + head + '[]` handle, which has no '
+                + 'fields of its own - its rows do.';
+            if (openForms.has(head))
+            {
+                return opening + ' Its row fields are not knowable at compile time - inline the '
+                    + 'blank-row fields in the `form ' + head + '[]` literal, or handle the event '
+                    + 'yourself with an onInput handler.';
+            }
+            const first = [...rowKeys].find(key => isSpellableField(key));
+            if (first === undefined)
+            {
+                return opening + ' Its blank row declares no fields `bind:` can wire. Handle '
+                    + 'the event yourself with an onInput handler.';
+            }
+            return opening + ' Iterate them and bind the row field there '
+                + '(`<For each={' + head + '.rows()} key={(row) => row.key} let={ row }>` with '
+                + '`bind:value={row.' + first + '}`).';
+        }
+        const handle = handleKinds.get(head);
+        if (handle === 'store')
+        {
+            return '`bind:` cannot write through `' + head + '`, a `store` handle: a store is '
+                + 'read as `' + head + '()` and written through its own setters, so `' + text + '` '
+                + 'never reaches its state. Bind a `state` instead, or write through a store '
+                + 'method in an onInput handler.';
+        }
+        if (handle === 'resource' || handle === 'stream' || handle === 'selector')
+        {
+            return '`bind:` needs a writable reactive value, but `' + text + '` writes into '
+                + '`' + head + '`, a `' + handle + '` handle, which is read-only. Copy its value '
+                + 'into `state` to edit it, or handle the event yourself with an onInput handler.';
+        }
+        return null;
+    };
+
+    /**
+     * Syntax-level vetting for a target the canonicalizer could not classify. The write-back
+     * synthesizes `target = value`, so a non-lvalue shape emits a module that is not valid
+     * JavaScript - the bundler fails pointing into GENERATED code, never at the bind. Element
+     * access with a computed key (`arr[i]`) is a legal lvalue and stays silent like other aliases.
+     */
+    const resolveShape = (text: string, scope: BindScope): string | null =>
+    {
+        let expression: ts.Expression;
+        try
+        {
+            const { sourceFile } = parseExpressionSlice(text, 0);
+            const statement = sourceFile.statements[0];
+            if (statement === undefined || !ts.isExpressionStatement(statement))
+            {
+                return '`bind:` needs a writable reactive value, but this target is empty. '
+                    + 'Bind a `state` name or a `form` field.';
+            }
+            // parseExpressionSlice wraps the text in parentheses; unwrap ITS wrapper only.
+            expression = ts.isParenthesizedExpression(statement.expression)
+                ? statement.expression.expression : statement.expression;
+        }
+        catch
+        {
+            return null;
+        }
+        // Author wrappers around the whole target.
+        while (ts.isParenthesizedExpression(expression) || ts.isNonNullExpression(expression))
+        {
+            expression = expression.expression;
+        }
+        if (expression.kind === ts.SyntaxKind.ThisKeyword)
+        {
+            return thisMessage(text);
+        }
+        if (ts.isIdentifier(expression))
+        {
+            if (expression.text.length === 0)
+            {
+                return notValidMessage(text);
+            }
+            return resolveBare(expression.text, scope);
+        }
+        if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression))
+        {
+            let sawOptional = false;
+            let sawInvalid = false;
+            let computedAccess = false;
+            let bracketKey: string | null = null;
+            let node: ts.Expression = expression;
+            while (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+                || ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node))
+            {
+                if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node))
+                {
+                    node = node.expression;
+                    continue;
+                }
+                if (node.questionDotToken !== undefined)
+                {
+                    sawOptional = true;
+                }
+                if (ts.isPropertyAccessExpression(node))
+                {
+                    if (!ts.isIdentifier(node.name) || node.name.text.length === 0)
+                    {
+                        sawInvalid = true;
+                    }
+                }
+                else
+                {
+                    const argument = node.argumentExpression;
+                    if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
+                    {
+                        bracketKey = argument.text;
+                    }
+                    else
+                    {
+                        computedAccess = true;
+                    }
+                }
+                node = node.expression;
+            }
+            if (node.kind === ts.SyntaxKind.ThisKeyword)
+            {
+                return thisMessage(text);
+            }
+            if (sawOptional)
+            {
+                return '`bind:` needs a writable reactive value, but `' + text + '` is an optional '
+                    + 'chain, which can never be assigned. Bind the non-optional path, or handle '
+                    + 'the event yourself with an onInput handler.';
+            }
+            if (sawInvalid || (ts.isIdentifier(node) && node.text.length === 0))
+            {
+                return notValidMessage(text);
+            }
+            if (bracketKey !== null && ts.isIdentifier(node)
+                && (analysis.forms.has(node.text) || arrayForms.has(node.text)))
+            {
+                return 'The field `' + bracketKey + '` of `form ' + node.text + '` cannot be '
+                    + 'wired by `bind:`: its name is not an identifier, so the compiler cannot '
+                    + 'rewrite the access. Handle the event yourself with an onInput handler.';
+            }
+            // A computed element access on a resolvable-or-not head is an alias-class lvalue.
+            void computedAccess;
+            return null;
+        }
+        return notAssignableMessage(text);
+    };
+
+    const report = (attr: MarkupAttribute, message: string, code = 'azeroth/bind-target-not-reactive'): void =>
+    {
+        out.push({ code, severity: 'error', message, start: attr.start, end: attr.end });
+    };
+
+    const emptyScope: BindScope =
+    {
+        rows: new Map<string, RowFormLink | null>(),
+        region: new Map<string, 'param' | 'local'>(),
+        keywords: new Set<string>()
+    };
+
+    /**
+     * Flags row-field READS the emitter would sugar into something this name does not hold.
+     *
+     * The model here MUST be the emitter's, not a lexical one. The emitter rewrites `NAME.field`
+     * whenever the name-keyed registry claims that field for that name, component-wide, and it
+     * deliberately does NOT let a same-named parameter or local shadow a row (walk.ts rowFieldOf:
+     * row names are excluded from shadow registration on purpose). So a callback param, local, or
+     * loop variable that happens to share a registered row name is sugared too - `{items.map(row
+     * => row.qty)}` beside a `<For let={ row }>` over an array form compiles to
+     * `row().form.values().qty` on a plain object and throws at first render. An earlier version
+     * of this rule keyed on lexical rows and SKIPPED shadowed names, which silenced exactly the
+     * crashing set.
+     *
+     * Only a KEYWORD source (a nested `state`/`store`) genuinely shadows, because the emitter
+     * honours those; those stay silent.
+     */
+    const flagPoisonedRowReads = (sourceFile: ts.SourceFile, sliceStart: number, scope: BindScope, keywords: ReadonlySet<string>): void =>
+    {
+        const report = (node: ts.Node, message: string): void =>
+        {
+            out.push({
+                code: 'azeroth/row-name-collision',
+                severity: 'error',
+                message,
+                start: sliceStart + node.getStart(sourceFile),
+                end: sliceStart + node.getEnd()
+            });
+        };
+
+        const wiredByName = 'The compiler wires array-form row fields by NAME across the whole '
+            + 'component, and it does not let a same-named local shadow a row.';
+
+        const visitRead = (node: ts.Node): void =>
+        {
+            // `const { field } = row` and `row["field"]` are never rewritten (the sugar matches a
+            // dotted access only), so they read the raw `{ key, form }` record and render empty.
+            if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)
+                && node.initializer !== undefined && ts.isIdentifier(node.initializer))
+            {
+                const rowName = node.initializer.text;
+                const link = scope.rows.get(rowName) ?? null;
+                if (link !== null && !link.open && !keywords.has(rowName))
+                {
+                    const bound = new Set<string>();
+                    collectBoundNames(node.name, bound);
+                    const field = [...bound].find(key => link.keys.has(key));
+                    if (field !== undefined)
+                    {
+                        report(node.name, 'Destructuring `' + rowName + '` does not read its form '
+                            + 'fields: a row is a `{ key, form }` record, and only a dotted read '
+                            + '(`' + rowName + '.' + field + '`) is rewritten to the field value. '
+                            + 'Read the fields you need through the row.');
+                        return;
+                    }
+                }
+            }
+            if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression)
+                && (ts.isStringLiteral(node.argumentExpression)
+                    || ts.isNoSubstitutionTemplateLiteral(node.argumentExpression)))
+            {
+                const rowName = node.expression.text;
+                const link = scope.rows.get(rowName) ?? null;
+                const field = node.argumentExpression.text;
+                if (link !== null && !link.open && link.keys.has(field) && !keywords.has(rowName))
+                {
+                    report(node, '`' + rowName + '["' + field + '"]` is not rewritten to the field '
+                        + 'value: only a dotted read is. Write `' + rowName + '.' + field + '`.');
+                    return;
+                }
+            }
+            if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)
+                && ts.isIdentifier(node.name))
+            {
+                const name = node.expression.text;
+                const field = node.name.text;
+                const link = scope.rows.get(name) ?? null;
+                // ONLY an exact registry DISAGREEMENT is reported: this row lexically carries the
+                // field and the name-keyed registry does not, or the reverse. That is decidable
+                // from the two tables and nothing else.
+                //
+                // Everything softer was retired. Reporting a read merely because the registry
+                // claims the name - a helper parameter, a statement-scoped local, a row whose
+                // `each=` could not be followed - required guessing what the author meant, and six
+                // rounds of adversarial review each found valid programs it refused: a helper
+                // called WITH the row is correct, `rows.values()` is a documented getter, a form
+                // named in a guard is not iterated. A rule that fails a build has to be right
+                // every time, and this one could not be.
+                if (link !== null && !link.open && !keywords.has(name))
+                {
+                    const sugared = rowFormsGlobal.get(name)?.has(field) ?? false;
+                    if (link.keys.has(field) !== sugared)
+                    {
+                        report(node, '`' + name + '.' + field + '` would not read what this row '
+                            + 'holds: ' + wiredByName + ' Rename one `let={ ' + name + ' }`.');
+                        return;
+                    }
+                }
+            }
+            ts.forEachChild(node, visitRead);
+        };
+        visitRead(sourceFile);
+    };
+
+    /** Scans a TS slice for embedded markup, resolving the scope surrounding each region. */
+    const scanEmbedded = (start: number, end: number, scope: BindScope): void =>
+    {
+        const first = findMarkupStart(source, start);
+        // A read is poisoned by the REGISTRY, so any component that registers a row can carry one
+        // - including in a slice with no markup at all. It is ALSO poisoned when the lexical row
+        // exists but the registry is empty, which is exactly what a component whose only <For>
+        // failed to link looks like: the rows render and every field reads nothing, and gating on
+        // the registry alone meant that component was never scanned at all.
+        const hasRows = rowFormsGlobal.size > 0 || scope.rows.size > 0;
+        if ((first === -1 || first >= end) && !hasRows)
+        {
+            return;
+        }
+        // Keyword constructs nested in this slice (`state` in a .map callback, a `store` in an
+        // effect body) declare scoped sources the TS parse cannot see.
+        const declared = findConstructs(source.slice(start, end))
+            .map(construct => 'name' in construct ? construct.name : null)
+            .filter((name): name is string => typeof name === 'string');
+        const keywords = declared.length > 0 ? new Set([...scope.keywords, ...declared]) : scope.keywords;
+        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, start, end), start);
+        if (hasRows)
+        {
+            flagPoisonedRowReads(sourceFile, start, scope, keywords);
+        }
+        if (first === -1 || first >= end)
+        {
+            return;
+        }
+        let pos = start;
+        for (;;)
+        {
+            const at = findMarkupStart(source, pos);
+            if (at === -1 || at >= end)
+            {
+                return;
+            }
+            let parsed: { node: MarkupElement | MarkupFragment; end: number };
+            try
+            {
+                parsed = parseMarkup(source, at);
+            }
+            catch
+            {
+                // Malformed markup is another rule's finding; this one must not crash on it.
+                return;
+            }
+            const local = regionScopeAt(sourceFile, at - start);
+            let region = scope.region;
+            let rows = scope.rows;
+            if (local.size > 0)
+            {
+                region = new Map([...scope.region, ...local]);
+                rows = new Map([...scope.rows].filter(([name]) => !local.has(name)));
+            }
+            visitNode(parsed.node, { rows, region, keywords });
+            pos = parsed.end;
+        }
+    };
+
+    const visitNode = (node: MarkupElement | MarkupFragment, scope: BindScope): void =>
+    {
+        let inner = scope;
+        if (node.kind === 'element')
+        {
+            const introduced = markupBoundNames(node);
+            if (introduced.length > 0)
+            {
+                // A `<For>` over an array form links its `let=` row to that form, LEXICALLY;
+                // every other introduced name (an `index=`, a Show/Match `let=`) is a plain row.
+                let letName: string | null = null;
+                let link: RowFormLink | null = null;
+                const letAttr = node.attributes.find(a => !a.spread && a.name === 'let' && a.value.kind === 'expression');
+                if (letAttr !== undefined && letAttr.value.kind === 'expression')
+                {
+                    letName = letAttr.value.code.trim();
+                }
+                if (node.tag === 'For' && letName !== null)
+                {
+                    const eachAttr = node.attributes.find(a => !a.spread && a.name === 'each' && a.value.kind === 'expression');
+                    const formName = eachAttr !== undefined && eachAttr.value.kind === 'expression'
+                        ? arrayFormEachName(eachAttr.value.code, arrayForms) : null;
+                    const keys = formName !== null ? arrayForms.get(formName) : undefined;
+                    if (formName !== null && keys !== undefined)
+                    {
+                        link = { form: formName, keys, open: openForms.has(formName) };
+                    }
+                }
+                const rows = new Map(scope.rows);
+                for (const name of introduced)
+                {
+                    rows.set(name, name === letName ? link : null);
+                }
+                let region = scope.region;
+                if (introduced.some(name => scope.region.has(name)))
+                {
+                    const trimmed = new Map(scope.region);
+                    for (const name of introduced)
+                    {
+                        trimmed.delete(name);
+                    }
+                    region = trimmed;
+                }
+                inner = { rows, region, keywords: scope.keywords };
+            }
+
+            // A file input never round-trips its value: the browser reports a fake path and
+            // refuses the write back. Only a STATIC type="file" is knowable at compile time.
+            const isFileInput = !node.isComponent && node.tag.toLowerCase() === 'input'
+                && node.attributes.some(a => !a.spread && a.name === 'type'
+                    && a.value.kind === 'static' && a.value.value.trim().toLowerCase() === 'file');
+
+            for (const attr of node.attributes)
+            {
+                if (attr.spread || attr.name === null || attr.value.kind !== 'expression')
+                {
+                    continue;
+                }
+                if (!attr.name.startsWith('bind:'))
+                {
+                    // A render-function attribute can hold markup of its own; its binds answer
+                    // to the scope of the function that carries them.
+                    scanEmbedded(source.indexOf('{', attr.start) + 1, attr.end - 1, inner);
+                    continue;
+                }
+                if (isFileInput && attr.name === 'bind:value')
+                {
+                    report(attr, 'The `value` of a file input cannot be two-way bound: the '
+                        + 'browser only reports a fake path and refuses the write back. Read '
+                        + '`$event.target.files` in an `onChange` handler and keep what you '
+                        + 'need in `state`.', 'azeroth/bind-file-input');
+                    continue;
+                }
+                const target = attr.value.code.trim();
+                let message: string | null;
+                if (target.length === 0)
+                {
+                    message = '`bind:` needs a writable reactive value, but this target is '
+                        + 'empty. Bind a `state` name or a `form` field.';
+                }
+                else if (IDENT.test(target))
+                {
+                    message = resolveBare(target, inner);
+                }
+                else
+                {
+                    // Dotted targets are classified from the AST, never a regex: whitespace, a
+                    // comment, or a line-wrapped dot spell the SAME chain, and wrapper spellings
+                    // (parens, `!`, bracket access) of a knowable chain defeat the emitter.
+                    const chain = canonicalDottedChain(target);
+                    if (chain !== null)
+                    {
+                        const resolved = chain.canonical.includes('.')
+                            ? resolveDotted(chain.canonical, inner)
+                            : resolveBare(chain.canonical, inner);
+                        message = resolved ?? (chain.wrapped ? wrappedMessage(chain.canonical) : null);
+                    }
+                    else
+                    {
+                        message = resolveShape(target, inner);
+                    }
+                }
+                if (message !== null)
+                {
+                    report(attr, message);
+                }
+            }
+        }
+
+        for (const child of node.children)
+        {
+            if (child.kind === 'element' || child.kind === 'fragment')
+            {
+                visitNode(child, inner);
+            }
+            else if (child.kind === 'expression')
+            {
+                scanEmbedded(child.start + 1, child.end - 1, inner);
+            }
+        }
+    };
+
+    for (const item of component.body)
+    {
+        if (item.kind === 'markup')
+        {
+            visitNode(item.node, emptyScope);
+        }
+        else if (item.kind === 'opaque-statements')
+        {
+            scanEmbedded(item.start, item.end, emptyScope);
+        }
+        else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
+        {
+            scanEmbedded(item.bodyStart, item.bodyEnd, emptyScope);
+        }
+    }
+}
+
+/**
+ * A markup value is a NODE, so using one twice cannot mean what it reads as.
+ *
+ * `const frag = <b/>; <p>{frag}{frag}</p>` serializes TWO copies on the server and mounts ONE on
+ * the client, because appending the same DOM node twice moves it. GRAMMAR's mode-equivalence
+ * clause is unconditional for accepted programs - "string rendering followed by hydration is
+ * observably equivalent to client rendering" - so the language has to refuse this program rather
+ * than pick a winner between the modes. Making it equivalent instead would mean markup values
+ * were re-renderable templates rather than nodes, which is a different language.
+ *
+ * The shape of this rule follows `azeroth/multiple-roots`: something the author wrote that would
+ * be silently discarded (there, a whole region; here, one of the two placements) is made loud.
+ *
+ * Reuse is counted per REFERENCE in markup, which catches the literal `{frag}{frag}`. A reference
+ * inside a callback (`{items.map(() => frag)}`) renders the same node once per item and is not
+ * counted - it reads as one reference and the rule does not model call counts.
+ *
+ * @internal `azeroth/markup-value-reused`
+ */
+function diagnoseReusedMarkupValues(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
+{
+    // Locals whose initializer IS a markup region. `blankMarkupRegions` replaces each region with
+    // a `0` at the region's own offset, so a markup initializer parses as a NumericLiteral whose
+    // position is exactly where markup starts in the ORIGINAL source - which is the test.
+    const markupLocals = new Set<string>();
+    for (const item of component.body)
+    {
+        if (item.kind !== 'opaque-statements')
+        {
+            continue;
+        }
+        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        for (const statement of sourceFile.statements)
+        {
+            if (!ts.isVariableStatement(statement))
+            {
+                continue;
+            }
+            for (const declaration of statement.declarationList.declarations)
+            {
+                const initializer = declaration.initializer;
+                if (initializer === undefined || !ts.isIdentifier(declaration.name)
+                    || !ts.isNumericLiteral(initializer))
+                {
+                    continue;
+                }
+                const at = item.start + initializer.getStart(sourceFile);
+                if (findMarkupStart(source, at) === at)
+                {
+                    markupLocals.add(declaration.name.text);
+                }
+            }
+        }
+    }
+    if (markupLocals.size === 0)
+    {
+        return;
+    }
+
+    // PLACEMENTS, not references. Counting every identifier read a name appears in rejected
+    // `onClick={() => log(frag)}` beside one placement, `{cond ? frag : frag}` (which places it
+    // ONCE), and a `<For>` row parameter that merely shares the name - none of which diverge, all
+    // of which compiled before. It also double-counted a single reference when markup was embedded
+    // in a hole, so whether the rule fired depended on how TypeScript error-recovered the hole
+    // text: an accident, not a rule.
+    //
+    // A placement is the narrow, decidable thing: a child hole whose ENTIRE expression is the
+    // name, which is exactly what inserts the node. Anything else - a ternary, a call, an
+    // attribute, a handler - is left alone. That undercounts (a name placed inside markup nested
+    // in a hole is not seen), and undercounting is the safe direction: silence, never a false
+    // build failure.
+    const uses = new Map<string, { start: number; end: number }[]>();
+    const placementName = (code: string): string | null =>
+    {
+        const text = code.trim();
+        return /^[A-Za-z_$][\w$]*$/.test(text) && markupLocals.has(text) ? text : null;
+    };
+    const countPlacements = (node: MarkupElement | MarkupFragment, shadowed: ReadonlySet<string>): void =>
+    {
+        // A `let=`/`index=` row name shadows a markup local of the same spelling for the whole
+        // subtree, the same way the bind rule trims its own scope - without this, a row parameter
+        // that merely shares the name was counted as a placement of the local.
+        let inner = shadowed;
+        if (node.kind === 'element')
+        {
+            const introduced = markupBoundNames(node);
+            if (introduced.length > 0)
+            {
+                inner = new Set([...shadowed, ...introduced]);
+            }
+        }
+        for (const child of node.children)
+        {
+            if (child.kind === 'element' || child.kind === 'fragment')
+            {
+                countPlacements(child, inner);
+                continue;
+            }
+            if (child.kind !== 'expression')
+            {
+                continue;
+            }
+            const name = placementName(child.code);
+            if (name === null || inner.has(name))
+            {
+                continue;
+            }
+            // The hole spans `{` .. `}`; the name sits at the first non-space inside it.
+            const at = child.start + 1 + (child.code.length - child.code.trimStart().length);
+            const list = uses.get(name) ?? [];
+            list.push({ start: at, end: at + name.length });
+            uses.set(name, list);
+        }
+    };
+
+    for (const item of component.body)
+    {
+        if (item.kind === 'markup')
+        {
+            countPlacements(item.node, new Set<string>());
+        }
+    }
+
+    for (const [name, found] of uses)
+    {
+        if (found.length < 2)
+        {
+            continue;
+        }
+        // Reported on the SECOND and later placements: the first one is the placement that
+        // survives on the client, so the later ones are the ones that vanish.
+        for (const use of found.slice(1))
+        {
+            out.push({
+                code: 'azeroth/markup-value-reused',
+                // A WARNING, not an error. The divergence is real and measured, but the rule
+                // decides it from syntax alone, and on this codebase every syntax-only guess about
+                // author intent has eventually refused a valid program. It reports; it does not
+                // fail the build.
+                severity: 'warning',
+                message: '`' + name + '` is a markup value, which is a single element - placing it '
+                    + 'more than once renders it twice on the server and once on the client, where '
+                    + 'the second placement MOVES the same node. Build the element where each copy '
+                    + 'is used, or make `' + name + '` a function and call it at each placement.',
+                start: use.start,
+                end: use.end
+            });
+        }
+    }
+}
+
+/** Imports and module-scope variables visible to every component in the module. */
+interface ModuleBindScope
+{
+    imports: ReadonlySet<string>;
+    vars: ReadonlySet<string>;
+}
+
+/** Collects imported names and module-scope variable names from the opaque module regions. */
+function moduleBindScope(source: string, items: readonly { kind: string; start: number; end: number }[]): ModuleBindScope
+{
+    const imports = new Set<string>();
+    const vars = new Set<string>();
+    for (const item of items)
+    {
+        if (item.kind === 'component')
+        {
+            continue;
+        }
+        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        for (const statement of sourceFile.statements)
+        {
+            if (ts.isImportDeclaration(statement) && statement.importClause !== undefined
+                && statement.importClause.phaseModifier !== ts.SyntaxKind.TypeKeyword)
+            {
+                const clause = statement.importClause;
+                if (clause.name !== undefined)
+                {
+                    imports.add(clause.name.text);
+                }
+                if (clause.namedBindings !== undefined)
+                {
+                    if (ts.isNamespaceImport(clause.namedBindings))
+                    {
+                        imports.add(clause.namedBindings.name.text);
+                    }
+                    else
+                    {
+                        for (const element of clause.namedBindings.elements)
+                        {
+                            if (!element.isTypeOnly)
+                            {
+                                imports.add(element.name.text);
+                            }
+                        }
+                    }
+                }
+            }
+            else if (ts.isVariableStatement(statement))
+            {
+                for (const declaration of statement.declarationList.declarations)
+                {
+                    collectBoundNames(declaration.name, vars);
+                }
+            }
+            else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+                && statement.name !== undefined)
+            {
+                vars.add(statement.name.text);
+            }
+        }
+    }
+    return { imports, vars };
+}
+
+/**
+ * Whether `text` can be written as `x.${text}` - the only spelling `bind:` rewrites. This is a
+ * PROPERTY-NAME test, not a standalone-identifier test: after a dot ES5 allows reserved words, so
+ * `login.class` is legal and genuinely wires, while a standalone-identifier check called it
+ * unspellable and told the author to write an onInput handler instead. Unicode names pass here
+ * exactly as they do in the emitted code; an ASCII regex denied those.
+ */
+function isSpellableField(text: string): boolean
+{
+    try
+    {
+        const { sourceFile } = parseExpressionSlice(`_.${ text }`, 0);
+        const statement = sourceFile.statements[0];
+        if (statement === undefined || !ts.isExpressionStatement(statement))
+        {
+            return false;
+        }
+        const expression = ts.isParenthesizedExpression(statement.expression)
+            ? statement.expression.expression : statement.expression;
+        return ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.name)
+            && expression.name.text === text;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+/** Adds every name a binding pattern declares (identifier, object or array pattern) to `into`. */
+function collectBoundNames(name: ts.BindingName, into: Set<string>): void
+{
+    if (ts.isIdentifier(name))
+    {
+        into.add(name.text);
+        return;
+    }
+    for (const element of name.elements)
+    {
+        if (ts.isBindingElement(element))
+        {
+            collectBoundNames(element.name, into);
+        }
+    }
+}
+
+/**
+ * Replaces every markup region in `source[start..end)` with `0` plus spaces, keeping all
+ * offsets stable, so TypeScript can parse the surrounding statements cleanly. Markup is not TS;
+ * an unblanked parse swallows whatever follows it.
+ */
+function blankMarkupRegions(source: string, start: number, end: number): string
+{
+    let out = source.slice(start, end);
+    let pos = start;
+    for (;;)
+    {
+        const at = findMarkupStart(source, pos);
+        if (at === -1 || at >= end)
+        {
+            return out;
+        }
+        let regionEnd: number;
+        try
+        {
+            regionEnd = parseMarkup(source, at).end;
+        }
+        catch
+        {
+            return out;
+        }
+        const stop = Math.min(regionEnd, end);
+        out = out.slice(0, at - start) + '0' + ' '.repeat(stop - at - 1) + out.slice(stop - start);
+        pos = regionEnd;
+    }
+}
+
+/**
+ * The scope surrounding position `pos` in a parsed slice: parameter names of every enclosing
+ * function and variable names of every enclosing block, innermost winning. These SHADOW component
+ * and module declarations, which is what keeps `(x) => <input bind:value={x} />` resolving to
+ * the parameter even when a `state x` exists.
+ */
+/**
+ * The canonical `a.b.c` spelling of an identifier-rooted access chain, or null when the
+ * expression is anything else (optional links, computed element access, calls, `this`).
+ * Spacing, comments, and line breaks around the dots are erased - they do not change which
+ * chain it is. `wrapped` is true when the spelling carries parentheses, non-null assertions,
+ * or string-literal bracket access anywhere: those parse to the same chain but DEFEAT the
+ * emitter rewrite (it matches bare identifier roots), so a wrapped spelling of even a valid
+ * target must be rejected with the plain one.
+ */
+function canonicalDottedChain(text: string): { canonical: string; wrapped: boolean } | null
+{
+    try
+    {
+        const { sourceFile } = parseExpressionSlice(text, 0);
+        const statement = sourceFile.statements[0];
+        if (statement === undefined || !ts.isExpressionStatement(statement))
+        {
+            return null;
+        }
+        let node: ts.Expression = ts.isParenthesizedExpression(statement.expression)
+            ? statement.expression.expression : statement.expression;
+        let wrapped = false;
+        const unwrap = (expression: ts.Expression): ts.Expression =>
+        {
+            let current = expression;
+            while (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current))
+            {
+                wrapped = true;
+                current = current.expression;
+            }
+            return current;
+        };
+        node = unwrap(node);
+        const parts: string[] = [];
+        for (;;)
+        {
+            if (ts.isPropertyAccessExpression(node))
+            {
+                if (node.questionDotToken !== undefined || !ts.isIdentifier(node.name)
+                    || node.name.text.length === 0)
+                {
+                    return null;
+                }
+                parts.unshift(node.name.text);
+                node = unwrap(node.expression);
+                continue;
+            }
+            if (ts.isElementAccessExpression(node))
+            {
+                const argument = node.argumentExpression;
+                const literal = ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument);
+                if (node.questionDotToken !== undefined || !literal
+                    || !isSpellableField((argument).text))
+                {
+                    return null;
+                }
+                wrapped = true;
+                parts.unshift(argument.text);
+                node = unwrap(node.expression);
+                continue;
+            }
+            break;
+        }
+        if (!ts.isIdentifier(node) || node.text.length === 0)
+        {
+            return null;
+        }
+        parts.unshift(node.text);
+        return { canonical: parts.join('.'), wrapped };
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+function regionScopeAt(sourceFile: ts.SourceFile, pos: number): Map<string, 'param' | 'local'>
+{
+    const scope = new Map<string, 'param' | 'local'>();
+    const declare = (name: ts.BindingName, kind: 'param' | 'local'): void =>
+    {
+        const names = new Set<string>();
+        collectBoundNames(name, names);
+        for (const text of names)
+        {
+            scope.set(text, kind);
+        }
+    };
+    const fromStatements = (statements: readonly ts.Statement[]): void =>
+    {
+        for (const statement of statements)
+        {
+            if (ts.isVariableStatement(statement))
+            {
+                for (const declaration of statement.declarationList.declarations)
+                {
+                    declare(declaration.name, 'local');
+                }
+            }
+            else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+                && statement.name !== undefined)
+            {
+                scope.set(statement.name.text, 'local');
+            }
+        }
+    };
+    const visit = (node: ts.Node): void =>
+    {
+        if (pos < node.pos || pos >= node.end)
+        {
+            return;
+        }
+        if (ts.isSourceFile(node) || ts.isBlock(node) || ts.isModuleBlock(node))
+        {
+            fromStatements(node.statements);
+        }
+        else if (ts.isCaseClause(node) || ts.isDefaultClause(node))
+        {
+            fromStatements(node.statements);
+        }
+        else if (ts.isFunctionLike(node))
+        {
+            for (const parameter of node.parameters)
+            {
+                declare(parameter.name, 'param');
+            }
+        }
+        else if ((ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node))
+            && node.initializer !== undefined && ts.isVariableDeclarationList(node.initializer))
+        {
+            for (const declaration of node.initializer.declarations)
+            {
+                declare(declaration.name, 'local');
+            }
+        }
+        else if (ts.isCatchClause(node) && node.variableDeclaration !== undefined)
+        {
+            declare(node.variableDeclaration.name, 'local');
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return scope;
+}
+
 function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysis: ReactiveAnalysis, out: AzerothDiagnostic[]): void
 {
-    const derivedNames = new Set(analysis.sources.filter(s => s.kind === 'derived').map(s => s.name));
-    if (derivedNames.size === 0)
+    const readOnly = new Map(analysis.sources.filter(s => s.kind !== 'state').map(s => [s.name, s.kind]));
+    if (readOnly.size === 0)
     {
         return;
     }
@@ -840,7 +2180,8 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
         traverseReactive(sourceFile, reactive, {
             write: (target) =>
             {
-                if (!derivedNames.has(target.text) || seen.has(target.text))
+                const kind = readOnly.get(target.text);
+                if (kind === undefined || seen.has(target.text))
                 {
                     return;
                 }
@@ -849,7 +2190,7 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
                 out.push({
                     code: 'azeroth/assign-to-derived',
                     severity: 'error',
-                    message: assignToDerivedMessage(target.text),
+                    message: assignToDerivedMessage(target.text, kind),
                     start: span.start,
                     end: span.end
                 });
@@ -1102,6 +2443,34 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
  * Wrapping is always available and costs one element (`<li>`, `<g>`); the wrapper is what
  * the reconciler moves.
  */
+/**
+ * `<For>` requires `key`. Its props type declares `key` non-optional and the runtime calls
+ * `props.key(item, i)` unconditionally on both the reconcile and the hydrate path, so a keyless
+ * `<For>` renders through SSR and then throws "props.key is not a function" the moment the
+ * client mounts it - a page that serves and dies. Rejecting it at compile time is what the type
+ * already says; a runtime index fallback would be a shim preserving a shape the contract forbids,
+ * and index keys silently break row identity on reorder.
+ *
+ * @internal `azeroth/for-missing-key`
+ */
+function forKeyRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    if (el.tag !== 'For'
+        || el.attributes.some(attr => attr.spread || attr.name === 'key'))
+    {
+        return;
+    }
+    out.push({
+        code: 'azeroth/for-missing-key',
+        severity: 'error',
+        message: '`<For>` needs a `key`: it tracks rows by key across updates, and without one the '
+            + 'page renders on the server and then throws as soon as it mounts. Add '
+            + '`key={(item) => item.id}` - any expression that is unique and stable per row.',
+        start: el.start,
+        end: el.end
+    });
+}
+
 function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
     if (el.tag !== 'For')
@@ -1111,8 +2480,17 @@ function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     const real = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
     const solo = real[0];
 
-    // A callback/thunk child is the manual API's own form and is judged by its own rule.
-    if (real.length === 1 && solo !== undefined && solo.kind === 'expression')
+    // A callback/thunk child is the manual API's own form and is judged by its own rule - but
+    // only a function LITERAL is that form. The exemption used to admit ANY expression child,
+    // which let two shapes through that the runtime cannot render:
+    //   `<For ...>{renderRow}</For>` - a function REFERENCE. SSR renders it correctly and the
+    //     client throws inside insertBefore, the same serve-then-die split as a keyless <For>.
+    //   `<For ... let={item}>{ item.n }</For>` - a bare hole. `let=` binds a row name for a row
+    //     ELEMENT, so this throws "item is not defined" in both modes.
+    // Neither is one host element, which is what a row must be, so both fall through to the
+    // existing azeroth/for-row-shape arms below and are named there.
+    if (real.length === 1 && solo !== undefined && solo.kind === 'expression'
+        && isFunctionLiteral(solo.code.trim()))
     {
         return;
     }
@@ -1238,6 +2616,7 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
     bindingAttrRules(el, out);
     callbackChildRule(el, out);
     forRowRule(el, out);
+    forKeyRule(el, out);
 
     for (const attr of el.attributes)
     {

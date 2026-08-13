@@ -124,3 +124,37 @@ describe('the version handshake', () =>
         expect(result.code).not.toContain('assertRuntimeContract');
     });
 });
+
+describe('the handshake failure tells the reader which side is stale', () =>
+{
+    // One direction-blind sentence ("rebuild the app, or update the prebuilt library") sent half
+    // of all readers to the wrong remedy: stale COMPILED output is rebuilt, a stale RUNTIME is
+    // upgraded, and those are opposite actions.
+    it('names rebuilding when the module is behind the runtime', () =>
+    {
+        expect(() => contract.assertRuntimeContract(contract.RUNTIME_CONTRACT_VERSION - 1))
+            .toThrow(/This module is the stale side: rebuild it/);
+    });
+
+    it('names upgrading the runtime when the runtime is behind the module', () =>
+    {
+        expect(() => contract.assertRuntimeContract(contract.RUNTIME_CONTRACT_VERSION + 1))
+            .toThrow(/The installed runtime is the stale side: upgrade azerothjs/);
+    });
+
+    it('names the module when a caller supplies its URL', () =>
+    {
+        expect(() => contract.assertRuntimeContract(contract.RUNTIME_CONTRACT_VERSION - 1, 'file:///app/dist/Card.js'))
+            .toThrow(/\(module: file:\/\/\/app\/dist\/Card\.js\)/);
+    });
+
+    it('does NOT emit import.meta, which would make compiled output module-only', () =>
+    {
+        // `import.meta` is legal only inside an ES module, so emitting it would make a compiled
+        // component impossible to evaluate anywhere else - including the harnesses that execute
+        // real emitted code to test it.
+        const result = generateModule('export default component C() { state n = 0; <p>{n}</p> }');
+        expect(result.code).toContain('assertRuntimeContract(');
+        expect(result.code).not.toContain('import.meta');
+    });
+});

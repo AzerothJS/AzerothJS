@@ -58,7 +58,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 1;
+export const EMITTED_CONTRACT_VERSION = 2;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -286,7 +286,12 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
             // A module-level "composable" (a plain function using the keywords) lowers here too.
             // Guard on a keyword token so keyword-free module code (imports, types, helpers) stays
             // byte-identical for clean source maps.
-            if (LOWERABLE_WORD_RE.test(projected))
+            // The marker test is not an optimization: `projectMarkup` emits `__azRow(...)` row
+            // markers for a raw-mode <For>, and ONLY the statement lowering strips them. A
+            // keyword-free module helper (`const renderRow = (items) => <For .../>`) failed the
+            // word test, skipped the strip, and shipped a bare `__azRow(` into the module - a
+            // ReferenceError at load. Markers never survive to emitted code.
+            if (LOWERABLE_WORD_RE.test(projected) || projected.includes(MARKER_ROW))
             {
                 const { code, used } = lowerStatements(projected, NO_SOURCES, item.start);
                 for (const name of used)
@@ -415,6 +420,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
         // Only `state` has a generated setter; `derived` is read-only. The rewrite uses this
         // to reject (rather than mis-emit a setter for) any write to a derived value.
         writable: new Set(analysis.sources.filter(s => s.kind === 'state').map(s => s.name)),
+        kinds: new Map(analysis.sources.map(s => [s.name, s.kind])),
         // Destructured signature props (`component Name({ a }: P)`): the rewrite turns a bare `a` into `props.a`.
         propAliases: analysis.propAliases,
         // `form` declarations: a field read `f.name` becomes `f.values().name`, a write `f.name = v` becomes
@@ -544,7 +550,17 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
     // pattern lowers to `props.<name>` reads, so its runtime param is the canonical `props`.
     // `= {}` so a prop-less call site (`<C/>` lowers to `C()`) still gives the body a props object.
     const paramName = analysis.paramName ?? 'props';
-    const sig = `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n`;
+
+    // The body runs inside a scope of its own. A component is a plain function call, so without
+    // this its work belongs to whatever owner is ambient at the call site: a `provideContext` in
+    // the body would be visible to every LATER SIBLING component in that scope, and the component's
+    // effects would outlive it. `componentScope` attaches to the rendering owner, so a row, a
+    // branch, or an enclosing component disposes it without anyone holding a disposer.
+    //
+    // Wrapping here rather than at the call sites is what keeps this a single integration point:
+    // every compiled component gets it, and no emitted call site changes shape.
+    emit.used.add('componentScope');
+    const sig = `function ${ component.name }${ typeParams }(${ paramName } = {})\n{\n    return componentScope(() =>\n    {\n`;
 
     // One source-map anchor per emitted line, keyed to the construct's source offset (the signature
     // maps to the component declaration). Without this the whole body collapses onto one piece and a
@@ -561,7 +577,10 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
         }
         pos += (rendered[i] ?? '').length + 1; // +1 for the '\n' between lines (join) / before the closing brace
     }
-    return { code: `${ sig }${ rendered.join('\n') }\n}`, spans };
+    // Body lines keep their existing indentation and their existing offsets, so every span computed
+    // above still points at the right generated column - the wrapper only lengthens `sig`, which
+    // the span walk already starts from.
+    return { code: `${ sig }${ rendered.join('\n') }\n    });\n}`, spans };
 }
 
 /** Emits the component's rendered output via the unified IR-driven emitter. */
@@ -739,7 +758,7 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                 // listener (matching the bindProps path); non-bubbling types fall
                 // back to a per-element listener inside the helper.
                 emit.used.add('bindEvent');
-                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ rewriteReactive(handlerSource(source, binding.handler), sources, binding.handler.start) });`);
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ modeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) });`);
             }
             else if (binding.kind === 'bind')
             {
@@ -748,21 +767,21 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                 emit.used.add('setProp');
                 emit.used.add('createEffect');
                 emit.used.add('bindEvent');
-                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, ${ quoteString(binding.prop) }, ${ bindValue(source, binding, sources) }));`);
-                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ composedBindHandler(source, binding, group, sources) });`);
+                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, ${ quoteString(binding.prop) }, ${ bindValue(source, binding, sources, emit) }));`);
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ composedBindHandler(source, binding, group, sources, emit) });`);
             }
             else if (binding.kind === 'class')
             {
                 // All class sources (static/dynamic/`class:` toggles) merged into one reactive className.
                 emit.used.add('setProp');
                 emit.used.add('createEffect');
-                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, 'class', ${ classCombined(source, binding, sources) }));`);
+                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, 'class', ${ classCombined(source, binding, sources, emit) }));`);
             }
             else if (binding.kind === 'style')
             {
                 emit.used.add('setProp');
                 emit.used.add('createEffect');
-                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, 'style', ${ styleCombined(source, binding, sources) }));`);
+                binds.push(`createEffect(() => setProp(${ nodeVar(target) }, 'style', ${ styleCombined(source, binding, sources, emit) }));`);
             }
         }
     }
@@ -864,8 +883,8 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
             // the value directly (not a DOM event), and the `state = $value` assignment is run through the
             // reactive rewrite so it becomes the state's setter - a non-writable target is rejected there.
             const bound = source.slice(prop.expr.start, prop.expr.end);
-            const value = rewriteReactive(bound, sources, prop.expr.start);
-            const writeBack = `($event) => ${ rewriteReactive(`${ bound } = $event`, sources, prop.expr.start) }`;
+            const value = modeRewrite(emit, bound, sources, prop.expr.start);
+            const writeBack = `($event) => ${ modeRewrite(emit, `${ bound } = $event`, sources, prop.expr.start) }`;
             const callbackName = bindWriteBack(prop.prop).callback;
             const authored = binding.props
                 .filter((entry): entry is Extract<PropEntry, { kind: 'event' }> =>
@@ -1084,6 +1103,18 @@ function maybeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset
     return out;
 }
 
+/**
+ * {@link rewriteReactive} gated on raw mode. Markup EMBEDDED in a hole or a statement is projected
+ * first and then rewritten ONCE by the outer expression/statement pass; an eager rewrite here runs
+ * that pass twice over the same text, turning a state read `d` into `d()()` - a value that never
+ * updates and a write-back that throws. The bind/class/style emitters were the only markup sites
+ * still rewriting eagerly, which is why `bind:` only worked in the component's markup position.
+ */
+function modeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset = 0): string
+{
+    return emit.raw ? code : rewriteReactive(code, sources, offset);
+}
+
 /** The rewritten source of a binding expression (nested markup projected, R2-rewritten). */
 function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
@@ -1137,9 +1168,9 @@ function exprValue(source: string, expr: ReactiveExpr, sources: ReactiveSources,
 }
 
 /** The bound state read for a `bind:` directive (`state()` after the reactive rewrite). */
-function bindValue(source: string, binding: BindBinding, sources: ReactiveSources): string
+function bindValue(source: string, binding: BindBinding, sources: ReactiveSources, emit: Emit): string
 {
-    return rewriteReactive(source.slice(binding.expr.start, binding.expr.end), sources, binding.expr.start);
+    return modeRewrite(emit, source.slice(binding.expr.start, binding.expr.end), sources, binding.expr.start);
 }
 
 /**
@@ -1147,10 +1178,33 @@ function bindValue(source: string, binding: BindBinding, sources: ReactiveSource
  * assignment is run through the reactive rewrite, so it becomes the state's setter call - and a
  * non-writable target (a `derived`) is rejected there with a precise error.
  */
-function bindHandler(source: string, binding: BindBinding, sources: ReactiveSources): string
+function bindHandler(source: string, binding: BindBinding, sources: ReactiveSources, emit: Emit): string
 {
     const target = source.slice(binding.expr.start, binding.expr.end);
-    return `($event) => ${ rewriteReactive(`${ target } = $event.target.${ binding.prop }`, sources, binding.expr.start) }`;
+    // `value` on a MULTIPLE select is a SET, and `$event.target.value` reports only the first
+    // selected option - a user ADDING a selection collapsed the whole set to one entry and
+    // corrupted `string[]` state to a string.
+    //
+    // The discrimination is `selectedOptions`, NOT `multiple`. `multiple` is a real reflected
+    // property on `<input type="email">` and `<input type="file">`, where `selectedOptions` does
+    // not exist - keying on it made every keystroke in such an input throw
+    // "Array.prototype.map called on null or undefined" and left the binding dead. Only
+    // HTMLSelectElement has `selectedOptions`, so it is the precise "is this a select" test, and
+    // a single select still falls through to `.value`. (It does NOT make `<input type="file">`
+    // bind usefully - `.value` there is a fake path the reactive echo cannot write back. That
+    // input is not a supported bind:value target.) The check is emitted for every bind:value
+    // because the binding does not carry its element's tag.
+    //
+    // `[].map`, never `Array.prototype.map`: the emitted text is spliced into USER scope and then
+    // run through the reactive rewrite, so a component with `state Array` rewrote it to
+    // `Array().prototype.map` and a module-scope `import { Array }` silently redirected it. An
+    // array literal introduces no name to capture.
+    const read = binding.prop === 'value'
+        ? '($event.target.selectedOptions && $event.target.multiple'
+            + ' ? [].map.call($event.target.selectedOptions, function (o) { return o.value; })'
+            + ' : $event.target.value)'
+        : `$event.target.${ binding.prop }`;
+    return `($event) => ${ modeRewrite(emit, `${ target } = ${ read }`, sources, binding.expr.start) }`;
 }
 
 /**
@@ -1162,10 +1216,10 @@ function bindHandler(source: string, binding: BindBinding, sources: ReactiveSour
  * not the previous one.
  */
 function composedBindHandler(
-    source: string, binding: BindBinding, group: readonly Binding[], sources: ReactiveSources
+    source: string, binding: BindBinding, group: readonly Binding[], sources: ReactiveSources, emit: Emit
 ): string
 {
-    const writeBack = bindHandler(source, binding, sources);
+    const writeBack = bindHandler(source, binding, sources, emit);
     const authored = group.filter((entry): entry is EventBinding =>
         entry.kind === 'event' && entry.event === binding.event);
 
@@ -1175,7 +1229,7 @@ function composedBindHandler(
     }
 
     const calls = authored
-        .map(entry => `(${ rewriteReactive(handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`)
+        .map(entry => `(${ modeRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`)
         .join('; ');
     return `($event) => { (${ writeBack })($event); ${ calls }; }`;
 }
@@ -1185,7 +1239,7 @@ function composedBindHandler(
  * `[<base>, <dynamic>, (<cond>) ? '<name>' : '', ...].filter(Boolean).join(' ')`. The base is a static
  * literal; the dynamic and each toggle condition are run through the reactive rewrite.
  */
-function classCombined(source: string, binding: ClassBinding, sources: ReactiveSources): string
+function classCombined(source: string, binding: ClassBinding, sources: ReactiveSources, emit: Emit): string
 {
     const parts: string[] = [];
     if (binding.base !== null)
@@ -1194,11 +1248,11 @@ function classCombined(source: string, binding: ClassBinding, sources: ReactiveS
     }
     if (binding.dynamic !== null)
     {
-        parts.push(rewriteReactive(source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
+        parts.push(modeRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
     }
     for (const toggle of binding.toggles)
     {
-        const cond = rewriteReactive(source.slice(toggle.expr.start, toggle.expr.end), sources, toggle.expr.start);
+        const cond = modeRewrite(emit, source.slice(toggle.expr.start, toggle.expr.end), sources, toggle.expr.start);
         parts.push(`(${ cond }) ? ${ quoteString(toggle.name) } : ''`);
     }
     // A single toggle is already a plain string expression - the array/filter/
@@ -1216,7 +1270,7 @@ function classCombined(source: string, binding: ClassBinding, sources: ReactiveS
  * `[<base>, <dynamic>, 'prop: ' + (<value>), ...].filter(Boolean).join('; ')`. The base is a static
  * literal; the dynamic and each `style:prop` value are run through the reactive rewrite.
  */
-function styleCombined(source: string, binding: StyleBinding, sources: ReactiveSources): string
+function styleCombined(source: string, binding: StyleBinding, sources: ReactiveSources, emit: Emit): string
 {
     const parts: string[] = [];
     if (binding.base !== null)
@@ -1225,11 +1279,11 @@ function styleCombined(source: string, binding: StyleBinding, sources: ReactiveS
     }
     if (binding.dynamic !== null)
     {
-        parts.push(rewriteReactive(source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
+        parts.push(modeRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
     }
     for (const entry of binding.props)
     {
-        const value = rewriteReactive(source.slice(entry.expr.start, entry.expr.end), sources, entry.expr.start);
+        const value = modeRewrite(emit, source.slice(entry.expr.start, entry.expr.end), sources, entry.expr.start);
         parts.push(`${ quoteString(`${ entry.name }: `) } + (${ value })`);
     }
     return `[${ parts.join(', ') }].filter(Boolean).join('; ')`;
@@ -1248,8 +1302,8 @@ function propEntries(source: string, group: readonly Binding[], sources: Reactiv
     return group
         .filter(binding => !(binding.kind === 'event' && boundEvents.has(binding.event)))
         .map(binding => binding.kind === 'bind'
-            ? `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), `
-                + `${ objectKey(canonicalHandlerName(binding.event)) }: ${ composedBindHandler(source, binding, group, sources) }`
+            ? `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources, emit) }), `
+                + `${ objectKey(canonicalHandlerName(binding.event)) }: ${ composedBindHandler(source, binding, group, sources, emit) }`
             : propEntry(source, binding, sources, emit));
 }
 
@@ -1273,17 +1327,17 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     if (binding.kind === 'bind')
     {
         // The bound value as a reactive getter prop (h() unwraps `() =>`), plus the write-back listener.
-        return `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources) }), ${ objectKey(canonicalHandlerName(binding.event)) }: ${ bindHandler(source, binding, sources) }`;
+        return `${ objectKey(binding.prop) }: () => (${ bindValue(source, binding, sources, emit) }), ${ objectKey(canonicalHandlerName(binding.event)) }: ${ bindHandler(source, binding, sources, emit) }`;
     }
     if (binding.kind === 'class')
     {
         // The merged class as a reactive getter (h() unwraps `() =>`).
-        return `class: () => (${ classCombined(source, binding, sources) })`;
+        return `class: () => (${ classCombined(source, binding, sources, emit) })`;
     }
     if (binding.kind === 'style')
     {
         // The merged inline style as a reactive getter (h() unwraps `() =>`).
-        return `style: () => (${ styleCombined(source, binding, sources) })`;
+        return `style: () => (${ styleCombined(source, binding, sources, emit) })`;
     }
     if (binding.kind === 'spread')
     {
@@ -1523,6 +1577,11 @@ function buildImport(source: string, emit: Emit): string
     withAssert.add('assertRuntimeContract');
     const names = [...withAssert].filter(name => !alreadyImports(source, name));
     const importLine = names.length > 0 ? `import { ${ names.join(', ') } } from '${ RUNTIME_MODULE }';\n` : '';
+    // Deliberately NOT `import.meta.url`, though it would name the offending module in the
+    // failure: `import.meta` is only legal inside an ES module, and emitting it would make
+    // compiled output impossible to evaluate in any other context - including the harnesses that
+    // execute a component's real emitted code to test it. `assertRuntimeContract` takes the URL
+    // as an optional argument for callers that can supply one.
     return `${ importLine }assertRuntimeContract(${ EMITTED_CONTRACT_VERSION });\n`;
 }
 

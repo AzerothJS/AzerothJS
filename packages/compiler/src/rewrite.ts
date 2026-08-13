@@ -59,16 +59,17 @@ const COMPOUND: ReadonlyMap<ts.SyntaxKind, string> = new Map([
 ]);
 
 /**
- * The "assigned a derived" error message, shared by the reactive-rewrite guard (this module) and
- * the semantic diagnostic (diagnostics.ts) so both phases report identically.
+ * The "assigned a read-only source" error message, shared by the reactive-rewrite guard (this
+ * module) and the semantic diagnostic (diagnostics.ts) so both phases report identically.
  *
- * @param name - The derived value's name.
+ * @param name - The read-only value's name.
+ * @param kind - Its declaring keyword; `derived` when the caller cannot resolve it.
  * @returns The error message.
  * @internal
  */
-export function assignToDerivedMessage(name: string): string
+export function assignToDerivedMessage(name: string, kind = 'derived'): string
 {
-    return `Cannot assign to \`${ name }\`: a \`derived\` value is read-only. Compute it from \`state\`, or make \`${ name }\` a \`state\` if it must change.`;
+    return `Cannot assign to \`${ name }\`: a \`${ kind }\` value is read-only. Compute it from \`state\`, or make \`${ name }\` a \`state\` if it must change.`;
 }
 
 /**
@@ -245,7 +246,7 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             // `writable` is resolved by the walk (handles both flat and nested scoped sources).
             if (sources.writable !== undefined && !writable)
             {
-                throw new CompileError(assignToDerivedMessage(target.text), offset);
+                throw new CompileError(assignToDerivedMessage(target.text, sources.kinds?.get(target.text) ?? 'derived'), offset);
             }
 
             const set = setterName(target.text);
@@ -314,19 +315,17 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
         // (`row().form.values().name`) when the row var is a `<For>` getter param. Outside the row
         // callback (`rows().forEach(row => row.qty)`) the name is NOT in rowItems and the value form
         // stays - there the binding really is the plain `{ key, form }` row object.
-        rowFieldRead: (node) =>
+        rowFieldRead: (node, viaGetter) =>
         {
-            const call = sources.rowItems?.has(node.expression.getText(sourceFile)) === true ? '()' : '';
-            insert(node.expression.getEnd(), `${ call }.form.values()`);
+            insert(node.expression.getEnd(), `${ viaGetter ? '()' : '' }.form.values()`);
         },
         // A write to a ROW field -> the row form's setValue, through `.form` (and the getter call when
         // the row var is a `<For>` getter param). `row.n = e` -> `row.form.setValue('n', e)`;
         // compound/`++` read the current value via `row.form.values()`.
-        rowFieldWrite: (target, expression) =>
+        rowFieldWrite: (target, expression, viaGetter) =>
         {
             const rowVar = target.expression.getText(sourceFile);
-            const call = sources.rowItems?.has(rowVar) === true ? '()' : '';
-            const form = `${ rowVar }${ call }.form`;
+            const form = `${ rowVar }${ viaGetter ? '()' : '' }.form`;
             const field = target.name.text;
             const lhsStart = target.getStart(sourceFile);
 

@@ -141,7 +141,9 @@ describe('generateModule - reactive desugaring', () =>
     {
         const code = gen('component C { state name = ""; <input bind:value={name} /> }');
         // Write-back: `name = $event.target.value` rewritten to the setter.
-        expect(code).toContain('setName($event.target.value)');
+        // value reads through a multiple-aware conditional: a multiple select write-back is the
+        // selected SET, while inputs and single selects read .value exactly as before.
+        expect(code).toContain('setName(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
         // The value side reads the state reactively.
         expect(code).toContain('name()');
     });
@@ -226,6 +228,31 @@ describe('generateModule - reactive desugaring', () =>
         // The state the user just produced must be visible to the authored handler.
         expect(code.indexOf('setName($event)')).toBeGreaterThan(-1);
         expect(code.indexOf('setName($event)')).toBeLessThan(code.indexOf('console.log(v)'));
+    });
+
+    it('discriminates the multiple write-back on selectedOptions, not on multiple', () =>
+    {
+        // `multiple` is a REAL reflected property on <input type="email"> and <input type="file">,
+        // where selectedOptions does not exist - keying on it made every keystroke in such an
+        // input throw "Array.prototype.map called on null or undefined" and left the binding dead.
+        // Only HTMLSelectElement has selectedOptions, so that is the precise "is this a select"
+        // test. The guard must come FIRST, or the throwing branch is still reachable.
+        const out = gen('component C { state e = "a"; <input type="email" multiple bind:value={e} /> }');
+        expect(out).toContain('$event.target.selectedOptions && $event.target.multiple');
+        expect(out).not.toMatch(/\(\$event\.target\.multiple \?/);
+    });
+
+    it('rejects bind: to a plain local, which cannot drive the DOM', () =>
+    {
+        expect(() => gen('component C { let name = "a"; <input bind:value={name} /> }'))
+            .toThrow(/bind-target-not-reactive/);
+    });
+
+    it('still compiles bind: to state unchanged', () =>
+    {
+        const out = gen('component C { state name = "a"; <input bind:value={name} /> }');
+        expect(out).toContain("setProp(_n0, 'value', name())");
+        expect(out).toContain('setName(');
     });
 
     it('rejects bind: to a read-only derived on a component (same write-back guard as DOM)', () =>
@@ -941,7 +968,7 @@ describe('codegen - bind: alongside an explicit handler for the same event', () 
         const registrations = [...code.matchAll(/bindEvent\(_n0, 'input'/g)];
         expect(registrations).toHaveLength(1);
         // Both behaviors survive in the single listener.
-        expect(code).toContain('setDraft($event.target.value)');
+        expect(code).toContain('setDraft(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
         expect(code).toContain('announce()');
     });
 

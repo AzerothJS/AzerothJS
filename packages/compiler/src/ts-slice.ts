@@ -179,24 +179,38 @@ export function parseDeclarationSlice(
  *
  * @internal
  */
-export function formFieldKeys(source: string, decl: FormDecl): string[]
+export function formFieldKeys(source: string, decl: FormDecl): { keys: string[]; open: boolean }
 {
     const parsed = parseDeclarationSlice(source, decl);
     const init = parsed?.initializer;
+    // `open` means the key set is NOT exhaustive: the initializer is not a plain object literal
+    // (a const, a call), or it spreads another object, or a key is computed. createForm derives
+    // the real fields at runtime via Object.keys, so a rule that treats the literal keys as the
+    // whole set would reject fields that genuinely exist.
     if (init === undefined || !ts.isObjectLiteralExpression(init))
     {
-        return [];
+        return { keys: [], open: true };
     }
     const keys: string[] = [];
+    let open = false;
     for (const property of init.properties)
     {
+        if (ts.isSpreadAssignment(property))
+        {
+            open = true;
+            continue;
+        }
         const name = property.name;
-        if (name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)))
+        if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))
         {
             keys.push(name.text);
         }
+        else
+        {
+            open = true;
+        }
     }
-    return keys;
+    return { keys, open };
 }
 
 /**

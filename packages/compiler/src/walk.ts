@@ -40,10 +40,15 @@ export interface ReactiveHooks
     formFieldRead?(node: ts.PropertyAccessExpression): void;
     /** An assignment / `++` / `--` whose target is a `form` field (`formName.field`). Always writable. */
     formWrite?(target: ts.PropertyAccessExpression, expression: ts.Node): void;
-    /** A FIELD read on an array-form ROW variable (`rowName.field`), where `field` is a blank-row key. */
-    rowFieldRead?(node: ts.PropertyAccessExpression): void;
-    /** An assignment / `++` / `--` whose target is a ROW field (`rowName.field`). Always writable. */
-    rowFieldWrite?(target: ts.PropertyAccessExpression, expression: ts.Node): void;
+    /** A FIELD read on an array-form ROW variable (`rowName.field`), where `field` is a blank-row
+     *  key. `viaGetter` is true when the row variable is a `<For>` getter param (a rowItem or a
+     *  marker-scoped row param) - the WALK resolves this, because only it sees the marker scopes
+     *  of the raw/hole path; a hook re-deriving it from rowItems emits record-shaped sugar on a
+     *  getter and crashes at first render. */
+    rowFieldRead?(node: ts.PropertyAccessExpression, viaGetter: boolean): void;
+    /** An assignment / `++` / `--` whose target is a ROW field (`rowName.field`). Always writable;
+     *  `viaGetter` as on {@link rowFieldRead}. */
+    rowFieldWrite?(target: ts.PropertyAccessExpression, expression: ts.Node, viaGetter: boolean): void;
     /**
      * An unshadowed read of a `<For>` row-item getter param: a bare `item`, or the `item` of a member
      * access not claimed by {@link rowFieldRead}. The rewrite appends the getter call.
@@ -155,8 +160,10 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
     const rowFieldOf = (objName: string, fieldName: string): boolean =>
         !isShadowed(objName) && (sources.rowForms?.get(objName)?.has(fieldName) ?? false);
 
-    /** True when `name` resolves (innermost-first) to a marker-scoped row param, with any
-     *  interposed plain local or keyword source winning over an outer row scope. */
+    /** True when `name` resolves (innermost-first) to a marker-scoped row param. Only an
+     *  interposed KEYWORD source wins over an outer row scope; a plain local of the same name
+     *  does NOT (row names are excluded from shadow registration by the rowFieldOf trade), so
+     *  a local alias sharing a registered row name is still rewritten as the row. */
     const isRowParam = (name: string): boolean =>
     {
         for (let k = scopeStack.length - 1; k >= 0; k--)
@@ -371,7 +378,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             if (ts.isPropertyAccessExpression(n.left) && ts.isIdentifier(n.left.expression)
                 && rowFieldOf(n.left.expression.text, n.left.name.text))
             {
-                hooks.rowFieldWrite?.(n.left, n);
+                hooks.rowFieldWrite?.(n.left, n, rowItemOf((n.left.expression).text));
                 visit(n.right);
                 return;
             }
@@ -397,7 +404,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             if (ts.isPropertyAccessExpression(n.operand) && ts.isIdentifier(n.operand.expression)
                 && rowFieldOf(n.operand.expression.text, n.operand.name.text))
             {
-                hooks.rowFieldWrite?.(n.operand, n);
+                hooks.rowFieldWrite?.(n.operand, n, rowItemOf((n.operand.expression).text));
                 return;
             }
         }
@@ -422,7 +429,7 @@ export function traverseReactive(root: ts.Node, sources: ReactiveSources, hooks:
             // / FormApi access (`rowName.form.errors()`) are not fields and fall to the rowItem check.
             if (ts.isIdentifier(object) && rowFieldOf(object.text, n.name.text))
             {
-                hooks.rowFieldRead?.(n);
+                hooks.rowFieldRead?.(n, rowItemOf(object.text));
                 return;
             }
             // Any other member access through a row-item getter param (`item.name`) - the rewrite

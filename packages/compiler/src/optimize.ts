@@ -18,7 +18,7 @@ import * as ts from 'typescript';
 
 import type { RenderPlan, TemplateNode, StaticAttr, Binding } from './ir.ts';
 
-import { CONTENT_PROPERTIES } from 'azerothjs/semantics';
+import { CONTENT_PROPERTIES, isAriaStateAttribute, isChildResolvedProperty } from 'azerothjs/semantics';
 import { parseExpressionSlice } from './ts-slice.ts';
 
 /**
@@ -95,6 +95,8 @@ export function foldConstants(source: string, plan: RenderPlan): RenderPlan
     const foldedText = new Map<number, string>();
     const foldedAttrs = new Map<number, StaticAttr[]>();
     const dropped = new Set<Binding>();
+    // Bindings carry a node id, not a tag, and the child-resolved rule is keyed on both.
+    const tagOf = collectTags(plan.template, new Map<number, string>());
 
     for (const binding of plan.bindings)
     {
@@ -112,13 +114,26 @@ export function foldConstants(source: string, plan: RenderPlan): RenderPlan
             // A content property (`innerHTML={'<b>x</b>'}`) folds to a template ATTRIBUTE, which is
             // inert in the clone while the h() path writes content - the fold would re-open the very
             // divergence the lowerer routes static content properties around. Leave it a binding.
-            if (CONTENT_PROPERTIES.has(binding.name))
+            //
+            // A child-resolved property (`<select value={'de'}>`) is the same trap: the lowerer
+            // deliberately keeps it OUT of the template, and folding it back in would undo that and
+            // leave no writer, which is exactly the bug for a literal `value="de"`.
+            if (CONTENT_PROPERTIES.has(binding.name) || isChildResolvedProperty(binding.name, tagOf.get(binding.target) ?? ''))
             {
                 continue;
             }
             const value = evalConstant(source.slice(binding.expr.span.start, binding.expr.span.end));
             if (value !== null)
             {
+                // An ARIA state is a STRING, not an HTML boolean. Folding here applies HTML-boolean
+                // semantics to the template text, so `aria-expanded={false}` vanished and `={true}`
+                // became a bare `aria-expanded` - both invisible to an accessibility tree, and both
+                // decided BEFORE the writers that know the rule ever run. Leave it a binding: setProp
+                // and the SSR serializer agree on "true"/"false". A string-valued aria-* still folds.
+                if (typeof value === 'boolean' && isAriaStateAttribute(binding.name))
+                {
+                    continue;
+                }
                 dropped.add(binding);
                 if (value !== false)
                 {
@@ -140,6 +155,27 @@ export function foldConstants(source: string, plan: RenderPlan): RenderPlan
         template: foldTemplate(plan.template, foldedText, foldedAttrs),
         bindings: plan.bindings.filter(b => !dropped.has(b))
     };
+}
+
+/** Maps every element node's id to its tag, so a binding can be judged against its element. */
+function collectTags(node: TemplateNode, into: Map<number, string>): Map<number, string>
+{
+    if (node.kind === 'element')
+    {
+        into.set(node.id, node.tag);
+        for (const child of node.children)
+        {
+            collectTags(child, into);
+        }
+    }
+    else if (node.kind === 'fragment')
+    {
+        for (const child of node.children)
+        {
+            collectTags(child, into);
+        }
+    }
+    return into;
 }
 
 /** Replaces folded holes with static text and adds folded static attributes. */
