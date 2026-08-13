@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
-import { BadRequestError, ForbiddenError, NotFoundError, matchesEtag } from '@azerothjs/http';
+import { BadRequestError, ForbiddenError, HttpError, NotFoundError, matchesEtag } from '@azerothjs/http';
 import type { Handler } from '@azerothjs/http';
 
 import type { KitErrorObserver } from './isr.ts';
@@ -247,23 +247,106 @@ export function imageHandler(options: ImageHandlerOptions): Handler
         }
     }
 
+    /**
+     * Reads a response body, stopping the moment it passes `cap`.
+     *
+     * `arrayBuffer()` materialises the WHOLE body before anything can inspect its length, so a
+     * cap checked afterwards reports the violation only once the memory has already been spent -
+     * a hostile or compromised allowlisted origin could hand back gigabytes and take the process
+     * with it. Reading chunk by chunk makes the cap a limit rather than a report: the stream is
+     * cancelled at the first byte over, so the upstream connection closes too.
+     */
+    async function readCapped(response: Response, cap: number): Promise<Uint8Array>
+    {
+        if (response.body === null)
+        {
+            return new Uint8Array(0);
+        }
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        try
+        {
+            for (;;)
+            {
+                const { done, value } = await reader.read();
+                if (done)
+                {
+                    break;
+                }
+                total += value.byteLength;
+                if (total > cap)
+                {
+                    await reader.cancel();
+                    throw new BadRequestError('Remote image exceeds the size limit.', { code: 'image-too-large' });
+                }
+                chunks.push(value);
+            }
+        }
+        finally
+        {
+            reader.releaseLock();
+        }
+
+        const out = new Uint8Array(total);
+        let at = 0;
+        for (const chunk of chunks)
+        {
+            out.set(chunk, at);
+            at += chunk.byteLength;
+        }
+        return out;
+    }
+
     async function readRemote(source: string): Promise<{ bytes: Uint8Array; hash: string; contentType: string }>
     {
-        const url = new URL(source);
+        const url = URL.parse(source);
+        if (url === null)
+        {
+            throw new BadRequestError('src must be a leading-slash local path or an https URL.',
+                { code: 'bad-image-params' });
+        }
         if (!allowed.has(url.origin))
         {
             throw new ForbiddenError('Remote image origin is not allowlisted.', { code: 'image-origin' });
         }
-        const response = await transport(new Request(source, { signal: AbortSignal.timeout(10_000) }));
+        // 'manual', because the allowlist is checked on THIS url only. Following redirects would
+        // let an allowlisted origin (or an open redirect on one) bounce the fetch anywhere the
+        // server can reach - cloud metadata endpoints, localhost admin ports - and the allowlist
+        // would have approved the first hop only. An exact-origin allowlist has to mean the bytes
+        // come from that origin.
+        let response: Response;
+        try
+        {
+            response = await transport(new Request(source, {
+                redirect: 'manual',
+                signal: AbortSignal.timeout(10_000)
+            }));
+        }
+        catch (cause)
+        {
+            const timedOut = (cause as { name?: string } | null)?.name === 'TimeoutError';
+            throw new HttpError(timedOut ? 504 : 502,
+                timedOut ? 'Remote image timed out.' : 'Remote image could not be fetched.',
+                { code: 'image-upstream', expose: true, cause });
+        }
+        if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400))
+        {
+            throw new ForbiddenError('Remote image redirected; only allowlisted origins are fetched.', { code: 'image-redirect' });
+        }
         if (!response.ok)
         {
             throw new BadRequestError(`Remote image answered ${ response.status }.`, { code: 'image-upstream' });
         }
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > maxSourceBytes)
+
+        // A declared length over the cap is refused before a single byte is read.
+        const declared = Number(response.headers.get('content-length'));
+        if (Number.isFinite(declared) && declared > maxSourceBytes)
         {
             throw new BadRequestError('Remote image exceeds the size limit.', { code: 'image-too-large' });
         }
+
+        const bytes = await readCapped(response, maxSourceBytes);
         return {
             bytes,
             hash: createHash('sha256').update(bytes).digest('hex'),

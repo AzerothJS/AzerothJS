@@ -94,6 +94,94 @@ describe('imageHandler without an adapter', () =>
         expect(fetchImpl).toHaveBeenCalledOnce();
         expect((await get(allowing, `src=${ encodeURIComponent('https://evil.example/pic.png') }`)).status).toBe(403);
     });
+
+    it('does not follow redirects off an allowlisted origin', async () =>
+    {
+        // The allowlist is checked on the REQUESTED url only. Following redirects would let an
+        // allowlisted origin - or an open redirect on one - bounce the fetch anywhere the server
+        // can reach (cloud metadata, localhost admin ports), with the allowlist having approved
+        // the first hop only.
+        let seen: Request | null = null;
+        const fetchImpl = vi.fn((request: Request) =>
+        {
+            seen = request;
+            return Promise.resolve(new Response(null, {
+                status: 302,
+                headers: { location: 'http://169.254.169.254/latest/meta-data/' }
+            }));
+        });
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'], fetchImpl });
+
+        const response = await get(app, `src=${ encodeURIComponent('https://cdn.example/pic.png') }`);
+
+        expect(response.status).toBe(403);
+        // The policy itself, not just this response: under 'follow' the hop would be invisible
+        // here, because the fake transport cannot redirect on its own.
+        expect((seen as unknown as Request).redirect).toBe('manual');
+    });
+
+    it('stops reading a remote body at the size cap instead of buffering it whole', async () =>
+    {
+        // The cap used to be checked AFTER arrayBuffer(), so it reported the violation only once
+        // the memory had already been spent - a hostile allowlisted origin could hand back
+        // gigabytes and take the process with it.
+        const cap = 1024 * 1024;
+        let pulled = 0;
+        const body = (): ReadableStream<Uint8Array> =>
+        {
+            let sent = 0;
+            const total = 40 * 1024 * 1024;
+            return new ReadableStream<Uint8Array>({
+                pull(controller)
+                {
+                    if (sent >= total)
+                    {
+                        controller.close();
+                        return;
+                    }
+                    const size = Math.min(256 * 1024, total - sent);
+                    sent += size;
+                    pulled += size;
+                    controller.enqueue(new Uint8Array(size));
+                }
+            });
+        };
+        const { app } = serve({
+            allowedOrigins: ['https://cdn.example'],
+            maxSourceBytes: cap,
+            fetchImpl: () => Promise.resolve(new Response(body(), { headers: { 'content-type': 'image/png' } }))
+        });
+
+        const response = await get(app, `src=${ encodeURIComponent('https://cdn.example/big.png') }`);
+
+        expect(response.status).toBe(400);
+        // Bounded by the cap plus at most a chunk of read-ahead. It was the full 40MB before.
+        expect(pulled).toBeLessThan(cap * 3);
+    });
+
+    it('refuses a declared content-length over the cap without reading the body', async () =>
+    {
+        let pulled = 0;
+        const { app } = serve({
+            allowedOrigins: ['https://cdn.example'],
+            maxSourceBytes: 1024,
+            fetchImpl: () => Promise.resolve(new Response(
+                new ReadableStream<Uint8Array>({
+                    pull(controller)
+                    {
+                        pulled += 1;
+                        controller.enqueue(new Uint8Array(16));
+                    }
+                }),
+                { headers: { 'content-type': 'image/png', 'content-length': String(50 * 1024 * 1024) } }
+            ))
+        });
+
+        expect((await get(app, `src=${ encodeURIComponent('https://cdn.example/huge.png') }`)).status).toBe(400);
+        // Not 0: a ReadableStream pre-pulls one chunk at construction, before the handler sees
+        // the response at all. What matters is that the handler never started draining it.
+        expect(pulled).toBeLessThanOrEqual(1);
+    });
 });
 
 describe('imageHandler with an adapter', () =>
@@ -223,4 +311,42 @@ describe('the source size limit is enforced against the file that is actually re
     // "A FileHandle object was closed during garbage collection ... is now considered an error"
     // on stderr. That is the real backstop; it does not fail vitest, so the `finally` is held in
     // place by review rather than by this file.
+});
+
+describe('a failing upstream is reported as an upstream failure', () =>
+{
+    // Every transport-level rejection - DNS failure, refused connection, TLS error, timeout - was
+    // an uncaught TypeError, so a CDN outage answered "Internal server error" and pointed the
+    // operator at THIS server. A gateway status names the side that actually failed.
+    it('answers 502 when the remote cannot be fetched', async () =>
+    {
+        const fetchImpl = vi.fn(() => Promise.reject(new TypeError('fetch failed')));
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'], fetchImpl });
+
+        const response = await get(app, `src=${ encodeURIComponent('https://cdn.example/pic.png') }`);
+        expect(response.status).toBe(502);
+        expect((await response.json() as { error: { code: string } }).error.code).toBe('image-upstream');
+    });
+
+    it('answers 504 when the remote times out', async () =>
+    {
+        const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+        const fetchImpl = vi.fn(() => Promise.reject(timeout));
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'], fetchImpl });
+
+        expect((await get(app, `src=${ encodeURIComponent('https://cdn.example/pic.png') }`)).status).toBe(504);
+    });
+
+    it('answers 400 for a malformed remote src, not 500', async () =>
+    {
+        // The shape gate is a prefix test, so `https://[` passed it and `new URL` threw a
+        // TypeError that surfaced as a 500 - the caller's mistake reported as the server's.
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'] });
+
+        for (const bad of ['https://', 'https://['])
+        {
+            const response = await get(app, `src=${ encodeURIComponent(bad) }`);
+            expect(response.status).toBe(400);
+        }
+    });
 });
