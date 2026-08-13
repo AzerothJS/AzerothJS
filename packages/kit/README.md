@@ -22,7 +22,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22. `azerothjs` is a required peer:
@@ -33,7 +33,7 @@ npm install @azerothjs/kit azerothjs
 
 ---
 
-## 💡 The whole idea
+## The whole idea
 
 Your router's route table is the manifest. Add one optional field per route and the kit does the rest:
 
@@ -60,7 +60,7 @@ error, because one pattern cannot become one file.
 
 ---
 
-## 🧩 The three calls
+## The three calls
 
 **Server entry** (`entry.server.ts`, built with `vite build --ssr`):
 
@@ -98,7 +98,7 @@ That is the entire integration. `mountPages` registers each page in its mode plu
 
 ---
 
-## ⚙️ Prerendering
+## Prerendering
 
 ```sh
 vite build && vite build --ssr src/entry.server.ts --outDir dist-server
@@ -109,7 +109,7 @@ The bin renders every `render: 'static'` page through your real loaders and writ
 
 ---
 
-## 🧮 Enumerated static routes - `staticParams`
+## Enumerated static routes - `staticParams`
 
 A parameterized route prerenders by enumerating its param sets; anything the enumeration
 did not list falls through to live SSR at request time:
@@ -125,7 +125,7 @@ The route table ships to the browser, so keep the closure browser-safe: inline d
 dynamic import the client bundle never follows eagerly. Invalid param values (empty, `/`,
 dot segments) fail the BUILD, never become a path.
 
-## ♻️ ISR - `revalidate`
+## ISR - `revalidate`
 
 A static page with `revalidate` serves from a page cache: fresh within the window, past it
 the stale copy answers instantly while exactly ONE background render replaces it. Build
@@ -180,7 +180,7 @@ The same mechanism means two applications pointed at one cache directory cannot 
 other's HTML - their shells hash differently, so each rejects the other's entries. They will,
 however, evict each other under the entry cap, so give each app its own directory.
 
-## 🌊 Streaming SSR - `render: 'stream'`
+## Streaming SSR - `render: 'stream'`
 
 The shell (loader handoff included) flushes before slow data resolves; each pending
 `<Suspense>` boundary streams its settled children as an out-of-order chunk that swaps in
@@ -191,7 +191,7 @@ resolve before any byte exists.
 { path: '/dashboard', component: Dashboard, render: 'stream' }
 ```
 
-## 🔒 Under a strict Content-Security-Policy - `scriptNonce`
+## Under a strict Content-Security-Policy - `scriptNonce`
 
 A page emits two kinds of inline tag: the swap-runtime scripts a streamed page needs, and the
 scoped-CSS `<style>` a server-rendered page carries. Both are refused by a policy without
@@ -213,7 +213,7 @@ fallback until hydration refetches, and the streamed bytes are wasted.
 `css()` on the client does not need a nonce: it adds a constructable stylesheet, which CSP does
 not govern.
 
-## 🖼️ The image endpoint - `/_image`
+## The image endpoint - `/_image`
 
 `KitOptions.images: true` serves `<Image optimize>`'s URLs over the client dist:
 content-hash cache keys, a year of immutable caching, ETag revalidation, and the same
@@ -230,7 +230,7 @@ is correct, cache-keyed separately, and keeps the resize win. Replacing an image
 in place keeps its URL, so browsers may cache the old bytes for up to a year; rename the
 file (hashed builds do) or lower `cacheControl` when images mutate.
 
-## 🚫 What it deliberately is not
+## What it deliberately is not
 
 - **Not a router.** The table above is `azerothjs`'s own router table - guards, loaders, `lazy:`, typed `defineRoute` handles all work unchanged.
 - **Not a data layer.** Route loaders ARE the data story; the kit just carries their results across the wire as the hydration handoff.
@@ -240,7 +240,7 @@ file (hashed builds do) or lower `cacheControl` when images mutate.
 
 ---
 
-## 🔗 Related
+## Related
 
 - [AzerothJS](../../README.md) - the monorepo overview and the full package list.
 - [`azerothjs`](../azerothjs) - the framework runtime, router, and renderer (required peer).
@@ -250,5 +250,5 @@ file (hashed builds do) or lower `cacheControl` when images mutate.
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

@@ -13,7 +13,7 @@
 
 ---
 
-## 🚀 Start here
+## Start here
 
 ```sh
 npm install
@@ -26,7 +26,7 @@ value text nodes update - that is the whole framework in one screen. Edit
 
 ---
 
-## 📜 Scripts
+## Scripts
 
 | Command | Does |
 | --- | --- |
@@ -40,7 +40,7 @@ CI runs the same three gates on every push - see `.github/workflows/ci.yml`.
 
 ---
 
-## 🗂 Structure
+## Structure
 
 | Path | Role |
 | --- | --- |
@@ -52,7 +52,7 @@ CI runs the same three gates on every push - see `.github/workflows/ci.yml`.
 
 ---
 
-## 🔬 Devtools
+## Devtools
 
 `npm run dev` mounts the inspector: a launcher pill bottom-right with a live effect count.
 Click it for the reactive tree, the dependency graph, and a timeline of every run with the
@@ -67,7 +67,7 @@ root, so your CSS cannot reach it and its CSS cannot reach your app.
 
 ---
 
-## ✍️ Writing a component
+## Writing a component
 
 A `.azeroth` file is TypeScript with markup at the end of the function body. The
 reactive keywords are the language, not an API:
@@ -92,14 +92,14 @@ full documentation.
 
 ---
 
-## 🚢 Deploy
+## Deploy
 
 `npm run build` emits a static `dist/` - deploy it to any static host: Netlify,
 Vercel, Cloudflare Pages, GitHub Pages, or an S3 bucket. There is no server half.
 
 ---
 
-## 📚 Next
+## Next
 
 - **Add pages** - rerun the scaffolder with `--router` for the framework's own
   client-side router (no extra dependency), or add it by hand from

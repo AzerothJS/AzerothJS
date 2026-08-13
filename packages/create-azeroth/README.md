@@ -20,7 +20,7 @@ working app.
 
 ---
 
-## ✨ What you get
+## What you get
 
 - **The whole canon, wired** - the [`azeroth`](https://www.npmjs.com/package/@azerothjs/cli)
   CLI verbs as your npm scripts, eslint with the azeroth rules, and `azeroth-tsc` as the
@@ -33,7 +33,7 @@ working app.
 
 ---
 
-## 🚀 Usage
+## Usage
 
 ```sh
 npm create azeroth@latest my-app
@@ -62,7 +62,7 @@ npm create azeroth@latest my-app -- --template fullstack --tailwind
 
 ---
 
-## 🧱 Templates
+## Templates
 
 | Template | What it scaffolds |
 | --- | --- |
@@ -75,7 +75,7 @@ as its scripts - `dev`, `check`, `build`, `test` - and nothing else to configure
 two shapes that run TypeScript with no build step (`backend`, `fullstack`) require
 Node >= 24; `frontend` compiles through vite and runs on Node >= 22.
 
-## 🧩 Options
+## Options
 
 A curated set per shape, asked as yes/no in interactive runs and passed as flags in CI:
 
@@ -89,5 +89,5 @@ The two compose: `--router --tailwind` scaffolds the routed app styled with util
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

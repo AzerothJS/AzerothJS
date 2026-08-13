@@ -19,11 +19,11 @@ single-file components, backed by the framework's own compiler.
 
 ---
 
-## ✨ What you get
+## What you get
 
 - **A bundled language server** - no Node.js required; install and open a `.azeroth`
   file, that's it.
-- **The `.ts` ⇄ `.azeroth` boundary dissolved** - definition, references, and rename
+- **The `.ts` and `.azeroth` boundary dissolved** - definition, references, and rename
   work in both directions across your TypeScript and your components.
 - **Compiler-true diagnostics and types** - real type errors in expressions, real props
   at the boundary, no `any`.
@@ -32,7 +32,7 @@ single-file components, backed by the framework's own compiler.
 
 ---
 
-## 🌉 The `.ts` ⇄ `.azeroth` boundary, dissolved
+## The `.ts` and `.azeroth` boundary, dissolved
 
 The differentiator: your TypeScript files and your components behave as ONE codebase.
 
@@ -46,7 +46,7 @@ The differentiator: your TypeScript files and your components behave as ONE code
 
 ---
 
-## 📋 Everything a first-class language gets
+## Everything a first-class language gets
 
 | Feature | Details |
 | --- | --- |
@@ -54,7 +54,7 @@ The differentiator: your TypeScript files and your components behave as ONE code
 | **Hover** | Types, signatures, JSDoc - plus full documentation for every AzerothJS keyword (`state`, `derived`, `effect`, `form`, ...) and built-in component (`Show`, `For`, `Switch`, `Suspense`, `Portal`, `ErrorBoundary`, ...). |
 | **Diagnostics** | Compiler markup errors + real TypeScript type errors in expressions and script. Errors say what is wrong, why, and how to fix it. |
 | **Navigation** | Definition, type definition, implementation, references - cross-file, cross-language. |
-| **Rename** | Safe cross-file rename across the `.ts` ⇄ `.azeroth` boundary. |
+| **Rename** | Safe cross-file rename across the `.ts` and `.azeroth` boundary. |
 | **Semantic highlighting** | Components, host tags, event attributes, and expression holes each get their own token - and **reactive names get a distinct color**, so you always see what re-renders. |
 | **Symbols & structure** | Outline, workspace-wide symbol search, folding, selection ranges. |
 | **Inlay hints** | Parameter names, inferred types, return types - each individually toggleable. |
@@ -64,7 +64,7 @@ The differentiator: your TypeScript files and your components behave as ONE code
 
 ---
 
-## 🔌 Zero-config companions
+## Zero-config companions
 
 The extension pre-wires common tooling so a project needs **no `.vscode/settings.json`**:
 
@@ -79,7 +79,7 @@ The extension pre-wires common tooling so a project needs **no `.vscode/settings
 
 ---
 
-## 🚀 Quick start
+## Quick start
 
 1. Install the extension - the language server is **bundled**; no Node.js required.
 2. Open any `.azeroth` file. That's it.
@@ -88,7 +88,7 @@ The extension pre-wires common tooling so a project needs **no `.vscode/settings
 
 ---
 
-## ⚙️ Key settings
+## Key settings
 
 Settings live under `azeroth.*` (*Settings -> Extensions -> AzerothJS*) - 33
 per-feature toggles. The ones most people touch:
@@ -107,7 +107,7 @@ Every capability (hover, rename, CodeLens, semantic tokens, ...) has its own
 
 ---
 
-## ✅ Requirements
+## Requirements
 
 | Requirement | Minimum |
 | --- | --- |
@@ -116,7 +116,7 @@ Every capability (hover, rename, CodeLens, semantic tokens, ...) has its own
 
 ---
 
-## 🏗️ Building from source
+## Building from source
 
 From the monorepo root:
 
@@ -127,7 +127,7 @@ npm run package -w azerothjs-vscode   # produce the .vsix
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 - **The file icon doesn't show?** Third-party file-icon themes (e.g. Material
   Icon Theme) override extension icons by design. The AzerothJS icon shows under
@@ -138,15 +138,15 @@ npm run package -w azerothjs-vscode   # produce the .vsix
 
 ---
 
-## 🔗 Links
+## Links
 
-[Framework](../../README.md) ·
-[Getting started](https://github.com/AzerothJS/AzerothJS#quick-start) ·
-[Issues](https://github.com/AzerothJS/AzerothJS/issues) ·
-[Changelog](https://github.com/AzerothJS/AzerothJS/blob/main/CHANGELOG.md)
+- [Framework](../../README.md)
+- [Getting started](https://github.com/AzerothJS/AzerothJS#quick-start)
+- [Issues](https://github.com/AzerothJS/AzerothJS/issues)
+- [Changelog](https://github.com/AzerothJS/AzerothJS/blob/main/CHANGELOG.md)
 
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

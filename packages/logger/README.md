@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22:
@@ -29,7 +29,7 @@ npm install @azerothjs/logger
 
 ---
 
-## 📖 Overview
+## Overview
 
 ```ts
 import { createLogger } from '@azerothjs/logger';
@@ -73,7 +73,7 @@ map onto styled `console` methods.
 
 ---
 
-## 🤝 What the design promises
+## What the design promises
 
 - **A disabled level is free.** Below-threshold methods ARE a shared no-op - a
   `log.trace(...)` in a hot loop costs a plain call, so instrumentation can stay in
@@ -91,7 +91,7 @@ map onto styled `console` methods.
 
 ---
 
-## 🎨 The pretty face's design
+## The pretty face's design
 
 The developer face renders MEANING, not just strings, and its rules are deliberate:
 
@@ -124,7 +124,7 @@ every field with full epoch timestamps.
 
 ---
 
-## 📣 The banner
+## The banner
 
 The framework's face at startup - `@azerothjs/http`'s `serve()` and the Vite dev plugin
 print it, and anything built on AzerothJS can too:
@@ -155,7 +155,7 @@ banner never invents numbers.
 
 ---
 
-## 🔧 Environment
+## Environment
 
 | Variable | Effect |
 | --- | --- |
@@ -166,7 +166,7 @@ banner never invents numbers.
 
 ---
 
-## 📁 Log files
+## Log files
 
 > [!NOTE]
 > The file sinks are Node-only (they use `node:fs`/`node:path`), so they live at the
@@ -223,7 +223,7 @@ new App({ observe: logRequests(log) });
 
 ---
 
-## 🔌 Custom sinks
+## Custom sinks
 
 A sink is one function; everything else is composition:
 
@@ -241,7 +241,7 @@ crash-safety a bare write stream does not have.
 
 ---
 
-## 🔗 Related
+## Related
 
 Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 [`@azerothjs/http`](../http) (whose request logging consumes this record shape),
@@ -250,5 +250,5 @@ Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

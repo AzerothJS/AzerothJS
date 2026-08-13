@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 ESM-only, Node >= 22:
 
@@ -28,7 +28,7 @@ npm install @azerothjs/ws
 
 ---
 
-## 📖 Overview
+## Overview
 
 `attachWebSockets` upgrades WebSocket requests on any Node HTTP server and returns a detach
 function:
@@ -64,7 +64,7 @@ both ends of a connection read the same way.
 
 ---
 
-## 🏗️ What the implementation covers
+## What the implementation covers
 
 - **The opening handshake** - strict validation, `Sec-WebSocket-Accept` derivation
   (verified against RFC 6455's own worked example), plain HTTP refusals for anything
@@ -88,7 +88,7 @@ both ends of a connection read the same way.
 
 ---
 
-## 🧪 How it is tested
+## How it is tested
 
 Interop runs against Node's built-in `WebSocket` client (undici) - a foreign implementation,
 so echo, binary, server push, and the close handshake passing is genuine conformance, not
@@ -99,7 +99,7 @@ close codes) and a seeded fuzz feeds the parser garbage: the contract is frames 
 
 ---
 
-## 🔗 Related
+## Related
 
 Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 [`@azerothjs/http`](../http) (the web-standard HTTP kernel it attaches to),
@@ -108,5 +108,5 @@ Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

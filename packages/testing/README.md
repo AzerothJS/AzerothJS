@@ -50,7 +50,7 @@ it('updates and tears down cleanly', () =>
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22. `azerothjs` is a required peer - the helpers mount and inspect its reactive trees:
@@ -61,7 +61,7 @@ npm install -D @azerothjs/testing azerothjs
 
 ---
 
-## 🔗 Related
+## Related
 
 - [AzerothJS](../../README.md) - the monorepo overview and the full package list.
 - [`azerothjs`](../azerothjs) - the framework runtime these helpers mount and inspect (required peer).
@@ -70,5 +70,5 @@ npm install -D @azerothjs/testing azerothjs
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

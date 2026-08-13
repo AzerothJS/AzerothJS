@@ -14,7 +14,7 @@
 
 ---
 
-## 🚀 Start here
+## Start here
 
 ```sh
 npm install
@@ -28,7 +28,7 @@ validate the same input in the form AND at the server boundary - and the server'
 
 ---
 
-## ✨ The canon tour
+## The canon tour
 
 Everything this template teaches, and the file that teaches it.
 
@@ -45,7 +45,7 @@ Everything this template teaches, and the file that teaches it.
 
 ---
 
-## 📜 Scripts (from this root)
+## Scripts (from this root)
 
 | Command | Does |
 | --- | --- |
@@ -59,7 +59,7 @@ CI runs exactly these on every push - see `.github/workflows/ci.yml`.
 
 ---
 
-## 🗂 Structure
+## Structure
 
 ```
 application/          the browser half - vite + the azeroth compiler
@@ -77,7 +77,7 @@ server/               the API half - @azerothjs/http, no build step
 
 ---
 
-## 🔌 How the halves talk
+## How the halves talk
 
 - **In dev**, vite serves the client and proxies `/api` to the server. The whole
   wiring is one visible line in `application/vite.config.ts`.
@@ -110,7 +110,7 @@ handler stops paying a model provider.
 
 ---
 
-## 🔬 Devtools
+## Devtools
 
 `npm run dev` mounts the inspector in the application: a launcher pill bottom-right with a
 live effect count, opening onto the reactive tree, the dependency graph, and a timeline of
@@ -131,7 +131,7 @@ it is: the token is printed at boot and minted fresh each time, never written to
 
 ---
 
-## 🔧 Environment
+## Environment
 
 Copy `server/.env.example` to `server/.env` and adjust; `server/src/main.ts` reads it
 into a typed object before anything else runs, and a bad value fails boot with one
@@ -139,7 +139,7 @@ error naming every problem.
 
 ---
 
-## 🚢 Deploy
+## Deploy
 
 One container for the whole app - stage 1 builds the client, stage 2 runs the
 server and serves it:
@@ -155,7 +155,7 @@ out of the image. `/api/healthz` answers orchestrator probes.
 
 ---
 
-## 📚 Next
+## Next
 
 - **Add a page**: one row in `application/src/routes.ts` plus its component.
   Choosing how it ships is the `render:` field.

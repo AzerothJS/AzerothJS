@@ -28,7 +28,7 @@ Requires ESLint 9+ (flat config).
 
 ---
 
-## 📦 Install
+## Install
 
 ESM-only; requires Node >= 22.
 
@@ -43,7 +43,7 @@ npm install -D @azerothjs/eslint-plugin eslint @typescript-eslint/parser
 
 ---
 
-## 🚀 Usage (flat config)
+## Usage (flat config)
 
 `configs.recommended` is an **array** - spread it into your config:
 
@@ -95,7 +95,7 @@ export default [
 
 ---
 
-## 🏗️ How it works
+## How it works
 
 A `.azeroth` file uses `component` / `state` / `effect` / markup syntax that is not valid TypeScript,
 so it cannot be linted by feeding the raw text to a TS parser. The **authority on `.azeroth` semantics
@@ -116,7 +116,7 @@ checks are the compiler's, surfaced by the processor.
 
 ---
 
-## 📏 Rules
+## Rules
 
 | Rule | What it catches |
 | --- | --- |
@@ -129,7 +129,7 @@ type-services project wiring is needed (the trade-off: aliased or re-exported si
 
 ---
 
-## 📏 Markup rules (inside `.azeroth`)
+## Markup rules (inside `.azeroth`)
 
 Your regular ESLint rules already reach INSIDE `{ ... }` expressions: the processor lints the
 compiler's TypeScript projection, where every expression is mapped byte-for-byte, so `eqeqeq`,
@@ -151,7 +151,7 @@ the `azeroth()` Vite plugin prints at build time and the editors squiggle.
 
 ---
 
-## 🧭 Editor integration
+## Editor integration
 
 `.azeroth` files lint through the official ESLint integration once it is told to validate the `azeroth`
 extension:
@@ -167,7 +167,7 @@ extension:
 
 ---
 
-## 🔗 Related
+## Related
 
 See the [monorepo README](../../README.md) for the full framework. Related tooling:
 
@@ -178,5 +178,5 @@ See the [monorepo README](../../README.md) for the full framework. Related tooli
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

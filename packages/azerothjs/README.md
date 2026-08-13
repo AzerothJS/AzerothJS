@@ -42,7 +42,7 @@ export default component Counter(props: { start?: number })
 
 ---
 
-## 📦 Install
+## Install
 
 ```sh
 npm install azerothjs
@@ -80,7 +80,7 @@ the complete API surface:
 
 ---
 
-## 🧠 The `.azeroth` language
+## The `.azeroth` language
 
 A `.azeroth` file is a TypeScript module with `component` blocks. Inside a component, reactive
 declarations are first-class keywords:
@@ -111,7 +111,7 @@ directives, and two-way input binding is `bind:value`/`bind:checked`.
 
 ---
 
-## 🧩 Core API
+## Core API
 
 `azerothjs` is the single runtime import; tree-shaking drops what you don't use. Every symbol below
 is a real export of the package.
@@ -250,7 +250,7 @@ const router = createRouter({
 
 ---
 
-## 🌐 The server side
+## The server side
 
 SSR ships in `azerothjs` itself (`renderToString` above). The rest of the backend is its own
 zero-dependency stack under the same scope - run it behind an AzerothJS frontend, or entirely on
@@ -271,7 +271,7 @@ consumes, and a server validation failure's field map drops straight into a brow
 
 ---
 
-## 🌊 Streaming SSR and `<Suspense>`
+## Streaming SSR and `<Suspense>`
 
 `renderToStream` sends everything that needs no waiting NOW and the rest the moment it
 exists: the shell flushes with each pending `<Suspense>` boundary's fallback in place,
@@ -306,7 +306,7 @@ return new Response(stream, { headers: { 'content-type': 'text/html; charset=utf
 
 With `@azerothjs/kit`, one route field does all of it: `render: 'stream'`.
 
-## 🖼️ `<Image>`
+## `<Image>`
 
 The responsive image element: `srcset`/`sizes` math over a fixed width ladder, lazy
 loading, async decoding, width/height reserved (no layout shift). Without an endpoint it
@@ -318,7 +318,7 @@ ships no codec dependency to do it.
 <Image src="/hero.png" alt="Hero" width={ 1200 } sizes="100vw" optimize={ true } />
 ```
 
-## 🧭 Editor support
+## Editor support
 
 - **VS Code** - the AzerothJS extension (built from `editors/vscode` in this repo):
   bundled language server, completion, hover docs for every keyword, cross-file navigation and
@@ -330,7 +330,7 @@ ships no codec dependency to do it.
 
 ---
 
-## 📥 Which package do I import from?
+## Which package do I import from?
 
 The canon is one rule per side of the wire:
 
@@ -350,7 +350,7 @@ why the frontend layers are no longer published separately.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 Guides, package docs, and the full language reference live in the
 [GitHub repository](https://github.com/AzerothJS/AzerothJS); start from the
@@ -362,5 +362,5 @@ Guides, package docs, and the full language reference live in the
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22. `azerothjs` is a REQUIRED peer: the kernel wires per-request
@@ -31,7 +31,7 @@ npm install @azerothjs/http azerothjs
 
 ---
 
-## 📖 Overview
+## Overview
 
 Handlers are `(context) => Response` on WHATWG types - one context carries the request, params, URL, and middleware additions. Node's `http`/`http2`
 appear only in edge adapters, which buys three things at once: the same app serves on any
@@ -70,7 +70,7 @@ guard, and graceful shutdown, in one file with no build step - with
 
 ---
 
-## 🛠️ Development
+## Development
 
 There is no build step in the dev loop. Node >= 22 runs TypeScript directly, so
 the whole story is one command:
@@ -131,7 +131,7 @@ metadata that strip-only execution does not emit. Then compile with `tsc` and ru
 
 ---
 
-## 🧩 The typed API layer - `@azerothjs/http/api`
+## The typed API layer - `@azerothjs/http/api`
 
 The typed API system lives in this package as the `./api` subpath: declare each
 feature once with `feature()` - routes, schemas, guards, handlers, docs, colocated,
@@ -144,7 +144,7 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
 
 ---
 
-## 🧰 What is in the box
+## What is in the box
 
 - **Radix router** - no regex, O(segments), route conflicts FAIL BOOT with a printable
   table; 405 + `Allow` distinguished from 404; params typed from the pattern string.
@@ -177,7 +177,7 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
 
 ---
 
-## 🌐 Other runtimes - Bun, Deno, Workers, Vercel Edge
+## Other runtimes - Bun, Deno, Workers, Vercel Edge
 
 The `.` entry is a pure fetch-standard kernel (one sanctioned `node:` import, the
 AsyncLocalStorage request-root seam, which Bun, Deno and workerd all implement). To serve on a
@@ -214,7 +214,7 @@ Verified by `runtime-compat.spec.ts`, which boots real Bun and Deno servers over
 
 ---
 
-## 🛡️ Production hardening
+## Production hardening
 
 Cross-cutting response concerns wrap the whole app as composable EDGE middleware - a
 `(next) => next` decorator that returns new `Response` values, never mutating a channel.
@@ -271,7 +271,7 @@ is emitted only over a connection proven secure.
 
 ---
 
-## 🎬 Server actions
+## Server actions
 
 A server action is a POST-only, param-free route kind whose typed client surface is a
 directly-callable function. The wire behavior is exactly a JSON route - input validated
@@ -305,7 +305,7 @@ catch (error)
 }
 ```
 
-## 🔐 CSRF
+## CSRF
 
 Browser-facing mutations pair `csrfCookie` (edge middleware minting a READABLE token
 cookie - readability is the point of double submit) with `csrfProtect` (a guard checking
@@ -333,7 +333,7 @@ The decision rules, spelled out because "checks the Origin" leaves the interesti
 Safe methods (GET/HEAD/OPTIONS) skip the guard entirely, so a mutation must never live behind
 one. `allowedOrigins` re-admits a named cross-origin caller; nothing else does.
 
-## 🌊 Streaming and response-wrapping middleware
+## Streaming and response-wrapping middleware
 
 Edge middleware can turn a streaming response into a buffered one, and **nothing on the wire
 says so**. A wrapper that reads the body and rebuilds still answers `transfer-encoding: chunked`
@@ -392,7 +392,7 @@ const brand = (next) => ({
 The behaviour is pinned in `tests/streaming-middleware-contract.spec.ts`, including the case
 proving a buffered response is indistinguishable by inspection.
 
-## 🔎 The QUERY method (RFC 10008)
+## The QUERY method (RFC 10008)
 
 > [!IMPORTANT]
 > **Experimental.** RFC 10008 is not yet deployed internet reality - proxies, caches,
@@ -429,7 +429,7 @@ client and a server.
 
 ---
 
-## ⚡ Performance
+## Performance
 
 The hot path is built to stay allocation-light: the request and response are lazy shims over
 the Node objects, so headers and body are read on demand rather than eagerly copied, and the
@@ -438,7 +438,7 @@ serving path - it is a property of the architecture, not a mode you trade away f
 
 ---
 
-## 🔗 Related
+## Related
 
 The server half of the [AzerothJS](../../README.md) monorepo. Related packages:
 [`azerothjs`](../azerothjs) (the reactive runtime this kernel shares as a peer),
@@ -448,5 +448,5 @@ The server half of the [AzerothJS](../../README.md) monorepo. Related packages:
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

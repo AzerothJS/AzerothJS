@@ -13,7 +13,7 @@
 
 ---
 
-## 🚀 Start here
+## Start here
 
 ```sh
 npm install
@@ -29,7 +29,7 @@ you and the running server: save a file, it restarts.
 
 ---
 
-## 📜 Scripts
+## Scripts
 
 | Command | Does |
 | --- | --- |
@@ -43,7 +43,7 @@ CI runs the same gates on every push - see `.github/workflows/ci.yml`.
 
 ---
 
-## 🗂 Structure
+## Structure
 
 | Path | Role |
 | --- | --- |
@@ -57,7 +57,7 @@ never touches the environment, a test can drive the entire app with a plain
 
 ---
 
-## 🔧 Environment
+## Environment
 
 Copy `.env.example` to `.env` and adjust; `src/main.ts` reads it into a typed object
 before anything else runs. Production reads the real environment instead.
@@ -75,7 +75,7 @@ would share one bucket and the limit would be a global budget rather than a per-
 
 ---
 
-## 🧭 Adding a route
+## Adding a route
 
 ```ts
 // src/app.ts
@@ -103,7 +103,7 @@ For a typed contract shared with a browser client, see the `fullstack` template.
 
 ---
 
-## 🚢 Deploy
+## Deploy
 
 ```sh
 docker build -t {{name}} .
@@ -115,7 +115,7 @@ answers orchestrator probes, and `SIGTERM` drains in-flight responses before exi
 
 ---
 
-## 📚 Next
+## Next
 
 - **Add a browser half** - `npm create azeroth@latest` and pick `fullstack`: one
   shared typed contract across both halves, validated at the boundary and in the

@@ -23,7 +23,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 ```sh
 npm install @azerothjs/schema
@@ -31,7 +31,7 @@ npm install @azerothjs/schema
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
 ```ts
 import { object, string, number, type Infer } from '@azerothjs/schema';
@@ -56,7 +56,7 @@ else
 
 ---
 
-## 📖 Overview
+## Overview
 
 One declaration drives runtime validation, the compile-time type, and the error codes your
 clients switch on - no interface written twice, no JSON Schema in a JavaScript costume, no
@@ -92,7 +92,7 @@ const first = createAccount.safeParse(input, { mode: 'first' }); // or stop at t
 
 ---
 
-## 🏗️ The deliberate shapes
+## The deliberate shapes
 
 - **Errors are a flat field-path map** - `{ 'items.0.email': 'Enter a valid email' }`. This is
   the exact shape `azerothjs`'s form `setError` consumes and the HTTP layer's 422 carries: a
@@ -116,7 +116,7 @@ checks run in a stable, documented order: required, type, normalization, `nonemp
 
 ---
 
-## 🌐 One call at the HTTP boundary
+## One call at the HTTP boundary
 
 `@azerothjs/http`'s `readValidated(request, schema)` reads the JSON body (Content-Type and
 size limits enforced) and validates it in one call - a failure is the standard 422 whose
@@ -132,7 +132,7 @@ app.post('/accounts', async (request) =>
 
 ---
 
-## 🧠 One schema, three boundaries
+## One schema, three boundaries
 
 The same declaration validates in the browser form (`createForm({ schema })`), in the api
 client before the request leaves, and at the server boundary - one source of truth, three
@@ -146,7 +146,7 @@ app.post('/accounts', async (request) => json(await readValidated(request, creat
 
 ---
 
-## 🗓️ Dates on the wire - `date()`
+## Dates on the wire - `date()`
 
 JSON cannot carry a Date, so `date()` IS the codec: the wire shape is the ISO 8601 string
 `JSON.stringify` already produces, parsing turns it back into a Date instance, and a Date
@@ -162,7 +162,7 @@ Server handlers store and return real Dates; the OpenAPI document says
 `{ type: 'string', format: 'date-time' }`; the typed client's return types say `string`
 (`Wire<T>`) because the manifest carries no schemas to revive them with.
 
-## 🧩 Combinators and validators
+## Combinators and validators
 
 Combinators: `string` `number` `boolean` `literal` `enumOf` `array` `object` `record` `union`,
 each with `.optional()` and `.refine()`. String formats: `email`, `url`, `uuid`, `datetime`.
@@ -174,7 +174,7 @@ the `countries` dataset (and `getCountry`) behind `phone`. The `email()` validat
 
 ---
 
-## 🔗 Related
+## Related
 
 - [AzerothJS monorepo](../../README.md) - the full framework, guides, and the language reference.
 - [`azerothjs`](https://www.npmjs.com/package/azerothjs) - the frontend framework; its `createForm` consumes these validators.
@@ -183,5 +183,5 @@ the `countries` dataset (and `getCountry`) behind `phone`. The `email()` validat
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

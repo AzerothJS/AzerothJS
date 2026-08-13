@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📖 Overview
+## Overview
 
 A TypeScript language-service plugin that teaches `tsserver` (the engine behind
 VS Code's built-in TypeScript support, and any editor that uses it) to resolve
@@ -38,7 +38,7 @@ type-checks against the component's actual signature instead of `any`.
 
 ---
 
-## 📦 Install
+## Install
 
 Requires Node >= 22 and TypeScript 5 or 6 (`typescript >=5 <7`, a required peer
 dependency).
@@ -63,7 +63,7 @@ the editor's TypeScript server loads the plugin.
 
 ---
 
-## 🏗️ How it works
+## How it works
 
 The plugin reuses the same projection as the editor language server
 (`@azerothjs/language-service`): a `.azeroth` file is compiled to a virtual
@@ -83,7 +83,7 @@ that seamless inside `tsserver`:
 
 ---
 
-## 🎯 Scope: editors, not `tsc`
+## Scope: editors, not `tsc`
 
 > [!IMPORTANT]
 > TypeScript language-service plugins run **only inside `tsserver`** (editors), not
@@ -98,7 +98,7 @@ that seamless inside `tsserver`:
 
 ---
 
-## 🔗 Related
+## Related
 
 See the [monorepo README](../../README.md) for the full framework. Related tooling:
 
@@ -109,5 +109,5 @@ See the [monorepo README](../../README.md) for the full framework. Related tooli
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

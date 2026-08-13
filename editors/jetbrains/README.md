@@ -20,9 +20,9 @@ the framework's own compiler for accurate, compiler-aware analysis.
 
 ---
 
-## ✨ What you get
+## What you get
 
-- **The `.ts` ⇄ `.azeroth` boundary dissolved** - go-to-definition, Find Usages, and
+- **The `.ts` and `.azeroth` boundary dissolved** - go-to-definition, Find Usages, and
   safe rename work in both directions between your TypeScript and your components.
 - **Usage-aware inspections** - the IDE's unused-symbol analysis sees component usages,
   so a `.ts` export used only from markup is never falsely flagged.
@@ -32,7 +32,7 @@ the framework's own compiler for accurate, compiler-aware analysis.
 
 ---
 
-## 📦 Install
+## Install
 
 **From the JetBrains Marketplace** (recommended): *Settings -> Plugins -> Marketplace*,
 search for **AzerothJS**, and click Install.
@@ -45,7 +45,7 @@ and select the zip, or extract it into `<IDE-config-dir>/plugins/` and restart.
 
 ---
 
-## 📋 Features
+## Features
 
 | Feature | Details |
 | --- | --- |
@@ -64,7 +64,7 @@ and select the zip, or extract it into `<IDE-config-dir>/plugins/` and restart.
 
 ---
 
-## ✅ Requirements
+## Requirements
 
 | Requirement | Details |
 | --- | --- |
@@ -76,7 +76,7 @@ backend, or fullstack project in one command.
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Go to *Settings -> Languages & Frameworks -> AzerothJS*. The toggles are sent to the
 server as `initializationOptions` and map to the same per-feature options the VS Code
@@ -131,7 +131,7 @@ analyzer.
 
 ---
 
-## 🏗️ Building from source
+## Building from source
 
 Requires **JDK 21** (set `JAVA_HOME`) and **Gradle 9 or later**. Build the language
 server bundle first (the plugin packages it), then the plugin:
@@ -164,7 +164,7 @@ of downloading the pinned version. The underlying language analysis is covered b
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Keep language analysis in `@azerothjs/language-service`; the Kotlin side handles only
 IDE wiring (starting the server, highlighting, settings, editing hooks). When the server
@@ -176,5 +176,5 @@ for the full workflow.
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

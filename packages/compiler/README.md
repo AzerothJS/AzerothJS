@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📖 Overview
+## Overview
 
 The `.azeroth` single-file-component compiler. A `.azeroth` file is a TypeScript module written with
 `component` blocks and AzerothJS markup. The compiler turns each component into one mode-aware runtime
@@ -26,7 +26,7 @@ artifact and copies everything outside a component (imports, types, helpers) thr
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22. `typescript` (`>=5 <7`) is a required peer - it parses and type-checks component
@@ -39,7 +39,7 @@ npm install -D @azerothjs/compiler typescript
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
 > [!TIP]
 > The supported way to use it is the **Vite plugin** - add `azeroth()` to a Vite config and imports of
@@ -56,7 +56,7 @@ export default defineConfig({ plugins: [azeroth()] });
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 `.azeroth` is component-only - there is no standalone markup transform. The pipeline, in run order:
 
@@ -77,7 +77,7 @@ Because SSR and hydration share the emitter, their comment markers line up by co
 
 ---
 
-## 🧩 Public API
+## Public API
 
 The supported entry point is the Vite plugin; the lower-level pieces are exported for tooling.
 
@@ -103,7 +103,7 @@ Every exported symbol is documented at its definition.
 
 ---
 
-## ✍️ Authoring idiom and reactivity
+## Authoring idiom and reactivity
 
 A component is a `component` block. Declare reactive state with `state`, derived values with
 `derived`, and side effects with `effect`, and type props with an ordinary TypeScript parameter on the
@@ -266,7 +266,7 @@ is left to the type system.
 
 ---
 
-## 🎨 Syntax highlighting anywhere
+## Syntax highlighting anywhere
 
 The TextMate grammar ships WITH this package - one canonical copy, welded by test to
 the editor bundles:
@@ -287,7 +287,7 @@ themselves) can load the same file.
 
 ---
 
-## 🔍 Type checking and diagnostics
+## Type checking and diagnostics
 
 Three independent layers run during a build, in increasing depth.
 
@@ -332,7 +332,7 @@ binds the lib a single time and reuses one checker across every file in a build.
 
 ---
 
-## 🔗 Related
+## Related
 
 - [AzerothJS](../../README.md) - the monorepo overview and the full package list.
 - [`azerothjs`](../azerothjs) - the framework runtime the compiled output targets.
@@ -341,5 +341,5 @@ binds the lib a single time and reuses one checker across every file in a build.
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

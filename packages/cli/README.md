@@ -19,7 +19,7 @@ TypeScript framework. `azeroth` is the single command line every scaffolded app 
 
 ---
 
-## ✨ What you get
+## What you get
 
 - **One verb per job** - `dev`, `check`, `build`, `test`, `upgrade`, `doctor`, `info`.
   No sub-command mazes, no aliases.
@@ -32,7 +32,7 @@ TypeScript framework. `azeroth` is the single command line every scaffolded app 
 
 ---
 
-## 📦 Install
+## Install
 
 ```sh
 npm install --save-dev @azerothjs/cli
@@ -47,7 +47,7 @@ npm create azeroth@latest my-app
 
 ---
 
-## 🧰 Commands
+## Commands
 
 | Verb | What it does |
 | --- | --- |
@@ -61,7 +61,7 @@ npm create azeroth@latest my-app
 
 ---
 
-## 🚩 Flags
+## Flags
 
 | Flag | Effect |
 | --- | --- |
@@ -77,7 +77,7 @@ npm create azeroth@latest my-app
 
 ---
 
-## 🔍 `--print` - transparency
+## `--print` - transparency
 
 > [!TIP]
 > Every orchestrating command takes `--print`: it prints the exact child invocations -
@@ -92,7 +92,7 @@ azeroth check --print
 
 ---
 
-## 🧭 Project shapes
+## Project shapes
 
 There is no config file. The CLI detects your project's shape from what already exists:
 
@@ -106,7 +106,7 @@ There is no config file. The CLI detects your project's shape from what already 
 
 ---
 
-## 🎛️ `azeroth dev` - the conductor
+## `azeroth dev` - the conductor
 
 One command replaces the hand-written dev script and the second terminal: the server's
 compiler watch (only when decorators demand one), `node --watch` on the emitted output -
@@ -135,7 +135,7 @@ when you are debugging the tools themselves.
 
 ---
 
-## 🩺 `azeroth doctor`
+## `azeroth doctor`
 
 Each check is a distilled real-world failure: an unsupported Node version for the backend
 stack, a decorator ORM without `emitDecoratorMetadata` (strip-only Node cannot run it), a
@@ -146,12 +146,12 @@ trap). Diagnosis only - doctor never mutates anything.
 
 ---
 
-## 🚦 Exit codes
+## Exit codes
 
-`0` success · `1` a gate or child failed · `2` usage or detection error.
+`0` success | `1` a gate or child failed | `2` usage or detection error.
 
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

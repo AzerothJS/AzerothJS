@@ -30,7 +30,7 @@ re-run answers the question that matters: WHAT triggered it.
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22; `azerothjs` is a peer dependency:
@@ -41,7 +41,7 @@ npm install --save-dev @azerothjs/devtools
 
 ---
 
-## 📖 Overview
+## Overview
 
 Install BEFORE mounting so every node created during the initial render is captured:
 
@@ -68,7 +68,7 @@ app's CSS cannot touch it, and its CSS cannot touch your app.
 
 ---
 
-## 🧭 What each view answers
+## What each view answers
 
 - **Components** - "what does my app hold right now?" Files own their declarations; each
   declared primitive is ONE collapsible group with a live status badge (a `resource` shows
@@ -95,7 +95,7 @@ via Vite), its primitive's sibling nodes, and both directions of its dependencie
 
 ---
 
-## 🏷️ Names come from your code
+## Names come from your code
 
 On the dev server, the compiler passes every declared identifier through automatically:
 `state count`, `form login`, `resource user` label their nodes with no configuration, and
@@ -105,7 +105,7 @@ Production output carries none of this.
 
 ---
 
-## 🖥️ Inspecting the server
+## Inspecting the server
 
 Requests on an AzerothJS backend are reactive roots, so the SAME inspector reads the
 server's graph. Attach the dev-only bridge next to `serve()`:
@@ -139,7 +139,7 @@ Logs and traces stay [`@azerothjs/logger`](../logger)'s job.
 
 ---
 
-## 🔌 The agent (headless use)
+## The agent (headless use)
 
 The panel is one consumer of the agent - the piece that installs the runtime hook and keeps
 the model. Drive it yourself for a custom overlay, a test harness, or an extension
@@ -158,7 +158,7 @@ Everything the agent returns is JSON-serializable: `getModel()`, `getGraph()`,
 
 ---
 
-## 🔗 Related
+## Related
 
 Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 [`azerothjs`](../azerothjs) (the runtime whose versioned hook this consumes),
@@ -168,5 +168,5 @@ Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📖 Overview
+## Overview
 
 A [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 frontend for `.azeroth` files. It is a thin adapter: it owns the LSP connection
@@ -31,7 +31,7 @@ repository, among others) launch this server and talk to it over stdio.
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only; requires Node >= 22. `azerothjs` is a peer dependency.
@@ -47,7 +47,7 @@ type checker), and `azeroth-docgen` (a Markdown/HTML API reference for
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 The server holds one `AzerothLanguageService` **per workspace root** (multi-root
 aware: each document resolves against the service whose root is its longest
@@ -71,7 +71,7 @@ back any other host without this package.
 
 ---
 
-## 🧱 Components
+## Components
 
 | File | Role |
 | --- | --- |
@@ -142,7 +142,7 @@ errors) from the service.
 
 ---
 
-## ▶️ Running
+## Running
 
 Editors launch the bundled binary over stdio:
 
@@ -161,7 +161,7 @@ startServer(createConnection(/* your reader/writer */));
 
 ---
 
-## ✨ Capabilities
+## Capabilities
 
 Completion (with resolve), hover, definition, type-definition, references,
 document highlights, rename, document symbols, workspace symbols, signature help,
@@ -176,7 +176,7 @@ so these token types get themed.
 
 ---
 
-## 🎨 Formatting: the placement, stated
+## Formatting: the placement, stated
 
 There is ONE formatting engine for `.azeroth`, and it lives here - the
 language-service format provider (document, range, and on-type). What it does in
@@ -193,7 +193,7 @@ second formatting implementation that could disagree with the editors.
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 Configuration is supplied by the client through `initializationOptions` and
 `workspace/configuration`. TypeScript intelligence uses the nearest
@@ -201,7 +201,7 @@ Configuration is supplied by the client through `initializationOptions` and
 
 ---
 
-## 🔗 Related
+## Related
 
 See the [monorepo README](../../README.md) for the full framework. Related tooling:
 
@@ -212,5 +212,5 @@ See the [monorepo README](../../README.md) for the full framework. Related tooli
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>

@@ -18,7 +18,7 @@ Part of [AzerothJS](https://github.com/AzerothJS/AzerothJS) - the fine-grained f
 
 ---
 
-## 📦 Install
+## Install
 
 > [!NOTE]
 > ESM-only, Node >= 22:
@@ -29,7 +29,7 @@ npm install @azerothjs/cron
 
 ---
 
-## 📖 Overview
+## Overview
 
 ```ts
 import { createScheduler } from '@azerothjs/cron';
@@ -46,7 +46,7 @@ await scheduler.stop();          // disarm + drain in-flight runs (pair with the
 
 ---
 
-## 🛡️ What setInterval gets wrong, fixed by construction
+## What setInterval gets wrong, fixed by construction
 
 - **Drift.** Every arm computes the NEXT wall-clock occurrence and sets one timeout to it -
   "daily at midnight" stays midnight instead of accumulating lag.
@@ -68,7 +68,7 @@ await scheduler.stop();          // disarm + drain in-flight runs (pair with the
 
 ---
 
-## ⏰ Expressions
+## Expressions
 
 Standard 5 fields (`minute hour day-of-month month day-of-week`) with ranges (`1-5`), steps
 (`*/15`, `1-30/5`, vixie `10/5`), lists (`mon,wed,fri`), month/day names, and the
@@ -78,7 +78,7 @@ exported - `parseExpression` + `nextOccurrence` answer "when would this run next
 
 ---
 
-## 🔗 Related
+## Related
 
 Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 [`@azerothjs/http`](../http) (the HTTP kernel whose `shutdown()` pairs with `stop()`),
@@ -87,5 +87,5 @@ Part of the [AzerothJS](../../README.md) monorepo. Related packages:
 ---
 
 <div align="center">
-<sub>Part of <a href="../../README.md">AzerothJS</a> · <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
+<sub>Part of <a href="../../README.md">AzerothJS</a> | <a href="https://github.com/AzerothJS/AzerothJS/blob/main/LICENSE">MIT License</a></sub>
 </div>
