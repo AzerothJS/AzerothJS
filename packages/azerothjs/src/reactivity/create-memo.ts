@@ -36,7 +36,8 @@ import {
     setCurrentCleanups
 } from './graph.ts';
 import { attachSubscriberProbe } from './create-signal.ts';
-import { currentOwner, registerDisposer, setCurrentOwner } from './create-root.ts';
+import { currentOwner, registerDisposer, setCurrentOwner, drainOwner } from './create-root.ts';
+import type { Owner } from './create-root.ts';
 import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
 import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
@@ -153,7 +154,13 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
     // The ownership scope this memo is created under, re-established around every recompute so
     // anything the compute creates is owned here and context reads resolve against this chain
     // - not the scope of whichever write invalidated the memo.
-    const owner = currentOwner;
+    const owner: Owner = {
+        disposers: [],
+        parent: currentOwner,
+        context: null,
+        errorHandler: currentErrorHandler,
+        disposed: false
+    };
 
     const node: Subscriber =
     {
@@ -223,13 +230,33 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
             );
         }
 
-        if (cleanups.length > 0)
+        // Teardown of the previous compute runs with no subscriber and no cleanup array, so a
+        // read inside a cleanup cannot link this memo (or whoever is ambient) to a producer it
+        // never legitimately read. Then the work the last compute OWNED is drained - not disposed,
+        // because this node has to survive for the next compute.
         {
-            for (const c of cleanups)
+            const teardownSubscriber = currentSubscriber;
+            const teardownCleanups = currentCleanups;
+            setCurrentSubscriber(null);
+            setCurrentCleanups(null);
+            try
             {
-                c();
+                if (cleanups.length > 0)
+                {
+                    const pending = cleanups;
+                    cleanups = [];
+                    for (const c of pending)
+                    {
+                        c();
+                    }
+                }
+                drainOwner(owner);
             }
-            cleanups = [];
+            finally
+            {
+                setCurrentSubscriber(teardownSubscriber);
+                setCurrentCleanups(teardownCleanups);
+            }
         }
 
         const previousSubscriber = currentSubscriber;
@@ -326,11 +353,27 @@ export function createMemo<T>(compute: () => T, options?: SignalOptions<T>): Get
         }
         node.isDisposed = true;
 
-        for (const c of cleanups)
+        const teardownSubscriber = currentSubscriber;
+        const teardownCleanups = currentCleanups;
+        setCurrentSubscriber(null);
+        setCurrentCleanups(null);
+        try
         {
-            c();
+            const pending = cleanups;
+            cleanups = [];
+            for (const c of pending)
+            {
+                c();
+            }
+            owner.disposed = true;
+            drainOwner(owner);
+            owner.context = null;
         }
-        cleanups = [];
+        finally
+        {
+            setCurrentSubscriber(teardownSubscriber);
+            setCurrentCleanups(teardownCleanups);
+        }
 
         unlinkAll(node);
         dtDispose(devtoolsId);

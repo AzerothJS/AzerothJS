@@ -48,6 +48,169 @@ interface ModeFrame
 const frames: ModeFrame[] = [];
 
 /**
+ * One client adoption of a server-rendered tree.
+ *
+ * The stack above is exception-safe but SYNCHRONOUS, which is the right lifetime for a
+ * serialization window and the wrong one for hydration: adoption can be outstanding after
+ * the entry call returns. `<Routes>` is the case that proves it - a route whose chunk has
+ * not landed claims nothing on its first effect run, and the re-run that finally adopts is
+ * scheduled by the reactive system, long after hydrate()'s frame was popped. The re-run
+ * then saw 'dom', built fresh DOM instead of an adoption descriptor, and left the server's
+ * markup in place but wired to nothing.
+ *
+ * So a pass is an object with an explicit lifetime rather than a stack entry. It is OPEN
+ * while adoption is still owed and terminal once it is not; a computation created during
+ * an open pass re-enters it on re-run through {@link runInPass}, and once the pass closes those
+ * same re-runs correctly see 'dom' again - adoption happens once, and later navigations
+ * are ordinary DOM swaps.
+ *
+ * `pending` is what keeps an open pass from closing at the end of the synchronous window:
+ * any site that must finish adopting later takes a {@link deferHydration} ticket first.
+ *
+ * @internal
+ */
+export interface HydrationPass
+{
+    /** False once adoption is finished or has failed; a closed pass is never re-entered. */
+    open: boolean;
+
+    /** Outstanding {@link deferHydration} tickets. The pass cannot close above zero. */
+    pending: number;
+
+    /**
+     * Where a failure during DEFERRED adoption goes. Without it such a throw escapes as an
+     * unhandled rejection, because the entry point's own catch returned with the frame -
+     * which is why a deferred mismatch left an inert page while a synchronous one fell back
+     * cleanly. hydrate() installs the same fallback it uses for the synchronous case.
+     */
+    onMismatch: ((error: unknown) => void) | null;
+}
+
+/** The pass being adopted right now, or null outside one. @internal */
+let activePass: HydrationPass | null = null;
+
+/**
+ * The active pass, but only while it is still open - a closed pass is deliberately
+ * indistinguishable from no pass, so a captured reference cannot resurrect adoption.
+ *
+ * @internal
+ * @returns The open {@link HydrationPass}, or null.
+ */
+function currentHydrationPass(): HydrationPass | null
+{
+    return activePass !== null && activePass.open ? activePass : null;
+}
+
+/**
+ * Opens a pass. The caller drives it with {@link runInPass} and ends it with
+ * {@link settleHydrationPass}.
+ *
+ * @internal
+ * @param onMismatch - Handler for a failure during deferred adoption.
+ * @returns The new pass.
+ */
+export function beginHydrationPass(onMismatch: (error: unknown) => void): HydrationPass
+{
+    return { open: true, pending: 0, onMismatch };
+}
+
+/**
+ * Runs `fn` inside `pass` with 'hydrate' active. This is the re-entry point: the initial
+ * window and every later resumption of the same pass go through here, so they are the same
+ * code path rather than two that must be kept in step.
+ *
+ * A throw is routed to the pass's mismatch handler and CLOSES the pass, so a failed
+ * adoption degrades to a clean client render instead of retrying against DOM that the
+ * fallback is about to replace.
+ *
+ * @internal
+ * @typeParam T - fn's return type.
+ * @param pass - The pass to enter.
+ * @param fn - The work to run under it.
+ * @returns fn's value, or undefined when the mismatch handler absorbed a throw.
+ */
+export function runInPass<T>(pass: HydrationPass, fn: () => T): T | undefined
+{
+    const previous = activePass;
+    activePass = pass;
+    try
+    {
+        return runInMode('hydrate', fn);
+    }
+    catch (error)
+    {
+        if (pass.onMismatch === null)
+        {
+            throw error;
+        }
+        pass.open = false;
+        pass.onMismatch(error);
+        return undefined;
+    }
+    finally
+    {
+        activePass = previous;
+    }
+}
+
+/**
+ * Takes a ticket saying "this region still owes adoption", keeping the pass open past the
+ * end of the synchronous window and handing back the pass to resume under.
+ *
+ * The ticket holder is the ONLY code allowed to resume. An earlier version of this let
+ * every computation born during the pass re-enter it, which is wrong in the other
+ * direction: a `<Show>` that had already adopted its range re-ran while an unrelated route
+ * was still waiting for its chunk, re-entered 'hydrate', and tried to adopt the same server
+ * nodes twice. Authority to adopt belongs to whoever still owes adoption, not to everyone
+ * who happened to be created while adoption was in progress.
+ *
+ * Call `release` once the region is adopted or abandoned; it is idempotent, and settles the
+ * pass when the last ticket goes.
+ *
+ * @internal
+ * @returns The pass and its release, or null when called outside an open pass.
+ */
+export function deferHydration(): { pass: HydrationPass; release: () => void } | null
+{
+    const pass = currentHydrationPass();
+    if (pass === null)
+    {
+        return null;
+    }
+
+    pass.pending += 1;
+    let released = false;
+    return {
+        pass,
+        release: (): void =>
+        {
+            if (released)
+            {
+                return;
+            }
+            released = true;
+            pass.pending -= 1;
+            settleHydrationPass(pass);
+        }
+    };
+}
+
+/**
+ * Closes the pass if nothing is outstanding. Called at the end of the entry window and
+ * again as each ticket is released, so whichever finishes last is the one that closes it.
+ *
+ * @internal
+ * @param pass - The pass to settle.
+ */
+export function settleHydrationPass(pass: HydrationPass): void
+{
+    if (pass.pending === 0)
+    {
+        pass.open = false;
+    }
+}
+
+/**
  * Whether hydration markers are active for the current render - true only inside a
  * `runInMode('string', fn, { markers: true })` window. Read by the SSR serializers
  * when emitting hole/control-flow comment anchors.

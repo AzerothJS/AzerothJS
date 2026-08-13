@@ -24,6 +24,7 @@ import { createSignal } from './create-signal.ts';
 import { createEffect, routeAsyncError } from './create-effect.ts';
 import { onCleanup } from './on-cleanup.ts';
 import { batch } from './batch.ts';
+import { assertFunction, describeArg } from './validate.ts';
 import { currentErrorHandler } from './catch-error.ts';
 import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 import { currentStreamSession, isHydrating, isStringMode } from './render-mode.ts';
@@ -71,6 +72,29 @@ export interface ResourceOptions<T>
 
     /** Debug name surfaced to devtools; groups the resource's data/loading/error/fetch nodes. */
     name?: string;
+}
+
+/**
+ * Whether a value could be the options bag rather than a misplaced fetcher value.
+ *
+ * "Any object" is NOT good enough, and that mistake defeats the whole guard: a PROMISE is an
+ * object, and `resource r = fetch(url) with { source: id }` emits
+ * `createResource(() => id(), fetch(url))`. Classifying that promise as options makes the
+ * overload discrimination promote the SOURCE THUNK into the fetcher slot, so the resource
+ * resolves to the source KEY and serves it as data - silently, and in SSR that wrong value is
+ * what gets serialized and hydrated. Thenables and arrays are therefore excluded.
+ *
+ * Takes `unknown` on purpose: the declared parameter type rules out null, but this runs against
+ * values the types never saw - compiled `.azeroth` output and untyped JavaScript callers - and
+ * narrowing to the declared type would make the check provably dead and delete itself.
+ */
+function isOptionsBag(value: unknown): boolean
+{
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+    {
+        return false;
+    }
+    return typeof (value as { then?: unknown }).then !== 'function';
 }
 
 /**
@@ -160,6 +184,29 @@ export function createResource<T, S>(
     maybeOptions?: ResourceOptions<T>
 ): Resource<T>
 {
+    // Both overloads take a callable first: a standalone fetcher, or the source getter. A
+    // non-function here is the `resource r = fetch(url)` shape - the keyword's value is a verbatim
+    // expression the compiler never inspects, so a forgotten thunk reached this call as a PROMISE.
+    // That did not hang: it settled ASYNCHRONOUSLY to "fetcher is not a function" on error(),
+    // which surfaces far from the call that caused it. Failing at construction, the way every
+    // sibling primitive does, is what makes it traceable.
+    assertFunction(sourceOrFetcher, 'createResource',
+        'Pass the fetcher as a function: createResource(async (signal) => (await fetch(url, { signal })).json()).');
+
+    // Arg 2 is either the fetcher (source-driven form) or the options bag. Anything else is the
+    // same forgotten thunk one position over: `resource r = 5 with { source: id }` emits
+    // `createResource(() => id(), 5)`, and the discrimination below would then quietly promote the
+    // SOURCE to fetcher and treat `5` as options - fetching the source's value as if it were data.
+    // That is worse than the hang, because it looks like it worked.
+    if (maybeFetcherOrOptions !== undefined
+        && typeof maybeFetcherOrOptions !== 'function'
+        && !isOptionsBag(maybeFetcherOrOptions))
+    {
+        throw new TypeError('createResource expects the fetcher or an options object as its second '
+            + `argument, received ${ describeArg(maybeFetcherOrOptions) }. With \`with { source }\`, `
+            + 'the value must be a function of the source: resource r = (id) => load(id) with { source: id }.');
+    }
+
     // Discriminate the overloads by whether the second argument is a fetcher FUNCTION.
     const hasSource = typeof maybeFetcherOrOptions === 'function';
     const source = hasSource

@@ -14,6 +14,7 @@
 
 import type { DisposeFn } from './types.ts';
 import { assertFunction } from './validate.ts';
+import { currentCleanups, setCurrentCleanups } from './graph.ts';
 import { currentErrorHandler, setCurrentErrorHandler } from './catch-error.ts';
 import { dtRegister, dtDispose, dtEnterOwner, dtExitOwner, dtEnabled } from './devtools.ts';
 
@@ -67,6 +68,125 @@ export function setCurrentOwner(owner: Owner | null): Owner | null
     const previous = currentOwner;
     currentOwner = owner;
     return previous;
+}
+
+/**
+ * Runs and clears an owner's disposers WITHOUT retiring the owner.
+ *
+ * This is the per-re-run teardown for a computation: an effect owns whatever its last run created
+ * (a nested effect, an onMount, a createResource), and that work must die before the next run
+ * builds its replacement. `dispose()` cannot be reused for it - that sets `disposed` permanently
+ * and frees `context`, after which {@link registerDisposer} would eagerly tear down everything the
+ * NEXT run creates, so a nested effect would die immediately after its first run.
+ *
+ * Same drain discipline as `dispose`: a pop loop (so a disposer that registers a disposer still
+ * runs), each call isolated (so a throwing disposer cannot strand its siblings), first error
+ * rethrown after the drain completes. Runs with the owner active so work spawned by a disposer
+ * registers here rather than leaking.
+ *
+ * @internal
+ * @param owner - The scope whose collected teardown callbacks should run now.
+ */
+export function drainOwner(owner: Owner): void
+{
+    const disposers = owner.disposers;
+    if (disposers.length === 0)
+    {
+        return;
+    }
+
+    const previousOwner = currentOwner;
+    currentOwner = owner;
+
+    let firstError: unknown;
+    let failed = false;
+    try
+    {
+        while (disposers.length > 0)
+        {
+            const disposer = disposers.pop();
+            if (disposer === undefined)
+            {
+                continue;
+            }
+            try
+            {
+                disposer();
+            }
+            catch (err)
+            {
+                if (!failed)
+                {
+                    failed = true;
+                    firstError = err;
+                }
+            }
+        }
+    }
+    finally
+    {
+        currentOwner = previousOwner;
+    }
+    if (failed)
+    {
+        throw firstError;
+    }
+}
+
+/**
+ * Runs a compiled component's body in an ownership scope of its own.
+ *
+ * A component is emitted as a plain function call, so without this it has no scope: work it creates
+ * belongs to whatever owner happens to be active, and a `provideContext` in its body is visible to
+ * every LATER SIBLING in that scope - a value meant for one component's subtree leaking sideways
+ * into the next one.
+ *
+ * Unlike {@link createRoot} this scope is ATTACHED: it registers with the owner that rendered it,
+ * so the component's effects, memos and context die when its parent does - a `<For>` row, a `<Show>`
+ * branch, an enclosing component, or the effect whose re-run built it. Nobody has to hold a
+ * disposer, because a component invocation has no call site that could.
+ *
+ * Descendants are unaffected: they run while this owner is active, so their context reads walk up
+ * through it and resolve the provided value exactly as before.
+ *
+ * @internal Emitted by the compiler; part of the runtime contract.
+ * @typeParam T - The component body's return type (its rendered output).
+ * @param fn - The component body.
+ * @returns Whatever the body returns.
+ */
+export function componentScope<T>(fn: () => T): T
+{
+    const owner: Owner = { disposers: [], parent: currentOwner, context: null, errorHandler: currentErrorHandler, disposed: false };
+
+    // Attach BEFORE switching, so this registers with the PARENT. Idempotent: the parent may drain
+    // it (a re-run) and something may dispose it again, and a second pass must be a no-op rather
+    // than re-running teardown that already happened.
+    registerDisposer(() =>
+    {
+        if (owner.disposed)
+        {
+            return;
+        }
+        owner.disposed = true;
+        drainOwner(owner);
+        owner.context = null;
+    });
+
+    const previousOwner = currentOwner;
+    const previousCleanups = currentCleanups;
+    currentOwner = owner;
+    // Same reasoning as createRoot: an `onCleanup` in a component body means "when this component
+    // goes away", not "before the next run of whatever effect happened to render me".
+    setCurrentCleanups(null);
+    try
+    {
+        return fn();
+    }
+    finally
+    {
+        currentOwner = previousOwner;
+        setCurrentCleanups(previousCleanups);
+    }
 }
 
 /**
@@ -226,6 +346,15 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     const previousRoot = currentOwner;
     currentOwner = owner;
 
+    // A root is an ownership boundary, so `onCleanup` in its body must mean "when THIS root
+    // disposes". Without clearing the ambient cleanup array, a createRoot opened from inside an
+    // effect run (which is how every control-flow row and reactive hole is built) would leave the
+    // effect's array installed, and the root body's onCleanup would fire on that effect's next
+    // re-run instead. Deliberately NOT touching currentSubscriber: a root is not a tracking
+    // boundary, and h.ts's per-run roots must keep tracking into the driving effect.
+    const previousCleanups = currentCleanups;
+    setCurrentCleanups(null);
+
     // Announce the root to devtools and make it the OWNER of everything created in its body, so the panel
     // can group nodes by their root. Children read the active owner at registration.
     const devtoolsId = dtEnabled() ? dtRegister('root', {}) : 0;
@@ -299,6 +428,7 @@ export function createRoot<T>(fn: (dispose: DisposeFn) => T): T
     finally
     {
         currentOwner = previousRoot;
+        setCurrentCleanups(previousCleanups);
         dtExitOwner(previousOwner);
     }
 }

@@ -31,7 +31,7 @@ export type { OnOptions } from './on.ts';
 export { onCleanup } from './on-cleanup.ts';
 export { onMount } from './on-mount.ts';
 export { onRootDispose } from './on-root-dispose.ts';
-export { createRoot, getOwner, runWithOwner, type Owner } from './create-root.ts';
+export { createRoot, componentScope, getOwner, runWithOwner, type Owner } from './create-root.ts';
 export { createContext, provideContext, useContext, type Context } from './create-context.ts';
 
 // Derived helpers built on the core primitives.

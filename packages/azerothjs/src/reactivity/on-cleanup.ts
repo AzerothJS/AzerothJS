@@ -11,6 +11,7 @@
 
 import type { CleanupFn } from './types.ts';
 import { currentCleanups } from './graph.ts';
+import { registerDisposer } from './create-root.ts';
 
 /**
  * onCleanup
@@ -80,5 +81,14 @@ export function onCleanup(fn: CleanupFn): void
     if (currentCleanups !== null)
     {
         currentCleanups.push(fn);
+        return;
     }
+    // No run in progress, but there may still be a scope: a createRoot body, or a component body
+    // executing inside one. Registering with the owner makes the callback fire when that scope is
+    // disposed, which is what `packages/azerothjs/README.md` has always described. Previously this
+    // fell through and registered nowhere, so the documented pattern silently did nothing.
+    //
+    // Outside every scope it remains a no-op rather than a throw - a component that calls
+    // onCleanup must not explode when someone renders it in a bare unit test.
+    registerDisposer(fn);
 }

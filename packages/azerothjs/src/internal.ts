@@ -25,20 +25,31 @@
  * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
  * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
  */
-export const RUNTIME_CONTRACT_VERSION = 1;
+export const RUNTIME_CONTRACT_VERSION = 2;
 
 /**
  * The load-time handshake every compiled module runs. A mismatch is a clear, actionable
  * error at startup - not undefined behavior three components deep.
  */
-export function assertRuntimeContract(compiledWith: number): void
+export function assertRuntimeContract(compiledWith: number, moduleUrl?: string): void
 {
     if (compiledWith !== RUNTIME_CONTRACT_VERSION)
     {
+        // Which side is behind decides what the reader has to DO, and they are opposite actions:
+        // stale COMPILED output is rebuilt, a stale RUNTIME is upgraded. A single direction-blind
+        // sentence sent half of all readers to the wrong remedy. The module URL is what turns
+        // "something in this app" into a file - decisive when the stale artifact is one prebuilt
+        // dependency inside an otherwise current install.
+        const remedy = compiledWith < RUNTIME_CONTRACT_VERSION
+            ? 'This module is the stale side: rebuild it with the matching compiler, or update the '
+                + 'prebuilt library that shipped it.'
+            : 'The installed runtime is the stale side: upgrade azerothjs to the release that '
+                + 'matches the compiler this module was built with.';
         throw new Error(
-            `This module was compiled for azerothjs runtime contract v${ compiledWith }, but the installed ` +
-            `azerothjs speaks v${ RUNTIME_CONTRACT_VERSION }. Compiled output and runtime must come from the ` +
-            'same release train - rebuild the app (or update the prebuilt library) with the matching compiler.'
+            `This module was compiled for azerothjs runtime contract v${ compiledWith }, but the installed `
+            + `azerothjs speaks v${ RUNTIME_CONTRACT_VERSION }. Compiled output and runtime must come from `
+            + `the same release train. ${ remedy }`
+            + (moduleUrl === undefined ? '' : ` (module: ${ moduleUrl })`)
         );
     }
 }
@@ -66,6 +77,7 @@ export {
 } from './reactivity/index.ts';
 
 // Markup runtime: the hyperscript core and the template-clone bindings.
+export { componentScope } from './reactivity/create-root.ts';
 export { h } from './renderer/index.ts';
 export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';

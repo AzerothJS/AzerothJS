@@ -34,7 +34,9 @@ import {
 } from './graph.ts';
 import { isBatching, queueEffect } from './batch.ts';
 import { isStringMode } from './render-mode.ts';
-import { currentOwner, registerDisposer, setCurrentOwner } from './create-root.ts';
+import { currentOwner, registerDisposer, setCurrentOwner, drainOwner } from './create-root.ts';
+import type { Owner } from './create-root.ts';
+import { DEV } from './dev.ts';
 import { currentErrorHandler, setCurrentErrorHandler, uncaughtErrorHandler } from './catch-error.ts';
 import { assertFunction } from './validate.ts';
 import { dtRegister, dtRun, dtDispose, dtEnabled } from './devtools.ts';
@@ -205,14 +207,30 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
     // Devtools node id (0 unless a devtools hook is attached); used to emit run/dispose events.
     let devtoolsId = 0;
 
-    // The ownership scope this effect is created under. Re-established around EVERY run (not
-    // just the first) so work during a re-run resolves against THIS scope: a nested effect,
-    // memo, createResource, or onMount registers with this owner and is disposed with this
-    // effect; a nested createRoot takes this owner as its PARENT (a detached lifetime the
-    // caller disposes, but whose context chain still resolves up through here); and a
-    // useContext() read resolves against this owner's chain rather than the ambient owner of
-    // whoever's write triggered the run.
-    const owner = currentOwner;
+    // This effect's OWN scope, allocated once and re-established around EVERY run. Work created
+    // during a run - a nested effect, memo, createResource or onMount - registers here and dies
+    // with the run that made it, because `runOnce` drains this node before each re-run. Capturing
+    // the ambient owner instead (the old shape) made a nested computation a sibling of this
+    // effect rather than its child, so it outlived every re-run and accumulated without bound.
+    //
+    // ONE node, not one per run: `getOwner()` inside an effect must return the same object across
+    // re-runs (owner-context.spec.ts:176-195 asserts identity), and a nested `createRoot` holds
+    // this as its PARENT for the whole life of the effect - a per-run node would leave surviving
+    // rows resolving context through a retired owner.
+    const owner: Owner = {
+        disposers: [],
+        parent: currentOwner,
+        context: null,
+        errorHandler: currentErrorHandler,
+        disposed: false
+    };
+
+    if (DEV && currentOwner === null)
+    {
+        console.warn('azeroth: createEffect() called with no owner - nothing can dispose it, so it '
+            + 'will run for the lifetime of the process. Wrap it in createRoot(), or keep the '
+            + 'returned disposer and call it yourself.');
+    }
 
     const subscriber: Subscriber =
     {
@@ -297,13 +315,35 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 
     function runOnce(): void
     {
-        if (cleanups.length > 0)
+        // Teardown of the PREVIOUS run happens in a neutral scope: no subscriber, no cleanup
+        // array. A signal read inside a cleanup body would otherwise link to whichever
+        // computation happened to be ambient - and a re-run triggered from inside another
+        // computation's tracked run (which is exactly what error-boundary.ts does when it tears a
+        // branch down) made that a foreign subscriber. The graph then woke computations that never
+        // read the signal at all. Cleanups tear down; they must not subscribe.
+        const teardownSubscriber = currentSubscriber;
+        const teardownCleanups = currentCleanups;
+        setCurrentSubscriber(null);
+        setCurrentCleanups(null);
+        try
         {
-            for (const c of cleanups)
+            if (cleanups.length > 0)
             {
-                c();
+                const pending = cleanups;
+                cleanups = [];
+                for (const c of pending)
+                {
+                    c();
+                }
             }
-            cleanups = [];
+            // Then the work this effect's last run OWNED - nested computations, onMount handles,
+            // resources. Drained, not disposed: the node stays alive for the next run.
+            drainOwner(owner);
+        }
+        finally
+        {
+            setCurrentSubscriber(teardownSubscriber);
+            setCurrentCleanups(teardownCleanups);
         }
 
         // Install this subscriber + cleanup array as the active context (saving the
@@ -421,11 +461,31 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
 
         subscriber.isDisposed = true;
 
-        for (const c of cleanups)
+        // Same neutral scope as the re-run teardown, and for the same reason: disposal is often
+        // driven from inside another computation's tracked run.
+        const teardownSubscriber = currentSubscriber;
+        const teardownCleanups = currentCleanups;
+        setCurrentSubscriber(null);
+        setCurrentCleanups(null);
+        try
         {
-            c();
+            const pending = cleanups;
+            cleanups = [];
+            for (const c of pending)
+            {
+                c();
+            }
+            // The effect is going away for good, so its scope retires with it: `disposed` is set
+            // and the context payload freed, which `drainOwner` deliberately does not do.
+            owner.disposed = true;
+            drainOwner(owner);
+            owner.context = null;
         }
-        cleanups = [];
+        finally
+        {
+            setCurrentSubscriber(teardownSubscriber);
+            setCurrentCleanups(teardownCleanups);
+        }
 
         unlinkAll(subscriber);
         dtDispose(devtoolsId);
