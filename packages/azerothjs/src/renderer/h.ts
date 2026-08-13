@@ -20,8 +20,10 @@ import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../r
 import { createEffect, createRoot, isStringMode, isHydrating } from '../reactivity/index.ts';
 import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
-import { serializeElement, assertSafeAttribute, assertSafeTag } from './ssr.ts';
+import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean } from './ssr.ts';
+import { writeSelectValue, settleSelectValue } from './select-value.ts';
 import { attachEvent } from './delegate.ts';
+import { isChildResolvedProperty } from '../semantics.ts';
 import {
     hostEventType,
     isReservedHostAttribute,
@@ -168,6 +170,10 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
     applyProps(el, properties);
 
     appendChildren(el, children);
+
+    // The element's own children are in place, so a <select value> written above can apply. This
+    // is targeted at THIS element: a global walk here would cost O(tracked selects) per element.
+    settleSelectValue(el);
 
     return el;
 }
@@ -321,11 +327,43 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
 {
     if (DOM_PROPERTIES.has(key))
     {
+        // `<select>.value` cannot simply be assigned: with no matching <option> yet the write is a
+        // silent no-op, so it is parked and re-tried when children arrive. See select-value.ts.
+        if (isChildResolvedProperty(key, el.localName))
+        {
+            writeSelectValue(el as HTMLSelectElement, value);
+            return;
+        }
         (el as unknown as Record<string, unknown>)[key] = value;
+        // An <option>'s value is what RESOLVES its select's value, and `value` is a DOM PROPERTY
+        // here - a property assignment produces no mutation record, so no MutationObserver of any
+        // kind can see it. Changing an existing option's value in place therefore left the select
+        // showing a stale selection while SSR, which reads the values directly, disagreed. This is
+        // the seam: the framework knows it just changed the resolving input, so it settles the
+        // owning select. `closest` returns null while the option is still detached, and the
+        // select's own childList observer covers that case when it attaches.
+        if (key === 'value' && el.localName === 'option')
+        {
+            // Walked explicitly rather than with `closest('select')`: an option's only valid
+            // parents are <select>, <optgroup>, and <datalist>, so this is exact - and `closest`
+            // is not reliable across the DOM implementations the suite runs on.
+            const parent = el.parentElement;
+            const owner = parent === null ? null
+                : parent.localName === 'select' ? parent
+                    : parent.localName === 'optgroup' ? parent.parentElement : null;
+            settleSelectValue(owner);
+        }
         return;
     }
 
     assertSafeAttribute(key, value, el.tagName);
+
+    // ARIA booleans are STRINGS, not HTML boolean attributes - see isAriaBoolean.
+    if (isAriaBoolean(key, value))
+    {
+        el.setAttribute(key, String(value));
+        return;
+    }
 
     if (value === false || value === null || value === undefined)
     {
@@ -527,7 +565,8 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
     // holds its slot with an empty text node), preserving this binding's single-anchor invariant.
     let extras: ChildNode[] = [];
 
-    createEffect(() =>
+    /** One update of this reactive child; returns this run's cleanup, if it registered one. */
+    function update(): (() => void) | undefined
     {
         // Evaluate the child inside a per-run root. This is critical:
         // building an element here (e.g. `h('span', {}, () => count())`)
@@ -615,7 +654,9 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
                 destroyComponent(nextNode);
             }
         };
-    });
+    }
+
+    createEffect(update);
 }
 
 /**
@@ -1140,6 +1181,12 @@ function createHydrationNode(tag: string, props: Props, children: Child[]): Hydr
         // rendered more than this element's tree expects (a mismatch take* can't
         // see). hydrate() turns this into its dev-warn + client-render fallback.
         childCursor.assertExhausted(`<${ tag }>`);
+
+        // The child walk ran AFTER applyProps, so an adopted <option selected> was written on
+        // top of the select's own value. Settling here restores the value's precedence - the
+        // same targeted call h() makes after appending children, because adoption performs no
+        // childList mutation for the observer to see.
+        settleSelectValue(el);
     });
 
     return node;

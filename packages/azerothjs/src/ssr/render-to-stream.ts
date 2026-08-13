@@ -15,6 +15,7 @@
  */
 
 import { createRoot, isSSRNode, runInMode, runInStoreScope } from '../reactivity/index.ts';
+import { markSelectedOption, markSelectedOptions } from '../renderer/ssr.ts';
 import { StreamSession, getStoreScope, runInExistingStoreScope } from '../reactivity/internal.ts';
 import type { PendingBoundary } from '../reactivity/internal.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
@@ -227,6 +228,18 @@ export function renderToStream(
 /** @internal One settled boundary as its wire chunk: template + seed script + swap call. */
 function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string | undefined): string
 {
+    // The enclosing <select>'s value, recorded when it serialized (see ssr.ts). Marking here is
+    // what keeps a streamed page's first paint correct: the swap inserts these options directly,
+    // and until hydration runs nothing else can express the selection.
+    let children = childrenHtml;
+    const select = boundary.select;
+    if (select !== undefined)
+    {
+        children = Array.isArray(select.desired) && select.multiple
+            ? markSelectedOptions(children, select.desired as readonly string[])
+            : markSelectedOption(children, select.desired as string);
+    }
+
     const seeds: Record<string, { d?: unknown; e?: string }> = {};
     for (const entry of boundary.entries)
     {
@@ -245,7 +258,7 @@ function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string
     // The one escape that matters inside an inert script: '<' cannot open '</script>'.
     json = json.replace(/</g, '\\u003c');
     const attribute = nonce === undefined ? '' : ` nonce="${ nonce }"`;
-    return `<template data-azs="${ boundary.id }">${ childrenHtml }</template>`
+    return `<template data-azs="${ boundary.id }">${ children }</template>`
         + `<script type="application/json" data-azs-seed="${ boundary.id }">${ json }</script>`
         + `<script${ attribute }>__AZS(${ boundary.id });document.currentScript.remove()</script>`;
 }

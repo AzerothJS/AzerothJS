@@ -16,9 +16,10 @@
 
 import type { Props, Child } from './types.ts';
 import { untrack, escapeText, escapeAttr, ssr } from '../reactivity/index.ts';
-import { resolveThunks, serializeChild } from '../reactivity/internal.ts';
+import { resolveThunks, serializeChild, currentStreamSession } from '../reactivity/internal.ts';
 import type { SSRNode } from '../reactivity/index.ts';
 import {
+    isChildResolvedProperty,
     hostEventType,
     isReservedHostAttribute,
     isEventNamespace,
@@ -28,7 +29,8 @@ import {
     canonicalHandlerName,
     CONTENT_PROPERTIES,
     VOID_ELEMENTS,
-    RAW_TEXT_ELEMENTS
+    RAW_TEXT_ELEMENTS,
+    isAriaStateAttribute
 } from '../semantics.ts';
 
 /**
@@ -380,6 +382,30 @@ function assertSafeUrl(key: string, value: unknown, tag?: string): void
  *
  * @internal
  */
+/**
+ * Whether this attribute is an ARIA boolean, which does NOT follow the HTML boolean-attribute
+ * convention.
+ *
+ * For a real boolean attribute, presence IS the value: `disabled=""` is disabled and an absent
+ * `disabled` is not. ARIA is the opposite - the value is a STRING, and the three states are
+ * distinct: `aria-expanded="true"` (open), `aria-expanded="false"` (a collapsed control, which
+ * assistive technology announces as collapsed), and absent (not expandable at all). Writing
+ * `false` as "remove the attribute" silently downgrades the second to the third, and writing
+ * `true` as `aria-expanded=""` is not a valid ARIA value at all.
+ *
+ * Shared by both writers so the DOM and SSR paths cannot drift apart on it. String values
+ * (`aria-checked="mixed"`) pass through untouched.
+ *
+ * @internal
+ * @param key - The attribute name.
+ * @param value - The value about to be written.
+ * @returns true when the value must be written as the literal "true"/"false".
+ */
+export function isAriaBoolean(key: string, value: unknown): boolean
+{
+    return typeof value === 'boolean' && isAriaStateAttribute(key);
+}
+
 function asWritten(value: unknown): string | null
 {
     if (value === true)
@@ -613,6 +639,20 @@ function serializeAttrs(props: Props, tag?: string): string
         // and checking the raw thunk here would see a function and wave every reactive prop past.
         assertSafeAttribute(key, value, tag);
 
+        // `<select value>` has no attribute form; the selection is expressed as `selected` on the
+        // matching <option> (see serializeElement). Emitting it would be inert markup that makes
+        // the pre-hydration paint disagree with the client render.
+        if (tag !== undefined && isChildResolvedProperty(key, tag))
+        {
+            continue;
+        }
+
+        if (isAriaBoolean(key, value))
+        {
+            out += ` ${ key }="${ String(value) }"`;
+            continue;
+        }
+
         if (value === false || value === null || value === undefined)
         {
             continue;
@@ -682,6 +722,7 @@ function serializeChildren(children: Child[]): string
 export function serializeElement(tag: string, props: Props, children: Child[]): SSRNode
 {
     const tagName = tag.toLowerCase();
+
     const attrs = serializeAttrs(props, tagName);
 
     if (VOID_ELEMENTS.has(tagName))
@@ -727,5 +768,374 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
         inner = serializeChildren(children);
     }
 
+    if (tagName === 'select')
+    {
+        // Children are ALREADY serialized strings here: h(<option>) ran before h(<select>),
+        // because arguments evaluate inner-to-outer. So the selection is applied to the emitted
+        // markup rather than published to the children while they render.
+        const desired = resolveValue(props.value);
+        if (desired !== null && desired !== undefined)
+        {
+            // A `multiple` select selects a SET, and the client has a dedicated array branch for
+            // it. Coercing here instead - String(['de','jp']) is "de,jp" - matched no option, so
+            // the server painted NOTHING while the client selected both, and the two writers
+            // disagreed by construction. A single-entry array happened to work, which is why it
+            // went unnoticed.
+            const multiple = resolveValue(props.multiple) === true || props.multiple === '';
+
+            // Options that are not here yet: a pending Suspense boundary inside this select emits
+            // its real options in a continuation chunk, long after this tag is flushed. The value
+            // IS known now, so it rides along on the boundary and the chunk marks its own options
+            // (see chunkFor). Set-once, so the INNERMOST select wins - children serialize first.
+            const session = currentStreamSession();
+            if (session !== null)
+            {
+                for (const match of inner.matchAll(/<!--azc:suspense:(\d+)-->/g))
+                {
+                    const boundary = session.boundaryOf(Number(match[1]));
+                    if (boundary !== undefined && boundary.select === undefined)
+                    {
+                        boundary.select = {
+                            desired: Array.isArray(desired)
+                                ? (desired as unknown[]).map((entry) => String(entry))
+                                // eslint-disable-next-line @typescript-eslint/no-base-to-string -- mirrors the DOM path
+                                : String(desired),
+                            multiple
+                        };
+                    }
+                }
+            }
+
+            inner = Array.isArray(desired) && multiple
+                ? markSelectedOptions(inner, (desired as unknown[]).map((entry) => String(entry)))
+                // eslint-disable-next-line @typescript-eslint/no-base-to-string -- mirrors the DOM path, where el.value = v coerces whatever it is given
+                : markSelectedOption(inner, String(desired));
+        }
+    }
+
     return ssr(`<${ tagName }${ attrs }>${ inner }</${ tagName }>`);
+}
+
+/**
+ * Applies a `<select>`'s value to its already-serialized options by marking the matching one
+ * `selected`.
+ *
+ * This works on the emitted STRING rather than on the children, because by the time a select
+ * serializes, its options are already HTML: `h('option', ...)` runs before `h('select', ...)`,
+ * since arguments evaluate inner-to-outer. There is no point at which the select could publish
+ * its value to children that have not rendered yet.
+ *
+ * Two rules, both matching what the DOM does when `select.value` is assigned:
+ * - the FIRST matching option wins;
+ * - an authored `selected` on any option is dropped, because the select's value is the later
+ *   writer. Leaving it would mark two options and the browser would take the last one, so the
+ *   server paint would disagree with the client render.
+ *
+ * @internal
+ * @param inner - The serialized children of the select.
+ * @param desired - The select's value.
+ * @returns The children with at most one option marked selected.
+ */
+export function markSelectedOption(inner: string, desired: string): string
+{
+    // TWO passes, and the order is load-bearing. Stripping an authored `selected` while walking
+    // would drop it even when NOTHING matches - the server would then paint no selection at all
+    // while the client, whose apply is match-gated, leaves the authored option selected. The strip
+    // exists only to stop TWO options being marked, which cannot happen if none matched.
+    const winner = findWinningOption(inner, desired);
+    if (winner === -1)
+    {
+        return inner;
+    }
+
+    let out = '';
+    let at = 0;
+
+    for (;;)
+    {
+        const open = nextOptionTag(inner, at);
+        if (open === -1)
+        {
+            return out + inner.slice(at);
+        }
+        const tagEnd = findTagEnd(inner, open);
+        if (tagEnd === -1)
+        {
+            return out + inner.slice(at);
+        }
+
+        out += inner.slice(at, open);
+        let tag = stripSelected(inner.slice(open, tagEnd));
+        if (open === winner)
+        {
+            tag += ' selected=""';
+        }
+        out += `${ tag }>`;
+        at = tagEnd + 1;
+    }
+}
+
+/**
+ * Marks EVERY option whose value is in `desired`, for a `<select multiple>`.
+ *
+ * The single-value marker cannot serve here: it stops at the first match, and coercing the array
+ * to a string (which is what the DOM does for a non-multiple select) matches nothing, so the
+ * server emitted no selection at all while the client selected the whole set.
+ *
+ * @internal
+ * @param inner - The serialized children of the select.
+ * @param desired - The values to select.
+ * @returns The children with each matching option marked.
+ */
+export function markSelectedOptions(inner: string, desired: readonly string[]): string
+{
+    const wanted = new Set(desired);
+
+    // Same two-pass rule as the single-value marker: when the array is non-empty but NOTHING in
+    // it is present, an authored `selected` must stand - the client's match gate leaves the
+    // selection alone in that case, and stripping here made the two writers disagree. An EMPTY
+    // array is different: it is an explicit "select nothing", which the client now honours by
+    // deselecting everything, so the strip proceeds with no member to mark.
+    if (wanted.size > 0)
+    {
+        let anyPresent = false;
+        let scanAt = 0;
+        for (;;)
+        {
+            const open = nextOptionTag(inner, scanAt);
+            if (open === -1)
+            {
+                break;
+            }
+            const tagEnd = findTagEnd(inner, open);
+            if (tagEnd === -1)
+            {
+                break;
+            }
+            const tag = inner.slice(open, tagEnd);
+            if (wanted.has(attrValue(tag, 'value') ?? optionText(inner, tagEnd + 1)))
+            {
+                anyPresent = true;
+                break;
+            }
+            scanAt = tagEnd + 1;
+        }
+        if (!anyPresent)
+        {
+            return inner;
+        }
+    }
+
+    let out = '';
+    let at = 0;
+
+    for (;;)
+    {
+        const open = nextOptionTag(inner, at);
+        if (open === -1)
+        {
+            return out + inner.slice(at);
+        }
+        const tagEnd = findTagEnd(inner, open);
+        if (tagEnd === -1)
+        {
+            return out + inner.slice(at);
+        }
+
+        out += inner.slice(at, open);
+        // The select's value decides the whole set, so an authored `selected` on a non-member is
+        // dropped for the same reason it is in the single-value case.
+        let tag = stripSelected(inner.slice(open, tagEnd));
+        const value = attrValue(tag, 'value') ?? optionText(inner, tagEnd + 1);
+        if (wanted.has(value))
+        {
+            tag += ' selected=""';
+        }
+        out += `${ tag }>`;
+        at = tagEnd + 1;
+    }
+}
+
+/** Index of the first `<option` tag at or after `from`, or -1. `<optgroup>` shares the prefix. */
+function nextOptionTag(inner: string, from: number): number
+{
+    let at = from;
+    for (;;)
+    {
+        const open = inner.indexOf('<option', at);
+        if (open === -1)
+        {
+            return -1;
+        }
+        const after = inner[open + '<option'.length];
+        if (after === ' ' || after === '>' || after === '\t' || after === '\n' || after === '\r')
+        {
+            return open;
+        }
+        at = open + '<option'.length;
+    }
+}
+
+/** Start index of the FIRST option carrying `desired`, matching `select.value = x`, or -1. */
+function findWinningOption(inner: string, desired: string): number
+{
+    let at = 0;
+    for (;;)
+    {
+        const open = nextOptionTag(inner, at);
+        if (open === -1)
+        {
+            return -1;
+        }
+        const tagEnd = findTagEnd(inner, open);
+        if (tagEnd === -1)
+        {
+            return -1;
+        }
+        const tag = inner.slice(open, tagEnd);
+        if ((attrValue(tag, 'value') ?? optionText(inner, tagEnd + 1)) === desired)
+        {
+            return open;
+        }
+        at = tagEnd + 1;
+    }
+}
+
+/**
+ * Removes a `selected` ATTRIBUTE from a serialized open tag, leaving everything else identical.
+ *
+ * Scanning matters here rather than a regex: `/\s+selected(="[^"]*")?/` also matches the word
+ * inside quoted VALUES, so `class="row selected"` lost its class and
+ * `title="Currently selected country"` lost a word from its prose. That is silent corruption of
+ * author content, and it is final on a page that runs without JS.
+ *
+ * @internal
+ */
+function stripSelected(tag: string): string
+{
+    // Everything up to the end of the tag name is kept verbatim; attribute names start after it.
+    let index = '<option'.length;
+    let out = tag.slice(0, index);
+
+    while (index < tag.length)
+    {
+        const gapStart = index;
+        while (index < tag.length && /\s/.test(tag[index] as string))
+        {
+            index += 1;
+        }
+        if (index >= tag.length)
+        {
+            out += tag.slice(gapStart);
+            break;
+        }
+
+        const nameStart = index;
+        while (index < tag.length && !/[\s=]/.test(tag[index] as string))
+        {
+            index += 1;
+        }
+        const name = tag.slice(nameStart, index);
+
+        // Consume `= value` when present, so a value can never be mistaken for the next name.
+        let end = index;
+        let scan = index;
+        while (scan < tag.length && /\s/.test(tag[scan] as string))
+        {
+            scan += 1;
+        }
+        if (tag[scan] === '=')
+        {
+            scan += 1;
+            while (scan < tag.length && /\s/.test(tag[scan] as string))
+            {
+                scan += 1;
+            }
+            const quote = tag[scan];
+            if (quote === '"' || quote === '\'')
+            {
+                scan += 1;
+                while (scan < tag.length && tag[scan] !== quote)
+                {
+                    scan += 1;
+                }
+                scan += 1;
+            }
+            else
+            {
+                while (scan < tag.length && !/\s/.test(tag[scan] as string))
+                {
+                    scan += 1;
+                }
+            }
+            end = scan;
+        }
+
+        if (name.toLowerCase() !== 'selected')
+        {
+            out += tag.slice(gapStart, end);
+        }
+        index = end;
+    }
+
+    return out;
+}
+
+/** Index of the `>` closing the tag that starts at `from`, skipping quoted attribute values. */
+function findTagEnd(html: string, from: number): number
+{
+    let quote = '';
+    for (let i = from; i < html.length; i += 1)
+    {
+        const c = html[i] as string;
+        if (quote !== '')
+        {
+            if (c === quote)
+            {
+                quote = '';
+            }
+            continue;
+        }
+        if (c === '"' || c === '\'')
+        {
+            quote = c;
+            continue;
+        }
+        if (c === '>')
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/** A quoted attribute's value from a serialized open tag, entity-decoded, or null when absent. */
+function attrValue(tag: string, name: string): string | null
+{
+    const match = new RegExp(`\\s${ name }="([^"]*)"`).exec(tag);
+    return match === null ? null : decodeAttr(match[1] as string);
+}
+
+/** Reverses the escaping serializeAttrs applies, so a value compares against the raw string. */
+function decodeAttr(value: string): string
+{
+    return value
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+}
+
+/**
+ * An option with no `value` attribute takes its text, per the HTML `option.value` rule:
+ * leading/trailing whitespace stripped and internal runs collapsed. Markers and nested tags are
+ * removed first, so a compiled option (`<option><!--[-->de<!--]--></option>`) compares equal to
+ * the hand-written one.
+ */
+function optionText(html: string, from: number): string
+{
+    const close = html.indexOf('</option>', from);
+    const raw = close === -1 ? html.slice(from) : html.slice(from, close);
+    return decodeAttr(raw.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '')).trim().replace(/\s+/g, ' ');
 }

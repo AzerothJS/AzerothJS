@@ -10,9 +10,9 @@
  * and rebuild (a flash, and lost focus/scroll/input state).
  */
 
-import { createRoot, runInMode } from '../reactivity/index.ts';
+import { createRoot } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { isHydrationNode, HydrationCursor, HydrationMismatchError, resetSeedScopes } from '../reactivity/internal.ts';
+import { isHydrationNode, HydrationCursor, HydrationMismatchError, resetSeedScopes, beginHydrationPass, runInPass, settleHydrationPass } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
@@ -90,9 +90,44 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
         containerDisposers.delete(container);
     }
 
+    /**
+     * Structural mismatch: dev-warn and fall back to a clean client render so the app boots
+     * regardless. Dispose the partial hydrate root first; render() then clears the container
+     * and mounts fresh.
+     *
+     * This is also the pass's completion barrier. Adoption is not always finished when the
+     * call below returns - a route waiting on a lazy chunk adopts from a later effect run -
+     * and a failure there used to escape as an unhandled rejection, leaving the server's
+     * markup on screen and inert. The pass calls this instead, so a deferred mismatch ends
+     * the same way a synchronous one does.
+     */
+    function fallBackToClientRender(error: unknown): void
+    {
+        if (!(error instanceof HydrationMismatchError))
+        {
+            throw error;
+        }
+
+        if (DEV)
+        {
+            console.warn(`${ error.message } - falling back to full client render.`);
+        }
+
+        const partialDispose = containerDisposers.get(container);
+        if (partialDispose)
+        {
+            partialDispose();
+            containerDisposers.delete(container);
+        }
+
+        render(component, container);
+    }
+
+    const pass = beginHydrationPass(fallBackToClientRender);
+
     try
     {
-        runInMode('hydrate', () =>
+        runInPass(pass, () =>
         {
             createRoot((dispose) =>
             {
@@ -108,31 +143,15 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
                 const cursor = new HydrationCursor(container);
                 root.hydrate(cursor);
                 cursor.assertExhausted('root container');
+
             });
         });
     }
-    catch (error)
+    finally
     {
-        if (!(error instanceof HydrationMismatchError))
-        {
-            throw error;
-        }
-
-        // Structural mismatch: dev-warn and fall back to a clean client render so the app
-        // boots regardless. Dispose the partial hydrate root first; render() then clears the
-        // container and mounts fresh.
-        if (DEV)
-        {
-            console.warn(`${ error.message } - falling back to full client render.`);
-        }
-
-        const partialDispose = containerDisposers.get(container);
-        if (partialDispose)
-        {
-            partialDispose();
-            containerDisposers.delete(container);
-        }
-
-        render(component, container);
+        // Closes the pass unless something took a deferHydration ticket, in which case the
+        // last release closes it. Runs on the throw path too: runInPass has already routed
+        // the error to the fallback and closed the pass, and settling again is harmless.
+        settleHydrationPass(pass);
     }
 }

@@ -39,6 +39,17 @@ export interface PendingBoundary
 
     /** Serializes the children under the captured owner/scopes; runs in a continuation window. */
     render: () => string;
+
+    /**
+     * The value of the nearest enclosing `<select>`, when this boundary's content sits inside one.
+     *
+     * A select serializes its children BEFORE it knows they contain a pending boundary's fallback,
+     * and the boundary's real options are emitted later, in a continuation chunk. Recording the
+     * value here is what lets that chunk mark the right option: without it the swapped-in options
+     * carry no `selected`, and a page whose chunk lands before hydration paints the browser's
+     * default until the client repairs it.
+     */
+    select?: { desired: string | readonly string[]; multiple: boolean };
 }
 
 /** @internal The per-render state of one streaming SSR session. */
@@ -59,6 +70,9 @@ export class StreamSession
     readonly #fetches = new Map<object, ServerFetch>();
 
     #boundaries: PendingBoundary[] = [];
+
+    /** Every boundary by id, INCLUDING drained ones - takeBoundaries empties the queue above. */
+    readonly #boundariesById = new Map<number, PendingBoundary>();
 
     readonly #finalizers: Array<() => void> = [];
 
@@ -110,6 +124,13 @@ export class StreamSession
     public registerBoundary(boundary: PendingBoundary): void
     {
         this.#boundaries.push(boundary);
+        this.#boundariesById.set(boundary.id, boundary);
+    }
+
+    /** A boundary by id, whether or not the driver has taken it yet. @internal */
+    public boundaryOf(id: number): PendingBoundary | undefined
+    {
+        return this.#boundariesById.get(id);
     }
 
     /** Drains the boundaries registered since the last take (the driver consumes these). */

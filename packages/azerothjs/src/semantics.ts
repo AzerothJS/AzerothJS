@@ -135,14 +135,54 @@ export function contentChildrenMessage(prop: string): string
 }
 
 /**
- * Attribute names written as live DOM properties on the client. Their server
- * representation is the matching attribute (`value="x"`), which the browser parses back
- * into the property, so the two writers agree; `innerHTML`/`textContent` additionally own
- * the element's content (see {@link CONTENT_PROPERTIES}).
+ * Attribute names written as live DOM properties on the client. For most of them the server
+ * representation is the matching attribute (`value="x"`), which the browser parses back into
+ * the property, so the two writers agree; `innerHTML`/`textContent` additionally own the
+ * element's content (see {@link CONTENT_PROPERTIES}).
+ *
+ * The one exception is `value` on `<select>` - see {@link isChildResolvedProperty}. Treating
+ * that as attribute-backed is what made four separate writers wrong the same way.
  */
 export const DOM_PROPERTIES: ReadonlySet<string> = new Set([
     'value', 'checked', 'selected', 'disabled', 'innerHTML', 'textContent'
 ]);
+
+/**
+ * Whether a property's value is resolved by the element's CHILDREN rather than by the element
+ * itself. `value` on `<select>` is the only one, and it breaks three assumptions at once:
+ *
+ * - It has NO content attribute. `<select value="de">` is meaningless HTML, so the server must
+ *   express the selection as `selected` on the matching `<option>` instead.
+ * - Assigning it while no matching `<option>` exists is a SILENT no-op, so a writer that runs
+ *   before the children are in place writes nothing and reports no error.
+ * - It therefore must not bake into a static template, where there is no writer left to re-run.
+ *
+ * Keyed on BOTH name and tag deliberately: `value` on `<input>`, `<textarea>` and `<option>` is
+ * genuinely attribute-backed, so a name-only check would break all three.
+ *
+ * @param prop - The property name.
+ * @param tag - The element's tag name, in any case.
+ * @returns true when the property must be written after children and serialized onto them.
+ */
+export function isChildResolvedProperty(prop: string, tag: string): boolean
+{
+    // `prop` first: the common case fails on one string compare and never lowercases the tag.
+    return prop === 'value' && tag.toLowerCase() === 'select';
+}
+
+/**
+ * Whether `name` is an ARIA attribute, whose booleans are the STRINGS "true"/"false" and never
+ * HTML boolean attributes. `aria-expanded={false}` must serialize as `aria-expanded="false"`:
+ * dropping it loses the state entirely, and writing `={true}` bare as `aria-expanded=""` reads
+ * as neither true nor false to an accessibility tree.
+ *
+ * The compiler needs this too - a constant-folded attribute is decided before any writer runs -
+ * so the fact lives here rather than in a renderer.
+ */
+export function isAriaStateAttribute(name: string): boolean
+{
+    return name.startsWith('aria-');
+}
 
 /** HTML void elements: no closing tag and no children (`<br>`, `<img>`, ...). */
 export const VOID_ELEMENTS: ReadonlySet<string> = new Set([
