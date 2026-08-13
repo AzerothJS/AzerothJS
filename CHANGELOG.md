@@ -10,6 +10,226 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Changed - the compiled contract moves to v2 - BREAKING for prebuilt output
+
+Every compiled component now opens an ownership scope of its own, so the work a component creates
+is torn down with the component rather than with whatever root happened to be rendering it. That
+changes the emitted vocabulary, so `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both
+move 1 -> 2.
+
+Lockstep releases cover the normal case. What this affects is PREBUILT compiled output: a
+published `.azeroth` library's `dist`, or a stale application bundle, compiled against v1 and
+loaded against this runtime. That combination now fails at load with a message naming both
+versions, rather than misbehaving several components deep. **Rebuild any prebuilt `.azeroth`
+package against this release.**
+
+
+### Fixed
+
+- **A markup value placed twice rendered differently on each side.** `const frag = <b/>;` then
+  `<p>{frag}{frag}</p>` serialized two copies on the server and mounted ONE on the client, because
+  appending the same node twice moves it. That is a real divergence and GRAMMAR makes mode
+  equivalence unconditional, so it is now reported as `azeroth/markup-value-reused`, pointing at
+  the placement the client discards. It is a WARNING rather than an error: the rule decides
+  placement from syntax alone, and on this codebase every syntax-only judgement about what an
+  author meant has eventually refused a valid program. It reports; it does not fail the build.
+
+- **A duplicate `<For>` key was invisible on the server.** The client warns and tears the
+  displaced row out on its next update; the server said nothing, so a page developed and reviewed
+  server-side shipped a defect whose only warning appeared where the author never looked. The
+  server render now reports it too. Nothing about the OUTPUT changed - a duplicate renders every
+  row in both modes, which is why this was a diagnosis gap rather than a divergence.
+
+- **A `<For>` without `key` served and then died.** `key` is required by `ForProps` and called
+  unconditionally on both the reconcile and hydrate paths, but nothing enforced it: SSR rendered
+  the rows and the client threw `props.key is not a function` on mount. It is now the compile
+  error `azeroth/for-missing-key`, and `<For>` itself refuses the shape before the string-mode
+  branch so both writers agree. A runtime index fallback was rejected deliberately - the type
+  forbids keyless rows, and index keys break identity on reorder.
+- **A `<For>` row that is not an element.** The row-shape rule exempted ANY expression child, so
+  a function REFERENCE (`{renderRow}`) rendered on the server and threw inside `insertBefore` on
+  the client, and a bare hole with `let=` threw in both modes. The exemption is now function
+  LITERALS only, which the callback-children rule already names.
+- **Markup rules were blind to markup held in a statement.** Duplicate attributes, reserved event
+  names, row shape and the rest applied in markup position and to module scope, but not to
+  `const frag = <div/>` inside a component - so the same mistake was an error one line and
+  silent the next. Statement and effect bodies are walked too.
+- **A compiled module could ship a bare `__azRow`.** Row markers are transport that only the
+  statement lowering strips, and a keyword-free module-scope helper skipped that lowering - the
+  module threw `__azRow is not defined` at load. Markers can no longer survive emission.
+- **An `each=` the compiler could not follow silently unwired its row fields.** Only `NAME`,
+  `NAME.rows()` and `NAME.rows` linked, so `each={rows.rows().filter(...)}` - filtering or sorting
+  rows for display, the ordinary reason to hold an array form - emitted a dead write onto the
+  `{ key, form }` record while the projection kept typing the field as present. Spellings that
+  RESELECT rows now link: `filter`, `slice`, `toSorted`, `toReversed`, a `toSpliced` that only
+  removes, a spread copy, guarded forms whose other branch is an empty array (`cond ? rows.rows()
+  : []`, `?? []`, `|| []`), and chains of those. `map` stays unlinked on purpose - it replaces the
+  elements - and so does a one-hop alias, which nothing in the expression can resolve.
+
+  A spelling that does NOT link leaves its row fields raw, and that is left SILENT. An earlier
+  version of this release reported it, by asking whether the `each=` mentioned an array form.
+  Six rounds of adversarial review showed the question cannot be answered from syntax:
+  `rows.values()` is a documented getter returning plain objects, `rows.isValid() ? list : []`
+  names the form only in a guard, `list.slice(0, rows.values().length)` only in an argument, and a
+  helper parameter named like the row is correct when it receives the row. Every one of those was
+  refused with an unsuppressable build error on code that compiles and renders correctly, so the
+  guess was withdrawn rather than patched a seventh time. What remains is decidable: an exact
+  disagreement between a row's own fields and the name-keyed registry the emitter wires by.
+
+- **An option changing in place left its select stale.** The observer watched `childList` only,
+  and the framework's own reactive write is a DOM property assignment that emits no mutation
+  record at all. The write site settles the owning select now, and the observer also takes
+  `characterData` and a filtered `value` attribute for text-valued options and outside writes.
+- **The API client's response cap ran after the whole body was buffered.** `readJsonBounded`
+  called `response.text()` - exactly as unbounded as the `response.json()` it exists to replace -
+  so the memory was spent before the limit was consulted, and the check counted UTF-16 code units
+  rather than bytes, letting 3-byte characters reach three times the configured cap. It streams
+  now, cancels at the first byte over, and counts bytes.
+- **An unreachable image upstream reported an internal error.** A DNS failure, refused
+  connection, TLS error or timeout surfaced as 500 `internal`, pointing operators at their own
+  server during a CDN outage; these are 502 and 504 `image-upstream` now. A malformed remote
+  `src` answers 400 rather than 500 - the prefix gate admitted strings that are not URLs.
+- **The contract-version failure told half its readers the wrong remedy.** One sentence covered
+  both directions, but stale COMPILED output is rebuilt and a stale RUNTIME is upgraded. The
+  message now names which side is behind, and accepts a module URL for callers that have one.
+
+
+- **`bind:` (and `class:`/`style:`) only worked in the component's markup position.** Markup
+  embedded anywhere else - a hole (`{ cond ? <input bind:value={draft} /> : null }`), a statement
+  (`const row = <input bind:value={draft} />`), a render-function attribute - had its bind, class
+  and style expressions rewritten twice: once eagerly at emission and once by the outer pass that
+  owns embedded code. A state read `draft` became `draft()()`, so the value never updated and
+  the write-back threw on the first keystroke. All emission sites now defer to the single outer
+  rewrite, and compiled-and-executed regressions cover both directions of the binding in every
+  position.
+- **The `bind:` target rule now covers the whole contract.** `bind:p={lvalue}` requires a
+  writable reactive lvalue; the valid set is exactly a `state` name, a `form` field path, and
+  an array-form row field. Every other target the compiler can resolve is now
+  the compile-time error `azeroth/bind-target-not-reactive` naming what the target actually is:
+  a `derived`/`deferred` value, a bare `form`/`store`/`resource`/`stream`/`selector`
+  handle, a prop (dotted or destructured), a plain or destructured local, a module-scope variable,
+  an import, a function parameter, a row binding - including through holes and shadowing, where a
+  nested `state` correctly wins over an outer local - a `store` dotted path (the handle is a
+  function, so no path through it can reach its state), a form field the compiler cannot verify
+  because the form initial object is not a plain literal, and a target that is not an assignable
+  expression at all (`(x)`, `x + y`, `x()`, an optional chain), which previously compiled into
+  a module that was not valid JavaScript. Module-scope statement markup answers to the same rule.
+  Dotted targets are classified from the AST and canonicalized, so whitespace, comments, or a
+  line-wrapped dot cannot slip a rejected chain past the rule - and wrapper spellings of a VALID
+  chain (parentheses, a non-null assertion, bracket access: `(login).email`, `login!.email`,
+  `login["email"]`) are rejected with the plain spelling, because they parse to the same chain
+  but defeat the emitter rewrite and would bind raw, unwired values. Row-form linkage is
+  LEXICAL: each `<For>` binds its own row to its own array form, a row name claimed by two
+  different forms (or shadowing a plain row) is rejected with a rename since the emitter wires
+  row fields by name, an unknown row field is named, and a `<For>` inside an expression hole
+  now registers its rows so hole-position row binds actually wire. A path deeper than one field
+  level, an empty or comment-only target, and `this`-rooted targets are all precise errors.
+  Row collisions are judged PER FIELD, matching what the emitter actually wires: rows route
+  through their own `.form`, so two forms sharing a row name and a field are fine, and only a
+  field the name-keyed registry mis-claims or drops is rejected. A row bind inside an expression
+  hole now emits through the getter (`row().form.setValue(...)`) and is RENDER-tested, wrappers
+  on `each=` no longer sever the row linkage, a non-identifier form key is named unbindable,
+  and no handle message recommends a spelling the compiler rejects. The detached `each=`
+  getter (`each={rows.rows}`, no call - inside the For contract and working at runtime) now
+  links its rows instead of silently severing the form wiring, and a `<For>` held in a
+  statement registers like every other position. Hole READS report the one case
+  that is decidable from the two tables alone (`azeroth/row-name-collision`): a row whose own
+  field the name-keyed registry drops because another same-named row registered last - a read
+  that stays raw and finds nothing - plus destructured (`const { qty } = row`) and bracket
+  (`row["qty"]`) reads of a linked row, which the rewrite never matches, so they read the
+  `{ key, form }` record and render empty. Softer read reporting - flagging a read because the
+  registry merely CLAIMS the name over a helper parameter or a plain local - was withdrawn with
+  the intent heuristics (see the `each=` entry): a helper called WITH the row is correct, and no
+  syntax-only test could tell it apart. A plain row sharing a claimed field still errors where it
+  is decidable, on the BIND. Field advice is unicode-correct, and reserved-word field names are
+  too: `login.class` genuinely wires, so the advice recommends it instead of calling it
+  unspellable. Array forms are covered in kind: a dotted bind
+  through the `form name[]` handle is rejected (its rows carry the fields), a row iterating an
+  array form whose blank-row object is not a plain literal is rejected as unknowable, and no
+  handle message ever recommends a spelling the compiler itself refuses. `bind:value` on a static
+  `type="file"` input is the new error `azeroth/bind-file-input`: browsers never round-trip a
+  file input's value. Targets the compiler cannot resolve are left alone, and every offending
+  bind is reported, not just the first per name.
+- **A `deferred` write was rejected as "a `derived` value".** The read-only guard now names
+  the actual keyword, in the semantic diagnostic and the codegen backstop alike, and the semantic
+  phase now covers `deferred` writes at all - previously only the build caught them, so the
+  editor showed nothing.
+- **`<select multiple>` fanned out a selection the user could not undo.** The write-back reduces a
+  selection to a set of VALUES, so with duplicate `<option>` values - legal HTML, and ordinary in
+  `<For>`-rendered rows - re-applying it selected every option carrying a wanted value. One click
+  selected rows the user never touched, and a later click could not deselect them, because the
+  match check agreed with the fanned-out state and never repaired it. The first option per value
+  is selected now, which is what the single-select path has always done.
+- **`bind:` accepted targets it could not actually bind.** The grammar requires a writable
+  *reactive* lvalue, and the compiler only enforced the writable half: a `derived` target was
+  rejected, but a plain `let` compiled to a half-dead binding - typing updated the variable while
+  nothing could ever update the input, because the value effect closed over a non-reactive local
+  and never re-ran - and a `const` target threw on the first keystroke. A `<For>`/`<Show>` row
+  binding was worse still: it compiled to an assignment to a call and threw at runtime. All three
+  are now the compile-time error `azeroth/bind-target-not-reactive`, pointing at the bind
+  attribute and naming the fix, whether the markup is in the component's markup position or held
+  in a statement (`const row = <input bind:value={a} />`). Bindings to `state` and form fields
+  are unchanged.
+- **`createResource` accepted a value where it needed a function.** `resource r = fetch(url)` -
+  a forgotten thunk - reached the primitive as a promise and surfaced "fetcher is not a function"
+  asynchronously through `error()`, far from the call that caused it. It now fails at the call,
+  like every sibling primitive. The `with { source }` form is covered too: there the value lands
+  in the second argument, where a promise would otherwise be mistaken for the options bag and the
+  source key served as the fetched data.
+
+- **`<select>` never took its value when the options were not there yet.** `<select>.value` is the
+  one DOM property decided by an element's CHILDREN: assigning it while no matching `<option>`
+  exists is a silent no-op, and assigning a value nothing carries clears the selection outright.
+  Options that arrive from `<For>`, a `<Show>`/`<Switch>`/`<Dynamic>` reveal, a `<Portal>`, a
+  streamed chunk, or an animation-deferred removal therefore left the control showing the browser
+  default while application state said otherwise - and a form submitted that default. A written
+  select now keeps its value as an INTENT and re-applies it whenever its own subtree changes, so
+  the repair happens before the browser paints. The intent is match-gated (it never clears a
+  selection to chase a value no option carries), user-owned (a pick that DIVERGES from it stops it
+  being re-applied), and persistent (an option removed and re-added is recovered).
+  `<select multiple>` binds to an array in every mode, including the `bind:` write-back, and an
+  empty array clears. `form.reset()` lands on the framework's value rather than option 0.
+- **The server expressed a select's value as an attribute that does not exist.** `<select>` has no
+  `value` content attribute, so SSR emitted inert markup and the first paint - and the JS-less
+  render - showed the wrong option, disagreeing with the client. The selection is now written as
+  `selected` on the matching `<option>`, including the whole set for `<select multiple>`, and for
+  options that only arrive in a later streaming chunk. A statically-known select value is no
+  longer baked into the compiled template, where no writer was left to apply it.
+- **ARIA state attributes were written as HTML boolean attributes.** `aria-expanded={false}` was
+  removed entirely and `={true}` written as `aria-expanded=""`; both are wrong, and the first
+  silently collapses "collapsed" into "not expandable". ARIA values are strings now - "true" and
+  "false" - while real boolean attributes such as `disabled` are untouched.
+
+  This covers the compiled template as well as the DOM and SSR writers. A literal
+  `aria-expanded={false}` is a compile-time constant, and constant attributes were folded into
+  the template with HTML-boolean semantics, so the attribute was decided before any writer ran and
+  vanished from the markup. A boolean-valued `aria-*` now stays a binding and reaches the writers
+  that know the rule; a string-valued one still folds.
+- **A `lazy:` route hydrated into a dead page.** `<Routes>` claims nothing while a chunk is in
+  flight, and the run that finally adopted it happened after hydration's synchronous window had
+  closed - so it built fresh DOM over the server's markup and the adoption failure escaped as an
+  unhandled rejection, leaving markup that looked right and did nothing. Hydration is now a pass
+  with a lifetime rather than a stack frame, and a deferred adoption failure degrades to a clean
+  client render instead of vanishing.
+- **A query-only navigation did not re-run loaders.** `query` is part of a loader's documented
+  arguments, but the loader resource depended only on the matched chain, which is deliberately
+  query-blind - so `?q=a` to `?q=b` never re-ran and a search page could not load its own search.
+  A hash-only change stays cosmetic.
+- **A guard veto double-applied the base path.** The accepted path was stored base-prefixed and
+  fed back through the navigator, which prefixes it again, so a veto under `base: '/app'` wrote
+  `/app/app/...` into history and every later link resolved one level too deep.
+- **An async `routes.stream` handler's rejection was discarded.** The handler's promise was
+  dropped, so a rejection ended nothing: the response body never terminated, no error hook fired,
+  and heartbeats kept the dead connection alive. A synchronous throw was always handled, which is
+  why it went unnoticed.
+- **The image proxy followed redirects and buffered before checking its size cap**
+  (`@azerothjs/kit`). The origin allowlist was applied only to the requested URL, so an
+  allowlisted origin - or an open redirect on one - could send the fetch anywhere the server could
+  reach; redirects are refused now. The byte cap was compared after the whole body had been read,
+  making it a report rather than a limit; the body is read incrementally and cancelled at the
+  first byte over, and a declared `content-length` over the cap is refused before any read.
+
+
 ## [2.1.0-beta.1] - 2026-08-08
 
 ### Added - the production-completeness pass: SSG enumeration, ISR, streaming SSR, server actions, images
