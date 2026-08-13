@@ -6,7 +6,8 @@
 // duplicate-key warning. The central guarantee asserted throughout: a surviving
 // key keeps its EXACT element instance across updates.
 import { describe, it, expect, vi } from 'vitest';
-import { createSignal, h, render, For } from 'azerothjs';
+import { createSignal, h, render, renderToString, For } from 'azerothjs';
+import type { ForProps } from 'azerothjs';
 
 interface Row { id: number; name: string }
 
@@ -321,5 +322,60 @@ describe('For - each guard', () =>
             key: (row) => row.id,
             children: (row) => h('li', {}, row().name)
         })))).toThrow(/<For each> expected an array/);
+    });
+
+    it('throws a clear error for a missing key, naming the attribute', () =>
+    {
+        // Keyless, `props.key(item, i)` threw "props.key is not a function" - a message naming an
+        // internal prop, and only on the CLIENT: string mode rendered the rows happily, so the
+        // page served and then died on mount. The guard runs before the string-mode branch so
+        // both writers refuse the same shape.
+        const keyless = {
+            each: [{ id: 1, name: 'a' }] as Row[],
+            children: (row: () => Row) => h('li', {}, row().name)
+        };
+        expect(() => mount(() => h('ul', {}, For(keyless as unknown as ForProps<Row>))))
+            .toThrow(/<For> requires a `key` function/);
+    });
+});
+
+describe('For - duplicate keys are reported in BOTH modes', () =>
+{
+    // The client warned and the server said nothing, so a page developed and reviewed
+    // server-side shipped a defect whose only warning appeared where the author never looked.
+    // The rendering itself never diverged - measured: a duplicate renders every row on the
+    // server AND on the client's first render (3 and 3) - so this is a diagnosis gap, not an
+    // output gap, and the fix is a warning rather than a change to what is rendered.
+    it('warns during a server render, naming what the client will do', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const rows: Row[] = [{ id: 1, name: 'a' }, { id: 1, name: 'dup' }];
+
+        const html = renderToString(() => h('ul', {}, For({
+            each: rows,
+            key: (row) => row.id,
+            children: (row) => h('li', {}, row().name)
+        })));
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]?.[0]).toContain('duplicate key');
+        expect(warn.mock.calls[0]?.[0]).toContain('tears the displaced row out');
+        // The server still renders every row - the warning does not change the output.
+        expect((html.match(/<li>/g) ?? [])).toHaveLength(2);
+        warn.mockRestore();
+    });
+
+    it('says nothing for unique keys on the server', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        renderToString(() => h('ul', {}, For({
+            each: [{ id: 1, name: 'a' }, { id: 2, name: 'b' }] as Row[],
+            key: (row) => row.id,
+            children: (row) => h('li', {}, row().name)
+        })));
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
     });
 });

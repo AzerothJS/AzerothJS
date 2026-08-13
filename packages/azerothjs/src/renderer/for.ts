@@ -21,6 +21,7 @@ import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, createSignal, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
+import { describeArg } from '../reactivity/validate.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
 import { hydrateChild, resolveReactive } from './h.ts';
@@ -242,6 +243,18 @@ export function For<T>(props: ForProps<T>): MountNode
 {
     const renderItem = props.children;
 
+    // Checked HERE, before the string-mode branch, so the server refuses exactly what the client
+    // refuses. Without it, a keyless <For> serialized fine and then threw "props.key is not a
+    // function" on mount - the page shipped and died, and the message named an internal prop
+    // rather than the missing attribute. The compiler rejects this shape too
+    // (`azeroth/for-missing-key`); this is the guard for hand-written h() callers.
+    if (typeof props.key !== 'function')
+    {
+        throw new TypeError('<For> requires a `key` function: it tracks rows by key across '
+            + `updates. Received ${ describeArg(props.key) }. Pass key={(item) => item.id} - any `
+            + 'expression that is unique and stable per row.');
+    }
+
     // Server-side rendering.
     // Map each item ONCE (index is static within a single render), then bracket
     // the rows with comment anchors so they are direct children of the real
@@ -251,10 +264,31 @@ export function For<T>(props: ForProps<T>): MountNode
         const items = asItemArray<T>(untrack(() => resolveReactive(props.each)));
         let inner = '';
 
+        // Keys are not NEEDED to serialize - a single pass has no reconciliation to do - but they
+        // are checked anyway so the server reports the same defect the client does. Rendering is
+        // identical either way, so nothing here diverges; what diverged was the DIAGNOSIS. A
+        // duplicate key survives a server render silently and then, on the client's first
+        // reconcile, tears the displaced row out - so a page developed and reviewed server-side
+        // shipped with a defect whose only warning appeared somewhere the author never looked.
+        const seenKeys = DEV ? new Set<string | number>() : null;
+        let warnedDuplicateKey = false;
+
         // entries() (not index reads) keeps each element typed T even when T itself
         // includes undefined - a guard would silently skip such rows.
         for (const [index, item] of items.entries())
         {
+            if (seenKeys !== null)
+            {
+                const key = props.key(item, index);
+                if (seenKeys.has(key) && !warnedDuplicateKey)
+                {
+                    warnedDuplicateKey = true;
+                    console.warn(`<For> received a duplicate key "${ String(key) }" - keys must be `
+                        + 'unique. The server renders every row, but the client tears the displaced '
+                        + 'row out on its first update.');
+                }
+                seenKeys.add(key);
+            }
             inner += serializeChild(renderItem(() => item, () => index));
         }
 
