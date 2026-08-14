@@ -179,3 +179,20 @@ export function useNavigate(router?: Router): NavigateApi
         forward: resolved.forward
     };
 }
+
+/**
+ * Returns the router's `revalidate`: marks every loader entry of the current location
+ * stale, refetches the watched ones, and resolves when those refetches settle. The one
+ * call a component makes after a mutation changed what the page's loaders would return.
+ *
+ * @example
+ * ```ts
+ * const revalidate = useRevalidate();
+ *
+ * h('button', { onClick: () => void revalidate() }, 'Refresh');
+ * ```
+ */
+export function useRevalidate(router?: Router): () => Promise<void>
+{
+    return resolveRouter(router, 'useRevalidate').revalidate;
+}

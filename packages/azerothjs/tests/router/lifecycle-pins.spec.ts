@@ -54,10 +54,11 @@ describe('a routed leaf\'s placed Outlet yields an empty marker range', () =>
     });
 });
 
-describe('a retained layout\'s useLoader().loading() flips across a leaf refetch', () =>
+describe('a retained layout\'s loader HOLDS across a leaf navigation', () =>
 {
-    it('loading true -> false while the layout element survives', async () =>
+    it('no refetch, no loading flip; revalidate() re-runs it with current params', async () =>
     {
+        let runs = 0;
         const Layout = (props: { children?: MountNode | undefined }): MountNode =>
         {
             const data = useLoader<string>();
@@ -69,20 +70,33 @@ describe('a retained layout\'s useLoader().loading() flips across a leaf refetch
         [{
             path: '/users',
             component: Layout,
-            loader: async ({ params }) => `v:${ params.id ?? 'none' }`,
+            loader: async ({ params }) =>
+            {
+                runs += 1;
+                return `v:${ params.id ?? 'none' }`;
+            },
             children: [{ path: ':id', component: (): HTMLElement => h('span', { id: 'leaf' }, 'leaf') }]
         }];
         const { router, container, cleanup } = mountApp(routes, '/users/1');
         await flush();
         const layout = container.querySelector('#layout');
         expect(container.querySelector('#status')!.textContent).toBe('v:1');
+        expect(runs).toBe(1);
 
         router.navigate('/users/2');
-        // The leaf refetch drives the layout's OWN level resource back into loading
-        // while the layout is retained - fine-grained update, no remount.
-        expect(container.querySelector('#status')!.textContent).toBe('loading');
         await flush();
+        // The layout's own inputs did not change: its loader does NOT re-run on a
+        // leaf param change, its data holds, and loading never flips. (A parent
+        // loader reading a DESCENDANT's param is outside its declared inputs -
+        // revalidate() is the sanctioned way to re-run it.)
+        expect(runs).toBe(1);
         expect(container.querySelector('#layout')).toBe(layout);
+        expect(container.querySelector('#status')!.textContent).toBe('v:1');
+
+        await router.revalidate();
+        await flush();
+        // The re-run receives the CURRENT staged arguments.
+        expect(runs).toBe(2);
         expect(container.querySelector('#status')!.textContent).toBe('v:2');
         cleanup();
     });

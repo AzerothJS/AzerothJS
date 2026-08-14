@@ -41,8 +41,9 @@ function levelResource(router: Router, level: Getter<number | null>): Resource<u
     return {
         data: () => at()?.data(),
         loading: () => at()?.loading() ?? false,
+        refreshing: () => at()?.refreshing() ?? false,
         error: () => at()?.error() ?? null,
-        refetch: (): void => at()?.refetch()
+        refetch: (): Promise<void> => at()?.refetch() ?? Promise.resolve()
     };
 }
 

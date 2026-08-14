@@ -69,6 +69,14 @@ export interface PageRenderOptions
      * bytes are wasted - streaming becomes slower than buffering. Must be per-request.
      */
     scriptNonce?: string;
+
+    /**
+     * Deploy-identity and produce-time stamps for the loader handoff: `build` lets the
+     * client drop cross-deploy seeds, `at` lets it heal a page served stale from a page
+     * cache, `static` marks build-time data that must adopt fresh forever. The host that
+     * knows these (mountPages, prerender) passes them; a bare renderer call emits none.
+     */
+    handoffMeta?: { build?: string; at?: number; static?: boolean };
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -193,6 +201,11 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         const notFound = loaded !== null && 'notFound' in loaded;
         const handoff = loaded !== null && 'version' in loaded ? loaded : undefined;
 
+        // The handoff is ALWAYS emitted - a loader-less page carries an empty envelope so
+        // the client still has the build/at baseline for deploy-aware adoption.
+        const pageUrl = new URL(url, 'http://azeroth.local');
+        const handoffMeta = { ...(options?.handoffMeta ?? {}), path: pageUrl.pathname + pageUrl.search };
+
         if (!shell.includes(ROOT_MARKER))
         {
             throw new Error(`kit: the built shell has no \`${ ROOT_MARKER }\` to render into - `
@@ -220,7 +233,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             // modes emit style -> handoff -> head additions (the normalized order; the
             // handoff is order-insensitive inert JSON, so only byte-diffing tests see
             // this).
-            const script = handoff !== undefined ? loaderHandoffScript(loaded) : '';
+            const script = loaderHandoffScript(loaded, handoffMeta);
             // Scoped CSS, collected AFTER that synchronous main pass and still spliced into the
             // head - the head has not been enqueued yet, `start()` below does that. The ordering
             // is what makes this correct: collecting BEFORE the render would publish whatever
@@ -291,7 +304,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             const nonce = options?.scriptNonce === undefined ? '' : ` nonce="${ options.scriptNonce }"`;
             html = html.replace('</head>', () => `<style data-azeroth-css${ nonce }>${ styles }</style></head>`);
         }
-        const script = handoff !== undefined ? loaderHandoffScript(loaded) : '';
+        const script = loaderHandoffScript(loaded, handoffMeta);
         if (script !== '')
         {
             html = html.replace('</head>', () => `${ script }</head>`);

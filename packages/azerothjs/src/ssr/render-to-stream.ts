@@ -27,6 +27,7 @@ import { streamRuntimeScript } from '../renderer/stream-swap.ts';
 import { discardStyleFrame } from '../renderer/css.ts';
 import { discardHeadFrame } from '../renderer/head.ts';
 import { inertJson } from '../reactivity/ssr.ts';
+import { latchServerData } from '../reactivity/data-cache.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
 export interface RenderToStreamOptions
@@ -87,6 +88,9 @@ export function renderToStream(
     options: RenderToStreamOptions = {}
 ): ReadableStream<Uint8Array>
 {
+    // A server entry point: from here on, default-scope reads bypass the data cache (see
+    // data-cache).
+    latchServerData();
     if (typeof component !== 'function')
     {
         throw new TypeError('renderToStream expects a THUNK that builds the tree, e.g. '

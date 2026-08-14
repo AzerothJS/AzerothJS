@@ -85,6 +85,19 @@ export function getStoreScope(): object
 }
 
 /**
+ * Whether `scope` is the app-wide default scope rather than a per-render or per-request one.
+ * The data cache disables itself on a latched server exactly when this is true, because the
+ * default scope is process-lifetime there and caching under it would share entries across
+ * requests.
+ *
+ * @internal
+ */
+export function isDefaultScope(scope: object): boolean
+{
+    return scope === DEFAULT_SCOPE;
+}
+
+/**
  * Runs `fn` under a fresh store scope, restoring the previous one afterwards even if `fn`
  * throws, so stores built inside are isolated from those outside. This is the SSR boundary:
  * renderToString wraps every render in it, giving each request its own instances without

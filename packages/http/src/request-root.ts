@@ -31,7 +31,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { setStoreScopeResolver } from 'azerothjs/internal';
+import { abortDataCacheFetches, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 
 /** What the async context carries for one request. @internal */
@@ -89,6 +89,10 @@ interface RootOptions
  */
 async function runCleanups(scope: RequestScope, options: RootOptions): Promise<void>
 {
+    // The request's data cache dies with its scope; aborting its outstanding fetches here
+    // keeps their settle closures from outliving the request that started them. Before the
+    // early return: fetches can be in flight even when no user cleanup was registered.
+    abortDataCacheFetches(scope.storeScope);
     const cleanups = scope.cleanups;
     if (cleanups === null)
     {

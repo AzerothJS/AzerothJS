@@ -35,12 +35,13 @@ import { flattenRoutes, splitFullPath, resolveRouteComponent } from './router.ts
 import { isRedirect } from './redirect.ts';
 import { parseQuery } from './query.ts';
 import { inertJson } from '../reactivity/ssr.ts';
+import { latchServerData } from '../reactivity/data-cache.ts';
 
 /** The DOM id of the handoff script tag. */
 export const LOADER_HANDOFF_ID = '__azeroth-loader-handoff';
 
 /** The handoff wire-format version; bumped when the payload shape changes. */
-export const LOADER_HANDOFF_VERSION = 2;
+export const LOADER_HANDOFF_VERSION = 3;
 
 /**
  * What {@link matchAndLoad} produces - EVERY server-side routing outcome, kept distinct so a
@@ -80,6 +81,9 @@ export async function matchAndLoad(
     options: { signal?: AbortSignal } = {}
 ): Promise<MatchAndLoadResult>
 {
+    // A server entry point: from here on, default-scope reads bypass the data cache so a
+    // resolver-less host's loader-phase reads can never be shared across requests.
+    latchServerData();
     const full = typeof url === 'string' ? url : url.pathname + url.search;
     const { pathname, search } = splitFullPath(full);
 
@@ -180,18 +184,62 @@ export async function matchAndLoad(
     return { notFound: true };
 }
 
+/** The deploy-identity and produce-time stamps a host adds to an emitted handoff. */
+export interface HandoffMeta
+{
+    /** The producing deployment's build id. */
+    build?: string;
+
+    /** Produce time (epoch ms); omitted for build-static pages. */
+    at?: number;
+
+    /** Marks a build-time prerendered page without a revalidation window. */
+    static?: boolean;
+
+    /**
+     * The page's pathname + search. With it, a page with NO loaders still emits an empty
+     * handoff so the client always has a build/at baseline; without it, such pages emit
+     * nothing, as before.
+     */
+    path?: string;
+}
+
 /**
  * SERVER: the handoff as an inert JSON script tag for renderToDocument's `head`. Returns ''
- * for null AND for the redirect shape (a redirecting response has no body to hydrate), so
- * `head: loaderHandoffScript(await matchAndLoad(...))` needs no branching.
+ * for the redirect/blocked/not-found shapes (no page body to hydrate), so
+ * `head: loaderHandoffScript(await matchAndLoad(...))` needs no branching. `meta` stamps the
+ * deploy identity and produce time, and its `path` makes loader-less pages emit an EMPTY
+ * handoff instead of none - the client's baseline for deploy-aware adoption.
  */
-export function loaderHandoffScript(handoff: MatchAndLoadResult): string
+export function loaderHandoffScript(handoff: MatchAndLoadResult, meta: HandoffMeta = {}): string
 {
-    if (handoff === null || !('version' in handoff))
+    let payload: LoaderHandoff | null = null;
+    if (handoff !== null && 'version' in handoff)
+    {
+        payload = handoff;
+    }
+    else if ((handoff === null || 'notFound' in handoff) && meta.path !== undefined)
+    {
+        payload = { version: LOADER_HANDOFF_VERSION, path: meta.path, data: [] };
+    }
+    if (payload === null)
     {
         return '';
     }
-    return `<script type="application/json" id="${ LOADER_HANDOFF_ID }">${ inertJson(handoff) }</script>`;
+    const stamped: LoaderHandoff = { ...payload };
+    if (meta.build !== undefined)
+    {
+        stamped.build = meta.build;
+    }
+    if (meta.static === true)
+    {
+        stamped.static = true;
+    }
+    else if (meta.at !== undefined)
+    {
+        stamped.at = meta.at;
+    }
+    return `<script type="application/json" id="${ LOADER_HANDOFF_ID }">${ inertJson(stamped) }</script>`;
 }
 
 /**

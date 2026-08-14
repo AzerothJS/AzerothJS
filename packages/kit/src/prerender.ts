@@ -16,7 +16,9 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
+import { setBuildContext } from 'azerothjs/internal';
 
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import type { PageRenderer } from './ssr.ts';
@@ -86,9 +88,20 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
     // In a normal build dist/ is fresh from vite, so exactly one file carries prior content.
     const emitted: Array<{ file: string; previous: string | null }> = [];
 
-    async function renderAndWrite(path: string): Promise<void>
+    // The same shell-hash identity the runtime mount computes, so build-emitted handoffs
+    // and runtime pages agree on the deployment they belong to.
+    const buildStamp = createHash('sha256').update(shell).digest('hex').slice(0, 16);
+
+    async function renderAndWrite(path: string, revalidate?: number): Promise<void>
     {
-        const result = await options.renderer(path, shell);
+        // A page WITH a revalidation window is ISR: its prerendered seed file is served
+        // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
+        // WITHOUT one is build-static by contract and adopts fresh forever.
+        const result = await options.renderer(path, shell, {
+            handoffMeta: revalidate !== undefined
+                ? { build: buildStamp, at: Date.now() }
+                : { build: buildStamp, static: true }
+        });
         if (result.kind === 'redirect')
         {
             throw new Error(`kit prerender: "${ path }" redirected to "${ result.to }" during prerender - `
@@ -129,6 +142,10 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
     }
 
     const written: string[] = [];
+    // Build context: the render entry points latch server mode, and outside any request
+    // scope the data cache disables itself - correct at build time, and SILENT (the
+    // install-a-request-root diagnostic is server advice, not build advice).
+    setBuildContext(true);
     try
     {
         await generate(options, renderAndWrite, written);
@@ -149,6 +166,10 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             }
         }
         throw failure;
+    }
+    finally
+    {
+        setBuildContext(false);
     }
     return written;
 }
@@ -175,7 +196,7 @@ function readPrevious(file: string): string | null
 /** @internal The page walk itself; `prerender` wraps it so a throw can roll back what it wrote. */
 async function generate(
     options: PrerenderOptions,
-    renderAndWrite: (path: string) => Promise<void>,
+    renderAndWrite: (path: string, revalidate?: number) => Promise<void>,
     written: string[]
 ): Promise<void>
 {
@@ -218,12 +239,12 @@ async function generate(
                     continue;
                 }
                 seen.add(resolved);
-                await renderAndWrite(resolved);
+                await renderAndWrite(resolved, page.revalidate);
                 written.push(resolved);
             }
             continue;
         }
-        await renderAndWrite(page.path);
+        await renderAndWrite(page.path, page.revalidate);
         written.push(page.path);
     }
 }

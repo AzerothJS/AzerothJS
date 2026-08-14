@@ -49,7 +49,10 @@ import type {
     RouteMatch,
     RouterConfig
 } from './types.ts';
-import { compilePath, type PathMatcher } from './path-pattern.ts';
+import { compilePath, paramNamesOf, type PathMatcher } from './path-pattern.ts';
+import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cache.ts';
+import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
 import { parseQuery, stringifyQuery } from './query.ts';
 import { createBrowserHistory } from './history.ts';
@@ -65,6 +68,12 @@ export type { NavigationKind } from './types.ts';
  * @internal
  */
 const LAZY_CACHE = new WeakMap<Route, { component: RouteComponent } | { error: unknown }>();
+
+/** Distinguishes each router's loader family; the ordinal-keyed entries never cross routers. */
+let routerSerial = 0;
+
+/** DEV-only: routes already given the declare-a-search-schema hint. */
+const queryHinted = new WeakSet<Route>();
 
 /**
  * Resolves a route's component: the direct `component`, or the `lazy` chunk (fetched
@@ -84,7 +93,9 @@ export async function resolveRouteComponent(route: Route): Promise<RouteComponen
         {
             return cached.component;
         }
-        throw cached.error;
+        // A failed chunk load is NOT poisoned for the process: drop the failure and retry
+        // below. componentOf keeps throwing the recorded error until a retry succeeds.
+        LAZY_CACHE.delete(route);
     }
     if (route.lazy === undefined)
     {
@@ -193,6 +204,13 @@ export interface Router
      * route handle) over indexing this directly.
      */
     loaders: ReadonlyArray<Resource<unknown>>;
+
+    /**
+     * Marks every loader entry of the current location stale and refetches the
+     * watched ones, resolving when those refetches settle. The one call a
+     * mutation needs after changing what the page's loaders would return.
+     */
+    revalidate: () => Promise<void>;
 
     /**
      * Reactive: true while ANY of the current navigation's work is in flight -
@@ -771,19 +789,20 @@ export function createRouter(config: RouterConfig): Router
     onRootDispose(unsubHistory);
 
     /**
-     * Bundles everything one level's loader fetcher needs. Keyed by the match
-     * object identity: a match change produces new triggers, so every level's
-     * createResource re-fetches (in parallel - each level reacts independently).
+     * Everything one level's loader run needs, staged by the level's KEY MEMO the moment it
+     * computes the key. The fetcher reads the CURRENTLY staged record for its key - same
+     * key, same declared inputs, so re-staging is idempotent and a re-run for a non-query
+     * reason receives current values.
      *
      * @internal
      */
-    interface LoaderTrigger
+    interface StagedTrigger
     {
-        match: RouteMatch;
         level: number;
         loader: (args: RouteLoaderArgs) => Promise<unknown>;
         params: Params;
         query: Query;
+        parentKey: string | null;
     }
 
     /**
@@ -1028,25 +1047,9 @@ export function createRouter(config: RouterConfig): Router
     const seed = config.initialLoaderData;
     const initialState = untrack(state);
     const adopt = seed !== undefined
-        && seed.version === 2
+        && seed.version === 3
         && Array.isArray(seed.data)
         && seed.path === initialState.pathname + initialState.search;
-
-    // Per-navigation promise slots, keyed by match identity: each level's fetcher
-    // deposits its promise so DESCENDANT levels can await `parent`. Levels react to
-    // the same match memo in creation order (root first), so an ancestor's slot is
-    // always deposited before a descendant's fetcher reads it.
-    let flightMatch: RouteMatch | null = null;
-    let flightSlots: Array<Promise<unknown> | undefined> = [];
-    function flightFor(m: RouteMatch): Array<Promise<unknown> | undefined>
-    {
-        if (flightMatch !== m)
-        {
-            flightMatch = m;
-            flightSlots = [];
-        }
-        return flightSlots;
-    }
 
     // The raw search string, isolated so loaders can depend on it WITHOUT depending on the
     // whole location. `match` is deliberately query-blind (a structural memo over the matched
@@ -1056,45 +1059,324 @@ export function createRouter(config: RouterConfig): Router
     // string collapses those, because equal strings do not propagate.
     const searchString = createMemo(() => state().search);
 
-    // One resource per level; each level with a loader starts the moment the match
-    // changes - all levels IN PARALLEL by construction. createResource handles
-    // cancellation and race-guarding per level, exactly as it did for the old
-    // single leaf loader.
+    // The commit point for EVERY navigation shape - match changes, query-only, hash-only
+    // (harmless): fetches begun from here on belong to THIS navigation and are never
+    // no-op'd as stale by a concurrent revalidate. Guard-accept alone would miss the
+    // query-only commits its structural match equality collapses.
+    createEffect(() =>
+    {
+        state();
+        getDataCache()?.beginNavigation();
+    });
+
+    // --- loader identity ----------------------------------------------------------------
+    // Every route gets a flatten-ordinal id (object identity as a string; joined patterns
+    // can collide across same-path sibling layouts). A level's cache key is that ordinal +
+    // the PREFIX params slice (params bound by levels 0..N - never a descendant's, which is
+    // what confined a leaf navigation's refetch to the leaf) + the search component: a
+    // route WITH a `search` schema keys on the serialized parse output (declared subset,
+    // defaults and coercions normalized, invalid degrades to {}), a route WITHOUT one keys
+    // on the full search string - schema-less routes keep refetching on any query change.
+    const routeOrdinals = new WeakMap<Route, number>();
+    {
+        let nextOrdinal = 0;
+        const assign = (list: Route[]): void =>
+        {
+            for (const route of list)
+            {
+                if (!routeOrdinals.has(route))
+                {
+                    routeOrdinals.set(route, nextOrdinal);
+                    nextOrdinal += 1;
+                }
+                if (route.children !== undefined)
+                {
+                    assign(route.children);
+                }
+            }
+        };
+        assign(config.routes);
+    }
+
+    /** The declared query a level's loader receives and its key serializes: parsed through
+     * the route's schema when one exists (so key and arguments can never skew), the full
+     * parsed query otherwise. */
+    function levelQuery(route: Route, search: string): Query
+    {
+        const query = parseQuery(search);
+        if (route.search === undefined)
+        {
+            // DEV hint, once per route: a schema-less loader touching `query` refetches on
+            // EVERY query change; declaring a `search` schema confines it to the declared
+            // subset. An optimization pointer, not a correctness warning.
+            if (DEV && route.loader !== undefined && !queryHinted.has(route))
+            {
+                return new Proxy(query, {
+                    get: (target, property, receiver): unknown =>
+                    {
+                        if (!queryHinted.has(route))
+                        {
+                            queryHinted.add(route);
+                            console.info(`[azerothjs/router] the loader for "${ route.path }" reads query without a `
+                                + 'search schema, so ANY query change refetches it; declare `search` to key on the fields it uses.');
+                        }
+                        return Reflect.get(target, property, receiver);
+                    }
+                });
+            }
+            return query;
+        }
+        const parsed = route.search.safeParse(query);
+        return (parsed.ok ? parsed.value : {}) as Query;
+    }
+
+    function levelKeyFor(m: RouteMatch | null, search: string, level: number): string | null
+    {
+        const route = m?.matched[level];
+        if (m === null || route === undefined || !route.loader)
+        {
+            return null;
+        }
+        const prefix: Params = {};
+        for (let i = 0; i <= level; i++)
+        {
+            const above = m.matched[i];
+            if (above === undefined)
+            {
+                continue;
+            }
+            for (const name of paramNamesOf(above.path))
+            {
+                const value = m.params[name];
+                if (value !== undefined)
+                {
+                    prefix[name] = value;
+                }
+            }
+        }
+        const searchComponent = route.search === undefined ? search : levelQuery(route, search);
+        return `${ routeOrdinals.get(route) ?? -1 }#${ level }|${ stableSerialize(prefix) }|${ stableSerialize(searchComponent) }`;
+    }
+
+    /** The nearest ancestor level WITH a loader, as a key, or null at the root. */
+    function parentKeyFor(m: RouteMatch, search: string, level: number): string | null
+    {
+        for (let above = level - 1; above >= 0; above--)
+        {
+            const key = levelKeyFor(m, search, above);
+            if (key !== null)
+            {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    // One loader FAMILY per router: entries are keyed by the level key, fetched by reading
+    // the staged trigger back. The family record is branded straight onto the fetcher so
+    // createResource takes the shared-entry path.
+    routerSerial += 1;
+    const stagedTriggers = new Map<string, StagedTrigger>();
+    const loaderFamily: FamilyRecord = {
+        name: `azeroth.loader#${ routerSerial }`,
+        fetcher: (async (key: string, signal: AbortSignal): Promise<unknown> =>
+        {
+            const trigger = stagedTriggers.get(key);
+            if (trigger === undefined)
+            {
+                throw new Error('[azerothjs/router] internal: a loader fetch ran for a key that was never staged.');
+            }
+            const cache = getDataCache();
+            const selfEntry = cache?.peek(loaderFamily, [key]);
+            if (selfEntry !== undefined)
+            {
+                // The propagation scan compares ENTRY keys, so the stamp must be the parent
+                // entry's full key, not the raw level key it wraps.
+                selfEntry.parentKey = trigger.parentKey === null
+                    ? null
+                    : entryKeyFor(loaderFamily, [trigger.parentKey]);
+                selfEntry.usedParent = false; // last-run truth; awaiting parent re-records it
+            }
+            const parent = parentPromiseFor(cache ?? null, trigger.parentKey, selfEntry);
+            return trigger.loader({ params: trigger.params, query: trigger.query, signal, parent });
+        }) as FamilyRecord['fetcher'],
+        fresh: 0,
+        retain: 5 * 60 * 1000
+    };
+    const brandedLoaderFetcher = Object.assign(
+        (key: string, signal: AbortSignal) => (loaderFamily.fetcher as (k: string, s: AbortSignal) => Promise<unknown>)(key, signal),
+        { [CACHED_FAMILY]: loaderFamily }
+    );
+
+    /**
+     * `args.parent` over the parent level's ENTRY - a partition: in-flight awaits its
+     * settlement; a VALUED idle parent (fresh, stale, or errored) delivers its retained
+     * value; an absent or valueless parent is read through the registry, which starts its
+     * fetch. Lazily resolved through a thenable so awaiting it is what records the
+     * parent-child dependency edge.
+     */
+    function parentPromiseFor(cache: DataCache | null, parentKey: string | null, childEntry: CacheEntry | undefined): Promise<unknown>
+    {
+        const resolveParent = (): Promise<unknown> =>
+        {
+            if (parentKey === null || cache === null)
+            {
+                return Promise.resolve(undefined);
+            }
+            const parentEntry = cache.peek(loaderFamily, [parentKey]);
+            if (parentEntry === undefined || (parentEntry.inflight === null && !parentEntry.hasValue))
+            {
+                return readValue(cache, loaderFamily, [parentKey]);
+            }
+            if (parentEntry.inflight !== null)
+            {
+                // The awaiting child is an audience: the waiter keeps a zero-subscriber
+                // parent's fetch from aborting under it mid-settlement.
+                cache.holdWaiter(parentEntry);
+                return cache.settlementFor(parentEntry, parentEntry.inflight.startedSeq).then(() =>
+                {
+                    if (parentEntry.hasError && !parentEntry.hasValue)
+                    {
+                        throw parentEntry.error;
+                    }
+                    return parentEntry.value;
+                }).finally(() =>
+                {
+                    cache.releaseWaiter(parentEntry);
+                });
+            }
+            return Promise.resolve(parentEntry.value);
+        };
+        let inner: Promise<unknown> | null = null;
+        const thenable = {
+            then<TOk, TErr>(onOk?: (value: unknown) => TOk, onErr?: (reason: unknown) => TErr): Promise<TOk | TErr>
+            {
+                if (childEntry !== undefined)
+                {
+                    childEntry.usedParent = true;
+                }
+                inner ??= resolveParent();
+                return inner.then(onOk, onErr);
+            },
+            catch(onErr?: (reason: unknown) => unknown): Promise<unknown>
+            {
+                return thenable.then(undefined, onErr);
+            },
+            finally(onFinally?: () => void): Promise<unknown>
+            {
+                return thenable.then(
+                    (value) =>
+                    {
+                        onFinally?.();
+                        return value;
+                    },
+                    (reason: unknown) =>
+                    {
+                        onFinally?.();
+                        throw reason;
+                    }
+                );
+            }
+        };
+        return thenable as unknown as Promise<unknown>;
+    }
+
+    // v3 seed adoption writes ENTRIES before the level resources exist, so the data is
+    // shared state from the first paint: subscription-fresh for a fresh seed; STALE-marked
+    // with a deferred heal for one older than the adoption bound (a page cache served it
+    // stale - the client revalidates once after hydration instead of pinning that age in).
+    const SEED_FRESH_MS = 30_000;
+    if (adopt)
+    {
+        const cache = getDataCache();
+        const m0 = untrack(rawMatch);
+        if (cache !== null && m0 !== null)
+        {
+            for (let level = 0; level < seed.data.length; level++)
+            {
+                if (seed.data[level] === undefined)
+                {
+                    continue;
+                }
+                const key = levelKeyFor(m0, initialState.search, level);
+                if (key === null)
+                {
+                    continue;
+                }
+                stagedTriggers.set(key, {
+                    level,
+                    loader: (m0.matched[level] as Route & { loader: NonNullable<Route['loader']> }).loader,
+                    params: m0.params,
+                    query: levelQuery(m0.matched[level] as Route, initialState.search),
+                    parentKey: parentKeyFor(m0, initialState.search, level)
+                });
+                const entry = cache.entryFor(loaderFamily, [key]);
+                if (!entry.hasValue)
+                {
+                    cache.writeEntry(entry, seed.data[level]);
+                    // The parent edge exists BEFORE any client run: a seeded chain whose
+                    // parent renews must reach its seeded children, so the edge is stamped
+                    // conservatively (usedParent true - the worst case is one refetch that
+                    // reads the fresh parent, never a child left deriving from the old one).
+                    const parentLevelKey = parentKeyFor(m0, initialState.search, level);
+                    entry.parentKey = parentLevelKey === null ? null : entryKeyFor(loaderFamily, [parentLevelKey]);
+                    entry.usedParent = entry.parentKey !== null;
+                    if (seed.build !== undefined)
+                    {
+                        entry.build = seed.build;
+                    }
+                    if (seed.at !== undefined)
+                    {
+                        entry.seededAt = seed.at;
+                    }
+                    const at = seed.static === true ? undefined : seed.at;
+                    if (at !== undefined)
+                    {
+                        entry.writtenAt = at;
+                        const age = Date.now() - at;
+                        if (age > SEED_FRESH_MS)
+                        {
+                            // After the synchronous hydration pass: the level resource has
+                            // subscribed by then, so the heal refetches exactly once.
+                            queueMicrotask(() =>
+                            {
+                                void cache.revalidateEntry(entry);
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // One resource per level, keyed by the level's KEY STRING with string equality: a
+    // navigation that leaves a level's key unchanged (a leaf param change, an undeclared
+    // query change) does not re-run it - the blast-radius fix. Computing the key stages
+    // the trigger; the branded fetcher reads it back, so all levels with changed keys
+    // still start IN PARALLEL by construction.
     const loaders: Array<Resource<unknown>> = [];
     for (let level = 0; level < maxDepth; level++)
     {
-        loaders.push(createResource<unknown, LoaderTrigger>(
+        loaders.push(createResource<unknown, string>(
             () =>
             {
                 const m = match();
-                // Tracked: a query-only navigation must produce a fresh trigger.
                 const search = searchString();
-                const route = m?.matched[level];
-                if (m === null || route === undefined || !route.loader)
+                const key = levelKeyFor(m, search, level);
+                if (key !== null && m !== null)
                 {
-                    return null;
+                    const route = m.matched[level] as Route & { loader: NonNullable<Route['loader']> };
+                    stagedTriggers.set(key, {
+                        level,
+                        loader: route.loader,
+                        params: m.params,
+                        query: levelQuery(route, search),
+                        parentKey: parentKeyFor(m, search, level)
+                    });
                 }
-                return { match: m, level, loader: route.loader, params: m.params, query: parseQuery(search) };
+                return key;
             },
-            async (trigger, signal) =>
-            {
-                const slots = flightFor(trigger.match);
-                // `parent` is the nearest ANCESTOR WITH A LOADER's promise; loaderless
-                // levels leave their slot empty and are skipped.
-                let parent: Promise<unknown> = Promise.resolve(undefined);
-                for (let above = trigger.level - 1; above >= 0; above--)
-                {
-                    const slot = slots[above];
-                    if (slot !== undefined)
-                    {
-                        parent = slot;
-                        break;
-                    }
-                }
-                const promise = trigger.loader({ params: trigger.params, query: trigger.query, signal, parent });
-                slots[trigger.level] = promise;
-                return promise;
-            },
+            brandedLoaderFetcher,
             adopt && (seed.data)[level] !== undefined
                 ? { initialValue: (seed.data)[level] }
                 : undefined
@@ -1114,7 +1396,10 @@ export function createRouter(config: RouterConfig): Router
         }
         for (const route of m.matched)
         {
-            if (route.lazy !== undefined && !LAZY_CACHE.has(route))
+            const chunk = LAZY_CACHE.get(route);
+            // A recorded FAILURE retries on the next demand instead of poisoning the route
+            // for the process - resolveRouteComponent drops it and re-runs the import.
+            if (route.lazy !== undefined && (chunk === undefined || 'error' in chunk))
             {
                 void resolveRouteComponent(route).catch(() => undefined).then(() =>
                 {
@@ -1291,6 +1576,31 @@ export function createRouter(config: RouterConfig): Router
         location,
         match,
         loaders,
+        revalidate(): Promise<void>
+        {
+            const cache = getDataCache();
+            if (cache === null)
+            {
+                return Promise.resolve();
+            }
+            const m = untrack(match);
+            const search = untrack(searchString);
+            const settlements: Promise<void>[] = [];
+            for (let level = 0; level < maxDepth; level++)
+            {
+                const key = levelKeyFor(m, search, level);
+                if (key === null)
+                {
+                    continue;
+                }
+                const entry = cache.peek(loaderFamily, [key]);
+                if (entry !== undefined)
+                {
+                    settlements.push(cache.revalidateEntry(entry));
+                }
+            }
+            return Promise.all(settlements).then(() => undefined);
+        },
         pending,
         chainReady,
         focusManagement: config.focus !== false,

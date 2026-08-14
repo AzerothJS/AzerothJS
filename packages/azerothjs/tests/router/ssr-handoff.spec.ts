@@ -100,7 +100,7 @@ describe('client side: adoption without a refetch', () =>
         embed(loaderHandoffScript(handoff));
         try
         {
-            expect(readLoaderHandoff()).toEqual({ version: 2, path: '/users/7?tab=posts', data: [{ id: '7' }] });
+            expect(readLoaderHandoff()).toEqual({ version: 3, path: '/users/7?tab=posts', data: [{ id: '7' }] });
         }
         finally
         {
@@ -112,7 +112,7 @@ describe('client side: adoption without a refetch', () =>
     {
         const clientLoader = vi.fn(async () => ({ fresh: true }));
         const routes = buildRoutes(clientLoader);
-        embed(loaderHandoffScript({ version: 2, path: '/users/42', data: [{ id: '42', name: 'user-42' }] }));
+        embed(loaderHandoffScript({ version: 3, path: '/users/42', data: [{ id: '42', name: 'user-42' }] }));
 
         try
         {
@@ -159,7 +159,7 @@ describe('client side: adoption without a refetch', () =>
             router = createRouter({
                 routes,
                 history: createMemoryHistory('/users/9'),
-                initialLoaderData: { version: 2, path: '/users/OLD', data: [{ id: 'OLD' }] }
+                initialLoaderData: { version: 3, path: '/users/OLD', data: [{ id: 'OLD' }] }
             });
         });
         await flush();
@@ -189,7 +189,7 @@ describe('multi-level parity: the nested chain hands off level by level', () =>
 
         const handoff = await matchAndLoad(nested, new URL('http://local/shop/items/9'));
         expect(handoff).toEqual({
-            version: 2,
+            version: 3,
             path: '/shop/items/9',
             data: [{ nav: ['a', 'b'] }, { id: '9' }]
         });

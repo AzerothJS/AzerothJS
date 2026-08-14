@@ -41,6 +41,8 @@ export { createSelector } from './create-selector.ts';
 export { createResource } from './create-resource.ts';
 export type { ResourceOptions } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
+export { cached, revalidate } from './data-cache.ts';
+export type { CachedFetcher, CachedOptions } from './data-cache.ts';
 
 // Error handling.
 export { catchError, onUncaughtError } from './catch-error.ts';

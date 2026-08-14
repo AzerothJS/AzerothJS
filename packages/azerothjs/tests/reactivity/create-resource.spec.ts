@@ -100,7 +100,7 @@ describe('createResource - standalone', () =>
         await flush();
         expect(calls).toEqual([1]);
 
-        resource.refetch();
+        void resource.refetch();
         expect(resource.loading()).toBe(true);
         await flush();
         expect(calls).toEqual([1, 1]);
@@ -209,7 +209,7 @@ describe('initialValue: the SSR/hydration adoption seam', () =>
         {
             resource = createResource(() => 'k', fetcher, { initialValue: 'seeded' });
         });
-        resource.refetch();
+        void resource.refetch();
         await vi.waitFor(() => expect(resource.data()).toBe('fresh'));
         expect(fetcher).toHaveBeenCalledTimes(1);
     });

@@ -22,6 +22,7 @@
 
 import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
 import { getStoreScope } from '../reactivity/store-scope.ts';
+import { latchServerData } from '../reactivity/data-cache.ts';
 import { discardStyleFrame } from '../renderer/css.ts';
 import { discardHeadFrame } from '../renderer/head.ts';
 
@@ -43,6 +44,9 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
             + 'renderToString(() => App(props)). It received an already-built value - the tree must '
             + 'build INSIDE the string-mode render, or h() runs against a missing server DOM.');
     }
+    // A server entry point: from here on, default-scope reads bypass the data cache so
+    // nothing is ever shared across requests (see data-cache).
+    latchServerData();
     // Markers ride the mode window itself (exception-safe, render-scoped) - there is no
     // separate marker global to set and restore.
     return runInMode('string', (): string =>

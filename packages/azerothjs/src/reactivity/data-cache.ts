@@ -1,0 +1,965 @@
+/**
+ * Copyright (c) 2026 AzerothJS.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
+ * The app-level data cache: one registry per store scope, shared by keyed resources, route
+ * loaders and prefetch, and invalidated by `revalidate`.
+ *
+ * A `cached(name, fetcher)` family names a key space; an entry is one argument set's state.
+ * Entries own every fetch: instances subscribe and mirror, so two readers of one key share
+ * one request, a revalidation reaches every subscriber through the entry's version signal,
+ * and an unwatched entry is never fetched on anyone's behalf.
+ *
+ * Ownership is the store scope. The client's default scope makes the cache app-wide; a
+ * server render or request scope makes it die with its owner. On a server the default scope
+ * is process-lifetime, so once any server entry point has run, reads resolving there bypass
+ * the cache entirely rather than share entries across requests.
+ */
+
+import type { Getter } from './types.ts';
+import { createSignal } from './create-signal.ts';
+import { createStore } from './create-store.ts';
+import { getStoreScope, isDefaultScope } from './store-scope.ts';
+import { getRenderMode, isStringMode } from './render-mode.ts';
+import { untrack } from './untrack.ts';
+import { DEV } from './dev.ts';
+
+/** Brands a fetcher wrapped by {@link cached}; createResource dispatches on its presence. */
+export const CACHED_FAMILY: unique symbol = Symbol('azeroth.cached');
+
+/** Options for {@link cached}. */
+export interface CachedOptions
+{
+    /**
+     * How long, in milliseconds, a retained value satisfies a NEW subscription without a
+     * background revalidation. `0` (the default) revalidates on every re-subscription;
+     * `Infinity` never does. Entries with live subscribers are fresh regardless.
+     */
+    fresh?: number;
+
+    /** How long, in milliseconds, an unsubscribed entry is retained before eviction. */
+    retain?: number;
+}
+
+/** The per-family record every entry of one key space shares. */
+export interface FamilyRecord
+{
+    name: string;
+    fetcher: (...args: unknown[]) => Promise<unknown>;
+    fresh: number;
+    retain: number;
+}
+
+/** A fetcher wrapped by {@link cached}: callable as a plain fetcher, targetable by revalidate. */
+export interface CachedFetcher<A extends unknown[], T>
+{
+    (...args: [...A, AbortSignal?]): Promise<T>;
+    readonly [CACHED_FAMILY]: FamilyRecord;
+}
+
+/**
+ * A fetcher may declare its trailing AbortSignal or ignore it; the family's argument list
+ * is the parameters WITHOUT that signal either way.
+ */
+type DropTrailingSignal<P extends unknown[]> = P extends [...infer Rest, AbortSignal] ? Rest : P;
+
+const DEFAULT_RETAIN_MS = 5 * 60 * 1000;
+
+/** One key's state. Fetches belong to the entry, never to a subscriber. */
+export interface CacheEntry
+{
+    key: string;
+    value: unknown;
+    hasValue: boolean;
+    hasError: boolean;
+    error: unknown;
+    version: Getter<number>;
+    bumpVersion: () => void;
+    bumpScheduled: boolean;
+    generation: number;
+    markSeq: number;
+    inflight: { controller: AbortController; generation: number; startedSeq: number } | null;
+    /** Waiters for a settle whose startedSeq >= minSeq; resolved on settle, eviction or reset. */
+    settleWaiters: { minSeq: number; resolve: () => void }[];
+    stale: boolean;
+    writtenAt: number;
+    subscribers: number;
+    waiters: number;
+    retainTimer: ReturnType<typeof setTimeout> | null;
+    zeroCheckScheduled: boolean;
+    args: unknown[];
+    parentKey: string | null;
+    usedParent: boolean;
+    family: FamilyRecord;
+
+    /** The producing deployment's build id, recorded at seed adoption for deploy-aware use. */
+    build?: string;
+
+    /** The seed's produce time, when adopted from a handoff. */
+    seededAt?: number;
+}
+
+let serverLatched = false;
+let disabledServerWarned = false;
+let disabledBrowserWarned = false;
+let buildContext = false;
+
+/** DEV-only: family name -> shared record, so an HMR re-registration swaps in place. */
+const devFamilies: Map<string, FamilyRecord> | null = DEV ? new Map() : null;
+
+/** DEV-only: live client caches, reachable for HMR-driven family invalidation. */
+const devClientCaches: Set<DataCache> | null = DEV ? new Set() : null;
+
+/**
+ * Keys whose fetcher is in its SYNCHRONOUS invocation window. A revalidate targeting a
+ * key from inside its own fetcher must be a no-op in EVERY mode - awaiting deadlocks and
+ * even marking loops (the follow-up re-marks itself) - so the tracking is unconditional;
+ * only the diagnostic is DEV-gated.
+ */
+const executingKeys = new Set<string>();
+
+/**
+ * Serializes a key part deterministically: object keys sorted, array order significant.
+ * Non-serializable values throw in DEV; in PROD they degrade to `String(value)`, which
+ * collapses distinct values into one entry - the documented risk of the degradation.
+ */
+export function stableSerialize(value: unknown): string
+{
+    const kind = typeof value;
+    if (value === null || kind === 'number' || kind === 'boolean' || kind === 'string')
+    {
+        return JSON.stringify(value);
+    }
+    if (value === undefined)
+    {
+        return 'undefined';
+    }
+    if (Array.isArray(value))
+    {
+        return `[${ value.map(stableSerialize).join(',') }]`;
+    }
+    if (kind === 'object')
+    {
+        // JSON's own contract first: a Date, a URL, or any class carrying toJSON keys on
+        // its serialized form - the walker must never be LESS faithful than JSON.stringify.
+        const withToJson = value as { toJSON?: () => unknown };
+        if (typeof withToJson.toJSON === 'function')
+        {
+            return stableSerialize(withToJson.toJSON());
+        }
+        // A Map, Set, or class instance without toJSON has no enumerable identity: walking
+        // its own keys would collapse distinct values into ONE entry and serve wrong data.
+        const proto: unknown = Object.getPrototypeOf(value);
+        if (proto !== Object.prototype && proto !== null)
+        {
+            if (DEV)
+            {
+                const name = (proto as { constructor?: { name?: string } } | null)?.constructor?.name ?? 'unknown';
+                throw new TypeError(`[azeroth] cached key parts must be plain data or carry toJSON; received an instance of ${ name }.`);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the PROD degradation is documented lossy
+            return JSON.stringify(String(value));
+        }
+        const record = value as Record<string, unknown>;
+        const keys = Object.keys(record).sort();
+        return `{${ keys.map(k => `${ JSON.stringify(k) }:${ stableSerialize(record[k]) }`).join(',') }}`;
+    }
+    if (DEV)
+    {
+        throw new TypeError(`[azeroth] cached key parts must be JSON-serializable, received ${ kind }.`);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the PROD degradation is documented lossy
+    return JSON.stringify(String(value));
+}
+
+/** The entry key for a family and argument list. */
+export function entryKeyFor(family: FamilyRecord, args: unknown[]): string
+{
+    return `${ family.name }|${ stableSerialize(args) }`;
+}
+
+/**
+ * The scope-owned registry. All fetch starts live here; subscribers only read, mirror and
+ * hold refcounts.
+ */
+export class DataCache
+{
+    readonly #entries = new Map<string, CacheEntry>();
+
+    /** Monotonic; orders marks against fetch starts and navigations without a clock. */
+    #seq = 0;
+
+    /** The seq at the latest navigation commit; marks never target fetches begun after it. */
+    #navSeq = 0;
+
+    constructor()
+    {
+        if (DEV && !serverLatched)
+        {
+            devClientCaches?.add(this);
+        }
+    }
+
+    public nextSeq(): number
+    {
+        this.#seq += 1;
+        return this.#seq;
+    }
+
+    public beginNavigation(): void
+    {
+        this.#navSeq = this.nextSeq();
+    }
+
+    public entryFor(family: FamilyRecord, args: unknown[]): CacheEntry
+    {
+        const key = entryKeyFor(family, args);
+        if (DEV && key.length > 2048)
+        {
+            console.warn(`[azeroth] cached key for '${ family.name }' is ${ key.length } chars; `
+                + 'adversarial or unbounded inputs in key parts grow the cache without bound.');
+        }
+        let entry = this.#entries.get(key);
+        if (entry === undefined)
+        {
+            const [version, setVersion] = createSignal(0, { name: 'cache-version' });
+            const created: CacheEntry = {
+                key,
+                value: undefined,
+                hasValue: false,
+                hasError: false,
+                error: undefined,
+                version,
+                bumpVersion: () => setVersion(v => v + 1),
+                bumpScheduled: false,
+                generation: 0,
+                markSeq: 0,
+                inflight: null,
+                settleWaiters: [],
+                stale: false,
+                writtenAt: 0,
+                subscribers: 0,
+                waiters: 0,
+                retainTimer: null,
+                zeroCheckScheduled: false,
+                args,
+                parentKey: null,
+                usedParent: false,
+                family
+            };
+            entry = created;
+            this.#entries.set(key, entry);
+            // A zero-subscriber creation (prefetch warm, seed write) starts its retention
+            // clock immediately; a subscriber arriving cancels it.
+            this.#scheduleRetention(entry);
+        }
+        else
+        {
+            entry.args = args;
+        }
+        return entry;
+    }
+
+    public peek(family: FamilyRecord, args: unknown[]): CacheEntry | undefined
+    {
+        return this.#entries.get(entryKeyFor(family, args));
+    }
+
+    public entriesOf(family: FamilyRecord): CacheEntry[]
+    {
+        const prefix = `${ family.name }|`;
+        const matches: CacheEntry[] = [];
+        for (const entry of this.#entries.values())
+        {
+            if (entry.key.startsWith(prefix))
+            {
+                matches.push(entry);
+            }
+        }
+        return matches;
+    }
+
+    public allEntries(): CacheEntry[]
+    {
+        return [...this.#entries.values()];
+    }
+
+    public subscribe(entry: CacheEntry): void
+    {
+        entry.subscribers += 1;
+        if (entry.retainTimer !== null)
+        {
+            clearTimeout(entry.retainTimer);
+            entry.retainTimer = null;
+        }
+    }
+
+    public unsubscribe(entry: CacheEntry): void
+    {
+        entry.subscribers -= 1;
+        this.#deferZeroCheck(entry);
+    }
+
+    public holdWaiter(entry: CacheEntry): void
+    {
+        entry.waiters += 1;
+    }
+
+    public releaseWaiter(entry: CacheEntry): void
+    {
+        entry.waiters -= 1;
+        this.#deferZeroCheck(entry);
+    }
+
+    /**
+     * The zero-audience consequences (abort, retention) run a microtask late, so an effect
+     * re-run that releases and immediately re-acquires the same entry never kills its own
+     * fetch through the transient zero.
+     */
+    #deferZeroCheck(entry: CacheEntry): void
+    {
+        if (entry.zeroCheckScheduled)
+        {
+            return;
+        }
+        entry.zeroCheckScheduled = true;
+        queueMicrotask(() =>
+        {
+            entry.zeroCheckScheduled = false;
+            if (entry.subscribers > 0 || entry.waiters > 0)
+            {
+                return;
+            }
+            if (entry.inflight !== null)
+            {
+                entry.inflight.controller.abort();
+                entry.inflight = null;
+                this.#resolveWaitersUpTo(entry, Infinity);
+            }
+            this.#scheduleRetention(entry);
+        });
+    }
+
+    #scheduleRetention(entry: CacheEntry): void
+    {
+        // A latched process is a server: entries die with their request scope, and a timer
+        // would only pin the cache object past its useful life.
+        if (serverLatched || entry.retainTimer !== null || entry.subscribers > 0)
+        {
+            return;
+        }
+        entry.retainTimer = setTimeout(() =>
+        {
+            entry.retainTimer = null;
+            if (entry.subscribers === 0 && entry.waiters === 0)
+            {
+                this.#entries.delete(entry.key);
+                this.#resolveWaitersUpTo(entry, Infinity);
+            }
+        }, entry.family.retain);
+        // A dangling timer must never hold a Node test process open.
+        (entry.retainTimer as { unref?: () => void }).unref?.();
+    }
+
+    /**
+     * The read machine, first matching rule wins: in-flight > error > stale > no-value >
+     * value. Every fetch decision funnels through ensureFetch, so a re-entrant read can only
+     * ever join.
+     */
+    public read(entry: CacheEntry, flags: { subscribing?: boolean; fromZero?: boolean; mandate?: boolean } = {}): void
+    {
+        if (entry.inflight !== null)
+        {
+            return;
+        }
+        if (entry.hasError)
+        {
+            if (flags.subscribing === true || flags.mandate === true)
+            {
+                this.ensureFetch(entry);
+            }
+            return;
+        }
+        if (entry.stale)
+        {
+            if (entry.subscribers > 0)
+            {
+                this.ensureFetch(entry);
+            }
+            return;
+        }
+        if (!entry.hasValue)
+        {
+            this.ensureFetch(entry);
+            return;
+        }
+        if (flags.subscribing === true && flags.fromZero === true)
+        {
+            const age = Date.now() - entry.writtenAt;
+            if (!(age < entry.family.fresh))
+            {
+                this.ensureFetch(entry);
+            }
+        }
+    }
+
+    public ensureFetch(entry: CacheEntry): void
+    {
+        if (entry.inflight !== null)
+        {
+            return;
+        }
+        this.#startFetch(entry);
+    }
+
+    /** Bypasses freshness: aborts any in-flight fetch and starts over. */
+    public force(entry: CacheEntry): Promise<void>
+    {
+        if (entry.inflight !== null)
+        {
+            entry.inflight.controller.abort();
+            entry.inflight = null;
+        }
+        this.#startFetch(entry);
+        const started = entry.inflight as CacheEntry['inflight'];
+        return this.settlementFor(entry, started === null ? 0 : started.startedSeq);
+    }
+
+    /** Resolves at the first settle whose startedSeq >= minSeq, or at eviction/reset. */
+    public settlementFor(entry: CacheEntry, minSeq: number): Promise<void>
+    {
+        if (entry.inflight === null && entry.markSeq < minSeq)
+        {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) =>
+        {
+            entry.settleWaiters.push({ minSeq, resolve });
+        });
+    }
+
+    #resolveWaitersUpTo(entry: CacheEntry, settledSeq: number): void
+    {
+        if (entry.settleWaiters.length === 0)
+        {
+            return;
+        }
+        const remaining: { minSeq: number; resolve: () => void }[] = [];
+        for (const waiter of entry.settleWaiters)
+        {
+            if (settledSeq >= waiter.minSeq)
+            {
+                waiter.resolve();
+            }
+            else
+            {
+                remaining.push(waiter);
+            }
+        }
+        entry.settleWaiters = remaining;
+    }
+
+    #startFetch(entry: CacheEntry): void
+    {
+        entry.generation += 1;
+        const generation = entry.generation;
+        const controller = new AbortController();
+        const startedSeq = this.nextSeq();
+        entry.inflight = { controller, generation, startedSeq };
+        this.#scheduleBump(entry);
+
+        let pending: Promise<unknown>;
+        executingKeys.add(entry.key);
+        try
+        {
+            const fetcher = entry.family.fetcher;
+            pending = Promise.resolve(fetcher(...entry.args, controller.signal));
+        }
+        catch (thrown)
+        {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the fetcher's thrown value propagates verbatim
+            pending = Promise.reject(thrown);
+        }
+        finally
+        {
+            executingKeys.delete(entry.key);
+        }
+
+        pending.then(
+            (result) =>
+            {
+                this.#settle(entry, generation, startedSeq, { value: result });
+            },
+            (failure: unknown) =>
+            {
+                this.#settle(entry, generation, startedSeq, { error: failure });
+            }
+        );
+    }
+
+    #settle(entry: CacheEntry, generation: number, startedSeq: number, outcome: { value?: unknown; error?: unknown }): void
+    {
+        // A superseded fetch writes nothing; its waiters are the surviving fetch's problem.
+        if (entry.generation !== generation || entry.inflight === null || entry.inflight.generation !== generation)
+        {
+            return;
+        }
+        entry.inflight = null;
+        if ('value' in outcome)
+        {
+            entry.value = outcome.value;
+            entry.hasValue = true;
+            entry.hasError = false;
+            entry.error = undefined;
+            entry.writtenAt = Date.now();
+            if (startedSeq >= entry.markSeq)
+            {
+                entry.stale = false;
+            }
+        }
+        else
+        {
+            entry.hasError = true;
+            entry.error = outcome.error;
+        }
+        entry.bumpVersion();
+        this.#resolveWaitersUpTo(entry, startedSeq);
+
+        // The post-mark follow-up: a settle that predates the last mark owes the mark one
+        // fetch, but only an audience justifies it - at zero subscribers the mark persists.
+        if (startedSeq < entry.markSeq)
+        {
+            if (entry.subscribers > 0)
+            {
+                this.ensureFetch(entry);
+            }
+            else
+            {
+                this.#resolveWaitersUpTo(entry, Infinity);
+            }
+        }
+
+        // Parent renewal propagates to the children that AWAITED it: subscribed children
+        // refetch (an in-flight child just joins), unsubscribed ones go stale for their
+        // next reader. Trees have no cycles, so the chain terminates.
+        if ('value' in outcome)
+        {
+            for (const child of this.#entries.values())
+            {
+                if (child.parentKey === entry.key && child.usedParent)
+                {
+                    if (child.subscribers > 0)
+                    {
+                        this.ensureFetch(child);
+                    }
+                    else
+                    {
+                        child.stale = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetch-start bumps are deferred a microtask so the reading effect that started the
+     * fetch never writes the signal it tracks within its own frame; settles bump
+     * synchronously from promise reactions.
+     */
+    #scheduleBump(entry: CacheEntry): void
+    {
+        if (entry.bumpScheduled)
+        {
+            return;
+        }
+        entry.bumpScheduled = true;
+        queueMicrotask(() =>
+        {
+            entry.bumpScheduled = false;
+            entry.bumpVersion();
+        });
+    }
+
+    /**
+     * Marks an entry stale and, with an audience, refetches. The returned promise resolves
+     * at settled data for subscribed entries, and at the mark itself for unsubscribed
+     * ones - nothing was watching, so nothing was triggered to await.
+     */
+    public revalidateEntry(entry: CacheEntry): Promise<void>
+    {
+        // Self-targeting from inside the key's own executing fetcher: a NO-OP in every
+        // mode. Awaiting the follow-up would deadlock (it cannot start until this settle),
+        // and even marking would loop - the follow-up's own body would re-mark itself
+        // forever. The running fetch already delivers this entry's freshest data.
+        if (executingKeys.has(entry.key))
+        {
+            if (DEV)
+            {
+                console.warn(`[azeroth] revalidate targeted '${ entry.key }' from inside its own fetcher; `
+                    + 'ignored - the running fetch is already producing this entry\'s freshest data. '
+                    + 'Revalidate a DIFFERENT family, or after the fetch settles.');
+            }
+            return Promise.resolve();
+        }
+        // A fetch begun after the current navigation committed cannot be stale to anyone.
+        if (entry.inflight !== null && entry.inflight.startedSeq >= this.#navSeq && this.#navSeq > 0)
+        {
+            return Promise.resolve();
+        }
+        entry.markSeq = this.nextSeq();
+        entry.stale = true;
+        entry.bumpVersion();
+        if (entry.subscribers === 0)
+        {
+            return Promise.resolve();
+        }
+        const settlement = this.settlementFor(entry, entry.markSeq);
+        if (entry.inflight === null)
+        {
+            this.read(entry, { mandate: true });
+        }
+        this.holdWaiter(entry);
+        return settlement.finally(() =>
+        {
+            this.releaseWaiter(entry);
+        });
+    }
+
+    /** The mutation seam: writes a settled value as if fetched, notifying subscribers. */
+    public writeEntry(entry: CacheEntry, value: unknown): void
+    {
+        // A write is newer than anything in flight: the superseded fetch must not
+        // overwrite it at settle (stale results never overwrite newer state, for writes
+        // exactly as for fetches), and its waiters resolve HERE - the superseded settle
+        // exits at the generation guard without touching them, and a stranded waiter
+        // would both hang its reader and block eviction forever.
+        if (entry.inflight !== null)
+        {
+            entry.inflight.controller.abort();
+            entry.inflight = null;
+            this.#resolveWaitersUpTo(entry, Infinity);
+        }
+        entry.generation += 1;
+        entry.value = value;
+        entry.hasValue = true;
+        entry.hasError = false;
+        entry.error = undefined;
+        entry.writtenAt = Date.now();
+        entry.stale = false;
+        entry.bumpVersion();
+    }
+
+    public abortAll(): void
+    {
+        for (const entry of this.#entries.values())
+        {
+            if (entry.inflight !== null)
+            {
+                entry.inflight.controller.abort();
+                entry.inflight = null;
+            }
+            this.#resolveWaitersUpTo(entry, Infinity);
+        }
+    }
+
+    public reset(): void
+    {
+        for (const entry of this.#entries.values())
+        {
+            if (entry.retainTimer !== null)
+            {
+                clearTimeout(entry.retainTimer);
+                entry.retainTimer = null;
+            }
+            if (entry.inflight !== null)
+            {
+                entry.inflight.controller.abort();
+                entry.inflight = null;
+            }
+            this.#resolveWaitersUpTo(entry, Infinity);
+        }
+        this.#entries.clear();
+    }
+}
+
+const useDataCache = createStore(() => new DataCache(), { name: 'azeroth.data-cache' });
+
+/** Materialized caches by scope, so a request's teardown can abort its outstanding fetches. */
+const scopeCaches = new WeakMap<object, DataCache>();
+
+/**
+ * Aborts every outstanding entry-fetch of `scope`'s cache, if one ever materialized. The
+ * request-end backstop: settle closures must not outlive the request that started them.
+ *
+ * @internal
+ */
+export function abortDataCacheFetches(scope: object): void
+{
+    scopeCaches.get(scope)?.abortAll();
+}
+
+/**
+ * The active scope's registry, or `null` when caching is disabled here: a latched server
+ * process resolving to the default scope, where entries would outlive their request.
+ *
+ * @internal
+ */
+export function getDataCache(): DataCache | null
+{
+    if (serverLatched && isDefaultScope(getStoreScope()))
+    {
+        if (DEV && !buildContext)
+        {
+            if (getRenderMode() === 'dom' && typeof document !== 'undefined')
+            {
+                if (!disabledBrowserWarned)
+                {
+                    disabledBrowserWarned = true;
+                    console.warn('[azeroth] a server entry point ran in this browser context; '
+                        + 'client data caching is disabled. Server rendering APIs are unsupported in the browser.');
+                }
+            }
+            else if (!disabledServerWarned)
+            {
+                disabledServerWarned = true;
+                console.warn('[azeroth] data caching is disabled outside a request scope on this server. '
+                    + 'Install the http request root (runInRequestRoot) so loader data is cached per request.');
+            }
+        }
+        return null;
+    }
+    const cache = useDataCache();
+    scopeCaches.set(getStoreScope(), cache);
+    return cache;
+}
+
+/**
+ * Latches server mode: from the first server entry point on, default-scope reads bypass the
+ * cache so nothing is ever shared across requests.
+ *
+ * @internal
+ */
+export function latchServerData(): void
+{
+    serverLatched = true;
+}
+
+/** Marks a build (prerender) context: the disable stands but stays silent. @internal */
+export function setBuildContext(active: boolean): void
+{
+    buildContext = active;
+}
+
+/** Test-only: clears the active scope's entries, timers and the server latch. @internal */
+export function resetDataCache(): void
+{
+    untrack(() =>
+    {
+        useDataCache().reset();
+    });
+    serverLatched = false;
+    disabledServerWarned = false;
+    disabledBrowserWarned = false;
+    buildContext = false;
+}
+
+/**
+ * Wraps a fetcher into a shared, keyed cache family. Two readers of one key share one
+ * request and one entry; `revalidate(fn)` reaches every subscriber.
+ *
+ * Composes with `createResource` (and the `resource` keyword) as an ordinary fetcher, and
+ * is callable directly - a direct call reads through the cache too.
+ *
+ * @param name - The family's key-space name. One name = one fetcher; reusing a name for a
+ *               different fetcher is undefined behavior in production builds.
+ * @param fetcher - Receives the arguments and an AbortSignal, returns a promise.
+ * @param options - Freshness and retention, see {@link CachedOptions}.
+ */
+export function cached<F extends (...args: never[]) => Promise<unknown>>(
+    name: string,
+    fetcher: F,
+    options: CachedOptions = {}
+): CachedFetcher<DropTrailingSignal<Parameters<F>>, Awaited<ReturnType<F>>>
+{
+    type A = DropTrailingSignal<Parameters<F>>;
+    type T = Awaited<ReturnType<F>>;
+    const rawFetcher = fetcher as unknown as FamilyRecord['fetcher'];
+    let family: FamilyRecord = {
+        name,
+        fetcher: rawFetcher,
+        fresh: options.fresh ?? 0,
+        retain: options.retain ?? DEFAULT_RETAIN_MS
+    };
+
+    if (DEV && devFamilies !== null)
+    {
+        const existing = devFamilies.get(name);
+        if (existing !== undefined && existing.fetcher !== rawFetcher)
+        {
+            // Hot module replacement re-evaluates data modules: replace in the SHARED record
+            // so live entries fetch through the new code, and drop their settled values. If
+            // this logs at cold start, two modules share a family name.
+            console.info(`[azeroth] cached family '${ name }' re-registered; entries invalidated.`);
+            existing.fetcher = rawFetcher;
+            existing.fresh = family.fresh;
+            existing.retain = family.retain;
+            family = existing;
+            devClientCaches?.forEach((cache) =>
+            {
+                for (const entry of cache.entriesOf(family))
+                {
+                    void cache.revalidateEntry(entry);
+                }
+            });
+        }
+        else
+        {
+            devFamilies.set(name, family);
+        }
+    }
+
+    const call = (...args: [...A, AbortSignal?]): Promise<T> =>
+    {
+        const trailing = args.length > 0 && args[args.length - 1] instanceof AbortSignal;
+        const plainArgs = (trailing ? args.slice(0, -1) : args) as unknown[];
+        const signal = trailing ? args[args.length - 1] as AbortSignal : undefined;
+        const cache = getDataCache();
+        if (cache === null)
+        {
+            const controller = new AbortController();
+            if (signal !== undefined)
+            {
+                if (signal.aborted)
+                {
+                    controller.abort();
+                }
+                else
+                {
+                    signal.addEventListener('abort', () => controller.abort(), { once: true });
+                }
+            }
+            return rawFetcher(...plainArgs, controller.signal) as Promise<T>;
+        }
+        return readValue<T>(cache, family, plainArgs, signal);
+    };
+
+    return Object.assign(call, { [CACHED_FAMILY]: family });
+}
+
+/**
+ * A one-shot value read through the machine: serves a fresh value synchronously-settled,
+ * joins or starts the fetch otherwise, and holds a waiter until it resolves.
+ *
+ * @internal
+ */
+export function readValue<T>(cache: DataCache, family: FamilyRecord, args: unknown[], signal?: AbortSignal): Promise<T>
+{
+    const entry = cache.entryFor(family, args);
+    if (entry.inflight === null && entry.hasValue && !entry.stale && !entry.hasError)
+    {
+        return Promise.resolve(entry.value as T);
+    }
+    // A one-shot reader is its own audience: it holds a waiter, so a stale or errored entry
+    // fetches for it even with zero subscribers (a fresh consumer always retries).
+    cache.ensureFetch(entry);
+    const started = entry.inflight;
+    if (started === null)
+    {
+        // A synchronously-settled fetcher (never a real promise) - serve the outcome as-is.
+        if (entry.hasError)
+        {
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the fetcher's failure propagates VERBATIM to the reader
+            return Promise.reject(entry.error);
+        }
+        return Promise.resolve(entry.value as T);
+    }
+    const awaited = started.startedSeq;
+    cache.holdWaiter(entry);
+    let released = false;
+    const release = (): void =>
+    {
+        if (!released)
+        {
+            released = true;
+            cache.releaseWaiter(entry);
+        }
+    };
+    if (signal !== undefined)
+    {
+        if (signal.aborted)
+        {
+            release();
+        }
+        else
+        {
+            signal.addEventListener('abort', release, { once: true });
+        }
+    }
+    return cache.settlementFor(entry, awaited).then(() =>
+    {
+        if (entry.hasError)
+        {
+            throw entry.error;
+        }
+        return entry.value as T;
+    }).finally(release);
+}
+
+/** Whether a fetcher carries the {@link cached} brand. @internal */
+export function cachedFamilyOf(fetcher: unknown): FamilyRecord | null
+{
+    if (typeof fetcher === 'function' && CACHED_FAMILY in fetcher)
+    {
+        return (fetcher as CachedFetcher<unknown[], unknown>)[CACHED_FAMILY];
+    }
+    return null;
+}
+
+/**
+ * Marks cached data stale and refetches what is being watched.
+ *
+ * - `revalidate()` - every entry in the active scope.
+ * - `revalidate(fn)` - every entry of one `cached` family.
+ * - `revalidate(fn, args)` - one entry.
+ *
+ * Resolves when the refetches it triggered settle; entries with no subscribers are marked
+ * and count as settled at the mark - the next subscriber serves the retained value and
+ * revalidates behind it.
+ */
+export function revalidate(target?: CachedFetcher<never[], unknown>, args?: unknown[]): Promise<void>
+{
+    if (DEV && isStringMode())
+    {
+        console.warn('[azeroth] revalidate() during a server render is not a supported operation; '
+            + 'server reads are one-shot per request and there is nothing to invalidate.');
+    }
+    const cache = getDataCache();
+    if (cache === null)
+    {
+        return Promise.resolve();
+    }
+    const family = target !== undefined ? cachedFamilyOf(target) : null;
+    if (target !== undefined && family === null)
+    {
+        throw new TypeError('[azeroth] revalidate targets a cached(...) fetcher.');
+    }
+    let entries: CacheEntry[];
+    if (family === null)
+    {
+        entries = cache.allEntries();
+    }
+    else if (args !== undefined)
+    {
+        const entry = cache.peek(family, args);
+        entries = entry !== undefined ? [entry] : [];
+    }
+    else
+    {
+        entries = cache.entriesOf(family);
+    }
+    return Promise.all(entries.map(entry => cache.revalidateEntry(entry))).then(() => undefined);
+}

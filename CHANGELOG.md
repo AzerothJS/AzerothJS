@@ -10,6 +10,46 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Added - the app-level data cache: `cached`, `revalidate`, and loader keying
+
+The framework now has one answer to "who fetched this, and when is it fetched again."
+A `cached(name, fetcher)` family names a shared key space: every reader of one key -
+two components, a route loader, a prefetcher - shares one entry and one in-flight
+request, and `revalidate(fn)` (or `revalidate(fn, args)`, or bare `revalidate()`)
+marks entries stale, refetches the watched ones, and RESOLVES WHEN THEY SETTLE, so a
+mutation can finally sequence on its data landing. Entries are owned by the store
+scope: app-wide in the browser, strictly per-request on the server - a server process
+never shares an entry across requests, by construction, including on servers that
+never installed the request root (reads there simply bypass the cache).
+
+- ROUTE LOADERS are keyed by their actual inputs: the route, the params bound at or
+  above its level, and - when the route declares a `search` schema - the parsed,
+  normalized output of that schema. A leaf `:id` navigation therefore re-runs ONLY the
+  leaf's loader; the layout's data holds, its element tree holds, and nothing refetches
+  above the change. Routes without a `search` schema keep their full query dependency
+  (query-only navigations still refetch them), so declaring a schema is the opt-in to
+  fine-grained search keying - and the loader then receives the parsed output, defaults
+  and coercions applied. `args.parent` now resolves from the parent level's cache
+  entry, so a child re-running alone still receives its parent's data.
+- NAVIGATION over retained entries serves synchronously - returning to a page you left
+  shows its data with no loading flash, revalidated once in the background
+  (`fresh: Infinity` opts a family out; `retain` bounds how long an unwatched entry
+  lives). `Resource` gains `refreshing` - true while a background revalidation runs
+  with data on screen; `loading` keeps meaning "nothing to show yet" - and `refetch()`
+  now returns a promise that settles with the fetch it forces. `router.revalidate()`
+  (or the `useRevalidate` composable) re-runs the current page's loaders through the
+  same machinery.
+- SSR HANDOFF: the wire format now carries the deployment's build id and the page's
+  produce time. A hydrating client adopts server data as already-settled shared
+  entries - zero refetches on hydration - and a page served STALE from a page cache
+  heals itself once after hydration instead of pinning its age into the cache;
+  build-static pages adopt fresh forever. Old-format payloads are rejected cleanly
+  (the client just fetches).
+- Failures are never cached: an errored entry serves its retained value beside the
+  error, never retries in a spin, and any NEW reader retries it. The same rule now
+  applies to lazy route chunks - a chunk that failed to download retries on the next
+  demand instead of poisoning the route for the session.
+
 ### Added - `useHead`, the document-head runtime
 
 The framework can now express "this page has a title." `useHead` declares a component's

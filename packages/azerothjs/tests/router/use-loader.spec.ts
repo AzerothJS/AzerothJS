@@ -268,11 +268,18 @@ describe('useLoader - refetch', () =>
             await flush();
             expect(calls).toEqual([1]);
 
-            resource.refetch();
-            expect(resource.loading()).toBe(true);
+            const settled = resource.refetch();
+            await Promise.resolve();
+            // Data is on screen, so the forced re-run reports as a background
+            // refresh: data() keeps serving, loading never flips.
+            expect(resource.refreshing()).toBe(true);
+            expect(resource.loading()).toBe(false);
+            expect(resource.data()).toBe('v');
+            await settled;
             await flush();
             expect(calls).toEqual([1, 1]);
             expect(resource.data()).toBe('v');
+            expect(resource.refreshing()).toBe(false);
         });
     });
 });

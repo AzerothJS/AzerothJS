@@ -37,7 +37,8 @@ export {
     useMatch,
     useParams,
     useQuery,
-    useNavigate
+    useNavigate,
+    useRevalidate
 } from './use-route.ts';
 export { useLoader } from './use-loader.ts';
 export { useSearch } from './use-search.ts';

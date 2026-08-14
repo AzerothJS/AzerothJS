@@ -210,7 +210,7 @@ describe('lazy routes', () =>
             path: '/lazy', lazy: async () => ({ default: leaf }), loader: async () => 'lazy-data'
         }];
         const handoff = await matchAndLoad(routes, new URL('http://local/lazy'));
-        expect(handoff).toEqual({ version: 2, path: '/lazy', data: ['lazy-data'] });
+        expect(handoff).toEqual({ version: 3, path: '/lazy', data: ['lazy-data'] });
     });
 });
 

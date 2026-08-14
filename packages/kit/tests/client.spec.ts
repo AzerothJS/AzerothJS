@@ -40,7 +40,7 @@ describe('bootClient', () =>
     it('hands the embedded loader handoff to the app', () =>
     {
         document.head.insertAdjacentHTML('beforeend',
-            loaderHandoffScript({ version: 2, path: '/x', data: [{ n: 1 }] }));
+            loaderHandoffScript({ version: 3, path: '/x', data: [{ n: 1 }] }));
         document.body.innerHTML = '<div id="root"></div>';
 
         let received: LoaderHandoff | undefined;
@@ -49,7 +49,7 @@ describe('bootClient', () =>
             received = props.handoff;
             return App();
         });
-        expect(received).toEqual({ version: 2, path: '/x', data: [{ n: 1 }] });
+        expect(received).toEqual({ version: 3, path: '/x', data: [{ n: 1 }] });
     });
 
     it('a missing #root is a loud error, not a silent no-op', () =>

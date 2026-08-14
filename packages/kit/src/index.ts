@@ -233,16 +233,19 @@ export function mountPages(app: App, options: KitOptions): void
     // carries it without any per-request work. Prerendered files were written at
     // build time without a server and keep the fetch fallback.
     const manifest = options.manifest;
+    const rawShellPromise = loadShell(options.clientDir);
     const shellPromise = manifest === undefined
-        ? loadShell(options.clientDir)
-        : loadShell(options.clientDir).then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
+        ? rawShellPromise
+        : rawShellPromise.then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
 
-    // Which build this process serves, hashed ONCE from the shell. A persistent page cache
-    // outlives the deploy that filled it, and the HTML it holds names the previous build's
-    // content-hashed assets - files the new build deleted - so ISR discards any entry stamped
-    // with a different id. The shell is the right thing to hash because it CARRIES those asset
-    // URLs: it changes exactly when they do.
-    const buildIdPromise = shellPromise
+    // Which build this process serves, hashed ONCE from the RAW shell - before any manifest
+    // injection, so the prerender pass (which hashes the same file at build time) and this
+    // mount agree on the id. A persistent page cache outlives the deploy that filled it, and
+    // the HTML it holds names the previous build's content-hashed assets - files the new
+    // build deleted - so ISR discards any entry stamped with a different id. The shell is
+    // the right thing to hash because it CARRIES those asset URLs: it changes exactly when
+    // they do.
+    const buildIdPromise = rawShellPromise
         .then((shell) => createHash('sha256').update(shell).digest('hex').slice(0, 16))
         .catch(() => randomUUID());
 
@@ -299,13 +302,13 @@ export function mountPages(app: App, options: KitOptions): void
             {
                 // An enumerated static page: try the prerendered file for the matched
                 // params first, live-render anything the enumeration did not list.
-                registerStaticFirst(app, page.path, options, shellPromise, assets);
+                registerStaticFirst(app, page.path, options, shellPromise, assets, buildIdPromise);
             }
             else
             {
                 // A wildcard cannot prerender one file: 'static' downgrades to
                 // per-request SSR when a renderer exists, else to the shell.
-                registerDynamic(app, page.path, mode === 'static' ? defaultMode : mode, options, shellPromise);
+                registerDynamic(app, page.path, mode === 'static' ? defaultMode : mode, options, shellPromise, buildIdPromise);
             }
             continue;
         }
@@ -316,7 +319,7 @@ export function mountPages(app: App, options: KitOptions): void
         }
         else
         {
-            registerDynamic(app, page.path, mode, options, shellPromise);
+            registerDynamic(app, page.path, mode, options, shellPromise, buildIdPromise);
         }
     }
 
@@ -346,7 +349,8 @@ async function renderOrShell(
     context: RequestContext,
     mode: PageRoute['render'],
     options: KitOptions,
-    shell: string
+    shell: string,
+    buildId: Promise<string>
 ): Promise<Response>
 {
     if (mode === 'server' && options.renderer !== undefined)
@@ -358,7 +362,10 @@ async function renderOrShell(
         const result = await options.renderer(
             context.url.pathname + context.url.search,
             shell,
-            nonce === undefined ? undefined : { scriptNonce: nonce });
+            {
+                handoffMeta: { build: await buildId, at: Date.now() },
+                ...(nonce !== undefined ? { scriptNonce: nonce } : {})
+            });
         return pageResponse(result, shell);
     }
     return htmlResponse(shell);
@@ -370,7 +377,8 @@ function registerDynamic(
     path: string,
     mode: PageRoute['render'],
     options: KitOptions,
-    shellPromise: Promise<string>
+    shellPromise: Promise<string>,
+    buildId: Promise<string>
 ): void
 {
     app.get(path, async (context) =>
@@ -382,7 +390,7 @@ function registerDynamic(
             // string-mode render starts no server fetches at all.
             if (context.request.method === 'HEAD')
             {
-                return renderOrShell(context, 'server', options, shell);
+                return renderOrShell(context, 'server', options, shell, buildId);
             }
             const nonce = options.scriptNonce?.(context);
             const result = await options.renderer(
@@ -391,6 +399,7 @@ function registerDynamic(
                 {
                     stream: true,
                     signal: context.request.signal,
+                    handoffMeta: { build: await buildId, at: Date.now() },
                     ...(nonce !== undefined ? { scriptNonce: nonce } : {})
                 });
             if (result.kind === 'stream')
@@ -416,7 +425,7 @@ function registerDynamic(
             // buffered by design) answered with an ordinary result: serve it as such.
             return pageResponse(result, shell);
         }
-        return renderOrShell(context, mode, options, shell);
+        return renderOrShell(context, mode, options, shell, buildId);
     });
 }
 
@@ -426,7 +435,8 @@ function registerStaticFirst(
     path: string,
     options: KitOptions,
     shellPromise: Promise<string>,
-    assets: Handler
+    assets: Handler,
+    buildId: Promise<string>
 ): void
 {
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
@@ -447,7 +457,7 @@ function registerStaticFirst(
                 throw error;
             }
         }
-        return renderOrShell(context, dynamicMode, options, await shellPromise);
+        return renderOrShell(context, dynamicMode, options, await shellPromise, buildId);
     });
 }
 

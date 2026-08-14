@@ -484,7 +484,7 @@ export function registerIsr(registration: IsrRegistration): void
                 // No seed on disk - render live.
             }
         }
-        const result = await renderer(target.url, await shell);
+        const result = await renderer(target.url, await shell, { handoffMeta: { build: await buildId, at: Date.now() } });
         if (result.kind === 'html' && result.status === 200)
         {
             const entry: PageEntry = { html: result.html, status: 200, createdAt: Date.now(), build: await buildId };
@@ -517,7 +517,7 @@ export function registerIsr(registration: IsrRegistration): void
         {
             try
             {
-                const result = await renderer(target.url, await shell);
+                const result = await renderer(target.url, await shell, { handoffMeta: { build: await buildId, at: Date.now() } });
                 if (result.kind === 'html' && result.status === 200)
                 {
                     await writeCache(target.key, { html: result.html, status: 200, createdAt: Date.now(), build: await buildId });

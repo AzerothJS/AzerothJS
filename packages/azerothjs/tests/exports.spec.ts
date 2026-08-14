@@ -102,6 +102,7 @@ const reExports: Array<[string, Record<string, unknown>]> = [
     ['useParams', router],
     ['useQuery', router],
     ['useNavigate', router],
+    ['useRevalidate', router],
     ['useLoader', router],
 
     // Server (SSR)

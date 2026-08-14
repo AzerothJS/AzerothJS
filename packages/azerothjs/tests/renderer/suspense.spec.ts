@@ -110,7 +110,7 @@ describe('Suspense', () =>
         expect(container.querySelector('.content')).not.toBeNull();
 
         // Refetch flips loading back to true -> fallback returns.
-        resource.refetch();
+        void resource.refetch();
         expect(container.querySelector('.spinner')).not.toBeNull();
         expect(container.querySelector('.content')).toBeNull();
 

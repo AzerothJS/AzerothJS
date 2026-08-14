@@ -468,6 +468,22 @@ export interface LoaderHandoff
 
     /** Per-level loader results, root to leaf (must be JSON-serializable to cross the wire). */
     data: unknown[];
+
+    /** The producing deployment's build id; a mismatched seed is dropped rather than adopted. */
+    build?: string;
+
+    /**
+     * Produce time (server epoch ms). A seed older than the adoption freshness bound is
+     * adopted STALE: served synchronously, revalidated once after hydration - a page served
+     * stale from a page cache heals instead of pinning its age into the data cache.
+     */
+    at?: number;
+
+    /**
+     * Marks a build-time prerendered page WITHOUT a revalidation window: its data is
+     * build-time by contract, so the seed always adopts fresh and hydration fetches nothing.
+     */
+    static?: boolean;
 }
 
 /**
