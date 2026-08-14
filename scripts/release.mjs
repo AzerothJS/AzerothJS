@@ -436,7 +436,15 @@ function releaseFiles()
     // `packages/`. Include their manifests so a release bumps them in lockstep instead of leaving
     // them stranded at the previous version - bumpFiles replaces the exact version string, which
     // appears as `"version"` in the VS Code manifest and `version = "..."` in the Gradle build.
-    for (const editorFile of [path.join('editors', 'vscode', 'package.json'), path.join('editors', 'jetbrains', 'build.gradle.kts')])
+    // The VS Code LOCKFILE is here for the same reason and is not optional: it restates the
+    // extension's own version, guardEditorInstallable requires the pair to agree, and the gate
+    // that guard runs under (`npm run verify`) executes AFTER the bump. Leave it out and the
+    // bump itself makes the tree inconsistent, failing every release that is not a resume.
+    for (const editorFile of [
+        path.join('editors', 'vscode', 'package.json'),
+        path.join('editors', 'vscode', 'package-lock.json'),
+        path.join('editors', 'jetbrains', 'build.gradle.kts')
+    ])
     {
         if (existsSync(path.join(ROOT, editorFile)))
         {
@@ -981,7 +989,39 @@ function bumpFiles(current, next)
         let after;
         let occurrences = 0;
 
-        if (file.endsWith('package.json'))
+        if (file.endsWith('package-lock.json'))
+        {
+            // A lockfile states its own package's version TWICE, at the top level and again as
+            // the root entry, and both move with the manifest beside it. Nothing else in the
+            // file does: every other version there describes a RESOLUTION (a linked workspace,
+            // a registry tarball) that is only correct once these versions are published, which
+            // is why the file is regenerated in full after the publish rather than rewritten here.
+            const escaped = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const ownVersion = new RegExp(`("version"\\s*:\\s*")${ escaped }(")`);
+            const rootEntry = new RegExp(`("":\\s*\\{[^{}]*?"version"\\s*:\\s*")${ escaped }(")`);
+            after = before
+                .replace(ownVersion, (_m, head, tail) => `${ head }${ next }${ tail }`)
+                .replace(rootEntry, (_m, head, tail) => `${ head }${ next }${ tail }`);
+
+            const beforeLock = JSON.parse(before);
+            const afterLock = JSON.parse(after);
+            if (afterLock.version !== next || afterLock.packages?.['']?.version !== next)
+            {
+                fail(`${ file }: own version is ${ afterLock.version } / ${ afterLock.packages?.['']?.version }`
+                    + ` after bump, expected ${ next } in both - regenerate the lockfile`);
+            }
+            // Proof the anchored replace hit those two fields and NOTHING else: put them back
+            // and the structure must be identical. A lockfile is the one release file where a
+            // stray replace is invisible, because the versions it repeats are real resolutions.
+            afterLock.version = beforeLock.version;
+            afterLock.packages[''].version = beforeLock.packages[''].version;
+            if (JSON.stringify(afterLock) !== JSON.stringify(beforeLock))
+            {
+                fail(`${ file }: the version replace changed a resolution, not just the package's own version`);
+            }
+            occurrences = after === before ? 0 : 2;
+        }
+        else if (file.endsWith('package.json'))
         {
             const escaped = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const versionField = new RegExp(`("version"\\s*:\\s*")${ escaped }(")`);
@@ -1064,7 +1104,10 @@ function guardDocVersions(current, next)
     const versionToken = /\b\d+\.\d+\.\d+(?:-(?:alpha|beta|rc|next|canary)\.\d+)?\b/g;
     for (const file of releaseFiles())
     {
-        if (file.endsWith('package.json') || file.endsWith('.kts'))
+        // Manifests, lockfiles and the Gradle build are structured: their version strings are
+        // fields and pins, not prose, and a lockfile legitimately names every third-party
+        // version in the tree. Only the docs get the stray-token scan.
+        if (file.endsWith('package.json') || file.endsWith('package-lock.json') || file.endsWith('.kts'))
         {
             continue;
         }

@@ -43,6 +43,11 @@ describe('release --no-bump (the documented resume path)', () =>
         expect(run.output).not.toContain('Publishing to npm');
     });
 
+    // Slow BY STATE, not by accident: once the release tag exists and names HEAD, nothing stops
+    // the plan early and it walks the whole publish list, asking the registry about each package
+    // in turn. Fifteen packuments that all resolve take far longer than fifteen that 404, so this
+    // spec is fast before a release and slow after one - and the default 15s made that difference
+    // the difference between green and red.
     it('refuses unless the release tag exists AND points at HEAD', () =>
     {
         const tag = `v${ currentVersion }`;
@@ -66,7 +71,7 @@ describe('release --no-bump (the documented resume path)', () =>
             expect(run.output).toContain(`${ tag } points at`);
             expect(run.output).toContain('publish packs the tree, not the tag');
         }
-    });
+    }, 180_000);
 
     it('reports a dirty tree under --dry-run instead of failing on it', () =>
     {
@@ -388,5 +393,52 @@ describe('editor integrations install from a clean checkout', () =>
         expect(run.output).toContain('package-lock.json');
         expect(run.output).toContain('@types/vscode');
         expect(run.output).not.toContain('Bumping versions');
+    });
+
+    /** Plans a release over a mutated lockfile ROOT (not just its package table). */
+    function withLock(mutate: (lock: { version?: string }) => void): { status: number; output: string }
+    {
+        const original = readFileSync(LOCK, 'utf8');
+        try
+        {
+            const lock = JSON.parse(original) as { version?: string };
+            mutate(lock);
+            writeFileSync(LOCK, JSON.stringify(lock, null, 4));
+            return release(PLAN);
+        }
+        finally
+        {
+            writeFileSync(LOCK, original);
+        }
+    }
+
+    // The bump is what drives this pair apart: it rewrites the manifest, and the lockfile is
+    // only regenerated AFTER the publish - so until the bump moved both, every release left the
+    // tree inconsistent across the window it spends running `npm run verify`, which runs this
+    // suite, which runs the guard above against the live tree. Eight specs failed and the
+    // release aborted mid-bump. Only a resume (--no-bump) ever survived, which is why the
+    // check shipped looking healthy.
+    it('bumps the editor lockfile in lockstep with its manifest', () =>
+    {
+        const run = release(PLAN);
+        const output = run.output.replace(/\\/g, '/');
+        expect(run.status).toBe(0);
+        expect(output).toContain('editors/vscode/package.json: 1 occurrence(s)');
+        // Two: the top-level `version` and the root `packages[""]` entry state it separately.
+        expect(output).toContain('editors/vscode/package-lock.json: 2 occurrence(s)');
+    });
+
+    it('refuses a lockfile whose two statements of its own version disagree', () =>
+    {
+        // The guard above compares the manifest against the ROOT ENTRY only, so a stale
+        // top-level field passes it and reaches the bump. The bump is where it is caught,
+        // because a replace that lands on one of the two is a half-bumped lockfile.
+        const run = withLock((lock) =>
+        {
+            lock.version = '0.0.1-stale.1';
+        });
+        expect(run.status).toBe(1);
+        expect(run.output).toContain('expected 9.9.9-beta.1 in both');
+        expect(run.output).not.toContain('Publishing to npm');
     });
 });

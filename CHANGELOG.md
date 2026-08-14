@@ -10,6 +10,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release that bumped versions could not pass its own gate.** The VS Code extension's
+  lockfile restates the extension's version, the release script's editor check requires that
+  pair to agree, and the bump rewrote only the manifest: the lockfile is regenerated after the
+  publish, because only then do the versions it resolves exist. From the bump until that
+  regeneration the tree was therefore inconsistent by construction, and that window is exactly
+  when the release runs `npm run verify` - the suite that runs the editor check against the
+  live tree. Eight specs failed and the release aborted mid-bump with every version file
+  already rewritten. Only a resumed release (`--no-bump`) ever survived, which is how the check
+  shipped looking healthy. The bump now moves both statements of that version with the
+  manifest, and refuses a replace that lands on only one of them or touches a resolution.
+
 ## [2.1.0-beta.2] - 2026-08-14
 
 ### Security - hardening across the server stack
