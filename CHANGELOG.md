@@ -10,18 +10,105 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
-### Changed - the compiled contract moves to v2 - BREAKING for prebuilt output
+### Changed - the per-segment route tree (nested layouts now RETAIN)
+
+`<Routes>` used to rebuild the whole matched chain on every navigation: any match change
+re-invoked every layout, so a persistent sidebar lost its element, its scroll position and
+its input state on every leaf click. Navigation now rebuilds exactly the segments whose
+IDENTITY changed - the route object at that level, or the params its own pattern binds -
+and retains every ancestor: same DOM node, no component body re-execution, state intact.
+
+- A layout's `children` prop is now a SLOT HANDLE, an opaque non-callable object the layout
+  places (through `<Outlet/>`, `{ props.children }`, or a hand-written `h()` tree). A slot
+  has one live placement at a time; disposing it (a `<Show>`-wrapped outlet toggling away,
+  an `ErrorBoundary` reset) re-arms the handle and a re-placement REMOUNTS the segment.
+  A layout test that matched `props.children instanceof Node` should place it instead.
+- A param bound by a segment's own pattern REMOUNTS that segment (fresh state per `:id`,
+  exactly the old leaf behavior); ancestors are retained. Query and hash changes retain
+  everything.
+- `useParams()` and `location().params` now derive from the GUARDED match: during an async
+  guard hold a rendered screen keeps observing the params it was rendered with, and under
+  an async boot guard both are `{}` until first acceptance while `pathname` shows the URL.
+- Transitions and focus happen at the OUTERMOST REBUILT segment: the route `transition`
+  prop plays its classes on the changed slot's content only, retained ancestors never
+  animate, and focus lands in the arriving segment (`[data-route-focus]` wins). The
+  fallback swap focuses too, and swaps instantly by design.
+- Hydration adopts the chain per segment inside nested `azc:outlet` ranges, preserving
+  server node identity per level; a version-skewed page (pre-retention markup) falls back to a
+  clean client render with a skew-specific message. Hydration descriptors now adopt under
+  their CREATION owner, so context (`RouterProvider`, themes) reaches content built during
+  the walk - a `<Link>` inside a hydrated `<For>` row previously threw "found no router"
+  and left the page inert.
+- Element destroy hooks now run for single-element rebuilt branches (the old fast path
+  skipped them); a routed leaf's placed `<Outlet/>` yields an empty marker range instead
+  of a placeholder `<span>`; a retained layout's `useLoader().loading()` flips across a
+  leaf refetch; Portals ride their segment (retained with it, disposed with it, kept
+  through a leave animation).
+
+### Added - `style { }`, a `.azeroth` file's own stylesheet
+
+A `.azeroth` file could compose TypeScript and markup, and not CSS. It can now:
+
+```azeroth
+style
+{
+    .card { padding: 1rem; border-radius: .5rem; }
+    .card:hover { background: var(--hover); }
+}
+
+export default component Card
+{
+    <article class="card">...</article>
+}
+```
+
+The compiler rewrites `.card` in the CSS **and** `class="card"` in the markup to the same
+content-hashed name. That is the whole justification for the syntax: it needs simultaneous
+knowledge of both languages, which is exactly what neither of them has alone. Everything else
+about the section is deliberately nothing - the body is plain CSS, never parsed, so nesting,
+`@media`, `@layer`, `@supports`, `@keyframes` and whatever CSS adds next all work because
+nothing looks at them.
+
+- **One section per file, at module level.** A stylesheet belongs to the file, not to an
+  instance. `style` is admitted as a SECTION rather than a keyword, under a new rule in the
+  compiler's STABILITY.md - the keyword rubric requires a construct to track or dispose, and CSS
+  does neither.
+- **Only static class syntax is rewritten**: `class="a b"` per token, and `class:name={cond}`.
+  `class={expr}` and `classList({ ... })` hold TypeScript values the compiler cannot read, so
+  they are left alone; the `css` template still returns the scoped names for those. A class the
+  section does not define is left alone too, so global stylesheets and utility frameworks are
+  untouched.
+- **Element, id and attribute selectors stay global.** `div { margin: 0 }` in a section applies
+  page-wide, exactly as it reads.
+- **`style` stays an ordinary identifier.** `el.style`, `const style = ...`, `{ style: x }` and
+  the `style="..."` attribute all keep their meanings. Written anywhere the section shape is not
+  recognised - inside a component body, or after a line missing its `;` - it is now the error
+  `azeroth/style-section` instead of reaching TypeScript as CSS and producing `Cannot find name
+  'red'`.
+- **Editors** get CSS completion, hover and colour swatches inside the section, the classes it
+  defines are indexed for `class="..."` completion and go-to-definition, and TypeScript reports
+  nothing inside it. JetBrains colours the keyword; injecting the CSS language into the block
+  there needs a non-flat PSI and is not in this release.
+- The hash and the selector rewrite moved into `azerothjs/semantics`, so a section and a
+  hand-written `css``` produce byte-identical class names. Two implementations of that rewrite
+  would drift on a name and the page would render unstyled with nothing to see in a diff.
+
+Nothing about existing files changes: a module with no section compiles exactly as before, and
+`import './styles.css'` at module level always worked and still does.
+
+### Changed - the compiled contract moves to v3 - BREAKING for prebuilt output
 
 Every compiled component now opens an ownership scope of its own, so the work a component creates
 is torn down with the component rather than with whatever root happened to be rendering it. That
-changes the emitted vocabulary, so `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both
-move 1 -> 2.
+changes the emitted vocabulary, and a `style { }` section adds one more emitted name
+(`registerStyle`), so `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move
+1 -> 3.
 
 Lockstep releases cover the normal case. What this affects is PREBUILT compiled output: a
-published `.azeroth` library's `dist`, or a stale application bundle, compiled against v1 and
-loaded against this runtime. That combination now fails at load with a message naming both
-versions, rather than misbehaving several components deep. **Rebuild any prebuilt `.azeroth`
-package against this release.**
+published `.azeroth` library's `dist`, or a stale application bundle, compiled against an earlier
+contract and loaded against this runtime. That combination now fails at load with a message
+naming both versions, rather than misbehaving several components deep. **Rebuild any prebuilt
+`.azeroth` package against this release.**
 
 
 ### Fixed
