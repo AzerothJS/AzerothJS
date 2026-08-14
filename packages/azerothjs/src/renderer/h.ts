@@ -22,9 +22,10 @@
 import type { Props, Child } from './types.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, isStringMode, isHydrating } from '../reactivity/index.ts';
-import { hydrationNode, isHydrationNode, HydrationCursor, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
+import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
+import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
+import { isSlotHandle, slotDriverOf, refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean } from './ssr.ts';
 import { writeSelectValue, settleSelectValue } from './select-value.ts';
 import { attachEvent } from './delegate.ts';
@@ -444,6 +445,14 @@ function appendChild(parent: HTMLElement | DocumentFragment, child: Child): void
         return;
     }
 
+    // A route slot handle placed in a hand-written h() tree: it places its own markers
+    // and effect. Checked before the coercion fallback, which would stringify it.
+    if (isSlotHandle(child))
+    {
+        slotDriverOf(child).place(parent, null);
+        return;
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort child coercion: primitives stringify correctly; a plain object is caller error surfaced visibly rather than thrown mid-render
     parent.appendChild(document.createTextNode(String(child)));
 }
@@ -471,6 +480,12 @@ function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null)
     }
     else
     {
+        // A LITERAL handle among a reactive array's members would place, but the hole
+        // then owns the slot's markers as plain disposable nodes: the next swap strands
+        // the segment's root and leaves the handle claimed forever. Refused (DEV throw,
+        // prod warn); a getter member resolving to a handle is fine - it gets its own
+        // binding with full slot support.
+        refuseArraySlotMembers(value as readonly unknown[]);
         appendChildren(parent as HTMLElement, value as Child[]);
     }
     const nodes = Array.prototype.slice.call(parent.childNodes, start) as ChildNode[];
@@ -486,6 +501,23 @@ function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null)
         }
     }
     return nodes;
+}
+
+/** Refuses LITERAL slot handles among a reactive array's members, recursively. @internal */
+function refuseArraySlotMembers(children: readonly unknown[]): void
+{
+    for (const child of children)
+    {
+        if (Array.isArray(child))
+        {
+            refuseArraySlotMembers(child);
+        }
+        else if (isSlotHandle(child))
+        {
+            refuseSlotHandle(child, 'a reactive array value',
+                'Place the slot directly ({ props.children }), not inside an array the hole rebuilds.');
+        }
+    }
 }
 
 /** Runs component destroy hooks on each element in `nodes` (control-flow / array teardown). @internal */
@@ -516,6 +548,18 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
     // holds its slot with an empty text node), preserving this binding's single-anchor invariant.
     let extras: ChildNode[] = [];
 
+    // A route slot handle this binding currently has PLACED (a hand-written conditional
+    // outlet, `() => cond() ? props.children : <span/>`). Held OUTSIDE the per-run roots:
+    // a same-handle re-resolution must be a no-op (the live-placement rule), and only a
+    // genuine handle <-> non-handle transition disposes or places. The empty text node
+    // stays as the binding's anchor; the slot's markers live in front of it.
+    let placedSlot: { handle: object; dispose: DisposeFn } | null = null;
+    onRootDispose(() =>
+    {
+        placedSlot?.dispose();
+        placedSlot = null;
+    });
+
     /** One update of this reactive child; returns this run's cleanup, if it registered one. */
     function update(): (() => void) | undefined
     {
@@ -530,6 +574,59 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
             localDispose = d;
             return resolveReactive(child);
         });
+
+        // Route slot handle resolved by a hand-written reactive child - the appendChild
+        // analog of driveHoleRange's branded branch (EVERY writer carries
+        // the dispatch; without this the coercion below renders '[object Object]').
+        if (isSlotHandle(value))
+        {
+            if (placedSlot !== null && placedSlot.handle === value)
+            {
+                localDispose();
+                return;
+            }
+            placedSlot?.dispose();
+            placedSlot = null;
+            for (const extra of extras)
+            {
+                if (extra.parentNode === parent)
+                {
+                    parent.removeChild(extra);
+                }
+            }
+            extras = [];
+            // Reset the binding's anchor to an empty text node; the slot places its
+            // marker pair (and content) immediately in front of it.
+            if (currentNode.nodeType !== 3 || (currentNode as Text).data !== '')
+            {
+                const placeholder = document.createTextNode('');
+                parent.replaceChild(placeholder, currentNode);
+                if (currentNode instanceof HTMLElement)
+                {
+                    destroyComponent(currentNode);
+                }
+                currentNode = placeholder;
+            }
+            let slotDispose: DisposeFn = () => undefined;
+            createRoot((dispose) =>
+            {
+                slotDispose = dispose;
+                slotDriverOf(value).place(parent, currentNode);
+            });
+            placedSlot = { handle: value, dispose: slotDispose };
+            localDispose();
+            // NO per-run cleanup: it would run before every re-run and tear the
+            // placement down under a same-handle re-resolution. Final teardown is the
+            // onRootDispose above; a handle -> non-handle transition disposes in-body.
+            return;
+        }
+        if (placedSlot !== null)
+        {
+            // handle -> non-handle: dispose the placement (re-arms the handle), then
+            // fall through to render the new value normally.
+            placedSlot.dispose();
+            placedSlot = null;
+        }
 
         // Fast path: primitive into the existing text node. The common
         // reactive child is a string or number (`() => `Count: ${ count() }``).
@@ -706,6 +803,14 @@ export function materializeChild(value: unknown): Node | null
         return null;
     }
 
+    // A route slot handle passes THROUGH: this function has no position data (one value
+    // in, one node out), so the caller's appendToCo performs the actual placement - the
+    // dispatch stays single-sited. The cast is the pass-through, not a coercion.
+    if (isSlotHandle(value))
+    {
+        return value as unknown as Node;
+    }
+
     if (Array.isArray(value))
     {
         const fragment = document.createDocumentFragment();
@@ -863,7 +968,13 @@ export function bindEvent(el: HTMLElement, type: string, handler: unknown): void
 export function bindSlot(marker: ChildNode, result: Node | null | undefined): void
 {
     const parent = marker.parentNode as Node;
-    if (result !== null && result !== undefined)
+    // A compiled <Outlet/> returns the route slot handle; it places its own markers and
+    // effect at the slot position. Today's bare insertBefore would throw on a non-Node.
+    if (isSlotHandle(result))
+    {
+        slotDriverOf(result).place(parent, marker);
+    }
+    else if (result !== null && result !== undefined)
     {
         parent.insertBefore(result, marker);
     }
@@ -905,7 +1016,7 @@ function containsHydrationNode(value: unknown): boolean
  *
  * @internal
  */
-function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown, hydrating = false): void
+function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown, hydrating = false, adoptedSlot: unknown = null, adoptedSlotDispose: DisposeFn | null = null): void
 {
     // The hole's live anchor node: the single primitive text node in the common
     // case. Extra nodes (an array-valued hole) are removed the first time the
@@ -913,6 +1024,33 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
     let currentNode: ChildNode | null = content[0] ?? null;
     let extras: ChildNode[] = content.slice(1);
     let firstRun = hydrating;
+
+    // A route slot handle the hole currently has PLACED. Held OUTSIDE the per-run root:
+    // a re-run that resolves the SAME handle must be a no-op (the live-placement rule
+    // forbids re-placement while live), and only a genuine handle <-> non-handle
+    // transition disposes or places. `adoptedSlot` seeds this for a hydrated slot-hole
+    // whose range the adoption walk already claimed (the consumed first run below then
+    // only re-reads to establish subscriptions and record the value).
+    let placedSlot: { handle: object; dispose: DisposeFn } | null = null;
+    let consumeFirstRun = false;
+    if (adoptedSlot !== null && isSlotHandle(adoptedSlot))
+    {
+        // The REAL disposer (the root adoptSlotHole wrapped the adoption in): without
+        // it a later handle -> non-handle transition cannot tear the adopted placement
+        // down, and the old range survives beside the new value.
+        placedSlot = { handle: adoptedSlot, dispose: adoptedSlotDispose ?? ((): void => undefined) };
+        consumeFirstRun = true;
+        firstRun = false;
+    }
+
+    // Final teardown for a placed slot: registered on the hole's OWNING scope (not as a
+    // per-run cleanup, which fires before every re-run and would tear the placement down
+    // under a same-handle re-resolution).
+    onRootDispose(() =>
+    {
+        placedSlot?.dispose();
+        placedSlot = null;
+    });
 
     createEffect(() =>
     {
@@ -935,6 +1073,78 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
                 }
                 return resolved;
             });
+
+            // Route slot handle resolved by the hole (a conditional outlet,
+            // `{ cond() ? props.children : fallback }`). Same handle as the live
+            // placement: nothing to do. Otherwise: clear whatever the hole holds, place
+            // the handle's markers + segment in the hole's range, and record it; the
+            // handle -> non-handle direction below disposes the placement (which re-arms
+            // the handle) before the new value renders.
+            if (isSlotHandle(value))
+            {
+                if (firstRun)
+                {
+                    // The server serialized an ordinary [ ] hole; the client's first
+                    // resolution yields a route slot - the condition flipped across the
+                    // boundary. The symmetric rule: a MISMATCH, never a silent
+                    // repair. (The legitimate hydrated slot-hole arrives pre-seeded via
+                    // adoptedSlot, which clears firstRun before this effect exists.)
+                    throw new HydrationMismatchError(
+                        'reactive hole: the client resolved a route slot where the server serialized an ordinary hole (condition flipped across the render boundary)');
+                }
+                if (placedSlot !== null && placedSlot.handle === value)
+                {
+                    if (consumeFirstRun)
+                    {
+                        consumeFirstRun = false;
+                    }
+                    localDispose?.();
+                    return;
+                }
+                placedSlot?.dispose();
+                placedSlot = null;
+                for (const extra of extras)
+                {
+                    if (extra.parentNode === parent)
+                    {
+                        parent.removeChild(extra);
+                    }
+                }
+                extras = [];
+                if (currentNode !== null)
+                {
+                    if (currentNode instanceof HTMLElement)
+                    {
+                        destroyComponent(currentNode);
+                    }
+                    parent.removeChild(currentNode);
+                    currentNode = null;
+                }
+                let slotDispose: DisposeFn = () => undefined;
+                createRoot((dispose) =>
+                {
+                    slotDispose = dispose;
+                    slotDriverOf(value).place(parent, closeAnchor);
+                });
+                placedSlot = { handle: value, dispose: slotDispose };
+                localDispose?.();
+                // Deliberately NO per-run cleanup here: a returned cleanup runs before
+                // EVERY re-run, and a same-handle re-resolution must keep the placement
+                // (the live-placement rule). Final teardown is the onRootDispose
+                // registered at hole creation below; transitions dispose in-body.
+                return;
+            }
+            if (placedSlot !== null)
+            {
+                // handle -> non-handle: dispose the placement first (re-arms the
+                // handle), then fall through to render the new value normally.
+                placedSlot.dispose();
+                placedSlot = null;
+            }
+            if (consumeFirstRun)
+            {
+                consumeFirstRun = false;
+            }
 
             if (firstRun)
             {
@@ -1191,12 +1401,78 @@ export function hydrateChild(child: Child, cursor: HydrationCursorType): void
 
     if (typeof child === 'function')
     {
+        // The compiled hole's value is a getter, so the handle cannot be seen without
+        // running user code - which must not happen on this (tracked) stack. The
+        // SERIALIZER already answered the question: peek the next comment. An
+        // `azc:outlet` open anchor means the serialized value was a route slot handle;
+        // the hole is then driven as a slot-hole (adopt inline, effect consumed) -
+        // resolution happens ONCE, tracked, inside the hole's own effect. A `[` anchor
+        // is an ordinary reactive hole, exactly as today.
+        if (peeksSlotRange(cursor))
+        {
+            adoptSlotHole(child, cursor);
+            return;
+        }
         adoptReactiveHole(child, cursor);
+        return;
+    }
+
+    // A BARE route slot handle: the compiled <Outlet/> emits an eager component call in
+    // the hydrate h() tree, so Outlet's return value (the handle) sits bare among the
+    // descriptor's children. Checked before the static-text fallback, which would
+    // consume a text node that does not exist.
+    if (isSlotHandle(child))
+    {
+        slotDriverOf(child).adopt(cursor);
         return;
     }
 
     // Static text: the server already rendered it; just consume the node.
     cursor.takeText();
+}
+
+/** Whether the cursor's next node is a route slot's serialized open anchor. @internal */
+function peeksSlotRange(cursor: HydrationCursorType): boolean
+{
+    const next = cursor.peek();
+    return next !== null && next.nodeType === 8 && (next as Comment).data === 'azc:outlet';
+}
+
+/**
+ * Adopts a slot-hole: a reactive hole whose SERIALIZED value was a route slot handle.
+ * The adoption walk claims the range inline through the handle's driver - obtained by an
+ * UNTRACKED resolution, permitted for slot-holes only (a compiled children getter is
+ * cheap and side-effect-free) - then the hole's effect is created with its first run
+ * consumed: it performs the tracked re-read that establishes the hole's subscriptions
+ * and records the placed handle as the hole's current value.
+ *
+ * @internal
+ */
+function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
+{
+    const resolved = untrack(() => resolveThunks(child));
+    if (!isSlotHandle(resolved))
+    {
+        // The peek said slot, the resolution disagrees: SSR/CSR diverged.
+        throw new HydrationMismatchError('slot hole: the serialized value was a route slot, the client value is not');
+    }
+    // The adoption runs in its OWN root so the hole can dispose the placement on a
+    // later handle -> non-handle transition (the slot's machinery registers its
+    // teardown on the current owner).
+    let slotDispose: DisposeFn = () => undefined;
+    createRoot((dispose) =>
+    {
+        slotDispose = dispose;
+        slotDriverOf(resolved).adopt(cursor);
+    });
+    // A stable position for LATER handle <-> non-handle transitions: the server emits no
+    // [ ] anchors around a slot-hole, and the slot's own markers leave with its disposal,
+    // so without an anchor of the hole's OWN a toggled-away value would land at the
+    // parent's tail (document position lost). The cursor's node list is a construction
+    // snapshot, so the insert does not disturb the remaining walk.
+    const anchor = document.createTextNode('');
+    cursor.parent.insertBefore(anchor, cursor.peek());
+    driveHoleRange(cursor.parent, anchor, [], child, false, resolved, slotDispose);
 }
 
 /**

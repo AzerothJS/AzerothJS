@@ -24,8 +24,9 @@
  * are the framework's control-flow contract, not app-facing API.
  */
 
-import { HydrationCursor, resolveThunks } from '../reactivity/internal.ts';
+import { HydrationCursor, HydrationMismatchError, resolveThunks } from '../reactivity/internal.ts';
 import { destroyComponent } from './destroy-component.ts';
+import { isSlotHandle, slotDriverOf } from '../reactivity/slot-handle.ts';
 
 /**
  * Where a control-flow component's content lives: a marker-bounded range inside an arbitrary
@@ -65,9 +66,19 @@ function coMarkerTarget(start: ChildNode, end: ChildNode): CoTarget
  * @param cursor - The hydration cursor positioned at the component's open anchor.
  * @returns The adopted {@link CoTarget} and a content cursor over the in-range nodes.
  */
-export function adoptCoRange(cursor: HydrationCursor): { target: CoTarget; contentCursor: HydrationCursor }
+export function adoptCoRange(cursor: HydrationCursor, expected?: string): { target: CoTarget; contentCursor: HydrationCursor }
 {
     const start = cursor.takeCoOpen();
+    // Optional expected-label check, used by the route slot's adoption site only: takeCoOpen
+    // accepts ANY `azc:*` anchor, so without this a version-skewed page (pre-slot markup) would
+    // fail one level deeper with a misleading message. The label makes the failure a
+    // single-point, skew-specific mismatch. Existing callers pass nothing and are unchanged.
+    if (expected !== undefined && start.data !== `azc:${ expected }`)
+    {
+        throw new HydrationMismatchError(
+            `expected an 'azc:${ expected }' range, found '${ start.data }' - `
+            + 'the server markup predates this runtime (version skew); falling back to a client render');
+    }
     const { content, end } = cursor.takeCoBalanced();
 
     return {
@@ -132,6 +143,15 @@ export function appendToCo(target: CoTarget, node: Node | null | undefined): voi
     // fallback, or `fallback={maybeNode}`). Appending nothing is a no-op.
     if (node === null || node === undefined)
     {
+        return;
+    }
+
+    // A route slot handle (a layout's `children`) reaching a co-range - a pass-through
+    // layout, an ErrorBoundary around an Outlet - places its own markers and effect; the
+    // handle is not a Node and insertBefore would throw on it.
+    if (isSlotHandle(node))
+    {
+        slotDriverOf(node).place(target.parent(), target.end);
         return;
     }
 

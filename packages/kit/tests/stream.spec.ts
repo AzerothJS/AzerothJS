@@ -11,7 +11,7 @@ import { PassThrough, Readable, pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import { Suspense, createResource, h } from 'azerothjs';
+import { Suspense, createResource, h, createRouter, createMemoryHistory, Routes, Outlet } from 'azerothjs';
 import type { Route } from 'azerothjs';
 import { App } from '@azerothjs/http';
 import { compressResponse } from '@azerothjs/http/node';
@@ -331,5 +331,79 @@ describe('CSP nonce plumbing', () =>
         pending.resolve('no-nonce');
         const rest = await drain(reader);
         expect(rest).not.toContain('nonce=');
+    });
+});
+
+describe('a routed chain streams with Suspense inside a segment', () =>
+{
+    it('the nested anchors flush in order and the swap protocol is unaffected', async () =>
+    {
+        const pending = gate();
+        const component = (): HTMLElement => h('div', {}, 'page');
+        const routes: PageRoute[] = [{
+            path: '/live',
+            component,
+            render: 'stream',
+            loader: () => Promise.resolve({ greeting: 'hello' })
+        }];
+        // The app is a ROUTED CHAIN: a layout places its slot, and the LEAF segment holds
+        // the Suspense boundary. The slot's azc:outlet range must nest inside the layout
+        // markup, the boundary's machinery inside the leaf - and the late chunk must ride
+        // the same template + swap protocol as an unrouted page.
+        const uiRoutes: Route[] = [{
+            path: '/live',
+            component: (props: { children?: unknown }): HTMLElement =>
+                h('div', { class: 'shell' },
+                    h('h1', {}, 'streamed shell'),
+                    Outlet({ children: props.children as never })),
+            children: [{
+                path: '',
+                component: (): HTMLElement =>
+                {
+                    const data = createResource<string>(() => pending.promise);
+                    return h('section', { class: 'leaf' },
+                        Suspense({
+                            fallback: () => h('p', {}, 'stream-loading'),
+                            on: [data],
+                            children: () => h('article', {}, () => data.data() ?? '')
+                        }));
+                }
+            }]
+        }];
+        const app = (props: { url?: string }): HTMLElement =>
+        {
+            const router = createRouter({ routes: uiRoutes, history: createMemoryHistory(props.url ?? '/') });
+            return h('main', {}, Routes({ router }));
+        };
+        const dir = makeClientDir();
+        dirs.push(dir);
+        const server = new App();
+        mountPages(server, { routes, clientDir: dir, renderer: createPageRenderer(app, routes) });
+
+        const response = await server.handle(new Request('http://local/live'));
+        expect(response.status).toBe(200);
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        const early = await readUntil(reader, 'stream-loading');
+
+        // The anchors NEST: routes range, then the layout's markup, then the slot's
+        // outlet range, then the leaf and its pending boundary - all before any data.
+        const routesAt = early.indexOf('<!--azc:routes-->');
+        const shellAt = early.indexOf('class="shell"');
+        const outletAt = early.indexOf('<!--azc:outlet-->');
+        const leafAt = early.indexOf('class="leaf"');
+        const fallbackAt = early.indexOf('stream-loading');
+        expect(routesAt).toBeGreaterThan(-1);
+        expect(shellAt).toBeGreaterThan(routesAt);
+        expect(outletAt).toBeGreaterThan(shellAt);
+        expect(leafAt).toBeGreaterThan(outletAt);
+        expect(fallbackAt).toBeGreaterThan(leafAt);
+
+        // The swap protocol is unaffected by the routed nesting: the settled boundary
+        // arrives as the same template + swap chunk, and the document closes cleanly.
+        pending.resolve('late-data');
+        const rest = await drain(reader);
+        expect(rest).toContain('late-data');
+        expect(rest).toContain('<template data-azs=');
+        expect(rest.trimEnd().endsWith('</html>')).toBe(true);
     });
 });

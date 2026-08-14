@@ -6,36 +6,44 @@
  */
 
 /**
- * The bridge between a Router and the DOM: read the match reactively, render the matched
- * chain with layouts wrapping leaves, and swap cleanly when the match changes. There is no
- * `<Route>` component, because routes are data passed to createRouter, so this is the only
- * DOM-side dispatcher needed.
+ * The bridge between a Router and the DOM: the PER-SEGMENT route tree.
  *
- * A match of `[UsersLayout, UserProfile]` renders as
- * `UsersLayout({ children: UserProfile({}) })`: the chain is walked leaf to root, and each
- * layout places its `children`, typically through an `<Outlet>`. Params are NOT props -
- * components read them with useParams - which keeps the route-component contract down to
- * `{ children? }`.
+ * The shape:
  *
- * The swap is the same comment-marker range Show, Switch and Dynamic use, with one branch
- * alive at a time and each branch in its own root, so effects and destroy hooks fire on swap.
- * Since the match is a structural-equality memo, the effect re-runs only when the route or
- * its params genuinely change, not for a cosmetic URL update carrying the same path with a
- * different hash or query.
+ * Construction is TOP-DOWN. Each matched level renders in its own root, and a layout's
+ * `children` prop is a SLOT HANDLE - a branded, non-callable object the layout places
+ * (normally through `<Outlet>`), at which point the slot's marker range and driving effect
+ * are created. A navigation rebuilds only the segments whose IDENTITY changed - the route
+ * object at that level, or the params its own pattern binds - and RETAINS every ancestor:
+ * same DOM, same state, no body re-execution. Transitions and focus play at the OUTERMOST
+ * REBUILT segment.
+ *
+ * The rendering source is one Routes-level signal, `committed`: the guarded match, HELD at
+ * its previous value while the chain awaits a lazy chunk, with a PENDING state for a cold
+ * start (renders NOTHING - never the fallback). `committed` alone reads `chainReady()`;
+ * slot identity memos derive from it and nothing else.
+ *
+ * Hydration adopts the whole chain in one synchronous top-down walk under the pass: slots
+ * adopt their `azc:outlet` ranges INLINE at placement (an effect's first run cannot be
+ * trusted to run inside the pass - it queues when created inside a drain), and every slot
+ * effect is created with its first run consumed. A per-instance `adopting` signal freezes
+ * slot identity until the instance's adoption completes.
  */
 
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
-import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
+import { createEffect, createMemo, createRoot, createSignal, isStringMode, isHydrating, onRootDispose, runInMode, untrack } from '../reactivity/index.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode, deferHydration, runInPass } from '../reactivity/internal.ts';
 import type { HydrationPass } from '../reactivity/internal.ts';
-import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode } from '../component/index.ts';
+import { createSlotHandle, claimSlotPlacement, releaseSlotPlacement, type SlotHandle } from '../reactivity/slot-handle.ts';
+import { type CoTarget, type MountNode, createCoMarkers, appendToCo, clearCo, adoptCoRange, resolveMountNode, destroyComponent } from '../component/index.ts';
 import { playTransitionClasses } from '../renderer/transition-classes.ts';
 import { adoptStyleSheet } from '../renderer/adopt-style.ts';
 import { hydrateChild } from '../renderer/h.ts';
-import type { RouteMatch } from './types.ts';
+import type { Params, RouteMatch } from './types.ts';
 import type { NavigationKind, Router } from './router.ts';
 import { componentOf } from './router.ts';
+import { paramNamesOf } from './path-pattern.ts';
 import { withRouteLevel, resolveRouter } from './provider.ts';
 
 /** What a `transition` FUNCTION receives to pick (or veto) a name per swap. */
@@ -72,17 +80,16 @@ export interface RoutesProps
     fallback?: (() => MountNode) | undefined;
 
     /**
-     * Animate route swaps with `<Transition>`'s 6-class family: the outgoing
-     * route plays `{name}-leave-*` (removal deferred until it completes) while
-     * the incoming plays `{name}-enter-*` - both mounted simultaneously, so a
-     * cross-fade or a directional drift is pure CSS. A FUNCTION receives
-     * {@link RouteTransitionContext} (from, to, and what caused the change) and
-     * returns the name per swap - or null for an instant swap - which is how a
-     * back-navigation gets a different animation than a forward one.
+     * Animate route swaps with `<Transition>`'s 6-class family, at the OUTERMOST segment
+     * a navigation actually REBUILDS: the outgoing content of that one slot plays
+     * `{name}-leave-*` (removal deferred until it completes) while the incoming plays
+     * `{name}-enter-*` - both mounted simultaneously inside the slot, so a cross-fade or
+     * a directional drift is pure CSS, scoped to what changed. Retained ancestors do not
+     * animate. A FUNCTION receives {@link RouteTransitionContext} (from, to, and what
+     * caused the change) and returns the name per swap - or null for an instant swap.
      *
-     * Requires the route chain to render a SINGLE ELEMENT root; a fragment root
-     * swaps instantly (classes need one element to land on). The first render
-     * never animates.
+     * Requires the REBUILT segment to render a SINGLE ELEMENT root; a fragment root swaps
+     * instantly (classes need one element to land on). The first render never animates.
      */
     transition?: string | ((context: RouteTransitionContext) => string | null) | undefined;
 
@@ -90,23 +97,52 @@ export interface RoutesProps
     transitionDuration?: number | undefined;
 }
 
+/** The cold-start hold: nothing has ever been accepted and the chain is not ready. */
+const PENDING: unique symbol = Symbol('azeroth.routes.pending');
+
+/** A committed rendering source value. */
+type Committed = RouteMatch | null | typeof PENDING;
+
+/** The NEVER sentinel a fresh slot's in-body value guard starts from. */
+const NEVER: unique symbol = Symbol('azeroth.routes.never');
+
+/** One segment's identity: the route object at its level plus its OWN bound params. */
+interface SegmentIdentity
+{
+    route: RouteMatch['matched'][number];
+    params: Params;
+}
+
+/** Everything the per-segment machinery shares within one `<Routes>` instance. */
+interface RoutesShared
+{
+    router: Router;
+    props: RoutesProps;
+
+    /** The rendering source: the guarded match, held while unready, PENDING cold. */
+    committed: () => Committed;
+
+    /** Per-instance adoption freeze. */
+    adopting: () => boolean;
+
+    /** The previous/current committed chain, for the transition context's from/to. */
+    previousMatch: RouteMatch | null;
+    currentMatch: RouteMatch | null;
+
+    /** Focus fires only on real navigations, never the initial mount. */
+    mounted: boolean;
+}
+
 /**
- * Renders the router's currently matched route chain, swapping content and disposing the
- * previous branch when the match changes.
+ * Renders the router's currently matched route chain as a per-segment tree: retained
+ * segments keep their DOM and state across navigations; only the segments whose identity
+ * changed rebuild.
  *
- * A layout route MUST place its `children`, normally through an {@link Outlet}, or the deeper
- * levels never appear. Params reach components through useParams, never as props.
+ * A layout route MUST place its `children` (normally through an {@link Outlet}) or the
+ * deeper levels are never constructed. Params reach components through useParams, never
+ * as props.
  *
- * Place it once per dispatch point, typically inside the top-level layout. Several Routes for
- * the same router are legal but mean several independent dispatch points.
- *
- * The effect re-runs only when the route or its params change, so a hash- or query-only URL
- * change leaves the rendered tree completely intact. Each branch builds in its own root and
- * is disposed on swap, and the build is read under untrack, so a route component's own signal
- * reads never rebuild the whole branch.
- *
- * @param props - See {@link RoutesProps}. `fallback` renders when nothing matches; without
- *                one, nothing renders.
+ * @param props - See {@link RoutesProps}. `fallback` renders when nothing matches.
  * @returns A handle holding the rendered chain.
  * @example
  * Routes({ router, fallback: () => h('h1', {}, '404') });
@@ -117,21 +153,21 @@ export interface RoutesProps
 export function Routes(props: RoutesProps): MountNode
 {
     const router = resolveRouter(props.router, 'Routes');
-    // Server-side rendering: evaluate the match ONCE (no live effect) and emit the
-    // matched chain (or fallback) inside a contents anchor the client hydrator can
-    // adopt - the same pattern as <Show>/<Switch>. (On the client, hydration currently
-    // re-renders the matched chain rather than adopting it in place.)
+
+    // Server-side rendering: evaluate the match ONCE (no live effects anywhere - pinned)
+    // and emit the chain eagerly, top-down, with one nested `azc:outlet` range per placed
+    // slot. Slot handles serialize themselves through serializeChild's branded dispatch.
     if (isStringMode())
     {
         const matchResult = untrack(() => router.match());
         const inner = matchResult !== null
-            ? serializeChild(renderChain(matchResult, router))
+            ? serializeChild(buildSegmentValue(router, matchResult, 0))
             : (props.fallback ? serializeChild(props.fallback()) : '');
         return wrapContentsAnchored('routes', inner) as unknown as MountNode;
     }
 
-    // Hydration: adopt the server-rendered range and its current route on the
-    // first effect run; later navigations use the normal DOM swap.
+    // Hydration: adopt the server-rendered range and the current chain on the first
+    // driver run; later navigations use the normal per-segment swap.
     if (isHydrating())
     {
         return hydrationNode((cursor: HydrationCursorType): void =>
@@ -141,130 +177,205 @@ export function Routes(props: RoutesProps): MountNode
         }) as unknown as MountNode;
     }
 
-    // Fresh client render: comment markers bracket the active route (no wrapper
-    // element), so <Routes> works directly inside <table>/<select>/<ul>.
+    // Fresh client render: comment markers bracket the active tree.
     const { fragment, target } = createCoMarkers('routes');
     driveRoutes(props, router, target, false);
     return fragment;
 }
 
 /**
- * Wires the match-selection effect onto `target`. Shared by the DOM path (a
- * marker range) and hydration (the adopted server range). Renders the matched
- * route chain (or fallback) into its own root so the leaving route's effects and
- * `onDestroy` hooks run on every swap.
+ * Wires the Routes-level driver onto `target`: builds `committed` and the shared state,
+ * then drives the fallback <-> chain <-> pending transitions. Ordinary navigations never
+ * re-run the driver - they re-run exactly the outermost rebuilt segment's slot effect.
  *
  * @internal
  */
 function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydrateFirstRun: boolean, hydrationCursor?: HydrationCursorType): void
 {
-    let branchDispose: DisposeFn | null = null;
-    let firstRun = hydrateFirstRun;
-    let mounted = false;
-
-    // Held while this <Routes> still owes the hydration pass an adoption. Taken when the
-    // first run cannot proceed (an unresolved lazy chunk) and released the moment the range
-    // is adopted or abandoned. It carries the pass itself because the adopting re-run is
-    // scheduled by the reactive system, long after hydrate()'s synchronous window closed:
-    // without re-entering the pass that run would build fresh DOM over the server's markup
-    // and leave the page inert.
-    let deferred: { pass: HydrationPass; release: () => void } | null = null;
-
-    // The current branch's SINGLE root element, when it has one - the thing a
-    // transition's classes can land on. null for fragment-rooted branches.
-    let currentEl: HTMLElement | null = null;
-    let previousMatch: RouteMatch | null = null;
-
-    // Outgoing branches still playing their leave: kept in the DOM (and their
-    // roots alive) until the animation settles or the next swap flushes them.
-    const leaving = new Map<HTMLElement, { dispose: DisposeFn; cancel: () => void }>();
-
-    /** Finishes every still-leaving branch NOW - rapid navigation stays crisp. */
-    function flushLeaving(): void
+    // --- committed: the one tracked reader of chainReady() -----------------------------
+    // A closure-latched compute (the memo `equals` option cannot implement the hold: the
+    // first value bypasses equals, and an equals-time chainReady read runs outside the
+    // memo's tracking frame). A deliberate, framework-internal exception to compute purity.
+    let latched: RouteMatch | null = null;
+    let everReady = false;
+    const committed = createMemo<Committed>(() =>
     {
-        for (const [el, entry] of [...leaving])
+        const m = router.match();
+        const ready = router.chainReady();
+        if (m === null)
         {
-            entry.cancel();
-            leaving.delete(el);
-            el.parentNode?.removeChild(el);
-            entry.dispose();
-        }
-    }
-
-    /** The name for this swap, from the string or function form; null = instant. */
-    function transitionName(to: RouteMatch | null): string | null
-    {
-        const transition = props.transition;
-        if (transition === undefined)
-        {
+            everReady = true;
+            latched = null;
             return null;
         }
-        if (typeof transition === 'string')
+        if (ready)
         {
-            return transition;
+            everReady = true;
+            latched = m;
+            return m;
         }
-        const l = router.location();
-        return transition({ from: previousMatch, to, navigation: l.navigationKind, delta: l.delta, key: l.key });
-    }
+        return everReady ? latched : PENDING;
+    });
+
+    // The kind DISCRIMINATOR: the driver's only tracked read. chain -> chain navigations
+    // keep the value 'chain', so the driver's effect never re-runs for them.
+    const kindOf = (c: Committed): 'pending' | 'null' | 'chain' =>
+        (c === PENDING ? 'pending' : c === null ? 'null' : 'chain');
+    const kind = createMemo(() => kindOf(committed()));
+
+    const [adopting, setAdopting] = createSignal(false);
+
+    const shared: RoutesShared = {
+        router,
+        props,
+        committed,
+        adopting,
+        previousMatch: null,
+        currentMatch: null,
+        mounted: false
+    };
+
+    // Navigation bookkeeping for the transition context's from/to. Created BEFORE any
+    // slot machinery so it runs earlier in every wave (creation-order queueing).
+    createEffect(() =>
+    {
+        const c = committed();
+        if (c !== PENDING)
+        {
+            shared.previousMatch = shared.currentMatch;
+            shared.currentMatch = c;
+        }
+    });
+
+    // Deferred-hydration ticket, one per instance: taken when the first run cannot
+    // adopt yet (an unresolved lazy chunk), released the moment adoption completes.
+    let deferred: { pass: HydrationPass; release: () => void } | null = null;
+    let firstRun = hydrateFirstRun;
+
+    // The chain (level 0) placement currently driven by this instance.
+    let chainDispose: DisposeFn | null = null;
+    let fallbackDispose: DisposeFn | null = null;
+    let lastKind: 'pending' | 'null' | 'chain' | typeof NEVER = NEVER;
+
+    const teardown = (): void =>
+    {
+        // A <Routes> disposed during the lazy hydration hold must not leave the pass's
+        // pending count elevated; release is idempotent.
+        deferred?.release();
+        deferred = null;
+        chainDispose?.();
+        chainDispose = null;
+        if (fallbackDispose !== null)
+        {
+            fallbackDispose();
+            fallbackDispose = null;
+        }
+        clearCo(target);
+    };
+
+    /** Mounts the chain from level 0 into the routes range. */
+    const mountChain = (present = false): void =>
+    {
+        createRoot((dispose) =>
+        {
+            chainDispose = dispose;
+            mountSegmentSlot(shared, 0, target, null, present);
+        });
+    };
+
+    /** Mounts the fallback into the routes range. */
+    const mountFallback = (present = false): void =>
+    {
+        const fallback = props.fallback;
+        if (!fallback)
+        {
+            return;
+        }
+        createRoot((dispose) =>
+        {
+            fallbackDispose = dispose;
+            const built = resolveMountNode(untrack(fallback)) ?? null;
+            appendToCo(target, built);
+            // The match -> fallback swap is a real navigation: focus the fallback
+            // content - the driver-level swap presents too.
+            if (present && router.focusManagement && built instanceof HTMLElement)
+            {
+                focusRouteContent(built);
+            }
+        });
+    };
 
     createEffect(() =>
     {
-        const matchResult = router.match();
+        const k = kind();
 
-        // A chain containing an unresolved lazy chunk is not renderable yet: keep
-        // the CURRENT screen (previous route, or nothing on a cold start - never a
-        // flash of a half-loaded chain) and return. chainReady is reactive and read
-        // unconditionally here, so the effect re-runs the moment the chunk lands; a
-        // FAILED chunk counts as ready and componentOf throws its load error into
-        // the branch, where an <ErrorBoundary> catches it.
-        if (matchResult !== null && !router.chainReady())
+        // In-body value guard: a deferred re-trigger re-runs the body WITHOUT
+        // dependency validation, so the scheduler's version gate alone is insufficient.
+        if (k === lastKind)
         {
-            // Adoption is owed but cannot happen yet: keep the pass open across the wait so
-            // the re-run that lands the chunk still adopts instead of rebuilding.
-            if (firstRun && deferred === null)
-            {
-                deferred = deferHydration();
-            }
             return;
         }
 
-        const factory: (() => MountNode) | null = matchResult !== null
-            ? (): MountNode => renderChain(matchResult, router)
-            : (props.fallback ?? null);
-
         if (firstRun)
         {
-            // Hydration first run: adopt the existing server children rather than
-            // building and appending new ones.
+            // Hydration first run: adopt the chain in place. The chainReady hold applies
+            // here too: while the chain awaits a chunk, keep the pass open and wait.
+            if (k === 'pending' || (k === 'chain' && !untrack(() => router.chainReady())))
+            {
+                if (deferred === null)
+                {
+                    deferred = deferHydration();
+                }
+                return;
+            }
             firstRun = false;
-            mounted = true;
-            previousMatch = matchResult;
+            lastKind = k;
+            shared.mounted = true;
 
-            /** Claims the server range for the matched chain. Runs under the pass. */
             const adopt = (): void =>
             {
-                if (factory)
+                if (k === 'chain')
                 {
-                    const build = factory;
+                    setAdopting(true);
+                    try
+                    {
+                        const adoptedMatch = untrack(committed) as RouteMatch;
+                        let adoptedDispose: DisposeFn | null = null;
+                        createRoot((dispose) =>
+                        {
+                            adoptedDispose = dispose;
+                            const value = buildSegmentValue(router, adoptedMatch, 0, shared);
+                            hydrateChild(value as never, hydrationCursor as HydrationCursorType);
+                        });
+                        // Level 0's slot machinery, in adopted mode: without it there is
+                        // no identity effect at the chain root, and the first
+                        // post-adoption navigation would have nothing to re-run.
+                        createRoot((dispose) =>
+                        {
+                            chainDispose = dispose;
+                            driveSegmentSlot(shared, 0, target, null, adoptedMatch, adoptedDispose);
+                        });
+                    }
+                    finally
+                    {
+                        setAdopting(false);
+                    }
+                }
+                else if (props.fallback)
+                {
+                    const fallback = props.fallback;
                     createRoot((dispose) =>
                     {
-                        branchDispose = dispose;
-                        hydrateChild(untrack(build), hydrationCursor as HydrationCursorType);
+                        fallbackDispose = dispose;
+                        hydrateChild(untrack(fallback), hydrationCursor as HydrationCursorType);
                     });
                 }
-
-                // Every server node in this range must be claimed by the adopted
-                // route chain; a leftover means SSR/CSR diverged. hydrate() recovers.
                 hydrationCursor?.assertExhausted('<Routes> content');
             };
 
             const resume = deferred;
             try
             {
-                // Straight through on the synchronous first run (already inside the pass);
-                // through runInPass when the chunk made us wait, which both restores
-                // 'hydrate' and routes a mismatch to hydrate()'s fallback instead of letting
-                // it escape as an unhandled rejection.
                 if (resume !== null)
                 {
                     runInPass(resume.pass, adopt);
@@ -276,92 +387,290 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
             }
             finally
             {
-                // Adopted, or failed trying - either way this <Routes> owes the pass nothing more.
                 resume?.release();
                 deferred = null;
             }
             return;
         }
 
-        // The name only applies when there is an OUTGOING single-element branch
-        // to animate; the very first render mounts instantly.
-        const wasMounted = mounted;
-        const name = mounted ? untrack(() => transitionName(matchResult)) : null;
-        const animated = name !== null && currentEl !== null;
-        previousMatch = matchResult;
-        mounted = true;
-
-        // A new navigation arriving mid-animation finishes the old exits NOW.
-        flushLeaving();
-
-        if (animated)
+        // Non-first runs build in explicit dom mode: a re-run can land inside a still-open
+        // runInPass window (a redirect-on-mount unwinding inside hydrate()'s window) and
+        // must not build descriptors against live DOM.
+        const fromKind = lastKind;
+        lastKind = k;
+        runInMode('dom', () =>
         {
-            // Detach the outgoing branch WITHOUT removing it: it stays in place
-            // playing its leave while the incoming mounts alongside.
-            const el = currentEl as HTMLElement;
-            const dispose = branchDispose;
-            branchDispose = null;
-            currentEl = null;
-            const entry = {
-                dispose: dispose ?? ((): void => undefined),
-                cancel: (): void => undefined
-            };
-            leaving.set(el, entry);
-            entry.cancel = playTransitionClasses(el, name, 'leave', props.transitionDuration, () =>
+            teardown();
+            // Driver-level (fallback <-> chain) swaps present as real navigations: segment
+            // 0 / the fallback content receives focus. The PENDING ->
+            // first-commit fill does NOT, hence the fromKind gates. These swaps
+            // are INSTANT by design - the transition prop animates chain-internal swaps.
+            if (k === 'chain')
             {
-                leaving.delete(el);
-                el.parentNode?.removeChild(el);
-                entry.dispose();
-            });
-        }
-        else
-        {
-            teardownBranch();
-        }
-
-        // Only a real NAVIGATION swap moves focus - the initial mount must not
-        // steal focus from wherever the user (or the browser) put it.
-        const moveFocus = wasMounted && router.focusManagement;
-
-        if (factory)
-        {
-            // Each branch owns its own root so its effects dispose on swap.
-            // untrack: only `match()` drives this effect - a signal read inside a
-            // route component must not subscribe (and rebuild) the whole branch.
-            const build = factory;
-            createRoot((dispose) =>
+                mountChain(shared.mounted && fromKind === 'null');
+            }
+            else if (k === 'null')
             {
-                branchDispose = dispose;
-                // resolveMountNode per the co-range caller contract: a fallback/factory result
-                // may be a thunk that must be invoked before it can be appended as a node.
-                const built = resolveMountNode(untrack(build)) ?? null;
-                appendToCo(target, built);
-                currentEl = built instanceof HTMLElement ? built : null;
-                if (name !== null && currentEl !== null)
-                {
-                    playTransitionClasses(currentEl, name, 'enter', props.transitionDuration, () => undefined);
-                }
-                if (moveFocus && currentEl !== null)
-                {
-                    focusRouteContent(currentEl);
-                }
-            });
-        }
-        else
-        {
-            currentEl = null;
-        }
+                mountFallback(shared.mounted && fromKind === 'chain');
+            }
+            // 'pending' renders nothing - the cold-start hold (never the fallback).
+        });
+        shared.mounted = true;
     });
 
-    // Final teardown: the active branch AND any branches still mid-leave.
-    onRootDispose(() =>
-    {
-        flushLeaving();
-        teardownBranch();
-    });
+    onRootDispose(teardown);
+}
 
-    function teardownBranch(): void
+/**
+ * The value a segment build produces for `mode`:
+ *   - 'dom'     the component's built output (a Node / co-range fragment / handle);
+ *   - 'string'  the component's SSRNode tree (serializeChild consumes it);
+ *   - 'hydrate' the component's descriptor tree (hydrateChild consumes it).
+ *
+ * The build itself is identical in all three: `componentOf(route)({ children: handle })`
+ * under `withRouteLevel`, untracked. The child handle is created per build; its behavior
+ * per mode lives in the SlotDriver below.
+ *
+ * @internal
+ */
+function buildSegmentValue(router: Router, match: RouteMatch, level: number, shared?: RoutesShared): unknown
+{
+    const route = match.matched[level];
+    if (route === undefined)
     {
+        return null;
+    }
+    // Every segment receives a slot handle - a leaf simply renders it empty, so an
+    // index-child <-> param-child swap under a retained layout fills the same position.
+    const handle = createChildHandle(router, match, level + 1, shared);
+    return untrack(() => withRouteLevel(router, level, () => componentOf(route)({ children: handle as unknown as MountNode })));
+}
+
+/**
+ * Creates the SLOT HANDLE segment `level` receives as its `children` prop. Placement
+ * creates the slot's machinery; a leaf's slot renders empty markers, so a chain that
+ * swaps an index child for a param child under a retained layout fills the same position.
+ *
+ * @internal
+ */
+function createChildHandle(router: Router, buildMatch: RouteMatch, level: number, shared?: RoutesShared): SlotHandle
+{
+    const handle: SlotHandle = createSlotHandle({
+        place(parent: Node, before: ChildNode | null): void
+        {
+            // Guard BEFORE claim: a claim with no machinery would leave the handle
+            // stuck live with nothing registered to release it.
+            if (shared === undefined)
+            {
+                return;
+            }
+            if (!claimSlotPlacement(handle))
+            {
+                return;
+            }
+            // Marker pair at the placement position; the slot effect drives the content.
+            const start = document.createComment('outlet');
+            const end = document.createComment('/outlet');
+            parent.insertBefore(start, before);
+            parent.insertBefore(end, before);
+            const slotTarget: CoTarget = { parent: (): Node => end.parentNode as Node, start, end };
+            driveSegmentSlot(shared, level, slotTarget, handle, null, null);
+        },
+
+        serialize(): string
+        {
+            // String mode: eager, no effects. The slot's content is the next level's
+            // serialized tree (empty at the leaf), wrapped in the outlet range.
+            const inner = buildMatch.matched[level] !== undefined
+                ? serializeChild(buildSegmentValue(router, buildMatch, level))
+                : '';
+            return (wrapContentsAnchored('outlet', inner) as unknown as { html: string }).html;
+        },
+
+        adopt(rawCursor: unknown): void
+        {
+            const cursor = rawCursor as HydrationCursorType;
+            if (shared === undefined)
+            {
+                return;
+            }
+            if (!claimSlotPlacement(handle))
+            {
+                return;
+            }
+            // Inline adoption: claim the labeled range ON THIS STACK - a slot
+            // effect's first run queues past the pass inside a deferred resume, so the
+            // walk cannot ride effects. The nested segment constructs and hydrates here,
+            // recursively; the slot effect is then created with its first run consumed.
+            const { target: slotTarget, contentCursor } = adoptCoRange(cursor, 'outlet');
+            let adoptedDispose: DisposeFn | null = null;
+            const adoptedMatch = untrack(shared.committed);
+            if (adoptedMatch !== PENDING && adoptedMatch !== null && adoptedMatch.matched[level] !== undefined)
+            {
+                createRoot((dispose) =>
+                {
+                    adoptedDispose = dispose;
+                    const value = buildSegmentValue(router, adoptedMatch, level, shared);
+                    hydrateChild(value as never, contentCursor);
+                });
+            }
+            contentCursor.assertExhausted(`route slot (level ${ level })`);
+            driveSegmentSlot(shared, level, slotTarget, handle, adoptedMatch === PENDING ? null : adoptedMatch, adoptedDispose);
+        }
+    });
+    return handle;
+}
+
+/** Mounts level `level` directly into `target` (the Routes-level chain mount). */
+function mountSegmentSlot(shared: RoutesShared, level: number, target: CoTarget, adopted: RouteMatch | null, presentFirstBuild = false): void
+{
+    driveSegmentSlot(shared, level, target, null, adopted, null, presentFirstBuild);
+}
+
+/**
+ * The per-segment slot machinery: one identity memo, one effect with the consumed-first-
+ * run and in-body value guards, per-slot leaving set, enter-cancel storage, and the
+ * bottom-up teardown hand-off. `handle` is null for the Routes-level chain mount (level 0
+ * has no handle - the driver owns it).
+ *
+ * @internal
+ */
+function driveSegmentSlot(shared: RoutesShared, level: number, target: CoTarget, handle: SlotHandle | null, adoptedMatch: RouteMatch | null, adoptedDispose: DisposeFn | null, presentFirstBuild = false): void
+{
+    const { router, props } = shared;
+
+    // --- identity ---------------------------------------------------------------------
+    // Frozen to the adopted identity while this instance is adopting; otherwise derived
+    // from committed: the route object at this level plus its OWN bound params.
+    const identityFor = (match: RouteMatch): SegmentIdentity | null =>
+    {
+        const route = match.matched[level];
+        if (route === undefined)
+        {
+            return null;
+        }
+        const params: Params = {};
+        for (const name of paramNamesOf(route.path))
+        {
+            const value = match.params[name];
+            if (value !== undefined)
+            {
+                params[name] = value;
+            }
+        }
+        return { route, params };
+    };
+
+    const identityEquals = (a: SegmentIdentity | null, b: SegmentIdentity | null): boolean =>
+    {
+        if (a === b)
+        {
+            return true;
+        }
+        if (a === null || b === null)
+        {
+            return false;
+        }
+        if (a.route !== b.route)
+        {
+            return false;
+        }
+        const aKeys = Object.keys(a.params);
+        const bKeys = Object.keys(b.params);
+        if (aKeys.length !== bKeys.length)
+        {
+            return false;
+        }
+        for (const key of aKeys)
+        {
+            if (a.params[key] !== b.params[key])
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const frozenIdentity: SegmentIdentity | null = adoptedMatch !== null ? identityFor(adoptedMatch) : null;
+    let lastComputed: SegmentIdentity | null = frozenIdentity;
+    const identity = createMemo<SegmentIdentity | null>(() =>
+    {
+        if (shared.adopting())
+        {
+            return frozenIdentity;
+        }
+        const c = shared.committed();
+        if (c === PENDING || c === null)
+        {
+            // The driver is about to tear this slot down (or hold); keep the last
+            // identity so no spurious slot work happens first.
+            return lastComputed;
+        }
+        lastComputed = identityFor(c);
+        return lastComputed;
+    }, { equals: identityEquals });
+
+    // --- swap state -------------------------------------------------------------------
+    let lastRendered: SegmentIdentity | null | typeof NEVER = NEVER;
+    let consumeFirstRun = false;
+    let branchDispose: DisposeFn | null = adoptedDispose;
+    let currentEl: HTMLElement | null = null;
+    let enterCancel: (() => void) | null = null;
+    const leaving = new Map<HTMLElement, { dispose: DisposeFn; cancel: () => void }>();
+
+    if (adoptedMatch !== null || adoptedDispose !== null)
+    {
+        // Adopted placement: the consumed first run records the adopted identity so the
+        // value guard alone is correct on every later path.
+        consumeFirstRun = true;
+        lastRendered = frozenIdentity;
+        // Record the adopted content's root when the range holds EXACTLY one node and it
+        // is an element - buildInto's currentEl for the adoption path. Without this the
+        // FIRST navigation away from a hydrated screen swapped instantly while every
+        // later one animated (adoption never runs buildInto, the only recorder). The
+        // strict one-node rule keeps teardownBranch's single-element fast path honest:
+        // a multi-node range stays on the clearCo path.
+        const node = target.start.nextSibling;
+        if (node !== null && node !== target.end && node.nextSibling === target.end && node instanceof HTMLElement)
+        {
+            currentEl = node;
+        }
+    }
+
+    const flushLeaving = (): void =>
+    {
+        for (const [el, entry] of [...leaving])
+        {
+            entry.cancel();
+            leaving.delete(el);
+            el.parentNode?.removeChild(el);
+            destroyComponent(el);
+            entry.dispose();
+        }
+    };
+
+    const transitionName = (): string | null =>
+    {
+        const transition = props.transition;
+        if (transition === undefined)
+        {
+            return null;
+        }
+        if (typeof transition === 'string')
+        {
+            return transition;
+        }
+        const l = router.location();
+        return transition({ from: shared.previousMatch, to: shared.currentMatch, navigation: l.navigationKind, delta: l.delta, key: l.key });
+    };
+
+    const teardownBranch = (): void =>
+    {
+        // The armed ENTER play dies with the branch (on demotion OR
+        // teardown) - a detached element must not keep a live transitionend wait or
+        // fallback timer mutating its classes after destroyComponent.
+        enterCancel?.();
+        enterCancel = null;
         if (branchDispose)
         {
             branchDispose();
@@ -370,11 +679,125 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         if (currentEl !== null)
         {
             currentEl.parentNode?.removeChild(currentEl);
+            // Destroy hooks run for single-element rebuilt branches too (release-noted;
+            // the old fast path skipped destroyComponent).
+            destroyComponent(currentEl);
             currentEl = null;
             return;
         }
         clearCo(target);
-    }
+    };
+
+    const buildInto = (animatedName: string | null, moveFocus: boolean): void =>
+    {
+        const c = untrack(shared.committed);
+        if (c === PENDING || c === null)
+        {
+            return;
+        }
+        createRoot((dispose) =>
+        {
+            branchDispose = dispose;
+            const built = resolveMountNode(buildSegmentValue(router, c, level, shared)) ?? null;
+            appendToCo(target, built);
+            currentEl = built instanceof HTMLElement ? built : null;
+            if (animatedName !== null && currentEl !== null)
+            {
+                enterCancel = playTransitionClasses(currentEl, animatedName, 'enter', props.transitionDuration, () => undefined);
+            }
+            if (moveFocus && currentEl !== null)
+            {
+                focusRouteContent(currentEl);
+            }
+        });
+    };
+
+    // --- the slot effect ---------------------------------------------------------------
+    createEffect(() =>
+    {
+        const id = identity();
+
+        // Consumption check FIRST, then the value guard.
+        if (consumeFirstRun)
+        {
+            consumeFirstRun = false;
+            lastRendered = id;
+            return;
+        }
+        if (lastRendered !== NEVER && identityEquals(lastRendered, id))
+        {
+            return;
+        }
+        const isFirstBuild = lastRendered === NEVER;
+        lastRendered = id;
+
+        runInMode('dom', () =>
+        {
+            // A navigation arriving mid-animation finishes this slot's exits NOW.
+            flushLeaving();
+
+            // This RE-RUN is by construction the outermost rebuilt segment for the
+            // navigation (ancestors did not re-run; deeper slots are recreated fresh
+            // inside this build), so presentation happens here.
+            const name = !isFirstBuild && shared.mounted ? untrack(transitionName) : null;
+            const animated = name !== null && currentEl !== null;
+            // presentFirstBuild: the Routes-level chain mount of a fallback -> chain
+            // swap - a real navigation whose FIRST slot build is the arriving screen.
+            const moveFocus = router.focusManagement
+                && ((!isFirstBuild && shared.mounted) || (isFirstBuild && presentFirstBuild));
+
+            if (animated)
+            {
+                const el = currentEl as HTMLElement;
+                // The enter play's cancel is invoked on demotion:
+                // a still-armed enter would re-apply classes onto the LIVE element
+                // mid-leave and let either play's transitionend finish the other's.
+                enterCancel?.();
+                enterCancel = null;
+                const dispose = branchDispose;
+                branchDispose = null;
+                currentEl = null;
+                const entry = {
+                    dispose: dispose ?? ((): void => undefined),
+                    cancel: (): void => undefined
+                };
+                leaving.set(el, entry);
+                entry.cancel = playTransitionClasses(el, name, 'leave', props.transitionDuration, () =>
+                {
+                    leaving.delete(el);
+                    el.parentNode?.removeChild(el);
+                    destroyComponent(el);
+                    entry.dispose();
+                });
+            }
+            else
+            {
+                teardownBranch();
+            }
+
+            if (id !== null)
+            {
+                buildInto(animated ? name : null, moveFocus);
+            }
+        });
+    });
+
+    // Bottom-up teardown: each slot's disposal path flushes its OWN leaving
+    // set, disposes the child root (whose drain reaches deeper slots' teardowns), clears
+    // its range, removes its markers when it owns them, and re-arms the handle.
+    onRootDispose(() =>
+    {
+        flushLeaving();
+        teardownBranch();
+        if (handle !== null)
+        {
+            const start = target.start;
+            const end = target.end;
+            start.parentNode?.removeChild(start);
+            end.parentNode?.removeChild(end);
+            releaseSlotPlacement(handle);
+        }
+    });
 }
 
 /**
@@ -435,50 +858,4 @@ function ensureRouteFocusStyle(): void
         `[${ ROUTE_FOCUS_FALLBACK_ATTR }]{outline:none}`,
         ROUTE_FOCUS_FALLBACK_ATTR
     );
-}
-
-/**
- * Walks the matched root-to-leaf chain and produces a single rendered tree by
- * wrapping each level inside the level above it.
- *
- *   matched: [A, B, C]
- *   result : A({ children: B({ children: C({}) }) })
- *
- * Layouts (intermediate nodes) must place their `children` prop somewhere in
- * their returned tree, typically inside an `<Outlet>`. Without that placement,
- * deeper levels won't be visible. (`<Outlet>` is just sugar for
- * `props.children`.)
- *
- * Each level's component is CONSTRUCTED inside `withRouteLevel(router, i)`, so a
- * `useLoader()`/`useSearch()` call in its body resolves this level (and this
- * router) without any argument. Components resolve through `componentOf` - the
- * direct component or the resolved lazy chunk (whose load error throws here,
- * into the branch an `<ErrorBoundary>` wraps).
- *
- * @internal
- */
-function renderChain(matchResult: RouteMatch, router: Router): MountNode
-{
-    const chain = matchResult.matched;
-    let current: MountNode | undefined = undefined;
-
-    for (let i = chain.length - 1; i >= 0; i--)
-    {
-        const route = chain[i];
-        if (route === undefined)
-        {
-            continue; // matched chains are dense; satisfies the indexed-access check
-        }
-        const level = i;
-        const previous: MountNode | undefined = current;
-        current = withRouteLevel(router, level, () => componentOf(route)({ children: previous }));
-    }
-
-    if (current === undefined)
-    {
-        // chain.length is always >= 1 for a non-null RouteMatch (the matched route
-        // IS the chain) - an empty chain means the match table is corrupted.
-        throw new Error('renderChain: RouteMatch carried an empty matched chain.');
-    }
-    return current;
 }

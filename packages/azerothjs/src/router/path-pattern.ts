@@ -125,6 +125,27 @@ export function compilePath(pattern: string): PathMatcher
 }
 
 /**
+ * The param names a pattern's OWN segments bind (`:name`, and the trailing `*splat`), in
+ * segment order. The routes layer uses this to slice the merged params record per chain
+ * level - segment identity is 'route object + the params ITS pattern binds', and the slice
+ * is unambiguous because duplicate names anywhere in a joined pattern throw at compile.
+ *
+ * @internal Router plumbing; not part of the application API.
+ */
+export function paramNamesOf(pattern: string): readonly string[]
+{
+    const names: string[] = [];
+    for (const segment of parsePattern(pattern))
+    {
+        if (segment.kind !== 'static')
+        {
+            names.push(segment.name);
+        }
+    }
+    return names;
+}
+
+/**
  * Splits a pattern string into structured segments.
  *
  * Validates that wildcard segments are last: multiple wildcards, or a wildcard

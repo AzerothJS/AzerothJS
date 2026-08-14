@@ -24,6 +24,7 @@
 import { untrack } from './untrack.ts';
 import { resolveThunks } from './resolve-thunks.ts';
 import { ssrMarkersActive } from './render-mode.ts';
+import { isSlotHandle, slotDriverOf } from './slot-handle.ts';
 
 /** Cycle bound for the child graph; see serializeChild. */
 const MAX_CHILD_DEPTH = 512;
@@ -140,6 +141,13 @@ export function serializeChild(child: unknown, depth = 0): string
     if (typeof child === 'function')
     {
         const value = untrack(() => resolveThunks(child));
+        // A route slot handle behind the getter: the slot serializes its own azc:outlet
+        // range with NO surrounding hole anchors - the hydrator's peek dispatch depends
+        // on the anchor at this position being the slot's, not a hole's.
+        if (isSlotHandle(value))
+        {
+            return slotDriverOf(value).serialize();
+        }
         // resolveThunks returns the value STILL AS A FUNCTION when its own depth bound is hit,
         // which means a getter that returns a getter forever. Recursing on that lands straight
         // back in this branch and resolves to a function again, so the bound would guard
@@ -147,6 +155,12 @@ export function serializeChild(child: unknown, depth = 0): string
         // document.
         const inner = typeof value === 'function' ? '' : serializeChild(value, depth + 1);
         return ssrMarkersActive() ? `<!--[-->${ inner }<!--]-->` : inner;
+    }
+
+    // A BARE route slot handle (the compiled <Outlet/> return value in the string h() tree).
+    if (isSlotHandle(child))
+    {
+        return slotDriverOf(child).serialize();
     }
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string -- last-resort fallback: primitives stringify correctly, and a plain object landing here is caller error surfaced as visible "[object Object]" rather than a throw mid-render

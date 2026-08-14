@@ -155,14 +155,12 @@ describe('a guard veto restores the previous URL exactly', () =>
 
 describe('layout identity across a param change', () =>
 {
-    // KNOWN DEFECT, reproduced and NOT fixed. `renderChain` (routes.ts) builds the whole
-    // matched chain eagerly leaf-to-root, handing each layout an already-built `children`
-    // node, so any match change re-invokes every layout instead of swapping only the leaf.
-    // Fixing it means making the outlet slot reactive and keeping layout instances alive
-    // across matches whose chain prefix is unchanged - a redesign of routes.ts + outlet.ts,
-    // not a patch. `it.fails` so this documents the defect AND fails loudly the day it is
-    // fixed, rather than being skipped and forgotten.
-    it.fails('keeps the layout element when only the leaf param changes', async () =>
+    // THE ACCEPTANCE TEST for layout retention. Formerly the tree's one
+    // `it.fails`: renderChain built the whole chain eagerly leaf-to-root, so any match
+    // change re-invoked every layout. Under the per-segment route tree, a leaf `:id`
+    // change rebuilds the leaf's slot only - the layout's component body does not
+    // re-execute and its element identity survives.
+    it('keeps the layout element when only the leaf param changes', async () =>
     {
         let layoutBuilds = 0;
         const routes: Route[] = [{

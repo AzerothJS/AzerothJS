@@ -96,6 +96,10 @@ export function useMatch(router?: Router): Getter<RouteMatch | null>
 export function useParams(router?: Router): Getter<Params>
 {
     const resolved = resolveRouter(router, 'useParams');
+    // Params are the RENDERED truth: they derive from the guarded match (through
+    // location's params slice), so during an async guard hold a live component keeps
+    // observing the params of the chain actually on screen, never a pending or vetoed
+    // target's. Under an async BOOT guard this is `{}` until first acceptance.
     return createMemo<Params>(
         () => resolved.location().params,
         { equals: shallowEqualRecord }

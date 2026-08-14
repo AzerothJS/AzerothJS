@@ -25,6 +25,7 @@
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createRoot, onRootDispose, isStringMode, isHydrating, runInMode } from '../reactivity/index.ts';
+import { refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
 
@@ -43,6 +44,9 @@ function setPortalCleanup(el: HTMLElement, cleanup: () => void): void
 {
     (el as unknown as SymbolStore)[PORTAL_CLEANUP] = cleanup;
 }
+
+/** The refusal hint every Portal mode shares. */
+const PORTAL_SLOT_HINT = 'Place the Outlet in the normal tree; portal individual UI (a modal) from inside the routed component instead.';
 
 /** Every live placeholder and its cleanup; see the module header for why it is shared. */
 const portalRegistry = new Map<HTMLElement, () => void>();
@@ -165,7 +169,15 @@ export function Portal(props: PortalProps): HTMLElement
     // relocates it to the real target on hydration.
     if (isStringMode())
     {
-        return wrapContentsAnchored('portal', serializeChild(props.children())) as unknown as HTMLElement;
+        const child = props.children();
+        // A route slot cannot live in a Portal: the segment would sit outside the route
+        // tree's DOM order and outside hydration's walk. Refused in every mode, so the
+        // server never serializes a segment the client would then discard.
+        if (refuseSlotHandle(child, 'Portal', PORTAL_SLOT_HINT))
+        {
+            return wrapContentsAnchored('portal', '') as unknown as HTMLElement;
+        }
+        return wrapContentsAnchored('portal', serializeChild(child)) as unknown as HTMLElement;
     }
 
     // Hydration.
@@ -210,6 +222,18 @@ export function Portal(props: PortalProps): HTMLElement
         contentDispose = d;
         content = children();
     });
+
+    // The dom-path (and hydration-rebuild) half of the three-mode refusal. Production
+    // no-op leaves NULL content and skips registration entirely, so cleanup never
+    // touches a non-Node.
+    if (refuseSlotHandle(content, 'Portal', PORTAL_SLOT_HINT))
+    {
+        contentDispose();
+        const inert = document.createElement('span');
+        inert.style.display = 'none';
+        inert.setAttribute('data-azeroth-portal', '');
+        return inert;
+    }
 
     // Append the content to the target (outside parent tree)
     target.appendChild(content);

@@ -33,6 +33,7 @@
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, onRootDispose, isStringMode, isHydrating, untrack } from '../reactivity/index.ts';
+import { refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, appendToCo, adoptCoRange } from '../component/index.ts';
 import { adoptStyleSheet } from './adopt-style.ts';
@@ -64,6 +65,9 @@ export interface TransitionProps
 
 /** Prevents re-entrant transitions and lets a mid-flight toggle be handled as a reversal. */
 type Phase = 'idle' | 'entering' | 'leaving';
+
+/** The refusal hint every Transition mode shares. */
+const TRANSITION_SLOT_HINT = 'Animate route swaps with the route-level `transition` prop on <Routes> instead.';
 
 const FALLBACK_TIMEOUT_MS = 1000;
 
@@ -130,7 +134,11 @@ export function Transition(props: TransitionProps): MountNode
     // no-enter-animation first mount of the client path.
     if (isStringMode())
     {
-        const inner = untrack(() => resolveReactive(props.when)) ? serializeChild(props.children()) : '';
+        const child = untrack(() => resolveReactive(props.when)) ? props.children() : '';
+        // A route slot cannot live in a Transition (single-element machine); refused
+        // identically in every mode so the server never serializes a segment the
+        // client would then refuse to animate.
+        const inner = refuseSlotHandle(child, 'Transition', TRANSITION_SLOT_HINT) ? '' : serializeChild(child);
         return wrapContentsAnchored('transition', inner) as unknown as MountNode;
     }
 
@@ -210,7 +218,15 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
         createRoot((d) =>
         {
             dispose = d;
-            el = props.children();
+            const built = props.children();
+            // A route slot's marker range is not a single element: the classList /
+            // transitionend / removeChild machinery below would TypeError or leak on it.
+            if (refuseSlotHandle(built, 'Transition', TRANSITION_SLOT_HINT))
+            {
+                el = undefined as unknown as HTMLElement;
+                return;
+            }
+            el = built;
             appendToCo(target, el);
         });
         currentEl = el;
@@ -231,7 +247,15 @@ function driveTransition(props: TransitionProps, target: CoTarget, hydrateFirstR
             dispose = d;
             const cursor = hydrationCursor as HydrationCursorType;
             const adopted = cursor.peekElement();
-            hydrateChild(props.children(), cursor);
+            const child = props.children();
+            // Refused BEFORE hydrateChild: its bare-branded branch would otherwise
+            // ADOPT the slot into a host whose machine cannot manage it.
+            if (refuseSlotHandle(child, 'Transition', TRANSITION_SLOT_HINT))
+            {
+                el = undefined as unknown as HTMLElement;
+                return;
+            }
+            hydrateChild(child, cursor);
             el = adopted as HTMLElement;
         });
         currentEl = el;

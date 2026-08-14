@@ -117,9 +117,10 @@ describe('router integration - nested layout app', () =>
         expect(container.querySelector('#profile')!.textContent).toBe('1');
 
         router.navigate('/users/2');
-        // A param change alters the structural match, so <Routes> re-renders the whole
-        // matched chain: a FRESH layout element, with the new param in the leaf.
-        expect(container.querySelector('#layout')).not.toBe(layoutBefore);
+        // The leaf's own `:id` changed, so the LEAF remounts - and the layout is
+        // RETAINED: same element identity, no body re-execution (formerly this asserted
+        // a fresh layout - the pre-retention behavior, deliberately abolished).
+        expect(container.querySelector('#layout')).toBe(layoutBefore);
         expect(container.querySelector('#profile')!.textContent).toBe('2');
 
         render(() => h('div', {}), container);

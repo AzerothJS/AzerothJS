@@ -600,7 +600,7 @@ describe('a multiple select on the server', () =>
     });
 });
 
-describe('the round-5 findings', () =>
+describe('the follow-up findings', () =>
 {
     /** A select in the document with the given options; returns it. */
     function mkSelect(values: string[], multiple = false): HTMLSelectElement

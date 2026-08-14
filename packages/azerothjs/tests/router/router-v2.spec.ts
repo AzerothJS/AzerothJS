@@ -6,7 +6,7 @@
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import { object, number, enumOf } from '@azerothjs/schema';
 import {
-    createRoot, render,
+    createRoot, render, h,
     createRouter, createMemoryHistory, defineRoute,
     RouterProvider, Routes, useRoute, useParams, useLoader, useSearch,
     matchAndLoad
@@ -265,12 +265,10 @@ describe('RouterProvider context resolution', () =>
         const layout = (props: { children?: unknown }): HTMLElement =>
         {
             layoutResource = useLoader();
-            const el = document.createElement('section');
-            if (props.children instanceof Node)
-            {
-                el.append(props.children);
-            }
-            return el;
+            // Children are placed through h() (a supported writer): under the
+            // per-segment route tree `children` is a slot HANDLE, not a Node, and a
+            // layout that never places it constructs nothing deeper.
+            return h('section', {}, props.children as never);
         };
         const child = (): HTMLElement =>
         {

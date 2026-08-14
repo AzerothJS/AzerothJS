@@ -22,6 +22,8 @@
  * app always boots.
  */
 
+import { getOwner, runWithOwner } from './create-root.ts';
+
 /**
  * A hydration descriptor returned by h()/control-flow components while 'hydrate' mode is
  * active (cast to HTMLElement so it composes like a real element). Its hydrate() method
@@ -44,11 +46,20 @@ export function isHydrationNode(x: unknown): x is HydrationNode
 /**
  * Wraps an adoption routine as a {@link HydrationNode}.
  *
+ * The walk invokes `hydrate` AFTER the component stack that created the descriptor has
+ * returned, under the container's ambient owner - so anything adoption creates (effects,
+ * route slots, row builds) would lose the creation scope's CONTEXT: a RouterProvider or
+ * theme provided on a component scope is invisible from the container, and a Link inside
+ * a hydrated row threw "found no router" while the same tree worked in dom mode, where
+ * construction is synchronous inside the provider. Capture the creation owner and adopt
+ * under it, so hydrate-mode ownership and context match dom mode's.
+ *
  * @param hydrate - Claims nodes from a cursor.
  */
 export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): HydrationNode
 {
-    return { __hydrate: true, hydrate };
+    const owner = getOwner();
+    return { __hydrate: true, hydrate: (cursor: HydrationCursor): void => runWithOwner(owner, () => hydrate(cursor)) };
 }
 
 /**

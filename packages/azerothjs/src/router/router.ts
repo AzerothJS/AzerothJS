@@ -770,23 +770,6 @@ export function createRouter(config: RouterConfig): Router
     // the requirement.
     onRootDispose(unsubHistory);
 
-    // A user-facing snapshot. Re-derives only when state changes.
-    const location = createMemo<RouteLocation>(() =>
-    {
-        const s = state();
-        return {
-            pathname: s.pathname,
-            search: s.search,
-            hash: s.hash,
-            params: s.matched?.params ?? {},
-            query: parseQuery(s.search),
-            fullPath: s.fullPath,
-            navigationKind: s.kind,
-            delta: s.delta,
-            key: s.key
-        };
-    });
-
     /**
      * Bundles everything one level's loader fetcher needs. Keyed by the match
      * object identity: a match change produces new triggers, so every level's
@@ -847,6 +830,28 @@ export function createRouter(config: RouterConfig): Router
     // flush (no timing change for the common case).
     const [match, setMatch] = createSignal<RouteMatch | null>(null, { equals: matchEquals });
     const [guarding, setGuarding] = createSignal(false);
+
+    // A user-facing snapshot. Re-derives only when state changes. `params` come from the
+    // GUARDED match (declared below; the memo body runs lazily, after it exists): params
+    // are MATCH OUTPUT - the thing guards gate - not URL truth, so a pending navigation's
+    // params must not surface through live components while the old chain is still
+    // rendered. pathname/search/hash stay raw URL truth, so
+    // during an async guard hold the pathname may briefly LEAD the params.
+    const location = createMemo<RouteLocation>(() =>
+    {
+        const s = state();
+        return {
+            pathname: s.pathname,
+            search: s.search,
+            hash: s.hash,
+            params: match()?.params ?? {},
+            query: parseQuery(s.search),
+            fullPath: s.fullPath,
+            navigationKind: s.kind,
+            delta: s.delta,
+            key: s.key
+        };
+    });
     let guardRun = 0;
     // BASE-RELATIVE, like every other path the router holds internally. It is fed straight back
     // to performNavigate on a veto, and commitNavigate -> resolve() applies the base prefix
@@ -872,7 +877,23 @@ export function createRouter(config: RouterConfig): Router
         {
             finish();
             lastAcceptedPath = s.fullPath;
-            lastAcceptedLocation = untrack(location);
+            // Composed from the ACCEPTED match directly rather than read from location():
+            // location's params now derive from the guarded match, which at this point
+            // still holds the PREVIOUS navigation - reading it here would pair the
+            // accepted target's pathname with stale params, and that snapshot is exactly
+            // what the NEXT navigation's GuardContext.from receives (the one pipeline
+            // carve-out, pinned by the from-params spec).
+            lastAcceptedLocation = {
+                pathname: s.pathname,
+                search: s.search,
+                hash: s.hash,
+                params: value?.params ?? {},
+                query: parseQuery(s.search),
+                fullPath: s.fullPath,
+                navigationKind: s.kind,
+                delta: s.delta,
+                key: s.key
+            };
             setMatch(value);
         };
         const veto = (): void =>
