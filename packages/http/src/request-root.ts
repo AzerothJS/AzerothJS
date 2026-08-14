@@ -40,9 +40,16 @@ interface RequestScope
     storeScope: object;
     /** Lazily allocated on the first onRequestCleanup - most requests register none. */
     cleanups: Array<() => void | Promise<void>> | null;
+    /** True once teardown has finished: a later registration runs instead of queueing. */
+    settled: boolean;
+    /** How a throwing cleanup is reported, reachable from every settle path. */
+    options: RootOptions;
 }
 
 const storage = new AsyncLocalStorage<RequestScope>();
+
+/** Teardown rounds a request may register from inside its own cleanups before we stop. */
+const MAX_CLEANUP_ROUNDS = 8;
 
 let resolverInstalled = false;
 
@@ -70,7 +77,39 @@ export function onRequestCleanup(fn: () => void | Promise<void>): void
         throw new Error('onRequestCleanup was called outside a request. It registers teardown '
             + 'for the current request root, so it only makes sense inside a handler or middleware.');
     }
+    if (scope.settled)
+    {
+        // The request already tore down - a client that aborted before the producer got its
+        // connection, or a body the kernel could not monitor. Queueing here would push onto a
+        // list nothing drains, so the registration runs NOW: teardown always runs, and a
+        // release that arrives late is still a release.
+        void runLate(fn, scope);
+        return;
+    }
     (scope.cleanups ??= []).push(fn);
+}
+
+/** @internal Runs one late teardown inside its request's context, reporting its failure. */
+async function runLate(fn: () => void | Promise<void>, scope: RequestScope): Promise<void>
+{
+    await storage.run(scope, async () =>
+    {
+        try
+        {
+            await fn();
+        }
+        catch (error)
+        {
+            try
+            {
+                scope.options.onCleanupError?.(error);
+            }
+            catch
+            {
+                // The error sink is the last stop; its own failure has nowhere to go.
+            }
+        }
+    });
 }
 
 /** @internal Options threaded from the App: how a throwing cleanup is reported. */
@@ -93,23 +132,57 @@ async function runCleanups(scope: RequestScope, options: RootOptions): Promise<v
     // keeps their settle closures from outliving the request that started them. Before the
     // early return: fetches can be in flight even when no user cleanup was registered.
     abortDataCacheFetches(scope.storeScope);
-    const cleanups = scope.cleanups;
-    if (cleanups === null)
+    if (scope.cleanups === null)
     {
+        // Nothing registered YET, but the request has reached a settle point: anything
+        // registered from here on runs immediately rather than queueing (onRequestCleanup).
+        scope.settled = true;
         return;
     }
-    scope.cleanups = null;
-    for (let i = cleanups.length - 1; i >= 0; i--)
+    // Re-enter the request's async context: every settle path (the post-await continuation,
+    // stream end, cancel, abort) arrives here OUTSIDE it - storage.run restores the outer
+    // context the moment fn returns its promise - and a cleanup, or the error observer for
+    // one that throws, resolving a request-scoped store must get THIS request's instance,
+    // not the process-wide default.
+    await storage.run(scope, async () =>
     {
-        try
+        // Drained to exhaustion: a cleanup registering another (a release that queues the
+        // pool return) is legal INSIDE the root, and the batch it registers must run rather
+        // than land on a list nothing reads. Bounded, so a cleanup that re-registers itself
+        // reports instead of spinning.
+        for (let round = 0; scope.cleanups !== null; round++)
         {
-            await cleanups[i]?.();
+            const batch = scope.cleanups;
+            scope.cleanups = null;
+            if (round >= MAX_CLEANUP_ROUNDS)
+            {
+                options.onCleanupError?.(new Error('onRequestCleanup kept registering new teardown from '
+                    + `inside a cleanup after ${ MAX_CLEANUP_ROUNDS } rounds; the remaining ${ batch.length } `
+                    + 'were dropped to end the request.'));
+                return;
+            }
+            for (let i = batch.length - 1; i >= 0; i--)
+            {
+                try
+                {
+                    await batch[i]?.();
+                }
+                catch (error)
+                {
+                    try
+                    {
+                        options.onCleanupError?.(error);
+                    }
+                    catch
+                    {
+                        // The error sink is the last stop: its own failure cannot be reported
+                        // anywhere, and must not reject teardown or strand the response.
+                    }
+                }
+            }
         }
-        catch (error)
-        {
-            options.onCleanupError?.(error);
-        }
-    }
+    });
+    scope.settled = true;
 }
 
 /**
@@ -193,7 +266,7 @@ export async function runInRequestRoot<T, A>(
     installResolver();
     // `arg` rides through storage.run instead of a per-request closure over `fn`;
     // the caller passes ONE stable function for the app's lifetime.
-    const scope: RequestScope = { storeScope: {}, cleanups: null };
+    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options };
     let result: T;
     try
     {
@@ -206,9 +279,10 @@ export async function runInRequestRoot<T, A>(
     }
 
     // A live streaming body outlives the handler return: hand the cleanups to the stream so
-    // they run at its true end. Only pays the wrap when a cleanup was actually registered -
-    // the hot path (no cleanups) returns the result untouched.
-    if (scope.cleanups !== null && isStreamingResponse(result))
+    // they run at its true end. The wrap cannot be gated on a cleanup being registered YET -
+    // a producer that awaits real I/O registers its teardown after this continuation has
+    // already run - so every streaming response pays it; buffered responses settle below.
+    if (isStreamingResponse(result))
     {
         // The stream is the PRIMARY settle signal, but it is not the only one: an adapter that
         // finds the socket already destroyed has nothing to read the body with, so nothing would
@@ -225,10 +299,23 @@ export async function runInRequestRoot<T, A>(
             }
             signal.addEventListener('abort', () =>
             {
-                void runCleanups(scope, options);
+                // Nothing awaits this settle path, so its rejection has nowhere to land and
+                // would surface as an unhandled rejection - fatal under Node's default.
+                void runCleanups(scope, options).catch(() => undefined);
             }, { once: true });
         }
-        return deferCleanupsToBody(result, scope, options) as T;
+        try
+        {
+            return deferCleanupsToBody(result, scope, options) as T;
+        }
+        catch
+        {
+            // A body the kernel cannot monitor (the handler took its own reader, so the
+            // stream is locked) still has to settle the root: run the cleanups now and send
+            // the original response rather than leaking the request and answering a 500.
+            await runCleanups(scope, options);
+            return result;
+        }
     }
 
     await runCleanups(scope, options);

@@ -40,13 +40,18 @@ import type { WebHandler } from './edge.ts';
 type AnyOutgoing = ServerResponse | Http2ServerResponse;
 
 /**
- * Declares the proxy in front of this server, `true` meaning both headers. OFF by default:
- * `X-Forwarded-*` is client-controlled, and believing it without a proxy lets any direct
- * caller forge its scheme and host - the same explicit trust boundary `clientIp` draws.
+ * Declares the proxy in front of this server. OFF by default: `X-Forwarded-*` is
+ * client-controlled, and believing it without a proxy lets any direct caller forge its
+ * scheme and host - the same explicit trust boundary `clientIp` draws.
+ *
+ * Each header is read by how it ACCUMULATES, not by one knob: `X-Forwarded-For` is
+ * appended per hop, so `trustedHops` counts from the right; `X-Forwarded-Proto` and
+ * `X-Forwarded-Host` are REPLACED by every mainstream proxy, so the last written value is
+ * the trusted one and no hop count applies.
  */
 export type TrustProxyOptions = boolean | ForwardedTrust;
 
-/** @internal Normalizes the trust shorthand: `true` believes both headers. */
+/** @internal Normalizes the trust shorthand: `true` believes both headers at the default hop count. */
 function forwardedTrust(trust: TrustProxyOptions | undefined): ForwardedTrust
 {
     if (trust === true)
@@ -286,6 +291,14 @@ function manage<S extends Server | Http2Server>(
         server.once('error', reject);
         server.listen(port, hostname, () =>
         {
+            // The listen-time rejection listener must not outlive the bind: left attached,
+            // the first post-listen error would fire it against a settled promise and the
+            // second would crash the process as an unhandled 'error'. A post-listen error
+            // (an accept that failed under fd pressure) concerns one connection while the
+            // listening socket stays up, so the server stays up - it must never take down
+            // every live connection.
+            server.removeListener('error', reject);
+            server.on('error', () => undefined);
             // Under load, address() can momentarily fail to report a bound port even inside the
             // listening callback (seen on Windows): it returns null, OR an address object whose
             // `port` is still 0. Either way the socket is not yet usable, and resolving would
@@ -494,10 +507,19 @@ export async function serve(
 /**
  * Serves an app over cleartext HTTP/2 (h2c) - the same listener, the http2 compat surface.
  * Browsers only speak h2 over TLS; h2c is for internal hops, proxies, and gRPC-style peers.
+ * Sessions are bounded like http1 sockets: an inactivity timeout reclaims a dead or stalled
+ * session (`timeouts.requestMs`, same default as {@link serve}), and a session that floods
+ * invalid frames or rejected streams is closed.
  */
-export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
+export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; timeouts?: SocketTimeouts; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
 {
-    return manage(createH2cServer(), app, options.port ?? 0, options.hostname, undefined, forwardedTrust(options.trustProxy));
+    const server = createH2cServer({ maxSessionInvalidFrames: 100, maxSessionRejectedStreams: 100 });
+    // h2 has no per-phase header/request timers - one socket-inactivity bound covers both.
+    // requestMs rather than keepAliveMs: no bytes move while a slow handler computes, and
+    // an idle-keep-alive-sized timer would sever the session mid-request. With no 'timeout'
+    // listener Node destroys the timed-out session, which is the intended outcome.
+    server.setTimeout(options.timeouts?.requestMs ?? DEFAULT_TIMEOUTS.requestMs);
+    return manage(server, app, options.port ?? 0, options.hostname, undefined, forwardedTrust(options.trustProxy));
 }
 
 /** Options for {@link handleShutdownSignals}. */

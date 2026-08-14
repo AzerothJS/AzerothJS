@@ -278,3 +278,115 @@ describe('every published package wipes dist before building', () =>
         expect(offenders).toEqual([]);
     });
 });
+
+// The editor integrations are the one place the monorepo consumes its own packages through
+// the registry instead of the workspace, so their lockfile is the one that can name a version
+// that does not exist yet. `npm ci` there is what every clean checkout and every CI editor job
+// runs, and the lockfile regeneration that repairs the file only happens AFTER a publish - so
+// the check has to refuse before the release starts, not warn after it finishes.
+describe('editor integrations install from a clean checkout', () =>
+{
+    const LOCK = join(ROOT, 'editors', 'vscode', 'package-lock.json');
+    const PLAN = ['9.9.9-beta.1', '--dry-run', '-y', '--skip-checks', '--allow-branch'];
+
+    interface LockEntry
+    {
+        name?: string;
+        version?: string;
+        resolved?: string;
+        integrity?: string;
+        link?: boolean;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+    }
+
+    /** Plans a release over a mutated editor lockfile, always restoring the original text. */
+    function withLockfile(mutate: (packages: Record<string, LockEntry>) => void): { status: number; output: string }
+    {
+        const original = readFileSync(LOCK, 'utf8');
+        try
+        {
+            const lock = JSON.parse(original) as { packages: Record<string, LockEntry> };
+            mutate(lock.packages);
+            writeFileSync(LOCK, JSON.stringify(lock, null, 4));
+            return release(PLAN);
+        }
+        finally
+        {
+            writeFileSync(LOCK, original);
+        }
+    }
+
+    /** The newest version of the language server the registry actually serves. */
+    function latestPublished(): string
+    {
+        // One constant command string rather than a shell WITH an args array: npm is a `.cmd`
+        // on Windows, which Node refuses to spawn shell-less, and an args array under a shell
+        // is concatenated rather than escaped (DEP0190). Nothing here is interpolated.
+        const result = spawnSync('npm view @azerothjs/language-server version', {
+            cwd: ROOT, encoding: 'utf8', shell: true
+        });
+        return result.stdout.trim();
+    }
+
+    it('passes the lockfile this repo ships', () =>
+    {
+        const run = release(PLAN);
+        expect(run.status).toBe(0);
+        expect(run.output).toContain('editors/vscode: lockfile installable');
+    });
+
+    it('refuses a lockfile that pins a version the registry does not serve', () =>
+    {
+        // The shape a hand-bump leaves behind: the editor manifest is bumped in lockstep with
+        // the monorepo, but the version it now names is unpublished by construction.
+        const run = withLockfile((packages) =>
+        {
+            packages['node_modules/@azerothjs/language-server'] = {
+                version: '9.9.9-beta.1',
+                resolved: 'https://registry.npmjs.org/@azerothjs/language-server/-/language-server-9.9.9-beta.1.tgz',
+                integrity: 'sha512-U1cmjIzZqp6At/7Ngdud+hH2Ga0LoI9aatKzKM6U8cQ70a2oeIOeQX7CM/04c+dFYJgLikQ/K3ZQu279uEA7+A=='
+            };
+        });
+        expect(run.status).toBe(1);
+        expect(run.output).toContain('is not on the registry');
+        expect(run.output).not.toContain('Bumping versions');
+    });
+
+    it('refuses a lockfile whose integrity does not describe the tarball it resolves', () =>
+    {
+        // Asserted, not skipped-on-empty: a probe that quietly returns nothing would make this
+        // test pass without ever reaching the check it exists to prove.
+        const published = latestPublished();
+        expect(published).toMatch(/^\d+\.\d+\.\d+/);
+        // `version` and `resolved` agree and the version is real: only the hash is left over
+        // from the previous tarball, which nothing but the registry can tell.
+        const run = withLockfile((packages) =>
+        {
+            packages['node_modules/@azerothjs/language-server'] = {
+                version: published,
+                resolved: `https://registry.npmjs.org/@azerothjs/language-server/-/language-server-${ published }.tgz`,
+                integrity: 'sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=='
+            };
+        });
+        expect(run.status).toBe(1);
+        expect(run.output).toContain('integrity the published tarball does not have');
+        expect(run.output).not.toContain('Bumping versions');
+    });
+
+    it('refuses a manifest and lockfile that disagree on a dependency', () =>
+    {
+        const run = withLockfile((packages) =>
+        {
+            const root = packages[''];
+            if (root?.devDependencies !== undefined)
+            {
+                root.devDependencies['@types/vscode'] = '~1.99.0';
+            }
+        });
+        expect(run.status).toBe(1);
+        expect(run.output).toContain('package-lock.json');
+        expect(run.output).toContain('@types/vscode');
+        expect(run.output).not.toContain('Bumping versions');
+    });
+});

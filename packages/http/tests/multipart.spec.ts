@@ -6,7 +6,7 @@
 // may hang or crash on hostile input - malformed framing is always a 400 with a stable code.
 
 import { describe, it, expect } from 'vitest';
-import { readMultipart, boundaryOf } from '../src/multipart.ts';
+import { readMultipart, streamMultipart, boundaryOf } from '../src/multipart.ts';
 import { BadRequestError, PayloadTooLargeError, UnsupportedMediaTypeError } from '../src/errors.ts';
 
 /** A request whose multipart body is built by the platform itself - the honest fixture. */
@@ -25,6 +25,31 @@ function rawRequest(body: string | Uint8Array, boundary = 'xyz'): Request
         body: typeof body === 'string' ? body : new Uint8Array(body), // ArrayBuffer-backed copy for BodyInit
         headers: { 'content-type': `multipart/form-data; boundary=${ boundary }` }
     });
+}
+
+/** A raw multipart request delivered in chunks of `size` bytes - the adversarial transport. */
+function chunkedRequest(body: string, size: number): Request
+{
+    const bytes = new TextEncoder().encode(body);
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+        pull(controller): void
+        {
+            if (offset >= bytes.byteLength)
+            {
+                controller.close();
+                return;
+            }
+            controller.enqueue(bytes.slice(offset, offset + size));
+            offset += size;
+        }
+    });
+    return new Request('http://local/upload', {
+        method: 'POST',
+        body: stream,
+        headers: { 'content-type': 'multipart/form-data; boundary=xyz' },
+        duplex: 'half'
+    } as RequestInit);
 }
 
 describe('parsing a real client body (undici FormData serialization)', () =>
@@ -241,6 +266,200 @@ describe('limits', () =>
         const body = `--xyz\r\ncontent-disposition: form-data; name="f"\r\n\r\n${ 'x'.repeat(200) }\r\n--xyz--`;
         await expect(readMultipart(rawRequest(body), { limit: 64 }))
             .rejects.toBeInstanceOf(PayloadTooLargeError);
+    });
+});
+
+describe('bare CR or LF inside part headers', () =>
+{
+    it('a bare LF inside a quoted filename is a typed 400, not a parsed part', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; filename="x\nsmuggled: header"\r\n\r\nv\r\n--xyz--';
+        const error = await readMultipart(rawRequest(body)).catch((e: unknown) => e) as BadRequestError;
+        expect(error).toBeInstanceOf(BadRequestError);
+        expect(error.code).toBe('malformed-multipart');
+    });
+
+    it('a bare CR inside a header line is a typed 400', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"\rx-extra: y\r\n\r\nv\r\n--xyz--';
+        const error = await readMultipart(rawRequest(body)).catch((e: unknown) => e) as BadRequestError;
+        expect(error).toBeInstanceOf(BadRequestError);
+        expect(error.code).toBe('malformed-multipart');
+    });
+
+    it('a percent-encoded CRLF in filename* is refused where the DECODED value is final', async () =>
+    {
+        // The header line carries `%0D%0A`, which no line-level check can see. Accepted, the
+        // decoded filename would carry a CRLF into whatever sink echoes it.
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; '
+            + 'filename*=UTF-8\'\'x%0D%0Ax-smuggled:%20yes\r\n\r\nv\r\n--xyz--';
+        const error = await readMultipart(rawRequest(body)).catch((e: unknown) => e) as BadRequestError;
+        expect(error).toBeInstanceOf(BadRequestError);
+        expect(error.code).toBe('malformed-multipart');
+    });
+
+    it('the ISO-8859-1 extended form decodes through the same rule', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; '
+            + 'filename*=ISO-8859-1\'\'x%0Ay\r\n\r\nv\r\n--xyz--';
+        const error = await readMultipart(rawRequest(body)).catch((e: unknown) => e) as BadRequestError;
+        expect(error).toBeInstanceOf(BadRequestError);
+        expect(error.code).toBe('malformed-multipart');
+    });
+
+    it('the streaming twin refuses the same decoded value', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; '
+            + 'filename*=UTF-8\'\'x%0D%0Ax-smuggled:%20yes\r\n\r\nv\r\n--xyz--';
+        const run = async (): Promise<void> =>
+        {
+            for await (const part of streamMultipart(chunkedRequest(body, 16)))
+            {
+                void part;
+            }
+        };
+        await expect(run()).rejects.toMatchObject({ code: 'malformed-multipart' });
+    });
+
+    it('a percent-encoded filename WITHOUT a line break still decodes and parses', async () =>
+    {
+        const body = '--xyz\r\ncontent-disposition: form-data; name="a"; '
+            + 'filename*=UTF-8\'\'caf%C3%A9%20menu.txt\r\n\r\nv\r\n--xyz--';
+        const parsed = await readMultipart(rawRequest(body));
+        expect(parsed.files[0]!.filename).toBe('café menu.txt');
+    });
+});
+
+describe('maxPartBytes governs parts the consumer never reads', () =>
+{
+    const oversized = `--xyz\r\ncontent-disposition: form-data; name="f"; filename="f.bin"\r\n\r\n${ 'x'.repeat(1024 * 1024) }\r\n--xyz--`;
+
+    async function skipAll(request: Request): Promise<void>
+    {
+        for await (const part of streamMultipart(request, { maxPartBytes: 4096 }))
+        {
+            void part; // never touches part.stream
+        }
+    }
+
+    it('an oversized skipped part is a 413 when the body arrives in one chunk', async () =>
+    {
+        await expect(skipAll(chunkedRequest(oversized, oversized.length)))
+            .rejects.toBeInstanceOf(PayloadTooLargeError);
+    });
+
+    it('the same body in small chunks is the SAME 413, not a framing error', async () =>
+    {
+        await expect(skipAll(chunkedRequest(oversized, 16 * 1024)))
+            .rejects.toBeInstanceOf(PayloadTooLargeError);
+    });
+});
+
+describe('a yielded part pulls under backpressure only', () =>
+{
+    it('takes nothing off the socket between the yield and the consumer\'s first read', async () =>
+    {
+        // A part stream that pulls on construction reads payload the consumer has not asked
+        // for - and scans the shared feed beside the generator's own discard loop.
+        const head = '--xyz\r\ncontent-disposition: form-data; name="f"; filename="f.bin"\r\n\r\n';
+        const payload = 'A'.repeat(4096);
+        const pieces = [head, ...(`${ payload }\r\n--xyz--`.match(/[\s\S]{1,64}/g) ?? [])]
+            .map((piece) => new TextEncoder().encode(piece));
+        let delivered = 0;
+        const source = new ReadableStream<Uint8Array>({
+            pull(controller): void
+            {
+                const next = pieces[delivered];
+                if (next === undefined)
+                {
+                    controller.close();
+                    return;
+                }
+                delivered++;
+                controller.enqueue(next);
+            }
+        }, { highWaterMark: 0 }); // the transport hands over a chunk only when asked
+        const request = new Request('http://local/upload', {
+            method: 'POST',
+            body: source,
+            headers: { 'content-type': 'multipart/form-data; boundary=xyz' },
+            duplex: 'half'
+        } as RequestInit);
+
+        let atYield = -1;
+        let text = '';
+        for await (const part of streamMultipart(request))
+        {
+            await new Promise((resolve) => setTimeout(resolve, 5)); // any read-ahead lands here
+            atYield = delivered;
+            text = await part.text();
+            break;
+        }
+        expect(atYield).toBe(1); // the header chunk, and no byte of the payload
+        expect(text).toBe(payload);
+    });
+});
+
+describe('the streaming preamble is capped', () =>
+{
+    /** Drives the iterator to exhaustion, touching nothing. */
+    async function drain(request: Request): Promise<void>
+    {
+        for await (const part of streamMultipart(request))
+        {
+            void part;
+        }
+    }
+
+    it('an oversized preamble arriving in ONE chunk with the delimiter is a typed 400', async () =>
+    {
+        const body = `${ 'a'.repeat(64 * 1024) }\r\n--xyz\r\ncontent-disposition: form-data; name="f"\r\n\r\nv\r\n--xyz--`;
+        await expect(drain(chunkedRequest(body, body.length))).rejects.toMatchObject({ code: 'malformed-multipart' });
+    });
+
+    it('the same preamble split across chunks is the SAME 400', async () =>
+    {
+        const body = `${ 'a'.repeat(64 * 1024) }\r\n--xyz\r\ncontent-disposition: form-data; name="f"\r\n\r\nv\r\n--xyz--`;
+        await expect(drain(chunkedRequest(body, 4096))).rejects.toMatchObject({ code: 'malformed-multipart' });
+    });
+
+    it('a preamble under the cap is discarded, not refused', async () =>
+    {
+        const body = `${ 'a'.repeat(1024) }\r\n--xyz\r\ncontent-disposition: form-data; name="f"\r\n\r\nv\r\n--xyz--`;
+        await expect(drain(chunkedRequest(body, body.length))).resolves.toBeUndefined();
+    });
+
+    it('a never-matching preamble flood stops at a bounded byte count with a typed 400', async () =>
+    {
+        const chunk = new Uint8Array(8 * 1024).fill(97);
+        let delivered = 0;
+        const source = new ReadableStream<Uint8Array>({
+            pull(controller): void
+            {
+                if (delivered >= 8 * 1024 * 1024)
+                {
+                    controller.close();
+                    return;
+                }
+                delivered += chunk.byteLength;
+                controller.enqueue(chunk.slice());
+            }
+        });
+        const request = new Request('http://local/upload', {
+            method: 'POST',
+            body: source,
+            headers: { 'content-type': 'multipart/form-data; boundary=xyz' },
+            duplex: 'half'
+        } as RequestInit);
+        const run = async (): Promise<void> =>
+        {
+            for await (const part of streamMultipart(request))
+            {
+                void part;
+            }
+        };
+        await expect(run()).rejects.toMatchObject({ code: 'malformed-multipart' });
+        expect(delivered).toBeLessThan(1024 * 1024); // the flood is refused, not drained
     });
 });
 

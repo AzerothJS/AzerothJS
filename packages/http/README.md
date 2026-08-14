@@ -229,7 +229,7 @@ const app = new App();
 
 const handler = pipeline(
     app,
-    requestId(),                                          // honor/mint X-Request-Id; rides into the logger
+    requestId(),                                          // mints X-Request-Id (trustInbound honors one); rides into the logger
     securityHeaders(),                                    // nosniff, frame-options, referrer-policy, ... (opt-in HSTS/CSP)
     cors({ origin: ['https://app.example'], credentials: true }),
     rateLimit({ limit: 100, windowMs: 60_000 })          // 429 + Retry-After + RateLimit-* headers
@@ -250,6 +250,16 @@ is the seam for a Redis-backed limiter across a fleet. The same boundary covers 
 `X-Forwarded-Proto`/`-Host` from a declared terminating proxy, so `context.url` carries the
 client's real scheme and host - redirects, absolute links, and secure-cookie decisions stop
 seeing the internal hop. Off by default: without a proxy those headers are caller-forgeable.
+There is no hop count to configure for those two, however many proxies you stack: every
+mainstream one (nginx, HAProxy, Traefik, ALB, Cloudflare) SETS proto and host rather than
+appending, so the header carries one value and the value read is the last one written - which
+also drops a client's prepended `X-Forwarded-Host` on the floor. `X-Forwarded-For` is the
+header that does grow per hop, and that is where `trustedHops` applies (`clientIp`,
+`rateLimit`).
+`csrfProtect` rides the same declaration: its origin check compares the browser's `Origin`
+against `context.url.origin`, so behind TLS termination an undeclared proxy leaves the URL on
+`http` while every browser says `https`, and each same-origin POST is rejected as cross-origin
+(the 403 names `trustProxy` when the mismatch is scheme-only) until the proxy is declared.
 
 One rule matters more than the rest when you write a policy check by hand: decide on
 `context.path`, not `context.url.pathname`. The router matches decoded, slash-collapsed segments,

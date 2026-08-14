@@ -170,8 +170,10 @@ describe('per-segment round trip', () =>
             expect(container.querySelector('#debt-caught')).toBeNull();
             const messages = warn.mock.calls.map((c) => String(c[0] ?? ''));
             expect(messages.some((m) => /falling back to full client render/.test(m))).toBe(false);
-            // The debt's signature: the deferred adoption ran OUTSIDE any owner.
-            expect(messages.some((m) => /createEffect\(\) called with no owner/.test(m))).toBe(true);
+            // The deferred adoption's effects land under the router's OWN root now (an
+            // unowned createRouter self-roots), so the run is warning-free; the remaining
+            // debt is the fresh #cf node above, not an ownership leak.
+            expect(messages.some((m) => /createEffect\(\) called with no owner/.test(m))).toBe(false);
             container.remove();
         }
         finally

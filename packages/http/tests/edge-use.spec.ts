@@ -10,7 +10,7 @@
 //
 // The brand (`edge()`) is what lets one verb take both kinds without the framework growing a third.
 import { describe, expect, it } from 'vitest';
-import { App, edge, json, pipeline, rateLimit, securityHeaders } from '@azerothjs/http';
+import { App, UnauthorizedError, cors, edge, json, pipeline, rateLimit, securityHeaders, withResponseHeaders } from '@azerothjs/http';
 
 describe('app.use - one verb for both kinds of middleware', () =>
 {
@@ -133,5 +133,64 @@ describe('app.use - one verb for both kinds of middleware', () =>
         // handle() never throws - the contract the kernel promises everywhere else.
         const response = await app.handle(new Request('http://local/x'));
         expect(response.status).toBe(500);
+    });
+});
+
+describe('error responses flow through the edge chain', () =>
+{
+    it('a wrapper decorates the response produced by a THROWN error', async () =>
+    {
+        const app = new App({ dev: false });
+        app.use(edge((next) => ({
+            handle: async (request: Request): Promise<Response> =>
+                withResponseHeaders(await next.handle(request), { 'x-edge': 'seen' })
+        })));
+        app.get('/boom', () =>
+        {
+            throw new UnauthorizedError('no token');
+        });
+        app.get('/returned', () => new Response('denied', { status: 401 }));
+
+        const thrown = await app.handle(new Request('http://local/boom'));
+        expect(thrown.status).toBe(401);
+        expect(thrown.headers.get('x-edge')).toBe('seen');
+
+        // Positive control: the returned-4xx path always carried the stamp.
+        const returned = await app.handle(new Request('http://local/returned'));
+        expect(returned.headers.get('x-edge')).toBe('seen');
+    });
+
+    it('cors stamps allow-origin on a thrown 401, so a browser reports the real status', async () =>
+    {
+        const app = new App({ dev: false });
+        app.use(cors({ origin: ['https://app.example'] }));
+        app.get('/private', () =>
+        {
+            throw new UnauthorizedError('no token');
+        });
+
+        const response = await app.handle(new Request('http://local/private', { headers: { origin: 'https://app.example' } }));
+        expect(response.status).toBe(401);
+        expect(response.headers.get('access-control-allow-origin')).toBe('https://app.example');
+    });
+
+    it('a THROWING wrapper\'s error response is decorated by the wrappers outside it', async () =>
+    {
+        const app = new App({ dev: false });
+        app.use(edge((next) => ({
+            handle: async (request: Request): Promise<Response> =>
+                withResponseHeaders(await next.handle(request), { 'x-outer': 'seen' })
+        })));
+        app.use(edge(() => ({
+            handle: (): Promise<Response> =>
+            {
+                throw new UnauthorizedError('nope');
+            }
+        })));
+        app.get('/x', () => json({ ok: true }));
+
+        const response = await app.handle(new Request('http://local/x'));
+        expect(response.status).toBe(401);
+        expect(response.headers.get('x-outer')).toBe('seen');
     });
 });

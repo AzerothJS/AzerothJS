@@ -350,3 +350,133 @@ describe('a failing upstream is reported as an upstream failure', () =>
         }
     });
 });
+
+describe('only image bytes leave the endpoint', () =>
+{
+    // The allowlist establishes WHERE remote bytes come from, not that they are images. An
+    // allowlisted bucket that also hosts user uploads can answer text/html, and relaying it
+    // under this origin with a year of cache would be stored XSS.
+
+    it('answers 415 when an allowlisted upstream declares a non-image content type', async () =>
+    {
+        const fetchImpl = vi.fn(() => Promise.resolve(new Response(
+            '<script>alert(1)</script>',
+            { headers: { 'content-type': 'text/html; charset=utf-8' } }
+        )));
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'], fetchImpl });
+
+        const response = await get(app, `src=${ encodeURIComponent('https://cdn.example/upload.png') }`);
+
+        expect(response.status).toBe(415);
+        expect((await response.json() as { error: { code: string } }).error.code).toBe('image-content-type');
+    });
+
+    it('answers 415 when the upstream declares no content type at all', async () =>
+    {
+        const body = new Response(new Uint8Array([1, 2, 3]));
+        body.headers.delete('content-type');
+        const { app } = serve({ allowedOrigins: ['https://cdn.example'], fetchImpl: () => Promise.resolve(body) });
+
+        expect((await get(app, `src=${ encodeURIComponent('https://cdn.example/blob') }`)).status).toBe(415);
+    });
+
+    it('a throwing adapter cannot fall back to non-image upstream bytes', async () =>
+    {
+        // The fallback arm serves ORIGINAL bytes - exactly the arm a non-image reaches, since a
+        // non-image is what makes a codec throw. The refusal happens at the read, so neither the
+        // store arm nor the fallback arm ever holds the bytes.
+        const onError = vi.fn();
+        const fetchImpl = vi.fn(() => Promise.resolve(new Response(
+            'not an image',
+            { headers: { 'content-type': 'text/html' } }
+        )));
+        const { app } = serve({
+            allowedOrigins: ['https://cdn.example'],
+            fetchImpl,
+            adapter: { transform: () => Promise.reject(new Error('codec exploded')) },
+            onError
+        });
+
+        const response = await get(app, `src=${ encodeURIComponent('https://cdn.example/upload.png') }`, { accept: 'image/webp' });
+
+        expect(response.status).toBe(415);
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('image responses carry nosniff and render inline', async () =>
+    {
+        const { app } = serve();
+        const response = await get(app, 'src=%2Fhero.png');
+        expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+        expect(response.headers.get('content-disposition')).toBe('inline');
+    });
+
+    it('svg answers carry a sandboxing content security policy; rasters stay bare', async () =>
+    {
+        // SVG runs script when navigated to directly; the sandbox keeps it an image without
+        // touching <img> embedding, which never scripts anyway.
+        const root = makeRoot();
+        dirs.push(root);
+        writeFileSync(join(root, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+        const { app } = serve({ root });
+
+        const svg = await get(app, `src=${ encodeURIComponent('/logo.svg') }`);
+        expect(svg.status).toBe(200);
+        expect(svg.headers.get('content-type')).toBe('image/svg+xml');
+        expect(svg.headers.get('content-security-policy')).toContain('sandbox');
+
+        const png = await get(app, 'src=%2Fhero.png');
+        expect(png.headers.get('content-security-policy')).toBeNull();
+    });
+});
+
+describe('the etag names the variant, not just the source', () =>
+{
+    const adapter: ImageAdapter = {
+        transform: (input, options): Promise<{ data: Uint8Array; contentType: string }> =>
+            Promise.resolve({ data: input.slice(0, 4), contentType: `image/${ options.format ?? 'png' }` })
+    };
+
+    it('differs across widths and formats of one source', async () =>
+    {
+        // A source-only tag lets a deduplicating intermediary answer one variant's conditional
+        // request with another variant's bytes.
+        const { app } = serve({ adapter });
+
+        const w300 = await get(app, 'src=%2Fhero.png&w=300', { accept: 'image/webp' });
+        const w640 = await get(app, 'src=%2Fhero.png&w=640', { accept: 'image/webp' });
+        const avif = await get(app, 'src=%2Fhero.png&w=300', { accept: 'image/avif' });
+
+        const tags = [w300, w640, avif].map((response) => response.headers.get('etag'));
+        for (const tag of tags)
+        {
+            expect(tag).not.toBeNull();
+        }
+        expect(new Set(tags).size).toBe(3);
+    });
+
+    it('the fallback tag differs, so a recovered adapter is not 304ed into permanence', async () =>
+    {
+        // Fallback serves the ORIGINAL bytes under the variant url. Sharing the variant's tag
+        // would make the next conditional request answer 304 once the adapter recovers, pinning
+        // the client on the fallback bytes forever.
+        let healthy = false;
+        const flaky: ImageAdapter = {
+            transform: (input): Promise<{ data: Uint8Array; contentType: string }> => healthy
+                ? Promise.resolve({ data: input.slice(0, 4), contentType: 'image/webp' })
+                : Promise.reject(new Error('codec exploded'))
+        };
+        const { app } = serve({ adapter: flaky, onError: () => undefined });
+
+        const fallback = await get(app, 'src=%2Fhero.png&w=640', { accept: 'image/webp' });
+        expect(fallback.headers.get('x-azeroth-image')).toBe('fallback');
+
+        healthy = true;
+        const revalidated = await get(app, 'src=%2Fhero.png&w=640', {
+            accept: 'image/webp',
+            'if-none-match': fallback.headers.get('etag') as string
+        });
+        expect(revalidated.status).toBe(200);
+        expect(revalidated.headers.get('x-azeroth-image')).toBe('miss');
+    });
+});

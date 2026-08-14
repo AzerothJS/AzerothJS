@@ -101,6 +101,15 @@ function hasDotSegment(relative: string): boolean
 }
 
 /**
+ * @internal The directory as a containment prefix. A volume root (`/`, `C:\`) already ends
+ * in the separator; appending another would double it and no resolved path could ever match.
+ */
+function asPrefix(dir: string): string
+{
+    return dir.endsWith(sep) ? dir : dir + sep;
+}
+
+/**
  * Options for the static file server: the root it can never escape, index/extension fallbacks,
  * cache policy, and range support. Traversal safety is not configurable - every resolved path
  * is verified to stay under `root` regardless of what these say.
@@ -174,7 +183,7 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         // decoded (including smuggled separators) is already literal here, so the one
         // prefix check covers every traversal spelling.
         let target = resolve(root, relative);
-        if (target !== root && !target.startsWith(root + sep))
+        if (target !== root && !target.startsWith(asPrefix(root)))
         {
             throw new NotFoundError();
         }
@@ -195,7 +204,7 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         // what stops an in-root symlink from serving `/etc/passwd`.
         const realRoot = await getRealRoot();
         const realTarget = await realpath(target).catch(() => null);
-        if (realTarget === null || (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)))
+        if (realTarget === null || (realTarget !== realRoot && !realTarget.startsWith(asPrefix(realRoot))))
         {
             throw new NotFoundError();
         }

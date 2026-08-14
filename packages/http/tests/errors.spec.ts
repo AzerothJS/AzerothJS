@@ -9,6 +9,7 @@ import {
     HttpError, BadRequestError, NotFoundError, MethodNotAllowedError, ValidationError,
     PayloadTooLargeError, TooManyRequestsError, errorResponse, type ErrorSerializerContext
 } from '../src/errors.ts';
+import { App } from '../src/app.ts';
 
 async function wire(response: Response): Promise<{ status: number; body: { error: { code: string; message: string; details?: unknown; stack?: string | undefined } }; headers: Headers }>
 {
@@ -150,6 +151,32 @@ describe('the serializeError hook', () =>
         expect(await response.text()).toBe('nope');
     });
 
+    it('a Response return keeps the error\'s mandated headers where it left them unset', () =>
+    {
+        // The Response branch is the only way to a non-JSON media type, so it must not cost
+        // the protocol headers the error mandates.
+        const serialize = (): Response => new Response('{"type":"about:blank"}', {
+            status: 405,
+            headers: { 'content-type': 'application/problem+json' }
+        });
+        const response = errorResponse(new MethodNotAllowedError(['GET', 'PUT']), { serialize, request: req() });
+        expect(response.headers.get('allow')).toBe('GET, PUT');
+        expect(response.headers.get('content-type')).toBe('application/problem+json');
+
+        const cleared = errorResponse(
+            new HttpError(401, 'Signed out', { headers: { 'set-cookie': 'session=; Max-Age=0' } }),
+            { serialize: () => new Response('bye', { status: 401 }), request: req() }
+        );
+        expect(cleared.headers.get('set-cookie')).toBe('session=; Max-Age=0');
+    });
+
+    it('a header the serializer already set wins over the mandate', () =>
+    {
+        const serialize = (): Response => new Response('x', { status: 405, headers: { allow: 'POST' } });
+        const response = errorResponse(new MethodNotAllowedError(['GET']), { serialize, request: req() });
+        expect(response.headers.get('allow')).toBe('POST');
+    });
+
     it('falls back to the default shape when it returns undefined', async () =>
     {
         const response = errorResponse(new NotFoundError('gone'), { serialize: () => undefined, request: req() });
@@ -180,5 +207,32 @@ describe('the serializeError hook', () =>
             }
         });
         expect(sawExpose).toBe(false);
+    });
+});
+
+describe('a serializer that returns one shared Response', () =>
+{
+    it('never carries one error\'s mandated headers onto the next', async () =>
+    {
+        // Returning a single Response for a whole class of errors is legal and idiomatic:
+        // the kernel must merge the mandate onto a copy, not into the app's object.
+        const shared = new Response(null, { status: 403 });
+        const app = new App({ serializeError: () => shared });
+        app.get('/out', () =>
+        {
+            throw new HttpError(401, 'gone', { code: 'unauthorized', headers: { 'set-cookie': 'session=; Max-Age=0' } });
+        });
+        app.get('/missing', () =>
+        {
+            throw new NotFoundError('nope');
+        });
+
+        const first = await app.handle(new Request('http://x/out'));
+        expect(first.headers.get('set-cookie')).toBe('session=; Max-Age=0');
+
+        const second = await app.handle(new Request('http://x/missing'));
+        // A different client's 404 must not clear their session.
+        expect(second.headers.get('set-cookie')).toBeNull();
+        expect(shared.headers.get('set-cookie')).toBeNull();
     });
 });

@@ -158,4 +158,18 @@ describe('register - the validation boundary', () =>
         const features = { ping: feature('/ping', (routes) => ({ run: routes.get('/', {}, () => ({ ok: true })) })) };
         expect(register(app, features)).toBe(features);
     });
+
+    it('a declared optional 200 body that is absent answers with the JSON null document', async () =>
+    {
+        const app = appWith({
+            maybe: feature('/maybe', (routes) => ({
+                read: routes.get('/', { output: object({ id: number() }).optional() }, () => undefined)
+            }))
+        });
+
+        const response = await app.handle(new Request('http://x/api/maybe'));
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toContain('application/json');
+        expect(await response.text()).toBe('null');
+    });
 });

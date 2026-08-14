@@ -34,7 +34,7 @@ import { RadixRouter, segmentsOf } from './router.ts';
 import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
 import { runInRequestRoot } from './request-root.ts';
-import { isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
+import { attachErrorPolicy, guardLayer, isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
 /**
  * THE context - the single argument every handler receives, carrying this one
@@ -132,6 +132,17 @@ function describeResult(value: unknown): string
     }
     const type = typeof value;
     return type === 'object' ? 'a plain object' : type;
+}
+
+/**
+ * @internal A handler that RESOLVES with a non-Response is the one way a failure could escape
+ * the never-throws contract: nothing threw, so the error path never ran, an observer recorded
+ * a success, and the value went back to a caller that expected a Response. An async handler
+ * missing a `return` on one branch is the common way in.
+ */
+function invalidResult(request: Request, value: unknown): HttpError
+{
+    return new HttpError(500, `Handler for ${ request.method } ${ pathnameOf(request.url) } returned ${ describeResult(value) } instead of a Response.`, { code: 'invalid-handler-result' });
 }
 
 /**
@@ -310,7 +321,9 @@ interface AppInternals
  *
  * @example
  * ```ts
- * const app = new App({ dev: process.env.NODE_ENV !== 'production' });
+ * // POSITIVE check: an unset NODE_ENV must not expose internals, so `staging` and a
+ * // forgotten variable both count as not-development.
+ * const app = new App({ dev: process.env.NODE_ENV === 'development' });
  *
  * app.get('/healthz', () => json({ ok: true }));
  * app.with(requireAuth).get('/account/me', (context) => json({ id: context.accountId }));
@@ -331,13 +344,13 @@ export class App<Ctx extends object = object>
     readonly #installed: Array<{ name: string; version?: string | undefined }>;
 
     /**
-     * Edge wrappers applied around dispatch, innermost first (see {@link wrap}). Shared with a
+     * Edge wrappers applied around dispatch, innermost first (see {@link use}). Shared with a
      * {@link with} fork by reference, so wrapping through a fork wraps the app it forked from -
      * an edge concern is per-SERVER, never per-route.
      */
     readonly #wrappers: HandlerWrapper[];
 
-    /** @internal The wrapped dispatch, rebuilt whenever {@link wrap} adds a layer. */
+    /** @internal The wrapped dispatch, rebuilt whenever {@link use} adds an edge layer. */
     #wrapped: WebHandler | null = null;
 
     /**
@@ -351,6 +364,10 @@ export class App<Ctx extends object = object>
         this.#middlewares = internals?.middlewares ?? [];
         this.#installed = internals?.installed ?? [];
         this.#wrappers = internals?.wrappers ?? [];
+        // Published so `pipeline(app, ...)` guards its layers with this app's policy: one
+        // throwing middleware must answer with one envelope and reach one observer, whichever
+        // verb composed it.
+        attachErrorPolicy(this, (error, request) => this.#errorBound(error, request));
     }
 
     /**
@@ -602,61 +619,38 @@ export class App<Ctx extends object = object>
         let response: Response;
         try
         {
-            // Edge wrappers (see `wrap`) sit OUTSIDE routing and the request root: a rate limiter
+            // Edge wrappers (see `use`) sit OUTSIDE routing and the request root: a rate limiter
             // must refuse before a route is matched, and a preflight must be answered for paths
-            // that have no route. Composed lazily and cached; `wrap` invalidates.
+            // that have no route. Composed lazily and cached; `use` invalidates.
             if (this.#wrappers.length > 0)
             {
                 // reduceRight, so the FIRST registered wrapper is outermost - the same order
                 // `pipeline(app, cors, rateLimit)` composes in. Reducing left-to-right would make
                 // the last `use` outermost, giving the framework two opposite orders for one
                 // concept and making a security header's position depend on which API applied it.
+                // Every layer is guarded, as under pipeline(): a wrapper's own throw becomes an
+                // error Response at its boundary, so the wrappers outside it still stamp the reply.
                 this.#wrapped ??= this.#wrappers.reduceRight<WebHandler>(
-                    (next, wrapper) => wrapper(next),
+                    (next, wrapper) => guardLayer(wrapper(next), this.#errorBound),
                     { handle: (inner: Request): Promise<Response> => this.#dispatchOnly(inner) }
                 );
                 response = await this.#wrapped.handle(request);
             }
-            else if (this.#options.requestRoot === false)
-            {
-                response = await this.#dispatch(request);
-            }
             else
             {
-                // One stable dispatch reference and one stable options object for the app's
-                // lifetime - the per-request closure and options allocation were pure garbage.
-                this.#rootOptions ??= {
-                    onCleanupError: ((): ((error: unknown) => void) | undefined =>
-                    {
-                        const onError = this.#options.onError;
-                        return onError !== undefined
-                            ? (error): void =>
-                            {
-                                onError(error, new HttpError(500, 'Request cleanup failed', { cause: error }));
-                            }
-                            : undefined;
-                    })()
-                };
-                response = await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
+                response = await this.#dispatchOnly(request);
             }
 
-            // A handler that RESOLVES with a non-Response is the one way a failure used to
-            // escape this contract: nothing threw, so the error path never ran, the observer
-            // recorded a success, and the value went back to a caller that expected a Response.
-            // An async handler missing a `return` on one branch is the common way in.
+            // The dispatch path enforces its own result inside #dispatchBound; a WRAPPER handing
+            // back a non-Response is the one way a bad value could still reach a caller.
             if (!(response instanceof Response))
             {
-                throw new HttpError(500, `Handler for ${ request.method } ${ pathnameOf(request.url) } returned ${ describeResult(response) } instead of a Response.`, { code: 'invalid-handler-result' });
+                throw invalidResult(request, response);
             }
         }
         catch (error)
         {
-            response = errorResponse(error, {
-                dev: this.#options.dev,
-                observe: this.#options.onError,
-                serialize: this.#options.serializeError,
-                request
-            });
+            response = this.#errorBound(error, request);
         }
         if (observer !== undefined)
         {
@@ -673,16 +667,18 @@ export class App<Ctx extends object = object>
     }
 
     /**
-     * @internal Dispatch with the request-root policy applied, but WITHOUT the observer or the
-     * error path - both belong to {@link handle}, which owns them for wrapped and unwrapped
-     * requests alike. Only the edge-wrapper chain calls this.
+     * @internal Dispatch under the request-root policy, every failure already mapped to a
+     * Response (see #dispatchBound). The completion observer stays in {@link handle}, which
+     * owns it for wrapped and unwrapped requests alike.
      */
     async #dispatchOnly(request: Request): Promise<Response>
     {
         if (this.#options.requestRoot === false)
         {
-            return await this.#dispatch(request);
+            return await this.#dispatchBound(request);
         }
+        // One stable options object for the app's lifetime - a per-request allocation here
+        // was pure garbage.
         this.#rootOptions ??= {
             onCleanupError: ((): ((error: unknown) => void) | undefined =>
             {
@@ -698,17 +694,47 @@ export class App<Ctx extends object = object>
         return await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
     }
 
-    /** @internal Stable dispatch reference: runInRequestRoot receives this one function
-     * for the app's lifetime and threads the request through as an argument. */
-    readonly #dispatchBound = (request: Request): Response | Promise<Response> => this.#dispatch(request);
+    /** @internal The one error path with this app's policy applied; one stable reference
+     * for the app's lifetime, shared by the dispatch path and the edge-layer guards. */
+    readonly #errorBound = (error: unknown, request: Request): Response =>
+        errorResponse(error, {
+            dev: this.#options.dev,
+            observe: this.#options.onError,
+            serialize: this.#options.serializeError,
+            request
+        });
 
-    /** @internal Built once on first use; see handle(). */
+    /**
+     * @internal Stable dispatch reference: runInRequestRoot receives this one function for
+     * the app's lifetime and threads the request through as an argument. Every failure maps
+     * to a Response HERE - inside the request scope, so error serialization and observers
+     * resolve request-scoped stores - and the edge chain above therefore always receives a
+     * Response to decorate, thrown errors included.
+     */
+    readonly #dispatchBound = async (request: Request): Promise<Response> =>
+    {
+        try
+        {
+            const response = await this.#dispatch(request);
+            if (!(response instanceof Response))
+            {
+                throw invalidResult(request, response);
+            }
+            return response;
+        }
+        catch (error)
+        {
+            return this.#errorBound(error, request);
+        }
+    };
+
+    /** @internal Built once on first use; see #dispatchOnly. */
     #rootOptions: { onCleanupError?: ((error: unknown) => void) | undefined } | null = null;
 
     /**
-     * @internal The throwing core `handle` wraps. Synchronous end to end when the route's
-     * handler returns a plain Response - a sync handler pays no promise machinery in the
-     * dispatch itself (handle()'s one await settles either shape).
+     * @internal The throwing core #dispatchBound wraps. Synchronous end to end when the
+     * route's handler returns a plain Response - a sync handler pays no promise machinery in
+     * the dispatch itself (the caller's one await settles either shape).
      */
     #dispatch(request: Request): Response | Promise<Response>
     {

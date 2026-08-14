@@ -26,7 +26,7 @@ import type { PendingBoundary } from '../reactivity/internal.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
 import { discardStyleFrame } from '../renderer/css.ts';
 import { discardHeadFrame } from '../renderer/head.ts';
-import { inertJson } from '../reactivity/ssr.ts';
+import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
 import { latchServerData } from '../reactivity/data-cache.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
@@ -72,6 +72,16 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
  *
  * Markers are always on, since a streamed page exists in order to hydrate.
  *
+ * THE CALLER OWNS THE MAIN PASS'S FRAMES. `css()` and `useHead()` have no document to write
+ * into here, so the main pass records them and this call returns with them still pending: the
+ * caller drains them with {@link collectStyleSheet} and `collectHead` (azerothjs/internal) into
+ * the head it builds around the stream, and must reach that drain on EVERY path out of the
+ * call - a `finally`, not a straight line - because a frame left pending is published by
+ * whichever render collects next, in an unrelated request's document. Only two frames are
+ * self-handled: a main pass that THROWS discards its own (no document will be built), and a
+ * Suspense continuation's frame is dropped where it is written, since the head has already
+ * flushed by then.
+ *
  * @param component - A thunk building the root element, as renderToString takes. Suspense
  *                    boundaries with pending resources become streamed chunks; everything
  *                    else serializes exactly as a buffered render would.
@@ -82,6 +92,7 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
  * return new Response(stream, { headers: { 'content-type': 'text/html; charset=utf-8' } });
  *
  * @see {@link renderToString} for the buffered form.
+ * @see {@link collectStyleSheet} for the style drain the caller owes this render.
  */
 export function renderToStream(
     component: () => HTMLElement | DocumentFragment,
@@ -109,15 +120,6 @@ export function renderToStream(
         {
             session.onFinalize(dispose);
             session.storeScope = getStoreScope();
-            // A continuation-time css``/useHead registers into a frame nothing will
-            // drain (the response's collect already ran); discard at finalize so it
-            // cannot leak into a LATER render's collect.
-            const scope = session.storeScope;
-            session.onFinalize(() =>
-            {
-                discardStyleFrame(scope);
-                discardHeadFrame(scope);
-            });
             const node = component() as unknown;
             mainHtml = Array.isArray(node)
                 ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
@@ -127,6 +129,19 @@ export function renderToStream(
     catch (error)
     {
         session.finalize();
+        // The response's collect will never run (the caller got a throw, not a stream), so
+        // the main pass's style/head frames are discarded here or a LATER render's collect
+        // would serve them. This is the ONLY finalize-adjacent discard of the MAIN frame:
+        // a page with no pending boundary finalizes synchronously inside the stream
+        // constructor, BEFORE the host drains the frames, and discarding there threw away
+        // every per-render css``/useHead of a settled streamed page. Continuation frames
+        // are discarded in the continuation drive itself.
+        const scope = session.storeScope;
+        if (scope !== null)
+        {
+            discardStyleFrame(scope);
+            discardHeadFrame(scope);
+        }
         throw error;
     }
 
@@ -278,7 +293,7 @@ function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string
         // Non-JSON-serializable data: omit the seeds; the client refetches after hydration.
         json = '{}';
     }
-    const attribute = nonce === undefined ? '' : ` nonce="${ nonce }"`;
+    const attribute = nonce === undefined ? '' : ` nonce="${ escapeAttr(nonce) }"`;
     return `<template data-azs="${ boundary.id }">${ children }</template>`
         + `<script type="application/json" data-azs-seed="${ boundary.id }">${ json }</script>`
         + `<script${ attribute }>__AZS(${ boundary.id });document.currentScript.remove()</script>`;

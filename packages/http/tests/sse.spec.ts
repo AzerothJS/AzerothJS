@@ -216,6 +216,57 @@ describe('a client that is already gone', () =>
     });
 });
 
+describe('client disconnect settles the response stream', () =>
+{
+    it('an aborted request signal ends the body instead of parking the reader forever', async () =>
+    {
+        // The adapter waits on reader.read() for the next event; a disconnect that only
+        // tore the producer down would leave that read pending for the process lifetime,
+        // retaining the response, the stream, and the socket - per reconnect.
+        const client = new AbortController();
+        const app = new App();
+        app.get('/live', ({ request: incoming }) => sse(incoming, (connection) =>
+        {
+            connection.send('tick');
+        }, { heartbeatMs: 0 }));
+
+        const response = await app.handle(new Request('http://local/live', { signal: client.signal }));
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        await reader.read(); // the stream is live
+
+        client.abort();
+        const settled = await Promise.race([
+            reader.read().then(({ done }) => (done ? 'done' : 'chunk')),
+            new Promise<string>((resolve) => setTimeout(() => resolve('parked'), 500))
+        ]);
+        expect(settled).toBe('done');
+    });
+
+    it('CONTROL: a normal close() settles the same reader the same way', async () =>
+    {
+        // Proves the harness can observe an end at all - a rig that never sees `done`
+        // would pass the abort case for the wrong reason.
+        const app = new App();
+        app.get('/live', ({ request: incoming }) => sse(incoming, (connection) =>
+        {
+            connection.send('tick');
+            connection.close();
+        }, { heartbeatMs: 0 }));
+
+        const response = await app.handle(new Request('http://local/live'));
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        const deadline = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('parked')), 500));
+        for (;;)
+        {
+            const { done } = await Promise.race([reader.read(), deadline]);
+            if (done)
+            {
+                break;
+            }
+        }
+    });
+});
+
 describe('the fullstack loop: the stream keyword runtime consumes sse()', () =>
 {
     it('createStream({ parse: "sse" }) accumulates this server\'s events and terminates on [DONE]', async () =>

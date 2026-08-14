@@ -192,9 +192,9 @@ Every package ships from this repository and is versioned in lockstep under the 
 
 ## Status
 
-AzerothJS is in beta. The published version is `2.1.0-beta.1`: the API surface is settled and the
-full suite runs green on every commit, but the release contract in [VERSIONING.md](VERSIONING.md)
-does not freeze until 2.1.0 proper.
+AzerothJS is in beta - the npm badge above carries the published version. The API surface is
+settled and the full suite runs green on every commit, but the release contract in
+[VERSIONING.md](VERSIONING.md) does not freeze until 2.1.0 proper.
 
 Until the documentation site is published, each package README is the reference for that package.
 

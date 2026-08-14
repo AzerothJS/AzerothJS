@@ -5,7 +5,7 @@
 // cannot read the cookie - which a cross-site attacker, by definition, cannot.
 import { describe, expect, it } from 'vitest';
 
-import { App, csrfCookie, csrfProtect, csrfToken, json, pipeline } from '@azerothjs/http';
+import { App, csrfCookie, csrfProtect, csrfToken, json, noContent, pipeline, text } from '@azerothjs/http';
 
 const TOKEN = csrfToken();
 
@@ -79,6 +79,22 @@ describe('csrfCookie', () =>
         expect(cookies.some((value) => value.startsWith('other=1'))).toBe(true);
         expect(cookies.some((value) => value.startsWith('azcsrf='))).toBe(true);
     });
+
+    it('mints on bodyless statuses - Set-Cookie is legal on a 204 and a 304', async () =>
+    {
+        const app = new App();
+        app.get('/none', () => noContent());
+        app.get('/cached', () => text('', { status: 304 }));
+        const handler = pipeline(app, csrfCookie({ secure: false }));
+
+        const none = await handler.handle(new Request('http://local/none'));
+        expect(none.status).toBe(204);
+        expect(none.headers.getSetCookie().some((value) => value.startsWith('azcsrf='))).toBe(true);
+
+        const cached = await handler.handle(new Request('http://local/cached'));
+        expect(cached.status).toBe(304);
+        expect(cached.headers.getSetCookie().some((value) => value.startsWith('azcsrf='))).toBe(true);
+    });
 });
 
 describe('csrfProtect', () =>
@@ -135,5 +151,30 @@ describe('csrfProtect', () =>
         const allowing = protectedApp({ secure: false, allowedOrigins: ['http://trusted.example'] });
         expect((await post(allowing, { ...pair, origin: 'http://trusted.example' })).status).toBe(200);
         expect((await post(allowing, { ...pair, origin: 'http://evil.example' })).status).toBe(403);
+    });
+
+    it('a scheme-only mismatch with a forwarded proto names trustProxy; other rejections stay terse', async () =>
+    {
+        const app = protectedApp();
+
+        // Same host, https Origin, http URL, x-forwarded-proto present: a TLS terminator in
+        // front of a serve() without trustProxy. Still a 403, but the message names the fix.
+        const proxied = await post(app, { ...pair, origin: 'https://local', 'x-forwarded-proto': 'https' });
+        expect(proxied.status).toBe(403);
+        const proxiedBody = await proxied.json() as { error: { code: string; message: string } };
+        expect(proxiedBody.error.code).toBe('csrf');
+        expect(proxiedBody.error.message).toContain('trustProxy');
+
+        // A genuinely foreign origin gets no hint even with the forwarded header along.
+        const hostile = await post(app, { ...pair, origin: 'https://evil.example', 'x-forwarded-proto': 'https' });
+        expect(hostile.status).toBe(403);
+        const hostileBody = await hostile.json() as { error: { message: string } };
+        expect(hostileBody.error.message).not.toContain('trustProxy');
+
+        // Without proxy evidence the same scheme mismatch stays terse too.
+        const bare = await post(app, { ...pair, origin: 'https://local' });
+        expect(bare.status).toBe(403);
+        const bareBody = await bare.json() as { error: { message: string } };
+        expect(bareBody.error.message).not.toContain('trustProxy');
     });
 });

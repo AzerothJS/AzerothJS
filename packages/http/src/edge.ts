@@ -27,6 +27,24 @@ export interface WebHandler
 {
     handle(request: Request): Promise<Response>;
 }
+
+/**
+ * Error policies handlers have published for composition to borrow, keyed weakly so a
+ * registration never outlives its app.
+ *
+ * Without this seam the same throwing middleware answers differently depending on which
+ * verb composed it: `app.use` maps through the app's serializer and observer, while
+ * `pipeline` would fall back to the default envelope and report nothing.
+ *
+ * @internal
+ */
+const errorPolicies = new WeakMap<WebHandler, (error: unknown, request: Request) => Response>();
+
+/** @internal Publishes a handler's own error policy for {@link pipeline} to reuse. */
+export function attachErrorPolicy(handler: WebHandler, policy: (error: unknown, request: Request) => Response): void
+{
+    errorPolicies.set(handler, policy);
+}
 import { PayloadResponse } from './payload.ts';
 import { errorResponse } from './errors.ts';
 
@@ -82,40 +100,55 @@ export function isEdge(value: unknown): value is EdgeMiddleware
 }
 
 /**
+ * @internal Guards one composed edge layer: a throw from it (or from anything inside it)
+ * becomes an error Response at that boundary, so the layers OUTSIDE it still receive a
+ * Response to decorate - a CORS or request-id stamp must land on error replies too.
+ * `toResponse` supplies the error policy of whoever owns the chain.
+ */
+export function guardLayer(layer: WebHandler, toResponse: (error: unknown, request: Request) => Response): WebHandler
+{
+    return {
+        handle: async (request: Request): Promise<Response> =>
+        {
+            try
+            {
+                return await layer.handle(request);
+            }
+            catch (error)
+            {
+                return toResponse(error, request);
+            }
+        }
+    };
+}
+
+/**
  * Composes edge middleware around an app, FIRST argument outermost: `pipeline(app, cors, rl)`
  * runs cors, then rate limiting, then the app, and unwinds responses back out through each.
  * The result is a `WebHandler` - hand it to `serve()`, or call `.handle()` in a test.
  */
 export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebHandler
 {
+    // Each layer is guarded as it is composed: a throwing middleware yields an error Response
+    // at its own boundary, so the layers outside it still decorate the reply, and the
+    // outermost guard keeps the kernel's contract - never throws, never rejects - or the
+    // adapter has nothing to write and the rejection escapes to the process. Middleware run
+    // OUTSIDE App.handle's error path, so a throwing origin predicate, a rate-limit store that
+    // rejects, or any user middleware would otherwise be a one-request process kill.
+    // The target's own policy when it has published one, so a middleware throw takes the SAME
+    // envelope and reaches the SAME observer it would under app.use.
+    const toResponse = errorPolicies.get(app)
+        ?? ((error: unknown, request: Request): Response => errorResponse(error, { request }));
     let handler = app;
     for (let i = middleware.length - 1; i >= 0; i--)
     {
         const wrap = middleware[i];
         if (wrap !== undefined)
         {
-            handler = wrap(handler);
+            handler = guardLayer(wrap(handler), toResponse);
         }
     }
-
-    // The composed handler must keep the kernel's contract - never throws, never rejects - or the
-    // adapter has nothing to write and the rejection escapes to the process. Middleware run
-    // OUTSIDE App.handle's error path, so a throwing origin predicate, a rate-limit store that
-    // rejects, or any user middleware would otherwise be a one-request process kill.
-    const composed = handler;
-    return {
-        handle: async (request: Request): Promise<Response> =>
-        {
-            try
-            {
-                return await composed.handle(request);
-            }
-            catch (error)
-            {
-                return errorResponse(error, { request });
-            }
-        }
-    };
+    return handler === app ? guardLayer(app, toResponse) : handler;
 }
 
 /**
@@ -232,10 +265,12 @@ export interface RequestIdOptions
     generate?: () => string;
 
     /**
-     * Honor a well-formed inbound id instead of always minting (default true). A proxy or an
-     * upstream service that already assigned an id keeps it, so one id spans the whole hop.
-     * Malformed ids (control chars, over-long) are never trusted - they are a header-injection
-     * vector - and a fresh one is minted instead.
+     * Honor a well-formed inbound id instead of always minting (default false: inbound
+     * correlation data is client-forgeable, and it is trusted only where the deployment says
+     * a proxy or upstream service already assigned it - the same default the framework
+     * applies to every other proxy-supplied header). When on, a well-formed inbound id is
+     * kept so one id spans the whole hop; malformed ids (control chars, over-long) are never
+     * trusted - they are a header-injection vector - and a fresh one is minted instead.
      */
     trustInbound?: boolean;
 }
@@ -244,15 +279,16 @@ export interface RequestIdOptions
 const VALID_ID = /^[\x21-\x7e]{1,200}$/;
 
 /**
- * Assigns every request a correlation id: honor a well-formed inbound one or mint a UUID,
- * expose it on the request (see {@link requestIdOf}) for handlers and the logger, and echo it
- * on the response so a client and its logs share one id across the whole call.
+ * Assigns every request a correlation id: mint a UUID (or honor a well-formed inbound one
+ * when `trustInbound` says the deployment has a proxy assigning them), expose it on the
+ * request (see {@link requestIdOf}) for handlers and the logger, and echo it on the response
+ * so a client and its logs share one id across the whole call.
  */
 export function requestId(options: RequestIdOptions = {}): EdgeMiddleware
 {
     const header = (options.header ?? 'x-request-id').toLowerCase();
     const generate = options.generate ?? ((): string => crypto.randomUUID());
-    const trustInbound = options.trustInbound ?? true;
+    const trustInbound = options.trustInbound ?? false;
 
     return edge((next) => ({
         async handle(request: Request): Promise<Response>

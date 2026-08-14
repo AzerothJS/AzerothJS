@@ -171,26 +171,14 @@ function register(raw: string, perRender: boolean): Record<string, string>
 }
 
 /**
- * The CSS for the render that just finished: every app-static scope plus the scopes
- * {@link css} recorded during that render, deduped and joined. Call it on the server
- * immediately after rendering the body, to build the document head's `<style>`.
- *
- * The render frame is DRAINED. Those scopes belong to one response, so a later collect never
- * re-serves them.
- *
- * @returns The concatenated CSS, empty when nothing was registered.
- * @example
- * const head = `<style data-azeroth-css>${ collectStyleSheet() }</style>`;
- *
- * @see {@link css}
- */
-/**
- * Discards the per-render frame if `owner` still holds it. The streaming session calls
- * this at finalize: a css`` evaluated inside a Suspense CONTINUATION registers into a
- * fresh frame AFTER the response's one collectStyleSheet() drain, and that orphan frame
- * would otherwise be served to whichever LATER render collects next - one response's
- * rules inside another response's document. Late rules cannot reach the already-flushed
- * head, so the honest behavior is a deterministic drop with a DEV diagnostic.
+ * Discards the per-render frame if `owner` still holds it. The streaming render calls this
+ * after each Suspense CONTINUATION, and when the main pass throws: a css`` evaluated in a
+ * continuation registers into a fresh frame AFTER the response's one collectStyleSheet()
+ * drain, and that orphan frame would otherwise be served to whichever LATER render collects
+ * next - one response's rules inside another response's document. Late rules cannot reach
+ * the already-flushed head, so the honest behavior is a deterministic drop with a DEV
+ * diagnostic. Never called between a main pass and its collect - the main frame belongs to
+ * the host's drain.
  *
  * @internal
  */
@@ -210,6 +198,20 @@ export function discardStyleFrame(owner: object): void
     frameOwner = null;
 }
 
+/**
+ * The CSS for the render that just finished: every app-static scope plus the scopes
+ * {@link css} recorded during that render, deduped and joined. Call it on the server
+ * immediately after rendering the body, to build the document head's `<style>`.
+ *
+ * The render frame is DRAINED. Those scopes belong to one response, so a later collect never
+ * re-serves them.
+ *
+ * @returns The concatenated CSS, empty when nothing was registered.
+ * @example
+ * const head = `<style data-azeroth-css>${ collectStyleSheet() }</style>`;
+ *
+ * @see {@link css}
+ */
 export function collectStyleSheet(): string
 {
     const frame = frameCss;

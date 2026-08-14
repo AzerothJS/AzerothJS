@@ -90,8 +90,8 @@ export interface RefineOptions
 }
 
 /**
- * The discriminated result of a non-throwing parse. `truncated` is present when the parse
- * reached the issue ceiling, so failures past it were never collected.
+ * The discriminated result of a non-throwing parse. `truncated` is present when the issue
+ * ceiling cut collection short, so failures past it were never collected.
  */
 export type ParseResult<T> =
     | { ok: true; value: T }
@@ -136,7 +136,7 @@ export class SchemaError extends Error
 
     public readonly issues: Issue[];
 
-    /** True when the parse reached the issue ceiling, so further failures were never collected. */
+    /** True when the issue ceiling cut collection short, so further failures were never collected. */
     public readonly truncated: boolean;
 
     constructor(fields: FieldErrors, issues?: Issue[], truncated = false)
@@ -409,8 +409,9 @@ function base<T>(run: (value: unknown, path: string, collector: Collector) => T 
 
 /**
  * @internal True once the collector takes nothing further: first-error mode has its issue, or
- * the ceiling is reached - and then the result is marked truncated, because input that would
- * have failed is no longer being described.
+ * the ceiling is reached. The ceiling branch marks the result truncated, so a caller probes
+ * only when something is actually pending - an issue to record, a child not yet validated -
+ * never after the final one, where nothing was dropped.
  */
 function stopCollecting(collector: Collector): boolean
 {
@@ -513,10 +514,13 @@ export interface StringOptions extends RuleOverrides
     /** Maximum length. */
     max?: number;
 
-    /** A pattern the (normalized) value must match. */
+    /**
+     * A pattern the (normalized) value must match; a /g or /y flag's lastIndex never carries
+     * between parses. Anything but a RegExp throws when the schema is built.
+     */
     pattern?: RegExp;
 
-    /** A named format; email matches azerothjs's email() rule exactly. */
+    /** A named format; email matches azerothjs's email() rule exactly. An unknown name throws when the schema is built. */
     format?: 'email' | 'url' | 'uuid' | 'datetime';
 }
 
@@ -526,6 +530,25 @@ export interface StringOptions extends RuleOverrides
  */
 export function string(options: StringOptions = {}): Schema<string>
 {
+    // Both option guards run at the DEFINITION site, before any input is seen, because each
+    // bad value would otherwise make the constraint silently accept everything: a non-RegExp
+    // pattern reads undefined source/flags and clones to /(?:)/, and an unknown format name
+    // finds no rule to run. A validator that fails open is worse than one never written.
+    // The brand test, not instanceof: a RegExp from another realm is still a RegExp.
+    if (options.pattern !== undefined && Object.prototype.toString.call(options.pattern) !== '[object RegExp]')
+    {
+        throw new TypeError(`string() expects a RegExp for 'pattern' - string({ pattern: /^[a-z]+$/ }) - received ${ typeof options.pattern }. A non-RegExp pattern would match every input.`);
+    }
+    // An OWN-key test: `format: 'toString'` otherwise finds an Object.prototype member and
+    // calls it as the rule.
+    if (options.format !== undefined && !Object.prototype.hasOwnProperty.call(FORMATS, options.format))
+    {
+        throw new TypeError(`string() received an unknown format ${ JSON.stringify(options.format) }. Known formats: ${ Object.keys(FORMATS).join(', ') }.`);
+    }
+    // Matching runs against a private clone with lastIndex reset per parse: a caller's /g or
+    // /y RegExp carries match state between calls, making the same input alternate pass/fail.
+    // meta.constraints keeps the caller's instance, so introspection reads its source/flags.
+    const pattern = options.pattern === undefined ? undefined : new RegExp(options.pattern.source, options.pattern.flags);
     return base((value, path, collector) =>
     {
         if (isMissing(value))
@@ -557,9 +580,13 @@ export function string(options: StringOptions = {}): Schema<string>
         {
             return reject(collector, path, options, 'max', `Must be at most ${ options.max } characters`);
         }
-        if (options.pattern !== undefined && !options.pattern.test(out))
+        if (pattern !== undefined)
         {
-            return reject(collector, path, options, 'pattern', 'Invalid format');
+            pattern.lastIndex = 0;
+            if (!pattern.test(out))
+            {
+                return reject(collector, path, options, 'pattern', 'Invalid format');
+            }
         }
         if (options.format !== undefined)
         {
@@ -672,10 +699,10 @@ export function boolean(options: BooleanOptions = {}): Schema<boolean>
  */
 export interface DateOptions extends RuleOverrides
 {
-    /** Earliest accepted instant (inclusive). */
+    /** Earliest accepted instant (inclusive); anything but a valid Date throws when the schema is built. */
     min?: Date;
 
-    /** Latest accepted instant (inclusive). */
+    /** Latest accepted instant (inclusive); anything but a valid Date throws when the schema is built. */
     max?: Date;
 }
 
@@ -688,6 +715,22 @@ export interface DateOptions extends RuleOverrides
  */
 export function date(options: DateOptions = {}): Schema<Date>
 {
+    // Checked at the DEFINITION site, as in string(): a bound that names no instant compares
+    // false against every value, so the constraint would silently stop constraining - and an
+    // Invalid Date is the ordinary result of `new Date(someMissingConfigValue)`.
+    // The brand test, not instanceof: a Date from another realm is still a Date.
+    for (const bound of ['min', 'max'] as const)
+    {
+        const limit = options[bound];
+        if (limit === undefined)
+        {
+            continue;
+        }
+        if (Object.prototype.toString.call(limit) !== '[object Date]' || Number.isNaN(limit.getTime()))
+        {
+            throw new TypeError(`date() expects a valid Date for '${ bound }' - date({ ${ bound }: new Date('2026-01-01T00:00:00Z') }) - received ${ Object.prototype.toString.call(limit) === '[object Date]' ? 'an Invalid Date' : typeof limit }. A bound that names no instant would accept every value.`);
+        }
+    }
     return base((value, path, collector) =>
     {
         if (isMissing(value))
@@ -795,13 +838,14 @@ export function array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[
         const out: (T | undefined)[] = [];
         for (let index = 0; index < value.length; index++)
         {
-            out.push(item.run(value[index], path === '' ? String(index) : `${ path }.${ index }`, collector));
-            // An exhausted collector cannot describe the rest of the array, and the parse has
-            // already failed - walking the remaining elements only burns the event loop.
+            // Probed BEFORE each element, so a ceiling met exactly at the last one stays
+            // untruncated: an exhausted collector cannot describe the rest of the array, and
+            // the parse has already failed - walking the remainder only burns the event loop.
             if (stopCollecting(collector))
             {
                 break;
             }
+            out.push(item.run(value[index], path === '' ? String(index) : `${ path }.${ index }`, collector));
         }
         return collector.issues.length > before ? undefined : out as T[];
     }, { kind: 'array', item: item, constraints: options });
@@ -849,6 +893,12 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
         const before = collector.issues.length;
         for (const [key, fieldSchema] of Object.entries(shape))
         {
+            // Probed before each field (see array()): a ceiling met at the last field drops
+            // nothing and stays untruncated.
+            if (stopCollecting(collector))
+            {
+                break;
+            }
             const fieldPath = path === '' ? key : `${ path }.${ key }`;
             // An OWN-property read, never `record[key]`: a plain member read walks the
             // prototype chain, so a `role`/`isAdmin` polluted onto Object.prototype anywhere
@@ -864,16 +914,21 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
             {
                 out[key] = parsed;
             }
-            if (stopCollecting(collector))
-            {
-                break;
-            }
         }
         return collector.issues.length > before ? undefined : out as ShapeType<Shape>;
     }, { kind: 'object', shape: shape });
 }
 
-/** A dictionary of arbitrary string keys to `value`-schema values; `__proto__` is stripped. */
+/**
+ * A dictionary of arbitrary string keys to `value`-schema values. `__proto__` is stripped, and
+ * the parsed record has a NULL prototype - a key can never shadow an Object.prototype member.
+ *
+ * That null prototype is visible to consumers: the parsed record inherits NO instance methods,
+ * so `parsed.hasOwnProperty(k)`, `parsed.toString()`, and `String(parsed)` throw rather than
+ * answer. Own-key reads, `Object.keys`/`entries`, spreads, and `JSON.stringify` all work as
+ * usual; where a prototype method is wanted, call it statically -
+ * `Object.prototype.hasOwnProperty.call(parsed, k)` - or copy into `{ ...parsed }`.
+ */
 export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<Record<string, T>>
 {
     return base((input, path, collector) =>
@@ -886,10 +941,20 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
         {
             return reject(collector, path, overrides, 'type', 'Expected an object');
         }
-        const out: Record<string, T> = {};
+        // A null prototype plus defineProperty, the error map's idiom: the keys are
+        // ATTACKER-controlled, so on a plain object `__proto__` would hit the prototype
+        // setter and a key like `toString` would shadow Object.prototype with validated
+        // DATA, handed to whatever later coerces or introspects the parsed record.
+        const out: Record<string, T> = Object.create(null) as Record<string, T>;
         const before = collector.issues.length;
         for (const [key, element] of Object.entries(input as Record<string, unknown>))
         {
+            // Probed before each key (see array()): a ceiling met at the last key drops
+            // nothing and stays untruncated.
+            if (stopCollecting(collector))
+            {
+                break;
+            }
             // `__proto__` is dropped like an unknown key in object(): JSON.parse creates it as
             // an OWN property, so preserving it would hand the handler a pollution primitive -
             // `Object.assign(target, validatedBody)` then gives the target an attacker-chosen
@@ -901,14 +966,7 @@ export function record<T>(value: Schema<T>, overrides?: RuleOverrides): Schema<R
             const parsed = value.run(element, path === '' ? key : `${ path }.${ key }`, collector);
             if (parsed !== undefined)
             {
-                // defineProperty, not `out[key] = parsed`: the keys are ATTACKER-controlled, and a
-                // plain assignment to `__proto__` invokes the prototype setter (poisoning the parsed
-                // object with attacker-supplied inherited properties) instead of adding an own key.
                 Object.defineProperty(out, key, { value: parsed, enumerable: true, writable: true, configurable: true });
-            }
-            if (stopCollecting(collector))
-            {
-                break;
             }
         }
         return collector.issues.length > before ? undefined : out;

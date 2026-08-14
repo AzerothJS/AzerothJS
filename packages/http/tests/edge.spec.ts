@@ -6,8 +6,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
-    App, pipeline, requestId, requestIdOf, securityHeaders, cors, clientIp,
-    rateLimit, MemoryRateStore, text, type WebHandler, type RateStore
+    App, UnauthorizedError, pipeline, edge, requestId, requestIdOf, securityHeaders, cors, clientIp,
+    rateLimit, MemoryRateStore, text, json, type WebHandler, type RateStore
 } from '@azerothjs/http';
 import { ipBucket } from '../src/client-ip.ts';
 
@@ -40,11 +40,24 @@ describe('requestId', () =>
         expect(seen).toBe(echoed); // the handler saw the same id that came back on the wire
     });
 
-    it('honors a well-formed inbound id but mints a fresh one for a malformed header', async () =>
+    it('mints a fresh id by default even when a well-formed inbound id exists', async () =>
     {
+        // Inbound correlation data is client-forgeable; like forwarded-for and
+        // forwarded-proto, it is honored only where the deployment opts in.
         const app = new App();
         app.get('/', () => text('ok'));
         const handler = pipeline(app, requestId());
+
+        const response = await handler.handle(new Request('http://local/', { headers: { 'x-request-id': 'trace-abc-123' } }));
+        expect(response.headers.get('x-request-id')).not.toBe('trace-abc-123');
+        expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('with trustInbound, honors a well-formed inbound id but mints for a malformed header', async () =>
+    {
+        const app = new App();
+        app.get('/', () => text('ok'));
+        const handler = pipeline(app, requestId({ trustInbound: true }));
 
         const honored = await handler.handle(new Request('http://local/', { headers: { 'x-request-id': 'trace-abc-123' } }));
         expect(honored.headers.get('x-request-id')).toBe('trace-abc-123');
@@ -448,5 +461,59 @@ describe('pipeline', () =>
         expect(response.headers.get('x-request-id')).not.toBeNull();
         expect(response.headers.get('x-content-type-options')).toBe('nosniff');
         expect(await response.text()).toBe('ok');
+    });
+
+    it('a throw inside an edge layer still flows through the layers outside it', async () =>
+    {
+        // One outer catch alone would answer a 401 with no CORS headers, which a browser
+        // reports as an opaque network failure instead of the real status.
+        const app = new App();
+        app.get('/x', () => text('ok'));
+        const throwing = edge(() => ({
+            handle: (): Promise<Response> =>
+            {
+                throw new UnauthorizedError('no token');
+            }
+        }));
+        const handler = pipeline(app, cors({ origin: ['https://app.example'] }), throwing);
+
+        const response = await handler.handle(new Request('http://local/x', { headers: { origin: 'https://app.example' } }));
+        expect(response.status).toBe(401);
+        expect(response.headers.get('access-control-allow-origin')).toBe('https://app.example');
+    });
+});
+
+describe('pipeline and use share one error policy', () =>
+{
+    it('a middleware throw takes the app\'s envelope and reaches its observer either way', async () =>
+    {
+        const seen: unknown[] = [];
+        const make = (): App =>
+        {
+            const app = new App({
+                onError: (error) => seen.push(error),
+                serializeError: () => ({ myEnvelope: true })
+            });
+            app.get('/', () => json({ ok: true }));
+            return app;
+        };
+        const throwing = edge(() => ({
+            handle: (): Promise<Response> =>
+            {
+                throw new UnauthorizedError('nope');
+            }
+        }));
+
+        const composed = pipeline(make(), throwing);
+        const viaPipeline = await composed.handle(new Request('http://x/'));
+        expect(await viaPipeline.json()).toEqual({ myEnvelope: true });
+
+        const used = make();
+        used.use(throwing);
+        const viaUse = await used.handle(new Request('http://x/'));
+        expect(await viaUse.json()).toEqual({ myEnvelope: true });
+
+        // One throwing middleware, one envelope, one observation - whichever verb composed it.
+        expect(seen).toHaveLength(2);
     });
 });

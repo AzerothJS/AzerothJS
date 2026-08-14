@@ -30,6 +30,8 @@ import {
     createMemo,
     createEffect,
     createResource,
+    createRoot,
+    getOwner,
     isStringMode,
     onRootDispose,
     untrack
@@ -603,6 +605,27 @@ function freshKey(): string
  * @see {@link Link} and {@link Routes}, which read the router this returns.
  */
 export function createRouter(config: RouterConfig): Router
+{
+    // A router built OUTSIDE any ownership scope (module scope, an app-lifetime
+    // singleton - a documented shell shape) gets its own root, exactly as createStore
+    // gives its factory one: the internal effects need an owner to register against,
+    // and an app-lifetime router's disposer is deliberately dropped because the state
+    // is meant to outlive every mount. Under an ambient owner nothing changes - a
+    // component-scoped router still disposes with its component.
+    if (getOwner() === null)
+    {
+        let built!: Router;
+        createRoot(() =>
+        {
+            built = buildRouter(config);
+        });
+        return built;
+    }
+    return buildRouter(config);
+}
+
+/** @internal The construction body; runs under whichever owner createRouter resolved. */
+function buildRouter(config: RouterConfig): Router
 {
     validateRouteTree(config.routes);
     const leaves = flattenRoutes(config.routes);

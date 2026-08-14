@@ -566,11 +566,13 @@ export interface OpenApiPluginOptions extends ToOpenApiOptions
     docs?: string | false;
 
     /**
-     * Register both routes even in production. Off by default: the document enumerates
+     * Register both routes outside development. Off by default: the document enumerates
      * every contracted route's shape and constraints, and the docs page carries a try-it
      * panel a developer pastes a real token into - so an app that wants that surface on
      * the public internet says so in one word, and an app that forgets leaks nothing.
-     * Without it, `NODE_ENV=production` installs the plugin as a no-op.
+     * The environment check is POSITIVE: without this, the routes register only when
+     * `NODE_ENV` is exactly `development` - unset, `staging`, and `Production` all
+     * count as not-development.
      */
     public?: boolean;
 
@@ -591,8 +593,8 @@ export interface OpenApiPluginOptions extends ToOpenApiOptions
  * explorer page beside it. An ordinary plugin: two GET routes, nothing else. External
  * viewers (Scalar, Redoc, Swagger UI) read the document route directly.
  *
- * Both routes are development surfaces: under `NODE_ENV=production` the plugin registers
- * nothing unless `public: true` says otherwise.
+ * Both routes are development surfaces: unless `public: true` says otherwise, the plugin
+ * registers nothing except under exactly `NODE_ENV=development`.
  */
 export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
 {
@@ -600,7 +602,10 @@ export function openapiPlugin(options: OpenApiPluginOptions): AzerothPlugin
         name: 'azerothjs-openapi',
         install(app: App): App
         {
-            if (options.public !== true && nodeEnv() === 'production')
+            // Positive check, matching the rest of the framework's dev gates: an unset
+            // variable has to mean "not development", and so do 'staging', 'Production',
+            // and a runtime with no process at all.
+            if (options.public !== true && nodeEnv() !== 'development')
             {
                 return app;
             }

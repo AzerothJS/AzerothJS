@@ -19,7 +19,8 @@
  *
  * Local sources resolve under `root` with the same two-step containment static file
  * serving uses (logical prefix + realpath); remote sources need an exact-origin
- * allowlist and are fetched with a byte cap and timeout.
+ * allowlist, must declare an image content type, and are fetched with a byte cap
+ * and timeout.
  */
 
 import { createHash } from 'node:crypto';
@@ -140,6 +141,9 @@ const CONTENT_TYPES: Record<string, string> = {
     svg: 'image/svg+xml',
     ico: 'image/x-icon'
 };
+
+/** @internal Content types the endpoint serves. Remote bytes declaring anything else are refused. */
+const IMAGE_TYPES: ReadonlySet<string> = new Set(Object.values(CONTENT_TYPES));
 
 /** @internal A dot-leading segment anywhere in the path (the static-serving policy). */
 function hasDotSegment(path: string): boolean
@@ -346,6 +350,16 @@ export function imageHandler(options: ImageHandlerOptions): Handler
             throw new BadRequestError(`Remote image answered ${ response.status }.`, { code: 'image-upstream' });
         }
 
+        // The allowlist says where the bytes come from, not what they are. An allowlisted
+        // bucket that also hosts user uploads can answer text/html, and relaying that under
+        // this origin with a year of cache is stored XSS - only declared image types are
+        // read at all.
+        const declaredType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
+        if (declaredType === undefined || !IMAGE_TYPES.has(declaredType))
+        {
+            throw new HttpError(415, 'Remote source did not declare an image content type.', { code: 'image-content-type' });
+        }
+
         // A declared length over the cap is refused before a single byte is read.
         const declared = Number(response.headers.get('content-length'));
         if (Number.isFinite(declared) && declared > maxSourceBytes)
@@ -357,7 +371,7 @@ export function imageHandler(options: ImageHandlerOptions): Handler
         return {
             bytes,
             hash: createHash('sha256').update(bytes).digest('hex'),
-            contentType: response.headers.get('content-type') ?? 'application/octet-stream'
+            contentType: declaredType
         };
     }
 
@@ -402,13 +416,25 @@ export function imageHandler(options: ImageHandlerOptions): Handler
         const key = `v1:${ original.hash }:${ width ?? '' }:${ quality }:${ format ?? '' }`;
         const respond = (entry: ImageCacheEntry, verdict: 'hit' | 'miss' | 'passthrough' | 'fallback'): Response =>
         {
-            const etag = `"${ key.slice(3, 35) }"`;
+            // The tag covers the FULL variant key - variants of one source must never share
+            // one, or a deduplicating cache cross-serves them. Fallback bytes are the original,
+            // not the variant, so that arm tags apart too; otherwise a recovered adapter would
+            // answer 304 to a client still holding fallback bytes.
+            const etag = `"${ createHash('sha256').update(verdict === 'fallback' ? `${ key }:fallback` : key).digest('hex').slice(0, 32) }"`;
             const headers: Record<string, string> = {
                 'content-type': entry.contentType,
                 'cache-control': verdict === 'fallback' ? 'public, max-age=0, must-revalidate' : cacheControl,
+                'x-content-type-options': 'nosniff',
+                'content-disposition': 'inline',
                 'x-azeroth-image': verdict,
                 etag
             };
+            // SVG runs script when navigated to directly; the sandbox keeps it an image
+            // without touching <img> embedding, which never scripts anyway.
+            if (entry.contentType === 'image/svg+xml')
+            {
+                headers['content-security-policy'] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+            }
             if (options.adapter !== undefined)
             {
                 headers['vary'] = 'accept';

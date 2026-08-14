@@ -20,6 +20,8 @@
  * function, so the code browsers run is the code under test.
  */
 
+import { escapeAttr } from '../reactivity/ssr.ts';
+
 /** @internal The window shape the runtime installs onto. */
 interface AzsWindow
 {
@@ -136,6 +138,6 @@ export function azsRuntime(): void
  */
 export function streamRuntimeScript(nonce?: string): string
 {
-    const attribute = nonce === undefined ? '' : ` nonce="${ nonce }"`;
+    const attribute = nonce === undefined ? '' : ` nonce="${ escapeAttr(nonce) }"`;
     return `<script${ attribute }>(${ azsRuntime.toString() })();document.currentScript.remove()</script>`;
 }

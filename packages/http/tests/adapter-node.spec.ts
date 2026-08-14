@@ -249,6 +249,60 @@ describe('the same app over cleartext HTTP/2', () =>
             await served.shutdown({ gracePeriodMs: 500 });
         }
     });
+
+    it('h2c sessions carry the socket timeout policy, tunable like serve()', async () =>
+    {
+        const app = new App();
+        app.get('/x', () => noContent());
+
+        const defaulted = await serveH2c(app);
+        try
+        {
+            expect((defaulted.server as unknown as { timeout: number }).timeout).toBe(300_000);
+        }
+        finally
+        {
+            await defaulted.shutdown({ gracePeriodMs: 500 });
+        }
+
+        const tuned = await serveH2c(app, { timeouts: { requestMs: 1234 } });
+        try
+        {
+            expect((tuned.server as unknown as { timeout: number }).timeout).toBe(1234);
+        }
+        finally
+        {
+            await tuned.shutdown({ gracePeriodMs: 500 });
+        }
+    });
+});
+
+describe('post-listen server errors', () =>
+{
+    it('server errors after listen neither crash the process nor stop service', async () =>
+    {
+        const app = new App();
+        app.get('/ping', () => text('ok'));
+        const served = await serve(app);
+        try
+        {
+            // Accept-time failures (fd pressure) surface as 'error' on the listening server.
+            // With no handler the first would be swallowed by the settled listen promise and
+            // the second would throw ERR_UNHANDLED_ERROR out of emit and kill the process.
+            expect(() =>
+            {
+                served.server.emit('error', new Error('accept failed'));
+                served.server.emit('error', new Error('accept failed again'));
+            }).not.toThrow();
+
+            const response = await fetch(`http://127.0.0.1:${ served.port }/ping`);
+            expect(await response.text()).toBe('ok');
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 500 });
+        }
+    });
 });
 
 describe('the connect `before` seam (dev tooling ahead of the app)', () =>
@@ -351,17 +405,47 @@ describe('trusted-proxy scheme and host (X-Forwarded-Proto / X-Forwarded-Host)',
         }
     });
 
-    it('the FIRST entry of a comma-joined chain wins (each proxy appends); ports survive', async () =>
+    it('the RIGHT-most entry of a comma-joined chain wins - the left end is client-prepended fiction; ports survive', async () =>
     {
         const served = await serve(echoUrlApp(), { trustProxy: true, banner: false });
         try
         {
+            // A direct curl can PREPEND anything; the appending proxy's own entry sits last.
             const seen = await askWhere(`http://127.0.0.1:${ served.port }`, {
-                'x-forwarded-proto': 'https, http',
-                'x-forwarded-host': 'app.example.com:8443, internal:3000'
+                'x-forwarded-proto': 'http, https',
+                'x-forwarded-host': 'evil.example, app.example.com:8443'
             });
             expect(seen.protocol).toBe('https:');
             expect(seen.host).toBe('app.example.com:8443');
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 1000 });
+        }
+    });
+
+    it('a chain of proxies that REPLACE these headers is believed at its single value', async () =>
+    {
+        const served = await serve(echoUrlApp(), { trustProxy: { proto: true, host: true }, banner: false });
+        try
+        {
+            // The shape a CDN in front of nginx produces: each hop SETS proto and host, so two
+            // proxies leave exactly what one leaves. Nothing here counts hops, and nothing may.
+            const seen = await askWhere(`http://127.0.0.1:${ served.port }`, {
+                'x-forwarded-proto': 'https',
+                'x-forwarded-host': 'app.example.com'
+            });
+            expect(seen.protocol).toBe('https:');
+            expect(seen.host).toBe('app.example.com');
+
+            // The client's own X-Forwarded-For chain says nothing about which host entry counts.
+            const deep = await askWhere(`http://127.0.0.1:${ served.port }`, {
+                'x-forwarded-for': '9.9.9.9, 203.0.113.7, 10.0.0.1',
+                'x-forwarded-proto': 'https',
+                'x-forwarded-host': 'app.example.com:8443'
+            });
+            expect(deep.protocol).toBe('https:');
+            expect(deep.host).toBe('app.example.com:8443');
         }
         finally
         {

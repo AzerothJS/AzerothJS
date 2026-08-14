@@ -17,6 +17,29 @@ import { toOpenApi, openapiPlugin, uncontracted } from '../../src/api/openapi.ts
 
 const INFO = { title: 'Test API', version: '1.0.0' };
 
+// The plugin registers only under exactly NODE_ENV=development (vitest runs as 'test');
+// install() reads the environment synchronously, so the override only spans the build.
+function inDevelopment<T>(build: () => T): T
+{
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try
+    {
+        return build();
+    }
+    finally
+    {
+        if (previous === undefined)
+        {
+            delete process.env.NODE_ENV;
+        }
+        else
+        {
+            process.env.NODE_ENV = previous;
+        }
+    }
+}
+
 function schemaOf(document: Record<string, unknown>, path: string, method: string): Record<string, unknown>
 {
     const paths = document.paths as Record<string, Record<string, unknown>>;
@@ -239,7 +262,7 @@ describe('serving and coverage', () =>
 
     it('openapiPlugin serves the cached document as JSON', async () =>
     {
-        const app = new App().register(openapiPlugin({ features: api, info: INFO }));
+        const app = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: INFO })));
         const response = await app.handle(new Request('http://local/openapi.json'));
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('application/json');
@@ -270,7 +293,7 @@ describe('the docs page', () =>
 
     it('defaults to the self-contained house explorer: no third-party code on the page', async () =>
     {
-        const app = new App().register(openapiPlugin({ features: api, info: INFO }));
+        const app = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: INFO })));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('text/html');
@@ -280,13 +303,13 @@ describe('the docs page', () =>
         // Self-contained: no external resource may be referenced.
         expect(html).not.toMatch(/src="http|href="http|https:\/\//);
         // The default IS the house explorer, byte for byte.
-        const explicit = new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'azeroth' }));
+        const explicit = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'azeroth' })));
         expect(await (await explicit.handle(new Request('http://local/docs'))).text()).toBe(html);
     });
 
     it("viewer: 'scalar' opts in to the CDN shell", async () =>
     {
-        const app = new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'scalar' }));
+        const app = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: INFO, viewer: 'scalar' })));
         const html = await (await app.handle(new Request('http://local/docs'))).text();
         expect(html).toContain('cdn.jsdelivr.net/npm/@scalar/api-reference');
         expect(html).toContain("url: '/openapi.json'");
@@ -294,7 +317,7 @@ describe('the docs page', () =>
 
     it('docs: false keeps the plugin spec-only', async () =>
     {
-        const app = new App().register(openapiPlugin({ features: api, info: INFO, docs: false }));
+        const app = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: INFO, docs: false })));
         const response = await app.handle(new Request('http://local/docs'));
         expect(response.status).toBe(404);
     });
@@ -330,7 +353,7 @@ describe('the docs page', () =>
     {
         for (const viewer of ['scalar', 'azeroth'] as const)
         {
-            const app = new App().register(openapiPlugin({ features: api, info: { title: '<script>alert(1)</script>', version: '1' }, viewer }));
+            const app = inDevelopment(() => new App().register(openapiPlugin({ features: api, info: { title: '<script>alert(1)</script>', version: '1' }, viewer })));
             const html = await (await app.handle(new Request('http://local/docs'))).text();
             expect(html).not.toContain('<script>alert');
             expect(html).toContain('&lt;script&gt;');

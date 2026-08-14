@@ -25,6 +25,7 @@
  */
 
 import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
+import { replacedForwardedValue } from './client-ip.ts';
 
 /**
  * HSTS for {@link securityHeaders}. Emitted only over a connection proven secure - sending it
@@ -81,7 +82,10 @@ export interface SecurityHeadersOptions
     trustProxy?: boolean;
 }
 
-/** @internal True when this request arrived over TLS (direct, or via a proxy trusted to say so). */
+/** @internal True when this request arrived over TLS (direct, or via a proxy trusted to say
+ * so). The forwarded claim is read by the one rule the URL builder uses for that header -
+ * proxies REPLACE it, so the value is the last entry written and a scheme is case-insensitive
+ * (RFC 9110 4.2.3) - or the same deployment would get HSTS on `context.url` and not here. */
 function isSecure(request: Request, trustProxy: boolean): boolean
 {
     try
@@ -95,7 +99,11 @@ function isSecure(request: Request, trustProxy: boolean): boolean
     {
         // A malformed URL cannot be proven secure.
     }
-    return trustProxy && request.headers.get('x-forwarded-proto') === 'https';
+    if (!trustProxy)
+    {
+        return false;
+    }
+    return replacedForwardedValue(request.headers.get('x-forwarded-proto') ?? undefined)?.toLowerCase() === 'https';
 }
 
 /** @internal Splits the header set once at wiring time: values the caller wrote always win,

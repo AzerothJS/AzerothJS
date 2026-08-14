@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { json } from '../../src/respond.ts';
 import { feature } from '../../src/api/feature.ts';
 import { manifestOf } from '../../src/api/feature.ts';
-import { createClient } from '../../src/api/client.ts';
+import { createClient, ApiError } from '../../src/api/client.ts';
 import { object, string, number } from '@azerothjs/schema';
 
 const files = feature('/files', (routes) => ({
@@ -113,6 +113,54 @@ describe('the client bounds what it is handed', () =>
         });
 
         await expect(client.me.read()).rejects.toMatchObject({ code: 'response-too-large' });
+    });
+
+    it('a 2xx that is not JSON rejects with the documented ApiError, never a bare SyntaxError', async () =>
+    {
+        // A gateway or captive portal answering 200 with an HTML page is the common shape.
+        const client = createClient<typeof api>(manifest, {
+            baseUrl: '',
+            fetch: () => Promise.resolve(new Response('<!doctype html><title>gateway</title>', {
+                status: 200,
+                headers: { 'content-type': 'text/html' }
+            }))
+        });
+
+        const failure = await client.me.read().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(ApiError);
+        expect(failure).toMatchObject({ status: 200, code: 'malformed-json' });
+    });
+
+    it('a non-JSON error body still maps to the status-derived ApiError', async () =>
+    {
+        const client = createClient<typeof api>(manifest, {
+            baseUrl: '',
+            fetch: () => Promise.resolve(new Response('<!doctype html>bad gateway', {
+                status: 502,
+                headers: { 'content-type': 'text/html' }
+            }))
+        });
+
+        const failure = await client.me.read().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(ApiError);
+        expect(failure).toMatchObject({ status: 502, code: 'unknown' });
+    });
+
+    it('a SUCCESS body that is not JSON surfaces the documented error, not a bare SyntaxError', async () =>
+    {
+        // A 2xx from a proxy error page or a misconfigured gateway: the decode failure must
+        // still reach the caller as the contract shape every call site already handles.
+        const client = createClient<typeof api>(manifest, {
+            baseUrl: '',
+            fetch: () => Promise.resolve(new Response('<!doctype html>hello', {
+                status: 200,
+                headers: { 'content-type': 'text/html' }
+            }))
+        });
+
+        const failure = await client.me.read().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(ApiError);
+        expect(failure).not.toBeInstanceOf(SyntaxError);
     });
 
     it('a redirect is an error, never a followed hop carrying the auth headers', async () =>

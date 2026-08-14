@@ -85,6 +85,16 @@ export type PageRenderer = (url: string, shell: string, options?: PageRenderOpti
 /** @internal The shell marker the rendered markup replaces. */
 const ROOT_MARKER = '<div id="root"></div>';
 
+/**
+ * The base64/base64url alphabet a CSP nonce may use. The value arrives from a per-request
+ * host callback over the live request, so anything outside this set is either an injection
+ * attempt or a broken generator - both are refused loudly rather than escaped into the
+ * attribute, where the policy would reject the token anyway.
+ *
+ * @internal
+ */
+const CSP_NONCE = /^[A-Za-z0-9+/=_-]+$/;
+
 /** Escapes regex metacharacters in a literal attribute value. @internal */
 function regexEscape(value: string): string
 {
@@ -119,9 +129,15 @@ function shellElementPattern(item: CollectedHead['replacements'][number]): RegEx
  * in content survive literally. Any pattern non-match degrades to APPEND; a shell without
  * `</head>` receives no head work at all (the anchor is the one hard requirement).
  *
+ * `prelude` is the host's own head content - the scoped stylesheet, then the loader
+ * handoff - emitted ahead of the head additions. Every insertion shares the ONE anchor
+ * located here, on the shell BEFORE any content lands: inserted content may itself contain
+ * a literal `</head>` (CSS legitimately can, inside a string), and re-searching after an
+ * insert would land every later splice inside that content instead of the head.
+ *
  * @internal Exported for the kit test suite.
  */
-export function applyHeadToShell(shell: string, collected: CollectedHead): string
+export function applyHeadToShell(shell: string, collected: CollectedHead, prelude = ''): string
 {
     const headEnd = shell.indexOf('</head>');
     if (headEnd === -1)
@@ -165,8 +181,42 @@ export function applyHeadToShell(shell: string, collected: CollectedHead): strin
         }
     }
 
-    const additions = extras.join('') + collected.additions;
+    const additions = prelude + extras.join('') + collected.additions;
     return additions === '' ? head + rest : `${ head }${ additions }${ rest }`;
+}
+
+/** One render's drained frames, ready to splice into the head. @internal */
+interface DrainedFrames
+{
+    /** The scoped stylesheet as a `<style>` element, empty when nothing was registered. */
+    styleTag: string;
+
+    /** The head runtime's structured drain. */
+    head: CollectedHead;
+}
+
+/**
+ * Drains the frames the render just produced. `css()` and `useHead()` have no document to
+ * write into on the server, so they record against the render and wait for the HOST to
+ * publish them - which makes the drain, not the splice, the load-bearing act: a frame left
+ * behind is published by whichever render collects NEXT, putting one request's stylesheet,
+ * `<title>` and og:meta into an unrelated request's document. Every path out of a render
+ * therefore reaches this, the throw path included, where the drained values die with the
+ * error instead of being served.
+ *
+ * Style before head, and both AFTER the render: collecting before it would publish the frame
+ * the previous render left behind and strand this render's own.
+ *
+ * @internal
+ */
+function drainFrames(scriptNonce: string | undefined): DrainedFrames
+{
+    const styles = collectStyleSheet();
+    const nonce = scriptNonce === undefined ? '' : ` nonce="${ escapeAttr(scriptNonce) }"`;
+    return {
+        styleTag: styles === '' ? '' : `<style data-azeroth-css${ nonce }>${ styles }</style>`,
+        head: collectHead(scriptNonce !== undefined ? { scriptNonce } : {})
+    };
 }
 
 /**
@@ -177,6 +227,12 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
 {
     return async (url, shell, options) =>
     {
+        if (options?.scriptNonce !== undefined && !CSP_NONCE.test(options.scriptNonce))
+        {
+            throw new Error('kit: scriptNonce is not a valid CSP nonce - base64/base64url characters only. '
+                + 'Generate it per request from a CSPRNG; never derive it from request data.');
+        }
+
         const loaded = await matchAndLoad(routes, url, options?.signal !== undefined ? { signal: options.signal } : undefined);
 
         // A guard/loader redirect -> a real 302; never render the target.
@@ -223,43 +279,34 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             const tail = `</div>${ shell.slice(marker + ROOT_MARKER.length) }`;
             // The main pass runs synchronously inside renderToStream: a top-level throw
             // rejects THIS promise and the caller answers a buffered 500 - zero torn bytes.
-            const body = renderToStream(
-                () => app(handoff !== undefined ? { url, handoff } : { url }),
-                {
-                    ...(options.signal !== undefined ? { signal: options.signal } : {}),
-                    ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
-                });
-            // The handoff script rides the head AFTER the style splice below, so both
-            // modes emit style -> handoff -> head additions (the normalized order; the
-            // handoff is order-insensitive inert JSON, so only byte-diffing tests see
-            // this).
-            const script = loaderHandoffScript(loaded, handoffMeta);
-            // Scoped CSS, collected AFTER that synchronous main pass and still spliced into the
-            // head - the head has not been enqueued yet, `start()` below does that. The ordering
-            // is what makes this correct: collecting BEFORE the render would publish whatever
-            // frame the PREVIOUS render left behind (measured: one tenant's interpolated colour
-            // in another tenant's page) and leave this render's own frame undrained for the next
-            // request to publish. Collecting after means each render drains exactly its own.
-            //
-            // Without this a `render: 'stream'` page flushed its shell carrying scoped class
+            // The drain rides a `finally` on that pass, so nothing can execute between the
+            // render and it, and this render's frames are gone before the promise rejects.
+            // Both frames are still spliced into the head - it has not been enqueued yet,
+            // `start()` below does that - which is the declare-before-flush contract:
+            // everything the synchronous pass declared is in hand before the first byte.
+            // Without it a `render: 'stream'` page flushed its shell carrying scoped class
             // names and no rules - an unstyled first paint, which is precisely what streaming
             // exists to avoid.
-            const streamedStyles = collectStyleSheet();
-            if (streamedStyles !== '')
+            let body: ReadableStream<Uint8Array>;
+            let frames: DrainedFrames;
+            try
             {
-                const nonce = options.scriptNonce === undefined ? '' : ` nonce="${ options.scriptNonce }"`;
-                head = head.replace('</head>', () => `<style data-azeroth-css${ nonce }>${ streamedStyles }</style></head>`);
+                body = renderToStream(
+                    () => app(handoff !== undefined ? { url, handoff } : { url }),
+                    {
+                        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+                        ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
+                    });
             }
-            if (script !== '')
+            finally
             {
-                head = head.replace('</head>', () => `${ script }</head>`);
+                frames = drainFrames(options.scriptNonce);
             }
-            // The head runtime's drain, at the same seam as the style collect (the
-            // declare-before-flush contract: everything the synchronous pass declared is
-            // in hand here, before the first byte). Applied AFTER style + handoff so the
-            // emitted order is style -> handoff -> head additions in BOTH modes.
-            head = applyHeadToShell(head, collectHead(
-                options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}));
+            const script = loaderHandoffScript(loaded, handoffMeta);
+            // Style and handoff ride in as the prelude, so the emitted order is
+            // style -> handoff -> head additions in BOTH modes, all at one anchor located
+            // before any of them is inserted.
+            head = applyHeadToShell(head, frames.head, frames.styleTag + script);
             const encoder = new TextEncoder();
             const reader = body.getReader();
             const stream = new ReadableStream<Uint8Array>({
@@ -286,33 +333,31 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             return { kind: 'stream', status: notFound ? 404 : 200, stream };
         }
 
-        const body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }));
-        // Function replacers, NOT the string form: rendered markup and the JSON
-        // handoff routinely contain `$&`, `` $` ``, `$'`, `$$` (any text with a
-        // literal `$` before a quote or ampersand), which the string form would
-        // interpret as replacement patterns and splice the document's own head or
-        // tail into the output. The function form treats the replacement verbatim.
+        // The drain rides a `finally` on the render, so nothing can execute between the two
+        // and this render's frames are gone before any later step can throw. Without the
+        // drain the SSR'd document arrives unstyled and headless, and only gets its rules
+        // once hydration runs - a flash of unstyled content on every server-rendered page.
+        let body: string;
+        let frames: DrainedFrames;
+        try
+        {
+            body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }));
+        }
+        finally
+        {
+            frames = drainFrames(options?.scriptNonce);
+        }
+        // A function replacer, NOT the string form: rendered markup routinely contains
+        // `$&`, `` $` ``, `$'`, `$$` (any text with a literal `$` before a quote or
+        // ampersand), which the string form would interpret as replacement patterns and
+        // splice the document's own head or tail into the output. The function form
+        // treats the replacement verbatim.
         const rendered = `<div id="root">${ body }</div>`;
         let html = shell.replace(ROOT_MARKER, () => rendered);
-        // Scoped CSS registered by this render. `css()` has no <head> to inject into on the
-        // server, so it records against the render and expects the host to drain it here -
-        // without this the SSR'd document arrives unstyled and only gets its rules once
-        // hydration runs, which is a flash of unstyled content on every server-rendered page.
-        const styles = collectStyleSheet();
-        if (styles !== '')
-        {
-            const nonce = options?.scriptNonce === undefined ? '' : ` nonce="${ options.scriptNonce }"`;
-            html = html.replace('</head>', () => `<style data-azeroth-css${ nonce }>${ styles }</style></head>`);
-        }
         const script = loaderHandoffScript(loaded, handoffMeta);
-        if (script !== '')
-        {
-            html = html.replace('</head>', () => `${ script }</head>`);
-        }
-        // The head runtime's drain, beside the style collect: title surgery, keyed
-        // replacements, additions - order in the document: style -> handoff -> head.
-        html = applyHeadToShell(html, collectHead(
-            options?.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}));
+        // Title surgery, keyed replacements, additions - order in the document:
+        // style -> handoff -> head, all at one anchor located before any of them is inserted.
+        html = applyHeadToShell(html, frames.head, frames.styleTag + script);
         return { kind: 'html', html, status: notFound ? 404 : 200 };
     };
 }

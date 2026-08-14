@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal, getStoreScope, runInStoreScope, createStore } from 'azerothjs';
 import { App } from '../src/app.ts';
+import { BadRequestError } from '../src/errors.ts';
 import { json } from '../src/respond.ts';
 import { onRequestCleanup } from '../src/request-root.ts';
 
@@ -159,6 +160,67 @@ describe('onRequestCleanup: teardown always runs', () =>
     });
 });
 
+describe('teardown and error serialization run inside the request scope', () =>
+{
+    it('cleanups resolve the request\'s OWN store, two concurrent requests apart', async () =>
+    {
+        const useBag = createStore(() => ({ bag: true }));
+        const seen: Array<{ during: object; cleanup: object | null }> = [];
+        const app = new App();
+        app.get('/scoped/:label', async () =>
+        {
+            const record: { during: object; cleanup: object | null } = { during: useBag(), cleanup: null };
+            seen.push(record);
+            onRequestCleanup(() =>
+            {
+                record.cleanup = useBag();
+            });
+            await pause(20); // the other request runs here, in ITS scope
+            return json({ ok: true });
+        });
+
+        await Promise.all([
+            app.handle(new Request('http://local/scoped/a')),
+            (async (): Promise<Response> =>
+            {
+                await pause(10);
+                return app.handle(new Request('http://local/scoped/b'));
+            })()
+        ]);
+
+        // A cleanup running outside the request's async context would resolve the
+        // process-wide default scope: one shared instance for every request's teardown.
+        expect(seen).toHaveLength(2);
+        expect(seen[0]?.cleanup).toBe(seen[0]?.during);
+        expect(seen[1]?.cleanup).toBe(seen[1]?.during);
+        expect(seen[0]?.during).not.toBe(seen[1]?.during);
+    });
+
+    it('a serializer shaping a thrown error\'s body sees the request\'s own store', async () =>
+    {
+        const useBag = createStore(() => ({ bag: true }));
+        let during: object | null = null;
+        let inSerializer: object | null = null;
+        const app = new App({
+            serializeError: () =>
+            {
+                inSerializer = useBag();
+                return undefined;
+            }
+        });
+        app.get('/boom', () =>
+        {
+            during = useBag();
+            throw new BadRequestError('bad');
+        });
+
+        const response = await app.handle(new Request('http://local/boom'));
+        expect(response.status).toBe(400);
+        expect(inSerializer).not.toBeNull();
+        expect(inSerializer).toBe(during);
+    });
+});
+
 describe('onRequestCleanup: streaming responses defer teardown to stream-end', () =>
 {
     it('does NOT run cleanup until a streaming body is fully consumed', async () =>
@@ -225,6 +287,32 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
         expect(released).toBe(true);  // teardown fires on cancel
     });
 
+    it('teardown registered AFTER the producer\'s first await still runs at stream end', async () =>
+    {
+        let released = false;
+        const app = new App();
+        app.get('/live', () =>
+        {
+            const encoder = new TextEncoder();
+            // The producer awaits real I/O BEFORE acquiring its resource: the registration
+            // lands after the handler returned and the root's settle continuation already ran.
+            const body = new ReadableStream<Uint8Array>({
+                async start(controller)
+                {
+                    await pause(15);
+                    onRequestCleanup(() => void (released = true));
+                    controller.enqueue(encoder.encode('chunk'));
+                    controller.close();
+                }
+            });
+            return new Response(body, { headers: { 'content-type': 'text/plain' } });
+        });
+
+        const response = await app.handle(new Request('http://local/live'));
+        expect(await response.text()).toBe('chunk');
+        expect(released).toBe(true);
+    });
+
     it('buffered responses still run cleanup before handle() resolves', async () =>
     {
         // The buffered fast path is unchanged: a PayloadResponse is excluded from
@@ -237,6 +325,174 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
             return json({ ok: true });
         });
         await app.handle(new Request('http://local/buffered'));
+        expect(released).toBe(true);
+    });
+});
+
+describe('teardown registered from inside a cleanup', () =>
+{
+    it('runs the nested teardown rather than dropping it on a list nothing reads', async () =>
+    {
+        const order: string[] = [];
+        const app = new App({});
+        app.get('/', () =>
+        {
+            onRequestCleanup(() =>
+            {
+                order.push('outer');
+                // A release that queues its own follow-up (returning a pooled connection
+                // after closing the transaction that borrowed it).
+                onRequestCleanup(() =>
+                {
+                    order.push('nested');
+                });
+            });
+            return json({ ok: true });
+        });
+
+        await app.handle(new Request('http://x/'));
+        expect(order).toEqual(['outer', 'nested']);
+    });
+
+    it('reports and stops when a cleanup re-registers itself forever', async () =>
+    {
+        const seen: unknown[] = [];
+        const app = new App({ onError: (error) => seen.push(error) });
+        let runs = 0;
+        app.get('/', () =>
+        {
+            const loop = (): void =>
+            {
+                runs += 1;
+                onRequestCleanup(loop);
+            };
+            onRequestCleanup(loop);
+            return json({ ok: true });
+        });
+
+        const response = await app.handle(new Request('http://x/'));
+        expect(response.status).toBe(200);
+        // Bounded, not spinning, and the abandonment is reported rather than silent.
+        expect(runs).toBeLessThan(20);
+        expect(seen.some((e) => /kept registering new teardown/.test((e as Error).message))).toBe(true);
+    });
+
+    it('a cleanup and its error sink both throwing still settles the request', async () =>
+    {
+        const app = new App({
+            onError: () =>
+            {
+                throw new Error('observer exploded');
+            }
+        });
+        app.get('/', () =>
+        {
+            onRequestCleanup(() =>
+            {
+                throw new Error('release failed');
+            });
+            return json({ ok: true });
+        });
+
+        const response = await app.handle(new Request('http://x/'));
+        // The computed response survives teardown's collapse.
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+    });
+});
+
+describe('a streaming body the kernel cannot monitor', () =>
+{
+    it('settles the request instead of leaking it when the handler holds its own reader', async () =>
+    {
+        const order: string[] = [];
+        const app = new App({});
+        app.get('/', () =>
+        {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller)
+                {
+                    controller.enqueue(new TextEncoder().encode('x'));
+                    controller.close();
+                }
+            });
+            onRequestCleanup(() =>
+            {
+                order.push('cleanup');
+            });
+            const response = new Response(stream);
+            // The handler took the reader itself: the body is locked, so the kernel's
+            // monitor cannot wrap it.
+            response.body?.getReader();
+            return response;
+        });
+
+        const response = await app.handle(new Request('http://x/'));
+        expect(response.status).toBe(200);
+        expect(order).toEqual(['cleanup']);
+    });
+});
+
+describe('teardown registered after the request already settled', () =>
+{
+    it('runs when the client aborted before the producer got its connection', async () =>
+    {
+        let released = false;
+        const app = new App({});
+        app.get('/live', () =>
+        {
+            const body = new ReadableStream<Uint8Array>({
+                async start(controller)
+                {
+                    // The producer borrows a pooled connection AFTER the handler returned.
+                    await pause(15);
+                    onRequestCleanup(() =>
+                    {
+                        released = true;
+                    });
+                    controller.enqueue(new TextEncoder().encode('chunk'));
+                    controller.close();
+                }
+            });
+            return new Response(body, { headers: { 'content-type': 'text/plain' } });
+        });
+
+        const abort = new AbortController();
+        const pending = app.handle(new Request('http://x/live', { signal: abort.signal }));
+        abort.abort();
+        const response = await pending;
+        await response.text();
+        await pause(60);
+
+        expect(released).toBe(true);
+    });
+
+    it('runs when the body could not be monitored', async () =>
+    {
+        let released = false;
+        const app = new App({});
+        app.get('/locked', () =>
+        {
+            const stream = new ReadableStream<Uint8Array>({
+                async start(controller)
+                {
+                    await pause(10);
+                    onRequestCleanup(() =>
+                    {
+                        released = true;
+                    });
+                    controller.enqueue(new TextEncoder().encode('x'));
+                    controller.close();
+                }
+            });
+            const response = new Response(stream);
+            response.body?.getReader();
+            return response;
+        });
+
+        await app.handle(new Request('http://x/locked'));
+        await pause(60);
+
         expect(released).toBe(true);
     });
 });

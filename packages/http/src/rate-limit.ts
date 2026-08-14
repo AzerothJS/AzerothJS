@@ -45,6 +45,16 @@ export interface RateStore
     hit(key: string, limit: number, windowMs: number): RateLimitDecision | Promise<RateLimitDecision>;
 }
 
+/** One key's fixed-window counter. */
+interface RateBucket
+{
+    count: number;
+
+    resetAt: number;
+
+    limit: number;
+}
+
 /**
  * A fixed-window counter in a Map. Buckets expire at their window end; a lazy sweep (once
  * per window, at most once a minute) drops expired keys, and a hard entry cap (default
@@ -54,31 +64,52 @@ export interface RateStore
  * indistinguishable from forgiving it: an attacker who can mint keys (a forged
  * `X-Forwarded-For`, an IPv6 /64) would otherwise burn their allowance, churn the cap, and
  * return with a clean counter. Only under-limit or already-expired buckets are given up, and
- * when the map holds nothing but limited buckets the store fails CLOSED - the new key is
- * refused rather than paid for with someone else's enforcement.
+ * when the store holds nothing but limited buckets it fails CLOSED - the new key is refused
+ * rather than paid for with someone else's enforcement - and reports the state through
+ * `onSaturation` so an operator can tell a key-space attack from ordinary limiting.
+ *
+ * Buckets are split across two maps by that standing, so admission never walks the store:
+ * the evictable set is read from the front of one map in O(1) however deep the enforced
+ * limits run, and worst-case work per hit is a constant independent of `maxEntries`.
  *
  * Single-process only - share one across a fleet and each node limits independently.
  */
 export class MemoryRateStore implements RateStore
 {
-    readonly #buckets = new Map<string, { count: number; resetAt: number; limit: number }>();
+    /** Buckets at or under their limit: free to drop, least-recently-hit first. */
+    readonly #spare = new Map<string, RateBucket>();
+
+    /** Buckets over their limit: retained until their window ends, least-recently-hit first. */
+    readonly #enforced = new Map<string, RateBucket>();
 
     readonly #maxEntries: number;
 
+    readonly #onSaturation: ((size: number) => void) | undefined;
+
     #nextSweep = 0;
 
-    /** Cap on the eviction scan, so a map full of limited buckets stays O(1) per hit. */
+    /** True once the running saturation episode has been announced, so refusals do not repeat it. */
+    #saturationReported = false;
+
+    /** Enforced buckets examined per admission while hunting an expired one. */
     static readonly #EVICT_SCAN = 8;
 
-    constructor(options: { maxEntries?: number } = {})
+    /**
+     * @param options.maxEntries - Hard cap on retained buckets (default 100000).
+     * @param options.onSaturation - Called with the store's size when every retained bucket is
+     * an enforced limit and a new key is refused; fired once per saturation episode, not per
+     * refusal, and its own throws are swallowed.
+     */
+    constructor(options: { maxEntries?: number; onSaturation?: (size: number) => void } = {})
     {
         this.#maxEntries = options.maxEntries ?? 100_000;
+        this.#onSaturation = options.onSaturation;
     }
 
     /** How many buckets are currently held (expired ones included until the next sweep). */
     public get size(): number
     {
-        return this.#buckets.size;
+        return this.#spare.size + this.#enforced.size;
     }
 
     public hit(key: string, limit: number, windowMs: number): RateLimitDecision
@@ -86,10 +117,10 @@ export class MemoryRateStore implements RateStore
         const now = Date.now();
         this.#sweep(now, windowMs);
 
-        let bucket = this.#buckets.get(key);
+        let bucket = this.#spare.get(key) ?? this.#enforced.get(key);
         if (bucket === undefined || bucket.resetAt <= now)
         {
-            if (bucket === undefined && this.#buckets.size >= this.#maxEntries && !this.#evict(now))
+            if (bucket === undefined && this.size >= this.#maxEntries && !this.#evict(now))
             {
                 // Nothing was safe to drop: admitting this key would cost an enforced limit.
                 // Refusing is the only direction that cannot be used to clear one.
@@ -101,11 +132,23 @@ export class MemoryRateStore implements RateStore
         // The caller owns the limit and may change it between hits; the bucket carries the
         // latest so #evict can tell an enforced bucket from a spare one.
         bucket.limit = limit;
-        // Re-inserted on EVERY hit so iteration order is least-recently-hit first, which is
-        // where #evict starts. `Map.set` on a key already present does not move it, so a
-        // continuously-active client stayed pinned at the front - the first candidate.
-        this.#buckets.delete(key);
-        this.#buckets.set(key, bucket);
+        // Re-filed on EVERY hit, under its current standing and at the back of that map, so
+        // iteration order is least-recently-hit first - which is where #evict starts. `Map.set`
+        // on a key already present does not move it, so a continuously-active client stayed
+        // pinned at the front, the first candidate.
+        this.#spare.delete(key);
+        this.#enforced.delete(key);
+        if (bucket.count > limit)
+        {
+            this.#enforced.set(key, bucket);
+        }
+        else
+        {
+            this.#spare.set(key, bucket);
+            // A spare bucket exists again (a window reset, a raised limit, a new key), so the
+            // saturation episode is over and the next one is worth announcing.
+            this.#saturationReported = false;
+        }
 
         return {
             limited: bucket.count > limit,
@@ -124,37 +167,75 @@ export class MemoryRateStore implements RateStore
             return;
         }
         this.#nextSweep = now + Math.min(windowMs, 60_000);
-        for (const [key, bucket] of this.#buckets)
+        MemoryRateStore.#dropExpired(this.#spare, now);
+        MemoryRateStore.#dropExpired(this.#enforced, now);
+    }
+
+    /** @internal Deletes every bucket in `buckets` whose window has already ended. */
+    static #dropExpired(buckets: Map<string, RateBucket>, now: number): void
+    {
+        for (const [key, bucket] of buckets)
         {
             if (bucket.resetAt <= now)
             {
-                this.#buckets.delete(key);
+                buckets.delete(key);
             }
         }
     }
 
     /**
-     * @internal Frees one slot, starting from the least-recently-hit end (every hit re-inserts
-     * its key at the back). Expired buckets and under-limit buckets are fair game - losing
-     * either costs nothing that was being enforced. A bucket already over its limit is SKIPPED,
-     * because dropping it would hand its owner a clean counter. Returns false when the first
-     * {@link MemoryRateStore.#EVICT_SCAN} candidates are all enforced limits, which keeps the
-     * scan bounded and tells the caller to fail closed.
+     * @internal Frees one slot. The least-recently-hit spare bucket goes first and is found
+     * without a scan - losing an under-limit bucket costs nothing that was being enforced, and
+     * because standing is filed at write time it is reachable however many enforced limits sit
+     * in front of it. An empty spare map is itself the proof that every retained bucket is over
+     * its limit; the only slot still free to take is then an enforced bucket whose window has
+     * already ended, and at most {@link MemoryRateStore.#EVICT_SCAN} candidates are examined
+     * per call, each rotated to the back so successive refusals advance through the map instead
+     * of re-paying for the same front. Worst-case work per call is therefore a constant,
+     * independent of the entry cap. Returning false tells the caller to fail closed, and the
+     * saturation observer hears it once per episode.
      */
     #evict(now: number): boolean
     {
-        let scanned = 0;
-        for (const [key, bucket] of this.#buckets)
+        const spare = this.#spare.keys().next();
+        if (spare.done !== true)
         {
-            if (bucket.resetAt <= now || bucket.count <= bucket.limit)
+            this.#spare.delete(spare.value);
+            return true;
+        }
+        // Bounded by the map's own size as well: rotation re-appends behind the live iterator,
+        // which would otherwise hand back a bucket this call has already stepped over.
+        let budget = Math.min(this.#enforced.size, MemoryRateStore.#EVICT_SCAN);
+        for (const [key, bucket] of this.#enforced)
+        {
+            if (bucket.resetAt <= now)
             {
-                this.#buckets.delete(key);
+                this.#enforced.delete(key);
                 return true;
             }
-            scanned += 1;
-            if (scanned >= MemoryRateStore.#EVICT_SCAN)
+            // Rotated to the back: never dropped, but no longer in front of the next scan.
+            this.#enforced.delete(key);
+            this.#enforced.set(key, bucket);
+            budget -= 1;
+            if (budget === 0)
             {
-                return false;
+                break;
+            }
+        }
+        if (this.#saturationReported)
+        {
+            return false;
+        }
+        this.#saturationReported = true;
+        if (this.#onSaturation !== undefined)
+        {
+            try
+            {
+                this.#onSaturation(this.size);
+            }
+            catch
+            {
+                // An observer must never be able to break the hit path.
             }
         }
         return false;

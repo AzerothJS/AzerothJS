@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/http",
-    "version": "2.1.0-beta.1",
+    "version": "2.1.0-beta.2",
     "engines": {
         "node": ">=22"
     },
@@ -53,11 +53,11 @@
         "prepack": "node ../../scripts/prepack.mjs"
     },
     "dependencies": {
-        "@azerothjs/logger": "^2.1.0-beta.1",
-        "@azerothjs/schema": "^2.1.0-beta.1"
+        "@azerothjs/logger": "^2.1.0-beta.2",
+        "@azerothjs/schema": "^2.1.0-beta.2"
     },
     "peerDependencies": {
-        "azerothjs": "^2.1.0-beta.1"
+        "azerothjs": "^2.1.0-beta.2"
     },
     "publishConfig": {
         "access": "public"

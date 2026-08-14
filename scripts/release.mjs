@@ -577,6 +577,125 @@ function guardEditorLockfile(editorDir, nextVersion, syncArgs)
     log(`    cd editors/vscode && rm -rf node_modules package-lock.json && npm ${ syncArgs.join(' ') }`);
 }
 
+/** The package name an npm lockfile key addresses, or null for the root entry. */
+function lockEntryName(key, entry)
+{
+    if (key === '')
+    {
+        return null;
+    }
+    const marker = key.lastIndexOf('node_modules/');
+    // A workspace/link SOURCE is keyed by its path, so its name comes from the entry itself.
+    return marker === -1 ? (entry.name ?? null) : key.slice(marker + 'node_modules/'.length);
+}
+
+/**
+ * Pre-flight refusal for an editor lockfile a clean checkout cannot install.
+ *
+ * The editor integrations live outside `workspaces`, so an `@azerothjs/*` entry there
+ * resolves like any third party - through the registry, at a version this repo may not have
+ * published yet. Two shapes make `npm ci` fail in that directory and both have shipped: a
+ * lockfile hand-bumped to a version that is not on the registry, and one whose `integrity`
+ * still describes the PREVIOUS tarball because only `version` and `resolved` were rewritten.
+ * Neither is visible in the file on its own, so the registry is asked directly - a
+ * registry-resolved entry must exist at exactly that version and carry exactly that
+ * integrity. Workspace links need no registry at all and are checked structurally.
+ *
+ * Fatal, and BEFORE the bump: an editor that cannot install is found in every clean
+ * checkout and in CI, and the lockfile regeneration that would repair it only runs after
+ * the publish this refuses to start.
+ */
+function guardEditorInstallable()
+{
+    const editorsDir = path.join(ROOT, 'editors');
+    if (!existsSync(editorsDir))
+    {
+        return;
+    }
+    for (const editor of readdirSync(editorsDir))
+    {
+        const editorDir = path.join(editorsDir, editor);
+        const lockPath = path.join(editorDir, 'package-lock.json');
+        const manifestPath = path.join(editorDir, 'package.json');
+        if (!existsSync(lockPath) || !existsSync(manifestPath))
+        {
+            continue;
+        }
+        const where = `editors/${ editor }`;
+        const remedy = `- run "cd ${ where } && rm -rf node_modules package-lock.json && npm install --package-lock-only"`;
+        const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        const root = lock.packages?.[''] ?? {};
+
+        // A manifest edited without regenerating the lockfile: `npm ci` refuses the pair
+        // outright, so the two dependency tables have to be identical, both ways.
+        for (const section of ['dependencies', 'devDependencies'])
+        {
+            const declared = manifest[section] ?? {};
+            const locked = root[section] ?? {};
+            for (const name of new Set([...Object.keys(declared), ...Object.keys(locked)]))
+            {
+                if (declared[name] !== locked[name])
+                {
+                    fail(`${ where }: "${ name }" is ${ declared[name] === undefined ? 'absent from' : `"${ declared[name] }" in` }`
+                        + ` package.json but ${ locked[name] === undefined ? 'absent from' : `"${ locked[name] }" in` } package-lock.json ${ remedy }`);
+                }
+            }
+        }
+        if (root.version !== manifest.version)
+        {
+            fail(`${ where }: package.json is ${ manifest.version } but its lockfile says ${ root.version } ${ remedy }`);
+        }
+
+        for (const [key, entry] of Object.entries(lock.packages ?? {}))
+        {
+            const name = lockEntryName(key, entry);
+            if (name === null || !/^(@azerothjs\/[a-z0-9-]+|azerothjs)$/.test(name))
+            {
+                continue;
+            }
+            if (entry.link === true)
+            {
+                // `resolved` on a link is a path relative to the lockfile's own directory.
+                if (!existsSync(path.resolve(editorDir, entry.resolved ?? '')))
+                {
+                    fail(`${ where }: "${ name }" links to ${ entry.resolved }, which does not exist ${ remedy }`);
+                }
+                continue;
+            }
+            if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith('http'))
+            {
+                continue;
+            }
+            if (typeof entry.integrity !== 'string')
+            {
+                fail(`${ where }: "${ name }@${ entry.version }" resolves from the registry with no integrity ${ remedy }`);
+            }
+            // The tarball URL carries the version too; a half-rewrite leaves the two disagreeing.
+            if (!entry.resolved.endsWith(`-${ entry.version }.tgz`))
+            {
+                fail(`${ where }: "${ name }" is version ${ entry.version } but resolves ${ entry.resolved } ${ remedy }`);
+            }
+            let published;
+            try
+            {
+                published = query('npm', ['view', `${ name }@${ entry.version }`, 'dist.integrity']);
+            }
+            catch
+            {
+                fail(`${ where }: "${ name }@${ entry.version }" is not on the registry, so "npm ci" there cannot resolve it`
+                    + ' - publish it first, or point the dependency at the workspace copy');
+            }
+            if (published !== entry.integrity)
+            {
+                fail(`${ where }: "${ name }@${ entry.version }" is locked to an integrity the published tarball does not have`
+                    + ` (locked ${ String(entry.integrity).slice(0, 24) }..., registry ${ published.slice(0, 24) }...) ${ remedy }`);
+            }
+        }
+        log(`  ${ where }: lockfile installable`);
+    }
+}
+
 // Recognized pre-release channels, in increasing maturity order. The channel is
 // the alphabetic id at the start of the `-prerelease` suffix (1.2.0-beta.3 ->
 // `beta`) and becomes the npm dist-tag. `next`/`canary` are rolling pointers, not
@@ -634,6 +753,99 @@ function baseVersion(version)
 {
     const dash = version.indexOf('-');
     return dash === -1 ? version : version.slice(0, dash);
+}
+
+/**
+ * SemVer 2.0.0 precedence, prerelease-aware, no dependency: negative when a < b, zero
+ * when equal, positive when a > b. Build metadata never appears in release versions here.
+ */
+function compareVersions(a, b)
+{
+    const parse = (version) =>
+    {
+        const dash = version.indexOf('-');
+        return {
+            base: (dash === -1 ? version : version.slice(0, dash)).split('.').map(Number),
+            prerelease: dash === -1 ? [] : version.slice(dash + 1).split('.')
+        };
+    };
+    const left = parse(a);
+    const right = parse(b);
+    for (let i = 0; i < 3; i++)
+    {
+        const l = left.base[i] ?? 0;
+        const r = right.base[i] ?? 0;
+        if (l !== r)
+        {
+            return l < r ? -1 : 1;
+        }
+    }
+    // A prerelease ranks below its stable release.
+    if (left.prerelease.length === 0 || right.prerelease.length === 0)
+    {
+        return Number(right.prerelease.length > 0) - Number(left.prerelease.length > 0);
+    }
+    for (let i = 0; i < Math.max(left.prerelease.length, right.prerelease.length); i++)
+    {
+        const l = left.prerelease[i];
+        const r = right.prerelease[i];
+        if (l === undefined || r === undefined)
+        {
+            // A shorter identifier set ranks below its extension (beta < beta.1).
+            return l === undefined ? -1 : 1;
+        }
+        if (l === r)
+        {
+            continue;
+        }
+        const lNumeric = /^\d+$/.test(l);
+        const rNumeric = /^\d+$/.test(r);
+        if (lNumeric && rNumeric)
+        {
+            return Number(l) < Number(r) ? -1 : 1;
+        }
+        if (lNumeric !== rNumeric)
+        {
+            // Numeric identifiers rank below alphanumeric ones.
+            return lNumeric ? -1 : 1;
+        }
+        return l < r ? -1 : 1;
+    }
+    return 0;
+}
+
+/**
+ * Publish refusal for the compiled-output runtime contract. The load-time handshake can
+ * only catch a mismatch AFTER a wrong install; the version string is what installs
+ * resolve on, so each contract generation is pinned to the FIRST version allowed to ship
+ * it (packages/compiler/contract-versions.json - the drift spec welds the same table).
+ * A contract with no entry, or a release version below its entry, would put two
+ * incompatible artifacts under version strings no resolver can tell apart - refuse.
+ * Reads the compiler's SOURCE so the check needs no build and survives --skip-checks.
+ */
+function guardContractFloor(nextVersion)
+{
+    const codegen = readFileSync(path.join(ROOT, 'packages', 'compiler', 'src', 'codegen.ts'), 'utf8');
+    const declared = /^export const EMITTED_CONTRACT_VERSION = (\d+);$/m.exec(codegen);
+    if (declared === null)
+    {
+        fail('cannot read EMITTED_CONTRACT_VERSION from packages/compiler/src/codegen.ts');
+    }
+    const contract = Number(declared[1]);
+    const table = JSON.parse(
+        readFileSync(path.join(ROOT, 'packages', 'compiler', 'contract-versions.json'), 'utf8')
+    ).firstVersionByContract;
+    const floor = table[String(contract)];
+    if (floor === undefined)
+    {
+        fail(`runtime contract v${ contract } has no entry in packages/compiler/contract-versions.json`
+            + ' - register the first version allowed to ship it before publishing');
+    }
+    if (compareVersions(nextVersion, floor) < 0)
+    {
+        fail(`${ nextVersion } is below ${ floor }, the first version allowed to ship runtime contract`
+            + ` v${ contract } - bump the version`);
+    }
 }
 
 /**
@@ -1166,6 +1378,18 @@ if (options.noBump && !options.noPublish)
             + ' - check out the tagged commit; publish packs the tree, not the tag');
     }
 }
+
+// Refused BEFORE anything mutates: a version that must not carry the current contract
+// stops here, not after a bump or halfway through a publish.
+if (!options.noPublish)
+{
+    guardContractFloor(next);
+}
+
+// Read-only, so it runs on every path including --dry-run: an editor that cannot be
+// installed from a clean checkout should be the first thing a release plan reports.
+log('\nChecking the editor integrations');
+guardEditorInstallable();
 
 if (!(await confirm('\nProceed?')))
 {

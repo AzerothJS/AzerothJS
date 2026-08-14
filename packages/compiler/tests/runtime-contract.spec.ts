@@ -6,8 +6,13 @@
 // keyword, builtin, or markup helper to the emitter without exporting it from
 // azerothjs/internal fails HERE, not in a user's build.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { generateModule, EMITTED_CONTRACT_VERSION } from '../src/codegen.ts';
 import * as contract from 'azerothjs/internal';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 // A kitchen-sink module exercising every keyword, every wrapper block, every builtin
 // component, and both markup paths (template clone + hydrate/string h() branch).
@@ -156,5 +161,136 @@ describe('the handshake failure tells the reader which side is stale', () =>
         const result = generateModule('export default component C() { state n = 0; <p>{n}</p> }');
         expect(result.code).toContain('assertRuntimeContract(');
         expect(result.code).not.toContain('import.meta');
+    });
+});
+
+/**
+ * SemVer 2.0.0 precedence, prerelease-aware, no dependency: negative when a < b, zero
+ * when equal, positive when a > b. Build metadata never appears in release versions here.
+ */
+function compareVersions(a: string, b: string): number
+{
+    const parse = (version: string): { base: number[]; prerelease: string[] } =>
+    {
+        const dash = version.indexOf('-');
+        return {
+            base: (dash === -1 ? version : version.slice(0, dash)).split('.').map(Number),
+            prerelease: dash === -1 ? [] : version.slice(dash + 1).split('.')
+        };
+    };
+    const left = parse(a);
+    const right = parse(b);
+    for (let i = 0; i < 3; i++)
+    {
+        const l = left.base[i] ?? 0;
+        const r = right.base[i] ?? 0;
+        if (l !== r)
+        {
+            return l < r ? -1 : 1;
+        }
+    }
+    // A prerelease ranks below its stable release.
+    if (left.prerelease.length === 0 || right.prerelease.length === 0)
+    {
+        return Number(right.prerelease.length > 0) - Number(left.prerelease.length > 0);
+    }
+    for (let i = 0; i < Math.max(left.prerelease.length, right.prerelease.length); i++)
+    {
+        const l = left.prerelease[i];
+        const r = right.prerelease[i];
+        if (l === undefined || r === undefined)
+        {
+            // A shorter identifier set ranks below its extension (beta < beta.1).
+            return l === undefined ? -1 : 1;
+        }
+        if (l === r)
+        {
+            continue;
+        }
+        const lNumeric = /^\d+$/.test(l);
+        const rNumeric = /^\d+$/.test(r);
+        if (lNumeric && rNumeric)
+        {
+            return Number(l) < Number(r) ? -1 : 1;
+        }
+        if (lNumeric !== rNumeric)
+        {
+            // Numeric identifiers rank below alphanumeric ones.
+            return lNumeric ? -1 : 1;
+        }
+        return l < r ? -1 : 1;
+    }
+    return 0;
+}
+
+describe('the contract generation is welded to the package version', () =>
+{
+    // The handshake can only distinguish artifacts AFTER a wrong install; the version string
+    // is what installs resolve on. So every contract generation is pinned to the FIRST package
+    // version allowed to ship it (contract-versions.json - the release script refuses to
+    // publish outside it), and the current version must be at or above the pin for the
+    // contract it carries. A generation absent from the table never shipped and never may.
+    const table = (JSON.parse(readFileSync(path.join(here, '..', 'contract-versions.json'), 'utf8')) as
+        { firstVersionByContract: Record<string, string> }).firstVersionByContract;
+    const compilerVersion = (JSON.parse(readFileSync(path.join(here, '..', 'package.json'), 'utf8')) as
+        { version: string }).version;
+    const runtimeVersion = (JSON.parse(readFileSync(path.join(here, '..', '..', 'azerothjs', 'package.json'), 'utf8')) as
+        { version: string }).version;
+
+    it('compareVersions orders semver with prerelease precedence', () =>
+    {
+        const ordered = ['2.1.0-alpha.2', '2.1.0-beta.1', '2.1.0-beta.2', '2.1.0-beta.11', '2.1.0-rc.1', '2.1.0', '2.1.1', '2.2.0-beta.1'];
+        for (let i = 1; i < ordered.length; i++)
+        {
+            const lower = ordered[i - 1] ?? '';
+            const higher = ordered[i] ?? '';
+            expect(compareVersions(lower, higher), `${ lower } < ${ higher }`).toBeLessThan(0);
+            expect(compareVersions(higher, lower), `${ higher } > ${ lower }`).toBeGreaterThan(0);
+        }
+        expect(compareVersions('2.1.0-beta.2', '2.1.0-beta.2')).toBe(0);
+    });
+
+    it('the table names the first version allowed to ship the current contract', () =>
+    {
+        expect(
+            table[String(EMITTED_CONTRACT_VERSION)],
+            `contract-versions.json must register the first version shipping contract v${ EMITTED_CONTRACT_VERSION }`
+        ).toBeDefined();
+    });
+
+    it('the package version is at or above the floor of the contract it ships', () =>
+    {
+        const floor = table[String(EMITTED_CONTRACT_VERSION)];
+        if (floor === undefined)
+        {
+            throw new Error(`no floor registered for contract v${ EMITTED_CONTRACT_VERSION }`);
+        }
+        expect(runtimeVersion, 'compiler and runtime version in lockstep').toBe(compilerVersion);
+        expect(
+            compareVersions(compilerVersion, floor),
+            `${ compilerVersion } must not ship contract v${ EMITTED_CONTRACT_VERSION } (first allowed at ${ floor })`
+        ).toBeGreaterThanOrEqual(0);
+    });
+
+    it('floors rise with the contract generation', () =>
+    {
+        // A new generation registered at or below an older one's floor would let one version
+        // string cover two contracts - exactly what the table exists to rule out.
+        const entries = Object.entries(table)
+            .map(([generation, version]) => [Number(generation), version] as const)
+            .sort((a, b) => a[0] - b[0]);
+        expect(entries.length).toBeGreaterThan(0);
+        let previous: readonly [number, string] | null = null;
+        for (const [generation, version] of entries)
+        {
+            if (previous !== null)
+            {
+                expect(
+                    compareVersions(previous[1], version),
+                    `contract v${ generation } floor (${ version }) must be above contract v${ previous[0] }'s (${ previous[1] })`
+                ).toBeLessThan(0);
+            }
+            previous = [generation, version];
+        }
     });
 });

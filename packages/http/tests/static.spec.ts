@@ -310,6 +310,27 @@ describe('hidden files stay hidden under every spelling the filesystem answers t
     });
 });
 
+describe('a mount at the volume root', () =>
+{
+    it('serves files when the root IS the volume root (its prefix already ends in the separator)', async () =>
+    {
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-root-'));
+        await writeFile(path.join(dir, 'hello.txt'), 'from the volume root');
+        const volume = path.parse(dir).root;
+
+        const app = new App();
+        app.get('/assets/*path', staticFiles(volume));
+
+        const relative = path.relative(volume, path.join(dir, 'hello.txt'))
+            .split(path.sep)
+            .map(encodeURIComponent)
+            .join('/');
+        const response = await get(app, `/assets/${ relative }`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('from the volume root');
+    });
+});
+
 describe('contentTypeFor', () =>
 {
     it('maps the web asset set and defaults to octet-stream', () =>

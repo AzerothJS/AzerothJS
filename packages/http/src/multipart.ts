@@ -41,7 +41,10 @@ export interface UploadedFile
     /** The client-supplied filename, verbatim. UNTRUSTED: sanitize before touching a filesystem. */
     filename: string;
 
-    /** The part's declared Content-Type (application/octet-stream when the client omits it). */
+    /**
+     * The part's declared Content-Type (application/octet-stream when the client omits it).
+     * UNTRUSTED: client-declared, never verified against the payload.
+     */
     contentType: string;
 
     /** The raw file bytes. */
@@ -270,6 +273,21 @@ function parseMultipart(
     }
 }
 
+/**
+ * @internal CRLF is the only line break RFC 7578's header grammar allows, and neither CR nor LF
+ * is a `token`, a `quoted-string` character, or (once decoded) an RFC 8187 `attr-char`. Carried
+ * inside a name/filename/contentType, either one is a header injection against whatever sink
+ * echoes the value, so the part is rejected rather than silently rewritten.
+ */
+function rejectBareLineBreak(value: string, what: string): void
+{
+    if (value.includes('\r') || value.includes('\n'))
+    {
+        throw new BadRequestError(
+            `A multipart part ${ what } contains a bare CR or LF.`, { code: 'malformed-multipart' });
+    }
+}
+
 /** @internal Parses one part's header block into what RFC 7578 says matters. */
 function parsePartHeaders(block: string): { name: string; filename: string | null; contentType: string | null }
 {
@@ -279,6 +297,7 @@ function parsePartHeaders(block: string): { name: string; filename: string | nul
 
     for (const line of block.split('\r\n'))
     {
+        rejectBareLineBreak(line, 'header');
         const colon = line.indexOf(':');
         if (colon === -1)
         {
@@ -304,6 +323,13 @@ function parsePartHeaders(block: string): { name: string; filename: string | nul
             // makes the part a file: classified as a text field it would face neither the
             // per-file cap nor byte preservation.
             filename = extendedFilename(params.get('filename*')) ?? params.get('filename') ?? null;
+            // The line check above saw `filename*` still percent-encoded, so the same rule is
+            // applied once more where the value is final - `UTF-8''x%0D%0Ay` decodes to a CRLF
+            // the raw line never contained.
+            if (filename !== null)
+            {
+                rejectBareLineBreak(filename, 'filename');
+            }
         }
     }
 
@@ -414,7 +440,10 @@ export interface MultipartPartStream
     /** The client-supplied filename, or null for a text field. UNTRUSTED: sanitize before touching a filesystem. */
     filename: string | null;
 
-    /** The part's declared Content-Type (application/octet-stream when the client omits it). */
+    /**
+     * The part's declared Content-Type (application/octet-stream when the client omits it).
+     * UNTRUSTED: client-declared, never verified against the payload.
+     */
     contentType: string;
 
     /**
@@ -446,13 +475,17 @@ export interface StreamMultipartOptions
     /**
      * Per-part payload cap in bytes. UNLIMITED by default - the consumer's sink governs in
      * streaming mode, and a surprise default cap would fail exactly the large uploads this
-     * mode exists for. Set it when the route knows its ceiling.
+     * mode exists for. Set it when the route knows its ceiling; it binds every part,
+     * including ones the consumer skips.
      */
     maxPartBytes?: number;
 }
 
 /** @internal Part header blocks may not exceed this (a header block is human-scale metadata). */
 const MAX_PART_HEADER_BYTES = 16 * 1024;
+
+/** @internal Preamble before the first boundary may not exceed this (real clients send none). */
+const MAX_PREAMBLE_BYTES = 16 * 1024;
 
 /** @internal Incremental byte cursor over the request body: one buffer, one reader, one pass. */
 class ByteFeed
@@ -509,8 +542,8 @@ class ByteFeed
 /**
  * Streams a multipart/form-data request part by part - the beyond-memory mode. Same
  * validation posture as {@link readMultipart}: wrong content type is a 415, framing
- * violations are typed 400s, part-count and header caps hold. Payload SIZE is the
- * consumer's to govern (or {@link StreamMultipartOptions.maxPartBytes}).
+ * violations are typed 400s, part-count, preamble, and header caps hold. Payload SIZE is
+ * the consumer's to govern (or {@link StreamMultipartOptions.maxPartBytes}).
  *
  * ```ts
  * for await (const part of streamMultipart(context.request))
@@ -566,15 +599,25 @@ async function* streamParts(
     const decoder = new TextDecoder();
 
     // Preamble: discard up to the first delimiter, retaining only a possible partial match.
+    // Capped - preamble bytes reach no sink, so no consumer-side limit can govern them.
+    let preambleBytes = 0;
     for (;;)
     {
         const at = indexOfBytes(feed.buffer, delimiter, 0);
+        // Bytes ahead of the delimiter are preamble too: counting only what is dropped ACROSS
+        // fills leaves a whole preamble that arrives in the delimiter's own buffer uncounted.
+        const dropped = at === -1 ? Math.max(0, feed.buffer.byteLength - (delimiter.length - 1)) : at;
+        preambleBytes += dropped;
+        if (preambleBytes > MAX_PREAMBLE_BYTES)
+        {
+            await feed.cancel();
+            throw new BadRequestError('The multipart preamble is too large.', { code: 'malformed-multipart' });
+        }
+        feed.consume(dropped);
         if (at !== -1)
         {
-            feed.consume(at);
             break;
         }
-        feed.consume(Math.max(0, feed.buffer.byteLength - (delimiter.length - 1)));
         if (!await feed.fill())
         {
             throw new BadRequestError('The multipart body contains no boundary.', { code: 'malformed-multipart' });
@@ -674,6 +717,10 @@ async function* streamParts(
             return chunk;
         };
 
+        // highWaterMark 0: pull only under a pending read. The default strategy pulls as soon
+        // as the stream is constructed, which reads past the part's header before the consumer
+        // has decided anything and leaves a second scan of the shared feed in flight beside
+        // the post-yield discard loop.
         const stream = new ReadableStream<Uint8Array>({
             async pull(controller): Promise<void>
             {
@@ -696,7 +743,7 @@ async function* streamParts(
                     throw error;
                 }
             }
-        });
+        }, { highWaterMark: 0 });
 
         const bytes = async (limit?: number): Promise<Uint8Array> =>
         {
@@ -739,11 +786,13 @@ async function* streamParts(
         };
 
         // Single-pass discipline: whatever the consumer left unread is discarded here so
-        // the iterator lands exactly on the next delimiter. When the part was already
-        // consumed, the delimiter sits at the buffer head and the first probe returns.
+        // the iterator lands exactly on the next delimiter - still through the byte guard,
+        // because a per-part cap a sender can dodge by posting parts nobody reads is no
+        // cap. When the part was already consumed, the delimiter sits at the buffer head
+        // and the first probe returns without emitting.
         for (;;)
         {
-            if (await nextSpan(() => undefined))
+            if (await nextSpan(guard))
             {
                 break;
             }

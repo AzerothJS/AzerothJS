@@ -178,6 +178,56 @@ describe('azeroth() plugin - emitDeclarations mirror', () =>
         }
     });
 
+    it('warns once per out-of-root module that gets no mirror entry; in-root modules warn nothing', async () =>
+    {
+        const base = mkdtempSync(join(tmpdir(), 'az-dts-'));
+        try
+        {
+            const root = join(base, 'app');
+            mkdirSync(root, { recursive: true });
+            const outside = join(base, 'Shared.azeroth');
+            writeFileSync(outside, source);
+
+            const warnings: string[] = [];
+            const warnCtx =
+            {
+                warn: (message: string): void =>
+                {
+                    warnings.push(message);
+                },
+                error: (m: unknown): never =>
+                {
+                    throw new Error(String(m));
+                }
+            };
+            const plugin = azeroth({ emitDeclarations: true, typeCheck: false });
+            (plugin.configResolved as (r: { root?: string }) => void)({ root });
+            const transform = plugin.transform as unknown as TransformFn;
+
+            // The module itself compiles and serves fine; only the type projection is impossible.
+            // The skip must be SAID - and said once per FILE, not on every HMR re-transform and
+            // not once per process (a second out-of-root module has to be named too).
+            const other = join(base, 'Other.azeroth');
+            writeFileSync(other, source);
+            await expect(transform.call(warnCtx, source, outside)).resolves.toBeTruthy();
+            await expect(transform.call(warnCtx, source, outside)).resolves.toBeTruthy();
+            await expect(transform.call(warnCtx, source, other)).resolves.toBeTruthy();
+            const skips = warnings.filter((w) => w.includes('outside the project root'));
+            expect(skips).toHaveLength(2);
+            expect(skips[0]).toContain('Shared.azeroth');
+            expect(skips[0]).toContain('azeroth/declarations-out-of-root');
+            expect(skips[1]).toContain('Other.azeroth');
+
+            // An in-root module has a mirror path: no skip warning for it.
+            await transform.call(warnCtx, source, join(root, 'Widget.azeroth'));
+            expect(warnings.filter((w) => w.includes('outside the project root'))).toHaveLength(2);
+        }
+        finally
+        {
+            rmSync(base, { recursive: true, force: true });
+        }
+    });
+
     it('does NOT write a mirror by default (opt-in only)', async () =>
     {
         const dir = mkdtempSync(join(tmpdir(), 'az-dts-'));

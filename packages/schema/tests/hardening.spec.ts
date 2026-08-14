@@ -4,10 +4,13 @@
 // input is hostile rather than merely wrong: a bounded issue collector (a bulk body must not
 // become the response's size and the event loop's stall), OWN-property reads (a polluted
 // prototype cannot mass-assign through the schema), an error map and an exception message that
-// survive keys named after Object.prototype members, and a parsed record that is safe to merge.
+// survive keys named after Object.prototype members, a parsed record that is safe to merge and
+// whose keys shadow nothing, and options that cannot be enforced refused where they are written
+// rather than degrading into a constraint that accepts everything.
 
+import { runInNewContext } from 'node:vm';
 import { describe, it, expect, afterEach } from 'vitest';
-import { array, boolean, number, object, record, string } from '@azerothjs/schema';
+import { array, boolean, date, number, object, record, string } from '@azerothjs/schema';
 import type { Schema, SchemaError } from '@azerothjs/schema';
 
 /** A shape whose field name is `__proto__` - an object literal would set the prototype instead. */
@@ -64,6 +67,36 @@ describe('the issue ceiling', () =>
             expect(failure.message).toContain('(+95 more)');
             expect(failure.message.length).toBeLessThan(400);
         }
+    });
+
+    it('a walk that ends exactly at the ceiling dropped nothing and is not truncated', () =>
+    {
+        const result = array(string()).safeParse(Array.from({ length: 100 }, () => 0));
+        expect(!result.ok && result.issues.length).toBe(100);
+        expect(!result.ok && result.truncated).toBeUndefined();
+    });
+
+    it('one failure past the ceiling is truncated', () =>
+    {
+        const result = array(string()).safeParse(Array.from({ length: 101 }, () => 0));
+        expect(!result.ok && result.issues.length).toBe(100);
+        expect(!result.ok && result.truncated).toBe(true);
+    });
+
+    it('a nested walk whose last field lands the last issue is complete, not truncated', () =>
+    {
+        const schema = array(object({ a: string(), b: string(), c: string(), d: string(), e: string() }));
+        const result = schema.safeParse(Array.from({ length: 20 }, () => ({})));
+        expect(!result.ok && result.issues.length).toBe(100);
+        expect(!result.ok && result.truncated).toBeUndefined();
+    });
+
+    it('a record whose last key lands the last issue is complete, not truncated', () =>
+    {
+        const input = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`k${ index }`, 0]));
+        const result = record(string()).safeParse(input);
+        expect(!result.ok && result.issues.length).toBe(100);
+        expect(!result.ok && result.truncated).toBeUndefined();
     });
 
     it('an ordinary handful of failures still reports every one, untruncated', () =>
@@ -141,6 +174,18 @@ describe('prototype safety', () =>
         }
     });
 
+    it('a parsed record has a null prototype, so a key never shadows an Object.prototype member', () =>
+    {
+        const parsed = record(string()).parse(JSON.parse('{"toString":"pwned","hasOwnProperty":"x","name":"ok"}'));
+        expect(Object.getPrototypeOf(parsed)).toBe(null);
+        expect(parsed['toString']).toBe('pwned');
+        expect(parsed['name']).toBe('ok');
+        expect(JSON.parse(JSON.stringify(parsed))).toEqual({ toString: 'pwned', hasOwnProperty: 'x', name: 'ok' });
+        // A key that was never sent answers with nothing - no inherited function leaks through.
+        const plain = record(string()).parse({ a: 'b' }) as Record<string, unknown>;
+        expect(plain['constructor']).toBeUndefined();
+    });
+
     it('record() strips an own __proto__ key, so a validated body is safe to merge', () =>
     {
         const schema = record(record(string()));
@@ -188,5 +233,57 @@ describe('the exception message', () =>
             expect(message.length).toBeLessThan(200);
             expect(message).toContain('...');
         }
+    });
+});
+
+describe('constraints that could not be enforced', () =>
+{
+    it('a non-RegExp pattern throws where the schema is written instead of matching everything', () =>
+    {
+        for (const bad of ['abc', {}, null, 42, ['abc']])
+        {
+            expect(() => string({ pattern: bad as unknown as RegExp })).toThrow(TypeError);
+            expect(() => string({ pattern: bad as unknown as RegExp })).toThrow(/expects a RegExp/);
+        }
+    });
+
+    it('a real pattern still builds and still rejects, whatever its flags or realm', () =>
+    {
+        expect(string({ pattern: /^[a-z]+$/ }).safeParse('ABC').ok).toBe(false);
+        expect(string({ pattern: /^[a-z]+$/g }).safeParse('abc').ok).toBe(true);
+        // A RegExp from another realm is still a RegExp - its constructor is simply not ours.
+        const foreign = runInNewContext('/^[a-z]+$/') as RegExp;
+        expect(foreign instanceof RegExp).toBe(false);
+        expect(string({ pattern: foreign }).safeParse('abc').ok).toBe(true);
+        expect(string({ pattern: foreign }).safeParse('ABC').ok).toBe(false);
+    });
+
+    it('an unknown format throws instead of leaving the value unchecked', () =>
+    {
+        expect(() => string({ format: 'phone' as 'email' })).toThrow(/unknown format/);
+        // A prototype member is not a rule: `toString` would answer the lookup and pass anything.
+        expect(() => string({ format: 'toString' as 'email' })).toThrow(TypeError);
+        expect(string({ format: 'email' }).safeParse('not-an-email').ok).toBe(false);
+    });
+
+    it('a date bound that names no instant throws instead of dropping the bound', () =>
+    {
+        // The config-typo shape: `new Date(undefined)` is a Date, and every comparison against
+        // it is false, so the bound would be written and never enforced.
+        expect(() => date({ min: new Date('nonsense') })).toThrow(TypeError);
+        expect(() => date({ max: new Date(NaN) })).toThrow(/valid Date/);
+        expect(() => date({ min: '2026-01-01T00:00:00Z' as unknown as Date })).toThrow(/valid Date/);
+    });
+
+    it('a valid date bound still builds and still rejects, whatever its realm', () =>
+    {
+        const bounded = date({ min: new Date('2026-01-01T00:00:00Z') });
+        expect(bounded.safeParse('2025-12-31T23:59:59Z').ok).toBe(false);
+        expect(bounded.safeParse('2026-06-01T00:00:00Z').ok).toBe(true);
+        // A Date from another realm is still a Date - its constructor is simply not ours.
+        const foreign = runInNewContext('new Date("2026-01-01T00:00:00Z")') as Date;
+        expect(foreign instanceof Date).toBe(false);
+        expect(date({ min: foreign }).safeParse('2025-12-31T23:59:59Z').ok).toBe(false);
+        expect(date({ min: foreign }).safeParse('2026-06-01T00:00:00Z').ok).toBe(true);
     });
 });

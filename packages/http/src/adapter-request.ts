@@ -35,6 +35,7 @@ import type { Http2ServerRequest } from 'node:http2';
 import { Readable } from 'node:stream';
 import { BadRequestError, PayloadTooLargeError } from './errors.ts';
 import { fastHeaderLookup, fastRawBody, socketAddress, type FastCapabilities } from './body.ts';
+import { replacedForwardedValue } from './client-ip.ts';
 
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
 export type AnyIncoming = (IncomingMessage | Http2ServerRequest) & { headers: Record<string, string | string[] | undefined> };
@@ -43,6 +44,10 @@ export type AnyIncoming = (IncomingMessage | Http2ServerRequest) & { headers: Re
  * Which forwarded headers to believe when building the request URL. OFF by default -
  * `X-Forwarded-*` is client-controlled, so believing it without a proxy in front lets any
  * caller forge its scheme and host (the same trust boundary clientIp draws for addresses).
+ *
+ * There is no hop count here, unlike `clientIp`: proto and host are REPLACED by each proxy
+ * that writes them, not appended per hop, so a chain of any depth leaves one entry and the
+ * value read is the last one written (see `replacedForwardedValue`).
  */
 export interface ForwardedTrust
 {
@@ -86,18 +91,6 @@ function targetPath(target: string | undefined): string
     }
     const slash = target.indexOf('/', scheme[0].length);
     return slash === -1 ? '/' : target.slice(slash);
-}
-
-/** @internal The first entry of a comma-joined forwarded header (each proxy appends). */
-function firstForwarded(value: string | string[] | undefined): string | undefined
-{
-    const raw = Array.isArray(value) ? value[0] : value;
-    if (raw === undefined)
-    {
-        return undefined;
-    }
-    const comma = raw.indexOf(',');
-    return (comma === -1 ? raw : raw.slice(0, comma)).trim();
 }
 
 class AdapterRequest implements Request
@@ -148,7 +141,7 @@ class AdapterRequest implements Request
             let authority = claimed !== undefined && FORWARDED_HOST.test(claimed) ? claimed : 'localhost';
             if (this.#trust.proto === true)
             {
-                const forwarded = firstForwarded(headers['x-forwarded-proto'])?.toLowerCase();
+                const forwarded = replacedForwardedValue(headers['x-forwarded-proto'])?.toLowerCase();
                 if (forwarded === 'https' || forwarded === 'http')
                 {
                     scheme = forwarded;
@@ -156,7 +149,7 @@ class AdapterRequest implements Request
             }
             if (this.#trust.host === true)
             {
-                const forwarded = firstForwarded(headers['x-forwarded-host']);
+                const forwarded = replacedForwardedValue(headers['x-forwarded-host']);
                 if (forwarded !== undefined && FORWARDED_HOST.test(forwarded))
                 {
                     authority = forwarded;

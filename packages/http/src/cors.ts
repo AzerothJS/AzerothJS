@@ -20,7 +20,8 @@
  * sandboxed frames, data: and file: documents), so a throwing predicate is a denial, never a
  * rejection. Credentials refuse `origin: true` at wiring time - reflecting every origin with
  * credentials hands authenticated bodies to any site, which is strictly worse than the `*`
- * the spec forbids - and a predicate under credentials never allows the shared `null` origin.
+ * the spec forbids - and no origin form under credentials ever allows the shared `null`
+ * origin: a literal `'null'` entry is refused at wiring time, a predicate match is denied.
  * `Vary: Origin` is appended - never overwritten - on every path, the no-Origin one included,
  * so a cache keyed on it stays correct alongside the compression layer's own `Vary`.
  */
@@ -114,6 +115,10 @@ export function cors(options: CorsOptions): EdgeMiddleware
     {
         throw new Error('cors: `origin: true` with credentials reflects every origin with cookies attached - list the origins you trust instead.');
     }
+    if (credentials && (options.origin === 'null' || (Array.isArray(options.origin) && options.origin.includes('null'))))
+    {
+        throw new Error('cors: `null` is the shared opaque origin of sandboxed frames and data:/file: documents - allowing it with credentials hands them to every such document; remove it from the allowlist.');
+    }
 
     const methods = (options.methods ?? DEFAULT_METHODS).join(', ');
     const maxAge = String(options.maxAgeSeconds ?? 600);
@@ -124,8 +129,8 @@ export function cors(options: CorsOptions): EdgeMiddleware
     const allowOrigin = (origin: string): string | null =>
     {
         // `null` is the shared opaque origin (sandboxed frames, data:, file:) - countless
-        // distinct documents present it, so a predicate match cannot make it credential-worthy.
-        if (credentials && origin === 'null' && typeof options.origin === 'function')
+        // distinct documents present it, so no configured match can make it credential-worthy.
+        if (credentials && origin === 'null')
         {
             return null;
         }
@@ -167,7 +172,12 @@ export function cors(options: CorsOptions): EdgeMiddleware
                 const headers: Record<string, string> = {};
                 for (const [name, value] of inner.headers)
                 {
-                    headers[name] = value;
+                    // Set-Cookie may repeat and a record holds one value per name; the
+                    // cookies ride the PayloadResponse cookie lane below instead.
+                    if (name !== 'set-cookie')
+                    {
+                        headers[name] = value;
+                    }
                 }
                 delete headers['content-type'];
                 delete headers['content-length'];
@@ -183,7 +193,7 @@ export function cors(options: CorsOptions): EdgeMiddleware
                         headers['access-control-allow-credentials'] = 'true';
                     }
                 }
-                return new PayloadResponse(new Uint8Array(0), 204, headers);
+                return new PayloadResponse(new Uint8Array(0), 204, headers, inner.headers.getSetCookie());
             }
 
             // Real request: run the app, then add the CORS headers to its response.

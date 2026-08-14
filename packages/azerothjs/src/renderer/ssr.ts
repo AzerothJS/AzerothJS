@@ -697,7 +697,9 @@ function serializeChildren(children: Child[]): string
  * real DOM node in h()).
  *
  * Content precedence matches the DOM path: `innerHTML` (raw, unescaped) wins,
- * else `textContent` (escaped), else the serialized children. Void elements
+ * else `textContent` (escaped), else the serialized children. On a raw-text
+ * element (`<script>`/`<style>`) the same precedence holds, but either content
+ * property is breakout-neutralized instead of entity-escaped. Void elements
  * emit no content and no closing tag.
  *
  * @param tag - The element tag name
@@ -726,21 +728,38 @@ export function serializeElement(tag: string, props: Props, children: Child[]): 
     }
 
     // Raw-text element (`<script>`/`<style>`): content is CDATA, emitted without HTML-escaping.
-    // The compiler feeds a single literal string here; entity-escaping it would corrupt the
-    // CSS/JSON-LD, since a browser does not decode entities inside these elements. Only the
+    // Entity-escaping would corrupt the CSS/JSON-LD, since a browser does not decode entities
+    // inside these elements - which is also why `textContent` takes the breakout transform here
+    // rather than escapeText. The content properties keep their usual precedence: the DOM path
+    // assigns them verbatim on these elements too, so skipping them shipped an EMPTY element to
+    // every non-hydrating reader while the browser render carried the content. Only the
     // sequences that could TERMINATE the element are neutralized (see neutralizeRawText), so a
-    // child value can never close the tag and continue as live markup.
+    // content value can never close the tag and continue as live markup.
     if (RAW_TEXT_ELEMENTS.has(tagName))
     {
-        let raw = '';
-        for (const child of children)
+        let raw: string;
+        if ('innerHTML' in props)
         {
-            if (child === null || child === undefined || child === false)
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- innerHTML is caller-trusted raw content; non-string input is caller error surfaced visibly
+            raw = String(resolveValue(props.innerHTML) ?? '');
+        }
+        else if ('textContent' in props)
+        {
+            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- textContent coerces like the DOM property; non-string input is caller error surfaced visibly
+            raw = String(resolveValue(props.textContent) ?? '');
+        }
+        else
+        {
+            raw = '';
+            for (const child of children)
             {
-                continue;
+                if (child === null || child === undefined || child === false)
+                {
+                    continue;
+                }
+                // eslint-disable-next-line @typescript-eslint/no-base-to-string -- raw-text content is caller-trusted CDATA; a reactive value is resolved, any non-string is coerced like the DOM path
+                raw += String(typeof child === 'function' ? resolveValue(child) ?? '' : child);
             }
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- raw-text content is caller-trusted CDATA; a reactive value is resolved, any non-string is coerced like the DOM path
-            raw += String(typeof child === 'function' ? resolveValue(child) ?? '' : child);
         }
         return ssr(`<${ tagName }${ attrs }>${ neutralizeRawText(tagName, raw) }</${ tagName }>`);
     }

@@ -171,8 +171,13 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
     return parts.join('; ');
 }
 
-/** A Set-Cookie value that deletes `name` (empty value, epoch expiry, matching scope). */
+/**
+ * A Set-Cookie value that deletes `name` (empty value, epoch expiry, matching scope). A
+ * `__Host-`/`__Secure-` name implies Secure - the deletion must satisfy the same prefix
+ * contract the cookie was minted under, or the browser drops it and the cookie survives.
+ */
 export function expireCookie(name: string, options: Pick<CookieOptions, 'path' | 'domain' | 'secure'> = {}): string
 {
-    return serializeCookie(name, '', { ...options, maxAge: 0, httpOnly: true });
+    const secure = options.secure ?? (name.startsWith('__Host-') || name.startsWith('__Secure-'));
+    return serializeCookie(name, '', { ...options, secure, maxAge: 0, httpOnly: true });
 }

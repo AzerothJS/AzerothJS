@@ -126,7 +126,12 @@ export function csrfCookie(options: CsrfOptions = {}): EdgeMiddleware
                 headers.append('set-cookie', existing);
             }
             headers.append('set-cookie', cookie);
-            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+            // 204/205/304 forbid a body - Response() throws on any stream for them, and the
+            // kernel's lazy response materializes a stream even for an empty payload.
+            const body = response.status === 204 || response.status === 205 || response.status === 304
+                ? null
+                : response.body;
+            return new Response(body, { status: response.status, statusText: response.statusText, headers });
         }
     }));
 }
@@ -160,6 +165,18 @@ export function csrfProtect(options: CsrfOptions = {}): (context: GuardContext) 
         }
         if (origin !== null && origin !== context.url.origin && !allowed.has(origin))
         {
+            // An https Origin against the same host's http URL, with a forwarded proto nothing
+            // honored, is a TLS terminator in front of a serve() that never declared trustProxy.
+            // Still fail closed - but name the fix, or every same-origin POST reads as hostile.
+            if (context.url.protocol === 'http:'
+                && origin === `https://${ context.url.host }`
+                && context.request.headers.get('x-forwarded-proto') !== null)
+            {
+                throw new ForbiddenError(
+                    'Request origin rejected: the Origin is https but the request URL is http. '
+                    + 'Behind a TLS-terminating proxy, set trustProxy on serve() so the forwarded scheme is honored.',
+                    { code: 'csrf' });
+            }
             throw new ForbiddenError('Request origin rejected.', { code: 'csrf' });
         }
         const cookie = parseCookies(context.request)[name];

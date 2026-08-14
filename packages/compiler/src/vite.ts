@@ -162,18 +162,13 @@ function writeIfChanged(dtsPath: string, content: string, mirrorRoot: string): v
  * onto the component declaration instead of stopping inside the generated mirror. A malformed source
  * (already reported with a located error by the compile/type-check gate) is swallowed so declaration
  * emit never crashes the build; any prior projection is left untouched.
+ *
+ * Returns whether the module HAS a path inside the mirror. A module resolved outside the root does
+ * not, so nothing is written for it and importers get no types - the caller surfaces that, because
+ * from the user's side the only symptom is `tsc` failing to see a component that runs fine.
  */
-function writeDeclarationMirror(source: string, azerothFile: string, root: string, extension: string): void
+function writeDeclarationMirror(source: string, azerothFile: string, root: string, extension: string): boolean
 {
-    let output: DeclarationOutput;
-    try
-    {
-        output = emitDeclarationsWithMap(source, azerothFile);
-    }
-    catch
-    {
-        return;
-    }
     const mirrorRoot = join(root, DECLARATIONS_DIR);
     const rel = relative(root, azerothFile);
     const mirrorStem = join(mirrorRoot, rel.slice(0, -extension.length));
@@ -183,7 +178,16 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
     // user's. Emit only what stays inside the mirror; anything else has no mirror path and is skipped.
     if (!contains(mirrorRoot, mirrorStem))
     {
-        return;
+        return false;
+    }
+    let output: DeclarationOutput;
+    try
+    {
+        output = emitDeclarationsWithMap(source, azerothFile);
+    }
+    catch
+    {
+        return true;
     }
     mkdirSync(dirname(mirrorStem), { recursive: true });
     // The map's `sources` must be relative to the map's own directory (the mirror folder).
@@ -199,6 +203,7 @@ function writeDeclarationMirror(source: string, azerothFile: string, root: strin
         writeIfChanged(stem + '.d.ts', `${ output.dts }//# sourceMappingURL=${ dtsName }.map\n`, mirrorRoot);
         writeIfChanged(stem + '.d.ts.map', JSON.stringify({ ...output.map, file: dtsName, sources: [sourceRel] }), mirrorRoot);
     }
+    return true;
 }
 
 let cachedVersion: string | undefined | null = null;
@@ -356,6 +361,9 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
     let checker: AzerothTypeChecker | null = null;
     let root = process.cwd();
     let dev = false;
+    // Modules already reported as having no mirror path: the notice fires once per file per
+    // build, not on every HMR re-transform of the same file.
+    const mirrorlessWarned = new Set<string>();
 
     return {
         name: 'azerothjs',
@@ -548,10 +556,13 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             }
 
             // Keep the projection mirror fresh on every edit (HMR), from the live source so it reflects
-            // the in-flight change. Only writes when the projection text actually changes.
-            if (emitDecls)
+            // the in-flight change. Only writes when the projection text actually changes. A module
+            // outside the root has no mirror path, so it serves fine but its importers see no types;
+            // say so once, or the missing projection is invisible.
+            if (emitDecls && !writeDeclarationMirror(code, filename, root, extension) && !mirrorlessWarned.has(filename))
             {
-                writeDeclarationMirror(code, filename, root, extension);
+                mirrorlessWarned.add(filename);
+                (this as MaybeCtx)?.warn?.(`azeroth/declarations-out-of-root: ${ filename } resolves outside the project root, so emitDeclarations wrote no .azeroth/types projection for it - imports of it work at runtime but carry no types`);
             }
 
             // Lint before compiling: the rules catch mistakes the type

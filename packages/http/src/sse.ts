@@ -302,13 +302,11 @@ export function sse(
                 (heartbeat as { unref?: () => void }).unref?.();
             }
 
-            // The client vanishing aborts the request signal; propagate to the connection.
-            request.signal.addEventListener('abort', () =>
-            {
-                enqueue = null;
-                finish = null;
-                stop();
-            }, { once: true });
+            // The client vanishing aborts the request signal; settle the stream and tear the
+            // producer down. Dropping the close handle without calling it would leave the body
+            // unsettled, parking the adapter's pending read forever - one leaked response,
+            // stream, and socket per disconnect, which reconnecting clients make routine.
+            request.signal.addEventListener('abort', end, { once: true });
 
             // Run the producer; a throw ends the stream (the status already went out) with NO
             // terminator, which is the client's only signal that it read a partial stream.

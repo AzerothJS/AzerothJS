@@ -158,7 +158,9 @@ const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /**
  * @internal Reads a JSON body with a byte ceiling. `response.json()` is unbounded, so a hostile
- * or broken upstream can exhaust the caller's memory on a path that has no other check.
+ * or broken upstream can exhaust the caller's memory on a path that has no other check. A body
+ * that is not JSON (a gateway's HTML error page on a 200) throws the documented {@link ApiError},
+ * never a bare SyntaxError.
  */
 async function readJsonBounded(response: Response, maxBytes: number): Promise<unknown>
 {
@@ -212,7 +214,16 @@ async function readJsonBounded(response: Response, maxBytes: number): Promise<un
         joined.set(chunk, at);
         at += chunk.byteLength;
     }
-    return JSON.parse(new TextDecoder().decode(joined));
+    const decoded = new TextDecoder().decode(joined);
+    try
+    {
+        return JSON.parse(decoded);
+    }
+    catch
+    {
+        throw new ApiError(response.status, 'malformed-json',
+            `The ${ response.status } response body is not JSON.`, undefined);
+    }
 }
 
 /**

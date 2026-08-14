@@ -258,8 +258,9 @@ export interface ErrorSerializerContext
 /**
  * Reshapes the error wire body. Return a plain value to REPLACE the default `{ error: { code,
  * message } }` (the kernel still applies the error's status and any mandated headers - a 405
- * `Allow`, a 429 `Retry-After`); return a `Response` to take full control; return `undefined`
- * to fall back to the default shape for this error. Wired via `new App({ serializeError })`.
+ * `Allow`, a 429 `Retry-After`); return a `Response` to take control of the status, body and
+ * media type (mandated headers it leaves unset are still applied); return `undefined` to fall
+ * back to the default shape for this error. Wired via `new App({ serializeError })`.
  *
  * This is the seam that lets an app speak its own envelope (`{ success, code, field, message }`,
  * a JSON:API document, ...) without reimplementing the one error path - the same mapping, the
@@ -381,7 +382,40 @@ export function errorResponse(
             const custom = options.serialize({ error: mapped, request: options.request, expose: exposeMessage, dev: options.dev === true });
             if (custom instanceof Response)
             {
-                return custom;
+                // The serializer chose the status, body and media type; the error's mandated
+                // protocol headers (a 405 Allow, a 429 Retry-After, a Set-Cookie) still apply
+                // wherever the Response left them unset.
+                //
+                // Merged onto a COPY: the serializer owns that object and returning one shared
+                // Response for a whole class of errors is legal and idiomatic, so writing the
+                // mandate into it would stamp one request's Set-Cookie onto every later reply
+                // built from the same instance.
+                const missing = Object.entries(mapped.headers).filter(([name]) => !custom.headers.has(name));
+                if (missing.length === 0)
+                {
+                    return custom;
+                }
+                if (custom instanceof PayloadResponse)
+                {
+                    return custom.withHeaders(Object.fromEntries(missing));
+                }
+                const merged = new Headers(custom.headers);
+                for (const [name, value] of missing)
+                {
+                    try
+                    {
+                        merged.set(name, value);
+                    }
+                    catch
+                    {
+                        // A header the platform refuses is dropped: the response still goes out.
+                    }
+                }
+                return new Response(custom.body, {
+                    status: custom.status,
+                    statusText: custom.statusText,
+                    headers: merged
+                });
             }
             if (custom !== undefined)
             {

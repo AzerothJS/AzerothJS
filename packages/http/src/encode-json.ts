@@ -229,6 +229,12 @@ function compileKind(meta: EncoderMeta): Encode
                 return out + '}';
             };
         }
+        default:
+            // Unreachable from this package's own schemas (the kind union is closed), but a
+            // FOREIGN schema object or a version-skewed install can carry a kind this build
+            // never compiled. Serializing through the safe fallback beats the "encode is not
+            // a function" crash the silent undefined return would produce downstream.
+            return fallback;
     }
 }
 

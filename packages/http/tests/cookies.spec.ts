@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { parseCookies, serializeCookie, expireCookie } from '../src/cookies.ts';
+import { App, redirect } from '@azerothjs/http';
 
 function requestWithCookie(header: string): Request
 {
@@ -126,5 +127,41 @@ describe('expireCookie', () =>
         const header = expireCookie('sid');
         expect(header).toContain('sid=');
         expect(header).toContain('Max-Age=0');
+    });
+
+    it('a __Host- or __Secure- name implies Secure - the deletion the browser honors', () =>
+    {
+        const host = expireCookie('__Host-session');
+        expect(host).toContain('__Host-session=');
+        expect(host).toContain('Max-Age=0');
+        expect(host).toContain('Secure');
+        expect(host).toContain('Path=/');
+
+        const scoped = expireCookie('__Secure-sid');
+        expect(scoped).toContain('__Secure-sid=');
+        expect(scoped).toContain('Secure');
+    });
+
+    it('an explicit secure: false on a prefixed name still fails loudly', () =>
+    {
+        expect(() => expireCookie('__Host-session', { secure: false })).toThrow(/__Host-/);
+        expect(() => expireCookie('__Secure-sid', { secure: false })).toThrow(/must set Secure/);
+    });
+
+    it('the sign-out shape dispatches: a redirect clearing a __Host- session', async () =>
+    {
+        const app = new App();
+        app.post('/sign-out', () => redirect('/login', 303, {
+            headers: { 'set-cookie': expireCookie('__Host-session') }
+        }));
+
+        const response = await app.handle(new Request('http://local/sign-out', { method: 'POST' }));
+        expect(response.status).toBe(303);
+        expect(response.headers.get('location')).toBe('/login');
+        const cookies = response.headers.getSetCookie();
+        expect(cookies).toHaveLength(1);
+        expect(cookies[0]).toContain('__Host-session=');
+        expect(cookies[0]).toContain('Max-Age=0');
+        expect(cookies[0]).toContain('Secure');
     });
 });

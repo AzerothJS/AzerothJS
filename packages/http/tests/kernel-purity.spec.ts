@@ -178,21 +178,28 @@ describe('the fetch-standard kernel', () =>
     it('toFetchHandler leaves an already-native response alone, streams included', async () =>
     {
         // Only kernel-built responses pay the materialisation; a streaming body must be
-        // forwarded by reference, never buffered.
+        // forwarded by reference, never buffered. The identity check runs against a bare
+        // handler: through an App, the request root re-wraps a streaming BODY so teardown
+        // can follow the stream's end - that layer's job, not a rebuild by this adapter.
         const { App, toFetchHandler } = await import('../src/index.ts');
-        const app = new App();
-        const streamed = new Response(new ReadableStream({
+        const chunked = (): ReadableStream<Uint8Array> => new ReadableStream({
             start(controller)
             {
                 controller.enqueue(new TextEncoder().encode('chunk'));
                 controller.close();
             }
-        }), { status: 202 });
-        app.get('/stream', () => streamed);
+        });
 
+        const streamed = new Response(chunked(), { status: 202 });
+        const identical = await toFetchHandler({ handle: () => Promise.resolve(streamed) })(new Request('http://edge.local/stream'));
+        expect(identical).toBe(streamed); // same object - not rebuilt
+
+        const app = new App();
+        app.get('/stream', () => new Response(chunked(), { status: 202 }));
         const response = await toFetchHandler(app)(new Request('http://edge.local/stream'));
-        expect(response).toBe(streamed); // same object - not rebuilt
+        expect(Object.getPrototypeOf(response)).toBe(Response.prototype);
         expect(response.status).toBe(202);
+        expect(response.body).toBeInstanceOf(ReadableStream); // still a live stream, not buffered
         expect(await response.text()).toBe('chunk');
     });
 

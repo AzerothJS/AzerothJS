@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { RouterProvider, Routes, createMemoryHistory, createRouter, css, h, resetStyleSheet } from 'azerothjs';
+import { RouterProvider, Routes, createMemoryHistory, createRouter, css, h, resetStyleSheet, useHead } from 'azerothjs';
 import { registerStyle } from 'azerothjs/internal';
 import type { LoaderHandoff, Route } from 'azerothjs';
 import { App } from '@azerothjs/http';
@@ -146,21 +146,36 @@ describe('a STREAMED page also carries its scoped CSS', () =>
     // `render: 'stream'` route flushed its shell with scoped class names and no rules - an
     // unstyled first paint, which is exactly what streaming exists to avoid. Measured on a real
     // app before the fix: server 1 stylesheet, static 1, stream 0.
+    //
+    // Every css() here is evaluated INSIDE the component, which is what makes these tests able
+    // to fail: a css() evaluated at module load is app-static and reaches every document
+    // whether or not this render's frame was ever drained, so it cannot tell a drained frame
+    // from one left behind for the next request.
+    function streamApp(routes: Route[]): (props: { url?: string; handoff?: LoaderHandoff }) => HTMLElement
+    {
+        return (props) => RouterProvider({
+            router: createRouter({
+                routes,
+                history: createMemoryHistory(props.url ?? '/'),
+                initialLoaderData: props.handoff
+            }),
+            children: () => Routes({ fallback: () => h('h1', {}, 'nf') })
+        }) as HTMLElement;
+    }
+
     it('emits the stylesheet in the streamed head, before any body chunk', async () =>
     {
-        const styled = css('.hero { color: rgb(7, 7, 7); }');
-        const routes: Route[] = [{ path: '/', component: () => h('div', { class: styled.hero }, 'hi') }];
-        const StreamApp = (props: { url?: string; handoff?: LoaderHandoff }): HTMLElement =>
-            RouterProvider({
-                router: createRouter({
-                    routes,
-                    history: createMemoryHistory(props.url ?? '/'),
-                    initialLoaderData: props.handoff
-                }),
-                children: () => Routes({ fallback: () => h('h1', {}, 'nf') })
-            }) as HTMLElement;
+        resetStyleSheet();
+        const routes: Route[] = [{
+            path: '/',
+            component: () =>
+            {
+                const styled = css('.hero { color: rgb(7, 7, 7); }');
+                return h('div', { class: styled.hero }, 'hi');
+            }
+        }];
 
-        const render = createPageRenderer(StreamApp, routes);
+        const render = createPageRenderer(streamApp(routes), routes);
         const result = await render('/', SHELL, { stream: true });
         expect(result.kind).toBe('stream');
 
@@ -172,31 +187,33 @@ describe('a STREAMED page also carries its scoped CSS', () =>
         await reader.cancel();
 
         expect(head).toContain('<style data-azeroth-css>');
+        expect(head).toContain('.hero_');
         expect(head).toContain('color: rgb(7, 7, 7)');
         expect(head.indexOf('<style data-azeroth-css>')).toBeLessThan(head.indexOf('<div id="root">'));
     });
 
     it('stamps the nonce on a streamed page stylesheet too', async () =>
     {
-        const styled = css('.badge { color: rgb(8, 8, 8); }');
-        const routes: Route[] = [{ path: '/', component: () => h('div', { class: styled.badge }, 'hi') }];
-        const StreamApp = (props: { url?: string; handoff?: LoaderHandoff }): HTMLElement =>
-            RouterProvider({
-                router: createRouter({
-                    routes,
-                    history: createMemoryHistory(props.url ?? '/'),
-                    initialLoaderData: props.handoff
-                }),
-                children: () => Routes({ fallback: () => h('h1', {}, 'nf') })
-            }) as HTMLElement;
+        resetStyleSheet();
+        const routes: Route[] = [{
+            path: '/',
+            component: () =>
+            {
+                const styled = css('.badge { color: rgb(8, 8, 8); }');
+                return h('div', { class: styled.badge }, 'hi');
+            }
+        }];
 
-        const render = createPageRenderer(StreamApp, routes);
+        const render = createPageRenderer(streamApp(routes), routes);
         const result = await render('/', SHELL, { stream: true, scriptNonce: 'streamnonce' });
         const reader = (result as { stream: ReadableStream<Uint8Array> }).stream.getReader();
         const head = new TextDecoder().decode((await reader.read()).value ?? new Uint8Array());
         await reader.cancel();
 
+        // The nonce AND this render's own rules: a stylesheet carrying only app-static rules
+        // would be nonced too, and would prove nothing about the frame.
         expect(head).toContain('<style data-azeroth-css nonce="streamnonce">');
+        expect(head).toContain('color: rgb(8, 8, 8)');
     });
 });
 
@@ -315,6 +332,72 @@ describe('one request\'s scoped CSS never reaches another request\'s document', 
 
         lazyModule();
         expect(await headOf(await render('/second', SHELL))).toContain('rgb(2, 4, 8)');
+    });
+});
+
+describe('a render that fails AFTER rendering keeps its frames out of the next document', () =>
+{
+    // The seam between the render and the drain is not empty of failure: the loader handoff is
+    // serialized there, and loader data JSON.stringify refuses (a BigInt, a circular object)
+    // throws. A drain the failure can skip leaves this render's style and head frames pending
+    // for the NEXT request's collect to publish - the same cross-request leak, arriving through
+    // an error path instead of an ordering mistake.
+    function poisonRoutes(): Route[]
+    {
+        return [
+            {
+                path: '/poison',
+                // JSON.stringify refuses a BigInt, so building the handoff throws.
+                loader: async () => ({ amount: 1n }),
+                component: () =>
+                {
+                    useHead({ title: 'POISON-TITLE' });
+                    const styles = css('.poison { color: rgb(3, 3, 3); }');
+                    return h('div', { class: styles.poison }, 'x');
+                }
+            },
+            { path: '/clean', component: () => h('p', {}, 'clean') }
+        ];
+    }
+
+    function appFor(routes: Route[]): (props: { url?: string; handoff?: LoaderHandoff }) => HTMLElement
+    {
+        return (props) => RouterProvider({
+            router: createRouter({
+                routes,
+                history: createMemoryHistory(props.url ?? '/'),
+                initialLoaderData: props.handoff
+            }),
+            children: () => Routes({ fallback: () => h('h1', {}, 'nf') })
+        }) as HTMLElement;
+    }
+
+    it('a buffered render whose handoff refuses to serialize leaks nothing', async () =>
+    {
+        resetStyleSheet();
+        const routes = poisonRoutes();
+        const render = createPageRenderer(appFor(routes), routes);
+
+        await expect(render('/poison', SHELL)).rejects.toThrow();
+
+        const clean = ((await render('/clean', SHELL)) as { html: string }).html;
+        expect(clean).not.toContain('rgb(3, 3, 3)');
+        expect(clean).not.toContain('data-azeroth-css');
+        expect(clean).not.toContain('POISON-TITLE');
+    });
+
+    it('a streamed render whose handoff refuses to serialize leaks nothing', async () =>
+    {
+        resetStyleSheet();
+        const routes = poisonRoutes();
+        const render = createPageRenderer(appFor(routes), routes);
+
+        await expect(render('/poison', SHELL, { stream: true })).rejects.toThrow();
+
+        const clean = ((await render('/clean', SHELL)) as { html: string }).html;
+        expect(clean).not.toContain('rgb(3, 3, 3)');
+        expect(clean).not.toContain('data-azeroth-css');
+        expect(clean).not.toContain('POISON-TITLE');
     });
 });
 

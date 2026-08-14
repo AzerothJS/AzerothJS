@@ -9,7 +9,7 @@ import { describe, it, expect, expectTypeOf } from 'vitest';
 import { email, required, minLength } from 'azerothjs';
 import {
     string, number, boolean, literal, enumOf, array, object, record, union,
-    SchemaError, type Infer, type Issue
+    SchemaError, type Infer, type Issue, type StringOptions
 } from '@azerothjs/schema';
 
 describe('inference: the type IS the declaration', () =>
@@ -74,6 +74,30 @@ describe('combinator behavior', () =>
         expect(string({ min: 2, max: 4 }).parse('abc')).toBe('abc');
         expect(() => string({ min: 2 }).parse('a')).toThrow(SchemaError);
         expect(() => string().parse(42)).toThrow(/Expected a string/);
+    });
+
+    it('a /g or /y pattern validates the same input identically on every parse', () =>
+    {
+        const global = string({ pattern: /^[a-z]+$/g });
+        const sticky = string({ pattern: /^[a-z]+$/y });
+        for (let round = 0; round < 4; round++)
+        {
+            expect(global.safeParse('abc').ok).toBe(true);
+            expect(sticky.safeParse('abc').ok).toBe(true);
+        }
+        // A sticky pattern keeps its fresh-instance semantics: matching anchored at the start.
+        const anchored = string({ pattern: /abc/y });
+        expect(anchored.safeParse('abc').ok).toBe(true);
+        expect(anchored.safeParse('xabc').ok).toBe(false);
+        expect(anchored.safeParse('abc').ok).toBe(true);
+        // The caller's instance is never used for matching, so its own state survives intact,
+        // and introspection (meta.constraints) still reads the caller's source and flags.
+        const shared = /^[a-z]+$/g;
+        const schema = string({ pattern: shared });
+        shared.lastIndex = 2;
+        expect(schema.safeParse('abc').ok).toBe(true);
+        expect(shared.lastIndex).toBe(2);
+        expect((schema.meta?.constraints as StringOptions).pattern).toBe(shared);
     });
 
     it('number: finiteness, integers, bounds, and EXPLICIT coercion only', () =>

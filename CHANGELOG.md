@@ -10,6 +10,95 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Security - hardening across the server stack
+
+A pass over the HTTP kernel, the request lifecycle, the image endpoint, the SSR seams and
+schema validation. These are the behavior changes a consumer will notice.
+
+- **Error responses now reach your middleware.** An error raised by `throw` used to skip
+  the wrapper chain entirely, so `app.use(cors(...))`, `securityHeaders`, `requestId` and
+  `rateLimit` never touched it - a browser saw an opaque CORS failure instead of your 401.
+  Thrown errors are now mapped inside the dispatch, so every wrapper decorates them, and a
+  wrapper that throws is mapped at its own boundary and decorated by the wrappers outside
+  it. `pipeline()` composes the same way.
+- **A serializer returning a `Response` keeps the error's mandated headers.** Choosing
+  `application/problem+json` used to silently drop `Set-Cookie` (so sign-out stopped
+  signing out), `Allow` on a 405, and `Retry-After` on a 429. They are merged onto a copy
+  wherever the serializer left them unset, so a shared `Response` never accumulates one
+  request's headers for the next.
+- **Request teardown runs inside the request.** `onRequestCleanup` callbacks, the cleanup
+  error observer and error serialization all ran outside the request's async context, so
+  `createStore` handed every request's teardown the SAME process-wide instance. They now
+  re-enter the request scope, teardown registered from inside a cleanup is drained rather
+  than dropped, and neither a throwing cleanup nor a throwing observer can strand the
+  response.
+- **A dropped SSE client no longer leaks.** A disconnect left the response stream unsettled
+  forever, retaining the response, the stream, the reader and the socket for every client
+  that closed a tab or slept a laptop. Disconnect now ends the stream. Teardown registered
+  by a producer after its first `await` is no longer dropped either.
+- **`X-Forwarded-Host` / `-Proto` are read from the right.** With `trustProxy` they took
+  the FIRST entry - the attacker-controlled end - so a forged header could point
+  `context.url` at another host and any absolute link built from it. All forwarded-header
+  readers now share one right-indexed helper with `clientIp`'s hop semantics; `trustProxy`
+  accepts `trustedHops` to match.
+- **The image endpoint refuses non-images.** `/_image` served the upstream `Content-Type`
+  verbatim, so an allowlisted origin fronting user uploads could return attacker HTML on
+  your own origin - cached immutable. The type is now allowlisted with a 415 otherwise, and
+  image responses carry `nosniff` and `content-disposition: inline`. The ETag covers the
+  full variant, not just the source.
+- **The OpenAPI explorer fails closed.** The production gate required `NODE_ENV` to be
+  exactly `production`, so an unset variable - or `prod`, or a runtime without
+  `process` - published `/openapi.json` and `/docs` unauthenticated. They now register
+  only when `NODE_ENV` is exactly `development`, or when `public: true` says so.
+- **CSRF and cookies stop breaking sign-out.** `csrfCookie` threw on any 204/304 (a
+  cookie-less health check answered 500 and log-flooded); `expireCookie` threw on the
+  framework's own `__Host-`/`__Secure-` names, so the documented sign-out left the user
+  signed in. Both are fixed, and a same-origin POST rejected behind a TLS terminator now
+  names `trustProxy` in its diagnostic instead of failing mutely.
+- **Uploads and limits.** `maxPartBytes` is enforced on parts the consumer never reads and
+  no longer depends on socket chunking (an oversized part could pass, or report a
+  misleading "malformed" 400 instead of a 413); the multipart preamble is capped; part
+  header values reject bare CR/LF. The rate limiter no longer locks out every new key once
+  its map saturates, and saturation is observable.
+- **Rendering.** CSP nonces are escaped at every interpolation site and refused outright if
+  they are not valid CSP tokens; `<script>`/`<style>` content properties are serialized in
+  string mode, so a JSON-LD block written as `textContent` reaches crawlers instead of
+  shipping empty; the head-splice anchor is computed once, so collected CSS containing a
+  head-close token cannot displace the loader handoff.
+- **Schema.** A `string({ pattern })` built with a `/g` or `/y` regex alternated between
+  accepting and rejecting the same valid input across requests - the pattern is now
+  stateless per validation. `record()` builds a null-prototype object, and the truncation
+  flag no longer claims a drop at exactly the issue limit.
+
+### Changed
+
+- `requestId` no longer trusts an inbound `x-request-id` by default, matching `clientIp`,
+  `securityHeaders` and the adapter. Pass `trustInbound: true` to keep the old behavior.
+- A router created outside any ownership scope - the app-lifetime singleton the README
+  models - now owns its own reactive root instead of warning that its effects have no
+  owner. A router created inside a component still disposes with that component.
+- `serveH2c` applies the same socket timeouts `serve` does, plus HTTP/2 session flood
+  limits.
+- Every streaming response is monitored to its true end so late-registered teardown always
+  runs. Measured cost: about 0.6 microseconds per chunk (2% on a 10MiB file served in
+  64KiB chunks, against an in-memory baseline with no socket write).
+
+### Fixed
+
+- `json(undefined)` no longer throws a raw `TypeError`, reachable through a declared
+  optional 200 schema.
+- The typed client wraps its success-path JSON parse, so a 2xx that is not JSON surfaces
+  the documented error shape instead of a bare `SyntaxError`.
+- `staticFiles` mounted at a volume root serves files again.
+- `manage()` removes its listen-time error listener, so a later server error reaches a
+  handler instead of killing the process.
+- CORS preflight no longer collapses multiple `Set-Cookie` headers into one, and a
+  credentialed `'null'` origin is refused in every configuration form.
+- `ipBucket` treats every spelling of a mapped IPv4 address as one host.
+- The declaration emitter now says so when it skips an out-of-root `.azeroth` module,
+  instead of leaving a linked workspace with working runtime and no types.
+
+
 ### Added - the app-level data cache: `cached`, `revalidate`, and loader keying
 
 The framework now has one answer to "who fetched this, and when is it fetched again."

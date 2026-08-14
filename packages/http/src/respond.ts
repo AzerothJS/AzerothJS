@@ -75,7 +75,12 @@ export function payloadResponse(body: string, contentType: string, init: Respons
 /** A JSON response; the default for API handlers. */
 export function json(data: unknown, init: ResponseInit = {}): Response
 {
-    return payloadResponse(JSON.stringify(data), 'application/json; charset=utf-8', init);
+    // JSON has no undefined: stringify yields NO document for it (functions and symbols
+    // too), which its declared `string` return type hides - hence the assertion. Degrade
+    // to the null document, the rule stringify itself applies to such values inside an
+    // array, so a handler whose declared optional body is absent still answers valid JSON.
+    const body = JSON.stringify(data) as string | undefined;
+    return payloadResponse(body ?? 'null', 'application/json; charset=utf-8', init);
 }
 
 /** A plain-text response. */

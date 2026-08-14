@@ -223,8 +223,9 @@ specs diff cleanly in CI. `docs` on a route adds only what a machine cannot know
 description, declared error prose, security schemes); it never affects runtime behavior.
 
 `openapiPlugin` serves `/openapi.json` and a fully self-contained `/docs` explorer page
-(`viewer: 'scalar'` opts into the CDN shell instead). Both are development surfaces: under
-`NODE_ENV=production` the plugin registers nothing unless `public: true` says otherwise.
+(`viewer: 'scalar'` opts into the CDN shell instead). Both are development surfaces: the
+plugin registers them only when `NODE_ENV` is exactly `development` - an unset or
+unrecognized value means production - unless `public: true` says otherwise.
 
 `uncontracted(app, features)` lists every registered route the record does not cover - the
 honest burndown for incremental adoption, and form/raw/stream routes count as covered.
