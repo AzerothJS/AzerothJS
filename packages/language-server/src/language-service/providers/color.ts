@@ -19,18 +19,18 @@ import type { Color, ColorInformation, ColorPresentation, Range } from '../proto
 import {
     cssColorPresentations,
     cssColors,
-    cssTemplateSpans,
+    stylesheetSpans,
     styleRegion,
-    templateRegion,
+    stylesheetRegion,
     valueColorRegion,
     type CssRegion
 } from './css-service.ts';
 import { styleMapColorValueSpans } from './style-map.ts';
 
 /**
- * Color swatches for every static `style="..."` value and css`` template in the
- * document. Collects the CSS regions, runs the wrapped CSS service over each,
- * and returns the located colors with source-mapped ranges. Never throws.
+ * Color swatches for every static `style="..."` value, `style { }` section and css``
+ * template in the document. Collects the CSS regions, runs the wrapped CSS service over
+ * each, and returns the located colors with source-mapped ranges. Never throws.
  */
 export function getDocumentColors(ctx: RequestContext): ColorInformation[]
 {
@@ -41,9 +41,9 @@ export function getDocumentColors(ctx: RequestContext): ColorInformation[]
         {
             regions.push(styleRegion(ctx.source, span.start, span.end));
         }
-        for (const span of cssTemplateSpans(ctx.source))
+        for (const span of stylesheetSpans(ctx.source))
         {
-            regions.push(templateRegion(ctx.source, span.start, span.end));
+            regions.push(stylesheetRegion(ctx.source, span.start, span.end));
         }
         // String color values inside styleMap({ color: '#080', ... }).
         for (const span of styleMapColorValueSpans(ctx.source))

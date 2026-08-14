@@ -23,7 +23,7 @@ import type { Hover, Range } from '../protocol.ts';
 import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
 import { BUILTIN_COMPONENT_MAP, attributeDocumentation, directiveDocumentation, keywordDocumentation, keywordOptions, keywordWithExample, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
-import { cssHover, cssTemplateHover, inCssTemplate } from './css-service.ts';
+import { cssHover, stylesheetHover, inStylesheet } from './css-service.ts';
 import { classHover } from './css-classes.ts';
 import { styleMapHover } from './style-map.ts';
 import { spanToRange, toGenerated, tokenAt, type RequestContext } from '../request.ts';
@@ -31,6 +31,14 @@ import { spanToRange, toGenerated, tokenAt, type RequestContext } from '../reque
 /** Hover content for the caret at `offset`, or null. */
 export function getHover(ctx: RequestContext, offset: number): Hover | null
 {
+    // Inside a `style { }` section or a css`` template the content is CSS - neither reaches
+    // TypeScript, and every rule below reads the caret as script or markup. Checked FIRST, so
+    // a CSS class named like a keyword or a `content: "<b>"` string cannot be misread.
+    if (inStylesheet(ctx.source, offset))
+    {
+        return stylesheetHover(ctx.source, offset, ctx.lineIndex);
+    }
+
     // An AzerothJS authoring keyword (`state`, `effect`, `component`, ...) compiles
     // away, so TypeScript has no symbol to describe it; serve its docs directly.
     const keyword = keywordHover(ctx, offset);
@@ -55,12 +63,6 @@ export function getHover(ctx: RequestContext, offset: number): Hover | null
         case 'expression':
         case 'script':
         case 'text':
-            // Inside a css`` template the content is an opaque string to
-            // TypeScript; the CSS engine has the docs.
-            if (inCssTemplate(ctx.source, offset))
-            {
-                return cssTemplateHover(ctx.source, offset, ctx.lineIndex);
-            }
             // A styleMap property key shows CSS docs; a class name inside a
             // binding string shows its CSS rule; otherwise the TS type.
             return styleMapHover(ctx, offset) ?? classHover(ctx, offset) ?? tsHover(ctx, offset);

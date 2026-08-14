@@ -5,12 +5,17 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// CSS intelligence for inline `style="..."` values, via `vscode-css-languageservice`
-// (the engine behind VS Code's CSS support). An inline style is a declaration
-// list, not a full stylesheet, so we wrap it in a synthetic rule `*{ ... }` and
-// shift positions by the 2-character prefix - the same trick VS Code uses for
-// embedded styles. Only static `style="..."` values reach here; `style={...}` is a
-// JavaScript expression handled by the TypeScript bridge.
+// CSS intelligence for the three places CSS appears in a `.azeroth` file, via
+// `vscode-css-languageservice` (the engine behind VS Code's CSS support):
+//
+//   - a `style { ... }` section and a css`` template, which are whole stylesheets and
+//     parse as-is;
+//   - an inline `style="..."` value, which is a declaration LIST, so it is wrapped in a
+//     synthetic rule `*{ ... }` and positions shift by the 2-character prefix - the same
+//     trick VS Code uses for embedded styles.
+//
+// Only static `style="..."` values reach here; `style={...}` is a JavaScript expression
+// handled by the TypeScript bridge.
 
 import { getCSSLanguageService, type LanguageService, type CompletionItem as CssCompletionItem, type Color as CssColor, type Range as CssRange } from 'vscode-css-languageservice';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -24,6 +29,7 @@ import {
     type Range
 } from '../protocol.ts';
 import type { LineIndex } from '../text.ts';
+import { parseModule } from '@azerothjs/compiler';
 
 /** The `*{` we prepend so the declaration list parses as a stylesheet. */
 const WRAP_PREFIX = '*{';
@@ -124,18 +130,37 @@ export function cssValueCompletions(property: string, valueText: string, caretIn
     return mapCssItems(list.items);
 }
 
-// css`` tagged templates. Their content is a real stylesheet (selectors and
-// all), not a declaration list, so unlike style="..." it parses without the
-// synthetic-rule wrap. The TypeScript bridge sees the template as an opaque
-// string, so this is the only source of intelligence inside it.
+// Whole-stylesheet regions: a `style { ... }` section and a css`` tagged template.
+// Their content is a real stylesheet (selectors and all), not a declaration list, so
+// unlike style="..." it parses without the synthetic-rule wrap. Neither reaches the
+// TypeScript bridge - the section projects to nothing and a template is an opaque
+// string - so this is the ONLY source of intelligence inside either.
 
 /**
- * The `[start, end)` of the css`` template content around `offset`, or null
- * when the caret isn't inside one. Interpolations are rare in scoped css;
- * the scan only skips escaped backticks.
+ * The content `[start, end)` of every stylesheet region in the source, in source order.
+ *
+ * Sections come from the real parser, so a brace inside a CSS string or a `url()` cannot end
+ * one early. Templates are found by scan, since a css`` may sit anywhere an expression may -
+ * including inside a component body the module parse leaves as opaque spans.
  */
-function cssTemplateSpan(source: string, offset: number): { start: number; end: number } | null
+export function stylesheetSpans(source: string): { start: number; end: number }[]
 {
+    const spans: { start: number; end: number }[] = [];
+    try
+    {
+        for (const item of parseModule(source).items)
+        {
+            if (item.kind === 'style')
+            {
+                spans.push({ start: item.bodyStart, end: item.bodyEnd });
+            }
+        }
+    }
+    catch
+    {
+        // A source too malformed to parse contributes no sections; the templates below still count.
+    }
+
     const open = /\bcss\s*`/g;
     let match: RegExpExecArray | null;
     while ((match = open.exec(source)) !== null)
@@ -150,25 +175,35 @@ function cssTemplateSpan(source: string, offset: number): { start: number; end: 
             }
             i++;
         }
-        if (offset >= start && offset <= i)
-        {
-            return { start, end: i };
-        }
+        spans.push({ start, end: i });
         open.lastIndex = i + 1;
+    }
+    return spans.sort((a, b) => a.start - b.start);
+}
+
+/** The stylesheet region containing `offset`, or null when the caret is outside every one. */
+function stylesheetSpanAt(source: string, offset: number): { start: number; end: number } | null
+{
+    for (const span of stylesheetSpans(source))
+    {
+        if (offset >= span.start && offset <= span.end)
+        {
+            return span;
+        }
     }
     return null;
 }
 
-/** Whether the caret sits inside a css`` template. */
-export function inCssTemplate(source: string, offset: number): boolean
+/** Whether the caret sits inside a `style { }` section or a css`` template. */
+export function inStylesheet(source: string, offset: number): boolean
 {
-    return cssTemplateSpan(source, offset) !== null;
+    return stylesheetSpanAt(source, offset) !== null;
 }
 
-/** Builds the stylesheet document for the css`` template around `offset`. */
-function templateDoc(source: string, offset: number): { doc: TextDocument; caret: number; contentStart: number } | null
+/** Builds the stylesheet document for the region around `offset`. */
+function stylesheetDoc(source: string, offset: number): { doc: TextDocument; caret: number; contentStart: number } | null
 {
-    const span = cssTemplateSpan(source, offset);
+    const span = stylesheetSpanAt(source, offset);
     if (span === null)
     {
         return null;
@@ -178,10 +213,10 @@ function templateDoc(source: string, offset: number): { doc: TextDocument; caret
     return { doc, caret: offset - span.start, contentStart: span.start };
 }
 
-/** CSS completion (selectors, properties, values) inside a css`` template. */
-export function cssTemplateCompletions(source: string, offset: number): CompletionItem[]
+/** CSS completion (selectors, properties, values) inside a stylesheet region. */
+export function stylesheetCompletions(source: string, offset: number): CompletionItem[]
 {
-    const wrapped = templateDoc(source, offset);
+    const wrapped = stylesheetDoc(source, offset);
     if (wrapped === null)
     {
         return [];
@@ -191,10 +226,10 @@ export function cssTemplateCompletions(source: string, offset: number): Completi
     return mapCssItems(list.items);
 }
 
-/** CSS hover inside a css`` template. */
-export function cssTemplateHover(source: string, offset: number, lineIndex: LineIndex): Hover | null
+/** CSS hover inside a stylesheet region. */
+export function stylesheetHover(source: string, offset: number, lineIndex: LineIndex): Hover | null
 {
-    const wrapped = templateDoc(source, offset);
+    const wrapped = stylesheetDoc(source, offset);
     if (wrapped === null)
     {
         return null;
@@ -347,34 +382,10 @@ export function valueColorRegion(source: string, valueStart: number, valueEnd: n
     return { content: source.slice(valueStart, valueEnd), contentStart: valueStart, prefix: `${ WRAP_PREFIX }color:` };
 }
 
-/** Builds a stylesheet region from a css`` template's content span. */
-export function templateRegion(source: string, contentStart: number, contentEnd: number): CssRegion
+/** Builds a whole-stylesheet region (a `style { }` section or a css`` template) from its span. */
+export function stylesheetRegion(source: string, contentStart: number, contentEnd: number): CssRegion
 {
     return { content: source.slice(contentStart, contentEnd), contentStart, prefix: '' };
-}
-
-/** The content spans of every css`` template in the source (start/end offsets). */
-export function cssTemplateSpans(source: string): { start: number; end: number }[]
-{
-    const open = /\bcss\s*`/g;
-    const spans: { start: number; end: number }[] = [];
-    let match: RegExpExecArray | null;
-    while ((match = open.exec(source)) !== null)
-    {
-        const start = match.index + match[0].length;
-        let i = start;
-        while (i < source.length && source[i] !== '`')
-        {
-            if (source[i] === '\\')
-            {
-                i++;
-            }
-            i++;
-        }
-        spans.push({ start, end: i });
-        open.lastIndex = i + 1;
-    }
-    return spans;
 }
 
 export type { CssRegion };

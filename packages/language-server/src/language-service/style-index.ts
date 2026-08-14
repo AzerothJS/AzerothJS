@@ -26,7 +26,7 @@
 import ts from 'typescript';
 import { LineIndex } from './text.ts';
 import type { Range } from './protocol.ts';
-import { cssTemplateSpans } from './providers/css-service.ts';
+import { stylesheetSpans } from './providers/css-service.ts';
 
 /** A class selector found in a stylesheet or a css`` template. */
 export interface ClassDefinition
@@ -328,10 +328,10 @@ export class StyleIndex
         const lineIndex = new LineIndex(text);
         if (file.endsWith('.azeroth'))
         {
-            // Index only the css`` templates inside; the markup's own class="..."
-            // is a *use*, not a definition.
+            // Index only the stylesheet regions inside - the `style { }` section and any
+            // css`` template. The markup's own class="..." is a *use*, not a definition.
             const defs: ClassDefinition[] = [];
-            for (const span of cssTemplateSpans(text))
+            for (const span of stylesheetSpans(text))
             {
                 defs.push(...extractClasses(text.slice(span.start, span.end), span.start, true, lineIndex, file));
             }

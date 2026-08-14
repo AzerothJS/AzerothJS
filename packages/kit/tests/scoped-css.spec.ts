@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { RouterProvider, Routes, createMemoryHistory, createRouter, css, h, resetStyleSheet } from 'azerothjs';
+import { registerStyle } from 'azerothjs/internal';
 import type { LoaderHandoff, Route } from 'azerothjs';
 import { App } from '@azerothjs/http';
 import { mountPages, type PageRoute } from '@azerothjs/kit';
@@ -279,5 +280,40 @@ describe('one request\'s scoped CSS never reaches another request\'s document', 
         const plain = await headOf(await render('/plain', SHELL));
         expect(plain).not.toContain('TENANT-A-SECRET');
         expect(plain).not.toContain('data-azeroth-css');
+    });
+
+    it('a `style { }` section\'s rules reach EVERY request, including a later one', async () =>
+    {
+        // The mirror image of the leak above, and just as load-bearing. A compiled section has
+        // no per-request input, so it is registered app-statically - which is what makes a
+        // LAZY-imported route work: its module is evaluated inside one request, and every later
+        // request reuses the cached module and never runs the registration again. Isolating a
+        // section per render would leave request 2 onward with the class names and none of the
+        // rules.
+        resetStyleSheet();
+        const routes: Route[] = [];
+        const app = (props: { url?: string; handoff?: LoaderHandoff }): HTMLElement =>
+            RouterProvider({
+                router: createRouter({ routes, history: createMemoryHistory(props.url ?? '/'), initialLoaderData: props.handoff }),
+                children: () => Routes({ fallback: () => h('p', { class: 'section-card' }, 'page') })
+            }) as HTMLElement;
+        const render = createPageRenderer(app, routes);
+
+        // Evaluated during the FIRST render, exactly as a lazy route's module would be.
+        let evaluated = false;
+        const lazyModule = (): void =>
+        {
+            if (!evaluated)
+            {
+                evaluated = true;
+                registerStyle('.section-card { color: rgb(2, 4, 8); }');
+            }
+        };
+
+        lazyModule();
+        expect(await headOf(await render('/first', SHELL))).toContain('rgb(2, 4, 8)');
+
+        lazyModule();
+        expect(await headOf(await render('/second', SHELL))).toContain('rgb(2, 4, 8)');
     });
 });

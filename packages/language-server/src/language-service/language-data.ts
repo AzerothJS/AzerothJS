@@ -338,6 +338,20 @@ export const KEYWORD_DOCS: Record<string, string> =
         '    validateArray: (rows) => rows.length ? null : \'Add one\'\n};\n\n' +
         '<For each={items.rows()} key={(item) => item.key} let={ item }>\n' +
         '    <input type="number" bind:value={item.qty} />\n</For>\n```',
+    style:
+        '**`style`** - the module\'s scoped stylesheet\n\n' +
+        'A module-level SECTION holding plain CSS. Every `.class` it defines is rewritten to a ' +
+        'content-hashed name, and the compiler rewrites the matching `class="..."` and `class:name` ' +
+        'in this file\'s markup to the same name - so two components can both define `.card` without ' +
+        'colliding. Element, id and attribute selectors stay GLOBAL, and a class the section does not ' +
+        'define (a utility class, a global stylesheet\'s) is left untouched.\n\n' +
+        '```azeroth\nstyle\n{\n    .card { padding: 1rem; border-radius: .5rem; }\n' +
+        '    .card:hover { background: var(--hover); }\n}\n\n' +
+        'export default component Card\n{\n    <article class="card">...</article>\n}\n```\n\n' +
+        'One section per file, at module level - a stylesheet belongs to the file, not to an ' +
+        'instance. Only STATIC class names are rewritten: `class={expr}` and `classList({ ... })` ' +
+        'are TypeScript values the compiler cannot read, so use the `css` template (which returns ' +
+        'the scoped names) for those. Nothing stops you importing a `.css` file instead.',
     with:
         '**`with`** - reactive options clause\n\n' +
         'Attaches an options object to a `state`, `derived`, `deferred`, `effect`, `watch`, `resource`, `stream`, ' +

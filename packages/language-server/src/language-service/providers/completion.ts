@@ -34,7 +34,7 @@ import {
     type KeywordOption
 } from '../language-data.ts';
 import { htmlCompletions, eventDocumentation } from './html-service.ts';
-import { cssCompletions, cssTemplateCompletions, inCssTemplate } from './css-service.ts';
+import { cssCompletions, stylesheetCompletions, inStylesheet } from './css-service.ts';
 import { classCompletions, inClassValue } from './css-classes.ts';
 import { styleMapCompletions } from './style-map.ts';
 import { toGenerated, tokenAt, type RequestContext } from '../request.ts';
@@ -70,6 +70,13 @@ export interface CompletionOptions
 /** Produces completion items for the caret at `offset`. */
 export function getCompletions(ctx: RequestContext, offset: number, options: CompletionOptions = {}): CompletionItem[]
 {
+    // A `style { }` section and a css`` template hold CSS, which never reaches TypeScript.
+    // Checked BEFORE the position is classified, because the classifier reads the caret as
+    // script or markup and a `content: "<b>"` would otherwise complete HTML tag names.
+    if (inStylesheet(ctx.source, offset))
+    {
+        return stylesheetCompletions(ctx.source, offset);
+    }
     const context = classifyPosition(ctx.source, offset);
     return builtinCompletions(ctx, offset, options, context);
 }
@@ -118,12 +125,6 @@ function builtinCompletions(ctx: RequestContext, offset: number, options: Comple
         case 'script':
         case 'text':
         {
-            // A css`` template is an opaque string to TypeScript; the CSS
-            // engine owns everything inside it.
-            if (inCssTemplate(ctx.source, offset))
-            {
-                return cssTemplateCompletions(ctx.source, offset);
-            }
             // A class binding's strings (`classList({ '...': })`, `class={'...'}`)
             // complete project class names rather than TypeScript identifiers.
             if (inClassValue(ctx.source, offset))
@@ -245,6 +246,7 @@ const KEYWORD_SNIPPETS: readonly { label: string; detail: string; insertText: st
     { label: 'form', detail: 'reactive form', insertText: 'form ${1:name} = { ${0} } with {\n    onSubmit: async (values) => {}\n};' },
     { label: 'form[]', detail: 'array-form (list of sub-forms)', insertText: 'form ${1:name}[] = { ${0} } with {\n    validateArray: (rows) => rows.length ? null : \'Add one\'\n};' },
     { label: 'component', detail: 'component declaration', insertText: 'component ${1:Name}(props: ${2:Props})\n{\n    ${0}\n}' },
+    { label: 'style', detail: 'scoped stylesheet section', insertText: 'style\n{\n    .${1:name} { ${0} }\n}' },
     { label: 'batch', detail: 'batched writes', insertText: 'batch\n{\n    ${0}\n}' },
     { label: 'untrack', detail: 'read without tracking', insertText: 'untrack\n{\n    ${0}\n}' },
     { label: 'mount', detail: 'connected hook', insertText: 'mount\n{\n    ${0}\n}' },

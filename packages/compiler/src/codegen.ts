@@ -42,6 +42,7 @@ import { parseModule } from './parser.ts';
 import { diagnoseModule } from './diagnostics.ts';
 import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
+import { styleScopeOf } from './style-section.ts';
 import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } from './keyword-spec.ts';
@@ -63,7 +64,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 2;
+export const EMITTED_CONTRACT_VERSION = 3;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -149,6 +150,13 @@ interface Emit
      * file; this is the one absolute anchor a depth failure inside that recursion can be reported at.
      */
     regionStart: number;
+
+    /**
+     * The module's `style { }` class-name map, or null when it has no section. Resolved BEFORE
+     * any item is emitted, because the section may sit after the components it styles and every
+     * markup class in the module resolves against the one stylesheet.
+     */
+    classes: Readonly<Record<string, string>> | null;
 }
 
 /** Interns a template HTML string, returning its hoisted const name. */
@@ -228,7 +236,8 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
     }
 
     const module = parseModule(source);
-    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0 };
+    const style = styleScopeOf(source, module);
+    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -270,6 +279,17 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
             else
             {
                 push(projected, item.start, projected === raw);
+            }
+        }
+        else if (item.kind === 'style')
+        {
+            // The section's RAW text goes to the runtime, which derives the same scope from it
+            // that the class rewrite already used. Emitting pre-scoped text instead would make
+            // the runtime scope it a SECOND time (`.btn_a1_b2`) and silently unstyle the page.
+            if (style !== null && item === style.section)
+            {
+                emit.used.add('registerStyle');
+                push(`registerStyle(${ quoteString(style.css) });\n`, item.start, false);
             }
         }
         else
@@ -374,7 +394,7 @@ interface ComponentEmit { code: string; spans: { genOffset: number; sourceOffset
 function generateComponent(source: string, component: ComponentDecl, emit: Emit): ComponentEmit
 {
     const analysis = analyzeComponent(source, component);
-    const lowered = lowerComponent(source, component, analysis);
+    const lowered = lowerComponent(source, component, analysis, emit.classes);
     const plan = lowered === null ? null : optimize(source, lowered);
     if (plan !== null)
     {
@@ -1514,7 +1534,7 @@ function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base 
  */
 function emitMarkupExpr(source: string, node: MarkupElement | MarkupFragment, sources: ReactiveSources, emit: Emit): string
 {
-    const plan = lowerMarkup(source, node);
+    const plan = lowerMarkup(source, node, emit.classes);
     const previous = emit.raw;
     emit.raw = true;
     emit.holeDepth++;

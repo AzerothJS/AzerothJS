@@ -28,7 +28,11 @@
  *   - azeroth/unterminated-declaration - a missing `;` that let a declaration absorb the next one
  *                                    (the swallowed binding would silently vanish);
  *   - azeroth/non-ascii-name       - a non-ASCII character in a declaration name (the ASCII-only
- *                                    scanner would truncate it silently).
+ *                                    scanner would truncate it silently);
+ *   - azeroth/style-section        - a `style { ... }` section that is unterminated, repeated, or
+ *                                    written where it is not a section (inside a component body,
+ *                                    or after a line with no `;`, where it would reach TypeScript
+ *                                    as CSS and produce nonsense type errors).
  *
  * Plus the normative markup rules of GRAMMAR 6.6, defined HERE and nowhere else (the lowerer
  * assumes validated input; the language server and ESLint processor surface the same findings):
@@ -52,7 +56,7 @@
 import * as ts from 'typescript';
 
 import type { MarkupAttribute, MarkupElement, MarkupFragment } from './types.ts';
-import type { ComponentDecl } from './ast.ts';
+import type { ComponentDecl, ModuleItem } from './ast.ts';
 import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
@@ -122,8 +126,15 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
     // Imports and module-scope variables, resolved once: a bind target that names one is a
     // silent half-dead binding (or a TypeError on the first keystroke, for an import).
     const moduleScope = moduleBindScope(source, items);
+    diagnoseStyleSections(source, items, diagnostics);
     for (const item of items)
     {
+        if (item.kind === 'style')
+        {
+            // The interior is CSS. Every rule below reads it as TypeScript or markup, and
+            // `@media (width < 40rem)` alone would be enough to make one of them fire.
+            continue;
+        }
         if (item.kind === 'component')
         {
             diagnoseComponent(source, item, diagnostics, moduleScope);
@@ -478,6 +489,109 @@ function diagnoseKeywordShadows(source: string, component: ComponentDecl, out: A
                 });
             }
         }
+    }
+}
+
+/**
+ * The `style { ... }` section's three failure modes, all of which are otherwise SILENT - the
+ * parser is total, so a section it does not recognise simply becomes opaque TypeScript and the
+ * author is told `Cannot find name 'red'` about their own CSS.
+ *
+ *   - unterminated: a missing `}` swallows the rest of the file into the stylesheet, so every
+ *     component below it disappears;
+ *   - repeated: two sections leave "which stylesheet defines `.card`" with no answer, so one
+ *     section per module is the rule and the second is rejected rather than silently ignored;
+ *   - misplaced: the shape is recognised ONLY at a module statement start. Inside a component
+ *     body, or after a line with no `;`, the same text is legal-but-meaningless TypeScript.
+ *
+ * @internal `azeroth/style-section`
+ */
+function diagnoseStyleSections(source: string, items: readonly ModuleItem[], out: AzerothDiagnostic[]): void
+{
+    let seen = 0;
+    for (const item of items)
+    {
+        if (item.kind === 'style')
+        {
+            seen++;
+            if (item.unterminated)
+            {
+                out.push({
+                    code: 'azeroth/style-section',
+                    severity: 'error',
+                    message: 'This `style` section is never closed, so the rest of the file is inside it. Add the closing `}`.',
+                    start: item.start,
+                    end: item.start + 'style'.length
+                });
+            }
+            else if (seen > 1)
+            {
+                out.push({
+                    code: 'azeroth/style-section',
+                    severity: 'error',
+                    message: 'A module has ONE `style` section - a class defined in two of them has no single scope. Merge them.',
+                    start: item.start,
+                    end: item.start + 'style'.length
+                });
+            }
+            continue;
+        }
+        if (item.kind === 'opaque')
+        {
+            diagnoseMisplacedStyle(source, item.start, item.end, false, out);
+            continue;
+        }
+        for (const body of item.body)
+        {
+            if (body.kind === 'opaque-statements')
+            {
+                diagnoseMisplacedStyle(source, body.start, body.end, true, out);
+            }
+        }
+    }
+}
+
+/** Words after which `style` is a NAME being declared, never the section keyword. */
+const STYLE_BINDERS: ReadonlySet<string> = new Set(['const', 'let', 'var', 'function', 'class', 'get', 'set']);
+
+/**
+ * Reports a `style { ... }` shape sitting in code the parser handed to TypeScript. Walks with
+ * the parser's own {@link step}, so `style` in a string, a comment or markup never triggers,
+ * and a property (`el.style`), a binding (`const style = ...`) or a member (`{ style: x }`) is
+ * left alone - only the bare keyword followed by `{` is flagged, which is meaningless in every
+ * TypeScript reading.
+ *
+ * @internal `azeroth/style-section`
+ */
+function diagnoseMisplacedStyle(source: string, start: number, end: number, inComponent: boolean, out: AzerothDiagnostic[]): void
+{
+    let i = start;
+    let prevChar = '';
+    let prevWord = '';
+    while (i < end)
+    {
+        const s = step(source, i, prevChar, prevWord);
+        if (s.kind === 'identifier' && s.text === 'style' && prevChar !== '.' && !STYLE_BINDERS.has(prevWord))
+        {
+            const brace = skipTrivia(source, s.next);
+            if (source[brace] === '{')
+            {
+                out.push({
+                    code: 'azeroth/style-section',
+                    severity: 'error',
+                    message: inComponent
+                        ? '`style { ... }` is a module SECTION, not a component body item - a stylesheet belongs '
+                            + 'to the file, not to an instance. Move it outside the component.'
+                        : '`style { ... }` is only a section where a statement may begin. Terminate the previous '
+                            + 'statement with `;`, or rename this binding.',
+                    start: i,
+                    end: s.next
+                });
+            }
+        }
+        i = s.next;
+        prevChar = s.prevChar;
+        prevWord = s.prevWord;
     }
 }
 
@@ -1862,7 +1976,7 @@ function moduleBindScope(source: string, items: readonly { kind: string; start: 
     const vars = new Set<string>();
     for (const item of items)
     {
-        if (item.kind === 'component')
+        if (item.kind === 'component' || item.kind === 'style')
         {
             continue;
         }

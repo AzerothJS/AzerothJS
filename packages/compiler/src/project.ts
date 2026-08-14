@@ -1125,13 +1125,21 @@ export function generateVirtualCode(source: string): VirtualCode
     };
 
     // Top-level transform: opaque regions are emitted as code (nested constructs lowered, markup within
-    // them expanded); components are projected to functions. The leading `export` / `export default` lives
-    // in the preceding opaque region, so it glues onto the emitted `function Name` and the export form
-    // carries through.
+    // them expanded); components are projected to functions; the style section is dropped. The leading
+    // `export` / `export default` lives in the preceding opaque region, so it glues onto the emitted
+    // `function Name` and the export form carries through.
     try
     {
         for (const item of module.items)
         {
+            // The style section projects to NOTHING, so its offsets carry no mapping. That is what
+            // makes every downstream tool correct without knowing the section exists: their shared
+            // rule for an unmapped region is already "drop it", so TypeScript never sees CSS,
+            // formatting leaves it alone, and no diagnostic, hint or lens can land inside it.
+            if (item.kind === 'style')
+            {
+                continue;
+            }
             if (item.kind === 'opaque')
             {
                 emitCode(item.start, item.end);

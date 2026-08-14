@@ -26,9 +26,13 @@
  *
  * Imperative, non-reactive features are deliberately NOT keywords - notably `ref` (a DOM escape hatch:
  * `current` is a plain read, no reactive initializer, no dependency tracking, nothing to dispose) and the
- * `class` / `style` / spread markup directives. Their only compiler need is attribute routing, which lives
+ * `class` / `style:` / spread markup directives. Their only compiler need is attribute routing, which lives
  * in the markup-binding layer, not here. Keeping them out preserves the invariant "keyword == reactive
  * construct"; do not add a keyword for a construct that does not participate in reactivity.
+ *
+ * SECTIONS ({@link SECTION_WORDS}) are the one thing here that is not a keyword: module-level blocks that
+ * compose another language into the file. They have no runtime helper, no projection style and no reactive
+ * kind - they appear only in the vocabulary the editor grammars are welded to.
  *
  * @internal Compiler metadata; not part of the package's public API.
  */
@@ -82,6 +86,15 @@ export const WRAPPER_FN: Readonly<Record<string, string>> =
     dispose: 'onRootDispose',
     mount: 'onMount'
 };
+
+/**
+ * The module-level SECTION words: a block that composes another language into the file, admitted
+ * under STABILITY.md §2.2 rather than the keyword rubric. `style { ... }` is the only one, and it
+ * carries no runtime helper - the emit is a registration call, not a keyword lowering - so it is
+ * absent from every table above. It is here because the editor grammars are welded to this file's
+ * vocabulary, and a section the grammars do not colour looks like a broken file.
+ */
+export const SECTION_WORDS: ReadonlySet<string> = new Set<string>(['style']);
 
 /** A factory keyword kind. */
 export type FactoryKind = 'resource' | 'stream' | 'store' | 'selector' | 'form';

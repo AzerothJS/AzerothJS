@@ -29,8 +29,8 @@ export interface Module extends Span
     items: ModuleItem[];
 }
 
-/** A top-level item: either opaque host code or a component declaration. */
-export type ModuleItem = OpaqueRegion | ComponentDecl;
+/** A top-level item: opaque host code, a component declaration, or the module's style section. */
+export type ModuleItem = OpaqueRegion | ComponentDecl | StyleSection;
 
 /**
  * A run of verbatim JS/TS outside any component (imports, types, helpers).
@@ -39,6 +39,34 @@ export type ModuleItem = OpaqueRegion | ComponentDecl;
 export interface OpaqueRegion extends Span
 {
     kind: 'opaque';
+}
+
+/**
+ * A `style { ... }` section: the module's stylesheet, holding plain CSS.
+ *
+ * A SECTION, not a body item - it belongs to the file rather than to a component instance, and
+ * it declares no reactive state. The body is never parsed as CSS; it is hashed and its class
+ * selectors are suffixed, so nesting, `@media`, `@layer` and anything CSS adds later pass
+ * through untouched.
+ *
+ * The interior is scanned with CSS rules rather than the JS scanner the rest of the parser
+ * uses, because the two disagree on real stylesheets: `url(//cdn/x.png)` is not a line comment
+ * and `calc(100%/3)` does not open a regex.
+ */
+export interface StyleSection extends Span
+{
+    kind: 'style';
+
+    /** Span of the block's interior, exclusive of the surrounding `{` and `}`. */
+    bodyStart: number;
+    bodyEnd: number;
+
+    /**
+     * True when no matching `}` was found, so the section runs to end of file. The parser is
+     * total and never throws, so the malformed shape is CARRIED rather than reported here;
+     * `diagnoseModule` turns it into a located error.
+     */
+    unterminated: boolean;
 }
 
 /** A `component Name { ... }` declaration with its parsed body items. */

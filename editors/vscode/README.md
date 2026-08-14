@@ -50,7 +50,7 @@ The differentiator: your TypeScript files and your components behave as ONE code
 
 | Feature | Details |
 | --- | --- |
-| **Completion** | HTML tags and user/built-in components in tag position; attributes and DOM events; CSS in inline `style` values; full type-aware TypeScript inside `{ ... }` holes; auto-imports for not-yet-imported symbols. |
+| **Completion** | HTML tags and user/built-in components in tag position; attributes and DOM events; CSS in a `style { }` section and in inline `style` values; full type-aware TypeScript inside `{ ... }` holes; auto-imports for not-yet-imported symbols. |
 | **Hover** | Types, signatures, JSDoc - plus full documentation for every AzerothJS keyword (`state`, `derived`, `effect`, `form`, ...) and built-in component (`Show`, `For`, `Switch`, `Suspense`, `Portal`, `ErrorBoundary`, ...). |
 | **Diagnostics** | Compiler markup errors + real TypeScript type errors in expressions and script. Errors say what is wrong, why, and how to fix it. |
 | **Navigation** | Definition, type definition, implementation, references - cross-file, cross-language. |
@@ -59,7 +59,7 @@ The differentiator: your TypeScript files and your components behave as ONE code
 | **Symbols & structure** | Outline, workspace-wide symbol search, folding, selection ranges. |
 | **Inlay hints** | Parameter names, inferred types, return types - each individually toggleable. |
 | **Signature help, quick fixes, CodeLens, call hierarchy** | The full modern set, compiler-aware. |
-| **Colors & links** | CSS color swatches in style values; clickable document links. |
+| **Colors & links** | CSS color swatches in a `style { }` section and in style values; clickable document links. |
 | **Formatting & editing aids** | Document + range formatting, on-type formatting, tag auto-close, linked editing of tag pairs. |
 
 ---

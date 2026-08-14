@@ -318,3 +318,154 @@ export function isBindingAttr(tag: string, name: string): boolean
 {
     return BINDING_ATTRS.get(tag)?.has(name) ?? false;
 }
+
+/**
+ * djb2 to base36 over CSS rule text: the scope suffix appended to every class name the text
+ * defines. Deterministic across runs and across processes, which is the whole mechanism -
+ * identical rules dedupe to one stylesheet, and the server and the client independently
+ * compute the SAME class names for the same rules.
+ *
+ * Nothing but the rule text may enter the input. A filename, module id or counter would make
+ * the two sides disagree, and the failure is silent: hydration overwrites `class` without
+ * comparing it, so the page would simply render unstyled.
+ *
+ * @param input - The raw CSS text.
+ * @returns A short base36 scope suffix.
+ * @see {@link scopeSelectors} - the rewrite that consumes the scope.
+ */
+export function hashCss(input: string): string
+{
+    let hash = 5381;
+    for (let i = 0; i < input.length; i++)
+    {
+        hash = (((hash << 5) + hash) + input.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(36);
+}
+
+/** A class-selector identifier after the `.`; sticky, so it matches in place. */
+const CLASS_IDENT = /-?[_a-zA-Z][\w-]*/y;
+
+/**
+ * Rewrites every `.name` class selector in `cssText` to `.name_<scope>`, recording each base
+ * name against its scoped form in `classMap`.
+ *
+ * Only CLASS selectors are rewritten. Element, id, attribute and custom-property names stay
+ * global, so `div { margin: 0 }` inside a scoped block still applies page-wide - the scoping
+ * unit is the class, not the block.
+ *
+ * Quoted strings, `url(...)` bodies and comments are copied VERBATIM, because a dotted token
+ * inside them is content rather than a selector. Rewriting `url(./logo.png)` or
+ * `content: ".done"` would 404 the asset or corrupt the value while the class names kept
+ * working, so the breakage would be silent.
+ *
+ * The CSS is never parsed, so nesting, `@media`, `@layer`, `@supports`, `@keyframes` and any
+ * future syntax pass through untouched.
+ *
+ * Lives here rather than in the renderer because BOTH the runtime `css` template and the
+ * compiler's `style { }` section run it - over the same text, to the same scope - and the two
+ * agreeing is what makes a class written in markup resolve to the rule that styles it.
+ *
+ * @param cssText - The raw CSS.
+ * @param scope - The suffix from {@link hashCss}.
+ * @param classMap - Filled in place: base class name to scoped class name.
+ * @returns The rewritten CSS.
+ * @example
+ * ```ts
+ * const map: Record<string, string> = {};
+ * scopeSelectors('.btn:hover { color: red }', 'a1b2', map);
+ * // '.btn_a1b2:hover { color: red }', map.btn === 'btn_a1b2'
+ * ```
+ */
+export function scopeSelectors(cssText: string, scope: string, classMap: Record<string, string>): string
+{
+    const n = cssText.length;
+    let out = '';
+    let i = 0;
+
+    // Copies a quoted string verbatim, honouring backslash escapes, and returns the index one
+    // past the closing quote.
+    const copyString = (from: number): number =>
+    {
+        const quote = cssText.charAt(from);
+        let j = from + 1;
+        while (j < n)
+        {
+            const c = cssText.charAt(j);
+            if (c === '\\')
+            {
+                j += 2;
+                continue;
+            }
+            j++;
+            if (c === quote)
+            {
+                break;
+            }
+        }
+        out += cssText.slice(from, j);
+        return j;
+    };
+
+    while (i < n)
+    {
+        const ch = cssText.charAt(i);
+
+        if (ch === '"' || ch === '\'')
+        {
+            i = copyString(i);
+            continue;
+        }
+
+        if (ch === '/' && cssText.charAt(i + 1) === '*')
+        {
+            const end = cssText.indexOf('*/', i + 2);
+            const stop = end === -1 ? n : end + 2;
+            out += cssText.slice(i, stop);
+            i = stop;
+            continue;
+        }
+
+        // url( token (not the tail of a longer identifier): copy through the closing paren,
+        // still honoring a quoted body so `url("a)b.png")` does not end early.
+        if ((ch === 'u' || ch === 'U')
+            && /^url\(/i.test(cssText.slice(i, i + 4))
+            && !/[\w-]/.test(cssText.charAt(i - 1)))
+        {
+            out += cssText.slice(i, i + 4);
+            i += 4;
+            while (i < n && cssText.charAt(i) !== ')')
+            {
+                const inner = cssText.charAt(i);
+                if (inner === '"' || inner === '\'')
+                {
+                    i = copyString(i);
+                    continue;
+                }
+                out += inner;
+                i++;
+            }
+            continue;
+        }
+
+        if (ch === '.')
+        {
+            CLASS_IDENT.lastIndex = i + 1;
+            const match = CLASS_IDENT.exec(cssText);
+            if (match !== null)
+            {
+                const name = match[0];
+                const scoped = `${ name }_${ scope }`;
+                classMap[name] = scoped;
+                out += `.${ scoped }`;
+                i += 1 + name.length;
+                continue;
+            }
+        }
+
+        out += ch;
+        i++;
+    }
+
+    return out;
+}

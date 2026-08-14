@@ -243,6 +243,49 @@ call only when it returns a handler; a *zero-argument* factory (`getHandler()`) 
 indistinguishable from the `save()` mistake and is therefore rejected - bind it to a name first
 (`const handler = getHandler();` ... `onClick={handler}`).
 
+### The `style` section
+
+A file's CSS can live in the file. `style { ... }` is a module-level section holding plain CSS:
+
+```azeroth
+style
+{
+    .card { padding: 1rem; border-radius: .5rem; }
+    .card:hover { background: var(--hover); }
+}
+
+export default component Card
+{
+    <article class="card">...</article>
+}
+```
+
+The compiler rewrites `.card` in the CSS **and** `class="card"` in the markup to the same
+content-hashed name, so two components can both define `.card` without colliding. That single
+rewrite is the entire reason the section exists - it needs to see both languages at once, which
+neither of them can do alone. The body is never parsed as CSS, so nesting, `@media`, `@layer`,
+`@supports` and `@keyframes` all work.
+
+- One section per file, at module level: a stylesheet belongs to the file, not to an instance.
+- Only STATIC class syntax is rewritten - `class="a b"` per token, and `class:name={cond}`.
+  `class={expr}` and `classList({ ... })` are TypeScript values, so they are left alone; use the
+  [`css`](../azerothjs) template, which returns the scoped names, when the class is computed.
+- A class the section does not define is untouched, so global stylesheets and utility frameworks
+  such as Tailwind keep working exactly as before.
+- Element, id and attribute selectors stay GLOBAL: `div { margin: 0 }` applies page-wide.
+- `@keyframes` names are global too - only `.class` selectors are rewritten, so a keyframes
+  declaration and every `animation` reference to it always agree, and two files defining
+  `@keyframes spin` share one name (the last-loaded definition wins, per the cascade). Prefix
+  the name with the component's class when that matters.
+- The compiler never validates the CSS. A typo inside the section reaches the browser, whose
+  own error recovery drops the invalid declaration or rule - exactly as in a `.css` file. The
+  one compile error is an unclosed section brace.
+- `style` remains an ordinary identifier everywhere else - `el.style`, `const style = ...`, and the
+  `style="..."` attribute are unaffected.
+
+Nothing here replaces a real stylesheet. `import './card.css'` at module level always worked, and a
+component whose CSS outgrows a section should use one.
+
 ### TypeScript syntax (the TSX rules)
 
 The full normative grammar - lexical rules, every disambiguation, the contextual

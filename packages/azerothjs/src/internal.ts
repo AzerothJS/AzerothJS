@@ -32,7 +32,7 @@
  * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
  * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
  */
-export const RUNTIME_CONTRACT_VERSION = 2;
+export const RUNTIME_CONTRACT_VERSION = 3;
 
 /**
  * The load-time handshake every compiled module runs. A mismatch is a clear, actionable
@@ -86,6 +86,9 @@ export {
 // Markup runtime: the hyperscript core and the template-clone bindings.
 export { componentScope } from './reactivity/create-root.ts';
 export { h } from './renderer/index.ts';
+// A `style { }` section compiles to this call, over the section's RAW text, so the section and
+// a hand-written css`` share one scoping algorithm and one registry.
+export { registerStyle } from './renderer/css.ts';
 export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';
 

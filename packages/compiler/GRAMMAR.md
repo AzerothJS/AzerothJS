@@ -100,16 +100,32 @@ A `<` in expression position, followed by `>` or an identifier-start character, 
 ## 4. Module grammar
 
 ```
-Module          := (OpaqueTS | ComponentDecl)*
+Module          := (OpaqueTS | ComponentDecl | StyleSection)*
 ComponentDecl   := `component` Identifier TypeParams? ParamClause? Block
 TypeParams      := `<` ... balanced ... `>`            // verbatim TS type parameters
 ParamClause     := `(` Param? `)`                      // Param is ONE verbatim TS parameter
 Block           := `{` ... markup-aware balanced ... `}`
+StyleSection    := `style` `{` ... CSS-aware balanced ... `}`
 ```
 
 - `component` is recognized at statement position in module code. A preceding
   `export` / `export default` remains part of the surrounding opaque region (the
   compiler handles the association; the grammar does not).
+- `style { ... }` is a **section**, not a declaration: module level only, at most one
+  per module, build-time only, no runtime value and no reactivity. Its interior is
+  plain CSS and is never parsed as such - the compiler only rewrites `.class`
+  selectors, so nesting, `@media`, `@layer`, `@supports` and anything CSS adds later
+  pass through untouched.
+- Its braces are **CSS-aware**, not markup-aware: quoted strings, `/* */` comments and
+  `url(...)` bodies are skipped, and nothing else is. The JS scanner cannot be used
+  here, because it reads `url(//cdn/x.png)` as a line comment and the `/` in
+  `calc(100%/3)` as the start of a regex.
+- The section's class names and the markup's are rewritten TOGETHER: `.field-error` in
+  the CSS and `class="field-error"` (and `class:field-error`) in the same module's
+  markup become one content-hashed name. Only static class syntax is rewritten;
+  `class={expr}` and `classList({ ... })` hold TypeScript values and are left alone.
+  A class the section does not define is left alone too, so global and utility classes
+  keep working.
 - The props parameter is a single ordinary TypeScript parameter - a named parameter
   (`props: T`), a destructuring pattern (`{ a, b = 1 }: T`), with or without inline
   object types. Its interior is TypeScript's, not this grammar's.
@@ -367,15 +383,25 @@ contextual, active only in its exact position and shape:
 | `effect` | body statement position | followed by `(`, `with {`, or `{` |
 | `batch` `untrack` `cleanup` `dispose` `mount` | body statement position | followed by `{` |
 | `with` | after a declaration value / effect header, depth 0 | followed by `{` |
+| `style` | module statement position | followed by `{` |
 
 Everything else - including `ref`, `class:`/`style:`/`bind:` directives and event
 names - is an ordinary identifier or a markup-layer attribute name.
+
+`style` in particular stays an ordinary identifier everywhere else: `el.style`,
+`const style = ...`, `{ style: x }` and a `style="..."` attribute are untouched,
+because the captured shape is the bare word at a module statement start followed by
+`{` - which is legal but meaningless TypeScript. The compiler reports that shape
+anywhere else (inside a component body, or after a line with no `;`) rather than
+letting it reach TypeScript as CSS.
 
 **What earns keyword status** (the rubric, unchanged since the keyword set was
 settled): a construct is a keyword only if it is a *reactive declaration that forces
 the compiler to transform surrounding code* - rewriting reads, rewriting the
 initializer + `with` clause, or binding lifecycle to the component's reactive root.
-Imperative, non-reactive features are never keywords.
+Imperative, non-reactive features are never keywords. `style` is admitted under the
+separate SECTION rule (STABILITY.md §2.2), not this one: it declares nothing, tracks
+nothing and disposes nothing.
 
 ## 8. Explicit non-goals
 

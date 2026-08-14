@@ -18,9 +18,15 @@
  * In the browser the rewritten CSS is injected into `<head>` once per scope. Under SSR there
  * is no head to inject into, so a render's scopes are recorded against that render and
  * flushed afterwards with {@link collectStyleSheet}.
+ *
+ * The hash and the selector rewrite themselves live in azerothjs/semantics, because a
+ * `.azeroth` file's `style { }` section runs the SAME two functions at compile time to learn
+ * which scoped name each class in the markup must become. Two implementations of that rewrite
+ * would disagree on a name and the page would render unstyled with nothing to see in a diff.
  */
 
 import { isStringMode, getStoreScope } from '../reactivity/index.ts';
+import { hashCss, scopeSelectors } from '../semantics.ts';
 
 import { adoptStyleSheet, resetAdoptedStyleSheets } from './adopt-style.ts';
 import { STYLE_BREAKOUT } from './ssr.ts';
@@ -53,124 +59,6 @@ let frameOwner: object | null = null;
  * class rather than `undefined`.
  */
 export type ScopedClasses = Record<string, string>;
-
-/**
- * djb2 to base36. Deterministic across runs, which is what lets the same CSS dedupe to one
- * scope and lets server and client agree on the class names.
- */
-function hashCss(input: string): string
-{
-    let hash = 5381;
-    for (let i = 0; i < input.length; i++)
-    {
-        hash = (((hash << 5) + hash) + input.charCodeAt(i)) | 0;
-    }
-    return (hash >>> 0).toString(36);
-}
-
-/** A class-selector identifier after the `.`; sticky, so it matches in place. */
-const CLASS_IDENT = /-?[_a-zA-Z][\w-]*/y;
-
-/**
- * Rewrites `.name` selectors to `.name_<scope>`, recording each mapping in `classMap`.
- *
- * Quoted strings, `url(...)` bodies and comments are copied VERBATIM, because a dotted token
- * inside them is content rather than a selector. Rewriting `url(./logo.png)` or
- * `content: ".done"` would 404 the asset or corrupt the value while the class names kept
- * working, so the breakage would be silent.
- */
-function scopeSelectors(cssText: string, scope: string, classMap: Record<string, string>): string
-{
-    const n = cssText.length;
-    let out = '';
-    let i = 0;
-
-    // Copies a quoted string verbatim, honouring backslash escapes, and returns the index one
-    // past the closing quote.
-    const copyString = (from: number): number =>
-    {
-        const quote = cssText.charAt(from);
-        let j = from + 1;
-        while (j < n)
-        {
-            const c = cssText.charAt(j);
-            if (c === '\\')
-            {
-                j += 2;
-                continue;
-            }
-            j++;
-            if (c === quote)
-            {
-                break;
-            }
-        }
-        out += cssText.slice(from, j);
-        return j;
-    };
-
-    while (i < n)
-    {
-        const ch = cssText.charAt(i);
-
-        if (ch === '"' || ch === '\'')
-        {
-            i = copyString(i);
-            continue;
-        }
-
-        if (ch === '/' && cssText.charAt(i + 1) === '*')
-        {
-            const end = cssText.indexOf('*/', i + 2);
-            const stop = end === -1 ? n : end + 2;
-            out += cssText.slice(i, stop);
-            i = stop;
-            continue;
-        }
-
-        // url( token (not the tail of a longer identifier): copy through the closing paren,
-        // still honoring a quoted body so `url("a)b.png")` does not end early.
-        if ((ch === 'u' || ch === 'U')
-            && /^url\(/i.test(cssText.slice(i, i + 4))
-            && !/[\w-]/.test(cssText.charAt(i - 1)))
-        {
-            out += cssText.slice(i, i + 4);
-            i += 4;
-            while (i < n && cssText.charAt(i) !== ')')
-            {
-                const inner = cssText.charAt(i);
-                if (inner === '"' || inner === '\'')
-                {
-                    i = copyString(i);
-                    continue;
-                }
-                out += inner;
-                i++;
-            }
-            continue;
-        }
-
-        if (ch === '.')
-        {
-            CLASS_IDENT.lastIndex = i + 1;
-            const match = CLASS_IDENT.exec(cssText);
-            if (match !== null)
-            {
-                const name = match[0];
-                const scoped = `${ name }_${ scope }`;
-                classMap[name] = scoped;
-                out += `.${ scoped }`;
-                i += 1 + name.length;
-                continue;
-            }
-        }
-
-        out += ch;
-        i++;
-    }
-
-    return out;
-}
 
 /**
  * Component-scoped styles from a tagged template or a plain string. The rules are hashed and
@@ -207,16 +95,57 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
         ? strings
         : strings.reduce((acc, part, i) => acc + part + (i < values.length ? String(values[i]) : ''), '');
 
+    // A missing key returns the key itself, so a typo degrades to a no-op class.
+    return new Proxy(register(raw, true), {
+        get(target, key: string): string
+        {
+            return target[key] ?? key;
+        }
+    });
+}
+
+/**
+ * Registers a compiled `style { }` section's CSS. The compiled-output counterpart of
+ * {@link css}, and the reason it is separate is the ONE way the two genuinely differ:
+ * a section's text is a compile-time literal, so it is app-static by construction and is
+ * never recorded per render.
+ *
+ * That distinction is load-bearing. A component module reached by a dynamic import - a lazy
+ * route - is evaluated DURING a request, so a render-scoped registration would be drained with
+ * that response and never run again, leaving every later request unstyled with nothing to see
+ * in the emitted code. A section cannot interpolate a per-request value, so there is nothing
+ * for the frame to isolate.
+ *
+ * Takes the section's RAW text and derives the scope here, so the class names the compiler
+ * wrote into the markup and the class names this defines come from one algorithm over one
+ * input.
+ *
+ * @param cssText - The section's CSS, verbatim.
+ * @see {@link css} for hand-written scoped styles, including interpolated ones.
+ * @internal Emitted by the compiler; part of the compiled-output contract, not application API.
+ */
+export function registerStyle(cssText: string): void
+{
+    register(cssText, false);
+}
+
+/**
+ * Hashes, rewrites and records one block of CSS, returning its base-to-scoped class map.
+ *
+ * `perRender` is what separates the two callers. Inside a string render an interpolated
+ * `css``` is RENDER-SCOPED, going into the current frame keyed by the render's store scope -
+ * the same per-request identity runInStoreScope gives createStore - so one request's rules,
+ * and anything interpolated into them, never reach another request's document. Everything else
+ * is app-static and lands in the global registry. In the browser either is injected into
+ * `<head>` once per scope.
+ */
+function register(raw: string, perRender: boolean): Record<string, string>
+{
     const scope = hashCss(raw);
     const classMap: Record<string, string> = {};
     const scopedCss = scopeSelectors(raw, scope, classMap);
 
-    // Inside a string render the scope is RENDER-SCOPED, going into the current frame keyed by
-    // the render's store scope - the same per-request identity runInStoreScope gives createStore
-    // - so one request's rules, and anything interpolated into them, never reach another
-    // request's document. Outside a render the scope is app-static and lands in the global
-    // registry, and in the browser it is injected into <head> once.
-    if (isStringMode())
+    if (perRender && isStringMode())
     {
         const owner = getStoreScope();
         if (frameCss === null || frameOwner !== owner)
@@ -237,13 +166,7 @@ export function css(strings: TemplateStringsArray | string, ...values: unknown[]
         adoptStyleSheet(`css:${ scope }`, scopedCss, 'data-azeroth-css', scope);
     }
 
-    // A missing key returns the key itself, so a typo degrades to a no-op class.
-    return new Proxy(classMap, {
-        get(target, key: string): string
-        {
-            return target[key] ?? key;
-        }
-    });
+    return classMap;
 }
 
 /**

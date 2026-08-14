@@ -8,7 +8,7 @@
 // ships undocumented.
 
 import { describe, it, expect } from 'vitest';
-import { RUNTIME_FN, WRAPPER_FN, BUILTIN_COMPONENTS } from '@azerothjs/compiler';
+import { RUNTIME_FN, WRAPPER_FN, SECTION_WORDS, BUILTIN_COMPONENTS } from '@azerothjs/compiler';
 import { keywordDocumentation, keywordOptions, keywordWithExample, BUILTIN_COMPONENT_MAP } from '../../src/language-service/language-data.ts';
 import { keywordSnippetLabels, builtinSnippetNames } from '../../src/language-service/providers/completion.ts';
 
@@ -33,6 +33,18 @@ describe('keyword documentation completeness', () =>
         for (const keyword of WRAPPER_KEYWORDS)
         {
             expect(labels, `wrapper keyword '${ keyword }' has no completion snippet`).toContain(keyword);
+        }
+    });
+
+    it('every module SECTION is documented and offered (sections answer to the same guard)', () =>
+    {
+        const labels = keywordSnippetLabels();
+        for (const word of SECTION_WORDS)
+        {
+            const doc = keywordDocumentation(word);
+            expect(doc, `section '${ word }' has no hover documentation`).toBeTruthy();
+            expect(doc!.length).toBeGreaterThan(20);
+            expect(labels, `section '${ word }' has no completion snippet`).toContain(word);
         }
     });
 

@@ -4,6 +4,18 @@
 // `login.touched()`, `login.submitting()`, `login.handleSubmit`, `login.setError(...)`.
 import { required, email as emailRule, minLength, combine } from 'azerothjs';
 
+// The module's stylesheet. Plain CSS: nothing here is a dialect. `.field-error` becomes a
+// content-hashed class, and the `class="field-error"` below becomes the same one - which is
+// the only thing the section does that an imported `.css` file could not.
+style
+{
+    .field-error
+    {
+        color: rgb(185, 28, 28);
+        font-size: .875rem;
+    }
+}
+
 interface Credentials
 {
     email: string;

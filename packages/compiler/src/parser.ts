@@ -6,9 +6,9 @@
  */
 
 /**
- * The component-pipeline parser. Splits a `.azeroth` source into opaque JS/TS regions and `component` declarations, and parses each
- * component body into items - state/derived declarations, effect blocks, the markup output, and opaque
- * statement runs.
+ * The component-pipeline parser. Splits a `.azeroth` source into opaque JS/TS regions, `component`
+ * declarations and the module's `style` section, and parses each component body into items -
+ * state/derived declarations, effect blocks, the markup output, and opaque statement runs.
  *
  * Everything is driven by ONE low-level routine, `step`, which advances past a single structural unit
  * (trivia, a string/template/regex/number literal, an identifier, a whole markup region, a bracket, or
@@ -27,6 +27,8 @@
  *   - Components are recognized by the shape `component <Identifier>` optionally followed by a
  *     `<TypeParams>` list and a `(<param>)` signature; a leading `export`/`export default` stays in the
  *     preceding opaque region.
+ *   - `style { ... }` is recognized only where a module-level statement may begin, so `style` stays
+ *     a legal identifier; its interior is scanned with CSS rules rather than `step`.
  *   - Reactive declarations are recognized only at the body's top level and must be `;`-terminated
  *     (no ASI); `effect` must be brace-delimited.
  *   - A `<` that opens neither valid markup nor a generic arrow is treated as an operator.
@@ -35,7 +37,7 @@
  * @see {@link Module} - the parsed-module shape (from ast.ts)
  */
 
-import type { Module, ModuleItem, ComponentDecl, BodyItem } from './ast.ts';
+import type { Module, ModuleItem, ComponentDecl, StyleSection, BodyItem } from './ast.ts';
 
 import {
     isWhitespace,
@@ -213,6 +215,11 @@ export function parseModule(source: string): Module
         }
     };
 
+    // Statement-start state, tracked for the `style` section alone. `style` is an ordinary
+    // identifier everywhere else, so the section is only captured where a statement may begin -
+    // `theme.style { }` and `type T = { style: {} }` keep their present meanings.
+    let atStmtStart = true;
+
     while (i < source.length)
     {
         const s = step(source, i, prevChar, prevWord);
@@ -228,6 +235,23 @@ export function parseModule(source: string): Module
                 opaqueStart = i;
                 prevChar = '}';
                 prevWord = '';
+                atStmtStart = true;
+                continue;
+            }
+        }
+
+        if (s.kind === 'identifier' && depth === 0 && atStmtStart && s.text === 'style')
+        {
+            const section = tryParseStyleSection(source, i, s.next);
+            if (section !== null)
+            {
+                flushOpaque(i);
+                items.push(section);
+                i = section.end;
+                opaqueStart = i;
+                prevChar = '}';
+                prevWord = '';
+                atStmtStart = true;
                 continue;
             }
         }
@@ -235,10 +259,16 @@ export function parseModule(source: string): Module
         if (s.kind === 'open')
         {
             depth++;
+            atStmtStart = false;
         }
         else if (s.kind === 'close')
         {
             depth--;
+            atStmtStart = depth === 0 && s.text === '}';
+        }
+        else if (s.kind !== 'trivia')
+        {
+            atStmtStart = s.kind === 'punct' && s.text === ';' && depth === 0;
         }
         i = s.next;
         prevChar = s.prevChar;
@@ -334,6 +364,116 @@ function tryParseComponent(source: string, keywordStart: number, keywordEnd: num
         start: keywordStart,
         end
     };
+}
+
+/**
+ * Reads a `style { ... }` section whose keyword spans `[keywordStart, keywordEnd)`. Returns the
+ * node when a `{` follows the keyword, else null (a plain identifier named `style`).
+ *
+ * @internal
+ */
+function tryParseStyleSection(source: string, keywordStart: number, keywordEnd: number): StyleSection | null
+{
+    const brace = skipTrivia(source, keywordEnd);
+    if (source[brace] !== '{')
+    {
+        return null;
+    }
+    const close = styleSectionEnd(source, brace);
+    const unterminated = close === -1;
+    const end = unterminated ? source.length : close;
+    return {
+        kind: 'style',
+        bodyStart: brace + 1,
+        bodyEnd: unterminated ? end : end - 1,
+        unterminated,
+        start: keywordStart,
+        end
+    };
+}
+
+/**
+ * Given `open` at the section's `{`, returns the index just past the matching `}`, or -1 when
+ * the section is never closed.
+ *
+ * CSS rules, deliberately - NOT the JS {@link step} scanner the rest of the parser runs on.
+ * Handing a stylesheet to the JS scanner silently truncates real CSS: `url(//cdn/x.png)` reads
+ * as a line comment that swallows the rest of the line, and the `/` in `calc(100%/3)` opens a
+ * regex that runs to the next slash. So only the three things CSS actually has are skipped -
+ * quoted strings, `/* *\/` comments, and `url(...)` - and braces are counted everywhere else.
+ *
+ * @internal
+ */
+function styleSectionEnd(source: string, open: number): number
+{
+    const n = source.length;
+    let depth = 0;
+    let i = open;
+
+    const skipQuoted = (from: number): number =>
+    {
+        const quote = source[from];
+        let j = from + 1;
+        while (j < n)
+        {
+            const c = source[j];
+            if (c === '\\')
+            {
+                j += 2;
+                continue;
+            }
+            j++;
+            if (c === quote)
+            {
+                break;
+            }
+        }
+        return j;
+    };
+
+    while (i < n)
+    {
+        const ch = source[i];
+
+        if (ch === '"' || ch === '\'')
+        {
+            i = skipQuoted(i);
+            continue;
+        }
+        if (ch === '/' && source[i + 1] === '*')
+        {
+            const close = source.indexOf('*/', i + 2);
+            i = close === -1 ? n : close + 2;
+            continue;
+        }
+        // An unquoted url() body may hold anything but `)` - including braces and slashes.
+        if ((ch === 'u' || ch === 'U')
+            && /^url\(/i.test(source.slice(i, i + 4))
+            && !/[\w-]/.test(source[i - 1] ?? ''))
+        {
+            i += 4;
+            while (i < n && source[i] !== ')')
+            {
+                i = (source[i] === '"' || source[i] === '\'') ? skipQuoted(i) : i + 1;
+            }
+            continue;
+        }
+        if (ch === '{')
+        {
+            depth++;
+        }
+        else if (ch === '}')
+        {
+            depth--;
+            if (depth === 0)
+            {
+                return i + 1;
+            }
+        }
+        i++;
+    }
+
+    return -1;
 }
 
 /**

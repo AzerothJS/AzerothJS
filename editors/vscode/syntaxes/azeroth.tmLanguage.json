@@ -6,11 +6,27 @@
     "patterns":
     [
         { "include": "#comments" },
+        { "include": "#style-section" },
         { "include": "#markup" },
         { "include": "#statements" }
     ],
     "repository":
     {
+        "style-section":
+        {
+            "comment": "The module's `style { … }` section. Its body is plain CSS, so it is embedded as source.css and the CSS grammar colours it. Anchored to a `style` that STARTS a line and closed by a `}` in the first column - what a module-level block produces in either brace style - which is also what keeps an ordinary identifier named `style` uncoloured. A lone `{` on its own line (the Allman form) is coloured as the section's brace rather than handed to CSS.",
+            "begin": "^(style)\\b[^\\S\\r\\n]*(\\{)?[^\\S\\r\\n]*$",
+            "beginCaptures": { "1": { "name": "keyword.control.azeroth" }, "2": { "name": "punctuation.section.braces.begin.azeroth" } },
+            "end": "^(\\})",
+            "endCaptures": { "1": { "name": "punctuation.section.braces.end.azeroth" } },
+            "contentName": "meta.embedded.block.css",
+            "patterns":
+            [
+                { "match": "^[^\\S\\r\\n]*(\\{)[^\\S\\r\\n]*$", "captures": { "1": { "name": "punctuation.section.braces.begin.azeroth" } } },
+                { "include": "source.css" }
+            ]
+        },
+
         "statements":
         {
             "patterns":

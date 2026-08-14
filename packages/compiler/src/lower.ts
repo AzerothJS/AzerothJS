@@ -90,7 +90,7 @@ interface Ctx
  * @see {@link lowerMarkup} for markup embedded inside an expression.
  * @internal
  */
-export function lowerComponent(source: string, component: ComponentDecl, analysis: ReactiveAnalysis): RenderPlan | null
+export function lowerComponent(source: string, component: ComponentDecl, analysis: ReactiveAnalysis, classes: ClassScope = null): RenderPlan | null
 {
     // Last markup body item is the output.
     let output: MarkupElement | MarkupFragment | null = null;
@@ -117,7 +117,7 @@ export function lowerComponent(source: string, component: ComponentDecl, analysi
     }
 
     const ctx: Ctx = { next: 0, bindings: [] };
-    const template = createLowerer(source, scopeByStart).lowerNode(output, ctx);
+    const template = createLowerer(source, scopeByStart, classes).lowerNode(output, ctx);
     return { template, bindings: ctx.bindings };
 }
 
@@ -140,16 +140,31 @@ export function lowerComponent(source: string, component: ComponentDecl, analysi
  * @see {@link lowerComponent} for a component's top-level output, which wires real deps.
  * @internal
  */
-export function lowerMarkup(source: string, node: MarkupElement | MarkupFragment): RenderPlan
+export function lowerMarkup(source: string, node: MarkupElement | MarkupFragment, classes: ClassScope = null): RenderPlan
 {
     const ctx: Ctx = { next: 0, bindings: [] };
-    const template = createLowerer(source, new Map()).lowerNode(node, ctx);
+    const template = createLowerer(source, new Map(), classes).lowerNode(node, ctx);
     return { template, bindings: ctx.bindings };
 }
 
-/** Builds the lowering closures bound to a `source` and a dependency-scope map. */
-function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>): { lowerNode: (node: MarkupElement | MarkupFragment, ctx: Ctx) => TemplateNode }
+/**
+ * The module's `style { }` class-name map, or null when it has no section. Only STATIC class
+ * names are rewritten - a literal `class="..."` token and a `class:name` directive's name -
+ * because those are the two places the compiler can see both the class and the rule that
+ * styles it. `class={expr}` and `classList({...})` are TypeScript values and stay untouched.
+ */
+type ClassScope = Readonly<Record<string, string>> | null;
+
+/** Builds the lowering closures bound to a `source`, a dependency-scope map and the style scope. */
+function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>, classes: ClassScope): { lowerNode: (node: MarkupElement | MarkupFragment, ctx: Ctx) => TemplateNode }
 {
+    /** One class name through the style scope; unknown names (globals, utilities) pass through. */
+    const scopeName = (name: string): string => classes?.[name] ?? name;
+
+    /** Every whitespace-separated token of a `class="a b"` value, whitespace preserved. */
+    const scopeClassList = (value: string): string =>
+        classes === null ? value : value.replace(/\S+/g, scopeName);
+
     const exprFor = (span: Span, lookupKey: number): ReactiveExpr =>
     {
         const scope = scopeByStart.get(lookupKey);
@@ -206,7 +221,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             {
                 if (attr.value.kind === 'static')
                 {
-                    classBase = attr.value.value;
+                    classBase = scopeClassList(attr.value.value);
                 }
                 else if (attr.value.kind === 'expression')
                 {
@@ -216,7 +231,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             }
             if (name.startsWith('class:'))
             {
-                const cls = name.slice(6);
+                const cls = scopeName(name.slice(6));
                 // `class:name={cond}` toggles by condition; bare `class:name` is unconditional (folds into base).
                 if (attr.value.kind === 'expression')
                 {
@@ -250,7 +265,9 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             }
             if (attr.value.kind === 'static' || attr.value.kind === 'none')
             {
-                const value = attr.value.kind === 'static' ? attr.value.value : true;
+                const value = attr.value.kind !== 'static'
+                    ? true
+                    : (name === 'class' ? scopeClassList(attr.value.value) : attr.value.value);
                 // A content property has no attribute form (see CONTENT_PROPERTIES), so it goes to the
                 // binding list even though its value is a literal; a static AFTER a spread goes there
                 // too (the source-order rule above); everything else bakes into the template.
@@ -342,7 +359,9 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>)
             }
             if (attr.value.kind === 'static')
             {
-                props.push({ kind: 'static', name, value: attr.value.value });
+                // A literal `class` handed to a component is scoped like any other: the child
+                // puts it on an element, and the parent's stylesheet is what has to style it.
+                props.push({ kind: 'static', name, value: name === 'class' ? scopeClassList(attr.value.value) : attr.value.value });
             }
             else if (attr.value.kind === 'none')
             {

@@ -104,6 +104,9 @@ TypeScript type checking. `azerothjs` is the only runtime import an application 
 - **A language, not a convention.** `state`, `derived`, `effect`, `form`, `store`, `resource`,
   `stream`, `selector` and `deferred` are keywords in `.azeroth` files. Reads and writes stay
   ordinary TypeScript; the compiler supplies the reactivity.
+- **One file, three languages, no dialects.** A `style { }` section holds plain CSS, and the
+  compiler rewrites its `.card` and the markup's `class="card"` to the same scoped name. HTML
+  stays HTML, CSS stays CSS, TypeScript stays TypeScript; the file only composes them.
 - **One artifact, three modes.** Client render, server serialization and hydration come from one
   emitter over one IR, so the hydration markers line up by construction rather than by review.
 - **Editor tooling at framework grade.** A compiler-powered language server drives both editor

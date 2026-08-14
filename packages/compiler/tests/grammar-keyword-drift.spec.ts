@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
-import { RUNTIME_FN, WRAPPER_FN, DECLARATION_KEYWORDS, BUILTIN_COMPONENTS } from '@azerothjs/compiler';
+import { RUNTIME_FN, WRAPPER_FN, DECLARATION_KEYWORDS, SECTION_WORDS, BUILTIN_COMPONENTS } from '@azerothjs/compiler';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -19,16 +19,18 @@ const jetbrainsLexer = readFileSync(
     'utf8'
 );
 
-// The authoring keywords a `.azeroth` grammar must colour: the declaration keywords, `component`,
+// The authoring words a `.azeroth` grammar must colour: the declaration keywords, `component`,
 // the two `effect` forms (the RUNTIME_FN `watch` kind is the `effect (deps)` form - still `effect`),
-// the `with` options clause, and the wrapper blocks. Built-in components are NOT here: the JetBrains
-// lexer leaves them to the LSP, and the TextMate grammar colours them by a separate rule (checked below).
+// the `with` options clause, the wrapper blocks, and the module SECTIONS (`style`). Built-in
+// components are NOT here: the JetBrains lexer leaves them to the LSP, and the TextMate grammar
+// colours them by a separate rule (checked below).
 const AUTHORING_KEYWORDS = new Set<string>([
     ...DECLARATION_KEYWORDS,
     'component',
     'effect',
     'with',
-    ...Object.keys(WRAPPER_FN)
+    ...Object.keys(WRAPPER_FN),
+    ...SECTION_WORDS
 ]);
 
 /** Every `\b(a|b|c)\b`-style lowercase alternation group across the grammar's keyword match rules. */
