@@ -6,7 +6,7 @@
 // keyword, builtin, or markup helper to the emitter without exporting it from
 // azerothjs/internal fails HERE, not in a user's build.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { generateModule, EMITTED_CONTRACT_VERSION } from '../src/codegen.ts';
@@ -164,6 +164,68 @@ describe('the handshake failure tells the reader which side is stale', () =>
     });
 });
 
+/** One workspace manifest, as far as the release invariants read it. */
+interface WorkspaceManifest
+{
+    name: string;
+    version: string;
+    dependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+}
+
+/** The [major, minor, patch] tuple, ignoring any prerelease. */
+function baseOf(version: string): string
+{
+    const dash = version.indexOf('-');
+    return dash === -1 ? version : version.slice(0, dash);
+}
+
+/**
+ * Whether `range` admits `version`, for the range shapes this repository writes between its
+ * own packages: `^x.y.z`, an exact version, and `*`. Any other shape is REFUSED rather than
+ * guessed - a guard that silently passes what it cannot parse is worse than no guard.
+ *
+ * The prerelease rule is npm's, and it is the whole point: a prerelease satisfies a caret
+ * range only when the range itself carries a prerelease on the SAME base tuple. That is why
+ * `^2.1.0-beta.2` admits 2.1.0-beta.3 and 2.2.0, but not 2.2.0-beta.1.
+ */
+function rangeAdmits(version: string, range: string): boolean
+{
+    if (range === '*' || range === 'latest')
+    {
+        return true;
+    }
+    if (/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(range))
+    {
+        return compareVersions(version, range) === 0;
+    }
+    const caret = /^\^(\d+)\.(\d+)\.(\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(range);
+    if (caret === null)
+    {
+        return false;
+    }
+    const floor = range.slice(1);
+    const major = Number(caret[1]);
+    if (compareVersions(version, floor) < 0)
+    {
+        return false;
+    }
+    // Caret keeps the left-most non-zero component: for 0.x the ceiling is tighter.
+    const ceiling = major > 0
+        ? `${ major + 1 }.0.0`
+        : `0.${ Number(caret[2]) + 1 }.0`;
+    if (compareVersions(version, ceiling) >= 0)
+    {
+        return false;
+    }
+    if (version.includes('-'))
+    {
+        return floor.includes('-') && baseOf(version) === baseOf(floor);
+    }
+    return true;
+}
+
 /**
  * SemVer 2.0.0 precedence, prerelease-aware, no dependency: negative when a < b, zero
  * when equal, positive when a > b. Build metadata never appears in release versions here.
@@ -270,6 +332,113 @@ describe('the contract generation is welded to the package version', () =>
             compareVersions(compilerVersion, floor),
             `${ compilerVersion } must not ship contract v${ EMITTED_CONTRACT_VERSION } (first allowed at ${ floor })`
         ).toBeGreaterThanOrEqual(0);
+    });
+
+    it('the table is well formed: positive integer generations, real version strings', () =>
+    {
+        // Every later assertion compares these values numerically or by semver. A key like
+        // "v3" or a value like "next" would make those comparisons NaN-silent - they would
+        // pass rather than object, which is the one failure a guard must never have.
+        const entries = Object.entries(table);
+        expect(entries.length).toBeGreaterThan(0);
+        for (const [generation, version] of entries)
+        {
+            expect(generation, `contract key ${ generation }`).toMatch(/^[1-9]\d*$/);
+            expect(version, `floor for contract v${ generation }`).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+        }
+    });
+
+    it('registers no contract generation above the one this build emits', () =>
+    {
+        // The floor rule alone is one-directional: it stops a version from shipping a
+        // contract too early, but a generation registered ahead of the code - or code
+        // rolled BACK below a generation already registered - leaves a floor nothing
+        // enforces, and the next release would satisfy it by accident.
+        const highest = Object.keys(table).reduce((top, key) => Math.max(top, Number(key)), 0);
+        expect(
+            highest,
+            `contract-versions.json registers v${ highest } but this build emits v${ EMITTED_CONTRACT_VERSION }`
+        ).toBe(EMITTED_CONTRACT_VERSION);
+    });
+
+    it('rangeAdmits matches npm resolution, prereleases included', () =>
+    {
+        // Pinned against the resolver that actually installs these packages. The two rows
+        // that matter: a caret range admits a LATER prerelease only on its own base tuple,
+        // so the next minor prerelease is refused - which is the bump-and-forget slip.
+        const cases: Array<readonly [string, string, boolean]> =
+        [
+            ['2.1.0-beta.2', '^2.1.0-beta.2', true],
+            ['2.1.0-beta.3', '^2.1.0-beta.2', true],
+            ['2.1.0', '^2.1.0-beta.2', true],
+            ['2.2.0', '^2.1.0-beta.2', true],
+            ['2.2.0-beta.1', '^2.1.0-beta.2', false],
+            ['2.1.0-beta.2', '^2.1.0', false],
+            ['2.1.0-beta.2', '^2.0.0', false],
+            ['3.0.0', '^2.1.0-beta.2', false],
+            ['2.1.0-beta.2', '2.1.0-beta.2', true],
+            ['2.1.0-beta.3', '2.1.0-beta.2', false],
+            ['2.1.0-beta.2', 'workspace:*', false]
+        ];
+        for (const [version, range, admitted] of cases)
+        {
+            expect(rangeAdmits(version, range), `${ range } admits ${ version }`).toBe(admitted);
+        }
+    });
+
+    it('every inter-package range admits the version being shipped', () =>
+    {
+        // The versions can all agree while the RANGES between them do not admit that
+        // version, and npm answers such a range from the registry: a consumer then installs
+        // this build's package beside an OLDER published sibling, mixing contract
+        // generations inside one install with nothing failing. The shape is easy to reach -
+        // `^2.1.0-beta.2` does not admit 2.2.0-beta.1, so bumping the version without
+        // rewriting the ranges produces exactly it.
+        const workspaces = readdirSync(path.join(here, '..', '..'), { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => path.join(here, '..', '..', entry.name, 'package.json'))
+            .filter(manifest => existsSync(manifest))
+            .map(manifest => JSON.parse(readFileSync(manifest, 'utf8')) as WorkspaceManifest);
+        const siblings = new Map(workspaces.map(pkg => [pkg.name, pkg.version]));
+        expect(siblings.size).toBeGreaterThan(1);
+
+        let checked = 0;
+        for (const pkg of workspaces)
+        {
+            const declared = { ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.devDependencies };
+            for (const [dependency, range] of Object.entries(declared))
+            {
+                const shipped = siblings.get(dependency);
+                if (shipped === undefined)
+                {
+                    continue;
+                }
+                checked += 1;
+                expect(
+                    rangeAdmits(shipped, range),
+                    `${ pkg.name } depends on ${ dependency }@${ range }, which does not admit the ${ shipped } being shipped`
+                ).toBe(true);
+            }
+        }
+        // A pass with nothing compared would be a guard that cannot fail.
+        expect(checked).toBeGreaterThan(5);
+    });
+
+    it('every workspace manifest carries the one version the contract is welded to', () =>
+    {
+        // The weld is only as good as its reach: a package left on the previous version
+        // publishes a contract under a version string that means an older one, which is
+        // exactly the mismatch the table exists to make impossible.
+        const workspaces = readdirSync(path.join(here, '..', '..'), { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => path.join(here, '..', '..', entry.name, 'package.json'))
+            .filter(manifest => existsSync(manifest));
+        expect(workspaces.length).toBeGreaterThan(1);
+        for (const manifest of workspaces)
+        {
+            const { name, version } = JSON.parse(readFileSync(manifest, 'utf8')) as { name: string; version: string };
+            expect(version, `${ name } must ship the lockstep version`).toBe(compilerVersion);
+        }
     });
 
     it('floors rise with the contract generation', () =>

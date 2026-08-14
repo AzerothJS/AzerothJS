@@ -85,6 +85,15 @@ schema validation. These are the behavior changes a consumer will notice.
 
 ### Fixed
 
+- `<Link>` kept every reactive attribute you passed through it alive. It resolved each one
+  when the link was built, so `data-*`, `aria-*`, `id` and `style` rendered their first
+  value and then never changed - silently, with nothing thrown, while the same attribute
+  written on a plain `<a>` stayed live. A scroll-spy nav whose `aria-current` never moved is
+  the shape this takes in practice. Event handlers and `ref` are unaffected, as before.
+- `<Outlet />` written with no children now explains itself. It has never been able to reach
+  the layout's nested content from that position - a layout forwards it explicitly, as
+  `{ Outlet({ children: props.children }) }` - and the failure said only
+  `Cannot read properties of undefined`.
 - `json(undefined)` no longer throws a raw `TypeError`, reachable through a declared
   optional 200 schema.
 - The typed client wraps its success-path JSON parse, so a 2xx that is not JSON surfaces

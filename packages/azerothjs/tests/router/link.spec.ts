@@ -4,7 +4,7 @@
 // active-class + aria-current reactivity, and attribute pass-through. Real DOM
 // dispatch through happy-dom; a real router on memory history - no mocks.
 import { describe, it, expect } from 'vitest';
-import { createRoot, render, createRouter, createMemoryHistory, Link } from 'azerothjs';
+import { createRoot, createSignal, render, createRouter, createMemoryHistory, Link } from 'azerothjs';
 import type { Route } from 'azerothjs';
 
 const leaf = (): HTMLElement => document.createElement('div');
@@ -104,6 +104,102 @@ describe('Link - rendered anchor', () =>
             Link({ to: '/about', router, id: 'nav-about', 'data-test': 'x', children: 'A' }));
         expect(anchor.id).toBe('nav-about');
         expect(anchor.getAttribute('data-test')).toBe('x');
+        container.remove();
+        dispose();
+    });
+
+    it('keeps a REACTIVE pass-through attribute live, as the same attribute on a host element is', () =>
+    {
+        const { router, dispose } = makeRouter();
+        const [count, setCount] = createSignal(0);
+        // A dynamic prop on a component compiles to an ACCESSOR, so reading it must stay
+        // deferred all the way to the element; materializing it once freezes the attribute.
+        const props =
+        {
+            to: '/about',
+            router,
+            get 'data-count'(): string
+            {
+                return String(count());
+            },
+            children: 'A'
+        };
+        const { anchor, container } = mountLink(() => Link(props));
+        expect(anchor.getAttribute('data-count')).toBe('0');
+
+        setCount(1);
+        expect(anchor.getAttribute('data-count')).toBe('1');
+        container.remove();
+        dispose();
+    });
+
+    it('forwards an accessor-shaped event handler so it still fires', () =>
+    {
+        const { router, dispose } = makeRouter();
+        let hits = 0;
+        // The element dispatches on* names before it considers reactivity, so an event
+        // handler must arrive as the handler itself - never wrapped for later reading.
+        const props =
+        {
+            to: '/about',
+            router,
+            get onMouseEnter(): () => void
+            {
+                return (): void =>
+                {
+                    hits += 1;
+                };
+            },
+            children: 'A'
+        };
+        const { anchor: el, container } = mountLink(() => Link(props));
+        el.dispatchEvent(new MouseEvent('mouseenter'));
+        expect(hits).toBe(1);
+        container.remove();
+        dispose();
+    });
+
+    it('forwards an accessor-shaped ref to the real anchor', () =>
+    {
+        const { router, dispose } = makeRouter();
+        let seen: HTMLElement | null = null;
+        const props =
+        {
+            to: '/about',
+            router,
+            get ref(): (el: HTMLElement) => void
+            {
+                return (el: HTMLElement): void =>
+                {
+                    seen = el;
+                };
+            },
+            children: 'A'
+        };
+        const { anchor: el, container } = mountLink(() => Link(props));
+        expect(seen).toBe(el);
+        container.remove();
+        dispose();
+    });
+
+    it('keeps an accessor-shaped class live', () =>
+    {
+        const { router, dispose } = makeRouter();
+        const [theme, setTheme] = createSignal('light');
+        const props =
+        {
+            to: '/about',
+            router,
+            get class(): string
+            {
+                return theme();
+            },
+            children: 'A'
+        };
+        const { anchor: el, container } = mountLink(() => Link(props));
+        expect(el.getAttribute('class')).toBe('light');
+        setTheme('dark');
+        expect(el.getAttribute('class')).toBe('dark');
         container.remove();
         dispose();
     });

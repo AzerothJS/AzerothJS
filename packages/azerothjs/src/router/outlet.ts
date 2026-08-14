@@ -48,8 +48,19 @@ export interface OutletProps
  *
  * @see {@link Routes}, which populates `children`.
  */
-export function Outlet(props: OutletProps): MountNode
+export function Outlet(props?: OutletProps): MountNode
 {
+    // The bare markup form lowers to a call with NO argument, and nothing in that position
+    // can reach the layout's children - so it would place an empty region while the matched
+    // leaf silently vanished. Refused instead, naming the spelling that works: a wrong page
+    // that renders is far harder to diagnose than a call that stops.
+    if (props === undefined)
+    {
+        throw new TypeError('Outlet was called with no props, which is what `<Outlet />` compiles to. '
+            + 'A layout receives the nested route content as its OWN `children` prop and forwards it '
+            + 'explicitly: `{ Outlet({ children: props.children }) }`.');
+    }
+
     if (props.children)
     {
         return props.children;

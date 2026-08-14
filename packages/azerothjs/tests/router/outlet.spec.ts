@@ -13,6 +13,15 @@ describe('Outlet', () =>
         expect(result).toBe(child);
     });
 
+    it('REFUSES the bare markup form, which cannot reach the layout children', () =>
+    {
+        // A bare `<Outlet />` compiles to a call with no argument, and nothing in that
+        // position can reach the layout's children. Placing an empty region there would
+        // drop the matched leaf silently, so the call stops and names the spelling that works.
+        expect(() => Outlet()).toThrow(/compiles to/);
+        expect(() => Outlet()).toThrow(/children: props\.children/);
+    });
+
     it('returns a placeholder span when there are no children', () =>
     {
         const result = Outlet({}) as HTMLElement;

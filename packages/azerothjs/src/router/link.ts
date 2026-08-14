@@ -27,6 +27,7 @@
  */
 
 import { h } from '../renderer/index.ts';
+import { hostEventType } from '../semantics.ts';
 import type { Child } from '../renderer/index.ts';
 import type { NavigateTarget } from './types.ts';
 import { resolveRouter } from './provider.ts';
@@ -119,6 +120,11 @@ function targetPathname(target: NavigateTarget): string
 
     return target.slice(0, stop);
 }
+
+/** The props Link consumes itself; everything else is forwarded to the anchor. @internal */
+const OWN_PROPS = new Set([
+    'to', 'router', 'replace', 'scroll', 'target', 'activeClass', 'end', 'onClick', 'class', 'children'
+]);
 
 /**
  * A real `<a href>` that intercepts only plain in-app clicks, with optional reactive
@@ -234,15 +240,17 @@ export function Link(props: LinkProps): HTMLElement
     // aria-current become reactive getters so h() wires them up as effects.
     // Without activeClass we leave the user's class as-is (string, getter, or
     // undefined; h() handles all three).
-    const userClass = props.class;
-    // Const capture so the undefined-narrowing below survives into the getter closure.
-    const activeClass = props.activeClass;
+    // Read through props at USE time, never captured: these arrive as accessors from the
+    // compiler exactly as pass-through props do, so capturing would freeze them.
+    const activeClass = (): string | undefined => props.activeClass;
 
     const classProp =
-        activeClass === undefined
-            ? userClass
+        activeClass() === undefined
+            ? ((): unknown => props.class)
             : (): string =>
             {
+                const userClass = props.class;
+                const active = activeClass() ?? '';
                 const base =
                     typeof userClass === 'function'
                         ? userClass()
@@ -252,7 +260,7 @@ export function Link(props: LinkProps): HTMLElement
                 {
                     return base;
                 }
-                return base.length > 0 ? `${ base } ${ activeClass }` : activeClass;
+                return base.length > 0 ? `${ base } ${ active }` : active;
             };
 
     const ariaCurrentProp =
@@ -260,30 +268,33 @@ export function Link(props: LinkProps): HTMLElement
             ? undefined
             : (): string | null => (isActive() ? 'page' : null);
 
-    // Pass-through for unknown attrs: pull our own props out so we don't leak
-    // them onto the <a> element. Anything else (id, style, aria-label, data-*)
-    // flows through.
-    const {
-        to: _to,
-        router: _router,
-        replace: _replace,
-        scroll: _scroll,
-        target: _target,
-        activeClass: _activeClass,
-        end: _end,
-        onClick: _onClick,
-        class: _class,
-        children: _children,
-        ...rest
-    } = props;
-
-    const linkAttrs: Record<string, unknown> =
+    // Pass-through for unknown attrs: our own props are excluded so they never reach the
+    // <a>; anything else (id, style, aria-label, data-*) flows through.
+    //
+    // Forwarded WITHOUT being read. A dynamic prop reaches a component as an accessor, so
+    // reading it here would resolve it once and hand the element a dead value - the
+    // attribute would then hold its first value forever, while the same attribute written
+    // directly on a host element stays live. Wrapping the accessor in a thunk defers the
+    // read to the element's own effect, which is what makes it track.
+    const linkAttrs: Record<string, unknown> = {};
+    for (const key of Object.keys(props))
     {
-        ...rest,
-        href,
-        onClick: handleClick,
-        class: classProp
-    };
+        if (OWN_PROPS.has(key))
+        {
+            continue;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(props, key);
+        // Only an ATTRIBUTE may be deferred. `ref` and every `on*` name are dispatched by
+        // the element BEFORE it looks at whether a value is reactive, so a thunk would be
+        // taken for the ref callback or the listener itself - invoked with the element or
+        // the event, and the real function discarded. Those resolve here instead.
+        linkAttrs[key] = descriptor?.get !== undefined && key !== 'ref' && hostEventType(key) === null
+            ? (): unknown => props[key]
+            : props[key];
+    }
+    linkAttrs.href = href;
+    linkAttrs.onClick = handleClick;
+    linkAttrs.class = classProp;
 
     if (props.target !== undefined)
     {

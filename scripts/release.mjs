@@ -605,6 +605,94 @@ function lockEntryName(key, entry)
  * checkout and in CI, and the lockfile regeneration that would repair it only runs after
  * the publish this refuses to start.
  */
+/**
+ * Whether `range` admits `version`, for the range shapes this repository writes between its
+ * own packages. Any other shape is REFUSED rather than guessed: a guard that silently passes
+ * what it cannot parse is worse than no guard.
+ *
+ * The prerelease rule is npm's, and it is the reason this exists - a prerelease satisfies a
+ * caret range only when the range carries a prerelease on the SAME base tuple, so
+ * `^2.1.0-beta.2` admits 2.1.0-beta.3 and 2.2.0 but NOT 2.2.0-beta.1.
+ */
+function rangeAdmits(version, range)
+{
+    if (range === '*' || range === 'latest')
+    {
+        return true;
+    }
+    if (VERSION_PATTERN.test(range))
+    {
+        return compareVersions(version, range) === 0;
+    }
+    const caret = /^\^(\d+)\.(\d+)\.(\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(range);
+    if (caret === null)
+    {
+        return false;
+    }
+    const floor = range.slice(1);
+    const major = Number(caret[1]);
+    if (compareVersions(version, floor) < 0)
+    {
+        return false;
+    }
+    const ceiling = major > 0 ? `${ major + 1 }.0.0` : `0.${ Number(caret[2]) + 1 }.0`;
+    if (compareVersions(version, ceiling) >= 0)
+    {
+        return false;
+    }
+    if (version.includes('-'))
+    {
+        const base = (value) => (value.indexOf('-') === -1 ? value : value.slice(0, value.indexOf('-')));
+        return floor.includes('-') && base(version) === base(floor);
+    }
+    return true;
+}
+
+/**
+ * Every dependency BETWEEN this repository's own packages must admit the version being
+ * released. The versions can all agree while the ranges do not, and npm answers such a
+ * range from the registry - so the consumer installs this release beside an OLDER published
+ * sibling, mixing contract generations inside one install with nothing failing.
+ */
+function guardInterPackageRanges(currentVersion, nextVersion)
+{
+    // The bump rewrites an internal pin only when it names the CURRENT version, so a range
+    // written any other way survives the release untouched. Those are the ones to check: a
+    // stale or hand-edited pin ships pointing somewhere other than this release.
+    const rewritten = new Set([currentVersion, `^${ currentVersion }`, `~${ currentVersion }`]);
+    const packagesDir = path.join(ROOT, 'packages');
+    const manifests = readdirSync(packagesDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => path.join(packagesDir, entry.name, 'package.json'))
+        .filter((manifest) => existsSync(manifest))
+        .map((manifest) => JSON.parse(readFileSync(manifest, 'utf8')));
+    const own = new Set(manifests.map((pkg) => pkg.name));
+
+    let checked = 0;
+    for (const pkg of manifests)
+    {
+        const declared = { ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.devDependencies };
+        for (const [dependency, range] of Object.entries(declared))
+        {
+            if (!own.has(dependency))
+            {
+                continue;
+            }
+            checked += 1;
+            if (rewritten.has(range))
+            {
+                continue;
+            }
+            if (!rangeAdmits(nextVersion, range))
+            {
+                fail(`${ pkg.name } depends on ${ dependency }@${ range }, which does not admit ${ nextVersion } - `
+                    + 'a consumer would resolve an older published copy instead of this release');
+            }
+        }
+    }
+    log(`  ranges:    ${ checked } inter-package dependencies admit ${ nextVersion }`);
+}
+
 function guardEditorInstallable()
 {
     const editorsDir = path.join(ROOT, 'editors');
@@ -835,6 +923,25 @@ function guardContractFloor(nextVersion)
     const table = JSON.parse(
         readFileSync(path.join(ROOT, 'packages', 'compiler', 'contract-versions.json'), 'utf8')
     ).firstVersionByContract;
+    // Validate the table before comparing against it: a key like "v3" or a value like
+    // "next" parses to NaN, and every NaN comparison is false, so a malformed table would
+    // pass this guard silently rather than stop the release.
+    for (const [generation, version] of Object.entries(table))
+    {
+        if (!/^[1-9]\d*$/.test(generation) || !VERSION_PATTERN.test(version))
+        {
+            fail(`packages/compiler/contract-versions.json has a malformed entry ${ generation }: ${ version }`
+                + ' - generations are positive integers and floors are semver versions');
+        }
+    }
+    // A generation registered above the one this build emits leaves a floor nothing
+    // enforces: the next release satisfies it by accident rather than by decision.
+    const highest = Object.keys(table).reduce((top, key) => Math.max(top, Number(key)), 0);
+    if (highest !== contract)
+    {
+        fail(`packages/compiler/contract-versions.json registers contract v${ highest } but this build emits`
+            + ` v${ contract } - the table's highest generation must be the one being shipped`);
+    }
     const floor = table[String(contract)];
     if (floor === undefined)
     {
@@ -1385,6 +1492,11 @@ if (!options.noPublish)
 {
     guardContractFloor(next);
 }
+
+// Read-only, and checked against the version this run will WRITE, so the plan reports a
+// range that would send consumers to the registry before the bump happens.
+log('\nChecking the inter-package ranges');
+guardInterPackageRanges(current, next);
 
 // Read-only, so it runs on every path including --dry-run: an editor that cannot be
 // installed from a clean checkout should be the first thing a release plan reports.
