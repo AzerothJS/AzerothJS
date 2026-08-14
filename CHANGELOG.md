@@ -10,6 +10,8 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+## [2.1.0-beta.2] - 2026-08-14
+
 ### Security - hardening across the server stack
 
 A pass over the HTTP kernel, the request lifecycle, the image endpoint, the SSR seams and
@@ -4080,7 +4082,8 @@ hardened file by file, every gate green (2017 tests), all 23 packages publint-cl
   editor tooling stack (language service, language server, VS Code extension,
   JetBrains plugin, tsserver plugin, ESLint processor).
 
-[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v2.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/AzerothJS/AzerothJS/compare/v2.1.0-beta.2...HEAD
+[2.1.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v2.1.0-beta.1...v2.1.0-beta.2
 [2.1.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.2...v2.1.0-beta.1
 [2.0.0-beta.2]: https://github.com/AzerothJS/AzerothJS/compare/v2.0.0-beta.1...v2.0.0-beta.2
 [2.0.0-beta.1]: https://github.com/AzerothJS/AzerothJS/compare/v1.1.0...v2.0.0-beta.1
