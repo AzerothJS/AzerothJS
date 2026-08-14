@@ -26,7 +26,9 @@
  */
 
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
-import { collectStyleSheet, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import { collectStyleSheet, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import type { CollectedHead } from 'azerothjs/internal';
+import { collectHead } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -75,6 +77,90 @@ export type PageRenderer = (url: string, shell: string, options?: PageRenderOpti
 /** @internal The shell marker the rendered markup replaces. */
 const ROOT_MARKER = '<div id="root"></div>';
 
+/** Escapes regex metacharacters in a literal attribute value. @internal */
+function regexEscape(value: string): string
+{
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The bounded shell-matching pattern for one keyed singleton: the tag, the identity
+ * attribute with its exact double-quoted value (attribute-order tolerant within the one
+ * tag), and media REQUIRED when the key carries it, REFUSED when it does not - media is
+ * part of the identity, so a shell theme-color WITH media never matches a runtime one
+ * without.
+ *
+ * @internal
+ */
+function shellElementPattern(item: CollectedHead['replacements'][number]): RegExp
+{
+    const requires = `(?=[^>]*\\b${ regexEscape(item.attr) }\\s*=\\s*"${ regexEscape(item.value) }")`;
+    const media = item.media !== undefined
+        ? `(?=[^>]*\\bmedia\\s*=\\s*"${ regexEscape(item.media) }")`
+        : '(?![^>]*\\bmedia\\s*=)';
+    return new RegExp(`<${ item.kind }\\b${ requires }${ media }[^>]*/?>`, 'i');
+}
+
+/**
+ * Applies a drained head to the shell: content-only title surgery (shell attributes
+ * preserved, the original text stamped for the client's restore), bounded replace-once
+ * of keyed shell elements, and appended additions. Kit performs string POSITIONING only:
+ * every element body comes runtime-serialized, the title text arrives runtime-escaped,
+ * and the one escaping act on kit's side - the base-title stamp - runs SHELL-OWNED text
+ * through the runtime's public escapeAttr. Function replacers throughout, so `$`-patterns
+ * in content survive literally. Any pattern non-match degrades to APPEND; a shell without
+ * `</head>` receives no head work at all (the anchor is the one hard requirement).
+ *
+ * @internal Exported for the kit test suite.
+ */
+export function applyHeadToShell(shell: string, collected: CollectedHead): string
+{
+    const headEnd = shell.indexOf('</head>');
+    if (headEnd === -1)
+    {
+        return shell;
+    }
+    // Surgery is BOUNDED to the head slice, so a body element can never be matched.
+    let head = shell.slice(0, headEnd);
+    const rest = shell.slice(headEnd);
+    const extras: string[] = [];
+
+    if (collected.titleText !== null)
+    {
+        let replaced = false as boolean;
+        head = head.replace(/(<title\b[^>]*)(>)([\s\S]*?)(<\/title>)/i,
+            (_whole, open: string, gt: string, original: string, close: string) =>
+            {
+                replaced = true;
+                const stamped = open.includes('data-azeroth-title-base')
+                    ? open
+                    : `${ open } data-azeroth-title-base="${ escapeAttr(original) }"`;
+                return `${ stamped }${ gt }${ collected.titleText ?? '' }${ close }`;
+            });
+        if (!replaced && collected.titleElementHtml !== null)
+        {
+            extras.push(collected.titleElementHtml);
+        }
+    }
+
+    for (const item of collected.replacements)
+    {
+        let replaced = false as boolean;
+        head = head.replace(shellElementPattern(item), () =>
+        {
+            replaced = true;
+            return item.html;
+        });
+        if (!replaced)
+        {
+            extras.push(item.html);
+        }
+    }
+
+    const additions = extras.join('') + collected.additions;
+    return additions === '' ? head + rest : `${ head }${ additions }${ rest }`;
+}
+
 /**
  * Builds the per-url renderer for `mountPages` (server) and the prerender pass
  * (build). `shell` is the BUILT index.html text - asset tags preserved.
@@ -121,11 +207,6 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             // the root marker: head flushes immediately, tail follows the last chunk.
             const marker = shell.indexOf(ROOT_MARKER);
             let head = `${ shell.slice(0, marker) }<div id="root">`;
-            const script = handoff !== undefined ? loaderHandoffScript(loaded) : '';
-            if (script !== '')
-            {
-                head = head.replace('</head>', () => `${ script }</head>`);
-            }
             const tail = `</div>${ shell.slice(marker + ROOT_MARKER.length) }`;
             // The main pass runs synchronously inside renderToStream: a top-level throw
             // rejects THIS promise and the caller answers a buffered 500 - zero torn bytes.
@@ -135,6 +216,11 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                     ...(options.signal !== undefined ? { signal: options.signal } : {}),
                     ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
                 });
+            // The handoff script rides the head AFTER the style splice below, so both
+            // modes emit style -> handoff -> head additions (the normalized order; the
+            // handoff is order-insensitive inert JSON, so only byte-diffing tests see
+            // this).
+            const script = handoff !== undefined ? loaderHandoffScript(loaded) : '';
             // Scoped CSS, collected AFTER that synchronous main pass and still spliced into the
             // head - the head has not been enqueued yet, `start()` below does that. The ordering
             // is what makes this correct: collecting BEFORE the render would publish whatever
@@ -151,6 +237,16 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                 const nonce = options.scriptNonce === undefined ? '' : ` nonce="${ options.scriptNonce }"`;
                 head = head.replace('</head>', () => `<style data-azeroth-css${ nonce }>${ streamedStyles }</style></head>`);
             }
+            if (script !== '')
+            {
+                head = head.replace('</head>', () => `${ script }</head>`);
+            }
+            // The head runtime's drain, at the same seam as the style collect (the
+            // declare-before-flush contract: everything the synchronous pass declared is
+            // in hand here, before the first byte). Applied AFTER style + handoff so the
+            // emitted order is style -> handoff -> head additions in BOTH modes.
+            head = applyHeadToShell(head, collectHead(
+                options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}));
             const encoder = new TextEncoder();
             const reader = body.getReader();
             const stream = new ReadableStream<Uint8Array>({
@@ -200,6 +296,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         {
             html = html.replace('</head>', () => `${ script }</head>`);
         }
+        // The head runtime's drain, beside the style collect: title surgery, keyed
+        // replacements, additions - order in the document: style -> handoff -> head.
+        html = applyHeadToShell(html, collectHead(
+            options?.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}));
         return { kind: 'html', html, status: notFound ? 404 : 200 };
     };
 }

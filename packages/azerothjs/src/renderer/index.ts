@@ -41,6 +41,7 @@ export { createRef } from './ref.ts';
 export { classList } from './class-binding.ts';
 export { styleMap } from './style-binding.ts';
 export { css, collectStyleSheet, resetStyleSheet, type ScopedClasses } from './css.ts';
+export { useHead, type HeadInput, type HeadMeta, type HeadLink, type HeadValue, type JsonLdValue } from './head.ts';
 
 // Public type contracts.
 export type { Props, Child } from './types.ts';

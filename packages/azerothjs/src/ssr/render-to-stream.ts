@@ -24,6 +24,9 @@ import { markSelectedOption, markSelectedOptions } from '../renderer/ssr.ts';
 import { StreamSession, getStoreScope, runInExistingStoreScope } from '../reactivity/internal.ts';
 import type { PendingBoundary } from '../reactivity/internal.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
+import { discardStyleFrame } from '../renderer/css.ts';
+import { discardHeadFrame } from '../renderer/head.ts';
+import { inertJson } from '../reactivity/ssr.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
 export interface RenderToStreamOptions
@@ -102,6 +105,15 @@ export function renderToStream(
         {
             session.onFinalize(dispose);
             session.storeScope = getStoreScope();
+            // A continuation-time css``/useHead registers into a frame nothing will
+            // drain (the response's collect already ran); discard at finalize so it
+            // cannot leak into a LATER render's collect.
+            const scope = session.storeScope;
+            session.onFinalize(() =>
+            {
+                discardStyleFrame(scope);
+                discardHeadFrame(scope);
+            });
             const node = component() as unknown;
             mainHtml = Array.isArray(node)
                 ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
@@ -191,6 +203,16 @@ export function renderToStream(
                         // after hydration and the error re-surfaces through client Suspense.
                         options.onError?.(error);
                     }
+                    finally
+                    {
+                        // SYNCHRONOUS with the continuation's render: a css`` or useHead
+                        // evaluated in it registered into a frame nothing will drain (this
+                        // response's collect already ran), and any interleaved request's
+                        // collect would otherwise serve those values in ITS document.
+                        // Discarding here, in the same task as the write, leaves no window.
+                        discardStyleFrame(session.storeScope as object);
+                        discardHeadFrame(session.storeScope as object);
+                    }
                     if (childrenHtml !== null)
                     {
                         // Boundaries the continuation itself registered (nested Suspense)
@@ -245,15 +267,13 @@ function chunkFor(boundary: PendingBoundary, childrenHtml: string, nonce: string
     let json: string;
     try
     {
-        json = JSON.stringify(seeds);
+        json = inertJson(seeds);
     }
     catch
     {
         // Non-JSON-serializable data: omit the seeds; the client refetches after hydration.
         json = '{}';
     }
-    // The one escape that matters inside an inert script: '<' cannot open '</script>'.
-    json = json.replace(/</g, '\\u003c');
     const attribute = nonce === undefined ? '' : ` nonce="${ nonce }"`;
     return `<template data-azs="${ boundary.id }">${ children }</template>`
         + `<script type="application/json" data-azs-seed="${ boundary.id }">${ json }</script>`

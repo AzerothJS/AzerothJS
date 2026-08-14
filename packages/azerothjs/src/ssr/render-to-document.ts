@@ -12,6 +12,7 @@
  */
 
 import { collectStyleSheet } from '../renderer/index.ts';
+import { collectHead } from '../renderer/head.ts';
 import { escapeText, escapeAttr } from '../reactivity/index.ts';
 import { renderToString } from './render-to-string.ts';
 
@@ -63,13 +64,19 @@ export function renderToDocument(component: () => HTMLElement | DocumentFragment
 {
     const lang = options.lang ?? 'en';
 
-    // Render the body FIRST so css`` scopes register before we collect them.
+    // Render the body FIRST so css``/useHead register before we collect them.
     const body = renderToString(component, { markers: options.static !== true });
     const styles = collectStyleSheet();
+    const collected = collectHead();
 
     let head = '<meta charset="utf-8">';
 
-    if (options.title !== undefined)
+    // A useHead-collected title WINS over the static option; the option is the fallback.
+    if (collected.titleText !== null)
+    {
+        head += collected.titleElementHtml ?? '';
+    }
+    else if (options.title !== undefined)
     {
         head += `<title>${ escapeText(options.title) }</title>`;
     }
@@ -83,6 +90,14 @@ export function renderToDocument(component: () => HTMLElement | DocumentFragment
     {
         head += options.head;
     }
+
+    // The collected singletons and additions: this head is self-built (no shell), so
+    // there is nothing to replace - everything appends.
+    for (const item of collected.replacements)
+    {
+        head += item.html;
+    }
+    head += collected.additions;
 
     const bodyAttrs = options.bodyAttrs ? ` ${ options.bodyAttrs }` : '';
 

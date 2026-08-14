@@ -88,7 +88,10 @@ export { componentScope } from './reactivity/create-root.ts';
 export { h } from './renderer/index.ts';
 // A `style { }` section compiles to this call, over the section's RAW text, so the section and
 // a hand-written css`` share one scoping algorithm and one registry.
-export { registerStyle } from './renderer/css.ts';
+export { registerStyle, discardStyleFrame } from './renderer/css.ts';
+// The head runtime's host seam: the kit drains beside collectStyleSheet; resetHead is for tests.
+export { collectHead, discardHeadFrame, resetHead, type CollectedHead } from './renderer/head.ts';
+export { inertJson } from './reactivity/ssr.ts';
 export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';
 

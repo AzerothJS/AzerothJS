@@ -21,6 +21,9 @@
  */
 
 import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
+import { getStoreScope } from '../reactivity/store-scope.ts';
+import { discardStyleFrame } from '../renderer/css.ts';
+import { discardHeadFrame } from '../renderer/head.ts';
 
 /**
  * Renders `component` to an HTML string in 'string' mode with hydration markers toggled per
@@ -65,6 +68,18 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
                         return (node as unknown[]).map(n => isSSRNode(n) ? n.html : String(n)).join('');
                     }
                     return isSSRNode(node) ? node.html : String(node);
+                }
+                catch (error)
+                {
+                    // THROW PATH ONLY: a render that dies after a css``/useHead write must
+                    // not orphan its frame for the next writer-less request's collect to
+                    // drain (one response's rules or title inside another's document). The
+                    // scope is reachable only here, inside runInStoreScope - and this must
+                    // NEVER run on the success path, whose collect happens after return.
+                    const scope = getStoreScope();
+                    discardStyleFrame(scope);
+                    discardHeadFrame(scope);
+                    throw error;
                 }
                 finally
                 {

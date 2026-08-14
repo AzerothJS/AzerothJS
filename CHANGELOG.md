@@ -10,6 +10,37 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Added - `useHead`, the document-head runtime
+
+The framework can now express "this page has a title." `useHead` declares a component's
+contribution to the document head - title (with `titleTemplate` composition, `%s` marks
+the slot), meta by name/property/http-equiv, links, and JSON-LD data blocks - with
+nesting as precedence: a leaf's declarations win over its layout's for the same key and
+fall back on disposal, riding the route tree's retention.
+
+- SERVER: values resolve at declaration, inside the request; the collected head is
+  spliced into the shell with content-only title surgery (your shell's `<title>`
+  attributes survive, its original text is stamped for the client's restore), keyed
+  replacement of matching shell metas/canonical (media is part of a meta's identity, so
+  paired theme-colors stay paired), and appended marked elements. SEO-critical facts
+  belong in route LOADERS, which settle before the render - a streamed page's head
+  flushes with the first bytes and no crawler class can miss it. Head declarations
+  reached only inside a streamed Suspense continuation are dropped with a DEV
+  diagnostic (the flushed head is physically immutable); the live page converges after
+  hydration.
+- CLIENT: navigation updates the head in place - one element per key, adopted from the
+  server markup by marker, removed or restored on route disposal. Getter values are
+  live: a loader-derived title, OG tag, or JSON-LD block tracks its data across
+  navigations.
+- SAFETY: no raw-HTML input exists; title text, attributes, and JSON-LD each pass
+  through the one escaping vocabulary (`JSON-LD` uses the inert-JSON rule, and carries
+  the per-request CSP nonce when one is configured); hostile URLs are dropped with a
+  diagnostic, never written.
+- `renderToDocument` prefers a collected title over its static option; `renderToString`
+  users compose `collectHead()` beside `collectStyleSheet()`. Also fixed along the way:
+  a render that throws after registering scoped css or head facts can no longer leak
+  its frame into the next request's document.
+
 ### Changed - the per-segment route tree (nested layouts now RETAIN)
 
 `<Routes>` used to rebuild the whole matched chain on every navigation: any match change

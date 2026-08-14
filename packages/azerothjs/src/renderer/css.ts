@@ -26,6 +26,7 @@
  */
 
 import { isStringMode, getStoreScope } from '../reactivity/index.ts';
+import { DEV } from '../reactivity/dev.ts';
 import { hashCss, scopeSelectors } from '../semantics.ts';
 
 import { adoptStyleSheet, resetAdoptedStyleSheets } from './adopt-style.ts';
@@ -183,6 +184,32 @@ function register(raw: string, perRender: boolean): Record<string, string>
  *
  * @see {@link css}
  */
+/**
+ * Discards the per-render frame if `owner` still holds it. The streaming session calls
+ * this at finalize: a css`` evaluated inside a Suspense CONTINUATION registers into a
+ * fresh frame AFTER the response's one collectStyleSheet() drain, and that orphan frame
+ * would otherwise be served to whichever LATER render collects next - one response's
+ * rules inside another response's document. Late rules cannot reach the already-flushed
+ * head, so the honest behavior is a deterministic drop with a DEV diagnostic.
+ *
+ * @internal
+ */
+export function discardStyleFrame(owner: object): void
+{
+    if (frameOwner !== owner)
+    {
+        return;
+    }
+    if (DEV && frameCss !== null && frameCss.size > 0)
+    {
+        console.warn('azeroth: css`` evaluated inside a streamed Suspense continuation cannot reach the '
+            + 'already-flushed document head; its rules were dropped for this response. Move the css`` '
+            + 'call to the main pass, or use a style { } section (app-static).');
+    }
+    frameCss = null;
+    frameOwner = null;
+}
+
 export function collectStyleSheet(): string
 {
     const frame = frameCss;

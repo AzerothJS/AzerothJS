@@ -85,6 +85,21 @@ export function escapeAttr(value: string): string
 }
 
 /**
+ * Serializes a value as INERT JSON for embedding inside a non-executing script element
+ * (`type="application/json"` handoffs and seeds, `type="application/ld+json"` data
+ * blocks). Escaping every `<` as the six-character sequence backslash-u003c closes the only injection route out of such a
+ * tag: a payload containing `</script>` (or `<!--`) cannot terminate the element once no
+ * literal `<` survives, and the escape is lossless - JSON never NEEDS a literal `<`.
+ *
+ * One shared spelling of the rule; the loader handoff, the stream seeds, and the head
+ * runtime's JSON-LD all consume it.
+ */
+export function inertJson(value: unknown): string
+{
+    return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+/**
  * Serializes one child value to HTML, mirroring the DOM path's child handling exactly. The
  * two must agree on which nodes exist and in what order, or hydration mismatches, which is
  * why this mapping is defined once and shared.

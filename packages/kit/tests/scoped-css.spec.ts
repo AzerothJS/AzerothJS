@@ -317,3 +317,76 @@ describe('one request\'s scoped CSS never reaches another request\'s document', 
         expect(await headOf(await render('/second', SHELL))).toContain('rgb(2, 4, 8)');
     });
 });
+
+describe('a streamed continuation css`` cannot leak into a later response', () =>
+{
+    it('drops the continuation frame with a DEV diagnostic; the next collect is clean', async () =>
+    {
+        const { Suspense, createResource, renderToStream, renderToString, collectStyleSheet } = await import('azerothjs');
+        const warnings: string[] = [];
+        const originalWarn = console.warn;
+        console.warn = (...args: unknown[]): void =>
+        {
+            warnings.push(typeof args[0] === 'string' ? args[0] : '');
+        };
+        try
+        {
+            let release!: (value: string) => void;
+            const pending = new Promise<string>((resolve) =>
+            {
+                release = resolve;
+            });
+            const app = (): HTMLElement =>
+            {
+                const data = createResource<string>(() => pending);
+                return h('main', {},
+                    Suspense({
+                        fallback: () => h('p', {}, 'loading'),
+                        on: [data],
+                        children: () =>
+                        {
+                            // Evaluated at CONTINUATION time - after this response's one
+                            // collectStyleSheet() drain. It can never reach the flushed
+                            // head; it must be dropped THERE, never served to a later render.
+                            const styles = css`.leaky { color: rgb(9, 9, 9); }`;
+                            return h('section', { class: styles.leaky }, () => data.data() ?? '');
+                        }
+                    }));
+            };
+
+            const stream = renderToStream(() => app());
+            collectStyleSheet(); // the response's own drain, as the kit performs it
+            release('late');
+            const reader = stream.getReader();
+            const decoder = new TextDecoder();
+            let streamed = '';
+            for (;;)
+            {
+                const { done, value } = await reader.read();
+                if (done)
+                {
+                    break;
+                }
+                streamed += decoder.decode(value, { stream: true });
+            }
+            expect(streamed).toContain('late');
+
+            // THE NEXT REQUEST: a clean page registering no per-render css. Without the
+            // synchronous discard in the continuation drive, this collected the previous
+            // response's .leaky rule (observed before the fix).
+            renderToString(() => h('div', {}, 'clean page'));
+            const nextCollect = collectStyleSheet();
+            // App-static rules (registerStyle) legitimately appear in every document;
+            // the pin is that the PER-RENDER continuation rule does not.
+            expect(nextCollect).not.toContain('leaky');
+
+            // The drop is DIAGNOSED, not silent.
+            expect(warnings.some((w) => /streamed Suspense continuation/.test(w))).toBe(true);
+        }
+        finally
+        {
+            console.warn = originalWarn;
+            resetStyleSheet();
+        }
+    });
+});

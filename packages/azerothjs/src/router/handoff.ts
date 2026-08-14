@@ -34,6 +34,7 @@ import type { LoaderHandoff, NavigateTarget, Route } from './types.ts';
 import { flattenRoutes, splitFullPath, resolveRouteComponent } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { parseQuery } from './query.ts';
+import { inertJson } from '../reactivity/ssr.ts';
 
 /** The DOM id of the handoff script tag. */
 export const LOADER_HANDOFF_ID = '__azeroth-loader-handoff';
@@ -190,11 +191,7 @@ export function loaderHandoffScript(handoff: MatchAndLoadResult): string
     {
         return '';
     }
-    // <-escaping closes the only injection route out of a JSON script tag: a payload
-    // string containing `</script>` (or `<!--`) cannot terminate the tag once no literal
-    // `<` survives. JSON itself never NEEDS a literal `<`, so the escape is lossless.
-    const json = JSON.stringify(handoff).replace(/</g, '\\u003c');
-    return `<script type="application/json" id="${ LOADER_HANDOFF_ID }">${ json }</script>`;
+    return `<script type="application/json" id="${ LOADER_HANDOFF_ID }">${ inertJson(handoff) }</script>`;
 }
 
 /**
