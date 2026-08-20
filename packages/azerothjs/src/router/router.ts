@@ -71,7 +71,7 @@ export type { NavigationKind } from './types.ts';
  */
 const LAZY_CACHE = new WeakMap<Route, { component: RouteComponent } | { error: unknown }>();
 
-/** Distinguishes each router's loader family; the ordinal-keyed entries never cross routers. */
+/** Distinguishes each router's loader family; the position-keyed entries never cross routers. */
 let routerSerial = 0;
 
 /** DEV-only: routes already given the declare-a-search-schema hint. */
@@ -846,9 +846,21 @@ function buildRouter(config: RouterConfig): Router
         {
             return false;
         }
-        if (a.route !== b.route)
+        // The CHAIN, not the leaf. One route config reused under two parents occupies two
+        // POSITIONS that share a leaf object, so comparing the leaf alone reports them equal:
+        // the memo never updates, the previous position keeps rendering, and its guards are
+        // never re-entered - wrong-route data and an authorization bypass at once. The leaf is
+        // the chain's last element, so comparing the chain subsumes comparing it.
+        if (a.matched.length !== b.matched.length)
         {
             return false;
+        }
+        for (let level = 0; level < a.matched.length; level++)
+        {
+            if (a.matched[level] !== b.matched[level])
+            {
+                return false;
+            }
         }
         return shallowEqualRecord(a.params, b.params);
     };
@@ -1093,32 +1105,42 @@ function buildRouter(config: RouterConfig): Router
     });
 
     // --- loader identity ----------------------------------------------------------------
-    // Every route gets a flatten-ordinal id (object identity as a string; joined patterns
-    // can collide across same-path sibling layouts). A level's cache key is that ordinal +
+    // Every POSITION in the tree gets an id - the chain PREFIX, not the config object, and not
+    // the joined pattern (which collides across same-path sibling layouts). A config object
+    // reused under two parents occupies TWO positions and must key separately, while two
+    // sibling leaves still SHARE their layout's id because they share every prefix above
+    // themselves. A level's cache key is that position id +
     // the PREFIX params slice (params bound by levels 0..N - never a descendant's, which is
     // what confined a leaf navigation's refetch to the leaf) + the search component: a
     // route WITH a `search` schema keys on the serialized parse output (declared subset,
     // defaults and coercions normalized, invalid degrades to {}), a route WITHOUT one keys
     // on the full search string - schema-less routes keep refetching on any query change.
-    const routeOrdinals = new WeakMap<Route, number>();
+    const positionIds = new WeakMap<Route[], number[]>();
     {
-        let nextOrdinal = 0;
-        const assign = (list: Route[]): void =>
+        let nextId = 0;
+        interface PositionNode { id: number; below: Map<Route, PositionNode> }
+        const top = new Map<Route, PositionNode>();
+        for (const entry of leaves)
         {
-            for (const route of list)
+            const ids: number[] = [];
+            let level = top;
+            for (const route of entry.matched)
             {
-                if (!routeOrdinals.has(route))
+                let node = level.get(route);
+                if (node === undefined)
                 {
-                    routeOrdinals.set(route, nextOrdinal);
-                    nextOrdinal += 1;
+                    node = { id: nextId, below: new Map() };
+                    nextId += 1;
+                    level.set(route, node);
                 }
-                if (route.children !== undefined)
-                {
-                    assign(route.children);
-                }
+                ids.push(node.id);
+                level = node.below;
             }
-        };
-        assign(config.routes);
+            // Keyed on the chain ARRAY, which is the very array the match carries
+            // (`matched: entry.matched` above), so a key lookup is one WeakMap read plus an
+            // index rather than a walk down the tree on every level of every navigation.
+            positionIds.set(entry.matched, ids);
+        }
     }
 
     /** The declared query a level's loader receives and its key serializes: parsed through
@@ -1178,7 +1200,7 @@ function buildRouter(config: RouterConfig): Router
             }
         }
         const searchComponent = route.search === undefined ? search : levelQuery(route, search);
-        return `${ routeOrdinals.get(route) ?? -1 }#${ level }|${ stableSerialize(prefix) }|${ stableSerialize(searchComponent) }`;
+        return `${ positionIds.get(m.matched)?.[level] ?? -1 }#${ level }|${ stableSerialize(prefix) }|${ stableSerialize(searchComponent) }`;
     }
 
     /** The nearest ancestor level WITH a loader, as a key, or null at the root. */

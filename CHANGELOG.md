@@ -12,6 +12,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A route config object reused under two parents served the first parent's data at the second
+  parent's URL, and skipped the second parent's guards.** Route identity was the config OBJECT: the
+  match compared the leaf route, so two positions sharing a leaf compared equal and the match never
+  updated, and loader keys carried a per-object ordinal, so both positions shared one cache entry.
+  Reusing a route object between two `children` arrays is ordinary configuration reuse, so a
+  multi-tenant table written the obvious way could render one tenant's layout and data under the
+  other tenant's URL with that tenant's guards never running. Identity is now the POSITION in the
+  tree: the match compares the whole matched chain, and level keys are interned per chain prefix.
+  Two routes that share a layout still share that layout's loader entry, and a route with its own
+  position now runs its own loaders and its own guards. No API change.
+
 - **A release that bumped versions could not pass its own gate.** The VS Code extension's
   lockfile restates the extension's version, the release script's editor check requires that
   pair to agree, and the bump rewrote only the manifest: the lockfile is regenerated after the

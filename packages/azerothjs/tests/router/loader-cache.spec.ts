@@ -8,7 +8,7 @@
 // The router's loader keying over the data cache: the refetch blast radius confined to the
 // levels whose inputs changed, search-schema keys with normalization, parent delivery from
 // the cached entry under partial re-runs, renewal propagation along the awaited edge,
-// route-ordinal identity across same-path siblings, v3 seed adoption (fresh, stale-heal,
+// route-position identity across same-path siblings, v3 seed adoption (fresh, stale-heal,
 // static, rejected v2), and back-navigation serving from the cache.
 import { describe, it, expect, afterEach } from 'vitest';
 import { createRoot, createRouter, createMemoryHistory } from 'azerothjs';
@@ -226,7 +226,7 @@ describe('parent delivery from the entry', () =>
     });
 });
 
-describe('route-ordinal identity', () =>
+describe('route-position identity', () =>
 {
     it('same-path sibling layouts with different loaders never serve each other\'s data', async () =>
     {
@@ -252,8 +252,8 @@ describe('route-ordinal identity', () =>
 
             router.navigate('/admin/settings');
             await flush();
-            // Distinct route objects, identical joined pattern: the ordinal keeps their
-            // entries apart, so the second layout runs ITS loader.
+            // Distinct route objects, identical joined pattern: their POSITIONS differ, so
+            // their keys differ and the second layout runs ITS loader.
             expect(router.loaders[0]!.data()).toBe('for-settings');
         });
     });
