@@ -47,6 +47,30 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A render's head and styles now belong to a frame its host owns - closing the two ways
+  the old shared frame could betray a response.** Head declarations and per-render css
+  used to collect into module-level state keyed on a store scope, with drains that read
+  whatever was armed last. Two measured consequences: a request that rendered without
+  collecting could have its head - title, meta, private loader-derived values - served
+  inside ANOTHER request's document by whoever drained next; and a streamed page whose
+  Suspense boundary settled quickly LOST its own title, meta and styles, silently in
+  production, because the continuation's cleanup could only name the shared scope and so
+  wiped the main render's frame. Now a host constructs a frame (`createRenderFrame()`),
+  passes it through the render options, and drains exactly that render's output - held
+  before the render runs, still in hand when it throws, immune to interleaving; stream
+  continuations write to internal frames that are always dropped (the head has already
+  flushed), and the framework's own servers pass frames everywhere. The zero-argument
+  `collectStyleSheet()`/head drains still work for a synchronous single-render host,
+  byte-identically. Two zero-argument shapes change, both fail-closed with a dev
+  diagnostic and NEITHER render's output ever cross-served: a host that renders twice
+  before draining, and a host that declares head facts but only ever drains styles (the
+  head drain is internal, so that is the only zero-argument drain a third-party host can
+  reach) - its undrained head data makes the next render's seal drop both. And one benign
+  divergence: a second zero-argument head drain now re-serves the SAME render's head
+  while its styles are still undrained, where it previously returned empty - own data,
+  same host. The app-wide stylesheet registry (`style { }`
+  sections and module-load css templates) is always served regardless.
+
 - **A head value the runtime could not represent failed the whole response - and could
   replace a real error with a `TypeError`.** Serializing the collected head runs inside
   the host's cleanup path, so a jsonLd block with a hole or a BigInt, or a non-string

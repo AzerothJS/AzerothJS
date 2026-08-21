@@ -62,6 +62,7 @@ const reExports: Array<[string, Record<string, unknown>]> = [
     ['styleMap', renderer],
     ['css', renderer],
     ['collectStyleSheet', renderer],
+    ['createRenderFrame', renderer],
     ['resetStyleSheet', renderer],
 
     // Component

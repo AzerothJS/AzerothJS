@@ -15,6 +15,7 @@ import { collectStyleSheet } from '../renderer/index.ts';
 import { collectHead } from '../renderer/head.ts';
 import { escapeText, escapeAttr } from '../reactivity/index.ts';
 import { renderToString } from './render-to-string.ts';
+import { createRenderFrame } from '../renderer/frame.ts';
 
 /**
  * Options for {@link renderToDocument}.
@@ -64,10 +65,13 @@ export function renderToDocument(component: () => HTMLElement | DocumentFragment
 {
     const lang = options.lang ?? 'en';
 
-    // Render the body FIRST so css``/useHead register before we collect them.
-    const body = renderToString(component, { markers: options.static !== true });
-    const styles = collectStyleSheet();
-    const collected = collectHead();
+    // Render the body FIRST so css``/useHead register before we collect them - into a
+    // frame THIS host owns, so the drains read exactly this render's output and a nested
+    // or interleaved render can neither steal nor receive it.
+    const frame = createRenderFrame();
+    const body = renderToString(component, { markers: options.static !== true, frame });
+    const styles = collectStyleSheet(frame);
+    const collected = collectHead({ frame });
 
     let head = '<meta charset="utf-8">';
 

@@ -23,8 +23,8 @@
 import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
 import { getStoreScope } from '../reactivity/store-scope.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
-import { discardStyleFrame } from '../renderer/css.ts';
-import { discardHeadFrame } from '../renderer/head.ts';
+import { closeRenderWindow, openRenderWindow } from '../renderer/frame.ts';
+import type { RenderFrame } from '../renderer/frame.ts';
 
 /**
  * Renders `component` to an HTML string in 'string' mode with hydration markers toggled per
@@ -36,7 +36,7 @@ import { discardHeadFrame } from '../renderer/head.ts';
  * @param markers - Whether to emit hydration markers.
  * @returns The serialized HTML.
  */
-function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean): string
+function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean, hostFrame?: RenderFrame): string
 {
     if (typeof component !== 'function')
     {
@@ -54,56 +54,77 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
         // requests. Renders are synchronous, so one render's scope is set and restored before
         // another can start (see store-scope in azerothjs).
         runInStoreScope((): string =>
-            // The tree builds inside a disposable ownership root, exactly as render()/
-            // hydrate() establish client-side - a root component may provideContext()
-            // (every router app does), which requires an owner. The tree is serialized
-            // and dead by return, so the root disposes immediately.
-            createRoot((dispose): string =>
+        {
+            // The render WINDOW opens INSIDE the store scope, never at the entry point:
+            // the entry scope and the body scope are different objects, and an
+            // entry-installed identity is the mistake the frame module retires. The host
+            // that passed a frame owns it (and still holds it in a finally on the throw
+            // path); a frame-less top-level window seals into the legacy slot for the
+            // zero-argument drains; a frame-less NESTED window is discarded - its
+            // request-derived writes must not outlive the request in module state.
+            const window = openRenderWindow(hostFrame);
+            let ok = false;
+            try
             {
-                try
+                const html = createRoot((dispose): string =>
                 {
+                    try
+                    {
                     // In string mode, h()/components return an SSRNode cast to HTMLElement.
                     // Read its serialized html back out. A fragment-root component returns an ARRAY
                     // of SSRNodes; concatenate each one's html so a multi-node root serializes as its
                     // children (not the array's `[object Object],...` string form).
-                    const node = component() as unknown;
-                    if (Array.isArray(node))
-                    {
-                        return (node as unknown[]).map(n => isSSRNode(n) ? n.html : String(n)).join('');
+                        const node = component() as unknown;
+                        if (Array.isArray(node))
+                        {
+                            return (node as unknown[]).map(n => isSSRNode(n) ? n.html : String(n)).join('');
+                        }
+                        return isSSRNode(node) ? node.html : String(node);
                     }
-                    return isSSRNode(node) ? node.html : String(node);
-                }
-                catch (error)
-                {
-                    // THROW PATH ONLY: a render that dies after a css``/useHead write must
-                    // not orphan its frame for the next writer-less request's collect to
-                    // drain (one response's rules or title inside another's document). The
-                    // scope is reachable only here, inside runInStoreScope - and this must
-                    // NEVER run on the success path, whose collect happens after return.
-                    const scope = getStoreScope();
-                    discardStyleFrame(scope);
-                    discardHeadFrame(scope);
-                    throw error;
-                }
-                finally
-                {
-                    // Dispose FIRST, release SECOND - the same order the stream host's
-                    // finalizers run: a root cleanup (onCleanup) may read a cached family
-                    // during dispose, and it must see the settled entries, not a released
-                    // cache that double-invokes the fetcher. The release then follows,
-                    // HERE, because the scope is unreachable after runInStoreScope
-                    // returns. Stragglers that captured the cache (the seed-heal
-                    // microtask, settlement continuations) find it released and degrade
-                    // to direct fetches - the latch, not silence, makes them benign.
-                    dispose();
-                    releaseDataCache(getStoreScope());
-                }
-            })), { markers });
+                    finally
+                    {
+                        // Dispose FIRST, release SECOND - the same order the stream host's
+                        // finalizers run: a root cleanup (onCleanup) may read a cached
+                        // family during dispose, and it must see the settled entries, not
+                        // a released cache that double-invokes the fetcher. The release
+                        // then follows, HERE, because the scope is unreachable after
+                        // runInStoreScope returns. Stragglers that captured the cache (the
+                        // seed-heal microtask, settlement continuations) find it released
+                        // and degrade to direct fetches - the latch, not silence, makes
+                        // them benign.
+                        dispose();
+                        releaseDataCache(getStoreScope());
+                    }
+                });
+                ok = true;
+                return html;
+            }
+            finally
+            {
+                // The window's ONE exit decides the frame's fate - an owned frame pops
+                // (cleared on throw, so a catching host cannot compose a dead render's
+                // partial head into its error page); an unowned one seals or discards.
+                // This replaces the scope-keyed throw-path discards: the frame module
+                // needs no owner comparison, because you cannot discard a frame you were
+                // not given.
+                closeRenderWindow(window, ok ? 'success' : 'throw');
+            }
+        }), { markers });
 }
 
 /** How {@link renderToString} shapes its output. */
 export interface RenderToStringOptions
 {
+    /**
+     * The render frame this render writes its useHead declarations and per-render css
+     * into. Construct with `createRenderFrame()`, hold it, and hand it to
+     * `collectStyleSheet(frame)` / the head drain to collect EXACTLY this render's
+     * output - including in a `finally` when the render throws (the frame is then
+     * empty). Omitted: the render publishes to the legacy slot the zero-argument drains
+     * read, which serves one synchronous render at a time, fail-closed.
+     */
+    frame?: RenderFrame;
+
     /**
      * Emit the hydration markers {@link hydrate} adopts (default true).
      *
@@ -148,5 +169,5 @@ export interface RenderToStringOptions
  */
 export function renderToString(component: () => HTMLElement | DocumentFragment, options: RenderToStringOptions = {}): string
 {
-    return renderBody(component, options.markers ?? true);
+    return renderBody(component, options.markers ?? true, options.frame);
 }

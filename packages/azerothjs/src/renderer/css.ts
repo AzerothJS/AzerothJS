@@ -25,8 +25,9 @@
  * would disagree on a name and the page would render unstyled with nothing to see in a diff.
  */
 
-import { isStringMode, getStoreScope } from '../reactivity/index.ts';
-import { DEV } from '../reactivity/dev.ts';
+import { isStringMode } from '../reactivity/index.ts';
+import { currentFrame, resetSlotCss, strayWriteFrame, takeSlotCss } from './frame.ts';
+import type { RenderFrame } from './frame.ts';
 import { hashCss, scopeSelectors } from '../semantics.ts';
 
 import { adoptStyleSheet, resetAdoptedStyleSheets } from './adopt-style.ts';
@@ -51,8 +52,9 @@ const registeredCss = new Map<string, string>();
  * entry per render forever. {@link collectStyleSheet} drains this frame, and a new render
  * under a different store scope replaces whatever frame an aborted render left behind.
  */
-let frameCss: Map<string, string> | null = null;
-let frameOwner: object | null = null;
+// The per-render frame lives in renderer/frame.ts as a VALUE the render's host owns -
+// the module-global map keyed on a store scope is gone (a scope could never say WHICH
+// window's frame it was, and the drain had no identity at all).
 
 /**
  * The class-name map returned by {@link css}. Reading any property returns the scoped class
@@ -148,13 +150,7 @@ function register(raw: string, perRender: boolean): Record<string, string>
 
     if (perRender && isStringMode())
     {
-        const owner = getStoreScope();
-        if (frameCss === null || frameOwner !== owner)
-        {
-            frameOwner = owner;
-            frameCss = new Map();
-        }
-        frameCss.set(scope, scopedCss);
+        (currentFrame() ?? strayWriteFrame('css')).css.set(scope, scopedCss);
     }
     else
     {
@@ -171,57 +167,34 @@ function register(raw: string, perRender: boolean): Record<string, string>
 }
 
 /**
- * Discards the per-render frame if `owner` still holds it. The streaming render calls this
- * after each Suspense CONTINUATION, and when the main pass throws: a css`` evaluated in a
- * continuation registers into a fresh frame AFTER the response's one collectStyleSheet()
- * drain, and that orphan frame would otherwise be served to whichever LATER render collects
- * next - one response's rules inside another response's document. Late rules cannot reach
- * the already-flushed head, so the honest behavior is a deterministic drop with a DEV
- * diagnostic. Never called between a main pass and its collect - the main frame belongs to
- * the host's drain.
- *
- * @internal
- */
-export function discardStyleFrame(owner: object): void
-{
-    if (frameOwner !== owner)
-    {
-        return;
-    }
-    if (DEV && frameCss !== null && frameCss.size > 0)
-    {
-        console.warn('azeroth: css`` evaluated inside a streamed Suspense continuation cannot reach the '
-            + 'already-flushed document head; its rules were dropped for this response. Move the css`` '
-            + 'call to the main pass, or use a style { } section (app-static).');
-    }
-    frameCss = null;
-    frameOwner = null;
-}
-
-/**
  * The CSS for the render that just finished: every app-static scope plus the scopes
  * {@link css} recorded during that render, deduped and joined. Call it on the server
  * immediately after rendering the body, to build the document head's `<style>`.
  *
- * The render frame is DRAINED. Those scopes belong to one response, so a later collect never
- * re-serves them.
+ * With a `frame` (the one this render's host passed through the render options): a PURE
+ * read of exactly that render's scopes - drain as often as needed, identical every time.
+ * Without one: the legacy slot's css payload is CONSUMED - those scopes belong to one
+ * response, and a later zero-argument collect never re-serves them.
  *
+ * @param frame - The render frame to read; omit for the legacy one-render-at-a-time slot.
  * @returns The concatenated CSS, empty when nothing was registered.
  * @example
  * const head = `<style data-azeroth-css>${ collectStyleSheet() }</style>`;
  *
  * @see {@link css}
  */
-export function collectStyleSheet(): string
+export function collectStyleSheet(frame?: RenderFrame): string
 {
-    const frame = frameCss;
-    frameCss = null;
-    frameOwner = null;
+    // With a frame: a pure read of exactly that render's scopes - drain as often as you
+    // like. Without one: the legacy slot's css payload is consumed (its head payload
+    // belongs to collectHead; an empty payload counts as consumed, so a styles-only host
+    // never strands the slot).
+    const scopes = frame !== undefined ? frame.css : takeSlotCss();
 
     const parts = [...registeredCss.values()];
-    if (frame !== null)
+    if (scopes !== null)
     {
-        for (const [scope, scoped] of frame)
+        for (const [scope, scoped] of scopes)
         {
             if (!registeredCss.has(scope))
             {
@@ -254,8 +227,9 @@ export function resetStyleSheet(): void
 {
     registeredCss.clear();
     injectedScopes.clear();
-    frameCss = null;
-    frameOwner = null;
+    // Per-payload: only the legacy slot's CSS clears here - the head payload belongs to
+    // resetHead - and a live render window keeps its frame (diagnosed in DEV).
+    resetSlotCss();
     // The adopted-sheet registry is a SECOND dedupe table. Clearing only this module's left
     // adopt-style still remembering every scope, so a reset followed by the same css() adopted
     // nothing and the rules vanished silently. Reset is one operation across both.

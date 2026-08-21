@@ -24,14 +24,22 @@ import { markSelectedOption, markSelectedOptions } from '../renderer/ssr.ts';
 import { StreamSession, getStoreScope, runInExistingStoreScope } from '../reactivity/internal.ts';
 import type { PendingBoundary } from '../reactivity/internal.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
-import { discardStyleFrame } from '../renderer/css.ts';
-import { discardHeadFrame } from '../renderer/head.ts';
 import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
+import { closeContinuationWindow, closeRenderWindow, openContinuationWindow, openRenderWindow } from '../renderer/frame.ts';
+import type { RenderFrame, RenderWindow } from '../renderer/frame.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
 export interface RenderToStreamOptions
 {
+    /**
+     * The render frame the MAIN PASS writes into; continuations get internal frames that
+     * are always discarded (the head has flushed by then). Construct with
+     * `createRenderFrame()` and drain with it after this call returns - a host that
+     * yields between the call and its drain is exactly who needs one.
+     */
+    frame?: RenderFrame;
+
     /** Aborts the render (client disconnect): fetches abort, the stream ends, the root disposes. */
     signal?: AbortSignal;
 
@@ -72,15 +80,18 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
  *
  * Markers are always on, since a streamed page exists in order to hydrate.
  *
- * THE CALLER OWNS THE MAIN PASS'S FRAMES. `css()` and `useHead()` have no document to write
- * into here, so the main pass records them and this call returns with them still pending: the
- * caller drains them with {@link collectStyleSheet} and `collectHead` (azerothjs/internal) into
- * the head it builds around the stream, and must reach that drain on EVERY path out of the
- * call - a `finally`, not a straight line - because a frame left pending is published by
- * whichever render collects next, in an unrelated request's document. Only two frames are
- * self-handled: a main pass that THROWS discards its own (no document will be built), and a
- * Suspense continuation's frame is dropped where it is written, since the head has already
- * flushed by then.
+ * THE CALLER OWNS THE MAIN PASS'S FRAME. `css()` and `useHead()` have no document to write
+ * into here, so the main pass records them into a frame the caller should CONSTRUCT
+ * (`createRenderFrame()`) and pass via `options.frame` - then drain with
+ * {@link collectStyleSheet} and `collectHead` (azerothjs/internal) into the head it builds
+ * around the stream, on any path and at any time: the frame is the caller's value, held
+ * before the render runs and still in hand when it throws, and no other render can reach
+ * it. A caller that passes no frame gets the legacy zero-argument drains, which serve one
+ * synchronous render at a time and fail CLOSED (dropped with a dev diagnostic, never
+ * served into another request's document) when a second render seals first. Two frames
+ * are self-handled either way: a frameless main pass that THROWS discards its own, and a
+ * Suspense continuation's frame is dropped where it is written, since the head has
+ * already flushed by then.
  *
  * @param component - A thunk building the root element, as renderToString takes. Suspense
  *                    boundaries with pending resources become streamed chunks; everything
@@ -114,27 +125,47 @@ export function renderToStream(
     // MAIN PASS: synchronous, root disposal DEFERRED to finalize. A throw finalizes (the
     // root is already registered) and propagates - the caller answers with a buffered 500.
     let mainHtml = '';
+    // A holder, not a plain let: the window is assigned inside the runInMode callback,
+    // which control-flow analysis cannot see through - a property read is re-checked
+    // after the call, a let is not.
+    const mainWindow: { current: RenderWindow | null } = { current: null };
     try
     {
-        runInMode('string', () => runInStoreScope(() => createRoot((dispose): void =>
+        runInMode('string', () => runInStoreScope(() =>
         {
-            session.onFinalize(dispose);
-            session.storeScope = getStoreScope();
-            // The render scope is a scope-creating host, and finalize is the ONE funnel
-            // every end path reaches - settle-all, timeout, signal abort, transport
-            // cancel, AND the main-pass throw, which builds no stream at all (a release
-            // wired into the stream's callbacks would miss it and pin this cache for the
-            // retain window on every SSR error page). Late continuations find the cache
-            // released and are gated in drive besides.
-            session.onFinalize(() => releaseDataCache(session.storeScope as object));
-            const node = component() as unknown;
-            mainHtml = Array.isArray(node)
-                ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
-                : (isSSRNode(node) ? node.html : String(node));
-        })), { markers: true, session });
+            // The main-pass render window, opened inside the store scope (see
+            // renderer/frame.ts). The host that passed a frame owns it; kit's drain
+            // rides a finally on this call and holds it on the throw path too.
+            mainWindow.current = openRenderWindow(options.frame);
+            createRoot((dispose): void =>
+            {
+                session.onFinalize(dispose);
+                session.storeScope = getStoreScope();
+                // The render scope is a scope-creating host, and finalize is the ONE funnel
+                // every end path reaches - settle-all, timeout, signal abort, transport
+                // cancel, AND the main-pass throw, which builds no stream at all (a release
+                // wired into the stream's callbacks would miss it and pin this cache for the
+                // retain window on every SSR error page). Late continuations find the cache
+                // released and are gated in drive besides.
+                session.onFinalize(() => releaseDataCache(session.storeScope as object));
+                const node = component() as unknown;
+                mainHtml = Array.isArray(node)
+                    ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
+                    : (isSSRNode(node) ? node.html : String(node));
+            });
+            closeRenderWindow(mainWindow.current, 'success');
+            mainWindow.current = null;
+        }), { markers: true, session });
     }
     catch (error)
     {
+        if (mainWindow.current !== null)
+        {
+            // The throw path's window exit: an owned frame clears, an unowned one
+            // discards - replacing the old scope-keyed frame discards.
+            closeRenderWindow(mainWindow.current, 'throw');
+            mainWindow.current = null;
+        }
         session.finalize();
         // The response's collect will never run (the caller got a throw, not a stream), so
         // the main pass's style/head frames are discarded here or a LATER render's collect
@@ -143,12 +174,6 @@ export function renderToStream(
         // constructor, BEFORE the host drains the frames, and discarding there threw away
         // every per-render css``/useHead of a settled streamed page. Continuation frames
         // are discarded in the continuation drive itself.
-        const scope = session.storeScope;
-        if (scope !== null)
-        {
-            discardStyleFrame(scope);
-            discardHeadFrame(scope);
-        }
         throw error;
     }
 
@@ -221,8 +246,14 @@ export function renderToStream(
                         return;
                     }
                     let childrenHtml: string | null = null;
+                    // The continuation's OWN window: created behind the drive gate, handed
+                    // to no host, and discarded on every exit - the head has already
+                    // flushed, so nothing declared here can reach this response's
+                    // document, and it must never reach anyone else's.
+                    let continuation: RenderWindow | null = null;
                     try
                     {
+                        continuation = openContinuationWindow();
                         childrenHtml = runInMode('string',
                             () => runInExistingStoreScope(session.storeScope as object, () => boundary.render()),
                             { markers: true, session });
@@ -235,13 +266,14 @@ export function renderToStream(
                     }
                     finally
                     {
-                        // SYNCHRONOUS with the continuation's render: a css`` or useHead
-                        // evaluated in it registered into a frame nothing will drain (this
-                        // response's collect already ran), and any interleaved request's
-                        // collect would otherwise serve those values in ITS document.
-                        // Discarding here, in the same task as the write, leaves no window.
-                        discardStyleFrame(session.storeScope as object);
-                        discardHeadFrame(session.storeScope as object);
+                        // SYNCHRONOUS with the continuation's render, in the same task as
+                        // the write - no window in which an interleaved request could see
+                        // anything, and the main frame (a different object entirely) is
+                        // untouchable from here.
+                        if (continuation !== null)
+                        {
+                            closeContinuationWindow(continuation);
+                        }
                     }
                     if (childrenHtml !== null)
                     {

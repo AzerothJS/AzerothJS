@@ -103,10 +103,12 @@ Render a document and flush collected styles:
 ```ts
 import { renderToDocument, collectStyleSheet, resetStyleSheet } from 'azerothjs';
 
-resetStyleSheet();
+// renderToDocument owns its render's frame and splices the collected styles and head
+// itself - no manual collectStyleSheet() call belongs here. (The old example drained
+// inside the options literal, which ran BEFORE the render and served the previous
+// render's frame.)
 const body = renderToDocument(() => App({}), {
     title: 'Home',
-    head: `<style>${collectStyleSheet()}</style>`,
     lang: 'en'
 });
 ```

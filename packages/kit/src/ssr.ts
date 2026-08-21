@@ -26,7 +26,8 @@
  */
 
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
-import { collectStyleSheet, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
 import { collectHead, guardedMatch } from 'azerothjs/internal';
 
@@ -215,13 +216,16 @@ interface DrainedFrames
  *
  * @internal
  */
-function drainFrames(scriptNonce: string | undefined): DrainedFrames
+function drainFrames(scriptNonce: string | undefined, frame: RenderFrame): DrainedFrames
 {
-    const styles = collectStyleSheet();
+    // The frame THIS render wrote - handed to the render call and back to both drains,
+    // so the kit is provably exact rather than drain-by-position correct: no interleaved
+    // render can be served here, and none can receive this render's head or styles.
+    const styles = collectStyleSheet(frame);
     const nonce = scriptNonce === undefined ? '' : ` nonce="${ escapeAttr(scriptNonce) }"`;
     return {
         styleTag: styles === '' ? '' : `<style data-azeroth-css${ nonce }>${ styles }</style>`,
-        head: collectHead(scriptNonce !== undefined ? { scriptNonce } : {})
+        head: collectHead(scriptNonce !== undefined ? { scriptNonce, frame } : { frame })
     };
 }
 
@@ -301,18 +305,21 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             // exists to avoid.
             let body: ReadableStream<Uint8Array>;
             let frames: DrainedFrames;
+            // Constructed BEFORE the render, so the finally holds it on the throw path.
+            const frame = createRenderFrame();
             try
             {
                 body = renderToStream(
                     () => app(handoff !== undefined ? { url, handoff } : { url }),
                     {
+                        frame,
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
                         ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
                     });
             }
             finally
             {
-                frames = drainFrames(options.scriptNonce);
+                frames = drainFrames(options.scriptNonce, frame);
             }
             const script = loaderHandoffScript(loaded, handoffMeta);
             // Style and handoff ride in as the prelude, so the emitted order is
@@ -351,13 +358,15 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // once hydration runs - a flash of unstyled content on every server-rendered page.
         let body: string;
         let frames: DrainedFrames;
+        // Constructed BEFORE the render, so the finally holds it on the throw path.
+        const frame = createRenderFrame();
         try
         {
-            body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }));
+            body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }), { frame });
         }
         finally
         {
-            frames = drainFrames(options?.scriptNonce);
+            frames = drainFrames(options?.scriptNonce, frame);
         }
         // A function replacer, NOT the string form: rendered markup routinely contains
         // `$&`, `` $` ``, `$'`, `$$` (any text with a literal `$` before a quote or

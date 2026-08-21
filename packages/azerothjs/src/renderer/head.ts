@@ -29,7 +29,8 @@
 
 import { createEffect, createSignal, onRootDispose, isStringMode, untrack } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { getStoreScope } from '../reactivity/store-scope.ts';
+import { currentFrame, resetAllFrames, strayWriteFrame, takeSlotHead } from './frame.ts';
+import type { RenderFrame } from './frame.ts';
 import { escapeText, escapeAttr, inertJson } from '../reactivity/ssr.ts';
 import { serializeElement } from './ssr.ts';
 import type { Props } from './types.ts';
@@ -154,30 +155,8 @@ function metaKeyOf(attr: string, value: string, media: string | undefined): stri
 
 // --- the server frame ------------------------------------------------------------------
 
-let frameEntries: HeadEntry[] | null = null;
-let frameOwner: object | null = null;
-
-/**
- * Discards the per-request head frame if `owner` still holds it - the streaming
- * continuation seam and the buffered throw path, exactly the css-frame rule.
- *
- * @internal
- */
-export function discardHeadFrame(owner: object): void
-{
-    if (frameOwner !== owner)
-    {
-        return;
-    }
-    if (DEV && frameEntries !== null && frameEntries.length > 0)
-    {
-        console.warn('azeroth: useHead() declarations could not reach this response\'s document head '
-            + '(declared inside a streamed Suspense continuation, or the render threw) and were dropped. '
-            + 'Derive SEO-critical facts from the route loader, or accept client-only application after hydration.');
-    }
-    frameEntries = null;
-    frameOwner = null;
-}
+// The per-request frame lives in renderer/frame.ts as a VALUE the render's host owns -
+// the module-global pair keyed on a store scope is gone.
 
 /** Resolves a HeadValue once, untracked - the server registration path. */
 function resolveNow(value: HeadValue): string
@@ -333,11 +312,14 @@ function serializeHeadElement(tag: string, props: Props): string | null
  *
  * @internal
  */
-export function collectHead(options: { scriptNonce?: string } = {}): CollectedHead
+export function collectHead(options: { scriptNonce?: string; frame?: RenderFrame } = {}): CollectedHead
 {
-    const entries = frameEntries ?? [];
-    frameEntries = null;
-    frameOwner = null;
+    // With a frame: a pure read of exactly that render's declarations. Without one: the
+    // legacy slot's head payload is consumed (an empty payload counts as consumed, so a
+    // host that never declares head facts cannot strand the slot).
+    const entries = (options.frame !== undefined
+        ? options.frame.headEntries
+        : takeSlotHead() ?? []) as HeadEntry[];
 
     let titleWinner: { ordinal: number; text: string } | null = null;
     let templateWinner: { ordinal: number; template: string } | null = null;
@@ -702,12 +684,7 @@ export function useHead(input: HeadInput): void
 {
     if (isStringMode())
     {
-        const owner = getStoreScope();
-        if (frameOwner !== owner)
-        {
-            frameEntries = [];
-            frameOwner = owner;
-        }
+        const frame = currentFrame() ?? strayWriteFrame('head');
         const entry = buildEntry(input, resolveNow);
         // EVERY value resolves HERE, at registration, inside the request's scope -
         // including the title getter and a function-form jsonLd. collectHead must
@@ -729,7 +706,7 @@ export function useHead(input: HeadInput): void
         {
             entry.jsonLd = untrack(entry.jsonLd);
         }
-        (frameEntries ??= []).push(entry);
+        frame.headEntries.push(entry);
         return;
     }
 
@@ -982,6 +959,9 @@ function findJsonLdElement(json: string): Element | null
 /** Clears every client registry (tests). @internal */
 export function resetHead(): void
 {
+    // The suite's between-tests hammer: the live-window stack and the legacy slot go
+    // with the registries (pop-safe - an enclosing window's pop no-ops on empty).
+    resetAllFrames();
     for (const el of keyedElements.values())
     {
         el.remove();
@@ -996,6 +976,5 @@ export function resetHead(): void
     tops.clear();
     bootTitle = null;
     sweepScheduled = false;
-    frameEntries = null;
-    frameOwner = null;
+    // The module frame globals are gone; resetAllFrames() above cleared stack and slot.
 }
