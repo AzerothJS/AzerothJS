@@ -57,6 +57,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   their dedup identities are untouched, and the response proceeds. Dropping a broken
   title is correct, not merely safe - the head contract has a single empty-title owner,
   so an absent title falls back exactly as an undeclared one does.
+- **`useHead()` on a server without a DOM killed the process.** Outside a server render,
+  `useHead` armed its head-sweep microtask without ever checking that a `document` exists; the
+  sweep then dereferenced `document.head` outside any catchable frame and exited the
+  process with an error no application code could intercept. The environment is now
+  validated first: with no document the call is a no-op with a dev diagnostic naming the
+  remedy, and nothing is armed. Client and server-render behavior are unchanged.
+
 - **A cache's lifetime is now decided by its scope, not by process flags - closing two
   server-side memory pins and making `retain` work everywhere.** Retention policy used to
   key on two process-wide proxies: the dev flag and a server latch set at the first

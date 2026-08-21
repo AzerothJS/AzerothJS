@@ -733,6 +733,21 @@ export function useHead(input: HeadInput): void
         return;
     }
 
+    // A bare server has no document: the client effects below would throw synchronously,
+    // and the sweep microtask would dereference document.head OUTSIDE any catchable frame
+    // and exit the process. Validate BEFORE arming anything - the call degrades to a
+    // diagnosed no-op, and the remedy is named.
+    if (typeof document === 'undefined')
+    {
+        if (DEV)
+        {
+            console.warn('azeroth: useHead() was called outside a server render with no document; the '
+                + 'declaration was ignored. On a server, declare head facts inside renderToString/'
+                + 'renderToStream so they reach the response document.');
+        }
+        return;
+    }
+
     if (!sweepScheduled)
     {
         sweepScheduled = true;
