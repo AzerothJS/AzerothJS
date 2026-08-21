@@ -3,11 +3,16 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
     plugins: [azeroth()],
-    // The SSR bundle (src/entry.server.ts) inlines its dependencies, so dist-server
-    // is ONE self-contained file - production imports it with no client node_modules.
+    // The SSR bundle (src/entry.server.ts) inlines the APPLICATION's dependencies, so
+    // production needs no client node_modules. The `azerothjs` runtime is deliberately
+    // external: the server process must hold ONE instance of it - @azerothjs/http installs
+    // the request scope on the copy it resolves, and a second inlined copy would silently
+    // split the per-request data cache - and server/package.json already declares it, so
+    // every deploy layout this template produces has it installed.
     ssr:
     {
-        noExternal: true
+        noExternal: true,
+        external: ['azerothjs']
     },
     server:
     {

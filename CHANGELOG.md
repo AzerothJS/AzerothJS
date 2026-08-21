@@ -12,6 +12,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **The fullstack scaffold's SSR config disabled the per-request data cache in every generated
+  app.** The generated `application/vite.config.ts` inlined the whole `azerothjs` runtime into the
+  SSR bundle (`ssr: { noExternal: true }`), while `@azerothjs/http` resolved a second copy from
+  `node_modules`. The request scope was installed on one copy and read on the other, so every
+  `cached()` read inside a route loader bypassed the cache and hit upstream - silently, in
+  production, with the only warning DEV-gated and misdirected. The scaffold now externalises the
+  runtime (`ssr: { noExternal: true, external: ['azerothjs'] }`), so the server process holds ONE
+  instance; the server workspace already depends on `azerothjs`, so every deploy layout the
+  template produces - including the Dockerfile's - already installs it and nothing new is
+  required. Verified end to end: three reads of one key in one request cost one upstream call
+  (previously three) while a second request still re-executes (the cache stays request-scoped),
+  head management, hydration and streaming are unchanged, and a mismatched runtime now fails
+  loudly at startup via the runtime-contract handshake instead of never being checked.
+  **Existing apps generated from earlier versions should apply the same one-line change** to
+  `application/vite.config.ts`; the symptom that tells you it applies is server-side `cached()`
+  reads hitting upstream on every call. The tailwind overlay carries the same fix, plus the
+  `/_image` dev-proxy entry it was missing relative to the base template.
+
 - **A route config object reused under two parents served the first parent's data at the second
   parent's URL, and skipped the second parent's guards.** Route identity was the config OBJECT: the
   match compared the leaf route, so two positions sharing a leaf compared equal and the match never
