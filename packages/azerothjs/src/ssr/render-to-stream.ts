@@ -27,7 +27,7 @@ import { streamRuntimeScript } from '../renderer/stream-swap.ts';
 import { discardStyleFrame } from '../renderer/css.ts';
 import { discardHeadFrame } from '../renderer/head.ts';
 import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
-import { latchServerData } from '../reactivity/data-cache.ts';
+import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
 export interface RenderToStreamOptions
@@ -120,6 +120,13 @@ export function renderToStream(
         {
             session.onFinalize(dispose);
             session.storeScope = getStoreScope();
+            // The render scope is a scope-creating host, and finalize is the ONE funnel
+            // every end path reaches - settle-all, timeout, signal abort, transport
+            // cancel, AND the main-pass throw, which builds no stream at all (a release
+            // wired into the stream's callbacks would miss it and pin this cache for the
+            // retain window on every SSR error page). Late continuations find the cache
+            // released and are gated in drive besides.
+            session.onFinalize(() => releaseDataCache(session.storeScope as object));
             const node = component() as unknown;
             mainHtml = Array.isArray(node)
                 ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
@@ -205,7 +212,11 @@ export function renderToStream(
             {
                 void Promise.allSettled(boundary.entries.map((entry) => entry.promise)).then(() =>
                 {
-                    if (closed)
+                    // finalized covers what closed does not: cancel() finalizes without
+                    // setting closed, and a continuation rendering after finalize would
+                    // find its cache released - every cached read becoming a fresh
+                    // UN-ABORTABLE direct fetch for a client that is already gone.
+                    if (closed || session.finalized)
                     {
                         return;
                     }

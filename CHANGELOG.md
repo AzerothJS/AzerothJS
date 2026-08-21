@@ -47,6 +47,34 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A cache's lifetime is now decided by its scope, not by process flags - closing two
+  server-side memory pins and making `retain` work everywhere.** Retention policy used to
+  key on two process-wide proxies: the dev flag and a server latch set at the first
+  render. Three consequences, each measured on real servers: in development, every
+  request's data cache joined a registry that nothing ever pruned - one cache pinned
+  forever per request on any server that never renders a page; in production, the same
+  server armed a five-minute retention timer per unused entry whose closure pinned the
+  entry AND its cache past request end; and on a server that HAD rendered, `retain` was
+  silently ignored entirely - a streaming or SSE response's scope lives as long as its
+  socket, and its entries accumulated without bound. Now: retention timers arm in every
+  cache, so an entry nobody holds dies after its retain window wherever it lives; every
+  scope-creating host - the http request root, `renderToString`, `renderToStream` -
+  releases its scope's cache at scope end, AFTER its cleanup callbacks run - so
+  cleanups still read the settled entries, and whatever they fetch is swept after them;
+  the release is a latch, so late settles and detached readers cannot re-arm anything on
+  a released cache, and reads that reach one degrade to plain uncached fetches with
+  correct data; and the dev registry admits only the app-scope cache - the one the HMR
+  invalidation walk actually serves. Two dev-mode honesty fixes ride along: the family
+  re-registration log now says what the walk does ("app-scope entries invalidated"
+  rather than claiming all of them), and re-registering a family with the SAME fetcher
+  no longer severs the shared record - previously a later real code swap could refetch
+  through the OLD code while the log claimed the entries were invalidated.
+- **A client disconnecting a streamed page mid-boundary could crash the server.** A
+  cancelled stream finalizes without marking itself closed, so a Suspense boundary
+  settling after the cancel still rendered its continuation into the cancelled
+  controller - an uncaught invalid-state error at process level. Continuations now stop
+  at finalize; nothing renders, fetches, or enqueues for a client that is gone.
+
 - **A bare `<Outlet />` passed every static check and then failed at runtime the moment the
   layout rendered.** The bare form compiles to a call that cannot reach the layout's `children`,
   so the router deliberately refuses it rather than render the page with the nested route content

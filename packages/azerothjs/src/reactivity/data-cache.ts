@@ -41,7 +41,13 @@ export interface CachedOptions
      */
     fresh?: number;
 
-    /** How long, in milliseconds, an unsubscribed entry is retained before eviction. */
+    /**
+     * How long, in milliseconds, an unsubscribed entry is retained before eviction. This
+     * is also the staleness bound for entries a DEV hot-swap cannot reach: scope-owned
+     * caches (requests, renders) are not walked on re-registration, so their unheld
+     * entries serve the old code until this window expires - a large retain stretches
+     * that accordingly.
+     */
     retain?: number;
 }
 
@@ -196,12 +202,25 @@ export class DataCache
     /** The seq at the latest navigation commit; marks never target fetches begun after it. */
     #navSeq = 0;
 
+    /** Set once by {@link release}; a released cache never holds or arms anything again. */
+    #released = false;
+
     constructor()
     {
-        if (DEV && !serverLatched)
+        // Only the APP-SCOPE cache joins the HMR registry: its lifetime is the app's, and
+        // the invalidation walk is its sole consumer. A scope-owned cache (request, render,
+        // future unit scopes) is owned by its host and torn down with its scope - admitting
+        // it here pinned one cache per request forever on any server that never latched.
+        if (DEV && isDefaultScope(getStoreScope()))
         {
             devClientCaches?.add(this);
         }
+    }
+
+    /** True once {@link release} ran: the cache holds nothing and admits nothing. */
+    public get released(): boolean
+    {
+        return this.#released;
     }
 
     public nextSeq(): number
@@ -346,9 +365,13 @@ export class DataCache
 
     #scheduleRetention(entry: CacheEntry): void
     {
-        // A latched process is a server: entries die with their request scope, and a timer
-        // would only pin the cache object past its useful life.
-        if (serverLatched || entry.retainTimer !== null || entry.subscribers > 0)
+        // The #released term is load-bearing, not defensive: release() resolves waiters,
+        // whose readValue continuations run as microtasks AFTER release returns and reach
+        // this method through the zero-check - without the gate, a fresh retain timer would
+        // re-arm on the released cache, pinning it for the retain window. Timers otherwise
+        // arm for EVERY cache: an entry nobody holds dies after its retain window wherever
+        // it lives, which is what makes a long-lived server scope bounded.
+        if (this.#released || entry.retainTimer !== null || entry.subscribers > 0)
         {
             return;
         }
@@ -666,6 +689,38 @@ export class DataCache
         }
     }
 
+    /**
+     * The scope-owned teardown: latch first, so nothing re-arms or re-admits from the
+     * waiter continuations this very call resolves; then abort, resolve, and drop
+     * everything. Waiters resolve BEFORE the map clears - the same order reset() uses -
+     * so a detached reader still observes today's settle semantics. Idempotent by the
+     * latch. After release, getDataCache answers null for this cache's scope and reads
+     * degrade to the cache-disabled path: direct fetch, no entry, no single-flight.
+     */
+    public release(): void
+    {
+        if (this.#released)
+        {
+            return;
+        }
+        this.#released = true;
+        for (const entry of this.#entries.values())
+        {
+            if (entry.retainTimer !== null)
+            {
+                clearTimeout(entry.retainTimer);
+                entry.retainTimer = null;
+            }
+            if (entry.inflight !== null)
+            {
+                entry.inflight.controller.abort();
+                entry.inflight = null;
+            }
+            this.#resolveWaitersUpTo(entry, Infinity);
+        }
+        this.#entries.clear();
+    }
+
     public reset(): void
     {
         for (const entry of this.#entries.values())
@@ -703,6 +758,18 @@ export function abortDataCacheFetches(scope: object): void
 }
 
 /**
+ * Releases `scope`'s cache, if one ever materialized: the scope-owning host's teardown
+ * call. Runs as the LAST act of teardown - after user cleanups, which may still read the
+ * settled entries - and is idempotent, so racing settle paths are harmless.
+ *
+ * @internal
+ */
+export function releaseDataCache(scope: object): void
+{
+    scopeCaches.get(scope)?.release();
+}
+
+/**
  * The active scope's registry, or `null` when caching is disabled here: a latched server
  * process resolving to the default scope, where entries would outlive their request.
  *
@@ -733,6 +800,13 @@ export function getDataCache(): DataCache | null
         return null;
     }
     const cache = useDataCache();
+    if (cache.released)
+    {
+        // The scope's host already tore this cache down; a read reaching it now is a
+        // dead-frame straggler (a late timer, a captured closure). No warning - it is not
+        // a misconfiguration - and no cache: the caller's null path direct-fetches.
+        return null;
+    }
     scopeCaches.set(getStoreScope(), cache);
     return cache;
 }
@@ -802,8 +876,12 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
         {
             // Hot module replacement re-evaluates data modules: replace in the SHARED record
             // so live entries fetch through the new code, and drop their settled values. If
-            // this logs at cold start, two modules share a family name.
-            console.info(`[azeroth] cached family '${ name }' re-registered; entries invalidated.`);
+            // this logs at cold start, two modules share a family name. The walk reaches
+            // app-scope caches only; a scope-owned cache's entries self-evict at their
+            // retain window instead - a bound the retain option controls.
+            console.info(`[azeroth] cached family '${ name }' re-registered; app-scope entries invalidated `
+                + '(scope-owned entries are not walked; unheld ones refresh as their retention '
+                + 'expires, so a large retain stretches their staleness accordingly).');
             existing.fetcher = rawFetcher;
             existing.fresh = family.fresh;
             existing.retain = family.retain;
@@ -815,6 +893,17 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
                     void cache.revalidateEntry(entry);
                 }
             });
+        }
+        else if (existing !== undefined)
+        {
+            // Same fetcher reference: KEEP the shared record - replacing it severs record
+            // identity, and a later genuine swap would then mutate the new record while
+            // live entries refetch through the old one, serving old code under an
+            // invalidation log. Options still land: an options-only edit re-registers with
+            // the same imported fetcher.
+            existing.fresh = family.fresh;
+            existing.retain = family.retain;
+            family = existing;
         }
         else
         {

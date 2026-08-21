@@ -100,6 +100,7 @@ export {
     setBuildContext,
     resetDataCache,
     abortDataCacheFetches,
+    releaseDataCache,
     readValue,
     entryKeyFor,
     stableSerialize,

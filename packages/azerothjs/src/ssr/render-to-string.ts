@@ -22,7 +22,7 @@
 
 import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
 import { getStoreScope } from '../reactivity/store-scope.ts';
-import { latchServerData } from '../reactivity/data-cache.ts';
+import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { discardStyleFrame } from '../renderer/css.ts';
 import { discardHeadFrame } from '../renderer/head.ts';
 
@@ -87,7 +87,16 @@ function renderBody(component: () => HTMLElement | DocumentFragment, markers: bo
                 }
                 finally
                 {
+                    // Dispose FIRST, release SECOND - the same order the stream host's
+                    // finalizers run: a root cleanup (onCleanup) may read a cached family
+                    // during dispose, and it must see the settled entries, not a released
+                    // cache that double-invokes the fetcher. The release then follows,
+                    // HERE, because the scope is unreachable after runInStoreScope
+                    // returns. Stragglers that captured the cache (the seed-heal
+                    // microtask, settlement continuations) find it released and degrade
+                    // to direct fetches - the latch, not silence, makes them benign.
                     dispose();
+                    releaseDataCache(getStoreScope());
                 }
             })), { markers });
 }

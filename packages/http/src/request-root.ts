@@ -31,7 +31,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { abortDataCacheFetches, setStoreScopeResolver } from 'azerothjs/internal';
+import { abortDataCacheFetches, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 
 /** What the async context carries for one request. @internal */
@@ -44,6 +44,14 @@ interface RequestScope
     settled: boolean;
     /** How a throwing cleanup is reported, reachable from every settle path. */
     options: RootOptions;
+
+    /**
+     * The one in-flight teardown, memoized so concurrent settle paths (the abort listener
+     * racing stream end) share it instead of re-entering: a second entrant would take the
+     * no-cleanups early return and release the cache WHILE the first entrant's cleanup
+     * rounds still run, handing their reads a dead cache mid-teardown.
+     */
+    teardown: Promise<void> | null;
 }
 
 const storage = new AsyncLocalStorage<RequestScope>();
@@ -126,7 +134,14 @@ interface RootOptions
  *
  * @internal
  */
-async function runCleanups(scope: RequestScope, options: RootOptions): Promise<void>
+function runCleanups(scope: RequestScope, options: RootOptions): Promise<void>
+{
+    scope.teardown ??= teardownOnce(scope, options);
+    return scope.teardown;
+}
+
+/** @internal The single teardown body behind {@link runCleanups}' memoization. */
+async function teardownOnce(scope: RequestScope, options: RootOptions): Promise<void>
 {
     // The request's data cache dies with its scope; aborting its outstanding fetches here
     // keeps their settle closures from outliving the request that started them. Before the
@@ -137,6 +152,7 @@ async function runCleanups(scope: RequestScope, options: RootOptions): Promise<v
         // Nothing registered YET, but the request has reached a settle point: anything
         // registered from here on runs immediately rather than queueing (onRequestCleanup).
         scope.settled = true;
+        releaseDataCache(scope.storeScope);
         return;
     }
     // Re-enter the request's async context: every settle path (the post-await continuation,
@@ -156,9 +172,17 @@ async function runCleanups(scope: RequestScope, options: RootOptions): Promise<v
             scope.cleanups = null;
             if (round >= MAX_CLEANUP_ROUNDS)
             {
-                options.onCleanupError?.(new Error('onRequestCleanup kept registering new teardown from '
-                    + `inside a cleanup after ${ MAX_CLEANUP_ROUNDS } rounds; the remaining ${ batch.length } `
-                    + 'were dropped to end the request.'));
+                try
+                {
+                    options.onCleanupError?.(new Error('onRequestCleanup kept registering new teardown from '
+                        + `inside a cleanup after ${ MAX_CLEANUP_ROUNDS } rounds; the remaining ${ batch.length } `
+                        + 'were dropped to end the request.'));
+                }
+                catch
+                {
+                    // A throwing sink must not reject teardown: that would skip both the
+                    // settled flag and the release below.
+                }
                 return;
             }
             for (let i = batch.length - 1; i >= 0; i--)
@@ -183,6 +207,10 @@ async function runCleanups(scope: RequestScope, options: RootOptions): Promise<v
         }
     });
     scope.settled = true;
+    // The LAST act, after every cleanup round: cleanups legitimately read the settled
+    // entries (and may fetch fresh keys) during teardown - releasing any earlier would
+    // hand them a dead cache, and releasing here sweeps whatever they repopulated.
+    releaseDataCache(scope.storeScope);
 }
 
 /**
@@ -266,7 +294,7 @@ export async function runInRequestRoot<T, A>(
     installResolver();
     // `arg` rides through storage.run instead of a per-request closure over `fn`;
     // the caller passes ONE stable function for the app's lifetime.
-    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options };
+    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null };
     let result: T;
     try
     {
