@@ -61,7 +61,8 @@ app.post('/users', async ({ request }) =>
 });
 
 const served = await serve(app, { port: 3000 });
-// served.shutdown(): graceful - drain in-flight responses, then close.
+// served.shutdown(): graceful - drain in-flight responses up to the grace period, destroy
+// what remains (held WebSockets exit in milliseconds, not after the grace), then close.
 ```
 
 Scaffold a complete runnable server like this - a custom error envelope, a scoped `with`
@@ -239,7 +240,7 @@ const served = await serve(handler, {
     port: 3000,
     timeouts: { headersMs: 15_000, keepAliveMs: 5_000 }  // slowloris + idle bounds, all overridable
 });
-handleShutdownSignals(served);                            // SIGTERM/SIGINT -> drain in-flight, then exit
+handleShutdownSignals(served);                            // SIGTERM/SIGINT -> bounded drain (held sockets destroyed), then exit
 ```
 
 Every piece is opt-in and tested through `app.handle(new Request(...))` - no socket required.

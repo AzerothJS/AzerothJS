@@ -111,7 +111,9 @@ docker run -p 3000:3000 {{name}}
 ```
 
 The Dockerfile has no build stage - it copies `src/` and runs it. `/healthz`
-answers orchestrator probes, and `SIGTERM` drains in-flight responses before exit.
+answers orchestrator probes, and `SIGTERM` drains in-flight responses up to the
+grace period, destroys any held connections, and exits - well inside an
+orchestrator's kill timeout.
 
 ---
 

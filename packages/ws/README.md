@@ -52,7 +52,10 @@ const detach = attachWebSockets(server, {
 });
 
 server.listen(3000);
-// detach(): stop upgrading and destroy live sockets, so a graceful shutdown can finish.
+// detach(): stop upgrading and destroy live sockets (clients see close code 1006; for a
+// clean 1001 goodbye, close() each socket yourself first). Shutdown no longer needs this
+// to finish - it destroys held sockets itself - but detach() before shutdown is still the
+// polite order.
 ```
 
 > [!TIP]
@@ -78,8 +81,9 @@ both ends of a connection read the same way.
   independent per-frame and per-message size caps, and the full closing handshake with code
   validation in both directions.
 - **Lifecycle honesty** - `attachWebSockets` returns a detach function that also destroys
-  live connections: upgraded sockets leave the HTTP server's connection tracking, so a
-  graceful shutdown would otherwise wait on them forever.
+  live connections (clients observe 1006; send `close(1001)` per socket first for a clean
+  goodbye). `served.shutdown()` also destroys held sockets itself, bounded by its grace
+  period, so a forgotten `detach()` can no longer hang a deploy.
 - **Production controls** - `verifyOrigin` gates the upgrade before the socket exists (the
   cross-site WebSocket hijacking defense); a heartbeat pings idle peers and terminates any
   that miss the pong deadline (half-open reclamation); and `socket.bufferedAmount` plus an

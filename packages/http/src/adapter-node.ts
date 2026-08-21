@@ -19,14 +19,17 @@
  *     streams with real backpressure (a slow client pauses the producer instead of buffering
  *     unbounded). Set-Cookie is written as the multiple headers it must be.
  *   - `serve`: listen + GRACEFUL SHUTDOWN. `shutdown()` stops accepting, lets in-flight
- *     responses drain up to a deadline, then destroys what remains - deploys stop dropping
- *     requests mid-body, the flaw the incumbents leave to process managers.
+ *     responses drain up to a deadline, then destroys what remains - upgraded sockets
+ *     included, so a live WebSocket can no longer stall the drain forever (h2c keeps its
+ *     wait-for-streams behaviour). Deploys stop dropping requests mid-body AND stop hanging
+ *     on held connections, the flaws the incumbents leave to process managers.
  *
  * The listener is written against the small structural surface http1 and the http2 compat
  * API share, so the same code serves HTTP/1.1 and h2c: `serve` speaks 1.1, `serveH2c` speaks
  * cleartext HTTP/2 (an ALPN/TLS front can sit ahead of either in production).
  */
 
+import type { Socket } from 'node:net';
 import type { ServerResponse } from 'node:http';
 import { createServer, type Server } from 'node:http';
 import { createServer as createH2cServer, type Http2Server, type Http2ServerResponse } from 'node:http2';
@@ -205,8 +208,14 @@ export interface Served<S extends Server | Http2Server = Server | Http2Server>
     port: number;
 
     /**
-     * Graceful shutdown: stop accepting, wait for in-flight responses up to `gracePeriodMs`
-     * (default 10s), then destroy whatever remains. Resolves when the server is fully closed.
+     * Graceful shutdown. On HTTP/1 (`serve`), `gracePeriodMs` (default 10s) bounds the ENTIRE
+     * drain: stop accepting, wait for in-flight responses up to the deadline, then destroy
+     * whatever remains - including upgraded sockets (WebSockets), which are cut immediately
+     * once in-flight HTTP work has drained, because the adapter cannot see their traffic. A
+     * WebSocket exchange mid-flight at shutdown is therefore lost (close code 1006); an app
+     * that wants clean closes sends `close(1001)` per socket BEFORE calling this. On h2c
+     * (`serveH2c`) the bound does NOT apply: the drain waits for open streams and sessions to
+     * finish, as it always has. Resolves when the server is fully closed.
      */
     shutdown(options?: { gracePeriodMs?: number | undefined }): Promise<void>;
 }
@@ -235,6 +244,21 @@ function manage<S extends Server | Http2Server>(
 ): Promise<Served<S>>
 {
     const inFlight = new Set<AnyOutgoing>();
+
+    // Every live socket, so shutdown can destroy what `closeAllConnections()` cannot reach:
+    // Node drops a socket from the http server's own tracking the moment it upgrades, which
+    // is how a live WebSocket used to stall the drain forever. Tracked via 'connection' and
+    // NEVER via 'upgrade' - merely registering an 'upgrade' listener reroutes every
+    // Upgrade-flagged request away from the request handler, so on a server with no WebSocket
+    // consumer a stray `Upgrade:` request (curl --http2 sends one) would stop being answered
+    // and dangle outside every timeout. 'connection' is purely observational.
+    const tracked = new Set<Socket>();
+    server.on('connection', (socket: Socket) =>
+    {
+        tracked.add(socket);
+        socket.on('close', () => tracked.delete(socket));
+    });
+
     server.on('request', (req: AnyIncoming, res: AnyOutgoing) =>
     {
         inFlight.add(res);
@@ -335,6 +359,12 @@ function manage<S extends Server | Http2Server>(
                 port: boundPort,
                 shutdown: async ({ gracePeriodMs = 10_000 } = {}) =>
                 {
+                    // ONE budget for the whole drain: the in-flight wait and the survivor
+                    // backstop both arm from this deadline, so the phases cannot stack.
+                    // Clamped to the 32-bit setTimeout maximum, or `Infinity` would be
+                    // silently reduced to 1ms and cut every in-flight response.
+                    const deadline = Date.now() + gracePeriodMs;
+                    const remaining = (): number => Math.max(0, Math.min(deadline - Date.now(), 2_147_483_647));
                     const closed = new Promise<void>((done) => server.close(() => done()));
                     // http1 keep-alive sockets with no active request would stall close();
                     // drop them immediately - only genuinely in-flight work gets the grace.
@@ -364,7 +394,7 @@ function manage<S extends Server | Http2Server>(
                                 }),
                                 new Promise<void>((done) =>
                                 {
-                                    expiry = setTimeout(done, gracePeriodMs);
+                                    expiry = setTimeout(done, remaining());
                                 })
                             ]);
                         }
@@ -375,6 +405,52 @@ function manage<S extends Server | Http2Server>(
                         }
                     }
                     (server as Partial<Server>).closeAllConnections?.();
+
+                    // Whatever `closeAllConnections()` left alive is by definition what it
+                    // cannot reach - upgraded sockets. Destroy them NOW rather than after the
+                    // remaining grace: the grace exists for in-flight HTTP work, an upgraded
+                    // socket has none the adapter can observe, and waiting the grace out made
+                    // every restart pay it in full. The trade is stated in the option's docs:
+                    // a WebSocket exchange mid-flight at shutdown is cut, and the clean path
+                    // is the app closing its sockets (code 1001) before calling shutdown.
+                    //
+                    // Valid ONLY where `closeAllConnections` exists. On `Http2Server` it does
+                    // not, so every live session would be a false survivor - and destroying an
+                    // h2 session mid-stream is SILENT truncation (the client reads a normal
+                    // 'end' with a short body). h2c therefore keeps its previous behaviour.
+                    if (typeof (server as Partial<Server>).closeAllConnections === 'function')
+                    {
+                        for (const socket of tracked)
+                        {
+                            socket.destroy();
+                        }
+                        if (tracked.size > 0)
+                        {
+                            // Sockets that arrived mid-drain: give close() the remaining
+                            // budget, then sweep once more.
+                            let expiry: ReturnType<typeof setTimeout> | undefined;
+                            try
+                            {
+                                await Promise.race([
+                                    closed,
+                                    new Promise<void>((done) =>
+                                    {
+                                        expiry = setTimeout(done, remaining());
+                                    })
+                                ]);
+                            }
+                            finally
+                            {
+                                clearTimeout(expiry);
+                            }
+                            for (const socket of tracked)
+                            {
+                                socket.destroy();
+                            }
+                        }
+                    }
+                    // ALWAYS awaited, on every path: resolving before close() completes would
+                    // hand the caller a port that the kernel has not released yet.
                     await closed;
                 }
             });
@@ -528,7 +604,12 @@ export interface ShutdownSignalOptions
     /** Which signals trigger the drain (default SIGTERM + SIGINT - the orchestrator and Ctrl-C signals). */
     signals?: NodeJS.Signals[];
 
-    /** Forwarded to `shutdown()`: how long in-flight requests get to finish (default 10s). */
+    /**
+     * Forwarded to `shutdown()`: the bound on the whole drain (default 10s). In-flight
+     * requests get up to this long to finish; upgraded sockets (WebSockets) are destroyed as
+     * soon as that work has drained rather than waiting the period out, so a held socket
+     * costs milliseconds on restart, not the full grace.
+     */
     gracePeriodMs?: number;
 
     /** Called if the drain itself throws; the process still exits. */
@@ -548,10 +629,13 @@ export interface ShutdownSignalOptions
 
 /**
  * Wires a graceful drain to process signals: on SIGTERM/SIGINT the server stops accepting,
- * lets in-flight requests finish (up to the grace period), then exits 0. This is the piece
- * that makes rolling deploys and orchestrator restarts stop dropping requests mid-flight -
- * the incumbents leave it to a process manager and hope. Returns a disposer that removes the
- * listeners (so tests and re-wiring do not leak process handlers).
+ * lets in-flight requests finish (up to the grace period), destroys held sockets (upgraded
+ * WebSockets included - a live socket exits in milliseconds, not after the grace), then exits
+ * 0. This is the piece that makes rolling deploys and orchestrator restarts stop dropping
+ * requests mid-flight AND stop hanging until SIGKILL - the incumbents leave it to a process
+ * manager and hope. An app that wants clean WebSocket closes (1001) sends them from its own
+ * pre-shutdown hook before the drain. Returns a disposer that removes the listeners (so
+ * tests and re-wiring do not leak process handlers).
  */
 export function handleShutdownSignals(served: Served, options: ShutdownSignalOptions = {}): () => void
 {

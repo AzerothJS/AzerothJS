@@ -12,6 +12,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **`Served.shutdown()` hung forever while a WebSocket (or any upgraded socket) was live, and
+  `gracePeriodMs` did not bound it.** Node drops a socket from the HTTP server's connection
+  tracking the moment it upgrades, so `closeAllConnections()` could never reach it, the grace
+  timer was only armed when HTTP requests were in flight, and the drain waited on a socket
+  nothing could close - a SIGTERM on a rolling deploy left the process alive until the
+  orchestrator killed it, using exactly the wiring the docs recommend. The adapter now tracks
+  every connection (via `'connection'` - deliberately never `'upgrade'`, whose mere presence
+  as a listener would reroute Upgrade-flagged requests away from ordinary handling), gives
+  in-flight responses their grace as before, then destroys whatever `closeAllConnections()`
+  could not reach, immediately - a held WebSocket now costs milliseconds on restart, not the
+  grace period, and the signal path reaches `exit(0)` in well under a second. Two boundaries
+  are deliberate and documented: clients of destroyed sockets observe close code 1006 (send
+  `close(1001)` per socket before shutdown for a clean goodbye - the ws `detach()` also
+  destroys rather than closing), and **h2c is unchanged**: `Http2Server` has no
+  `closeAllConnections`, so destroying its sessions would silently truncate live streams, and
+  `serveH2c`'s drain still waits for open streams to finish. Also fixed on the way:
+  `gracePeriodMs: Infinity` previously collapsed the grace to 1ms with a
+  `TimeoutOverflowWarning` and cut in-flight responses; it now means what it says.
+
 - **The fullstack scaffold's SSR config disabled the per-request data cache in every generated
   app.** The generated `application/vite.config.ts` inlined the whole `azerothjs` runtime into the
   SSR bundle (`ssr: { noExternal: true }`), while `@azerothjs/http` resolved a second copy from
