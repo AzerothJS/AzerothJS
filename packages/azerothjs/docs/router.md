@@ -158,6 +158,11 @@ loader: async ({ params, query, signal, parent }) =>
 - `guard` runs root-to-leaf BEFORE loaders and rendering: `false` vetoes (previous
   location restored), a target or `redirect(...)` goes elsewhere, `true` passes. Async
   guards hold the navigation; first veto wins.
+- A guard makes every route under it identity-dependent, so the kit refuses
+  `render: 'static'` (prerender and ISR) anywhere below one - a cached or prerendered
+  page answers without running guards. Keep guarded subtrees server-rendered: put the
+  guard on a layout whose children are `render: 'server'`, and let the public static
+  pages live on a sibling branch.
 - A loader THROWS `redirect('/login')` to turn its navigation into another one - on the
   client and during SSR alike.
 - `router.block(fn)` registers a leave blocker (unsaved forms): return `false` to stay.

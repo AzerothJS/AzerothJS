@@ -11,8 +11,10 @@
  * Renders every `render: 'static'` page through the SSR bundle's renderer and
  * writes it into the client dist, after preserving the pristine SPA shell as
  * `shell.html` (what `mountPages` serves for `render: 'client'` pages and what
- * static pages splice over). A guard that redirects a static page is a BUILD
- * error - a prerendered redirect is a contradiction someone should hear about.
+ * static pages splice over). A GUARD anywhere on a static page's chain is a BUILD
+ * error - declaration-based, verdict irrespective: a prerendered file is served without
+ * ever running guards, so even a guard that passes at build time is a contradiction
+ * someone should hear about, and so is a static page that redirects.
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -205,6 +207,20 @@ async function generate(
         if (page.render !== 'static')
         {
             continue;
+        }
+        // Declaration-based, not verdict-based: a guard that happens to PASS at build time
+        // still owns the route per-request, and a file written here is served without ever
+        // running it. The verdict-based checks below (redirect/blocked) stay as the
+        // backstop for a renderer whose table differs. The wildcard-without-revalidate
+        // shape falls through to its own existing error; mountPages exempts it because it
+        // never serves files.
+        if (page.guardedBy !== undefined && !(page.path.includes('*') && page.revalidate === undefined))
+        {
+            throw new Error(`kit prerender: "${ page.path }" is render: 'static' but its route chain is `
+                + `guarded at "${ page.guardedBy }" - a prerendered page is served without running guards. `
+                + 'Move the guard into a server-rendered subtree, throw redirect() from a loader '
+                + '(live-rendered requests only; it never runs for prerendered bytes), or use '
+                + 'render: \'server\'.');
         }
         const parameterized = page.path.includes(':') || page.path.includes('*');
         if (!parameterized && page.staticParams !== undefined)

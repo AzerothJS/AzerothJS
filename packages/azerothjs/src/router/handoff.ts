@@ -30,8 +30,8 @@
  * normal fetch - never to wrong data.
  */
 
-import type { LoaderHandoff, NavigateTarget, Route } from './types.ts';
-import { flattenRoutes, splitFullPath, resolveRouteComponent } from './router.ts';
+import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
+import { flattenRoutes, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { parseQuery } from './query.ts';
 import { inertJson } from '../reactivity/ssr.ts';
@@ -64,6 +64,53 @@ export type MatchAndLoadResult =
     | { notFound: true }
     | null;
 
+/** @internal One selected chain: the URL's split plus the first entry whose matcher matched it. */
+interface SelectedChain
+{
+    entry: LeafEntry;
+    params: Params;
+    pathname: string;
+    search: string;
+}
+
+/**
+ * The one entry-selection walk behind {@link matchAndLoad} and {@link guardedMatch}. Pure:
+ * it owns the URL normalization and the order-first walk over the flattened table, and it
+ * latches nothing, so a build- or mount-time caller cannot flip server-data mode. Both
+ * consumers MUST select through here - two independent walks could drift on ordering or
+ * normalization, and a guarded verdict is only meaningful about the chain that will run.
+ *
+ * @internal
+ */
+function selectChain(routes: Route[], url: string | URL): SelectedChain | null
+{
+    const full = typeof url === 'string' ? url : url.pathname + url.search;
+    const { pathname, search } = splitFullPath(full);
+    for (const entry of flattenRoutes(routes))
+    {
+        const result = entry.matcher.match(pathname);
+        if (result !== null)
+        {
+            return { entry, params: result.params, pathname, search };
+        }
+    }
+    return null;
+}
+
+/**
+ * SERVER: whether `url`'s matched chain carries any guard - the static fact a page-cache
+ * host needs before it may treat a rendered page as shared content. A guard makes the
+ * render a function of (URL, request identity), so its output must never be cached,
+ * seeded, or coalesced across visitors. Selection is the same walk {@link matchAndLoad}
+ * performs, so the verdict describes the chain that will actually run. False for an
+ * unmatched URL.
+ */
+export function guardedMatch(routes: Route[], url: string | URL): boolean
+{
+    const selected = selectChain(routes, url);
+    return selected !== null && selected.entry.matched.some((route) => route.guard !== undefined);
+}
+
 /**
  * SERVER: matches `url` against `routes`, runs the chain's GUARDS root-to-leaf, and
  * runs every matched level's loader in parallel - the same matching, guarding, and
@@ -84,17 +131,14 @@ export async function matchAndLoad(
     // A server entry point: from here on, default-scope reads bypass the data cache so a
     // resolver-less host's loader-phase reads can never be shared across requests.
     latchServerData();
-    const full = typeof url === 'string' ? url : url.pathname + url.search;
-    const { pathname, search } = splitFullPath(full);
-
-    for (const entry of flattenRoutes(routes))
+    const selected = selectChain(routes, url);
+    if (selected === null)
     {
-        const result = entry.matcher.match(pathname);
-        if (result === null)
-        {
-            continue;
-        }
-
+        // No route in the table matched this URL.
+        return { notFound: true };
+    }
+    {
+        const { entry, params, pathname, search } = selected;
         const query = parseQuery(search);
 
         // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
@@ -109,7 +153,7 @@ export async function matchAndLoad(
             let verdict: unknown;
             try
             {
-                verdict = await route.guard({ params: result.params, pathname, query, from: null });
+                verdict = await route.guard({ params, pathname, query, from: null });
             }
             catch (error)
             {
@@ -164,7 +208,7 @@ export async function matchAndLoad(
                         break;
                     }
                 }
-                const promise = route.loader({ params: result.params, query, signal, parent });
+                const promise = route.loader({ params, query, signal, parent });
                 slots[level] = promise;
                 return promise;
             }));
@@ -180,8 +224,6 @@ export async function matchAndLoad(
 
         return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
     }
-    // No route in the table matched this URL.
-    return { notFound: true };
 }
 
 /** The deploy-identity and produce-time stamps a host adds to an emitted handoff. */

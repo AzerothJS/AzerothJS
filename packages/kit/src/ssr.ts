@@ -28,7 +28,7 @@
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead } from 'azerothjs/internal';
+import { collectHead, guardedMatch } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -39,6 +39,12 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *
  *   - `html`     - rendered markup to serve with `status` (defaults to 200; a not-found
  *                  page renders the app's fallback UI at 404).
+ *
+ * The `html` and `stream` arms carry `guarded: true` when the matched chain has any route
+ * guard. A guard makes the render a function of (URL, request identity), so a guarded
+ * result must never enter a shared page cache, be written as a prerender file, or be
+ * answered without `cache-control: private, no-store` - hosts that persist or share
+ * rendered pages key those refusals on this stamp.
  *   - `redirect` - a guard/loader redirected; serve a 302.
  *   - `blocked`  - a guard VETOED; serve `status` (403) with NO rendered component. This is
  *                  the arm that stops the guard-veto authorization bypass.
@@ -48,10 +54,10 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *                  any byte exists).
  */
 export type PageResult =
-    | { kind: 'html'; html: string; status: number }
+    | { kind: 'html'; html: string; status: number; guarded?: boolean }
     | { kind: 'redirect'; to: string; replace: boolean }
     | { kind: 'blocked'; status: number }
-    | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array> };
+    | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean };
 
 /** How one render is asked to behave; omitted entirely for the buffered default. */
 export interface PageRenderOptions
@@ -235,6 +241,12 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
 
         const loaded = await matchAndLoad(routes, url, options?.signal !== undefined ? { signal: options.signal } : undefined);
 
+        // The same selection walk matchAndLoad just performed, asked one static question:
+        // does the chain carry a guard? A guarded render is a function of (URL, request
+        // identity), and the stamp is how every host that persists or shares pages -
+        // the ISR cache, the prerender pass, a CDN via response headers - hears it.
+        const guarded = guardedMatch(routes, url);
+
         // A guard/loader redirect -> a real 302; never render the target.
         if (loaded !== null && 'redirect' in loaded)
         {
@@ -330,7 +342,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                     return reader.cancel(reason);
                 }
             });
-            return { kind: 'stream', status: notFound ? 404 : 200, stream };
+            return { kind: 'stream', status: notFound ? 404 : 200, stream, ...(guarded ? { guarded: true } : {}) };
         }
 
         // The drain rides a `finally` on the render, so nothing can execute between the two
@@ -358,6 +370,6 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // Title surgery, keyed replacements, additions - order in the document:
         // style -> handoff -> head, all at one anchor located before any of them is inserted.
         html = applyHeadToShell(html, frames.head, frames.styleTag + script);
-        return { kind: 'html', html, status: notFound ? 404 : 200 };
+        return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded ? { guarded: true } : {}) };
     };
 }

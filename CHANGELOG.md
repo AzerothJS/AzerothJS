@@ -10,6 +10,41 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Security
+
+- **An ISR cache hit served guarded pages without running guards, disclosing the first
+  visitor's loader data to strangers.** `registerIsr` answered from the page cache before
+  any routing, and guards run only inside the renderer - so once one authorized visitor
+  warmed a guarded page, every later request inside the revalidate window received that
+  visitor's rendered page, private handoff data included, with the guard never consulted.
+  A guard makes a page a function of the request's identity, and an identity-dependent
+  page has no business in a shared cache, so the combination now cannot exist, refused at
+  every surface:
+  - `mountPages` and the prerender pass both REFUSE a `render: 'static'` page (plain,
+    enumerated, or ISR) whose route chain carries a guard - declaration-based, even when
+    the guard would pass at build time, naming the guard-carrying route. Move the guard
+    into a server-rendered subtree, throw `redirect()` from a loader (live-rendered
+    requests only; it never runs for prerendered bytes), or use `render: 'server'`. The
+    one exemption is a wildcard static page without `revalidate`, which never serves
+    files. The mount-time refusal means a server-only upgrade against a pre-fix dist
+    fails the deploy loudly instead of serving stale guarded files; rebuild the client
+    dist as part of upgrading across this fix, and clear any persistent page-cache
+    directory (`FilePageCache`) - pre-fix entries may hold a visitor's private HTML at
+    rest.
+  - An ISR URL that matches a guarded chain elsewhere in the route table (an overlap the
+    static checks cannot see) is gated ahead of the cache, the prerender seed, AND the
+    shared in-flight render: it renders live per request and answers
+    `cache-control: private, no-store` with `x-azeroth-cache: live`, reported once per
+    registration through `onError` as a policy notice.
+  - Every guarded 200 and streamed response now carries `cache-control: private,
+    no-store` - server-rendered pages included, which previously answered with headers a
+    shared cache one hop out could store. A guard veto (403) or redirect (302) on the
+    plain server path keeps its existing headers: neither is heuristically cacheable, and
+    a veto renders nothing private to protect.
+  - Boundary, stated plainly: this refusal keys on GUARDS. A loader that reads request
+    identity without a guard is invisible to it - keep personalized loaders off ISR and
+    static pages.
+
 ### Fixed
 
 - **A bare `<Outlet />` passed every static check and then failed at runtime the moment the

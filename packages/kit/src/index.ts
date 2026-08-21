@@ -30,6 +30,7 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import type { Route } from 'azerothjs';
+import { guardedMatch } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, NotFoundError } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
@@ -108,7 +109,10 @@ export interface KitOptions
 
     /**
      * Hears background failures (a failed ISR regeneration, a broken image transform) -
-     * work with no request to answer. Default: console.error; kit carries no logger dep.
+     * work with no request to answer - plus one POLICY notice: the first time an ISR
+     * registration meets a URL matching a guarded route chain, it reports (once, phase
+     * 'revalidate') that those URLs render live and are never cached. Default:
+     * console.error; kit carries no logger dep.
      */
     onError?: KitErrorObserver;
 
@@ -152,13 +156,22 @@ export interface FlatPage
     /** Leaf-only: enumeration never inherits - a parent's param list means nothing to a child. */
     staticParams?: PageRoute['staticParams'];
     revalidate?: number;
+
+    /**
+     * The joined path of the TOPMOST guard-carrying route in this page's chain, when any
+     * route on it has a guard. A guard makes the render identity-dependent, and every
+     * static serving shape (prerendered file, ISR cache) answers without running guards -
+     * so the static refusals key on this, and its value lets the error name the route
+     * that carries the guard rather than the page that merely inherits it.
+     */
+    guardedBy?: string;
 }
 
 /** @internal Flattens the page tree to absolute paths with their effective modes. */
 export function flattenPages(
     routes: PageRoute[],
     base = '',
-    inherited: { render?: PageRoute['render'] | undefined; revalidate?: number | undefined } = {}
+    inherited: { render?: PageRoute['render'] | undefined; revalidate?: number | undefined; guardedBy?: string | undefined } = {}
 ): FlatPage[]
 {
     const out: FlatPage[] = [];
@@ -170,9 +183,10 @@ export function flattenPages(
             : withoutTrailingSlashes(`${ base }/${ child }`);
         const mode = route.render ?? inherited.render;
         const revalidate = route.revalidate ?? inherited.revalidate;
+        const guardedBy = inherited.guardedBy ?? (route.guard !== undefined ? full : undefined);
         if (route.children !== undefined && route.children.length > 0)
         {
-            out.push(...flattenPages(route.children, full === '/' ? '' : full, { render: mode, revalidate }));
+            out.push(...flattenPages(route.children, full === '/' ? '' : full, { render: mode, revalidate, guardedBy }));
         }
         else
         {
@@ -184,6 +198,10 @@ export function flattenPages(
             if (revalidate !== undefined)
             {
                 page.revalidate = revalidate;
+            }
+            if (guardedBy !== undefined)
+            {
+                page.guardedBy = guardedBy;
             }
             out.push(page);
         }
@@ -262,6 +280,22 @@ export function mountPages(app: App, options: KitOptions): void
     for (const page of flattenPages(options.routes))
     {
         const mode = page.render ?? defaultMode;
+        // A guarded chain makes the render identity-dependent, and every 'static' serving
+        // shape answers without running guards: a prerendered file involves no renderer at
+        // all, and an ISR cache hit answers without any routing. Refused at mount so a server-only
+        // upgrade against an old dist fails the DEPLOY loudly instead of serving stale
+        // guarded files forever. The one exemption: a wildcard WITHOUT revalidate never
+        // serves files (it downgrades to per-request SSR, where guards run, or to the bare
+        // shell, which carries no content).
+        if (mode === 'static' && page.guardedBy !== undefined
+            && !(page.path.includes('*') && page.revalidate === undefined))
+        {
+            throw new Error(`kit mountPages: "${ page.path }" renders 'static' but its route chain `
+                + `is guarded at "${ page.guardedBy }" - a prerendered or cached page is served without `
+                + 'running guards. Move the guard into a server-rendered subtree, throw redirect() '
+                + 'from a loader (live-rendered requests only; it never runs for prerendered bytes), '
+                + 'or use render: \'server\'.');
+        }
         if (page.revalidate !== undefined)
         {
             if (mode !== 'static')
@@ -284,6 +318,7 @@ export function mountPages(app: App, options: KitOptions): void
                 app,
                 path: page.path,
                 revalidate: page.revalidate,
+                guarded: (url) => guardedMatch(options.routes, url),
                 cache: isrCache,
                 renderer: options.renderer,
                 shell: shellPromise,
@@ -416,7 +451,9 @@ function registerDynamic(
                     status: result.status,
                     headers: {
                         'content-type': 'text/html; charset=utf-8',
-                        'cache-control': 'no-cache',
+                        // A guarded stream is identity-dependent: no-cache alone permits
+                        // STORAGE of the private bytes, only reuse needs revalidation.
+                        'cache-control': result.guarded === true ? 'private, no-store' : 'no-cache',
                         'x-accel-buffering': 'no'
                     }
                 });

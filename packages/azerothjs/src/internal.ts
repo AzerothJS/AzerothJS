@@ -125,6 +125,7 @@ export {
 } from './renderer/index.ts';
 export { ErrorBoundary } from './component/index.ts';
 export { Outlet } from './router/index.ts';
+export { guardedMatch } from './router/handoff.ts';
 
 // Keyword lowerings living outside reactivity.
 export { createForm, createFieldArray } from './form/index.ts';

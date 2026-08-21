@@ -309,7 +309,7 @@ export interface Router
  *
  * @internal
  */
-interface LeafEntry
+export interface LeafEntry
 {
     matcher: PathMatcher;
     /** Root-to-leaf chain, used by `<Outlet>`. */
