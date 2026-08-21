@@ -12,6 +12,27 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A server that never rendered a page cached loader data process-wide, serving one
+  identity's reads to every other.** The data cache refused the default scope only after
+  a render latched it, so on a plain API server - WebSocket handlers, cron jobs,
+  module-construction code - every `cached()` read outside a request landed in ONE
+  process-wide registry: socket B read socket A's value with zero fetches, and four cron
+  runs shared the first run's data for the retain window (five minutes by default,
+  indefinite while subscribed). The cache now fails closed on positive server evidence:
+  every `@azerothjs/http` entry point (`App` construction, `serve`, `serveH2c`,
+  `toFetchHandler`, the request root) marks the process, and from then on a default-scope
+  read gets no cache - correct data, fresh fetch, no disclosure. Requests are unaffected
+  (their scope is per-request), browsers are unaffected, and a latched server render
+  behaves exactly as before; default-scope reads at boot, before the first render, fall
+  under the breaking change below. BREAKING for a server that deliberately used
+  `cached()` as a process cache outside requests: those reads lose entry reuse and
+  single-flighting, and their `revalidate` becomes a no-op. Wrap unit work (a WebSocket
+  message, a cron run) in a work-unit root (`runInWorkUnit`) so it owns a real scope, or
+  hold true process-lifetime values in module-local state instead of the request-data
+  cache. A process using `@azerothjs/ws` or `@azerothjs/cron` with no `@azerothjs/http`
+  import anywhere carries no azeroth scoping surface and keeps the old fail-open
+  behavior - wire `runInWorkUnit` there.
+
 - **An ISR cache hit served guarded pages without running guards, disclosing the first
   visitor's loader data to strangers.** `registerIsr` answered from the page cache before
   any routing, and guards run only inside the renderer - so once one authorized visitor

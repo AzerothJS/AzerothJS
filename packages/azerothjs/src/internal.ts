@@ -93,10 +93,11 @@ export { registerStyle } from './renderer/css.ts';
 export { collectHead, resetHead, type CollectedHead } from './renderer/head.ts';
 
 // The data cache's host seams: the registry accessor for router integration, the server
-// latch's build-context marker for kit prerender, and the test reset.
+// latch and runtime mark, the build-context marker for kit prerender, and the test reset.
 export {
     getDataCache,
     latchServerData,
+    markServerRuntime,
     setBuildContext,
     resetDataCache,
     abortDataCacheFetches,

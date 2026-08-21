@@ -36,6 +36,7 @@ import { createServer as createH2cServer, type Http2Server, type Http2ServerResp
 import { readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { printBanner } from '@azerothjs/logger';
+import { markServerRuntime } from 'azerothjs/internal';
 import { createAdapterRequest, type AnyIncoming, type ForwardedTrust } from './adapter-request.ts';
 import { PayloadResponse } from './payload.ts';
 import type { WebHandler } from './edge.ts';
@@ -566,6 +567,7 @@ export async function serve(
     options: { port?: number; hostname?: string; before?: ConnectMiddleware; timeouts?: SocketTimeouts; banner?: boolean; trustProxy?: TrustProxyOptions } = {}
 ): Promise<Served<Server>>
 {
+    markServerRuntime();
     const startedAt = performance.now();
     const timeouts = options.timeouts ?? {};
     const server = timeouts.checkIntervalMs !== undefined
@@ -589,6 +591,7 @@ export async function serve(
  */
 export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; timeouts?: SocketTimeouts; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
 {
+    markServerRuntime();
     const server = createH2cServer({ maxSessionInvalidFrames: 100, maxSessionRejectedStreams: 100 });
     // h2 has no per-phase header/request timers - one socket-inactivity bound covers both.
     // requestMs rather than keepAliveMs: no bytes move while a slow handler computes, and

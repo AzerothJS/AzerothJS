@@ -31,7 +31,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { abortDataCacheFetches, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
+import { abortDataCacheFetches, markServerRuntime, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 
 /** What the async context carries for one request. @internal */
@@ -291,6 +291,7 @@ export async function runInRequestRoot<T, A>(
     options: RootOptions = {}
 ): Promise<T>
 {
+    markServerRuntime();
     installResolver();
     // `arg` rides through storage.run instead of a per-request closure over `fn`;
     // the caller passes ONE stable function for the app's lifetime.

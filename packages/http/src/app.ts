@@ -33,6 +33,7 @@ import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
 import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
+import { markServerRuntime } from 'azerothjs/internal';
 import { runInRequestRoot } from './request-root.ts';
 import { attachErrorPolicy, guardLayer, isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
@@ -359,6 +360,8 @@ export class App<Ctx extends object = object>
      */
     constructor(options: AppOptions = {}, internals?: AppInternals)
     {
+        // Positive server evidence: from here on, default-scope reads fail closed.
+        markServerRuntime();
         this.#options = options;
         this.#router = internals?.router ?? new RadixRouter<Handler>();
         this.#middlewares = internals?.middlewares ?? [];

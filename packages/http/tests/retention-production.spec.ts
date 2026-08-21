@@ -1,13 +1,14 @@
 // @vitest-environment node
 //
-// The shipped-default retention arm: a production server that never latches must retain
-// ZERO caches after teardown at the DEFAULT retain. DEV is decided at module load, so the
-// arm runs in a spawned child with NODE_ENV=production against the BUILT dist - and two
-// vacuity guards make the arm able to fail: a staleness check fails loudly when dist is
-// older than the src it was built from (a dist-importing child otherwise rots silently
-// after the first build), and the child carries a LIVING positive control (one app-scope
-// read must raise the count to exactly 1, proving the counter sees retained caches - and
-// wiring the retain-legitimate-app-scope-caches acceptance criterion in as a living arm).
+// The shipped-default retention arm: a production server must retain ONLY the
+// pre-construction seed cache after teardown at the DEFAULT retain - request caches all
+// release, and the marked process refuses new default-scope caches. DEV is decided at
+// module load, so the arm runs in a spawned child with NODE_ENV=production against the
+// BUILT dist. Vacuity guards: a staleness check fails loudly when dist is older than the
+// src it was built from; the LIVING positive control is a default-scope read BEFORE App
+// construction (the mark is construction-onward), whose cache stays alive so the counter
+// provably sees a retained cache; and the fail-closed refusal asserts on the FETCHER
+// INVOCATION delta, the one channel a released control could not fake.
 import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ function assertFresh(src: string, dist: string): void
 
 describe('production retention at the shipped default (child process, built dist)', () =>
 {
-    it('300 requests retain 0 caches after teardown; the living control raises the count to exactly 1', async () =>
+    it('300 requests retain only the pre-construction seed; the marked refusal re-fetches the seeded key', async () =>
     {
         assertFresh('packages/azerothjs/src/reactivity/data-cache.ts', 'packages/azerothjs/dist/reactivity/data-cache.js');
         assertFresh('packages/azerothjs/src/reactivity/store-scope.ts', 'packages/azerothjs/dist/reactivity/store-scope.js');
@@ -49,14 +50,22 @@ describe('production retention at the shipped default (child process, built dist
         const report = JSON.parse(lines[lines.length - 1] ?? '{}') as {
             error?: string;
             nodeEnv?: string;
-            before?: number;
+            beforeSeed?: number;
+            seedFetches?: number;
+            afterSeed?: number;
             afterTeardown?: number;
-            afterAppScopeRead?: number;
+            refusalDelta?: number;
+            refusedValue?: string;
+            afterRefusal?: number;
         };
         expect(report.error).toBeUndefined();
         expect(report.nodeEnv).toBe('production');
-        expect(report.before).toBe(0);
-        expect(report.afterTeardown).toBe(0);
-        expect(report.afterAppScopeRead).toBe(1);
+        expect(report.beforeSeed).toBe(0);
+        expect(report.seedFetches).toBe(1);
+        expect(report.afterSeed).toBe(1);
+        expect(report.afterTeardown).toBe(1);
+        expect(report.refusalDelta).toBe(1);
+        expect(report.refusedValue).toBe('v:app-scope');
+        expect(report.afterRefusal).toBe(1);
     }, 90000);
 });

@@ -110,6 +110,7 @@ export interface CacheEntry
 }
 
 let serverLatched = false;
+let serverRuntime = false;
 let disabledServerWarned = false;
 let disabledBrowserWarned = false;
 let buildContext = false;
@@ -770,14 +771,16 @@ export function releaseDataCache(scope: object): void
 }
 
 /**
- * The active scope's registry, or `null` when caching is disabled here: a latched server
- * process resolving to the default scope, where entries would outlive their request.
+ * The active scope's registry, or `null` when caching is disabled here: a server process
+ * resolving to the default scope, where entries would outlive their request and be served
+ * across identities. The server is known by positive evidence - a render latched, or an
+ * `@azerothjs/http` entry point marked the runtime - never guessed from the environment.
  *
  * @internal
  */
 export function getDataCache(): DataCache | null
 {
-    if (serverLatched && isDefaultScope(getStoreScope()))
+    if ((serverLatched || serverRuntime) && isDefaultScope(getStoreScope()))
     {
         if (DEV && !buildContext)
         {
@@ -786,15 +789,17 @@ export function getDataCache(): DataCache | null
                 if (!disabledBrowserWarned)
                 {
                     disabledBrowserWarned = true;
-                    console.warn('[azeroth] a server entry point ran in this browser context; '
-                        + 'client data caching is disabled. Server rendering APIs are unsupported in the browser.');
+                    console.warn('[azeroth] a server entry point ran in this DOM context, so shared-scope '
+                        + 'data caching is disabled. In a test that constructs a server and then exercises '
+                        + 'components, call resetDataCache() between the two; real browsers never host server entry points.');
                 }
             }
             else if (!disabledServerWarned)
             {
                 disabledServerWarned = true;
-                console.warn('[azeroth] data caching is disabled outside a request scope on this server. '
-                    + 'Install the http request root (runInRequestRoot) so loader data is cached per request.');
+                console.warn('[azeroth] data caching is disabled at the default scope on this server. '
+                    + 'Wrap HTTP work in the request root (runInRequestRoot) and background units - '
+                    + 'WebSocket handlers, cron runs - in a work-unit root (runInWorkUnit) so each owns its cache.');
             }
         }
         return null;
@@ -822,13 +827,25 @@ export function latchServerData(): void
     serverLatched = true;
 }
 
+/**
+ * Marks the process a server on positive evidence: an `@azerothjs/http` entry point ran.
+ * From then on default-scope reads fail closed even where no render ever latches, so a
+ * server that only serves an API cannot share one cache across identities.
+ *
+ * @internal
+ */
+export function markServerRuntime(): void
+{
+    serverRuntime = true;
+}
+
 /** Marks a build (prerender) context: the disable stands but stays silent. @internal */
 export function setBuildContext(active: boolean): void
 {
     buildContext = active;
 }
 
-/** Test-only: clears the active scope's entries, timers and the server latch. @internal */
+/** Test-only: clears the active scope's entries, timers, the server latch and runtime mark. @internal */
 export function resetDataCache(): void
 {
     untrack(() =>
@@ -836,6 +853,7 @@ export function resetDataCache(): void
         useDataCache().reset();
     });
     serverLatched = false;
+    serverRuntime = false;
     disabledServerWarned = false;
     disabledBrowserWarned = false;
     buildContext = false;

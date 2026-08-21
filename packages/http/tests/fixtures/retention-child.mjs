@@ -1,9 +1,14 @@
 // The shipped-default retention arm's child body: NODE_ENV=production (DEV is read at
 // module load, so this cannot run in-process under vitest), the BUILT dist (what a
 // consumer executes), the DEFAULT retain (never overridden - a retain:5-only suite is the
-// rigged-test anti-pattern this arm exists to kill), and a LIVING positive control: after
-// asserting zero retained caches, one app-scope read must raise the count to exactly one,
-// proving the counter can see a retained cache at all.
+// rigged-test anti-pattern this arm exists to kill), and a LIVING positive control that
+// must run BEFORE App construction: the server mark is construction-onward, so only a
+// pre-construction default-scope read can still materialize a cache and prove the counter
+// sees a retained one. Its cache stays alive on purpose - releasing it would make the
+// refusal arm below unable to fail, because released-null and refusal-null are
+// indistinguishable at the count. The refusal arm therefore asserts on FETCHER INVOCATION
+// COUNT: post-construction, the same key must fetch AGAIN (the seeded entry is refused);
+// with the fail-closed predicate reverted, the cached value is served and the delta is 0.
 import { queryObjects } from 'node:v8';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -27,7 +32,17 @@ if (typeof globalThis.gc !== 'function')
 const { App } = await import(dist('packages/http/dist/index.js'));
 const { DataCache, cached } = await import(dist('packages/azerothjs/dist/reactivity/data-cache.js'));
 
-const family = cached('retention-child', (n) => Promise.resolve(`v:${ n }`));
+let fetchCount = 0;
+const family = cached('retention-child', (n) =>
+{
+    fetchCount++;
+    return Promise.resolve(`v:${ n }`);
+});
+
+const beforeSeed = queryObjects(DataCache, { format: 'count' });
+await family('app-scope');
+const seedFetches = fetchCount;
+const afterSeed = queryObjects(DataCache, { format: 'count' });
 
 const app = new App();
 app.get('/u/:id', async (context) =>
@@ -36,7 +51,6 @@ app.get('/u/:id', async (context) =>
     return new Response('ok');
 });
 
-const before = queryObjects(DataCache, { format: 'count' });
 for (let n = 0; n < 300; n++)
 {
     const response = await app.handle(new Request(`http://local/u/${ n }`));
@@ -47,16 +61,19 @@ globalThis.gc();
 globalThis.gc();
 const afterTeardown = queryObjects(DataCache, { format: 'count' });
 
-// The living control: an app-scope (default scope, no request root) read on this same
-// unlatched process materializes a cache that IS retained - by the scope singleton and
-// its default-retain timer - so the counter demonstrably can report nonzero.
-await family('app-scope');
+const preRefusal = fetchCount;
+const refused = await family('app-scope');
+const refusalDelta = fetchCount - preRefusal;
 globalThis.gc();
-const afterAppScopeRead = queryObjects(DataCache, { format: 'count' });
+const afterRefusal = queryObjects(DataCache, { format: 'count' });
 
 console.log(JSON.stringify({
     nodeEnv: process.env.NODE_ENV,
-    before,
+    beforeSeed,
+    seedFetches,
+    afterSeed,
     afterTeardown,
-    afterAppScopeRead
+    refusalDelta,
+    refusedValue: refused,
+    afterRefusal
 }));

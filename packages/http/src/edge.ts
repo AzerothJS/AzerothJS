@@ -45,6 +45,7 @@ export function attachErrorPolicy(handler: WebHandler, policy: (error: unknown, 
 {
     errorPolicies.set(handler, policy);
 }
+import { markServerRuntime } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 import { errorResponse } from './errors.ts';
 
@@ -176,6 +177,8 @@ export function pipeline(app: WebHandler, ...middleware: HandlerWrapper[]): WebH
  */
 export function toFetchHandler(target: WebHandler | ((request: Request) => Response | Promise<Response>)): (request: Request) => Promise<Response>
 {
+    // Edge runtimes reuse isolates across requests, so the fail-closed mark matters here too.
+    markServerRuntime();
     const handle = typeof target === 'function' ? target : target.handle.bind(target);
     return async (request: Request): Promise<Response> =>
     {
