@@ -47,6 +47,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A head value the runtime could not represent failed the whole response - and could
+  replace a real error with a `TypeError`.** Serializing the collected head runs inside
+  the host's cleanup path, so a jsonLd block with a hole or a BigInt, or a non-string
+  composed title, threw AFTER a perfect render and turned it into a 500; worse, a prior
+  render's undrained head could convert a later request's genuine error into that
+  `TypeError`. Every head serialization site now refuses by drop on both faces: the
+  offending block or title is dropped with a dev diagnostic naming it, its siblings and
+  their dedup identities are untouched, and the response proceeds. Dropping a broken
+  title is correct, not merely safe - the head contract has a single empty-title owner,
+  so an absent title falls back exactly as an undeclared one does.
 - **A cache's lifetime is now decided by its scope, not by process flags - closing two
   server-side memory pins and making `retain` work everywhere.** Retention policy used to
   key on two process-wide proxies: the dev flag and a server latch set at the first

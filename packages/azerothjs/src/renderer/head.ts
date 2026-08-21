@@ -288,6 +288,31 @@ function composeTitle(
 
 // --- collect (the SSR drain) -----------------------------------------------------------
 
+/**
+ * The ONE refuse-by-drop diagnostic for every head value the runtime cannot serve: a
+ * hostile URL the gate refuses, a jsonLd block JSON cannot represent, a non-string
+ * composed title. The offending VALUE is dropped and the response proceeds - a head fact
+ * is never worth failing a rendered page for, and on the server these sites run inside
+ * the host's finally, where a throw would REPLACE the render's real outcome.
+ */
+function droppedHead(what: string, error: unknown): null
+{
+    if (DEV)
+    {
+        let reason: string;
+        try
+        {
+            reason = String(error instanceof Error ? error.message : error);
+        }
+        catch
+        {
+            reason = 'an unrepresentable error';
+        }
+        console.warn(`azeroth: a useHead ${ what } was DROPPED - ${ reason }`);
+    }
+    return null;
+}
+
 /** DEV-diagnosed drop for an element the safety gate refuses (a hostile data-derived URL). */
 function serializeHeadElement(tag: string, props: Props): string | null
 {
@@ -297,11 +322,7 @@ function serializeHeadElement(tag: string, props: Props): string | null
     }
     catch (error)
     {
-        if (DEV)
-        {
-            console.warn(`azeroth: a useHead ${ tag } element was DROPPED - ${ String(error instanceof Error ? error.message : error) }`);
-        }
-        return null;
+        return droppedHead(`${ tag } element`, error);
     }
 }
 
@@ -356,7 +377,18 @@ export function collectHead(options: { scriptNonce?: string } = {}): CollectedHe
             const list = Array.isArray(entry.jsonLd) ? entry.jsonLd : [entry.jsonLd as JsonLdValue];
             for (const block of list)
             {
-                const json = inertJson(block);
+                // Per-BLOCK, so one unrepresentable value (a hole, a BigInt, a cycle)
+                // costs itself and nothing else; dedup identity for survivors unchanged.
+                let json: string;
+                try
+                {
+                    json = inertJson(block);
+                }
+                catch (error)
+                {
+                    droppedHead('jsonLd block', error);
+                    continue;
+                }
                 if (!jsonLdBlocks.includes(json))
                 {
                     jsonLdBlocks.push(json);
@@ -365,8 +397,23 @@ export function collectHead(options: { scriptNonce?: string } = {}): CollectedHe
         }
     }
 
-    const title = composeTitle(titleWinner, templateWinner);
-    const titleText = title === null ? null : escapeText(title);
+    // Dropping a broken title is CORRECT here, not merely safe: the contract has one
+    // empty-title owner, so an absent title element falls back exactly as an undeclared
+    // one does - whereas a throw from this site runs inside the host's finally and would
+    // replace the render's real outcome with a TypeError.
+    let title: string | null;
+    let titleText: string | null;
+    try
+    {
+        title = composeTitle(titleWinner, templateWinner);
+        titleText = title === null ? null : escapeText(title);
+    }
+    catch (error)
+    {
+        droppedHead('title', error);
+        title = null;
+        titleText = null;
+    }
     const titleElementHtml = titleText === null
         ? null
         : `<title data-azeroth-head="title">${ titleText }</title>`;
@@ -457,12 +504,22 @@ function applyDocumentTitle(): void
         document.title = base ?? bootTitle;
         return;
     }
-    const composed = composeTitle(
-        { ordinal: titleTop.ordinal, text: untrack(() => resolveNow(titleTop.title as HeadValue)) },
-        templateTop !== null && templateTop.titleTemplate !== undefined
-            ? { ordinal: templateTop.ordinal, template: templateTop.titleTemplate }
-            : null);
-    document.title = composed ?? bootTitle;
+    try
+    {
+        const composed = composeTitle(
+            { ordinal: titleTop.ordinal, text: untrack(() => resolveNow(titleTop.title as HeadValue)) },
+            templateTop !== null && templateTop.titleTemplate !== undefined
+                ? { ordinal: templateTop.ordinal, template: templateTop.titleTemplate }
+                : null);
+        // The WRITE stays inside the try: assignment stringifies, and a composed value
+        // with a throwing toString must not escape the winner-gated effect either.
+        document.title = composed ?? bootTitle;
+    }
+    catch (error)
+    {
+        droppedHead('title', error);
+        document.title = bootTitle;
+    }
 }
 
 /** Adopt-or-create the registry-owned element for a marker value. Null when refused. */
@@ -502,11 +559,7 @@ function createHeadElement(tag: string, attrs: Record<string, string>): Element 
     }
     catch (error)
     {
-        if (DEV)
-        {
-            console.warn(`azeroth: a useHead ${ tag } element was DROPPED - ${ String(error instanceof Error ? error.message : error) }`);
-        }
-        return null;
+        return droppedHead(`${ tag } element`, error);
     }
     const el = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs))
@@ -664,6 +717,13 @@ export function useHead(input: HeadInput): void
         if (entry.title !== undefined)
         {
             entry.title = resolveNow(entry.title);
+            if (typeof entry.title === 'function')
+            {
+                // A getter that RETURNS a function would smuggle user code past this
+                // registration-time resolution into the drain - which must invoke none.
+                droppedHead('title', new TypeError('a title getter resolved to a function'));
+                entry.title = undefined;
+            }
         }
         if (typeof entry.jsonLd === 'function')
         {
@@ -778,8 +838,22 @@ export function useHead(input: HeadInput): void
         const applyBlocks = (blocks: readonly JsonLdValue[]): void =>
         {
             // Deduped up front: identical blocks in one call are ONE identity, so the
-            // acquire/release accounting can never skew on duplicates.
-            const next = [...new Set(blocks.map((block) => inertJson(block)))];
+            // acquire/release accounting can never skew on duplicates. Per-block drop:
+            // an unrepresentable value costs itself, not the effect - a throw here runs
+            // mid-navigation inside createEffect, the contract's own warned failure mode.
+            const serialized: string[] = [];
+            for (const block of blocks)
+            {
+                try
+                {
+                    serialized.push(inertJson(block));
+                }
+                catch (error)
+                {
+                    droppedHead('jsonLd block', error);
+                }
+            }
+            const next = [...new Set(serialized)];
             const nextIdentities = next.map((json) => `jsonld:${ json }`);
             for (const identity of jsonLdCurrent)
             {
