@@ -5,6 +5,13 @@
 // asserting zero retained caches, one app-scope read must raise the count to exactly one,
 // proving the counter can see a retained cache at all.
 import { queryObjects } from 'node:v8';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// The repo root, derived from THIS file's location - never a machine-local absolute
+// path: the fixture must run on any checkout (CI, contributors, public clones).
+const repo = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..');
+const dist = (rel) => pathToFileURL(join(repo, rel)).href;
 
 if (process.env.NODE_ENV !== 'production')
 {
@@ -17,9 +24,8 @@ if (typeof globalThis.gc !== 'function')
     process.exit(1);
 }
 
-const { App } = await import('file:///C:/Users/IntelligentQuantum/Documents/Projects/AzerothJS/packages/http/dist/index.js');
-const { DataCache, cached } = await import(
-    'file:///C:/Users/IntelligentQuantum/Documents/Projects/AzerothJS/packages/azerothjs/dist/reactivity/data-cache.js');
+const { App } = await import(dist('packages/http/dist/index.js'));
+const { DataCache, cached } = await import(dist('packages/azerothjs/dist/reactivity/data-cache.js'));
 
 const family = cached('retention-child', (n) => Promise.resolve(`v:${ n }`));
 
