@@ -717,3 +717,69 @@ describe('diagnoseModule - a row binding shadows a markup local of the same name
             .toContain('azeroth/markup-value-reused');
     });
 });
+
+describe('diagnoseModule - outlet-bare', () =>
+{
+    // A bare `<Outlet />` lowers to `Outlet()` with no argument, which the runtime deliberately
+    // refuses (nothing in that position can reach the layout's children). This rule moves the
+    // refusal to compile time; every form that lowers to a props call stays legal.
+    it('flags the bare self-closing form, with both working spellings in the message', () =>
+    {
+        const diag = find('component Shell(props: { children?: unknown }) { <div><Outlet /></div> }', 'azeroth/outlet-bare');
+        expect(diag).toBeDefined();
+        expect(diag!.severity).toBe('error');
+        expect(diag!.message).toContain('<Outlet children={ props.children } />');
+        expect(diag!.message).toContain('Outlet({ children: props.children })');
+    });
+
+    it('flags the empty open/close and whitespace-only forms identically', () =>
+    {
+        expect(codes('component Shell { <div><Outlet></Outlet></div> }')).toContain('azeroth/outlet-bare');
+        expect(codes('component Shell { <div><Outlet>   </Outlet></div> }')).toContain('azeroth/outlet-bare');
+    });
+
+    it('flags a bare Outlet inside an expression hole and in module-scope markup', () =>
+    {
+        expect(codes('component Shell { <div>{ true ? <Outlet /> : null }</div> }')).toContain('azeroth/outlet-bare');
+        expect(codes('export const row = () => <Outlet />;')).toContain('azeroth/outlet-bare');
+    });
+
+    it('does not flag any form that lowers to a props call', () =>
+    {
+        expect(codes('component Shell(props: { children?: unknown }) { <div><Outlet children={ props.children } /></div> }'))
+            .not.toContain('azeroth/outlet-bare');
+        expect(codes('component Shell { <div><Outlet><p>fallback</p></Outlet></div> }'))
+            .not.toContain('azeroth/outlet-bare');
+        expect(codes('component Shell(props: { children?: unknown }) { <div><Outlet {...props} /></div> }'))
+            .not.toContain('azeroth/outlet-bare');
+    });
+
+    it('does not fire on a lowercase or unrelated tag', () =>
+    {
+        expect(codes('component C { <div><outlet /><Outlets /></div> }')).not.toContain('azeroth/outlet-bare');
+    });
+});
+
+describe('diagnoseModule - outlet-bare user-override exemption', () =>
+{
+    // The compiler honors a user import of `Outlet` over the auto-imported builtin, and a
+    // user's component may accept a no-props call - so the rule must not fire on it.
+    it('exempts a module that imports its own Outlet (named, aliased, or default)', () =>
+    {
+        expect(codes("import { Outlet } from './my-outlet.ts';\ncomponent Shell { <div><Outlet /></div> }"))
+            .not.toContain('azeroth/outlet-bare');
+        expect(codes("import { Thing as Outlet } from './x.ts';\ncomponent Shell { <div><Outlet /></div> }"))
+            .not.toContain('azeroth/outlet-bare');
+        expect(codes("import Outlet from './x.ts';\ncomponent Shell { <div><Outlet /></div> }"))
+            .not.toContain('azeroth/outlet-bare');
+    });
+
+    it('still flags the builtin: an explicit azerothjs import, and a type-only import of something else', () =>
+    {
+        expect(codes("import { Outlet } from 'azerothjs';\ncomponent Shell { <div><Outlet /></div> }"))
+            .toContain('azeroth/outlet-bare');
+        // A type-only import introduces no VALUE binding - the rendered Outlet is the builtin.
+        expect(codes("import type { Outlet } from './x.ts';\ncomponent Shell { <div><Outlet /></div> }"))
+            .toContain('azeroth/outlet-bare');
+    });
+});

@@ -12,6 +12,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A bare `<Outlet />` passed every static check and then failed at runtime the moment the
+  layout rendered.** The bare form compiles to a call that cannot reach the layout's `children`,
+  so the router deliberately refuses it rather than render the page with the nested route content
+  silently missing - but nothing refused it earlier: `azeroth check`, the build, the language
+  server and the ESLint processor all accepted it, and the refusal surfaced only at
+  runtime - in a server-rendered app, as a 500 on the first request. The compiler now reports
+  `azeroth/outlet-bare` at the element itself - in component bodies, inside expression holes,
+  and in module-scope markup alike - with the two working spellings in the message:
+  `<Outlet children={ props.children } />` or
+  `{ Outlet({ children: props.children }) }`. Every form that forwards children (a `children`
+  prop, markup children, a spread) is unaffected, and the runtime refusal remains as the
+  backstop for the spellings the rule deliberately leaves alone: dotted tags, aliased imports,
+  and non-markup call sites. A module that imports its OWN `Outlet` from elsewhere is exempt
+  entirely - the compiler honors that override, and a user component may accept a bare call.
+
 - **The build-time type check cost one TypeScript Program rebuild per component outside the Vite
   root, dominating real builds - measured at 92% of a production build (24.0s against 1.9s with
   `typeCheck: false`) on an app with 18 in-root pages and 36 components in a linked workspace

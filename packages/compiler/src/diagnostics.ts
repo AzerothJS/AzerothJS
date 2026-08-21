@@ -126,6 +126,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
     // Imports and module-scope variables, resolved once: a bind target that names one is a
     // silent half-dead binding (or a TypeError on the first keystroke, for an import).
     const moduleScope = moduleBindScope(source, items);
+    const userOutlet = hasUserOutletImport(source, items);
     diagnoseStyleSections(source, items, diagnostics);
     for (const item of items)
     {
@@ -137,14 +138,14 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
         }
         if (item.kind === 'component')
         {
-            diagnoseComponent(source, item, diagnostics, moduleScope);
+            diagnoseComponent(source, item, diagnostics, moduleScope, userOutlet);
         }
         else
         {
             diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
-            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(diagnostics));
+            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(diagnostics, userOutlet));
             // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
             // per-component pass and compiled to the same silent half-dead binding. A synthetic
             // one-item body reuses the whole resolver with module scope only.
@@ -755,7 +756,7 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
     return -1;
 }
 
-function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope): void
+function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope, userOutlet = false): void
 {
     diagnoseKeywordShadows(source, component, out);
     diagnoseDeclarationSlips(source, component, out);
@@ -839,15 +840,15 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
         if (item.kind === 'markup')
         {
             diagnoseEventHandlers(source, item.node, out);
-            walkMarkupDeep(source, item.node, markupRuleVisitor(out));
+            walkMarkupDeep(source, item.node, markupRuleVisitor(out, userOutlet));
         }
         else if (item.kind === 'opaque-statements')
         {
-            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(out));
+            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(out, userOutlet));
         }
         else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
         {
-            walkEmbeddedMarkup(source, item.bodyStart, item.bodyEnd, markupRuleVisitor(out));
+            walkEmbeddedMarkup(source, item.bodyStart, item.bodyEnd, markupRuleVisitor(out, userOutlet));
         }
     }
 
@@ -1970,6 +1971,44 @@ interface ModuleBindScope
 }
 
 /** Collects imported names and module-scope variable names from the opaque module regions. */
+/**
+ * True when the module imports a VALUE binding named `Outlet` from anywhere other than
+ * 'azerothjs' - a user override the compiler honors over the auto-import, so the bare-outlet
+ * rule must not fire on it (the user's component may well accept a no-props call).
+ */
+function hasUserOutletImport(source: string, items: readonly { kind: string; start: number; end: number }[]): boolean
+{
+    for (const item of items)
+    {
+        if (item.kind === 'component' || item.kind === 'style')
+        {
+            continue;
+        }
+        const { sourceFile } = parseStatementsSlice(blankMarkupRegions(source, item.start, item.end), item.start);
+        for (const statement of sourceFile.statements)
+        {
+            if (!ts.isImportDeclaration(statement) || statement.importClause === undefined
+                || statement.importClause.phaseModifier === ts.SyntaxKind.TypeKeyword
+                || !ts.isStringLiteral(statement.moduleSpecifier)
+                || statement.moduleSpecifier.text === 'azerothjs')
+            {
+                continue;
+            }
+            const clause = statement.importClause;
+            if (clause.name?.text === 'Outlet')
+            {
+                return true;
+            }
+            if (clause.namedBindings !== undefined && !ts.isNamespaceImport(clause.namedBindings)
+                && clause.namedBindings.elements.some(el => !el.isTypeOnly && el.name.text === 'Outlet'))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 function moduleBindScope(source: string, items: readonly { kind: string; start: number; end: number }[]): ModuleBindScope
 {
     const imports = new Set<string>();
@@ -2560,6 +2599,39 @@ function forKeyRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     });
 }
 
+/**
+ * A bare `<Outlet />` lowers to `Outlet()` with no argument, and nothing in that position can
+ * reach the layout's own `children` - so the runtime deliberately REFUSES the call rather than
+ * render an empty region while the matched leaf silently vanishes. This rule moves that exact
+ * refusal to compile time, where every static surface sees it, instead of first render.
+ * Any attribute (including a spread) or any child makes the element lower to a props call the
+ * runtime accepts, so only the truly bare form is flagged. Two escapes are BY DESIGN, both
+ * backstopped by the runtime refusal: a dotted tag (`<Router.Outlet />`) and an aliased import,
+ * because those name shapes may be user components the rule cannot see into. A module that
+ * imports its OWN `Outlet` from elsewhere is exempt entirely for the same reason.
+ */
+function bareOutletRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    if (el.tag !== 'Outlet' || el.attributes.length > 0)
+    {
+        return;
+    }
+    if (el.children.some(child => !(child.kind === 'text' && child.value.trim() === '')))
+    {
+        return;
+    }
+    out.push({
+        code: 'azeroth/outlet-bare',
+        severity: 'error',
+        message: 'A bare `<Outlet />` compiles to a call that cannot reach this layout\'s `children`, '
+            + 'so the nested route content would silently vanish - the runtime refuses it the moment it '
+            + 'renders. Forward the layout\'s own children explicitly: '
+            + '`<Outlet children={ props.children } />` or `{ Outlet({ children: props.children }) }`.',
+        start: el.start,
+        end: el.end
+    });
+}
+
 function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
     if (el.tag !== 'For')
@@ -2683,7 +2755,7 @@ function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
  * authored handler may share that callback key (codegen composes them, write-back first).
  * Markup children emit `children` too, so an explicit children= prop alongside them collides.
  */
-function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[], userOutlet = false): void
 {
     const emitted = new Set<string>();
     const claim = (key: string, start: number, end: number): void =>
@@ -2704,6 +2776,10 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 
     bindingAttrRules(el, out);
     callbackChildRule(el, out);
+    if (!userOutlet)
+    {
+        bareOutletRule(el, out);
+    }
     forRowRule(el, out);
     forKeyRule(el, out);
 
@@ -2770,9 +2846,9 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 }
 
 /** Dispatches one element to its name-domain's rule set. */
-function markupRuleVisitor(out: AzerothDiagnostic[]): (el: MarkupElement) => void
+function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: MarkupElement) => void
 {
-    return (el) => (el.isComponent ? componentPropRules(el, out) : hostAttributeRules(el, out));
+    return (el) => (el.isComponent ? componentPropRules(el, out, userOutlet) : hostAttributeRules(el, out));
 }
 
 /** Walks markup for on* handlers whose value would run at setup, not on the event. */
