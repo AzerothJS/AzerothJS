@@ -12,6 +12,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **The build-time type check cost one TypeScript Program rebuild per component outside the Vite
+  root, dominating real builds - measured at 92% of a production build (24.0s against 1.9s with
+  `typeCheck: false`) on an app with 18 in-root pages and 36 components in a linked workspace
+  package.** The plugin primed only files under the project root, so every linked-package
+  component joined the checker's root set mid-build and rebuilt the Program - 37 Programs for 54
+  files. Builds now record what they compile and check it ONCE at the end of each build cycle:
+  one Program over exactly the compiled files, wherever they live, with every type error reported
+  together in a single failure - each finding carrying its `file:line:column` and its own code
+  frame, which also means a build now surfaces ALL broken components at once instead of stopping
+  at the first one reached. When the build is already failing to compile, type findings are
+  surfaced as one warning instead (so the compile error stays the headline) and return as
+  build-failing errors once compilation succeeds. The dev server is unchanged: it still checks
+  inline at each transform for immediate feedback. Two comment-level claims were corrected in the
+  same pass: the plugin no longer asserts that "no type-unsafe module reaches codegen" (the real
+  guarantee is that a type error prevents that build cycle's output), and the option's
+  "single-digit milliseconds" cost claim is now conditional on the mode instead of unconditional.
+
 - **`Served.shutdown()` hung forever while a WebSocket (or any upgraded socket) was live, and
   `gracePeriodMs` did not bound it.** Node drops a socket from the HTTP server's connection
   tracking the moment it upgrades, so `closeAllConnections()` could never reach it, the grace

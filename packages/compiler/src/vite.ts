@@ -37,8 +37,40 @@ import { CompileError } from './markup-parser.ts';
 import { azerothViteLogger } from './vite-logger.ts';
 import { printBanner } from '@azerothjs/logger';
 
+/**
+ * A small code frame for a finding: up to two lines of context either side, a numbered gutter,
+ * and a caret under the offending column. Built from the source the cycle recorded, because the
+ * host renders no frames for errors reported outside `transform`.
+ */
+function codeFrame(source: string, line: number, column: number): string
+{
+    const lines = source.split('\n');
+    const from = Math.max(1, line - 2);
+    const to = Math.min(lines.length, line + 2);
+    const width = String(to).length;
+    const out: string[] = [];
+    for (let current = from; current <= to; current++)
+    {
+        out.push(`${ String(current).padStart(width) }: ${ lines[current - 1] ?? '' }`);
+        if (current === line)
+        {
+            // `column` is 0-BASED (locationFor's convention, shared with the dev-server path,
+            // where Vite's own frame puts the caret ON the offending token from the same value).
+            out.push(`${ ' '.repeat(width + 2 + Math.max(0, column)) }^`);
+        }
+    }
+    return out.join('\n');
+}
+
 /** The Rollup plugin context when Vite binds it; unit tests invoke hooks bare, so it may be absent. */
-type MaybeCtx = { warn?: (message: string, position?: { line: number; column: number }) => void; error?: (message: string, position?: { line: number; column: number }) => void } | undefined;
+type MaybeCtx = {
+    warn?: (message: string, position?: { line: number; column: number }) => void;
+    error?: (
+        message: string | { message: string; id?: string; loc?: { file?: string; line: number; column: number } },
+        position?: { line: number; column: number }
+    ) => void;
+    environment?: { name?: string };
+} | undefined;
 
 /**
  * Directory (under the project root) that holds the generated `.azeroth` type projections. Nested
@@ -58,9 +90,12 @@ export interface AzerothPluginOptions
      * required prop, including across `.azeroth` file boundaries. **Default: `true`.**
      *
      * The check is sound (segment-scoped, so it never reports a false error; markup children are a
-     * documented false negative - see the compiler README). All files share ONE incremental checker
-     * (lib and dependency files parse once per build), so a typical component adds single-digit
-     * milliseconds. Set it to `false` to skip type checking entirely.
+     * documented false negative - see the compiler README). Its cost is conditional on the mode: a
+     * production build checks ONCE at the end of each build cycle, over exactly the files that
+     * cycle compiled, in one shared Program - so the whole check costs one Program construction
+     * per cycle, whether the components live under the Vite root or in linked workspace packages.
+     * The dev server checks per file on an incremental checker, where a primed component adds
+     * single-digit milliseconds. Set it to `false` to skip type checking entirely.
      */
     typeCheck?: boolean;
 
@@ -359,6 +394,15 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
     // every `.azeroth` file (lazily created on first use), instead of building a fresh ts.Program per
     // file. Persists for the plugin instance, so dev-server HMR re-checks are incremental too.
     let checker: AzerothTypeChecker | null = null;
+
+    // BUILD-mode cycles: buildStart assigns a FRESH map and a fresh checker per cycle, buildEnd
+    // consumes its own cycle's record. Keyed by environment name because concurrent cycles (the
+    // opt-in sharedPlugins with parallel environments) are only distinguishable that way, while
+    // sequential same-name cycles (library formats, output arrays, watch rebuilds) are separated
+    // by the per-cycle ASSIGNMENT itself. Two CONCURRENT same-name cycles are unsupported.
+    interface CheckCycle { pending: Map<string, string>; checker: AzerothTypeChecker }
+    const cycles = new Map<string, CheckCycle>();
+    const cycleName = (ctx: MaybeCtx): string => ctx?.environment?.name ?? 'client';
     let root = process.cwd();
     let dev = false;
     // Modules already reported as having no mirror path: the notice fires once per file per
@@ -523,19 +567,29 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
             });
         },
 
-        // Build the type-checker ONCE per build and PRIME it with the whole project's `.azeroth` files,
-        // so the shared TypeScript Program is constructed a single time (lib + every file bound once)
-        // instead of growing - and being incrementally rebuilt - as files are transformed one by one.
+        // DEV SERVER: build the type-checker once and PRIME it with the whole project's `.azeroth`
+        // files, so the shared Program exists before the first inline check. BUILD: no walk and no
+        // up-front prime - a fresh per-cycle record captures exactly what transform compiles, and
+        // buildEnd constructs the one Program over that set.
         buildStart()
         {
             // Discover every `.azeroth` file once, then share the list between priming the checker and
             // seeding the projection mirror - so a project-wide type-view exists before any `.ts` import
             // resolves (WebStorm/tsc see it without waiting for each file to be transformed).
-            const files = (typeCheck || emitDecls) ? collectFiles(root, extension) : [];
-            if (typeCheck)
+            const files = ((typeCheck && dev) || emitDecls) ? collectFiles(root, extension) : [];
+            if (typeCheck && dev)
             {
+                // DEV SERVER only: one long-lived incremental checker, primed up front, checking
+                // inline at transform for immediate feedback.
                 checker = createIncrementalChecker();
                 checker.prime(files);
+            }
+            if (typeCheck && !dev)
+            {
+                // BUILD: no walk, no up-front prime. The cycle records exactly what transform
+                // compiles, and buildEnd primes THAT set once - so the whole build constructs one
+                // Program over precisely the compiled files, wherever they live on disk.
+                cycles.set(cycleName(this), { pending: new Map(), checker: createIncrementalChecker() });
             }
             if (emitDecls)
             {
@@ -544,6 +598,81 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                     writeDeclarationMirror(readFileSync(file, 'utf8'), file, root, extension);
                 }
             }
+        },
+
+        // BUILD-mode type check: prime the cycle's recorded set once, check every file, report
+        // ALL findings together. Never fires during a live dev server (buildEnd arrives only at
+        // session close there), which is why the dev path checks inline at transform instead.
+        buildEnd(err?: Error)
+        {
+            if (!typeCheck || dev)
+            {
+                return;
+            }
+            const cycle = cycles.get(cycleName(this));
+            cycles.delete(cycleName(this));
+            if (cycle === undefined)
+            {
+                // No buildStart fired for this environment - anomalous in every measured mode, so
+                // it is named unconditionally rather than gated on a flag that is false here.
+                (this as MaybeCtx)?.warn?.('azeroth/typecheck-no-cycle: buildEnd fired without a matching buildStart (or after its cycle was already consumed); the type check was skipped for this cycle');
+                return;
+            }
+
+            cycle.checker.prime([...cycle.pending.keys()]);
+            const findings: { file: string; source: string; code: string; message: string; line: number; column: number }[] = [];
+            for (const [file, source] of cycle.pending)
+            {
+                let results;
+                try
+                {
+                    results = cycle.checker.check(file, source);
+                }
+                catch
+                {
+                    // A file whose transform ALREADY failed (err is set) can make the checker
+                    // throw on the same malformed input; the compile error is the real
+                    // diagnostic and must reach the user intact, so the thrower is skipped.
+                    continue;
+                }
+                for (const finding of results)
+                {
+                    const loc = locationFor(finding.start, buildLineStarts(source));
+                    findings.push({ file, source, code: finding.code, message: finding.message, line: loc.line + 1, column: loc.column });
+                }
+            }
+            if (findings.length === 0)
+            {
+                return;
+            }
+
+            // Every finding rendered uniformly into ONE message: its location, its code and
+            // message, and its own frame from the recorded source. The hook can only throw once,
+            // so one error carrying N findings is the shape that loses nothing; the structural
+            // `frame` field is deliberately NOT passed (the host renders it once, misattributed
+            // to the last finding) and positions are NOT left to `loc` alone (the host renders
+            // no frames from it).
+            const body = findings
+                .map((f) => `${ f.file }:${ f.line }:${ f.column } ${ f.code }: ${ f.message }\n${ codeFrame(f.source, f.line, f.column) }`)
+                .join('\n\n');
+            const message = findings.length === 1 ? body : `${ findings.length } type errors:\n\n${ body }`;
+            if (err !== undefined)
+            {
+                // The build is already failing for a compile or lint reason the host will report
+                // with its own location; throwing here would make WHICH error surfaces
+                // nondeterministic. The findings are surfaced best-effort as one warning and
+                // return as build-failing errors on the next build, once compilation succeeds.
+                (this as MaybeCtx)?.warn?.(`azeroth/type-check (deferred while the build is failing): ${ message }`);
+                return;
+            }
+            const [first] = findings;
+            if (first !== undefined)
+            {
+                (this as MaybeCtx)?.error?.({ message, id: first.file, loc: { file: first.file, line: first.line, column: first.column } });
+            }
+            // Optional-chained on a cast context (hooks may run bare - see MaybeCtx): without the
+            // rethrow, a bare invocation would discard every finding silently.
+            throw new Error(message);
         },
 
         async transform(code: string, id: string)
@@ -577,20 +706,47 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
-            // 0) Optional type-check (real TypeScript Program). When enabled, a type error
-            //    (non-function handler, wrong-typed component prop) fails the build here, BEFORE
-            //    compiling - no type-unsafe module reaches codegen. Off by default (see options).
+            // 0) Optional type-check (real TypeScript Program). ON by default (see options).
+            //    DEV SERVER: checked inline right here, so the error lands on the transform that
+            //    touched the file. BUILD: the file is RECORDED and the whole cycle is checked once
+            //    at buildEnd - after this environment's modules are compiled and before its bundle
+            //    is written, so a type error prevents THAT environment's output. (The check does
+            //    not run before codegen in a build; what it guarantees is that no failing
+            //    environment writes its bundle.)
             if (typeCheck)
             {
-                // Pass the filename so relative imports of other `.azeroth` files resolve from disk
-                // and cross-file component prop types are checked. One shared incremental checker
-                // across the build (binds lib once) instead of a fresh ts.Program per file.
-                checker ??= createIncrementalChecker();
-                for (const finding of checker.check(filename, code))
+                if (dev)
                 {
-                    const loc = locationFor(finding.start, lineStarts);
-                    (this as MaybeCtx)?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
-                    throw new Error(`${ finding.code }: ${ finding.message }`);
+                    // Pass the filename so relative imports of other `.azeroth` files resolve from
+                    // disk and cross-file component prop types are checked. One shared incremental
+                    // checker across the session (binds lib once).
+                    checker ??= createIncrementalChecker();
+                    for (const finding of checker.check(filename, code))
+                    {
+                        const loc = locationFor(finding.start, lineStarts);
+                        (this as MaybeCtx)?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                        throw new Error(`${ finding.code }: ${ finding.message }`);
+                    }
+                }
+                else if (id === filename)
+                {
+                    // EVERY transformed BARE id is recorded, virtual modules included - the
+                    // checker reads the handed source through its override, so a non-disk id
+                    // checks exactly like a file. QUERY VARIANTS (`?raw`, `?url`, ...) are NOT
+                    // recorded: their `code` is Vite's re-presentation of the module (the
+                    // rawified string export, say), not the component source, and recording one
+                    // under the stripped key would EVICT the real source - a broken component
+                    // imported both ways would then ship unchecked, order-dependently. A file
+                    // imported ONLY via a query variant is not checked, exactly as before this
+                    // seam: the variant's content is component-less, so the old inline check
+                    // early-returned on it too.
+                    let cycle = cycles.get(cycleName(this));
+                    if (cycle === undefined)
+                    {
+                        cycle = { pending: new Map(), checker: createIncrementalChecker() };
+                        cycles.set(cycleName(this), cycle);
+                    }
+                    cycle.pending.set(filename, code);
                 }
             }
 

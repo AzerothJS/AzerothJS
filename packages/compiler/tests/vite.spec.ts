@@ -80,27 +80,142 @@ describe('azeroth() plugin - type-check gate (on by default)', () =>
             warn: vi.fn(),
             error: (message: unknown): never =>
             {
-                throw new Error(String(message));
+                // The real host accepts a string or an object carrying { message, id, loc };
+                // either way it throws its own error built from the message text.
+                const text = typeof message === 'object' && message !== null && 'message' in message
+                    ? String((message).message)
+                    : String(message);
+                throw new Error(text);
             }
         });
 
-    it('FAILS the build for a non-function handler by default', async () =>
+    it('DEV SERVER: fails inline at the transform that touched the file', async () =>
     {
-        const transform = azeroth().transform as unknown as TransformFn;
+        const plugin = azeroth();
+        (plugin.configResolved as (r: { command?: string }) => void)({ command: 'serve' });
+        const transform = plugin.transform as unknown as TransformFn;
         await expect(transform.call(throwingCtx(), TYPE_UNSAFE, '/X.azeroth')).rejects.toThrow(/azeroth\/handler-type/);
+    });
+
+    it('BUILD: the transform records, and buildEnd fails the cycle with the located finding', async () =>
+    {
+        const plugin = azeroth();
+        const ctx = throwingCtx();
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
+        // The type-unsafe module COMPILES here - the check is deferred to the cycle end.
+        await expect(transform.call(ctx, TYPE_UNSAFE, '/X.azeroth')).resolves.toBeTruthy();
+        // The cycle end reports the finding, located, with a code frame, and rethrows.
+        expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx))
+            .toThrow(/X\.azeroth:1:49 azeroth\/handler-type[\s\S]*\^/);
+    });
+
+    it('BUILD: two broken modules surface as ONE error carrying BOTH findings', async () =>
+    {
+        const plugin = azeroth();
+        const ctx = throwingCtx();
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
+        await transform.call(ctx, TYPE_UNSAFE, '/A.azeroth');
+        await transform.call(ctx, TYPE_UNSAFE, '/B.azeroth');
+        expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx))
+            .toThrow(/2 type errors:[\s\S]*A\.azeroth:1:49[\s\S]*B\.azeroth:1:49/);
+    });
+
+    it('BUILD: with the build already failing, findings become one warning and nothing throws', () =>
+    {
+        const plugin = azeroth();
+        const warnings: string[] = [];
+        const ctx = { warn: (m: string): void =>
+        {
+            warnings.push(m);
+        }, error: throwingCtx().error };
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
+        void transform.call(ctx, TYPE_UNSAFE, '/X.azeroth');
+        (plugin.buildEnd as (e?: Error) => void).call(ctx, new Error('some compile failure'));
+        expect(warnings.join('\n')).toMatch(/azeroth\/type-check \(deferred[\s\S]*X\.azeroth:1:49/);
     });
 
     it('compiles the same type-unsafe handler when typeCheck is explicitly off', async () =>
     {
-        const transform = azeroth({ typeCheck: false }).transform as unknown as TransformFn;
-        await expect(transform.call(throwingCtx(), TYPE_UNSAFE, '/X.azeroth')).resolves.toBeTruthy();
+        const plugin = azeroth({ typeCheck: false });
+        const ctx = throwingCtx();
+        const transform = plugin.transform as unknown as TransformFn;
+        await expect(transform.call(ctx, TYPE_UNSAFE, '/X.azeroth')).resolves.toBeTruthy();
+        expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx)).not.toThrow();
     });
 
-    it('compiles a well-typed handler', async () =>
+    it('compiles a well-typed handler, and the cycle end stays quiet', async () =>
     {
-        const transform = azeroth().transform as unknown as TransformFn;
+        const plugin = azeroth();
+        const ctx = throwingCtx();
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
         const source = 'component C { state count = 0; <button onClick={() => count++}>x</button> }';
-        await expect(transform.call(throwingCtx(), source, '/X.azeroth')).resolves.toBeTruthy();
+        await expect(transform.call(ctx, source, '/X.azeroth')).resolves.toBeTruthy();
+        expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx)).not.toThrow();
+    });
+
+    it('BUILD: a query-variant import cannot evict the real source from the checked set', async () =>
+    {
+        // The eviction hazard: Vite hands a `?raw` transform its RE-PRESENTATION of the
+        // module (a component-less string export), not the component source. Recorded under the
+        // stripped key it would replace the real source, and a broken component imported both
+        // ways would ship unchecked - order-dependently. Both orders must still fail.
+        const rawified = `export default ${ JSON.stringify(TYPE_UNSAFE) };`;
+        for (const order of [['bare', 'raw'], ['raw', 'bare']] as const)
+        {
+            const plugin = azeroth();
+            const ctx = throwingCtx();
+            (plugin.buildStart as () => void).call(ctx);
+            const transform = plugin.transform as unknown as TransformFn;
+            for (const kind of order)
+            {
+                await transform.call(ctx, kind === 'bare' ? TYPE_UNSAFE : rawified, kind === 'bare' ? '/X.azeroth' : '/X.azeroth?raw');
+            }
+            expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx))
+                .toThrow(/azeroth\/handler-type/);
+        }
+    });
+
+    it('BUILD: the caret sits ON the offending token', async () =>
+    {
+        const plugin = azeroth();
+        const ctx = throwingCtx();
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
+        await transform.call(ctx, TYPE_UNSAFE, '/X.azeroth');
+        // The finding points at `count` - 0-based column 49 in TYPE_UNSAFE, so the caret line is
+        // gutter width (1) + ': ' (2) + 49 spaces. An off-by-one in either direction fails this.
+        expect(() => (plugin.buildEnd as (e?: Error) => void).call(ctx))
+            .toThrow(new RegExp(`\\n${ ' '.repeat(1 + 2 + 49) }\\^`));
+    });
+
+    it('BUILD: component-less modules are recorded quietly, virtual ids are genuinely checked', async () =>
+    {
+        const plugin = azeroth();
+        const ctx = throwingCtx();
+        (plugin.buildStart as () => void).call(ctx);
+        const transform = plugin.transform as unknown as TransformFn;
+        // Component-less: transformed, recorded, and check() early-returns it - no finding.
+        await transform.call(ctx, 'export const shared = 1;', '/shared.azeroth');
+        // Virtual id carrying a real component with a real error: MUST be checked and located.
+        await transform.call(ctx, TYPE_UNSAFE, '\0virtual:gen.azeroth');
+        let thrown: Error | undefined;
+        try
+        {
+            (plugin.buildEnd as (e?: Error) => void).call(ctx);
+        }
+        catch (error)
+        {
+            thrown = error as Error;
+        }
+        // EXACTLY the virtual finding: a message that also carried a spurious shared.azeroth
+        // finding (or the "2 type errors" aggregate) would prove the quiet half broken - a bare
+        // inclusion regex would accept that shape, so the exclusion is the load-bearing assert.
+        expect(thrown?.message).toMatch(/virtual:gen\.azeroth:1:49 azeroth\/handler-type/);
+        expect(thrown?.message).not.toMatch(/shared\.azeroth|type errors:/);
     });
 });
 
