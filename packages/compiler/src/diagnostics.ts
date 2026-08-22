@@ -77,7 +77,7 @@ import {
 } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
-import { parseStatementsSlice, parseExpressionSlice } from './ts-slice.ts';
+import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
 import { traverseReactive } from './walk.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
@@ -609,9 +609,16 @@ const DECLARATION_KINDS: ReadonlySet<string> = new Set([
  *   - `azeroth/unterminated-declaration` - `state a = 1  state b = 2;` (no `;` after the first)
  *     parses as ONE declaration whose value ABSORBED the second, so `b` vanishes with no error.
  *     Detect a declaration keyword at depth 0 inside a value and point at it.
+ *   - `azeroth/array-suffix` / `azeroth/malformed-declaration` - the shape rules
+ *     ({@link diagnoseDeclarationShape}), run over top-level declarations AND every nested
+ *     span that can hold one.
+ *
+ * Returns the shape-flagged declaration spans, so the caller can suppress hints (the
+ * constant-derived pair) that a malformed value would otherwise mistrigger.
  */
-function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): void
+function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out: AzerothDiagnostic[]): Array<[number, number]>
 {
+    const flagged: Array<[number, number]> = [];
     for (const item of component.body)
     {
         if (!DECLARATION_KINDS.has(item.kind))
@@ -680,7 +687,128 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
                 end: decl.nameEnd
             });
         }
+
+        const span = diagnoseDeclarationShape(source, item as Parameters<typeof parseDeclarationSlice>[1], 0, out);
+        if (span !== null)
+        {
+            flagged.push(span);
+        }
     }
+
+    // Nested declarations (an effect body, an opaque statement run, an initializer arrow)
+    // lower through the same slice machinery and share the same silent discard, so the
+    // shape rules walk every span that can hold one. NOT this walk's scope: markup-hole
+    // callbacks and module-scope composables. The slice is passed as the rules' source so
+    // findConstructs' slice-relative offsets stay internally consistent; the shift rebases
+    // the emitted positions.
+    for (const item of component.body)
+    {
+        const spans: Array<[number, number]> = [];
+        if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
+        {
+            const block = item as { bodyStart: number; bodyEnd: number };
+            spans.push([block.bodyStart, block.bodyEnd]);
+        }
+        else if (item.kind === 'opaque-statements')
+        {
+            spans.push([item.start, item.end]);
+        }
+        else if (DECLARATION_KINDS.has(item.kind))
+        {
+            const decl = item as { nameEnd: number; valueEnd: number };
+            spans.push([decl.nameEnd, decl.valueEnd]);
+        }
+        for (const [from, to] of spans)
+        {
+            const slice = source.slice(from, to);
+            for (const construct of findConstructs(slice))
+            {
+                if (!DECLARATION_KINDS.has(construct.kind))
+                {
+                    continue;
+                }
+                const span = diagnoseDeclarationShape(slice, construct as Parameters<typeof parseDeclarationSlice>[1], from, out);
+                if (span !== null)
+                {
+                    flagged.push(span);
+                }
+            }
+        }
+    }
+    return flagged;
+}
+
+/**
+ * @internal The two declaration SHAPE rules, applied to one declaration (top-level or
+ * nested; `shift` rebases slice-relative positions):
+ *
+ *   - `azeroth/array-suffix` - the `[]` suffix is form-only (GRAMMAR ArraySuffix); on any
+ *     other keyword the suffix lands in the value span, TypeScript's error recovery eats
+ *     the initializer, and codegen emits `undefined` - so the spelling is rejected here.
+ *   - `azeroth/malformed-declaration` - the general class, keyed on the SLICE PARSE
+ *     OUTCOME (a token scan false-positives on `=>` in type annotations): the slice is
+ *     null, or the initializer is absent from an unclean parse, or the recovered
+ *     initializer is an artifact (zero-width, or `=`-leading like `x = = 1`). The
+ *     present-branch is deliberately narrow: markup-bearing values parse unclean with a
+ *     LEGAL initializer and must stay silent. Residual recovery artifacts that survive
+ *     this (e.g. `x = 1 2` recovering `1`) still fail a default build downstream.
+ *
+ * Returns the flagged declaration's absolute span, or null. The specific rule suppresses
+ * the general one on the same declaration.
+ */
+function diagnoseDeclarationShape(
+    source: string,
+    decl: Parameters<typeof parseDeclarationSlice>[1],
+    shift: number,
+    out: AzerothDiagnostic[]
+): [number, number] | null
+{
+    if (decl.kind !== 'form')
+    {
+        const bracket = skipTrivia(source, decl.nameEnd);
+        if (source[bracket] === '[')
+        {
+            const close = skipTrivia(source, bracket + 1);
+            if (source[close] === ']')
+            {
+                out.push({
+                    code: 'azeroth/array-suffix',
+                    severity: 'error',
+                    message: `The \`[]\` suffix belongs to \`form\` declarations (\`form ${ decl.name }[] = ...\`). A \`${ decl.kind }\` holding a list is \`${ decl.kind } ${ decl.name } = [...]\` - as written, the initializer would be silently dropped.`,
+                    start: bracket + shift,
+                    end: close + 1 + shift
+                });
+                return [decl.start + shift, decl.valueEnd + shift];
+            }
+        }
+    }
+    const parsed = parseDeclarationSlice(source, decl);
+    let broken: boolean;
+    if (parsed === null)
+    {
+        broken = true;
+    }
+    else if (parsed.initializer === undefined)
+    {
+        broken = !parsed.clean;
+    }
+    else
+    {
+        const init = parsed.initializer;
+        broken = init.getStart(parsed.sourceFile) === init.end || init.getText(parsed.sourceFile).startsWith('=');
+    }
+    if (!broken)
+    {
+        return null;
+    }
+    out.push({
+        code: 'azeroth/malformed-declaration',
+        severity: 'error',
+        message: `\`${ decl.kind } ${ decl.name }\` does not parse as \`${ decl.kind } <name> = <value>;\` - its value would be silently dropped or mis-emitted. Fix the span between the name and the \`;\`.`,
+        start: decl.start + shift,
+        end: decl.valueEnd + shift
+    });
+    return [decl.start + shift, decl.valueEnd + shift];
 }
 
 /**
@@ -759,7 +887,7 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
 function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope, userOutlet = false): void
 {
     diagnoseKeywordShadows(source, component, out);
-    diagnoseDeclarationSlips(source, component, out);
+    const malformedSpans = diagnoseDeclarationSlips(source, component, out);
 
     // azeroth/constant-derived and azeroth/inert-effect
     const analysis = analyzeComponent(source, component);
@@ -788,6 +916,16 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
         // plain value") would silently break reactivity. Only a dependency-free, side-effect-free
         // scope (e.g. `derived x = 1 + 2`) is provably constant/inert.
         if (scope.deps.length > 0 || !scope.pure)
+        {
+            continue;
+        }
+        // A malformed declaration lowers to an `undefined` value that reads as "no reactive
+        // source"; the shape error already fired, and this hint on top would point the
+        // author at the wrong fix - the specific finding suppresses the general one.
+        // INTERSECTION, not start-containment: the flagged declaration may be the scope
+        // itself (a flagged derived) or NESTED inside it (a broken decl in an effect body
+        // whose enclosing scope starts earlier), and both pairings are the same mistrigger.
+        if (malformedSpans.some(([from, to]) => from < scope.span.end && to > scope.span.start))
         {
             continue;
         }

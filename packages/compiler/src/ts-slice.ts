@@ -49,6 +49,14 @@ export interface ParsedDeclaration extends ParsedSlice
 
     /** The initializer expression node, when present. */
     initializer: ts.Expression | undefined;
+
+    /**
+     * True when the slice parsed without recovery. False means every node here may be an
+     * error-recovery artifact - an ABSENT initializer then does not mean "none written",
+     * it means TypeScript could not see one. `parseDiagnostics` is internal API, so an
+     * undefined read degrades to clean rather than guessing dirty.
+     */
+    clean: boolean;
 }
 
 /** Common parse options - latest syntax, parent pointers on (so `getText` works). */
@@ -168,12 +176,14 @@ export function parseDeclarationSlice(
         return null;
     }
 
+    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
     return {
         sourceFile,
         mapPos,
         name: declaration.name.getText(sourceFile),
         type: declaration.type,
-        initializer: declaration.initializer
+        initializer: declaration.initializer,
+        clean: parseDiagnostics === undefined || parseDiagnostics.length === 0
     };
 }
 

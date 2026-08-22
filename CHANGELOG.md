@@ -101,6 +101,26 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `onError` path - wired or not - instead of the unhandled-rejection channel. Both host
   seams are structural types: ws and cron stay zero-dependency.
 
+### Fixed
+
+- **A malformed declaration could silently drop its value; the compiler now rejects the
+  shape with a named, located error.** `state rows[] = [1, 2]` emitted
+  `createSignal(undefined)` - the `[]` suffix is `form`-only per the grammar, TypeScript's
+  error recovery ate the initializer, and nothing checked - and the same fate met any
+  broken spelling between a declaration's name and its `=` (`store` and `derived`
+  included, nested declarations in effect bodies and initializer arrows included). With
+  type checking on (the default) these shapes already failed the build, but as a cryptic
+  mapped syntax error; with `typeCheck: false` they shipped silently corrupted. Two rules
+  now reject them everywhere the compiler runs (build, dev server, language server,
+  eslint, `azeroth-tsc`): `azeroth/array-suffix` points at the brackets and at the
+  `form NAME[]` / `state NAME = [...]` spellings, and `azeroth/malformed-declaration`
+  fires when the declaration's parse fails to recover an initializer or recovers an
+  artifact one - keyed on the parse outcome, so arrow types
+  (`state cb: (e: Event) => void;`), markup-bearing values, and every other legal shape
+  stay silent. The dev server surfaces the named
+  finding ahead of the type check, and the misleading `constant-derived` hint no longer
+  fires on a declaration the shape rules already flagged.
+
 ### Changed
 
 - **`onRequestCleanup` is renamed to `onWorkUnitCleanup`.** A request is one kind of work

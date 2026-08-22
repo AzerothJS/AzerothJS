@@ -706,6 +706,33 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 (this as MaybeCtx)?.warn?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
             }
 
+            // Error-severity semantic diagnostics FIRST, before the type check: the projection
+            // surfaces these same shapes as mapped TS syntax hiccups, and the named azeroth
+            // finding is the actionable one, so it must win on the dev surface. One call,
+            // reused below for the warning pass; generateModule's own gate then finds nothing.
+            // Guarded like the language server's call: an analyzer throw on a hostile mid-edit
+            // source falls through to generateModule's caught path, which reports it WITH a
+            // location instead of letting it escape the transform raw.
+            let moduleFindings: ReturnType<typeof diagnoseModule>;
+            try
+            {
+                moduleFindings = diagnoseModule(code);
+            }
+            catch
+            {
+                moduleFindings = [];
+            }
+            for (const finding of moduleFindings)
+            {
+                if (finding.severity !== 'error')
+                {
+                    continue;
+                }
+                const loc = locationFor(finding.start, lineStarts);
+                (this as MaybeCtx)?.error?.(`${ finding.code }: ${ finding.message }`, { line: loc.line + 1, column: loc.column });
+                throw new Error(`${ finding.code }: ${ finding.message }`);
+            }
+
             // 0) Optional type-check (real TypeScript Program). ON by default (see options).
             //    DEV SERVER: checked inline right here, so the error lands on the transform that
             //    touched the file. BUILD: the file is RECORDED and the whole cycle is checked once
@@ -772,11 +799,11 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 throw (err instanceof Error ? err : new Error(message));
             }
 
-            // 2) Warning-severity diagnostics. The compile succeeded, so diagnoseModule
-            //    parses cleanly and reports no errors; surface the warnings non-blocking.
+            // 2) Warning-severity diagnostics. The pre-pass above already threw on any
+            //    error-severity finding; surface the warnings non-blocking.
             // Unused-import detection needs the COMPILED JS (markup lowered to calls) + the source, so
             // it runs here rather than inside diagnoseModule (which would recurse into the compiler).
-            for (const finding of [...diagnoseModule(code), ...diagnoseUnusedImports(code, compiled.code)])
+            for (const finding of [...moduleFindings, ...diagnoseUnusedImports(code, compiled.code)])
             {
                 if (finding.severity !== 'warning')
                 {
