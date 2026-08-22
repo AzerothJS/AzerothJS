@@ -10,7 +10,7 @@ import { createSignal, getStoreScope, runInStoreScope, createStore } from 'azero
 import { App } from '../src/app.ts';
 import { BadRequestError } from '../src/errors.ts';
 import { json } from '../src/respond.ts';
-import { onRequestCleanup } from '../src/request-root.ts';
+import { onWorkUnitCleanup } from '../src/request-root.ts';
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -80,14 +80,14 @@ describe('store isolation across awaits', () =>
         const app = new App({ requestRoot: false });
         app.get('/bare', () =>
         {
-            expect(() => onRequestCleanup(() => undefined)).toThrow(/outside a request/);
+            expect(() => onWorkUnitCleanup(() => undefined)).toThrow(/outside a work unit/);
             return json({ ok: true });
         });
         expect((await app.handle(new Request('http://local/bare'))).status).toBe(200);
     });
 });
 
-describe('onRequestCleanup: teardown always runs', () =>
+describe('onWorkUnitCleanup: teardown always runs', () =>
 {
     it('runs after a successful response, LIFO', async () =>
     {
@@ -95,8 +95,8 @@ describe('onRequestCleanup: teardown always runs', () =>
         const app = new App();
         app.get('/ok', () =>
         {
-            onRequestCleanup(() => void order.push('first-registered'));
-            onRequestCleanup(() => void order.push('second-registered'));
+            onWorkUnitCleanup(() => void order.push('first-registered'));
+            onWorkUnitCleanup(() => void order.push('second-registered'));
             return json({ ok: true });
         });
         await app.handle(new Request('http://local/ok'));
@@ -109,7 +109,7 @@ describe('onRequestCleanup: teardown always runs', () =>
         const app = new App();
         app.get('/boom', () =>
         {
-            onRequestCleanup(cleaned);
+            onWorkUnitCleanup(cleaned);
             throw new Error('handler failed');
         });
         const response = await app.handle(new Request('http://local/boom'));
@@ -123,7 +123,7 @@ describe('onRequestCleanup: teardown always runs', () =>
         const app = new App();
         app.get('/tx', () =>
         {
-            onRequestCleanup(async () =>
+            onWorkUnitCleanup(async () =>
             {
                 await pause(10);
                 released = true;
@@ -141,8 +141,8 @@ describe('onRequestCleanup: teardown always runs', () =>
         const app = new App({ onError });
         app.get('/messy', () =>
         {
-            onRequestCleanup(survivor); // registered first, runs last (LIFO)
-            onRequestCleanup(() =>
+            onWorkUnitCleanup(survivor); // registered first, runs last (LIFO)
+            onWorkUnitCleanup(() =>
             {
                 throw new Error('cleanup exploded');
             });
@@ -156,7 +156,7 @@ describe('onRequestCleanup: teardown always runs', () =>
 
     it('throws loudly outside a request', () =>
     {
-        expect(() => onRequestCleanup(() => undefined)).toThrow(/outside a request/);
+        expect(() => onWorkUnitCleanup(() => undefined)).toThrow(/outside a work unit/);
     });
 });
 
@@ -171,7 +171,7 @@ describe('teardown and error serialization run inside the request scope', () =>
         {
             const record: { during: object; cleanup: object | null } = { during: useBag(), cleanup: null };
             seen.push(record);
-            onRequestCleanup(() =>
+            onWorkUnitCleanup(() =>
             {
                 record.cleanup = useBag();
             });
@@ -221,7 +221,7 @@ describe('teardown and error serialization run inside the request scope', () =>
     });
 });
 
-describe('onRequestCleanup: streaming responses defer teardown to stream-end', () =>
+describe('onWorkUnitCleanup: streaming responses defer teardown to stream-end', () =>
 {
     it('does NOT run cleanup until a streaming body is fully consumed', async () =>
     {
@@ -247,7 +247,7 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
                     controller.close();
                 }
             });
-            onRequestCleanup(() => void (released = true));
+            onWorkUnitCleanup(() => void (released = true));
             return new Response(body, { headers: { 'content-type': 'text/plain' } });
         });
 
@@ -273,7 +273,7 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
                     controller.enqueue(new TextEncoder().encode('tick\n'));
                 }
             });
-            onRequestCleanup(() => void (released = true));
+            onWorkUnitCleanup(() => void (released = true));
             return new Response(body);
         });
 
@@ -300,7 +300,7 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
                 async start(controller)
                 {
                     await pause(15);
-                    onRequestCleanup(() => void (released = true));
+                    onWorkUnitCleanup(() => void (released = true));
                     controller.enqueue(encoder.encode('chunk'));
                     controller.close();
                 }
@@ -321,7 +321,7 @@ describe('onRequestCleanup: streaming responses defer teardown to stream-end', (
         const app = new App();
         app.get('/buffered', () =>
         {
-            onRequestCleanup(() => void (released = true));
+            onWorkUnitCleanup(() => void (released = true));
             return json({ ok: true });
         });
         await app.handle(new Request('http://local/buffered'));
@@ -337,12 +337,12 @@ describe('teardown registered from inside a cleanup', () =>
         const app = new App({});
         app.get('/', () =>
         {
-            onRequestCleanup(() =>
+            onWorkUnitCleanup(() =>
             {
                 order.push('outer');
                 // A release that queues its own follow-up (returning a pooled connection
                 // after closing the transaction that borrowed it).
-                onRequestCleanup(() =>
+                onWorkUnitCleanup(() =>
                 {
                     order.push('nested');
                 });
@@ -364,9 +364,9 @@ describe('teardown registered from inside a cleanup', () =>
             const loop = (): void =>
             {
                 runs += 1;
-                onRequestCleanup(loop);
+                onWorkUnitCleanup(loop);
             };
-            onRequestCleanup(loop);
+            onWorkUnitCleanup(loop);
             return json({ ok: true });
         });
 
@@ -387,7 +387,7 @@ describe('teardown registered from inside a cleanup', () =>
         });
         app.get('/', () =>
         {
-            onRequestCleanup(() =>
+            onWorkUnitCleanup(() =>
             {
                 throw new Error('release failed');
             });
@@ -416,7 +416,7 @@ describe('a streaming body the kernel cannot monitor', () =>
                     controller.close();
                 }
             });
-            onRequestCleanup(() =>
+            onWorkUnitCleanup(() =>
             {
                 order.push('cleanup');
             });
@@ -446,7 +446,7 @@ describe('teardown registered after the request already settled', () =>
                 {
                     // The producer borrows a pooled connection AFTER the handler returned.
                     await pause(15);
-                    onRequestCleanup(() =>
+                    onWorkUnitCleanup(() =>
                     {
                         released = true;
                     });
@@ -477,7 +477,7 @@ describe('teardown registered after the request already settled', () =>
                 async start(controller)
                 {
                     await pause(10);
-                    onRequestCleanup(() =>
+                    onWorkUnitCleanup(() =>
                     {
                         released = true;
                     });

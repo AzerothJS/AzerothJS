@@ -63,6 +63,24 @@ export interface ServerSocketOptions
 
     /** Grace for a pong after each heartbeat ping before the connection is terminated (default 10000 ms). */
     pongTimeoutMs?: number;
+
+    /**
+     * Wraps each complete APPLICATION message in a work unit - one per message, none for
+     * control frames. `unit` invokes the handler; errors it reports, and rejections of an
+     * async handler, land on this socket's contained onError path and never reach the
+     * frame loop. Build one with `createWorkUnitInterceptor` from `@azerothjs/http` so
+     * every message owns a per-unit cache scope; without it an unwrapped handler on a
+     * marked server reads uncached (safe, slower), and a process with no http import at
+     * all keeps the process-wide default scope - wire this on any multi-identity server.
+     * The type is structural: this package stays zero-dependency.
+     */
+    intercept?: (unit: () => unknown, report: (error: unknown) => void) => unknown;
+}
+
+/** @internal A handler return the dispatch must watch for rejection. */
+function isThenable(value: unknown): value is PromiseLike<unknown>
+{
+    return typeof (value as { then?: unknown } | null)?.then === 'function';
 }
 
 const DEFAULT_MAX_MESSAGE = 16 * 1024 * 1024;
@@ -84,8 +102,15 @@ const PONG_BACKLOG_BYTES = 64 * 1024;
 /** One server-side WebSocket connection. */
 export class ServerSocket
 {
-    /** Fired per complete message: a string for text frames, bytes for binary. */
-    public onMessage: ((data: string | Uint8Array) => void) | null = null;
+    /**
+     * Fired per complete message: a string for text frames, bytes for binary. An async
+     * handler's returned promise is observed - its rejection reaches onError (and, when an
+     * interceptor is wired, settles the message's work unit) - but never awaited, so
+     * message processing stays concurrent. A UNION of function types, not a return union:
+     * TypeScript's void-return exception applies per call signature, so a sync handler
+     * returning a value (`(data) => list.push(data)`) keeps compiling as it always did.
+     */
+    public onMessage: ((data: string | Uint8Array) => void) | ((data: string | Uint8Array) => Promise<void>) | null = null;
 
     /** Fired exactly once when the connection is over, with the applicable close code. */
     public onClose: ((code: number, reason: string) => void) | null = null;
@@ -94,6 +119,8 @@ export class ServerSocket
     public onError: ((error: Error) => void) | null = null;
 
     readonly #socket: Socket;
+
+    readonly #intercept: ((unit: () => unknown, report: (error: unknown) => void) => unknown) | undefined;
 
     readonly #parser: FrameParser;
 
@@ -134,6 +161,7 @@ export class ServerSocket
     constructor(socket: Socket, options: ServerSocketOptions = {})
     {
         this.#socket = socket;
+        this.#intercept = options.intercept;
         this.#maxMessage = options.maxMessage ?? DEFAULT_MAX_MESSAGE;
         this.#parser = new FrameParser({ role: 'server', maxPayload: options.maxPayload ?? this.#maxMessage });
         this.#closeTimeoutMs = options.closeTimeoutMs ?? 5000;
@@ -422,7 +450,7 @@ export class ServerSocket
             }
             this.#decoder = null;
             this.#text = '';
-            this.onMessage?.(message);
+            this.#dispatch(message);
             return;
         }
 
@@ -444,7 +472,50 @@ export class ServerSocket
                 offset += part.byteLength;
             }
         }
-        this.onMessage?.(assembled);
+        this.#dispatch(assembled);
+    }
+
+    /**
+     * @internal Hands ONE complete application message to the handler. With an interceptor
+     * wired, the message is one work unit and every failure - the unit's report, a sync
+     * throw, even a throwing interceptor - lands on the contained reporter, never in the
+     * frame loop. Without one, a returned thenable still gets a rejection handler routed
+     * to the same reporter (no await: processing stays concurrent), closing the lane the
+     * widened onMessage type would otherwise leave discarding rejections.
+     */
+    #dispatch(data: string | Uint8Array): void
+    {
+        const handler = this.onMessage;
+        if (handler === null)
+        {
+            return;
+        }
+        const report = (error: unknown): void => this.#report(error instanceof Error ? error : new Error(String(error)));
+        if (this.#intercept !== undefined)
+        {
+            try
+            {
+                // The interceptor's returned thenable needs its own rejection guard: the
+                // option is structural and user-supplied, and a pass-through wrapper
+                // returns the handler's rejecting promise - without the catch, wiring a
+                // non-factory interceptor would REMOVE the protection the unwired path has.
+                const outcome = this.#intercept(() => handler(data), report);
+                if (isThenable(outcome))
+                {
+                    void Promise.resolve(outcome).catch(report);
+                }
+            }
+            catch (error)
+            {
+                report(error);
+            }
+            return;
+        }
+        const result = handler(data);
+        if (isThenable(result))
+        {
+            void Promise.resolve(result).catch(report);
+        }
     }
 
     /**

@@ -34,7 +34,7 @@ export type { PathParams, RouteResult, RouteMatch, RouteMethodMismatch, RouteMis
 export { App } from './app.ts';
 export type { AppOptions, Handler, Middleware, RequestContext, RequestObserver, AzerothPlugin } from './app.ts';
 
-export { onRequestCleanup, runInRequestRoot } from './request-root.ts';
+export { onWorkUnitCleanup, runInRequestRoot, runInWorkUnit, createWorkUnitInterceptor, type WorkUnitInterceptor, type WorkUnitOptions } from './request-root.ts';
 
 export { loadConfig, str, num, flag, oneOf } from './config.ts';
 export type { ConfigVar, ConfigOf } from './config.ts';

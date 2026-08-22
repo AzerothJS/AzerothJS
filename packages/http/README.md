@@ -159,7 +159,7 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
   use the pull-based twin: `streamMultipart(request)` iterates parts as they arrive,
   each file payload a ReadableStream piped straight to its sink (disk, object storage).
 - **A request is a reactive root** - `createStore` state is request-isolated across
-  `await` (the same isolation SSR renders have), and `onRequestCleanup` teardown ALWAYS
+  `await` (the same isolation SSR renders have), and `onWorkUnitCleanup` teardown ALWAYS
   runs: success, throw, or client disconnect. The disconnect `AbortSignal` rides on
   `request.signal`.
 - **Typed middleware** - a middleware takes the same `context` and RETURNS its additions

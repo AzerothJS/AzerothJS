@@ -39,7 +39,13 @@ let scopeResolver: (() => object | undefined) | null = null;
  * cost until a host opts in is one null check; a browser bundle carries nothing.
  *
  * The resolver runs on EVERY store access, so it must be cheap and must not throw.
- * Installing twice replaces the previous one.
+ *
+ * The slot is SINGLE-WRITER, enforced loudly: a second, DIFFERENT registrant throws,
+ * because silently replacing the first would permanently collapse its host's isolation
+ * onto whatever the newcomer resolves - the failure would surface as cross-request state
+ * sharing, far from its cause. Re-registering the SAME function is an idempotent no-op,
+ * so a host may install on every entry; `null` uninstalls and clears the slot, so
+ * register/uninstall cycles (test harnesses) keep working.
  *
  * @param resolver - Returns the active scope, or `undefined` to fall through to the
  *                   synchronous scope, so an SSR render nested inside a request still
@@ -48,6 +54,12 @@ let scopeResolver: (() => object | undefined) | null = null;
  */
 export function setStoreScopeResolver(resolver: (() => object | undefined) | null): void
 {
+    if (resolver !== null && scopeResolver !== null && scopeResolver !== resolver)
+    {
+        throw new Error('[azeroth] a store-scope resolver is already installed. Two async-context '
+            + 'carriers cannot coexist: the second would silently collapse the first host\'s '
+            + 'isolation. Uninstall with setStoreScopeResolver(null) first if the handoff is intentional.');
+    }
     scopeResolver = resolver;
 }
 

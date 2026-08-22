@@ -82,6 +82,36 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
     identity without a guard is invisible to it - keep personalized loaders off ISR and
     static pages.
 
+### Added
+
+- **Work units: any server-side unit of work can own the scope a request gets.**
+  `runInWorkUnit(fn)` (from `@azerothjs/http`) runs `fn` with a fresh store scope and a
+  cleanup registry, released when it settles - wrap a ws `onConnection` body, background
+  regeneration, an app timer, a queue consumer. `createWorkUnitInterceptor(options?)`
+  builds the constructor-supplied interceptor `@azerothjs/ws` (`intercept` on
+  `ServerSocketOptions`/`attachWebSockets`) and `@azerothjs/cron` (`intercept` on
+  `createScheduler`) now accept: each WebSocket application message and each cron run
+  becomes one unit with its own cache scope - per-unit caching and single-flighting with
+  zero cross-identity sharing, the same isolation HTTP requests already have. The
+  optional `deadlineMs` bounds a unit that never settles: on fire the unit's cache scope
+  is released and a timeout error reports through the host's reporter; the unit itself
+  continues at the released scope, and its cleanups run at the eventual settle (reading a
+  released cache - the timeout path cannot promise entry reads). ws's `onMessage` widens
+  to `void | Promise<void>`, and an async handler's rejection now reaches the socket's
+  `onError` path - wired or not - instead of the unhandled-rejection channel. Both host
+  seams are structural types: ws and cron stay zero-dependency.
+
+### Changed
+
+- **`onRequestCleanup` is renamed to `onWorkUnitCleanup`.** A request is one kind of work
+  unit, and the registry serves them all - a ws message, a cron run, a `runInWorkUnit`
+  body - so the request-shaped name and its "outside a request" error were wrong the
+  moment a unit registered teardown. Mechanical migration: rename the import; no alias
+  ships. `setStoreScopeResolver` (internal) now REFUSES a second, different registrant
+  loudly instead of silently replacing the first - a silent replacement permanently
+  collapsed the first host's isolation; same-function re-registration is a no-op and
+  `null` still uninstalls.
+
 ### Fixed
 
 - **A render's head and styles now belong to a frame its host owns - closing the two ways

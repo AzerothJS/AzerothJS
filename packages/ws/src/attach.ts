@@ -121,6 +121,11 @@ interface ClaimableSocket extends Socket
  * upgrade listener AND destroys every live connection - so a graceful server shutdown is
  * not held open by upgraded sockets (an upgraded socket is detached from the HTTP server's
  * connection tracking, so `server.close()` alone would never drain it).
+ *
+ * On a server carrying per-identity data, wire {@link ServerSocketOptions.intercept} (via
+ * `createWorkUnitInterceptor` from `@azerothjs/http`) so each message owns its own cache
+ * scope: a marked server refuses the shared default scope (uncached, safe), and a process
+ * with no http import at all still shares it - the interceptor is the remedy for both.
  */
 export function attachWebSockets(server: Server, options: AttachOptions): () => void
 {

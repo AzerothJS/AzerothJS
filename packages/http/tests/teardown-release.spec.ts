@@ -8,7 +8,7 @@
 // path fires still sees the live cache.
 import { describe, expect, it, afterEach } from 'vitest';
 
-import { App, onRequestCleanup } from '@azerothjs/http';
+import { App, onWorkUnitCleanup } from '@azerothjs/http';
 import { cached } from 'azerothjs';
 import { getDataCache, resetDataCache, type DataCache } from 'azerothjs/internal';
 
@@ -75,7 +75,7 @@ describe('teardown releases the request cache', () =>
         {
             await family('handler');
             cache = getDataCache();
-            onRequestCleanup(async () =>
+            onWorkUnitCleanup(async () =>
             {
                 // Runs during teardown, BEFORE the release: the settled entry serves.
                 cleanupSameKey = await family('handler');
@@ -199,7 +199,7 @@ describe('teardown releases the request cache', () =>
             cache = getDataCache();
             setTimeout(() =>
             {
-                onRequestCleanup(async () =>
+                onWorkUnitCleanup(async () =>
                 {
                     lateValue = await family();
                 });
@@ -285,7 +285,7 @@ describe('teardown releases the request cache', () =>
         {
             await family('k');
             cache = getDataCache();
-            onRequestCleanup(async () =>
+            onWorkUnitCleanup(async () =>
             {
                 // Teardown entrant 1 is inside this await when entrant 2 (the abort
                 // listener) fires; single-entrancy means the second path AWAITS this

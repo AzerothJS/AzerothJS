@@ -117,7 +117,7 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
     {
         // The client vanished before the handler finished; there is nothing to write to. The
         // body is still cancelled: it is what settles the request root, so dropping it silently
-        // would leave every onRequestCleanup (a pooled connection, an open transaction, an
+        // would leave every onWorkUnitCleanup (a pooled connection, an open transaction, an
         // advisory lock) unreleased for the process lifetime.
         if (response.body !== null)
         {

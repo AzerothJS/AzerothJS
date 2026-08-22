@@ -86,6 +86,20 @@ export interface SchedulerOptions
     onError?: (error: unknown, jobName: string) => void;
 
     /**
+     * Wraps each run in a work unit - `unit` executes the run; what it reports routes to
+     * `onError` with the job's name. Build one with `createWorkUnitInterceptor` from
+     * `@azerothjs/http` so every run owns a per-unit cache scope; without it an unwrapped
+     * run on a marked server reads uncached (safe, slower), and a process with no http
+     * import at all keeps the process-wide default scope - wire this on any scheduler
+     * whose jobs touch per-identity data. The type is structural: this package stays
+     * zero-dependency. Cross-run single-flighting is per unit, exactly as HTTP requests
+     * are per request. `stop({ drain })` awaits the RUNS, not their units' async
+     * teardown: onWorkUnitCleanup registrations settle in the run's continuation, so
+     * close shared resources from your own teardown signal, or keep cleanups synchronous.
+     */
+    intercept?: (unit: () => unknown, report: (error: unknown) => void) => unknown;
+
+    /**
      * Lifecycle visibility: runs at debug, overlap skips at warn, failures at error
      * (in addition to onError - the observer is programmatic, this is for humans).
      * Its own throws are swallowed, like the observer's.
@@ -198,6 +212,46 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
     }
 
     /**
+     * One run as one work unit when an interceptor is wired. The wrap sits at the CALL
+     * sites, never inside run's own promise chain and never around fire/arm; the per-call
+     * closure supplies unit identity to the reporter. run() never rejects, so the
+     * interceptor's report only ever carries the unit's own findings (a deadline). A
+     * throwing interceptor is contained here: the run is what must not be lost.
+     */
+    function runUnit(job: Job): Promise<void>
+    {
+        const intercept = options.intercept;
+        if (intercept === undefined)
+        {
+            return run(job);
+        }
+        // A holder, not a bare let: the only write is inside the closure, and the typed
+        // lint would otherwise read the flag as always-false at the catch site.
+        const started = { ran: false };
+        const unit = (): Promise<void> =>
+        {
+            started.ran = true;
+            return run(job);
+        };
+        try
+        {
+            // The rejection arm guards a user interceptor whose returned promise rejects:
+            // fire() void-discards this chain, so without it the rejection would land on
+            // the process channel, and runNow would reject to its caller against its
+            // report-to-onError contract.
+            return Promise.resolve(intercept(unit, (error) => report(error, job.name)))
+                .then(() => undefined, (error: unknown) => report(error, job.name));
+        }
+        catch (error)
+        {
+            report(error, job.name);
+            // The run must not be lost - unless the throwing interceptor already started
+            // it, in which case a fallback run would execute the job twice in one tick.
+            return started.ran ? Promise.resolve() : run(job);
+        }
+    }
+
+    /**
      * Visibility, isolated exactly like {@link report}. A logger call runs SYNCHRONOUSLY inside
      * a timer callback or a promise handler here, so an unguarded throw is an uncaughtException
      * or an unhandled rejection - the process dies for a log line, and the failure it was
@@ -274,7 +328,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
         {
             // Deliberately not awaited: run() handles both outcomes internally (it can
             // never reject) and registers itself in job.inflight for stop({ drain }).
-            void run(job);
+            void runUnit(job);
         }
         arm(job);
     }
@@ -399,7 +453,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler
                 tell('warn', 'cron overlap skipped', { job: job.name, skipped: job.overlapsSkipped });
                 return;
             }
-            await run(job);
+            await runUnit(job);
         },
 
         jobs(): JobInfo[]

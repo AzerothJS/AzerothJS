@@ -108,7 +108,7 @@ export interface AppOptions
 
     /**
      * Wrap every dispatch in a request root (store isolation across awaits + the
-     * onRequestCleanup registry). Default true; set false only where the runtime lacks
+     * onWorkUnitCleanup registry). Default true; set false only where the runtime lacks
      * AsyncLocalStorage or for micro-benchmarking the bare kernel.
      */
     requestRoot?: boolean;
@@ -613,7 +613,7 @@ export class App<Ctx extends object = object>
      * Maps one Request to one Response. This function cannot throw and cannot reject; every
      * failure becomes an error Response through the one error path. Unless opted out, the
      * whole dispatch runs inside a request root: stores are request-isolated across awaits
-     * and onRequestCleanup teardown ALWAYS runs when the request settles.
+     * and onWorkUnitCleanup teardown ALWAYS runs when the request settles.
      */
     public async handle(request: Request): Promise<Response>
     {

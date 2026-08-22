@@ -14,11 +14,16 @@
  *     concurrent requests get isolated instances - the exact isolation SSR renders already
  *     have, extended across `await` (reactivity's synchronous runInStoreScope cannot survive
  *     one; this module installs the async-context resolver reactivity exposes for hosts).
- *   - a CLEANUP REGISTRY. `onRequestCleanup(fn)` registers teardown that ALWAYS runs when
- *     the request settles - success, throw, or client abort - in LIFO order, mirroring the
+ *   - a CLEANUP REGISTRY. `onWorkUnitCleanup(fn)` registers teardown that ALWAYS runs when
+ *     the unit settles - success, throw, or client abort - in LIFO order, mirroring the
  *     component world's onCleanup. (Reactivity's own onCleanup is a silent no-op outside a
- *     synchronous root, which an async handler is not; this registry is the request-scoped
+ *     synchronous root, which an async handler is not; this registry is the unit-scoped
  *     equivalent that survives awaits.)
+ *
+ * A request is ONE KIND of work unit. `runInWorkUnit` is the bare unit root (scope +
+ * cleanups + release at settle); the request root is that plus the HTTP settle policy
+ * (streaming deferral, abort-as-settle); `createWorkUnitInterceptor` packages the unit
+ * root in the constructor-supplied shape ws and cron accept.
  *
  * The resolver returns undefined outside a request, falling through to the synchronous
  * scope - so an SSR render nested INSIDE a request still isolates via its own
@@ -38,12 +43,12 @@ import { PayloadResponse } from './payload.ts';
 interface RequestScope
 {
     storeScope: object;
-    /** Lazily allocated on the first onRequestCleanup - most requests register none. */
+    /** Lazily allocated on the first onWorkUnitCleanup - most requests register none. */
     cleanups: Array<() => void | Promise<void>> | null;
     /** True once teardown has finished: a later registration runs instead of queueing. */
     settled: boolean;
     /** How a throwing cleanup is reported, reachable from every settle path. */
-    options: RootOptions;
+    options: WorkUnitOptions;
 
     /**
      * The one in-flight teardown, memoized so concurrent settle paths (the abort listener
@@ -73,35 +78,38 @@ export function captureRequestContext(): <R>(fn: () => R) => R
     return AsyncLocalStorage.snapshot();
 }
 
-let resolverInstalled = false;
+/**
+ * The ONE resolver http registers, hoisted to module scope: reactivity's slot is
+ * single-writer with same-function idempotence, so re-installing after a consumer's
+ * uninstall (a test harness's afterEach) works only because every install passes this
+ * exact function - a per-call arrow would trip the foreign-registrant refusal.
+ */
+const resolveUnitScope = (): object | undefined => storage.getStore()?.storeScope;
 
 /** @internal Idempotent: reactivity consults the async context once a server exists. */
 function installResolver(): void
 {
-    if (!resolverInstalled)
-    {
-        resolverInstalled = true;
-        setStoreScopeResolver(() => storage.getStore()?.storeScope);
-    }
+    setStoreScopeResolver(resolveUnitScope);
 }
 
 /**
- * Registers teardown for the CURRENT request: closing a transaction, releasing a lock,
- * returning a connection. Runs when the request settles - success, error, or disconnect -
- * in LIFO order (later acquisitions release first). Throws outside a request: teardown
+ * Registers teardown for the CURRENT work unit: closing a transaction, releasing a lock,
+ * returning a connection. Runs when the unit settles - success, error, or disconnect -
+ * in LIFO order (later acquisitions release first). Throws outside a unit: teardown
  * registered nowhere is a leak wearing a seatbelt, and loud beats leaking.
  */
-export function onRequestCleanup(fn: () => void | Promise<void>): void
+export function onWorkUnitCleanup(fn: () => void | Promise<void>): void
 {
     const scope = storage.getStore();
     if (scope === undefined)
     {
-        throw new Error('onRequestCleanup was called outside a request. It registers teardown '
-            + 'for the current request root, so it only makes sense inside a handler or middleware.');
+        throw new Error('onWorkUnitCleanup was called outside a work unit. It registers teardown '
+            + 'for the current unit (an HTTP request root, runInWorkUnit, or an intercepted ws '
+            + 'message or cron run), so it only makes sense inside one.');
     }
     if (scope.settled)
     {
-        // The request already tore down - a client that aborted before the producer got its
+        // The unit already tore down - a client that aborted before the producer got its
         // connection, or a body the kernel could not monitor. Queueing here would push onto a
         // list nothing drains, so the registration runs NOW: teardown always runs, and a
         // release that arrives late is still a release.
@@ -134,8 +142,8 @@ async function runLate(fn: () => void | Promise<void>, scope: RequestScope): Pro
     });
 }
 
-/** @internal Options threaded from the App: how a throwing cleanup is reported. */
-interface RootOptions
+/** How a unit's throwing cleanup is reported; threaded from the App for requests. */
+export interface WorkUnitOptions
 {
     onCleanupError?: ((error: unknown) => void) | undefined;
 }
@@ -148,14 +156,14 @@ interface RootOptions
  *
  * @internal
  */
-function runCleanups(scope: RequestScope, options: RootOptions): Promise<void>
+function runCleanups(scope: RequestScope, options: WorkUnitOptions): Promise<void>
 {
     scope.teardown ??= teardownOnce(scope, options);
     return scope.teardown;
 }
 
 /** @internal The single teardown body behind {@link runCleanups}' memoization. */
-async function teardownOnce(scope: RequestScope, options: RootOptions): Promise<void>
+async function teardownOnce(scope: RequestScope, options: WorkUnitOptions): Promise<void>
 {
     // The request's data cache dies with its scope; aborting its outstanding fetches here
     // keeps their settle closures from outliving the request that started them. Before the
@@ -164,7 +172,7 @@ async function teardownOnce(scope: RequestScope, options: RootOptions): Promise<
     if (scope.cleanups === null)
     {
         // Nothing registered YET, but the request has reached a settle point: anything
-        // registered from here on runs immediately rather than queueing (onRequestCleanup).
+        // registered from here on runs immediately rather than queueing (onWorkUnitCleanup).
         scope.settled = true;
         releaseDataCache(scope.storeScope);
         return;
@@ -188,7 +196,7 @@ async function teardownOnce(scope: RequestScope, options: RootOptions): Promise<
             {
                 try
                 {
-                    options.onCleanupError?.(new Error('onRequestCleanup kept registering new teardown from '
+                    options.onCleanupError?.(new Error('onWorkUnitCleanup kept registering new teardown from '
                         + `inside a cleanup after ${ MAX_CLEANUP_ROUNDS } rounds; the remaining ${ batch.length } `
                         + 'were dropped to end the request.'));
                 }
@@ -255,7 +263,7 @@ function isStreamingResponse(result: unknown): result is Response & { body: Read
  *
  * @internal
  */
-function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Array> }, scope: RequestScope, options: RootOptions): Response
+function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Array> }, scope: RequestScope, options: WorkUnitOptions): Response
 {
     const reader = response.body.getReader();
     // Each pull/cancel re-enters the request context EXPLICITLY and unconditionally: a
@@ -308,7 +316,7 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
 export async function runInRequestRoot<T, A>(
     fn: (arg: A) => T | Promise<T>,
     arg: A,
-    options: RootOptions = {}
+    options: WorkUnitOptions = {}
 ): Promise<T>
 {
     markServerRuntime();
@@ -369,4 +377,120 @@ export async function runInRequestRoot<T, A>(
 
     await runCleanups(scope, options);
     return result;
+}
+
+/** @internal A value the unit handed back that the settle must wait on. */
+function isThenable(value: unknown): value is PromiseLike<unknown>
+{
+    return typeof (value as { then?: unknown } | null)?.then === 'function';
+}
+
+/**
+ * Runs `fn` as ONE WORK UNIT: the unit owns a fresh store scope - so its `cached()` reads
+ * get a real per-unit cache on a server whose default scope fails closed - and a cleanup
+ * registry ({@link onWorkUnitCleanup}), and both die when the unit settles. The HTTP
+ * request root is this plus the HTTP settle policy (streaming deferral, abort-as-settle).
+ * Wrap the units no interceptor reaches: a ws `onConnection`/`onClose` body, background
+ * regeneration, an app-started timer or queue consumer.
+ */
+export async function runInWorkUnit<T>(fn: () => T | Promise<T>, options: WorkUnitOptions = {}): Promise<T>
+{
+    markServerRuntime();
+    installResolver();
+    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null };
+    try
+    {
+        return await storage.run(scope, fn);
+    }
+    finally
+    {
+        await runCleanups(scope, options);
+    }
+}
+
+/**
+ * The constructor-supplied seam ws and cron accept: one unit in, the host's contained
+ * reporter alongside. Both hosts declare it structurally so their zero-dependency
+ * contract holds; a type spec pins mutual assignability.
+ */
+export type WorkUnitInterceptor = (unit: () => unknown, report: (error: unknown) => void) => unknown;
+
+/**
+ * Builds the interceptor a socket server or scheduler wires at construction - one factory
+ * call per host, each carrying its own options. Every intercepted unit (one ws
+ * application message, one cron run) owns a work-unit scope: per-unit caching, cleanups,
+ * release at settle - the fail-closed cost goes away with no cross-identity sharing. The
+ * unit runs synchronously inside its scope; a thenable it returns is what the settle
+ * waits on, a sync throw reports and settles, and neither ever escapes to the caller.
+ *
+ * `deadlineMs` (opt-in, NO default) bounds a unit that never settles: on fire the unit's
+ * cache scope is RELEASED and a timeout error reports through the host's reporter. The
+ * unit itself cannot be cancelled - it continues at the released scope (direct fetches,
+ * correct data), and its cleanups still run at the eventual settle, reading a released
+ * cache rather than settled entries. Set it for untrusted-input-driven units (ws);
+ * leave cron's legitimate long runs unbounded.
+ */
+export function createWorkUnitInterceptor(options: { deadlineMs?: number } = {}): WorkUnitInterceptor
+{
+    markServerRuntime();
+    installResolver();
+    const deadlineMs = options.deadlineMs;
+    return (unit, report) =>
+    {
+        // Per unit, not only at factory time: same-function idempotence makes this free,
+        // and it self-heals the resolver slot after a consumer's uninstall - the last
+        // door the silent-collapse defect could otherwise survive through.
+        installResolver();
+        const unitOptions: WorkUnitOptions = { onCleanupError: report };
+        const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options: unitOptions, teardown: null };
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        if (deadlineMs !== undefined)
+        {
+            deadline = setTimeout(() =>
+            {
+                deadline = undefined;
+                report(new Error(`[azeroth] a work unit exceeded its ${ deadlineMs }ms deadline; its cache scope was `
+                    + 'released. The unit keeps running at the released scope and its cleanups still run at settle.'));
+                releaseDataCache(scope.storeScope);
+            }, deadlineMs);
+            (deadline as { unref?: () => void }).unref?.();
+        }
+        const settle = async (): Promise<void> =>
+        {
+            if (deadline !== undefined)
+            {
+                clearTimeout(deadline);
+                deadline = undefined;
+            }
+            await runCleanups(scope, unitOptions);
+        };
+        let outcome: unknown;
+        try
+        {
+            outcome = storage.run(scope, unit);
+        }
+        catch (error)
+        {
+            report(error);
+            void settle().catch(() => undefined);
+            return undefined;
+        }
+        if (isThenable(outcome))
+        {
+            return Promise.resolve(outcome).then(
+                async (value) =>
+                {
+                    await settle();
+                    return value;
+                },
+                async (error: unknown) =>
+                {
+                    report(error);
+                    await settle();
+                    return undefined;
+                });
+        }
+        void settle().catch(() => undefined);
+        return outcome;
+    };
 }
