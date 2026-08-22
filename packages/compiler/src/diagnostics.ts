@@ -38,7 +38,9 @@
  * assumes validated input; the language server and ESLint processor surface the same findings):
  *   - azeroth/reserved-event-name  - a host on* attribute that is not handler-form (`onclick`,
  *                                    `once`); the namespace is reserved for event handlers;
- *   - azeroth/duplicate-attr       - a repeated host attribute name (render modes disagree on
+ *   - azeroth/duplicate-attr       - a repeated host attribute CLAIM: the case-folded name,
+ *                                    an expression `bind:p`'s claimed `p`, or a handler form's
+ *                                    event type (render modes disagree on
  *                                    the winner);
  *   - azeroth/duplicate-prop       - a repeated component prop key, including bind:'s claimed
  *                                    value + write-back keys and children=/markup-children;
@@ -2820,24 +2822,49 @@ function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
 function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 {
     const hasContent = el.children.some(child => !(child.kind === 'text' && child.value.trim() === ''));
-    const seen = new Set<string>();
+    // Keyed by the CLAIMED name, mapping to the first spelling (the GRAMMAR uniqueness
+    // rule): an expression `bind:p` claims `p`, so `bind:value={v} value="y"` collides
+    // here exactly as on a component - without the claim, the static attribute bakes into
+    // the cloned template and fights the binding. A handler-form name claims its EVENT
+    // TYPE (`onInput`/`onINPUT` denote one event; the client would attach both while
+    // string rendering keeps one). Everything else claims its name CASE-FOLDED, because
+    // HTML parses host attribute names case-insensitively - `value` and `VALUE` are one
+    // parsed attribute. `class:`/`style:` stay composition, not uniqueness.
+    const seen = new Map<string, string>();
     for (const attr of el.attributes)
     {
         if (attr.spread || attr.name === null)
         {
             continue;
         }
-        if (seen.has(attr.name))
+        // Case-folding IS the event-type claim: every handler-form spelling of one event
+        // differs only in case (onInput/onINPUT), so folding the full name collides them
+        // without a separate event key. eventType survives only to specialize the message.
+        const eventType = hostEventType(attr.name);
+        const expressionBind = attr.name.startsWith('bind:') && attr.value.kind === 'expression';
+        const claimed = (expressionBind ? attr.name.slice(5) : attr.name).toLowerCase();
+        const first = seen.get(claimed);
+        if (first !== undefined)
         {
+            const bindPair = first.startsWith('bind:') || attr.name.startsWith('bind:');
             out.push({
                 code: 'azeroth/duplicate-attr',
                 severity: 'error',
-                message: `Duplicate attribute '${ attr.name }' - render modes disagree on which one wins`,
+                message: first === attr.name
+                    ? `Duplicate attribute '${ attr.name }' - render modes disagree on which one wins`
+                    : eventType !== null
+                        ? `'${ first }' and '${ attr.name }' name the same '${ eventType }' event - the client attaches both while string rendering keeps one, so the modes disagree. Use one spelling.`
+                        : bindPair
+                            ? `'${ claimed }' has two writers: '${ first }' and '${ attr.name }'. \`bind:${ claimed }\` owns the key and writes back - drop the attribute and seed the bound state instead.`
+                            : `'${ first }' and '${ attr.name }' are one parsed attribute - HTML reads host attribute names case-insensitively, so render modes disagree on which wins.`,
                 start: attr.start,
                 end: attr.end
             });
         }
-        seen.add(attr.name);
+        else
+        {
+            seen.set(claimed, attr.name);
+        }
 
         if (attr.name === 'ref' && attr.value.kind !== 'expression')
         {
@@ -2983,10 +3010,47 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[], userOut
     }
 }
 
+/**
+ * GRAMMAR two-way binding: `bind:p={lvalue}` REQUIRES an expression. A static or bare
+ * `bind:` never binds - the lowerer's value-kind check precedes its bind branch - so on a
+ * host it would bake a literal `bind:p` attribute into the document, and on a component
+ * it would pass a dead string prop; both are silent authoring corruption.
+ */
+function bindExpressionRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null || !attr.name.startsWith('bind:') || attr.value.kind === 'expression')
+        {
+            continue;
+        }
+        out.push({
+            code: 'azeroth/bind-value',
+            severity: 'error',
+            message: `'${ attr.name }' needs an expression lvalue: \`${ attr.name }={ x }\`. A static or bare bind never binds`
+                + (el.isComponent ? '.' : ` - it would emit a literal '${ attr.name }' attribute into the document.`),
+            start: attr.start,
+            end: attr.end
+        });
+    }
+}
+
 /** Dispatches one element to its name-domain's rule set. */
 function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: MarkupElement) => void
 {
-    return (el) => (el.isComponent ? componentPropRules(el, out, userOutlet) : hostAttributeRules(el, out));
+    return (el) =>
+    {
+        bindExpressionRule(el, out);
+
+        if (el.isComponent)
+        {
+            componentPropRules(el, out, userOutlet);
+        }
+        else
+        {
+            hostAttributeRules(el, out);
+        }
+    };
 }
 
 /** Walks markup for on* handlers whose value would run at setup, not on the event. */

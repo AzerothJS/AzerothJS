@@ -313,9 +313,13 @@ suppresses them - identically everywhere. All other types attach per element. Th
 dispatcher preserves per-handler `currentTarget`, `stopPropagation` ordering, and
 `stopImmediatePropagation`.
 
-**Uniqueness.** Within one element, every explicit attribute's full name must be
-unique, and on components every EMITTED key must be unique; a violation is a
-compile error. This is not style policing: repeated keys have no single meaning
+**Uniqueness.** Within one element, every explicit attribute's CLAIMED name must
+be unique, and on components every EMITTED key must be unique; a violation is a
+compile error. An attribute claims its name CASE-FOLDED, because HTML parses host
+attribute names case-insensitively (`value` and `VALUE` are one parsed
+attribute); an expression `bind:p` claims `p`; a handler-form name claims its
+EVENT TYPE, so `onInput` and `onINPUT` denote one event and collide. This is not
+style policing: repeated keys have no single meaning
 across render modes (a template fires both duplicate listeners and keeps the FIRST
 duplicate parsed attribute; an object literal keeps the LAST), so the language
 refuses the program instead of picking a winner. Consequences:
@@ -358,7 +362,9 @@ compile-time uniqueness rule does not apply to it.
 followed by hydration is observably equivalent to client rendering - including
 the event-attachment model above. `h()` is a JavaScript API, not markup: the
 UNIQUENESS rules cannot apply to it (an object literal cannot express a duplicate
-key) and spreads follow object-literal merge semantics by definition - but the
+key, `bind:` and the directive forms are not `h()` vocabulary, and case-variant
+handler keys in one literal are distinct JavaScript keys with object semantics)
+and spreads follow object-literal merge semantics by definition - but the
 name-domain, handler-value, content-ownership, and attachment rules of this
 section bind `h()` identically, so a reserved name, a non-function handler, or a
 content-property/children combination is refused by `h()` with the same rule in

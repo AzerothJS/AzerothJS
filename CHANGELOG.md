@@ -121,6 +121,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   finding ahead of the type check, and the misleading `constant-derived` hint no longer
   fires on a declaration the shape rules already flagged.
 
+- **`bind:value={v} value="y"` on a host element compiled silently; it is now the
+  collision the grammar always said it was.** The uniqueness rule's consequence - a
+  `bind:p` claims its target key `p` - was enforced on components (`azeroth/duplicate-prop`)
+  but not on host elements, so the static attribute baked into the cloned template and
+  fought the binding, last writer winning silently. Host elements now claim the bind's
+  target key too: `bind:value` + `value` (either order, any bind target) is
+  `azeroth/duplicate-attr`, naming both writers. The audit of that fix closed two
+  adjacent escapes sheltered by the same literalism: host attribute claims are now
+  CASE-FOLDED (HTML parses host attribute names case-insensitively, so `value` and
+  `VALUE` were always one parsed attribute - and `onMouseDown` + `onMousedown` attached
+  two client listeners while string rendering silently kept one), and a static or bare
+  `bind:` (`bind:value="lit"`, `bind:value`) is now `azeroth/bind-value` on hosts and
+  components alike - it never bound, and on a host it baked a literal `bind:value`
+  attribute into the document. The grammar's compositions are untouched: an authored
+  `onInput` still composes with `bind:value`'s write-back, and `class:`/`style:`
+  directives still merge with their base attribute. GRAMMAR.md's uniqueness section now
+  states the claimed-name rule it always implied.
+
 ### Changed
 
 - **`onRequestCleanup` is renamed to `onWorkUnitCleanup`.** A request is one kind of work

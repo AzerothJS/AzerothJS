@@ -486,3 +486,89 @@ describe('bind contract - an each= that cannot link is loud, not silently dead',
             + ' <For each={items} key={(i) => i} let={ row }><li>{row.other}</li></For> }')).toEqual([]);
     });
 });
+
+describe('bind contract - a host bind claims its target key (uniqueness)', () =>
+{
+    const host = (markup: string): string =>
+        `export default component C() { state v = "a"; ${ markup } }`;
+
+    it('rejects bind:value alongside a value attribute, in either order, pointing at the second writer', () =>
+    {
+        for (const [markup, secondWriter] of [
+            ['<input bind:value={v} value={"y"} />', 'value={"y"}'],
+            ['<input value={"y"} bind:value={v} />', 'bind:value={v}']
+        ] as const)
+        {
+            const source = host(markup);
+            const findings = diagnoseModule(source);
+            expect(findings.map((d) => d.code)).toEqual(['azeroth/duplicate-attr']);
+            expect(findings[0]!.message).toContain('two writers');
+            expect(source.slice(findings[0]!.start, findings[0]!.end)).toBe(secondWriter);
+        }
+    });
+
+    it('collides the STATIC spelling too - the form that bakes into the cloned template', () =>
+    {
+        expect(diagnoseModule(host('<input bind:value={v} value="y" />')).map((d) => d.code))
+            .toEqual(['azeroth/duplicate-attr']);
+    });
+
+    it('claims case-folded: VALUE and value are one parsed attribute', () =>
+    {
+        expect(diagnoseModule(host('<input bind:value={v} VALUE="y" />')).map((d) => d.code))
+            .toEqual(['azeroth/duplicate-attr']);
+        const plain = diagnoseModule(host('<input value="a" VALUE="b" />'));
+        expect(plain.map((d) => d.code)).toEqual(['azeroth/duplicate-attr']);
+        expect(plain[0]!.message).toContain('case-insensitively');
+    });
+
+    it('claims handler forms by EVENT TYPE: case-variant spellings of one event collide', () =>
+    {
+        const pair = diagnoseModule(host('<button onMousedown={() => 1} onMouseDown={() => 2}>x</button>'));
+        expect(pair.map((d) => d.code)).toEqual(['azeroth/duplicate-attr']);
+        expect(pair[0]!.message).toContain("'mousedown' event");
+        expect(diagnoseModule(host('<input bind:value={v} onInput={() => 0} onINPUT={() => 0} />')).map((d) => d.code))
+            .toEqual(['azeroth/duplicate-attr']);
+    });
+
+    it('rejects a static or bare bind: it never binds, on hosts and components alike', () =>
+    {
+        expect(diagnoseModule(host('<input bind:value="lit" />')).map((d) => d.code))
+            .toEqual(['azeroth/bind-value']);
+        expect(diagnoseModule(host('<input bind:value />')).map((d) => d.code))
+            .toEqual(['azeroth/bind-value']);
+        expect(diagnoseModule(host('<Widget bind:value="lit" />')).map((d) => d.code))
+            .toContain('azeroth/bind-value');
+        // The claim stays on the FULL name for a non-binding bind:, so the value attribute
+        // does not spuriously collide with an already-rejected spelling.
+        expect(diagnoseModule(host('<input bind:value="lit" value="y" />')).map((d) => d.code))
+            .toEqual(['azeroth/bind-value']);
+    });
+
+    it('claims every bind target, not just value', () =>
+    {
+        expect(diagnoseModule(host('<input type="checkbox" bind:checked={v} checked />')).map((d) => d.code))
+            .toEqual(['azeroth/duplicate-attr']);
+    });
+
+    it('keeps the compositions the grammar defines: write-back handler, class directives', () =>
+    {
+        expect(diagnoseModule(host('<input bind:value={v} onInput={() => undefined} />'))).toEqual([]);
+        expect(diagnoseModule(host('<input type="checkbox" bind:checked={v} onChange={() => undefined} />'))).toEqual([]);
+        expect(diagnoseModule(host('<div class="a" class:active={true}>x</div>'))).toEqual([]);
+        expect(diagnoseModule(host('<input bind:value={v} />'))).toEqual([]);
+    });
+
+    it('keeps the plain duplicate message for same-spelling repeats', () =>
+    {
+        const findings = diagnoseModule(host('<input value={"a"} value={"b"} />'));
+        expect(findings.map((d) => d.code)).toEqual(['azeroth/duplicate-attr']);
+        expect(findings[0]!.message).toContain('Duplicate attribute');
+    });
+
+    it('leaves the component-side duplicate-prop rule untouched', () =>
+    {
+        const source = 'export default component C() { state v = "a"; <Widget bind:value={v} value={"y"} /> }';
+        expect(diagnoseModule(source).map((d) => d.code)).toContain('azeroth/duplicate-prop');
+    });
+});
