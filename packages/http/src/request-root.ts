@@ -59,6 +59,20 @@ const storage = new AsyncLocalStorage<RequestScope>();
 /** Teardown rounds a request may register from inside its own cleanups before we stop. */
 const MAX_CLEANUP_ROUNDS = 8;
 
+/**
+ * Captures the ambient async context; the returned function re-enters it around a call.
+ * Re-entry restores the ENTIRE capture-time frame - an ambient context present at call
+ * time but not at capture is replaced for the call's duration - which outside a request
+ * root means restoring the empty frame. Lives here so this file stays the kernel's ONE
+ * `node:async_hooks` seam.
+ *
+ * @internal
+ */
+export function captureRequestContext(): <R>(fn: () => R) => R
+{
+    return AsyncLocalStorage.snapshot();
+}
+
 let resolverInstalled = false;
 
 /** @internal Idempotent: reactivity consults the async context once a server exists. */
@@ -244,8 +258,14 @@ function isStreamingResponse(result: unknown): result is Response & { body: Read
 function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Array> }, scope: RequestScope, options: RootOptions): Response
 {
     const reader = response.body.getReader();
+    // Each pull/cancel re-enters the request context EXPLICITLY and unconditionally: a
+    // pull's async context is whoever dispatched it (the adapter, the consumer's pace) -
+    // a Node implementation detail, not a spec guarantee - so a synchronous producer's
+    // continuations would otherwise resolve the DEFAULT scope from pull #2 on. A pull
+    // arriving after the abort path already released re-enters harmlessly: reads land on
+    // the cache's silent released path, and request-scoped state keeps its instance.
     const monitored = new ReadableStream<Uint8Array>({
-        async pull(controller)
+        pull: (controller) => storage.run(scope, async () =>
         {
             try
             {
@@ -263,12 +283,12 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
                 controller.error(error);
                 await runCleanups(scope, options);
             }
-        },
-        async cancel(reason)
+        }),
+        cancel: (reason) => storage.run(scope, async () =>
         {
             await reader.cancel(reason);
             await runCleanups(scope, options);
-        }
+        })
     });
 
     return new Response(monitored, {

@@ -111,6 +111,10 @@ export interface CacheEntry
 
 let serverLatched = false;
 let serverRuntime = false;
+
+/** Scopes whose host already tore down; membership dies with the scope object. */
+const releasedScopes = new WeakSet<object>();
+
 let disabledServerWarned = false;
 let disabledBrowserWarned = false;
 let buildContext = false;
@@ -767,6 +771,10 @@ export function abortDataCacheFetches(scope: object): void
  */
 export function releaseDataCache(scope: object): void
 {
+    // The scope latches as released even when no cache ever materialized: a straggler
+    // whose FIRST read arrives after teardown must not create a live cache that nothing
+    // will ever release and whose fetches escape the teardown abort.
+    releasedScopes.add(scope);
     scopeCaches.get(scope)?.release();
 }
 
@@ -804,12 +812,19 @@ export function getDataCache(): DataCache | null
         }
         return null;
     }
+    if (releasedScopes.has(getStoreScope()))
+    {
+        // The scope's host already tore down; a read reaching it now is a dead-frame
+        // straggler (a late timer, a still-in-flight pull). No warning - it is not a
+        // misconfiguration - and no cache, whether one existed at release or the scope
+        // never materialized one: the caller's null path direct-fetches.
+        return null;
+    }
     const cache = useDataCache();
     if (cache.released)
     {
-        // The scope's host already tore this cache down; a read reaching it now is a
-        // dead-frame straggler (a late timer, a captured closure). No warning - it is not
-        // a misconfiguration - and no cache: the caller's null path direct-fetches.
+        // Released through a path that never latched the scope (a direct reset flow);
+        // same silent straggler semantics as above.
         return null;
     }
     scopeCaches.set(getStoreScope(), cache);

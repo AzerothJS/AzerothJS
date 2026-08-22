@@ -36,6 +36,8 @@
  * events hostage until a flush boundary.
  */
 
+import { captureRequestContext } from './request-root.ts';
+
 export interface SseSendOptions
 {
     /**
@@ -145,6 +147,11 @@ function frame(data: string, options: SseSendOptions | undefined): string
  * reading the body; its throw ends the stream with no `[DONE]` terminator and reports to
  * {@link SseOptions.onError} - an SSE stream that already sent bytes cannot change its
  * status line, so mid-stream errors END, not 500.
+ *
+ * The producer's own async chain keeps the request scope, and `connection.signal`
+ * teardown re-enters it. A callback subscribed to an EXTERNAL emitter is the one shape
+ * that does not: it runs in the emitter's context, so capture what the callback needs
+ * before subscribing, or wrap the callback in a work-unit root (`runInWorkUnit`).
  */
 export function sse(
     request: Request,
@@ -156,6 +163,10 @@ export function sse(
     const doneMarker = options.doneMarker ?? true;
     const maxBufferedBytes = options.maxBufferedBytes ?? 1_048_576;
     const controller = new AbortController();
+    // Captured at construction, inside the handler frame: teardown re-enters this context
+    // so `connection.signal` listeners run in the request they belong to. Re-entry
+    // restores the construction-time frame - outside a request root, the empty one.
+    const enterRequestContext = captureRequestContext();
     const lastEventId = request.headers.get('last-event-id');
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -171,7 +182,9 @@ export function sse(
         }
         if (!controller.signal.aborted)
         {
-            controller.abort();
+            // Abort-listener dispatch runs in the ABORTER's context (the transport's
+            // disconnect path), not the request's - re-enter the captured scope.
+            enterRequestContext(() => controller.abort());
         }
     };
 

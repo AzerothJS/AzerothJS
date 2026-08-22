@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A streamed response left its request scope mid-body, sharing one identity's cached
+  data with every later stream.** A pull's async context is whoever DISPATCHED it - the
+  adapter, or the consumer's own pace - so a synchronous producer's reads resolved the
+  process-wide default scope from the second chunk on: alice streamed and completed, then
+  bob streamed and read alice's data with zero fetches, and the same stream flipped
+  behavior on consumer pace alone. Every monitored pull and cancel now re-enters its
+  request context explicitly (the boundary is a Node implementation detail, not a spec
+  guarantee), so a streamed body's isolation unit is the full response lifetime:
+  per-request caching holds at every chunk, and a disconnect that tears the request down
+  mid-pull completes the in-flight read silently on the released cache's path. `sse()`
+  teardown re-enters too: `connection.signal` abort listeners run in the request scope
+  they belong to, via a context snapshot taken at construction. One shape remains the
+  app's: a producer callback subscribed to an external emitter runs in the emitter's
+  context - capture what it needs before subscribing, or wrap it in a work-unit root
+  (`runInWorkUnit`).
+
 - **A server that never rendered a page cached loader data process-wide, serving one
   identity's reads to every other.** The data cache refused the default scope only after
   a render latched it, so on a plain API server - WebSocket handlers, cron jobs,
