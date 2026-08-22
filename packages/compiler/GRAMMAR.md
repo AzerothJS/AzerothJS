@@ -1,6 +1,6 @@
 # The `.azeroth` grammar
 
-NORMATIVE for the 1.x train. This document specifies the syntax of `.azeroth` source
+NORMATIVE for the major train this package version belongs to. This document specifies the syntax of `.azeroth` source
 files: what the compiler recognizes, how every ambiguity is resolved, and what is
 deliberately out of scope. The compiler in this package is the reference
 implementation; where its behavior and this document disagree, one of the two has a
@@ -36,7 +36,7 @@ The parser advances through source one *structural unit* at a time. Units:
 - **Regular-expression literals** - `/.../flags`, recognized only in expression
   position (§3); with character-class and escape handling.
 - **Numeric literals** - a digit begins a number.
-- **Identifiers / words** - `[A-Za-z_$][A-Za-z0-9_$]*`. (ASCII-only in 1.x; Unicode
+- **Identifiers / words** - `[A-Za-z_$][A-Za-z0-9_$]*`. (ASCII-only in this train; Unicode
   identifier characters inside opaque TypeScript are untouched, but *recognized
   words* - keywords, component names, declaration names - are ASCII.)
 - **Markup regions** - a `<` in expression position that parses as markup (§3, §6).
@@ -78,7 +78,7 @@ A `<` in operator position is always the less-than operator.
 A `<` in expression position, followed by `>` or an identifier-start character, is a
 **markup candidate**. It resolves in this order:
 
-1. `<>` - always a fragment (§6.2). Never a type-parameter list.
+1. `<>` - always a fragment (§6). Never a type-parameter list.
 2. `<Ident ...` - probed as a **generic arrow type-parameter list**: if the balanced
    `<...>` region is followed (after trivia) by `(`, whose balanced close is followed
    by `:` (return-type annotation) or `=>`, the `<...>` is the type-parameter list of
@@ -419,7 +419,7 @@ nothing and disposes nothing.
   no user-extensible syntax.
 - **No HTML compatibility promises** beyond §6: no doctype, no comments-in-markup
   (`<!-- -->`) - a hole with a TS comment serves that need. Entity decoding and
-  newline-whitespace collapsing are in §6.4 and are the whole of it.
+  newline-whitespace collapsing are in §6 and are the whole of it.
 - **No angle-bracket casts, no comma-less generic arrows in body positions** (§3.3).
 - **No new keywords without the §7 rubric** - and the current keyword set is
   settled; additions follow the syntax-stability policy, not ad-hoc need.

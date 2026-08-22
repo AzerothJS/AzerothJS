@@ -141,6 +141,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- **The normative language documents no longer name a version train.** GRAMMAR.md
+  declared itself normative "for the 1.x train" and STABILITY.md froze "the 1.x keyword
+  set", two majors after that train ended - a frozen-set policy scoped to a dead train
+  answers nothing about today's set. Both documents now state their rules per MAJOR
+  TRAIN (the freeze, the shape rubric, and the ASCII identifier rule scope to the train
+  the package version belongs to), so they cannot rot again at the next major; GRAMMAR's
+  dangling cross-references to folded subsections are repaired. No rule changed.
+
 - **`onRequestCleanup` is renamed to `onWorkUnitCleanup`.** A request is one kind of work
   unit, and the registry serves them all - a ws message, a cron run, a `runInWorkUnit`
   body - so the request-shaped name and its "outside a request" error were wrong the

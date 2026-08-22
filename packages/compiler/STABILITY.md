@@ -1,17 +1,17 @@
-# Syntax stability policy (1.x)
+# Syntax stability policy
 
 RATIFIED. Companion to [GRAMMAR.md](./GRAMMAR.md),
 which records WHAT the language is; this page records how it is allowed to CHANGE.
 
 ## 1. The freeze
 
-The 1.x keyword set is FROZEN as shipped:
+The shipped keyword set is FROZEN within its major train:
 
 > `component` · `state` `derived` `deferred` · `resource` `stream` `store` `selector`
 > `form` (+ `form NAME[]`) · `effect` (both forms) · `batch` `untrack` `cleanup`
 > `dispose` `mount` · the `with { }` clause
 
-Through every 1.x release: **no removals, no renames, no semantic changes, no merging
+Through every release of a major train: **no removals, no renames, no semantic changes, no merging
 of keywords into options of other keywords**. Each keyword stays separate and
 first-class - settled; not revisited per release.
 
@@ -28,15 +28,15 @@ A candidate construct must pass ALL of:
    the compiler rewrites, or it binds a block's lifecycle to the component's
    reactive root. Imperative features that neither track nor dispose are never
    keywords (`ref` is the canonical rejection).
-2. **Existing surface shape.** It fits one of the two 1.x shapes -
+2. **Existing surface shape.** It fits one of the two shipped shapes -
    declaration (`kw NAME = value [with { }] ;`) or block (`kw [(args)] [with { }] { }`).
-   New shapes are 2.0 territory.
+   New shapes are next-major territory.
 3. **Shape-gated, never reserved.** The word stays a legal identifier everywhere
    except its exact position + shape (GRAMMAR.md §7).
 4. **One runtime helper.** It maps to exactly one entry in `keyword-spec.ts` -
    the tables, all three emitters, the projection style, editor tooling (semantic
    tokens, keyword docs), and eslint coverage land in ONE change, with a GRAMMAR.md
-   diff and empirical parser probes (the 6.1 discipline).
+   diff and empirical parser probes.
 5. **Capture analysis.** Because contextual keywords claim a shape, adding one can
    re-interpret pathological existing code (`kw {` as an expression statement
    followed by a block). An addition must show the captured shape is not meaningful
@@ -83,7 +83,7 @@ import.
 - **MINOR**: may ADD a keyword that passes the full rubric (§2.1), or a section that
   passes §2.2. Existing code compiles unchanged (shape-gating + capture analysis).
   May add new *options* inside existing `with { }` clauses.
-- **MAJOR (2.0)**: the only place removals, renames, or new surface shapes can
+- **MAJOR**: the only place removals, renames, or new surface shapes can
   happen - each with a codemod.
 - GRAMMAR.md is normative: no syntax change merges without its diff, and the
   compiler's divergence from it is a defect regardless of direction.
