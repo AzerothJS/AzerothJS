@@ -500,3 +500,90 @@ describe('navigation over retained entries', () =>
         });
     });
 });
+
+// The staged loader trigger is owned by the cache entry that will be fetched with it, so it
+// dies with that entry instead of living in a second, never-pruned map keyed per URL. The
+// arms below pin the two seams that lifetime creates: a parent whose entry is gone can no
+// longer be resurrected (it has nothing to fetch WITH), and the cache-disabled path has no
+// entry to hang a trigger on at all.
+describe('the loader trigger lives and dies with its cache entry', () =>
+{
+    it('resolves a vanished parent as undefined instead of throwing the internal never-staged error', async () =>
+    {
+        const seen: unknown[] = [];
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) =>
+        {
+            release = resolve;
+        });
+        const routes: Route[] = [{
+            path: '/p/:id',
+            component: leaf,
+            loader: () => Promise.resolve('parent-value'),
+            children: [{
+                path: 'child',
+                component: leaf,
+                // Awaits its parent LATE - after the parent's entry is gone. Before the
+                // trigger was entry-owned this refetched through the leaked map; the naive
+                // bounded version threw '[azerothjs/router] internal: ... never staged'.
+                loader: async ({ parent }) =>
+                {
+                    await gate;
+                    try
+                    {
+                        seen.push({ ok: await parent });
+                    }
+                    catch (error)
+                    {
+                        seen.push({ failed: String(error) });
+                    }
+                    return 'child-value';
+                }
+            }]
+        }];
+
+        await withRouter(routes, '/p/1/child', async () =>
+        {
+            await flush();
+            // Drop every entry, which is what an eviction past the retain window does.
+            resetDataCache();
+            release();
+            await flush();
+            await flush();
+        });
+
+        expect(seen).toHaveLength(1);
+        expect(JSON.stringify(seen[0])).not.toContain('never staged');
+        expect(seen[0]).toEqual({ ok: undefined });
+    });
+
+    it('still runs loaders when there is NO cache to carry the trigger', async () =>
+    {
+        // A latched server at the default scope, a released scope, and a DOM test after a
+        // server entry point ran all reach getDataCache() === null. There the resource
+        // calls the fetcher directly, and the one-frame handoff is the only carrier.
+        resetDataCache();
+        const { latchServerData } = await import('azerothjs/internal');
+        latchServerData();
+        try
+        {
+            const values: unknown[] = [];
+            await withRouter(
+                [{ path: '/n/:id', component: leaf, loader: ({ params }) => Promise.resolve(`v:${ params.id }`) }],
+                '/n/7',
+                async (router) =>
+                {
+                    await flush();
+                    values.push(router.loaders[0]?.data());
+                    router.navigate('/n/8');
+                    await flush();
+                    values.push(router.loaders[0]?.data());
+                });
+            expect(values).toEqual(['v:7', 'v:8']);
+        }
+        finally
+        {
+            resetDataCache();
+        }
+    });
+});

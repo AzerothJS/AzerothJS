@@ -1191,18 +1191,41 @@ function buildRouter(config: RouterConfig): Router
     // the staged trigger back. The family record is branded straight onto the fetcher so
     // createResource takes the shared-entry path.
     routerSerial += 1;
-    const stagedTriggers = new Map<string, StagedTrigger>();
+    // The trigger's OWNER is the cache entry that will be fetched with it, so it is held
+    // BY that entry and dies with it. A name-keyed Map here would be a second lifetime
+    // with no eviction of its own: its keys fold route params, so it grew once per
+    // distinct URL for the router's lifetime while the cache beside it expired normally.
+    const triggerFor = new WeakMap<CacheEntry, StagedTrigger>();
+    // The cache-disabled path (a latched server at the default scope, a released scope, a
+    // DOM test after a server entry point ran) has no entry to hang the trigger on. There
+    // it is a one-frame handoff: createResource's fetch effect reads its source - which
+    // stages - and calls the fetcher inside the SAME synchronous body, so at most one
+    // stage is ever outstanding. If that ever stops holding, the fetcher below throws its
+    // named internal error rather than reading someone else's trigger.
+    let handoff: { key: string; trigger: StagedTrigger } | null = null;
+
+    /** Records one level's trigger against the entry that will carry it. */
+    function stageTrigger(key: string, trigger: StagedTrigger): void
+    {
+        const cache = getDataCache();
+        if (cache !== null)
+        {
+            triggerFor.set(cache.entryFor(loaderFamily, [key]), trigger);
+        }
+        handoff = { key, trigger };
+    }
     const loaderFamily: FamilyRecord = {
         name: `azeroth.loader#${ routerSerial }`,
         fetcher: (async (key: string, signal: AbortSignal): Promise<unknown> =>
         {
-            const trigger = stagedTriggers.get(key);
+            const cache = getDataCache();
+            const selfEntry = cache?.peek(loaderFamily, [key]);
+            const trigger = (selfEntry === undefined ? undefined : triggerFor.get(selfEntry))
+                ?? (handoff?.key === key ? handoff.trigger : undefined);
             if (trigger === undefined)
             {
                 throw new Error('[azerothjs/router] internal: a loader fetch ran for a key that was never staged.');
             }
-            const cache = getDataCache();
-            const selfEntry = cache?.peek(loaderFamily, [key]);
             if (selfEntry !== undefined)
             {
                 // The propagation scan compares ENTRY keys, so the stamp must be the parent
@@ -1239,7 +1262,15 @@ function buildRouter(config: RouterConfig): Router
                 return Promise.resolve(undefined);
             }
             const parentEntry = cache.peek(loaderFamily, [parentKey]);
-            if (parentEntry === undefined || (parentEntry.inflight === null && !parentEntry.hasValue))
+            if (parentEntry === undefined)
+            {
+                // The parent's entry is gone, and its trigger went with it, so there is
+                // nothing to fetch WITH: reading it would create a fresh entry whose fetch
+                // has no staged trigger and would throw the internal error above. A parent
+                // whose data has expired resolves undefined - the same answer as no parent.
+                return Promise.resolve(undefined);
+            }
+            if (parentEntry.inflight === null && !parentEntry.hasValue)
             {
                 return readValue(cache, loaderFamily, [parentKey]);
             }
@@ -1318,7 +1349,7 @@ function buildRouter(config: RouterConfig): Router
                 {
                     continue;
                 }
-                stagedTriggers.set(key, {
+                stageTrigger(key, {
                     level,
                     loader: (m0.matched[level] as Route & { loader: NonNullable<Route['loader']> }).loader,
                     params: m0.params,
@@ -1381,7 +1412,7 @@ function buildRouter(config: RouterConfig): Router
                 if (key !== null && m !== null)
                 {
                     const route = m.matched[level] as Route & { loader: NonNullable<Route['loader']> };
-                    stagedTriggers.set(key, {
+                    stageTrigger(key, {
                         level,
                         loader: route.loader,
                         params: m.params,
