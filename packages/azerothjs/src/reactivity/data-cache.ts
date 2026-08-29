@@ -119,8 +119,25 @@ let disabledServerWarned = false;
 let disabledBrowserWarned = false;
 let buildContext = false;
 
-/** DEV-only: family name -> shared record, so an HMR re-registration swaps in place. */
-const devFamilies: Map<string, FamilyRecord> | null = DEV ? new Map() : null;
+/**
+ * DEV-only: family name -> shared record, WEAKLY, so an HMR re-registration swaps in
+ * place without the map itself retaining anything: a module-held family stays alive
+ * through its fetcher (which carries the record), while a DYNAMIC name (a per-tenant or
+ * per-request `cached()`) whose fetcher and entries died becomes collectible instead of
+ * pinning its closure forever - the map was the one add-only holder. The reaper prunes
+ * the dead name, re-checking liveness first: the name may have been re-registered with a
+ * fresh record between collection and callback.
+ */
+const devFamilies: Map<string, WeakRef<FamilyRecord>> | null = DEV ? new Map() : null;
+const devFamilyReaper: FinalizationRegistry<string> | null = DEV
+    ? new FinalizationRegistry((name) =>
+    {
+        if (devFamilies?.get(name)?.deref() === undefined)
+        {
+            devFamilies?.delete(name);
+        }
+    })
+    : null;
 
 /** DEV-only: live client caches, reachable for HMR-driven family invalidation. */
 const devClientCaches: Set<DataCache> | null = DEV ? new Set() : null;
@@ -904,7 +921,7 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
 
     if (DEV && devFamilies !== null)
     {
-        const existing = devFamilies.get(name);
+        const existing = devFamilies.get(name)?.deref();
         if (existing !== undefined && existing.fetcher !== rawFetcher)
         {
             // Hot module replacement re-evaluates data modules: replace in the SHARED record
@@ -940,7 +957,10 @@ export function cached<F extends (...args: never[]) => Promise<unknown>>(
         }
         else
         {
-            devFamilies.set(name, family);
+            // A dead WeakRef under this name is simply overwritten; the reaper's liveness
+            // re-check keeps it from deleting the fresh registration afterwards.
+            devFamilies.set(name, new WeakRef(family));
+            devFamilyReaper?.register(family, name);
         }
     }
 

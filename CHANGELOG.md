@@ -121,6 +121,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   finding ahead of the type check, and the misleading `constant-derived` hint no longer
   fires on a declaration the shape rules already flagged.
 
+- **The DEV family registry no longer retains dynamic `cached()` names forever.** The
+  hot-swap registry (family name to shared record) was an add-only map holding each
+  family's fetcher closure and everything it captured, ungated by anything but DEV - so
+  a per-tenant or per-request family name retained one closure per distinct name for the
+  process lifetime. The registry now holds records weakly with a finalization reaper: a
+  module-held family survives through its own fetcher (hot-swap semantics unchanged), a
+  dropped dynamic name is collected, and the name re-registers cleanly afterward.
+
 - **`bind:value={v} value="y"` on a host element compiled silently; it is now the
   collision the grammar always said it was.** The uniqueness rule's consequence - a
   `bind:p` claims its target key `p` - was enforced on components (`azeroth/duplicate-prop`)
