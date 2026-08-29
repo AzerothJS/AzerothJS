@@ -84,6 +84,9 @@ export {
 } from './reactivity/index.ts';
 
 // Markup runtime: the hyperscript core and the template-clone bindings.
+// The router's own target-to-path join, so a host writing a redirect target to the wire
+// produces the same string the client would navigate to.
+export { targetToFullPath } from './router/router.ts';
 export { componentScope } from './reactivity/create-root.ts';
 export { h } from './renderer/index.ts';
 // A `style { }` section compiles to this call, over the section's RAW text, so the section and

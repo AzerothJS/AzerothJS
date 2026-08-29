@@ -295,7 +295,20 @@ export function pageResponse(result: PageResult, shell: string, headers: Record<
 {
     if (result.kind === 'redirect')
     {
-        return new Response(null, { status: 302, headers: { location: result.to, ...headers } });
+        // An app-derived redirect is a function of this request's identity as much as any
+        // guarded page is, and a bare 302 is HEURISTICALLY CACHEABLE - a shared cache may
+        // store one user's redirect and replay it for the next.
+        return new Response(null, {
+            status: 302,
+            headers: { location: result.to, 'cache-control': 'private, no-store', ...headers }
+        });
+    }
+    // An OFF-ORIGIN redirect target was refused at the router boundary. It is a server-side
+    // fault, not a client one: the app asked for a navigation the framework will not perform,
+    // and rendering the page instead would serve what the guard declined.
+    if (result.kind === 'refused-redirect')
+    {
+        return new Response(null, { status: 500, headers: { 'cache-control': 'private, no-store', ...headers } });
     }
     // A vetoed route renders NOTHING: serve the plain shell (so the client can boot
     // and show its own 403 UI) with the guard's status - never the protected page.

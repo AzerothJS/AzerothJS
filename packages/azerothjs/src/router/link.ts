@@ -32,7 +32,7 @@ import type { Child } from '../renderer/index.ts';
 import type { NavigateTarget } from './types.ts';
 import { resolveRouter } from './provider.ts';
 import type { Router } from './router.ts';
-import { isExternalUrl } from './router.ts';
+import { isExternalUrl } from '../semantics.ts';
 
 /**
  * Props for the `<Link>` component.

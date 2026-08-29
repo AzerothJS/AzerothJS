@@ -143,6 +143,19 @@ function unbrand(value: unknown, kind: UnsafeKind): string | null
 }
 
 /**
+ * The string behind an author-vetted URL marker, or null when the value is not one. The
+ * redirect boundaries read it: a target the author wrapped in {@link unsafeUrl} is written
+ * verbatim, and every other value is judged - the same opt-out the render gate honours,
+ * reused rather than restated so one brand authorizes both.
+ *
+ * @internal
+ */
+export function unbrandUrl(value: unknown): string | null
+{
+    return unbrand(value, 'url');
+}
+
+/**
  * Marks one URL as author-vetted, so the render-safety gate writes it verbatim into a URL
  * attribute - `href`, `src`, `action`, `formaction`, `poster`, `xlink:href`, `data` - even
  * when its scheme is one the framework otherwise refuses, and into `srcdoc`, which is

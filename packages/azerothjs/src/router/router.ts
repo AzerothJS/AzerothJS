@@ -51,6 +51,8 @@ import type {
     RouteMatch,
     RouterConfig
 } from './types.ts';
+import { isExternalUrl, externalRedirectMessage } from '../semantics.ts';
+import { acceptRedirectTarget } from './redirect-target.ts';
 import { compilePath, paramNamesOf, type PathMatcher } from './path-pattern.ts';
 import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cache.ts';
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
@@ -450,49 +452,6 @@ export function targetToFullPath(target: NavigateTarget): string
     }
 
     return target.pathname + searchPart + hashPart;
-}
-
-/**
- * Matches a string starting with a URL scheme (`https:`, `mailto:`, `tel:`,
- * ...) or a protocol-relative URL (`//host`). Such targets are external: the
- * base prefix must not be applied to them, and `<Link>` does not intercept
- * their clicks. Callers classify through {@link isExternalUrl}, which
- * normalizes the candidate the way a browser normalizes an href first.
- *
- * @internal
- */
-const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
-
-/**
- * ASCII whitespace and C0 controls (plus space), which browsers STRIP when resolving an
- * href: `java\tscript:` and a leading-newline scheme both reach the browser as a real
- * scheme. The classifier must strip them too, or it disagrees with the browser - calling
- * such a string internal, intercepting the click, and pushing a scheme URL into history
- * as if it were an app path.
- *
- * @internal
- */
-// eslint-disable-next-line no-control-regex -- stripping control characters is the point: browsers remove them from an href before resolving its scheme
-const URL_CONTROL_CHARS = /[\x00-\x20]/g;
-
-/**
- * Whether a navigation target is EXTERNAL (scheme or protocol-relative), judged on the
- * string a browser would actually resolve: control characters and whitespace are stripped
- * before the scheme test, so the classifier and the rendered `href` can never disagree.
- *
- * Lives here (rather than in link.ts) so the router's base-resolution and the link's
- * click logic share one definition.
- *
- * @example
- * ```ts
- * isExternalUrl('https://example.com'); // -> true
- * isExternalUrl('java\tscript:x');      // -> true (the browser sees a scheme; so do we)
- * isExternalUrl('/users/42');           // -> false (internal app path)
- * ```
- */
-export function isExternalUrl(candidate: string): boolean
-{
-    return EXTERNAL_URL.test(candidate.replace(URL_CONTROL_CHARS, ''));
 }
 
 /**
@@ -978,8 +937,19 @@ function buildRouter(config: RouterConfig): Router
                 return true;
             }
             const target = isRedirect(verdict) ? verdict : { to: verdict as NavigateTarget, replace: true };
+            const accepted = acceptRedirectTarget(target.to);
+            if (!accepted.accepted)
+            {
+                // Fails CLOSED, like a throwing guard below: the guarded route must not render
+                // just because its redirect was refused. Reported unconditionally - this path
+                // used to reach history.pushState, which throws SecurityError on a cross-origin
+                // URL from OUTSIDE the guard's try/catch, so the navigation half-settled.
+                console.error(`[azerothjs/router] ${ externalRedirectMessage(accepted.target) }`);
+                veto();
+                return false;
+            }
             finish();
-            untrack(() => performNavigate(target.to, { replace: target.replace }));
+            untrack(() => performNavigate(accepted.to, { replace: target.replace }));
             return false;
         };
         const settleThrow = (error: unknown): void =>

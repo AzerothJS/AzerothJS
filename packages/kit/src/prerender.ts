@@ -109,6 +109,12 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             throw new Error(`kit prerender: "${ path }" redirected to "${ result.to }" during prerender - `
                 + 'a static page cannot redirect; drop the guard or use render: \'server\'.');
         }
+        if (result.kind === 'refused-redirect')
+        {
+            throw new Error(`kit prerender: "${ path }" redirected off-origin to "${ result.target }" during `
+                + 'prerender - a redirect target that leaves the app\'s origin is refused; redirect to a path, '
+                + 'or wrap a deliberate off-origin target in unsafeUrl(...).');
+        }
         // A static page that a guard blocks (or that doesn't match) cannot be a prerendered
         // file - both are contradictions someone should hear about at build time.
         if (result.kind === 'blocked')

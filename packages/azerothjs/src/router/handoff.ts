@@ -30,6 +30,7 @@
  * normal fetch - never to wrong data.
  */
 
+import { acceptRedirectTarget } from './redirect-target.ts';
 import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
 import { flattenRoutes, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
@@ -52,15 +53,36 @@ export const LOADER_HANDOFF_VERSION = 3;
  *   - `{ blocked: true, status }`        - a guard VETOED (returned false); the route MUST NOT
  *                                          render. Answer with `status` (403), never a 200 page
  *                                          - collapsing this into `null` is the SSR auth bypass.
+ *   - `{ refusedRedirect, target }`     - a guard or loader redirected OFF-ORIGIN. An automatic
+ *                                          navigation to an app-derived target that leaves the
+ *                                          origin is the open-redirect shape, so it is refused
+ *                                          here rather than written to a Location header. It is
+ *                                          a distinct terminal outcome, NOT a drop: dropping it
+ *                                          would render the page the guard declined to serve.
  *   - `{ notFound: true }`               - no route matched; render the app's fallback UI, but
  *                                          with a real 404 (not a soft-404 at 200).
  *   - `null`                             - matched and authorized, but no level has a loader;
  *                                          render normally with no handoff.
  */
+/**
+ * @internal One redirect outcome, judged at the boundary: an off-origin target becomes the
+ * distinct refusal rather than a Location header. Refusing is NOT dropping - dropping would
+ * render the page the guard declined to serve, which is the SSR authorization bypass the
+ * blocked shape exists to prevent.
+ */
+function redirectOutcome(to: NavigateTarget, replace: boolean): MatchAndLoadResult
+{
+    const verdict = acceptRedirectTarget(to);
+    return verdict.accepted
+        ? { redirect: verdict.to, replace }
+        : { refusedRedirect: true, target: verdict.target };
+}
+
 export type MatchAndLoadResult =
     | LoaderHandoff
     | { redirect: NavigateTarget; replace: boolean }
     | { blocked: true; status: number }
+    | { refusedRedirect: true; target: string }
     | { notFound: true }
     | null;
 
@@ -159,7 +181,7 @@ export async function matchAndLoad(
             {
                 if (isRedirect(error))
                 {
-                    return { redirect: error.to, replace: error.replace };
+                    return redirectOutcome(error.to, error.replace);
                 }
                 throw error;
             }
@@ -170,8 +192,8 @@ export async function matchAndLoad(
             if (verdict !== true && verdict !== undefined && verdict !== null)
             {
                 return isRedirect(verdict)
-                    ? { redirect: verdict.to, replace: verdict.replace }
-                    : { redirect: verdict as NavigateTarget, replace: true };
+                    ? redirectOutcome(verdict.to, verdict.replace)
+                    : redirectOutcome(verdict as NavigateTarget, true);
             }
         }
 
@@ -217,7 +239,7 @@ export async function matchAndLoad(
         {
             if (isRedirect(error))
             {
-                return { redirect: error.to, replace: error.replace };
+                return redirectOutcome(error.to, error.replace);
             }
             throw error;
         }

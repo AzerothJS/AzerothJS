@@ -640,3 +640,137 @@ export function executableScriptMessage(): string
         + 'privileges. A data block (type="application/ld+json" or any other non-JavaScript type) renders as-is; '
         + 'pass unsafeTag(\'script\') if the execution is deliberate.';
 }
+
+/**
+ * Matches a string starting with a URL scheme (`https:`, `mailto:`, `tel:`, ...) or a
+ * protocol-relative URL (`//host`). Such targets are EXTERNAL: they leave the app's origin
+ * rather than address a route within it.
+ */
+const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+
+/**
+ * Whether a navigation target is EXTERNAL (scheme or protocol-relative), judged on the
+ * string a browser would actually resolve: control characters and whitespace are stripped
+ * before the scheme test, so the classifier and the rendered `href` can never disagree.
+ *
+ * Shared because more than the router needs it: the link's click logic, the router's
+ * base-resolution, and the redirect boundaries that must refuse an app-derived target
+ * pointing off-origin all answer to ONE definition of external.
+ *
+ * @example
+ * ```ts
+ * isExternalUrl('https://example.com'); // -> true
+ * isExternalUrl('java\tscript:x');      // -> true (the browser sees a scheme; so do we)
+ * isExternalUrl('/users/42');           // -> false (internal app path)
+ * ```
+ */
+export function isExternalUrl(candidate: string): boolean
+{
+    return EXTERNAL_URL.test(candidate.replace(URL_CONTROL_CHARS, ''));
+}
+
+/**
+ * The one rule text for a redirect whose target leaves the app's origin. A guard or loader
+ * redirect is an AUTOMATIC navigation whose target is app-derived, so an off-origin one is
+ * either a mistake or an attacker-supplied `?next=` reaching the wire - the open-redirect
+ * shape. A deliberate one says so with `unsafeUrl(...)`.
+ */
+export function externalRedirectMessage(target: string): string
+{
+    return `refusing to redirect to ${ JSON.stringify(target) } - it leaves this app's origin, and a `
+        + 'guard/loader redirect target is app-derived, so an off-origin one is the open-redirect shape. '
+        + 'Redirect to a path, or wrap a deliberate off-origin target in unsafeUrl(...).';
+}
+
+/** ASCII whitespace, per the HTML spec's definition (not JS `\s`). */
+const HTML_WHITESPACE = new Set([' ', '\t', '\n', '\r', '\f']);
+
+/**
+ * The URL a `<meta http-equiv="refresh">` directive would navigate to, or null when the
+ * directive carries no target (a self-refresh, which navigates nowhere new) or is invalid
+ * (in which case the browser performs no refresh at all).
+ *
+ * Implements HTML's shared declarative refresh steps, because a naive `url=` scan is wrong
+ * in three ways the spec allows and an attacker uses: the `url=` prefix is OPTIONAL
+ * (`0;https://evil.example/`), the separator may be `;`, `,` or bare whitespace, and the
+ * target may be quoted. Anything that only looks for `url=` misses the majority of legal
+ * spellings.
+ */
+export function refreshTarget(content: string): string | null
+{
+    let i = 0;
+    const skipSpace = (): void =>
+    {
+        while (i < content.length && HTML_WHITESPACE.has(content[i] ?? ''))
+        {
+            i++;
+        }
+    };
+    skipSpace();
+    const isDigit = (at: number): boolean =>
+    {
+        const ch = content[at] ?? '';
+        return ch >= '0' && ch <= '9';
+    };
+    // The time component: digits, optionally followed by a fraction the browser ignores.
+    const timeStart = i;
+    while (i < content.length && isDigit(i))
+    {
+        i++;
+    }
+    if (content[i] === '.')
+    {
+        while (i < content.length && (content[i] === '.' || isDigit(i)))
+        {
+            i++;
+        }
+    }
+    if (i === timeStart && content[timeStart] !== '.')
+    {
+        return null;
+    }
+    if (i >= content.length)
+    {
+        return null;
+    }
+    // A separator is required here; anything else makes the whole directive invalid.
+    const separator = content[i] ?? '';
+    if (separator !== ';' && separator !== ',' && !HTML_WHITESPACE.has(separator))
+    {
+        return null;
+    }
+    skipSpace();
+    if (content[i] === ';' || content[i] === ',')
+    {
+        i++;
+        skipSpace();
+    }
+    if (i >= content.length)
+    {
+        return null;
+    }
+    // The `url=` prefix is optional: consume it when present, rewind entirely when not.
+    const beforePrefix = i;
+    if (content.slice(i, i + 3).toLowerCase() === 'url')
+    {
+        i += 3;
+        skipSpace();
+        if (content[i] === '=')
+        {
+            i++;
+            skipSpace();
+        }
+        else
+        {
+            i = beforePrefix;
+        }
+    }
+    let target = content.slice(i);
+    const quote = target[0];
+    if (quote === '"' || quote === '\'')
+    {
+        const end = target.indexOf(quote, 1);
+        target = end === -1 ? target.slice(1) : target.slice(1, end);
+    }
+    return target.length === 0 ? null : target;
+}

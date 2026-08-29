@@ -10,8 +10,9 @@
  *
  * Thin, typed constructors for the common response shapes. They exist for correctness, not
  * ceremony: each sets the right Content-Type WITH charset (a plain `new Response(json)` is
- * text/plain and mojibake awaits the first non-ASCII byte), and redirect validates its status
- * range. Handlers return these directly - there is no `res` object to call methods on, which
+ * text/plain and mojibake awaits the first non-ASCII byte), and `redirect` TYPES its status
+ * to the redirect range (a compile-time union, not a runtime check - a JS caller passing 200
+ * gets a 200). Handlers return these directly - there is no `res` object to call methods on, which
  * is what makes double-send and headers-already-sent unrepresentable: a response is a VALUE
  * a handler returns once, not a channel it writes to twice.
  */

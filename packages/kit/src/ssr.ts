@@ -29,7 +29,7 @@ import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch } from 'azerothjs/internal';
+import { collectHead, guardedMatch, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -58,6 +58,7 @@ export type PageResult =
     | { kind: 'html'; html: string; status: number; guarded?: boolean }
     | { kind: 'redirect'; to: string; replace: boolean }
     | { kind: 'blocked'; status: number }
+    | { kind: 'refused-redirect'; target: string }
     | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean };
 
 /** How one render is asked to behave; omitted entirely for the buffered default. */
@@ -251,12 +252,24 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // the ISR cache, the prerender pass, a CDN via response headers - hears it.
         const guarded = guardedMatch(routes, url);
 
+        // An OFF-ORIGIN guard/loader redirect is refused at the router boundary and arrives
+        // here as its own terminal outcome. It is never rendered and never written to a
+        // Location header: rendering would serve the page the guard declined, and writing it
+        // is the open redirect itself.
+        if (loaded !== null && 'refusedRedirect' in loaded)
+        {
+            return { kind: 'refused-redirect', target: loaded.target };
+        }
+
         // A guard/loader redirect -> a real 302; never render the target.
         if (loaded !== null && 'redirect' in loaded)
         {
+            // The object form carries query and hash the client honours; keeping only the
+            // pathname silently dropped the comeback-query idiom the router documents
+            // (a login redirect carrying where to return to) on the SSR leg alone.
             const to = typeof loaded.redirect === 'string'
                 ? loaded.redirect
-                : loaded.redirect.pathname;
+                : targetToFullPath(loaded.redirect);
             return { kind: 'redirect', to, replace: loaded.replace };
         }
 

@@ -11,7 +11,7 @@
 // real outcome - the masking shape pinned below is exactly that: a stale poison frame must
 // not convert a later request's genuine error into a TypeError.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoot, h, renderToString, useHead } from 'azerothjs';
+import { createRoot, h, renderToString, unsafeUrl, useHead } from 'azerothjs';
 import { collectHead, resetHead } from 'azerothjs/internal';
 
 beforeEach(() =>
@@ -171,5 +171,69 @@ describe('client faces - the same drops, mid-navigation safe', () =>
             dispose();
         });
         expect(warn.mock.calls.some((c) => /no document/.test(String(c[0])))).toBe(false);
+    });
+});
+
+// A refresh pragma's `content` IS a navigation directive, and useHead is the one path that
+// builds one from DATA. It answers to the same rule a guard redirect does; every other meta
+// keeps its absolute URLs, which is what makes the rule safe rather than noisy.
+describe('a meta refresh directive is judged like a redirect target', () =>
+{
+    const meta = (input: Parameters<typeof useHead>[0]): string =>
+    {
+        renderToString(page(input));
+        // ONE drain: collectHead empties the frame, so a second call returns nothing and
+        // would make every not-to-contain assertion below pass on an empty string.
+        const collected = collectHead();
+        return collected.additions + collected.replacements.map((r) => r.html).join('');
+    };
+
+    it('DROPS a refresh whose target leaves the origin, in every legal spelling', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try
+        {
+            for (const content of [
+                '0;url=https://evil.example/',
+                '0;https://evil.example/',
+                '0,https://evil.example/',
+                '0 https://evil.example/',
+                '0;url=//evil.example/'
+            ])
+            {
+                resetHead();
+                expect(meta({ meta: [{ httpEquiv: 'refresh', content }] })).not.toContain('evil.example');
+            }
+            expect(warn).toHaveBeenCalled();
+        }
+        finally
+        {
+            warn.mockRestore();
+        }
+    });
+
+    it('KEEPS an ordinary absolute URL in any other meta - the rule is refresh-only', () =>
+    {
+        // og:url and og:image carry absolute URLs by definition; judging `content` on every
+        // meta would refuse the single most common head declaration on the web.
+        const html = meta({ meta: [
+            { property: 'og:url', content: 'https://example.com/post/1' },
+            { name: 'twitter:image', content: 'https://cdn.example.com/a.png' }
+        ] });
+        expect(html).toContain('https://example.com/post/1');
+        expect(html).toContain('https://cdn.example.com/a.png');
+    });
+
+    it('KEEPS an internal refresh target and a self-refresh', () =>
+    {
+        expect(meta({ meta: [{ httpEquiv: 'refresh', content: '3;url=/thanks' }] })).toContain('/thanks');
+        resetHead();
+        expect(meta({ meta: [{ httpEquiv: 'refresh', content: '30' }] })).toContain('content="30"');
+    });
+
+    it('KEEPS an author-vetted off-origin refresh', () =>
+    {
+        const html = meta({ meta: [{ httpEquiv: 'refresh', content: unsafeUrl('0;url=https://payments.example/') }] });
+        expect(html).toContain('payments.example');
     });
 });

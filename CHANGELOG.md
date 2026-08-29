@@ -12,6 +12,29 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A guard or loader could redirect off-origin, and the framework wrote it to the wire.**
+  `throw redirect(url.searchParams.get('next'))` produced a real 302 to wherever the
+  parameter pointed - a shipped open redirect needing no browser quirk. A guard/loader
+  redirect is an AUTOMATIC navigation whose target the app derives, so an off-origin one is
+  now refused by the router's own notion of external (scheme or protocol-relative, judged
+  on the string a browser would actually resolve). The check sits at the CONSUMPTION
+  boundaries, not in `redirect()`, because a guard may return a bare target and never call
+  `redirect()` at all; both target forms are judged, since `{ pathname }` is an
+  unconstrained string. A refused redirect is its own terminal outcome served as a 500 -
+  never rendered, because rendering the page a guard declined is the authorization bypass -
+  and prerender fails the build naming the target. A deliberate off-origin redirect says so
+  with `unsafeUrl(...)`, the same brand the render gate honours, unwrapped at the boundary
+  so no marker object reaches a header. `<meta http-equiv="refresh">` built through
+  `useHead` answers to the same rule, parsed per HTML's declarative-refresh steps (the
+  `url=` prefix is optional and `;`, `,` or bare whitespace all separate, so a naive `url=`
+  scan misses most legal spellings); every other meta keeps its absolute URLs, so `og:url`
+  and `og:image` are untouched. Unchanged by design: `<Link>` (user-initiated) and
+  `@azerothjs/http`'s `redirect()` (a raw `Location` header value, whose job includes
+  off-origin flows). Two adjacent fixes ride along: a redirect 302 now carries
+  `cache-control: private, no-store`, since a bare 302 is heuristically cacheable and a
+  shared cache could replay one visitor's redirect; and the object form's query and hash
+  now survive server-side rendering, where only the pathname used to.
+
 - **A streamed response left its request scope mid-body, sharing one identity's cached
   data with every later stream.** A pull's async context is whoever DISPATCHED it - the
   adapter, or the consumer's own pace - so a synchronous producer's reads resolved the
