@@ -834,6 +834,17 @@ function buildRouter(config: RouterConfig): Router
     // boot-time guard redirect cannot hit a temporal-dead-zone ReferenceError.
     const scrollManaged = config.scroll !== false && typeof window !== 'undefined';
     const scrollPositions = new Map<string, { x: number; y: number }>();
+    /**
+     * How many history entries' scroll positions to keep. A saved position is only useful
+     * while its entry can still be navigated BACK to, and browsers cap that themselves
+     * (Chrome keeps about 50 entries per tab), so a bound comfortably above the reachable
+     * depth loses nothing observable - while an unbounded map grew one entry per
+     * navigation for the tab's lifetime, repeated navigations to the same URL included,
+     * because every push mints a fresh history key. Evicting degrades to the path a
+     * never-visited entry already takes: `saved` is null and the hash-anchor / scroll-to-top
+     * branch runs.
+     */
+    const SCROLL_MEMORY = 64;
     let navScrollOverride: boolean | undefined = undefined;
     const blockers = new Set<(context: { from: RouteLocation; to: NavigateTarget | null; kind: NavigationKind }) => boolean | Promise<boolean>>();
 
@@ -1497,7 +1508,20 @@ function buildRouter(config: RouterConfig): Router
     {
         if (scrollManaged)
         {
+            // Delete-then-set refreshes recency: a Map iterates in insertion order, so the
+            // oldest live key is always the first, and a key the user keeps returning to
+            // never ages out.
+            scrollPositions.delete(currentKey);
             scrollPositions.set(currentKey, { x: window.scrollX, y: window.scrollY });
+            while (scrollPositions.size > SCROLL_MEMORY)
+            {
+                const oldest = scrollPositions.keys().next().value;
+                if (oldest === undefined)
+                {
+                    break;
+                }
+                scrollPositions.delete(oldest);
+            }
         }
     }
     if (scrollManaged)

@@ -331,6 +331,64 @@ describe('managed scrolling', () =>
     });
 });
 
+describe('the scroll memory is bounded', () =>
+{
+    it('keeps recent entries restorable and lets the oldest age out, observable through scrollBehavior', async () =>
+    {
+        const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+        try
+        {
+            const seen: Array<{ path: string; saved: unknown }> = [];
+            const routes: Route[] = [{ path: '/p/:id', component: leaf }];
+            let dispose!: () => void;
+            let router!: Router;
+            createRoot((d) =>
+            {
+                dispose = d;
+                router = createRouter({
+                    routes,
+                    history: createMemoryHistory('/p/0'),
+                    scrollBehavior: ({ location, saved }) =>
+                    {
+                        seen.push({ path: location.pathname, saved });
+                        return false;
+                    }
+                });
+            });
+
+            // Far more navigations than a browser keeps history entries for. Each push mints
+            // a fresh history key, so an unbounded map would retain one record per hop.
+            for (let n = 1; n <= 200; n++)
+            {
+                router.navigate(`/p/${ n }`);
+                await flush();
+            }
+            seen.length = 0;
+
+            // A RECENT entry is still restorable: going back one step finds its record.
+            router.back();
+            await flush();
+            expect(seen.at(-1)?.saved).not.toBeNull();
+
+            // Walking far past the retained window must reach entries whose record has aged
+            // out - which is the whole point of the bound, and the half an unbounded map
+            // fails. Note each hop re-records the entry it LEAVES, so recency keeps moving.
+            for (let n = 0; n < 150; n++)
+            {
+                router.back();
+                await flush();
+            }
+            expect(seen.some((r) => r.saved === null)).toBe(true);
+
+            dispose();
+        }
+        finally
+        {
+            scrollTo.mockRestore();
+        }
+    });
+});
+
 describe('route-change focus', () =>
 {
     it('after a navigation the new route content receives focus (data-route-focus wins)', async () =>
