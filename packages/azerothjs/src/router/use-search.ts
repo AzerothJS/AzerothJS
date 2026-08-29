@@ -15,6 +15,7 @@
  * warns once per offending query string, so declare search fields optional or defaulted.
  */
 
+import { declaredQuery } from './query.ts';
 import type { Getter } from '../reactivity/index.ts';
 import { createMemo, untrack } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
@@ -33,18 +34,15 @@ function parseWith(schema: SearchSchemaLike | undefined, location: { query: unkn
     {
         return location.query;
     }
-    const parsed = schema.safeParse(location.query);
-    if (parsed.ok)
+    return declaredQuery(schema, location.query as Parameters<typeof declaredQuery>[1], (errors) =>
     {
-        return parsed.value;
-    }
-    if (DEV && warned.get(schema) !== location.search)
-    {
-        warned.set(schema, location.search);
-        console.warn(`[azerothjs/router] search params "${ location.search }" failed their schema; `
-            + `degrading to {}. Fields: ${ Object.keys(parsed.errors ?? {}).join(', ') }`);
-    }
-    return {};
+        if (DEV && warned.get(schema) !== location.search)
+        {
+            warned.set(schema, location.search);
+            console.warn(`[azerothjs/router] search params "${ location.search }" failed their schema; `
+                + `degrading to {}. Fields: ${ Object.keys(errors).join(', ') }`);
+        }
+    });
 }
 
 /** @internal Memoizes {@link parseWith} over the live location for a FIXED schema. */

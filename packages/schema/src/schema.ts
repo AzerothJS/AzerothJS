@@ -889,7 +889,12 @@ export function object<Shape extends Record<string, Schema<unknown>>>(shape: Sha
             return reject(collector, path, overrides, 'type', 'Expected an object');
         }
         const record = value as Record<string, unknown>;
-        const out: Record<string, unknown> = {};
+        // NULL prototype, like record() below: a declared `__proto__` field assigned onto a
+        // plain object hits the prototype SETTER instead of defining a key, so the parsed
+        // value silently loses the field (and, on an older engine, mutates the object's
+        // prototype). The declared shape is author-written, but its VALUES are request data
+        // wherever a schema validates a query or a body.
+        const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
         const before = collector.issues.length;
         for (const [key, fieldSchema] of Object.entries(shape))
         {

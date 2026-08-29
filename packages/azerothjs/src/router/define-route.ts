@@ -99,10 +99,16 @@ export interface DefineRouteConfig<Path extends string, Data, Search>
     /** Free-form metadata, kept verbatim on the match. */
     meta?: Record<string, unknown>;
 
-    /** Typed loader: `params` matches the pattern; the return type becomes the handle's Data. */
+    /**
+     * Typed loader: `params` matches the pattern; the return type becomes the handle's Data.
+     *
+     * `query` is the schema's OUTPUT when `search` is declared, not the raw query - reading
+     * an undeclared key is a type error rather than a silent `undefined`, because the value
+     * this loader returns is cached under a key built from the declared subset alone.
+     */
     loader?: (args: {
         params: RoutePathParams<Path> & Record<string, string>;
-        query: Query;
+        query: [Search] extends [never] ? Query : Search;
         signal: AbortSignal;
         parent: Promise<unknown>;
     }) => Promise<Data>;

@@ -34,7 +34,7 @@ import { acceptRedirectTarget } from './redirect-target.ts';
 import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
 import { flattenRoutes, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
-import { parseQuery } from './query.ts';
+import { declaredQuery, parseQuery } from './query.ts';
 import { inertJson } from '../reactivity/ssr.ts';
 import { latchServerData } from '../reactivity/data-cache.ts';
 
@@ -230,7 +230,13 @@ export async function matchAndLoad(
                         break;
                     }
                 }
-                const promise = route.loader({ params, query, signal, parent });
+                // The DECLARED query, per route - the same rule the client applies, and for
+                // the reason the client applies it: this level's value is cached under a key
+                // built from the declared subset, and a navigation that leaves that key
+                // unchanged starts NO fetch. Handing the loader the raw query here produced a
+                // value whose inputs were wider than its key, which then served every other
+                // URL sharing that key. Guards keep the raw query (both paths already do).
+                const promise = route.loader({ params, query: declaredQuery(route.search, query), signal, parent });
                 slots[level] = promise;
                 return promise;
             }));

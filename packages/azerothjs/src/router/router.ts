@@ -58,7 +58,7 @@ import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cac
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
 import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
-import { parseQuery, stringifyQuery } from './query.ts';
+import { declaredQuery, parseQuery, stringifyQuery } from './query.ts';
 import { createBrowserHistory } from './history.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
 
@@ -1152,8 +1152,7 @@ function buildRouter(config: RouterConfig): Router
             }
             return query;
         }
-        const parsed = route.search.safeParse(query);
-        return (parsed.ok ? parsed.value : {}) as Query;
+        return declaredQuery(route.search, query);
     }
 
     function levelKeyFor(m: RouteMatch | null, search: string, level: number): string | null

@@ -22,7 +22,7 @@
  * clean.
  */
 
-import type { Query } from './types.ts';
+import type { Query, SearchSchemaLike } from './types.ts';
 
 /**
  * Parses a query string into a {@link Query}, collapsing repeated keys into arrays in
@@ -112,4 +112,42 @@ export function stringifyQuery(query: Query): string
     }
 
     return params.toString();
+}
+
+/**
+ * THE DECLARED QUERY a level's loader receives - the ONE definition of it, applied
+ * identically by the client router, the SSR handoff, and `useSearch`.
+ *
+ * The invariant it exists to hold: **a loader's argument must be exactly the preimage of
+ * the key its entry is cached under.** The client skips the fetch entirely when a
+ * navigation leaves the level key unchanged, so a value produced from inputs WIDER than
+ * the key is served, unfetched, for every other URL that shares that key. Keying on the
+ * declared subset is what makes the key a complete description of the value; passing the
+ * raw query alongside it is the one combination that cannot be sound.
+ *
+ * A route with no schema declares nothing, so its whole parsed query IS its declared
+ * input, and the key widens to match - the two stay in step either way.
+ *
+ * `onInvalid` is INJECTED rather than owned: a failed parse is worth reporting in an
+ * editor and on a client, but this runs on the SSR path too, where the input is a
+ * request an attacker controls and a console call would be per-request log amplification.
+ * The caller that has a safe place to report passes one; the server passes nothing.
+ */
+export function declaredQuery(
+    schema: SearchSchemaLike | undefined,
+    raw: Query,
+    onInvalid?: (errors: Record<string, string>) => void
+): Query
+{
+    if (schema === undefined)
+    {
+        return raw;
+    }
+    const parsed = schema.safeParse(raw);
+    if (parsed.ok)
+    {
+        return parsed.value as Query;
+    }
+    onInvalid?.(parsed.errors ?? {});
+    return {};
 }

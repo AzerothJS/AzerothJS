@@ -12,6 +12,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A server-rendered loader received a wider query than the key its result was cached
+  under, and that result was then served for other URLs.** Server-side `matchAndLoad`
+  ignored the route's declared `search` schema and handed every loader the raw query,
+  while the client keyed the entry on the declared subset alone. Given
+  `?page=1&utm=junk`, the server's loader saw `{ page: '1', utm: 'junk' }` where the
+  client's saw `{ page: '1' }` - so a value computed from the tracking parameter was
+  stored under a key claiming it depended only on `page`. Because a navigation that
+  leaves the level key unchanged starts no fetch at all, those bytes then served
+  `?page=1&utm=anything` indefinitely. A loader's argument is now the exact preimage of
+  its key on every path that can produce the value: the declared subset when a schema is
+  declared, the whole parsed query when none is. Guards are unchanged and still receive
+  the raw query on both paths - they key nothing, so narrowing them would remove
+  information an authorization decision may legitimately use. On a typed route handle the
+  loader's `query` is now the schema's output type, so reading an undeclared key is a
+  compile error rather than a silent `undefined`. Related: an `object()` schema's parsed
+  value now has a null prototype, so a declared `__proto__` field can no longer reach the
+  prototype setter through request data.
+
 - **A guard or loader could redirect off-origin, and the framework wrote it to the wire.**
   `throw redirect(url.searchParams.get('next'))` produced a real 302 to wherever the
   parameter pointed - a shipped open redirect needing no browser quirk. A guard/loader

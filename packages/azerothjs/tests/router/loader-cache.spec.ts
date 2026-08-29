@@ -11,7 +11,7 @@
 // route-position identity across same-path siblings, v3 seed adoption (fresh, stale-heal,
 // static, rejected v2), and back-navigation serving from the cache.
 import { describe, it, expect, afterEach } from 'vitest';
-import { createRoot, createRouter, createMemoryHistory } from 'azerothjs';
+import { createRoot, createRouter, createMemoryHistory, matchAndLoad } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 import { resetDataCache } from 'azerothjs/internal';
 
@@ -585,5 +585,82 @@ describe('the loader trigger lives and dies with its cache entry', () =>
         {
             resetDataCache();
         }
+    });
+});
+
+// The identity violation itself, not the shape difference: an SSR-produced value is seeded
+// into the entry and ADOPTED WITHOUT FETCHING, and a later navigation that leaves the level
+// key unchanged starts no fetch at all. So if the server computed that value from inputs
+// WIDER than the key, those bytes serve every other URL sharing the key - permanently, not
+// for a frame. The loader returns its own query, so the served value is a literal witness of
+// the argument the producing path used.
+describe('an SSR seed is the preimage of the key it is stored under', () =>
+{
+    const declaredRoutes = (): Route[] =>
+    {
+        return [{
+            path: '/items',
+            component: leaf,
+            search: {
+                safeParse: (value: unknown) =>
+                {
+                    const query = value as Record<string, string | undefined>;
+                    return { ok: true as const, value: { page: query.page ?? '1' } };
+                }
+            },
+            loader: ({ query }) => Promise.resolve(query)
+        }];
+    };
+
+    it('serves a seed produced under one undeclared param to a URL carrying another', async () =>
+    {
+        // Produced on the server for utm=junk; the key names only `page`.
+        const handoff = await matchAndLoad(declaredRoutes(), '/items?page=1&utm=junk');
+        expect(handoff).not.toBeNull();
+
+        await withRouter(declaredRoutes(), '/items?page=1&utm=junk', async (router) =>
+        {
+            await flush();
+            // The adopted value must be the key's preimage - the declared subset alone.
+            expect(router.loaders[0]!.data()).toEqual({ page: '1' });
+
+            // A different undeclared param shares the key, so NO fetch runs and this value
+            // is served as-is. That is only sound because it contains nothing about `utm`.
+            router.navigate('/items?page=1&utm=other');
+            await flush();
+            expect(router.loaders[0]!.data()).toEqual({ page: '1' });
+        }, handoff);
+    });
+
+    it('CONTROL: when the param IS declared, the two URLs are different keys and refetch', async () =>
+    {
+        // Without this the arm above would pass against a build that keys on nothing at all.
+        let runs = 0;
+        const routes: Route[] =
+        [{
+            path: '/items',
+            component: leaf,
+            search: {
+                safeParse: (value: unknown) =>
+                {
+                    const query = value as Record<string, string | undefined>;
+                    return { ok: true as const, value: { page: query.page ?? '1', utm: query.utm ?? '' } };
+                }
+            },
+            loader: ({ query }) =>
+            {
+                runs += 1;
+                return Promise.resolve(query);
+            }
+        }];
+        await withRouter(routes, '/items?page=1&utm=junk', async (router) =>
+        {
+            await flush();
+            expect(runs).toBe(1);
+            router.navigate('/items?page=1&utm=other');
+            await flush();
+            expect(runs).toBe(2);
+            expect(router.loaders[0]!.data()).toEqual({ page: '1', utm: 'other' });
+        });
     });
 });

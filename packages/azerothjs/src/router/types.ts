@@ -295,7 +295,13 @@ export interface RouteLoaderArgs
     /** Path params of the full matched chain. */
     params: Params;
 
-    /** The parsed query string at navigation time. */
+    /**
+     * The route's DECLARED query: the `search` schema's output when one is declared, and
+     * the whole parsed query when none is. Not the raw query in the first case - this
+     * value's cache key is built from the declared subset, and a navigation that leaves
+     * that key unchanged starts no fetch, so a loader reading anything wider would have
+     * its result served for URLs it never saw. Guards, which key nothing, get the raw query.
+     */
     query: Query;
 
     /** Fires when the navigation is superseded - pass it to fetch. */
