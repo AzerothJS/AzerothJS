@@ -121,6 +121,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   finding ahead of the type check, and the misleading `constant-derived` hint no longer
   fires on a declaration the shape rules already flagged.
 
+- **A refused value could still reach the browser through the compiled template.** The
+  render-safety gate judges every value the runtime writers put in the document, but a
+  STATIC tag or attribute is folded into a clone template that no runtime writer inspects
+  - so one component source threw in server rendering and rendered on the client:
+  `<a href="javascript:alert(1)">`, `<div onClick="alert(1)">` (a live inline handler),
+  `<base href>`, `<iframe srcdoc>`, an executable `<script>`. In a `dom`-target build the
+  gated branch is not emitted at all, so nothing judged those values in any mode. The same
+  policy is now applied at BUILD time over exactly the values that fold - including
+  constant-folded expressions such as `href={'javascript:' + x}`, which land in the same
+  template - and the policy itself moved into `azerothjs/semantics` so the compiler and the
+  runtime share one copy rather than restating it. Tag-awareness is preserved (an inline
+  image `data:` URL still passes on `<img src>` and `<video poster>` while the same string
+  is refused on `<a href>`), a `<script>` whose `type` is dynamic is left to the runtime
+  gate that can resolve it, and `unsafeUrl(...)`/`unsafeTag(...)` are unaffected: they are
+  expressions, never fold, and reach the runtime branded. One behavior change worth
+  calling out for client-only builds: a static non-image `data:` URL in a URL attribute
+  (`<link href="data:font/woff2;...">`) was already refused in server rendering and is now
+  a build error everywhere - wrap it in `unsafeUrl(...)` if it is deliberate.
+
 - **The DEV family registry no longer retains dynamic `cached()` names forever.** The
   hot-swap registry (family name to shared record) was an add-only map holding each
   family's fetcher closure and everything it captured, ungated by anything but DEV - so

@@ -469,3 +469,174 @@ export function scopeSelectors(cssText: string, scope: string, classMap: Record<
 
     return out;
 }
+
+/**
+ * THE RENDER-SAFETY POLICY - the markup a browser turns into EXECUTION or into a
+ * page-wide retarget, judged by one set of predicates so no writer can drift from
+ * another. Three consumers apply them to the same strings: the SSR serializer and the
+ * DOM writer at runtime, and the compiler at build time over the values it FOLDS into a
+ * clone template (a folded value reaches the document without passing any runtime
+ * writer, so a policy stated only at runtime would not bind it).
+ *
+ * The predicates take plain strings. The `unsafeUrl`/`unsafeTag` opt-out markers are a
+ * RUNTIME concept and stay in the renderer, which unwraps them before asking anything
+ * here - so a marker can never be forged into this layer, and the compiler, which can
+ * never meet one, does not need to know they exist.
+ */
+
+/**
+ * Attributes the browser resolves as a URL and then FETCHES or NAVIGATES to. A scheme it
+ * treats as code (`javascript:`, `vbscript:`) or as a document it will run script from
+ * (`data:text/html`, `data:image/svg+xml`) turns a rendered value into execution - which is
+ * what every "user-supplied link" injection reduces to. Names are matched lowercased, as
+ * HTML attribute names are case-insensitive.
+ */
+export const URL_ATTRIBUTES: ReadonlySet<string> = new Set
+([
+    'href',
+    'src',
+    'action',
+    'formaction',
+    'poster',
+    'xlink:href',
+    'data'
+]);
+
+/**
+ * ASCII whitespace and C0 controls, which browsers STRIP before resolving a URL: `java\tscript:`
+ * and a leading-newline scheme both reach the parser as a real `javascript:` scheme. Testing the
+ * raw string instead of the normalized one is exactly how a scheme classifier gets bypassed, so
+ * the candidate is normalized the way the browser normalizes it first.
+ */
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point: browsers remove them from a URL before resolving its scheme
+const URL_CONTROL_CHARS = /[\x00-\x20]/g;
+
+/** The scheme of a URL candidate, or no match for a relative URL. */
+const URL_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+/** A `data:` URL carrying a non-SVG image, which is inert everywhere. */
+const DATA_IMAGE_URL = /^data:image\/(?!svg)[a-z0-9.+-]+[;,]/i;
+
+/** An `image/svg+xml` data URL, which is inert in an image context and scripted everywhere else. */
+const DATA_SVG_URL = /^data:image\/svg\+xml[;,]/i;
+
+/**
+ * Tag+attribute pairs where the browser renders the URL as an IMAGE and nothing else. SVG
+ * loaded there runs in the spec's secure static mode: no script, no external references, no
+ * navigation - a guarantee every engine implements. Anywhere else (`<a href>`, `<iframe src>`,
+ * a `<use xlink:href>`) an SVG document keeps its scripting, so the refusal stands there.
+ */
+const IMAGE_URL_CONTEXT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+    ['img', new Set(['src'])],
+    ['video', new Set(['poster'])]
+]);
+
+/** Whether `tag[attribute]` is one of the image-only contexts above. */
+export function rendersAsImage(tag: string | undefined, name: string): boolean
+{
+    return tag !== undefined && IMAGE_URL_CONTEXT.get(tag.toLowerCase())?.has(name) === true;
+}
+
+/**
+ * Whether a URL hands the browser CODE rather than a resource, judged on the string the
+ * browser would actually resolve.
+ */
+export function isExecutableUrl(value: string, imageContext = false): boolean
+{
+    const candidate = value.replace(URL_CONTROL_CHARS, '');
+    const scheme = URL_SCHEME.exec(candidate)?.[1]?.toLowerCase();
+
+    if (scheme === undefined)
+    {
+        return false;
+    }
+
+    // Every data: URL is same-origin-ish content the browser parses; only a real image is
+    // inert, so the allowance is stated positively. SVG joins that allowance ONLY where the
+    // browser renders it as an image, which strips its scripting.
+    if (scheme === 'data')
+    {
+        return !DATA_IMAGE_URL.test(candidate) && !(imageContext && DATA_SVG_URL.test(candidate));
+    }
+
+    return scheme === 'javascript' || scheme === 'vbscript';
+}
+
+/**
+ * Tags refused outright: `<base>` rewrites where every relative URL on the page resolves to
+ * (one injected tag re-points every link, form and script), and `<object>`/`<embed>` load a
+ * document that runs script in this origin. `<iframe>` is deliberately NOT here - every video
+ * and payment embed is one, and it is sandboxable and origin-isolated.
+ */
+export const REFUSED_TAGS: ReadonlySet<string> = new Set(['base', 'object', 'embed']);
+
+/**
+ * The `type` values a `<script>` can carry and still EXECUTE: the HTML JavaScript-MIME set,
+ * plus `module` and the empty value (both mean "run this"). Any OTHER type is a data block the
+ * browser never runs - `application/ld+json` is the documented case, and the SSR serializer has
+ * dedicated escaping for its content.
+ */
+const JAVASCRIPT_MIME_TYPES: ReadonlySet<string> = new Set
+([
+    '',
+    'module',
+    'text/javascript',
+    'application/javascript',
+    'text/ecmascript',
+    'application/ecmascript',
+    'text/jscript',
+    'text/livescript',
+    'text/x-javascript',
+    'text/x-ecmascript',
+    'application/x-javascript',
+    'application/x-ecmascript'
+]);
+
+/**
+ * Whether a `<script>` carrying this RESOLVED type would run. An absent type means yes; a
+ * caller that cannot resolve its type to a string must also treat it as yes, since a value
+ * that cannot be proven inert must fail closed.
+ */
+export function scriptTypeExecutes(type: string | undefined): boolean
+{
+    if (type === undefined)
+    {
+        return true;
+    }
+
+    // A MIME's parameters (`;charset=utf-8`) do not change what it is.
+    return JAVASCRIPT_MIME_TYPES.has(type.trim().toLowerCase().split(';')[0] ?? '');
+}
+
+/** The one rule text for a URL whose scheme the browser would execute. */
+export function executableUrlMessage(key: string, written: string): string
+{
+    return `refusing ${ JSON.stringify(key) }=${ JSON.stringify(written) } - the browser would `
+        + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image - '
+        + 'an SVG data URL is accepted only on <img src> and <video poster>, where it cannot script). '
+        + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.';
+}
+
+/** The one rule text for `srcdoc`, whose value is an inline document rather than a URL. */
+export function srcdocMessage(key: string): string
+{
+    return `refusing the ${ JSON.stringify(key) } attribute - srcdoc is an inline DOCUMENT, `
+        + 'so its value is markup that runs with the embedding page\'s privileges. Point the frame at a real URL, '
+        + 'or pass unsafeUrl(...) if the content is yours.';
+}
+
+/** The one rule text for a tag that loads a document or retargets the page. */
+export function refusedTagMessage(name: string): string
+{
+    return `refusing to render <${ name }> - it loads a document that runs script in this origin `
+        + '(or, for <base>, silently re-targets every relative URL on the page). Use <iframe> for an embed, '
+        + `or unsafeTag('${ name }') if it is deliberate.`;
+}
+
+/** The one rule text for a `<script>` whose type means the browser runs its content. */
+export function executableScriptMessage(): string
+{
+    return 'refusing to render an executable <script> - its content would run with the page\'s '
+        + 'privileges. A data block (type="application/ld+json" or any other non-JavaScript type) renders as-is; '
+        + 'pass unsafeTag(\'script\') if the execution is deliberate.';
+}

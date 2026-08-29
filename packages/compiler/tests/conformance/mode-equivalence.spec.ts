@@ -306,3 +306,75 @@ describe('children placement is identical across modes and root shapes', () =>
         dispose();
     });
 });
+
+// GRAMMAR 6.6 binds the template CLONE as well as h(): a value one mode refuses cannot be
+// written by another. The clone is fed by a folded template no runtime writer inspects, and
+// in a `dom`-target build the gated h() branch is never emitted at all - so before this rule
+// the SAME SOURCE threw in SSR and rendered on the client. Recorded pre-fix red run, measured
+// through the real compiler and runtime:
+//
+//   <a href="javascript:alert(1)">   CSR: <a href="javascript:alert(1)">   SSR: THREW
+//   <div onClick="alert(1)">         CSR: <div onclick="alert(1)">         SSR: THREW
+//   <base href="//evil.test/">       CSR: rendered                         SSR: THREW
+//   <iframe srcdoc="...">            CSR: rendered                         SSR: THREW
+//   <script>alert(1)</script>        CSR: rendered                         SSR: THREW
+//
+// The rejected corpus below pins each family at BUILD time, where the clone can be reached.
+describe('render-safety binds every writer, the folded template included', () =>
+{
+    const REJECTED: ReadonlyArray<readonly [string, string, RegExp]> = [
+        ['an executable URL scheme', '<a href="javascript:alert(1)">x</a>', /would\s+execute this URL/],
+        ['a CONSTANT-FOLDED URL, which lands in the same template', '<a href={ "javascript:" + "alert(1)" }>x</a>', /would\s+execute this URL/],
+        ['a non-image data: URL', '<a href="data:text/html,<script>alert(1)</script>">x</a>', /would\s+execute this URL/],
+        ['an SVG data URL outside an image context', '<a href="data:image/svg+xml,x">y</a>', /would\s+execute this URL/],
+        ['srcdoc, an inline document', '<iframe srcdoc="<img onerror=alert(1)>"></iframe>', /inline DOCUMENT/],
+        ['a refused tag', '<div><base href="//evil.test/" /></div>', /refusing to render <base>/],
+        ['an executable script', '<div><script>alert(1)</script></div>', /executable <script>/],
+        ['a handler-form name given a STRING, the one shape that yields live code', '<div onClick="alert(1)">x</div>', /expects a function handler/]
+    ];
+
+    for (const [label, markup, rule] of REJECTED)
+    {
+        it(`refuses ${ label } at build time, in both compile targets`, () =>
+        {
+            const source = `component C() { ${ markup } }`;
+            expect(() => generateModule(source)).toThrow(rule);
+            // The dom-only target is the shape with NO gated branch at all, so a rule that
+            // only held for the universal target would leave it unreachable everywhere.
+            expect(() => generateModule(source, 'C.azeroth', { ssr: false })).toThrow(rule);
+        });
+    }
+
+    // The non-vacuous half: programs the gate ACCEPTS must still compile and agree across
+    // modes. Without these the corpus above could pass by refusing everything.
+    const ACCEPTED: ReadonlyArray<readonly [string, string]> = [
+        ['an inline image data URL on <img src>', '<img src="data:image/png;base64,AAAA" />'],
+        ['an SVG data URL where the browser renders it as an image', '<img src="data:image/svg+xml,%3Csvg%3E" />'],
+        ['a data-block script', '<div><script type="application/ld+json">{}</script></div>'],
+        ['a script whose type is dynamic, which the runtime gate judges instead', '<div><script type={ t }>{ "{}" }</script></div>'],
+        ['an ordinary relative URL', '<a href="/docs">x</a>'],
+        ['a handler given a function', '<div onClick={ go }>x</div>']
+    ];
+
+    for (const [label, markup] of ACCEPTED)
+    {
+        it(`accepts ${ label }`, () =>
+        {
+            const source = `component C() { const t = "application/ld+json"; const go = () => undefined; ${ markup } }`;
+            expect(() => generateModule(source)).not.toThrow();
+            expect(() => generateModule(source, 'C.azeroth', { ssr: false })).not.toThrow();
+        });
+    }
+
+    it('leaves an author-vetted value alone: unsafeUrl is an expression and never folds', () =>
+    {
+        const source = 'import { unsafeUrl } from "azerothjs";'
+            + ' component C() { <a href={ unsafeUrl("javascript:void(0)") }>legacy</a> }';
+        expect(() => generateModule(source)).not.toThrow();
+        // It must reach the runtime BRANDED rather than be baked into the clone: the
+        // template carries no href at all, and both writers receive the unsafeUrl call.
+        const code = generateModule(source).code;
+        expect(code).toContain("tmpl('<a>legacy</a>')");
+        expect(code).toContain('unsafeUrl("javascript:void(0)")');
+    });
+});

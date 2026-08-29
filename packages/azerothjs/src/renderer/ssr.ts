@@ -36,7 +36,16 @@ import {
     CONTENT_PROPERTIES,
     VOID_ELEMENTS,
     RAW_TEXT_ELEMENTS,
-    isAriaStateAttribute
+    isAriaStateAttribute,
+    URL_ATTRIBUTES,
+    REFUSED_TAGS,
+    rendersAsImage,
+    isExecutableUrl,
+    scriptTypeExecutes,
+    executableUrlMessage,
+    srcdocMessage,
+    refusedTagMessage,
+    executableScriptMessage
 } from '../semantics.ts';
 
 /**
@@ -87,105 +96,6 @@ function neutralizeRawText(tagName: string, content: string): string
 // delimiters happen not to matter today.
 // eslint-disable-next-line no-control-regex -- matching control characters is the POINT: a control char in an attribute name is invalid HTML and an injection vector
 const INVALID_ATTR_NAME = /[\u0000-\u0020\u007F-\u009F"'`<>/=]/;
-
-/**
- * Attributes the browser resolves as a URL and then FETCHES or NAVIGATES to. A scheme it
- * treats as code (`javascript:`, `vbscript:`) or as a document it will run script from
- * (`data:text/html`, `data:image/svg+xml`) turns a rendered value into execution - which is
- * what every "user-supplied link" injection reduces to. Names are matched lowercased, as
- * HTML attribute names are case-insensitive.
- *
- * @internal
- */
-const URL_ATTRIBUTES: ReadonlySet<string> = new Set
-([
-    'href',
-    'src',
-    'action',
-    'formaction',
-    'poster',
-    'xlink:href',
-    'data'
-]);
-
-/**
- * ASCII whitespace and C0 controls, which browsers STRIP before resolving a URL: `java\tscript:`
- * and a leading-newline scheme both reach the parser as a real `javascript:` scheme. Testing the
- * raw string instead of the normalized one is exactly how a scheme classifier gets bypassed, so
- * the candidate is normalized the way the browser normalizes it first.
- *
- * @internal
- */
-// eslint-disable-next-line no-control-regex -- stripping control characters is the point: browsers remove them from a URL before resolving its scheme
-const URL_CONTROL_CHARS = /[\x00-\x20]/g;
-
-/** The scheme of a URL candidate, or no match for a relative URL. @internal */
-const URL_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
-
-/**
- * A `data:` URL carrying a non-SVG image. Inline images are legitimate and common, so they
- * stay allowed; `image/svg+xml` does NOT, because an SVG document carries script and runs it
- * when navigated to - a `data:image/svg+xml` href is a same-document XSS with an image's name.
- *
- * @internal
- */
-const DATA_IMAGE_URL = /^data:image\/(?!svg)[a-z0-9.+-]+[;,]/i;
-
-/** An `image/svg+xml` data URL, which is inert in an image context and scripted everywhere else. */
-const DATA_SVG_URL = /^data:image\/svg\+xml[;,]/i;
-
-/**
- * Tag+attribute pairs where the browser renders the URL as an IMAGE and nothing else. SVG
- * loaded there runs in the spec's secure static mode: no script, no external references, no
- * navigation - a guarantee every engine implements. Anywhere else (`<a href>`, `<iframe src>`,
- * a `<use xlink:href>`) an SVG document keeps its scripting, so the refusal stands there.
- *
- * @internal
- */
-const IMAGE_URL_CONTEXT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-    ['img', new Set(['src'])],
-    ['video', new Set(['poster'])]
-]);
-
-/** Whether `tag[attribute]` is one of the image-only contexts above. */
-function rendersAsImage(tag: string | undefined, name: string): boolean
-{
-    return tag !== undefined && IMAGE_URL_CONTEXT.get(tag.toLowerCase())?.has(name) === true;
-}
-
-/**
- * Tags refused outright: `<base>` rewrites where every relative URL on the page resolves to
- * (one injected tag re-points every link, form and script), and `<object>`/`<embed>` load a
- * document that runs script in this origin. `<iframe>` is deliberately NOT here - every video
- * and payment embed is one, and it is sandboxable and origin-isolated.
- *
- * @internal
- */
-const REFUSED_TAGS: ReadonlySet<string> = new Set(['base', 'object', 'embed']);
-
-/**
- * The `type` values a `<script>` can carry and still EXECUTE: the HTML JavaScript-MIME set,
- * plus `module` and the empty value (both mean "run this"). Any OTHER type is a data block the
- * browser never runs - `application/ld+json` is the documented case, and this serializer has
- * dedicated escaping for its content.
- *
- * @internal
- */
-const JAVASCRIPT_MIME_TYPES: ReadonlySet<string> = new Set
-([
-    '',
-    'module',
-    'text/javascript',
-    'application/javascript',
-    'text/ecmascript',
-    'application/ecmascript',
-    'text/jscript',
-    'text/livescript',
-    'text/x-javascript',
-    'text/x-ecmascript',
-    'application/x-javascript',
-    'application/x-ecmascript'
-]);
 
 /** The two things an author can take responsibility for: a URL's scheme, or a tag name. @internal */
 type UnsafeKind = 'url' | 'tag';
@@ -347,9 +257,7 @@ function assertSafeUrl(key: string, value: unknown, tag?: string): void
 
     if (name === 'srcdoc')
     {
-        throw new Error(`azeroth: refusing the ${ JSON.stringify(key) } attribute - srcdoc is an inline DOCUMENT, `
-            + 'so its value is markup that runs with the embedding page\'s privileges. Point the frame at a real URL, '
-            + 'or pass unsafeUrl(...) if the content is yours.');
+        throw new Error(`azeroth: ${ srcdocMessage(key) }`);
     }
 
     // Judged on the COERCED value, because that is what both writers put in the document:
@@ -361,10 +269,7 @@ function assertSafeUrl(key: string, value: unknown, tag?: string): void
         const written = asWritten(candidate);
         if (written !== null && isExecutableUrl(written, rendersAsImage(tag, name)))
         {
-            throw new Error(`azeroth: refusing ${ JSON.stringify(key) }=${ JSON.stringify(written) } - the browser would `
-                + 'execute this URL rather than fetch it (javascript:/vbscript:, or a data: URL that is not an image - '
-                + 'an SVG data URL is accepted only on <img src> and <video poster>, where it cannot script). '
-                + 'Validate the value, or pass unsafeUrl(...) if it is deliberate.');
+            throw new Error(`azeroth: ${ executableUrlMessage(key, written) }`);
         }
     }
 }
@@ -418,37 +323,10 @@ function asWritten(value: unknown): string | null
 }
 
 /**
- * Whether a URL hands the browser CODE rather than a resource, judged on the string the
- * browser would actually resolve.
- *
- * @internal
- */
-function isExecutableUrl(value: string, imageContext = false): boolean
-{
-    const candidate = value.replace(URL_CONTROL_CHARS, '');
-    const scheme = URL_SCHEME.exec(candidate)?.[1]?.toLowerCase();
-
-    if (scheme === undefined)
-    {
-        return false;
-    }
-
-    // Every data: URL is same-origin-ish content the browser parses; only a real image is
-    // inert, so the allowance is stated positively. SVG joins that allowance ONLY where the
-    // browser renders it as an image, which strips its scripting.
-    if (scheme === 'data')
-    {
-        return !DATA_IMAGE_URL.test(candidate) && !(imageContext && DATA_SVG_URL.test(candidate));
-    }
-
-    return scheme === 'javascript' || scheme === 'vbscript';
-}
-
-/**
  * Validates the tag h() was handed, in every render mode, and returns the concrete tag name to
  * build with (unwrapping an {@link unsafeTag} marker). The refused set is the markup that turns
  * content into execution - see {@link REFUSED_TAGS} for why `<iframe>` is not in it, and
- * {@link JAVASCRIPT_MIME_TYPES} for why a data-block `<script>` is allowed.
+ * {@link scriptTypeExecutes} for why a data-block `<script>` is allowed.
  *
  * The original casing is returned, not the lowercased name: `foreignObject` and the other
  * camelCase SVG tags must reach createElementNS spelled exactly as given.
@@ -473,16 +351,12 @@ export function assertSafeTag(tag: string, props: Props): string
 
     if (REFUSED_TAGS.has(name))
     {
-        throw new Error(`azeroth: refusing to render <${ name }> - it loads a document that runs script in this origin `
-            + '(or, for <base>, silently re-targets every relative URL on the page). Use <iframe> for an embed, '
-            + `or unsafeTag('${ name }') if it is deliberate.`);
+        throw new Error(`azeroth: ${ refusedTagMessage(name) }`);
     }
 
     if (name === 'script' && scriptExecutes(props))
     {
-        throw new Error('azeroth: refusing to render an executable <script> - its content would run with the page\'s '
-            + 'privileges. A data block (type="application/ld+json" or any other non-JavaScript type) renders as-is; '
-            + 'pass unsafeTag(\'script\') if the execution is deliberate.');
+        throw new Error(`azeroth: ${ executableScriptMessage() }`);
     }
 
     return raw;
@@ -533,13 +407,9 @@ function scriptExecutes(props: Props): boolean
 
     const type = resolveValue(props.type);
 
-    if (typeof type !== 'string')
-    {
-        return true;
-    }
-
-    // A MIME's parameters (`;charset=utf-8`) do not change what it is.
-    return JAVASCRIPT_MIME_TYPES.has(type.trim().toLowerCase().split(';')[0] ?? '');
+    // A non-string type (a reactive one) cannot be proven inert at creation, so it fails
+    // closed here; the MIME judgement itself is the shared predicate's.
+    return typeof type !== 'string' || scriptTypeExecutes(type);
 }
 
 /**

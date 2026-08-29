@@ -65,6 +65,7 @@ import type { ReactiveSources } from './dep.ts';
 import { parseModule, step, skipTrivia } from './parser.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { findConstructs } from './lower-reactive.ts';
+import { evalConstant } from './optimize.ts';
 import { arrayFormEachName } from './analyze.ts';
 import { DECLARATION_KEYWORDS } from './keyword-spec.ts';
 import {
@@ -75,7 +76,17 @@ import {
     reservedHostAttributeMessage,
     contentChildrenMessage,
     bindWriteBack,
-    CONTENT_PROPERTIES
+    CONTENT_PROPERTIES,
+    handlerValueMessage,
+    URL_ATTRIBUTES,
+    REFUSED_TAGS,
+    rendersAsImage,
+    isExecutableUrl,
+    scriptTypeExecutes,
+    executableUrlMessage,
+    srcdocMessage,
+    refusedTagMessage,
+    executableScriptMessage
 } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
@@ -3011,6 +3022,131 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[], userOut
 }
 
 /**
+ * The value a build-time safety check can judge: a literal, or an expression the constant
+ * FOLD will bake into the clone template (`href={'javascript:' + x}` where x folds). The
+ * fold's own `evalConstant` decides, so this rule and the fold cannot disagree about what
+ * "static" means - and a call expression never folds, which is why `unsafeUrl(...)` stays
+ * an expression, reaches the runtime gate branded, and is never flagged here.
+ *
+ * @internal
+ */
+function foldedValue(value: MarkupAttribute['value']): string | null
+{
+    if (value.kind === 'static')
+    {
+        return value.value;
+    }
+    if (value.kind !== 'expression')
+    {
+        return null;
+    }
+    const folded = evalConstant(value.code);
+    return folded === null ? null : String(folded);
+}
+
+/**
+ * GRAMMAR Mode equivalence for the values the compiler FOLDS: a static tag or attribute is
+ * baked into the clone template, which no runtime writer inspects, so a program the SSR
+ * gate refuses would still render on the client - and in a `dom`-target build the gated
+ * branch is not even emitted. The refusals are therefore applied HERE, at build time, over
+ * exactly the values that fold, using the one policy the renderer applies at runtime.
+ *
+ * Deliberately NOT restated here: the tag-name and attribute-name productions (the markup
+ * parser refuses those first), the `on*` reserved namespace and the `ref` value rule (each
+ * already has its own rule above). What a static value CAN reach is a URL scheme, `srcdoc`,
+ * a refused tag, an executing `<script>`, and a handler-form name given a string - the last
+ * being the only one that puts live code in the cloned document.
+ *
+ * @internal
+ */
+function renderSafetyRules(el: MarkupElement, out: AzerothDiagnostic[]): void
+{
+    const tag = el.tag.toLowerCase();
+    if (REFUSED_TAGS.has(tag))
+    {
+        out.push({
+            code: 'azeroth/refused-tag',
+            severity: 'error',
+            message: `${ refusedTagMessage(tag) } (Refused at build time because a folded template reaches the document unchecked.)`,
+            start: el.start,
+            end: el.start + tag.length + 1
+        });
+    }
+    if (tag === 'script')
+    {
+        const type = el.attributes.find(attr => !attr.spread && attr.name === 'type');
+        // A type the compiler cannot fold is HOISTED out of the template and applied at
+        // runtime, where the gate resolves it and judges the real value - so flagging it
+        // here would refuse `<script type={ldJson}>`, a program the runtime accepts. Only
+        // an ABSENT type, or one that folds to an executing MIME, is judged at build time.
+        const dynamicType = type !== undefined && foldedValue(type.value) === null;
+        if (!dynamicType && scriptTypeExecutes(type === undefined ? undefined : foldedValue(type.value) ?? undefined))
+        {
+            out.push({
+                code: 'azeroth/executable-script',
+                severity: 'error',
+                message: executableScriptMessage(),
+                start: el.start,
+                end: el.start + tag.length + 1
+            });
+        }
+    }
+
+    for (const attr of el.attributes)
+    {
+        if (attr.spread || attr.name === null)
+        {
+            continue;
+        }
+        const name = attr.name.toLowerCase();
+        // A handler-form name whose value is a STRING is written as an inline event handler
+        // content attribute by the clone - the one shape in this set that hands the browser
+        // code rather than a URL. An expression value is the legal form and is typed elsewhere.
+        // Handler-form is classified on the AUTHORED name: `onClick` is a handler, `onclick`
+        // is a reserved name the rule above already refuses. Only the URL checks below fold
+        // case, because HTML attribute names are case-insensitive and these are not.
+        if (hostEventType(attr.name) !== null && attr.value.kind !== 'expression')
+        {
+            out.push({
+                code: 'azeroth/handler-value',
+                severity: 'error',
+                message: handlerValueMessage(attr.name, attr.value.kind === 'none' ? 'a bare attribute' : 'string'),
+                start: attr.start,
+                end: attr.end
+            });
+            continue;
+        }
+        const written = foldedValue(attr.value);
+        if (written === null)
+        {
+            continue;
+        }
+        if (name === 'srcdoc')
+        {
+            out.push({
+                code: 'azeroth/unsafe-url',
+                severity: 'error',
+                message: srcdocMessage(attr.name),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+        else if (URL_ATTRIBUTES.has(name) && isExecutableUrl(written, rendersAsImage(tag, name)))
+        {
+            // The TAG is load-bearing: it is what lets an inline image data URL pass on
+            // `<img src>` while the same string is refused on `<a href>`.
+            out.push({
+                code: 'azeroth/unsafe-url',
+                severity: 'error',
+                message: executableUrlMessage(attr.name, written),
+                start: attr.start,
+                end: attr.end
+            });
+        }
+    }
+}
+
+/**
  * GRAMMAR two-way binding: `bind:p={lvalue}` REQUIRES an expression. A static or bare
  * `bind:` never binds - the lowerer's value-kind check precedes its bind branch - so on a
  * host it would bake a literal `bind:p` attribute into the document, and on a component
@@ -3041,6 +3177,11 @@ function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: M
     return (el) =>
     {
         bindExpressionRule(el, out);
+        // Host-only: a component tag names a function, not an element the browser parses.
+        if (!el.isComponent)
+        {
+            renderSafetyRules(el, out);
+        }
 
         if (el.isComponent)
         {
