@@ -414,6 +414,48 @@ export function registerIsr(registration: IsrRegistration): void
     // so the query cannot affect it, one learned pathname covers every query variant, and
     // a key-based set would let junk queries mint unbounded permanent entries. Capped,
     // oldest-out: eviction (like a restart) merely re-opens one discovery window.
+    /**
+     * Query-bearing keys seen ONCE and not yet admitted to the shared cache.
+     *
+     * A cold key must be rendered - what it MEANS is a correctness question the framework
+     * cannot answer, because a loader and `useQuery()` may read any parameter whether or
+     * not a search schema declares it. What IS decidable is whether an unproven key may
+     * EVICT a proven one. So a query-bearing key renders and is served exactly as before,
+     * byte for byte, but only earns a cache slot on its SECOND observation.
+     *
+     * That closes the eviction half: a tracking parameter arriving once per visitor -
+     * every ad click and shared link carries its own `utm_source`/`fbclid` - can no longer
+     * displace the real entries, while a genuinely popular query pays one extra render
+     * once. It does NOT bound the render itself; a cold key must either render or be
+     * refused, and refusing is a rate decision that belongs at the HTTP edge.
+     *
+     * Bounded oldest-out, the same discipline `learned` uses below: evicting merely
+     * re-opens the discovery window for that key.
+     */
+    const provisional = new Set<string>();
+    const admitToCache = (target: Target): boolean =>
+    {
+        // No query component: this is the page's own identity, not visitor-supplied width.
+        if (target.key === target.pathname)
+        {
+            return true;
+        }
+        if (provisional.delete(target.key))
+        {
+            return true;
+        }
+        if (provisional.size >= 1000)
+        {
+            const oldest = provisional.values().next().value;
+            if (oldest !== undefined)
+            {
+                provisional.delete(oldest);
+            }
+        }
+        provisional.add(target.key);
+        return false;
+    };
+
     const learned = new Set<string>();
     const learn = (pathname: string): void =>
     {
@@ -610,7 +652,7 @@ export function registerIsr(registration: IsrRegistration): void
         if (result.kind === 'html' && result.status === 200)
         {
             const entry: PageEntry = { html: result.html, status: 200, createdAt: Date.now(), build: await buildId };
-            if (!learned.has(target.pathname))
+            if (!learned.has(target.pathname) && admitToCache(target))
             {
                 await writeCache(target.key, entry);
             }

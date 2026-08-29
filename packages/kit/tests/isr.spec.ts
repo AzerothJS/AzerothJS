@@ -578,12 +578,18 @@ describe('ISR and the query string', () =>
 
     it('serves a repeated query from cache rather than re-rendering', async () =>
     {
+        // A query-bearing key earns its cache slot on its SECOND observation, so a repeat
+        // reuses from the third request on. The guarantee this test exists for - a REPEATED
+        // query stops re-rendering - is unchanged; only the observation it lands on moved,
+        // which is the price of never letting a once-seen key evict a proven one.
         const rig = build([{ path: '/search', component, render: 'static', revalidate: 60 }]);
         const first = await fetch(rig.app, '/search?q=same');
         const second = await fetch(rig.app, '/search?q=same');
+        const third = await fetch(rig.app, '/search?q=same');
         expect(first.headers.get('x-azeroth-cache')).toBe('miss');
-        expect(second.headers.get('x-azeroth-cache')).toBe('hit');
-        expect(rig.calls()).toBe(1);
+        expect(second.headers.get('x-azeroth-cache')).toBe('miss');
+        expect(third.headers.get('x-azeroth-cache')).toBe('hit');
+        expect(rig.calls()).toBe(2);
     });
 
     it('normalises parameter order so one page is not cached twice', async () =>
@@ -592,9 +598,13 @@ describe('ISR and the query string', () =>
         // a separate cache entry, which is how a bounded cache gets filled by an attacker.
         const rig = build([{ path: '/search', component, render: 'static', revalidate: 60 }]);
         await fetch(rig.app, '/search?a=1&b=2');
+        // The permutation is the SAME key, which is what makes it the second observation and
+        // admits it; the third request then reuses. One key, not two - the property under test.
         const second = await fetch(rig.app, '/search?b=2&a=1');
-        expect(second.headers.get('x-azeroth-cache')).toBe('hit');
-        expect(rig.calls()).toBe(1);
+        const third = await fetch(rig.app, '/search?a=1&b=2');
+        expect(second.headers.get('x-azeroth-cache')).toBe('miss');
+        expect(third.headers.get('x-azeroth-cache')).toBe('hit');
+        expect(rig.calls()).toBe(2);
     });
 
     it('a bare request still seeds from the prerendered file', async () =>
@@ -766,5 +776,87 @@ describe('FilePageCache creates the directory it was given', () =>
 
         await cache.set('/p', { html: '<p>two</p>', status: 200, createdAt: Date.now(), build: 'b1' });
         expect((await cache.get('/p'))?.html).toBe('<p>two</p>');
+    });
+});
+
+// A cold key must be RENDERED - what a query means is a correctness question the framework
+// cannot answer, because a loader and useQuery() may read any parameter whether or not a
+// search schema declares it. What IS decidable is whether an unproven key may EVICT a proven
+// one. So a once-seen query is served exactly as before and simply does not take a cache
+// slot; it earns one on its second observation.
+describe('an unproven query key may render but may not evict', () =>
+{
+    function rigWithCache(maxEntries: number): { app: App; calls: () => number; sets: string[] }
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+        let count = 0;
+        const inner = new MemoryPageCache({ maxEntries });
+        const sets: string[] = [];
+        const cache: PageCache = {
+            get: (key) => inner.get(key),
+            set: (key, entry) =>
+            {
+                sets.push(key);
+                return inner.set(key, entry);
+            },
+            delete: (key) => inner.delete(key)
+        };
+        const app = new App();
+        mountPages(app, {
+            routes: [{ path: '/blog', component, render: 'static', revalidate: 60 }],
+            clientDir: dir,
+            cache,
+            renderer: (url: string): Promise<PageResult> =>
+            {
+                count++;
+                return Promise.resolve({ kind: 'html', status: 200, html: `<html><body>R${ count }:${ url }</body></html>` });
+            }
+        });
+        return { app, calls: () => count, sets };
+    }
+
+    it('serves a first-seen query normally but takes no cache slot for it', async () =>
+    {
+        const rig = rigWithCache(1000);
+        const response = await fetch(rig.app, '/blog?utm_source=a');
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain('/blog?utm_source=a');
+        expect(rig.sets).not.toContain('/blog?utm_source=a');
+
+        // CONTROL: the bare path is the page's own identity and is admitted immediately -
+        // without this the arm would pass against a cache that admits nothing at all.
+        await fetch(rig.app, '/blog');
+        expect(rig.sets).toContain('/blog');
+    });
+
+    it('does not let one-shot junk queries evict a warm entry', async () =>
+    {
+        const rig = rigWithCache(4);
+        await fetch(rig.app, '/blog');
+        const before = rig.calls();
+        for (let n = 0; n < 40; n++)
+        {
+            await fetch(rig.app, `/blog?utm_source=${ n }`);
+        }
+        const warm = await fetch(rig.app, '/blog');
+        expect(warm.headers.get('x-azeroth-cache')).toBe('hit');
+        expect(rig.calls()).toBe(before + 40);
+    });
+
+    it('CONTROL: a REPEATED junk query does earn a slot and can evict', async () =>
+    {
+        // The biting half: if the arm above passed merely because the cache never filled,
+        // this would pass too. Issuing each junk key twice admits them and pushes the warm
+        // entry out, so the first arm is measuring admission and not an idle cache.
+        const rig = rigWithCache(4);
+        await fetch(rig.app, '/blog');
+        for (let n = 0; n < 40; n++)
+        {
+            await fetch(rig.app, `/blog?utm_source=${ n }`);
+            await fetch(rig.app, `/blog?utm_source=${ n }`);
+        }
+        const warm = await fetch(rig.app, '/blog');
+        expect(warm.headers.get('x-azeroth-cache')).toBe('miss');
     });
 });
