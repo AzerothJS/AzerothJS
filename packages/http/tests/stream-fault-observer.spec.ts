@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { App } from '../src/app.ts';
+import { sse } from '../src/sse.ts';
 
 interface Seen
 {
@@ -119,6 +120,45 @@ describe('a producer failure after the headers are sent', () =>
         const response = await app.handle(new Request('http://local/feed'));
         // The PRODUCER's error, not the reporter's.
         await expect(response.text()).rejects.toThrow('upstream died mid-stream');
+    });
+
+    it('CONTROL: an SSE slow-client DROP is not a server fault', async () =>
+    {
+        // Policy succeeding, not a producer failing. The only way to end a dropped client's
+        // stream is to error it, which is indistinguishable from a real fault at the kernel -
+        // so the layer that knows brands it. Without the brand this reports, which is a
+        // client-caused event filed as a server error, the exact mislabelling this whole
+        // thread has been closing.
+        const reported: string[] = [];
+        const app = new App({ onStreamError: (error) => void reported.push((error as Error).message) });
+        app.get('/events', (context) => sse(context.request, async (connection) =>
+        {
+            for (let i = 0; i < 400; i++)
+            {
+                connection.send({ data: 'x'.repeat(500) });
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+        }, { maxBufferedBytes: 1024, heartbeatMs: 0 }));
+
+        const response = await app.handle(new Request('http://local/events'));
+        const reader = response.body!.getReader();
+        await reader.read();
+        // Stop consuming so the producer runs ahead and trips the backpressure floor.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        try
+        {
+            for (let i = 0; i < 20; i++)
+            {
+                await reader.read();
+            }
+        }
+        catch
+        {
+            // The drop reaches the CONSUMER, which is intended and unchanged.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(reported).toEqual([]);
     });
 
     it('CONTROL: with no observer configured nothing changes', async () =>

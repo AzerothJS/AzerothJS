@@ -197,7 +197,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 ### Fixed
 
 - **Added `onStreamError`: a streaming producer that failed after the headers were sent
-  reported to nobody.** Such a failure cannot become a status - the headers left long ago - so
+  reported to nobody.** An SSE client dropped for
+  falling `maxBufferedBytes` behind is deliberately excluded: ending its stream requires
+  erroring it, which the kernel cannot distinguish from a producer dying, so the layer that
+  knows now marks it as client-caused. Such a failure cannot become a status - the headers left long ago - so
   the consumer received a truncated body while the server recorded the 2xx it had already sent,
   and over h2c that truncation is byte-identical to a normal end, invisible on both sides. The
   new `AppOptions.onStreamError` receives the error and its request. It is deliberately NOT

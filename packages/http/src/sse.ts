@@ -37,6 +37,7 @@
  */
 
 import { captureRequestContext } from './request-root.ts';
+import { markClientFault } from './errors.ts';
 
 export interface SseSendOptions
 {
@@ -271,7 +272,9 @@ export function sse(
                     stop();
                     try
                     {
-                        streamController.error(new Error(`SSE client fell ${ maxBufferedBytes } bytes behind and was dropped`));
+                        // Branded: this is policy succeeding, not a producer failing, so a
+                        // server-fault reporter must not count it (see markClientFault).
+                        streamController.error(markClientFault(new Error(`SSE client fell ${ maxBufferedBytes } bytes behind and was dropped`)));
                     }
                     catch
                     {

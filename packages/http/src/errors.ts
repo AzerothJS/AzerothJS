@@ -233,6 +233,30 @@ export function notFoundResponse(): Response
     return new PayloadResponse(NOT_FOUND_BODY, 404, NOT_FOUND_HEADERS);
 }
 
+/**
+ * @internal Brands an error as CAUSED BY THE CLIENT, so a server-fault reporter skips it.
+ *
+ * Some failures are policy working correctly: an SSE client that falls `maxBufferedBytes`
+ * behind is dropped ON PURPOSE, and the only way to end its stream is to error it. From the
+ * kernel's side that is indistinguishable from a producer dying, so the layer that KNOWS says
+ * so here. Without it a dropped slow client is filed as a server stream fault - the same
+ * mislabelling `clientGone` exists to prevent, arriving by a different road.
+ */
+const CLIENT_FAULT = Symbol('azeroth.clientFault');
+
+/** @internal Marks an error the client caused; returns it for use in a throw or a reject. */
+export function markClientFault<E extends object>(error: E): E
+{
+    Object.defineProperty(error, CLIENT_FAULT, { value: true, enumerable: false });
+    return error;
+}
+
+/** @internal Whether {@link markClientFault} branded this value. */
+export function isClientFault(error: unknown): boolean
+{
+    return typeof error === 'object' && error !== null && CLIENT_FAULT in error;
+}
+
 /** What the kernel knows about an error's context beyond the error itself. */
 export interface ErrorContext
 {

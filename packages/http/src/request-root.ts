@@ -38,6 +38,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { abortDataCacheFetches, markServerRuntime, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
+import { isClientFault } from './errors.ts';
 
 /** What the async context carries for one request. @internal */
 interface RequestScope
@@ -340,7 +341,13 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
                 // does not cost us the only record of it.
                 try
                 {
-                    options.onStreamError?.(error, arg);
+                    // A fault the client caused is not a server fault, however it arrives: an
+                    // SSE slow-client drop errors its own stream ON PURPOSE, and reporting that
+                    // would mislabel policy working correctly.
+                    if (!isClientFault(error))
+                    {
+                        options.onStreamError?.(error, arg);
+                    }
                 }
                 catch
                 {
