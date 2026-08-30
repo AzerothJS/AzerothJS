@@ -369,6 +369,55 @@ function joinPaths(parent: string, child: string): string
  *
  * @internal
  */
+/**
+ * @internal The memo behind {@link flattenRoutesFor}. Keyed on the routes ARRAY, so a table
+ * that dies takes its entry with it; the value holds `Route` objects already reachable from
+ * the key, so it adds no retention of its own.
+ */
+const FLATTENED = new WeakMap<Route[], LeafEntry[]>();
+
+/**
+ * The memoized TOP-LEVEL flatten - the one every server-side selection goes through.
+ *
+ * The server re-flattens per selection where the client flattens once at construction, and a
+ * selection is not rare: a warm ISR hit pays one (the guarded predicate runs before the cache
+ * read), an SSR render pays two, and an ISR cold miss pays three. At a 250-leaf table that is
+ * the dominant cost of a cache hit.
+ *
+ * TOP LEVEL ONLY, and that is a correctness boundary rather than a convenience. {@link
+ * flattenRoutes} recurses on `route.children` with a different `parentPath`/`parentChain`, so
+ * an array's identity determines its table ONLY at the root. A `children` array mounted under
+ * two parents - a settings subtree under both `/admin` and `/account` - is legal, and a memo
+ * consulted inside the recursion would hand the second parent the first's chains: the second
+ * subtree's URLs would resolve to the first's chain and {@link guardedMatch} would report the
+ * first's guard verdict. Mounted the other way round that is an authorization BYPASS. The
+ * recursion is therefore left with no knowledge of caching at all, so no later edit to it can
+ * reintroduce the hazard.
+ *
+ * INVARIANT ON THE CALLER: a routes array must not be mutated after its first selection. The
+ * memo is keyed on identity, not contents, so a route APPENDED afterwards is invisible - and
+ * it fails open, since a guard added late would not be seen and the page could be cached. No
+ * route table in this repo is mutated after construction and there is no dynamic-registration
+ * API; a server that builds routes per request should build a NEW array, which simply misses
+ * the memo.
+ *
+ * @internal
+ */
+export function flattenRoutesFor(routes: Route[]): LeafEntry[]
+{
+    const memo = FLATTENED.get(routes);
+    if (memo !== undefined)
+    {
+        return memo;
+    }
+    // Deliberately outside the set: flattenRoutes THROWS on a malformed pattern (a duplicate
+    // param, a mid-pattern wildcard), and a negative result must never be cached - the next
+    // call has to throw again rather than return a half-built table.
+    const flattened = flattenRoutes(routes);
+    FLATTENED.set(routes, flattened);
+    return flattened;
+}
+
 export function flattenRoutes(
     routes: Route[],
     parentPath = '',
@@ -588,6 +637,12 @@ export function createRouter(config: RouterConfig): Router
 function buildRouter(config: RouterConfig): Router
 {
     validateRouteTree(config.routes);
+    // NOT flattenRoutesFor, and not because there is nothing to gain (there isn't - this runs
+    // once per router). `RouteMatch.matched` is PUBLIC and MUTABLE (types.ts) and matchPathname
+    // hands out `entry.matched` verbatim below, so a component reaching it through useMatch()
+    // can write to it. createRouter runs per SSR request, which is what keeps that array
+    // request-private; sharing one table here would hand every concurrent render the same
+    // mutable chain.
     const leaves = flattenRoutes(config.routes);
     const history: HistoryAdapter = config.history ?? createBrowserHistory();
 

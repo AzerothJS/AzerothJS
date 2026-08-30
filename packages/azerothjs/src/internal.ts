@@ -132,6 +132,9 @@ export { ErrorBoundary } from './component/index.ts';
 export { Outlet } from './router/index.ts';
 export { guardedMatch } from './router/handoff.ts';
 
+/** @internal The memoized top-level flatten; exported for the arms that pin its boundary. */
+export { flattenRoutesFor } from './router/router.ts';
+
 // Keyword lowerings living outside reactivity.
 export { createForm, createFieldArray } from './form/index.ts';
 

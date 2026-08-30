@@ -32,7 +32,7 @@
 
 import { acceptRedirectTarget } from './redirect-target.ts';
 import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
-import { flattenRoutes, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
+import { flattenRoutesFor, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { declaredQuery, parseQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
@@ -109,7 +109,9 @@ function selectChain(routes: Route[], url: string | URL): SelectedChain | null
 {
     const full = typeof url === 'string' ? url : url.pathname + url.search;
     const { pathname, search } = splitFullPath(full);
-    for (const entry of flattenRoutes(routes))
+    // Memoized: this walk is EVERY server-side selection - a warm ISR hit, an SSR render, a
+    // cold miss - and it is the only front door both guardedMatch and matchAndLoad use.
+    for (const entry of flattenRoutesFor(routes))
     {
         const result = entry.matcher.match(pathname);
         if (result !== null)

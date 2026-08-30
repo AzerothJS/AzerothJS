@@ -196,6 +196,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **The server re-flattened the whole route table on every selection; it is now memoized per
+  route array.** Every server-side selection paid one full flatten plus a `compilePath` per
+  leaf - a warm ISR hit pays one (the guarded predicate runs before the cache read), an SSR
+  render two, an ISR cold miss three - where the client flattens once at construction. Measured
+  server CPU on a warm hit, transport included: at 41 leaves roughly 62us falls to 38us, and at
+  251 leaves roughly 167us falls to 69us. Below about 40 leaves the gain is within noise, so
+  this matters for real tables rather than small ones. The memo is TOP-LEVEL ONLY by
+  construction: `flattenRoutes` itself is untouched, because a `children` array mounted under
+  two parents is legal and a memo consulted inside the recursion would hand the second parent
+  the first's chains, making `guardedMatch` answer about the wrong chain - an authorization
+  bypass, not just wrong routing. **New invariant:** do not mutate a routes array after its
+  first server-side selection. The memo keys on array identity, so a route appended afterwards
+  is invisible, and it fails OPEN - a guard added late would not be seen. Build a new array
+  instead; it simply misses the memo. `createRouter` deliberately still flattens per call,
+  because `RouteMatch.matched` is public and mutable and reaching components through
+  `useMatch()`.
+
 - **Documented that open connections do NOT bound concurrent ISR renders.** A cold production
   outlives the request that started it, so a client that issues requests and drops each socket
   immediately buys far more work than one that waits: measured at a fixed 8 sockets over one
