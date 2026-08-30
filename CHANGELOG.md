@@ -196,6 +196,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **Documented that open connections do NOT bound concurrent ISR renders.** A cold production
+  outlives the request that started it, so a client that issues requests and drops each socket
+  immediately buys far more work than one that waits: measured at a fixed 8 sockets over one
+  second against a 60ms render, waiting yields 104 renders at peak concurrency 8 (its connection
+  count), while dropping yields 1568 renders at peak concurrency 202. Edge rate limiting is
+  therefore load-bearing for ISR rather than optional, and the kit README now says so with the
+  numbers. No behaviour changed: cancelling an abandoned production was designed and rejected on
+  measurement - on a cold path its output is what the next visitor gets served (aborting turns
+  useful work into repeated work), and the loader fan-out is issued synchronously around 0.8ms
+  while a socket reset is not observable until around 1.9ms, so no cancellation signal can
+  prevent it.
+
 - **Corrected a work-unit deadline doc that told operators a released scope was write-safe.**
   `createWorkUnitInterceptor({ deadlineMs })` documented that a unit continuing past its
   deadline gets "direct fetches, correct data". Measured, that holds only for a read STARTED

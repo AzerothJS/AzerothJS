@@ -197,11 +197,31 @@ It keys on the client IP through the same trusted-proxy boundary as `clientIp`, 
 with `Retry-After`, and stamps `RateLimit-*` headers so a well-behaved client paces itself
 before it is ever refused. Size it against your render budget, not just your cache hit rate.
 
-What the kit does do on its own is stop paying for work nobody is waiting for: a
-`render: 'server'` page and a guarded live render both receive the request's disconnect signal,
-so a client that goes away takes its loaders' fan-out with it. Two render paths deliberately do
-NOT take it - a coalesced ISR production is shared with every other request queued on the same
-key, and a background regeneration has no waiting client at all.
+**That limit is load-bearing for ISR, not a nicety**, and the reason is worth being precise
+about. It is tempting to assume open connections bound concurrent renders: a client waiting for
+a response cannot ask for another until it arrives. They do not. Measured at a fixed budget of
+8 sockets over one second against a 60 ms render: a client that WAITS gets 104 renders and pins
+peak concurrency to 8, exactly its connection count. A client that issues the request and
+immediately drops the socket gets **1568 renders and 202 concurrent** - about 15x the renders
+and 25x the concurrency from the same 8 sockets. Dropping the connection does not buy the same
+work more cheaply; it removes the only bound the server had, because a production outlives the
+request that started it and nothing caps how many run at once. Budget the limiter against that
+number, not against the polite one.
+
+An abandoned production is deliberately NOT cancelled, and cancelling it would not help anyway:
+
+- On a cold path its output is exactly what the next visitor wants. Measured: five waiters
+  abort, the render completes, and the next request is a `hit` with no second render. Aborting
+  there would turn useful work into repeated work.
+- The loader fan-out cannot be un-issued. `matchAndLoad` dispatches every level of the chain
+  synchronously, and a socket reset is not observable until after that has happened - measured,
+  the fan-out goes out around 0.8 ms and the abort lands around 1.9 ms. No cancellation signal
+  can beat it, so the bound has to be arrival rate, at the edge.
+
+What the kit does cancel is work with exactly one waiter and no cache value: a `render: 'server'`
+page and a guarded live render both receive the request's disconnect signal. A coalesced ISR
+production does not, because it is shared with every request queued on the same key, and a
+background regeneration does not, because it has no waiting client at all.
 
 ### A deploy makes a shared cache go cold
 

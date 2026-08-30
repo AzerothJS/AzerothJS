@@ -402,6 +402,17 @@ export function cacheKeyFor(pathname: string, search: string): string
 export function registerIsr(registration: IsrRegistration): void
 {
     const { app, path, revalidate, cache, renderer, shell, seedFile, guarded, onError, buildId } = registration;
+    // UNCAPPED, unlike `provisional` and `learned` below, and that is a known bound living
+    // outside this file rather than an oversight. A production outlives the request that
+    // started it, so open connections do NOT bound how many run at once: measured at 8 sockets
+    // over one second against a 60ms render, a client that WAITS gets 104 renders and peak
+    // concurrency 8 - its connection count - while one that drops each socket immediately gets
+    // 1568 renders and peak 202. Capping here was considered and rejected twice: a cap cannot
+    // reduce render CPU (renderToString is synchronous, so the CPU is already serialized) and
+    // measured 35% SLOWER by destroying the loader phase's overlap. Cancelling an abandoned
+    // production is also useless - matchAndLoad issues the whole fan-out synchronously, around
+    // 0.8ms, and a socket reset is not observable until around 1.9ms. The bound is arrival
+    // rate at the edge (`rateLimit`), which the README states as load-bearing for ISR.
     const inflight = new Map<string, Promise<Produced>>();
     const regenerating = new Set<string>();
 
