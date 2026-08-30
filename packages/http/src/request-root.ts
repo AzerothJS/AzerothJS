@@ -537,10 +537,19 @@ export type WorkUnitInterceptor = (unit: () => unknown, report: (error: unknown)
  *
  * `deadlineMs` (opt-in, NO default) bounds a unit that never settles: on fire the unit's
  * cache scope is RELEASED and a timeout error reports through the host's reporter. The
- * unit itself cannot be cancelled - it continues at the released scope (direct fetches,
- * correct data), and its cleanups still run at the eventual settle, reading a released
- * cache rather than settled entries. Set it for untrusted-input-driven units (ws);
- * leave cron's legitimate long runs unbounded.
+ * unit itself cannot be cancelled - it continues at the released scope, and its cleanups
+ * still run at the eventual settle, reading a released cache rather than settled entries.
+ * Set it for untrusted-input-driven units (ws); leave cron's legitimate long runs unbounded.
+ *
+ * WHAT A READ SEES ACROSS THE RELEASE, which decides whether a continuing unit may write.
+ * A read STARTED AFTER the release fetches directly and gets correct data. A read already
+ * IN FLIGHT resolves `undefined`: releasing aborts the in-flight fetch and resolves its
+ * waiters, and that prompt, total resolution is what keeps teardown bounded - letting those
+ * readers re-fetch instead would leave the deadline bounding nothing, which is the one job
+ * it has. So a unit that continues past its deadline MUST NOT PERSIST on a value it read
+ * across the release; it has already been reported as over deadline, and `undefined` there
+ * is indistinguishable from absent data. {@link raceDeadline} declines to release for this
+ * exact reason - it has a live client, so it can afford to leave the scope alone.
  */
 export function createWorkUnitInterceptor(options: { deadlineMs?: number } = {}): WorkUnitInterceptor
 {

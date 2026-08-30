@@ -196,6 +196,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **Corrected a work-unit deadline doc that told operators a released scope was write-safe.**
+  `createWorkUnitInterceptor({ deadlineMs })` documented that a unit continuing past its
+  deadline gets "direct fetches, correct data". Measured, that holds only for a read STARTED
+  AFTER the release; a read already IN FLIGHT resolves `undefined`, because releasing aborts
+  the fetch and resolves its waiters - and that prompt, total resolution is what keeps teardown
+  bounded, so it is deliberate rather than a bug. No behaviour changed, but if you set
+  `deadlineMs` on a ws host, a unit that keeps running must not PERSIST on a value it read
+  across the release. Fixing the cache instead was designed, reviewed, and rejected: it broke
+  the boundedness the deadline exists for, and did not even close the hazard, since a
+  revalidating entry would hand back stale data rather than `undefined`.
+
 - **A malformed declaration could silently drop its value; the compiler now rejects the
   shape with a named, located error.** `state rows[] = [1, 2]` emitted
   `createSignal(undefined)` - the `[]` suffix is `form`-only per the grammar, TypeScript's

@@ -8,7 +8,7 @@
 // path fires still sees the live cache.
 import { describe, expect, it, afterEach } from 'vitest';
 
-import { App, onWorkUnitCleanup } from '@azerothjs/http';
+import { App, createWorkUnitInterceptor, onWorkUnitCleanup } from '@azerothjs/http';
 import { cached } from 'azerothjs';
 import { getDataCache, resetDataCache, type DataCache } from 'azerothjs/internal';
 
@@ -92,6 +92,42 @@ describe('teardown releases the request cache', () =>
         // And the release that FOLLOWS the cleanup rounds swept the repopulation.
         expect((cache as unknown as DataCache).released).toBe(true);
         expect((cache as unknown as DataCache).allEntries().length).toBe(0);
+    });
+
+    it('a work-unit deadline: a read STARTED AFTER the release fetches directly, one already IN FLIGHT does not', async () =>
+    {
+        // The two halves of what the deadlineMs contract promises, pinned together - the
+        // in-flight half is already pinned elsewhere by name, but only the CONTRAST makes the
+        // documented rule executable. Fixing the in-flight half in the cache was reviewed and
+        // rejected: letting those readers re-fetch removes the prompt, total resolution that
+        // keeps teardown bounded, which is the deadline's one job.
+        const tick = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+        const load = cached(familyName(), async (id: string) =>
+        {
+            await tick(120);
+            return `REAL-${ id }`;
+        });
+
+        const intercept = createWorkUnitInterceptor({ deadlineMs: 25 });
+        const reported: unknown[] = [];
+        let inFlight: unknown;
+        let afterRelease: unknown;
+
+        await intercept(() => (async (): Promise<void> =>
+        {
+            const early = load('a');       // in flight when the deadline fires
+            await tick(60);                // ... the deadline fires in here
+            afterRelease = await load('b'); // started AFTER the release
+            inFlight = await early;
+        })(), (error) => void reported.push(error));
+
+        await tick(200);
+
+        expect(reported).toHaveLength(1);
+        // Started after the release: a direct fetch, correct data - what the doc promises.
+        expect(afterRelease).toBe('REAL-b');
+        // Already in flight across the release: resolved by the release itself, with nothing.
+        expect(inFlight).toBeUndefined();
     });
 
     it('a detached reader resolves undefined at teardown AND its entry/timer are freed - at the shipped default retain', async () =>
