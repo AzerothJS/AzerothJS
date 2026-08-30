@@ -196,6 +196,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A streamed page that failed after the shell had flushed reported the failure to nobody.**
+  `renderToStream` surfaces a Suspense boundary's rejection through its `onError`, and kit
+  constructed it without one - so the client received a page missing a boundary while the server
+  recorded a clean 200, the one shape no observability seam can see. It cannot be a status: the
+  head left long before the failure. `PageRenderOptions` gains `onError`, `mountPages` wires
+  it to the observer you already pass, and `KitErrorObserver`'s phase gains `'stream'`. Note
+  the honest boundary: this covers kit's streamed SSR. A hand-rolled `new Response(stream)`
+  whose producer throws mid-body is still unreported by the kernel, and routing SSE's producer
+  failures (today stderr, via `sse()`'s default) to the app's observer is likewise still open.
+
 - **An abandoned request was reported as a server fault.** A handler or loader that honours
   `request.signal` - the shape the router documents - rejects when the client disconnects, and
   that rejection mapped to a 500 like any other: measured, 20 of 20 abandoned requests produced

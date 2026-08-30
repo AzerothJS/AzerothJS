@@ -71,6 +71,17 @@ export interface PageRenderOptions
     signal?: AbortSignal;
 
     /**
+     * Hears a STREAMED render's failure after the shell has already flushed.
+     *
+     * A Suspense boundary that rejects mid-stream cannot change the status - it left with the
+     * head - so `renderToStream` reports it here and lets the stream continue. Without this
+     * the failure is swallowed entirely: the client gets a page missing a boundary and the
+     * server records a clean 200, which is the one shape no observability seam can see.
+     * Ignored by the buffered path, where a failure still becomes a real status.
+     */
+    onError?: (error: unknown) => void;
+
+    /**
      * CSP nonce stamped onto the inline scripts a streamed page emits. REQUIRED under any
      * `script-src` without `'unsafe-inline'`: without it the browser blocks the swap runtime,
      * every boundary stays on its fallback until hydration refetches the data, and the streamed
@@ -327,6 +338,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                     {
                         frame,
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
+                        ...(options.onError !== undefined ? { onError: options.onError } : {}),
                         ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
                     });
             }

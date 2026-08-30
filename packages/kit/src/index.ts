@@ -440,6 +440,10 @@ function registerDynamic(
                 {
                     stream: true,
                     signal: context.request.signal,
+                    // A boundary that rejects AFTER the shell flushed cannot change the status,
+                    // so without this the failure reaches nobody: the client gets a page missing
+                    // a boundary and the server records a clean 200.
+                    onError: (error: unknown): void => options.onError?.(error, { path: context.url.pathname, phase: 'stream' }),
                     handoffMeta: { build: await buildId, at: Date.now() },
                     ...(nonce !== undefined ? { scriptNonce: nonce } : {})
                 });

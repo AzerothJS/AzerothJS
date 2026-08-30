@@ -276,7 +276,7 @@ export class FilePageCache implements PageCache
 }
 
 /** The kit's background-failure seam; `phase` names which machinery failed. */
-export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' }) => void;
+export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' | 'stream' }) => void;
 
 /**
  * A finished BUFFERED {@link PageResult} as the response `mountPages` serves - the ONE
