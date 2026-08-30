@@ -218,6 +218,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **On h2c the server never noticed a client disconnect, so every such request leaked and a
+  graceful drain never returned.** `Http2ServerResponse` has no `destroyed` property at all -
+  `'destroyed' in res` is false - so the adapter's liveness checks read as "still alive" on
+  every h2c disconnect: a producer's `cancel()` never ran on ANY h2c path, and an RST_STREAM
+  with NO_ERROR (what `fetch` with an `AbortController` and a browser navigating away actually
+  send) left the write loop parked on a `drain` that could never arrive, so `request.signal`
+  never aborted, the request root never settled, every `onWorkUnitCleanup` was held for the
+  process lifetime, and `shutdown()` ran past its grace deadline - measured 5010ms against a
+  300ms grace. Liveness is now read from the h2 stream, the backpressure wait watches the stream
+  rather than the response (whose own close cannot arrive while the write side is parked), and a
+  stream the client reset is destroyed so the drain can complete. Measured after: signal,
+  cleanup, and producer cancel all at ~1ms on all three h2c disconnect shapes, with shutdown at
+  1ms. http1 is unchanged.
+
 - **A streaming source whose own `cancel()` rejected cost its request every cleanup.** A
   rollback that fails or a pool release that throws is ordinary code, but that rejection
   propagated out before teardown ran, so every `onWorkUnitCleanup` - the pooled connection, the

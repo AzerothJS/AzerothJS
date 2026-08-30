@@ -84,6 +84,67 @@ export function toWebRequest(req: AnyIncoming, options: { scheme?: 'http' | 'htt
  * ballooning memory. Set-Cookie is written via getSetCookie() - the one header that must
  * not be joined.
  */
+/**
+ * @internal Whether this response can still be written to.
+ *
+ * `Http2ServerResponse` has NO `destroyed` property at all - measured, `'destroyed' in res`
+ * is false and the value is `undefined` - so a bare `res.destroyed` check silently reads as
+ * "still alive" on every h2c disconnect. The h2 truth lives on the stream, where a client reset
+ * shows as `closed` (and only later, sometimes never, as `destroyed`).
+ */
+function responseGone(res: ServerResponse | Http2ServerResponse): boolean
+{
+    const stream = (res as Http2ServerResponse).stream as { destroyed: boolean; closed: boolean } | undefined;
+    if (stream !== undefined)
+    {
+        return stream.destroyed || stream.closed;
+    }
+    return (res as ServerResponse).destroyed;
+}
+
+/**
+ * @internal Calls `listener` once the peer goes away, on whichever transport this is, and
+ * returns the detach.
+ *
+ * On h2 the response's own `'close'` does NOT arrive while the write side is parked - the
+ * parked writable is what keeps the stream from closing - so waiting on it deadlocks the write
+ * loop against itself. The stream's `'close'`/`'aborted'` do arrive.
+ */
+function onPeerGone(res: ServerResponse | Http2ServerResponse, listener: () => void): () => void
+{
+    const stream = (res as Http2ServerResponse).stream as
+        { once: (event: string, fn: () => void) => void; off: (event: string, fn: () => void) => void } | undefined;
+    if (stream !== undefined)
+    {
+        stream.once('close', listener);
+        stream.once('aborted', listener);
+        return (): void =>
+        {
+            stream.off('close', listener);
+            stream.off('aborted', listener);
+        };
+    }
+    res.once('close', listener);
+    return (): void => void res.off('close', listener);
+}
+
+/**
+ * @internal Releases a stream the client reset.
+ *
+ * An h2 stream RST with NO_ERROR - what `fetch` + `AbortController` and a browser navigating
+ * away actually send - sits at `closed: true, destroyed: false` indefinitely, and
+ * `Http2Server.close()` waits on it, so a graceful drain never returns. Neither `res.end()`
+ * nor `stream.close()` releases it; only destroying it does.
+ */
+function releaseAbandoned(res: ServerResponse | Http2ServerResponse): void
+{
+    const stream = (res as Http2ServerResponse).stream as { destroyed: boolean; destroy: () => void } | undefined;
+    if (stream !== undefined && !stream.destroyed)
+    {
+        stream.destroy();
+    }
+}
+
 export async function writeResponse(res: AnyOutgoing, response: Response): Promise<void>
 {
     // The kernel's own constructors return a PayloadResponse: status, a plain header record,
@@ -113,7 +174,7 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
         headers['set-cookie'] = cookies;
     }
 
-    if (res.destroyed)
+    if (responseGone(res))
     {
         // The client vanished before the handler finished; there is nothing to write to. The
         // body is still cancelled: it is what settles the request root, so dropping it silently
@@ -160,10 +221,12 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
             {
                 break;
             }
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types destroyed as always-false on this union; it flips true when the client disconnects mid-stream
-            if (res.destroyed)
+            if (responseGone(res))
             {
                 await reader.cancel();
+                // The stream may be closed-but-not-destroyed (a NO_ERROR reset), which holds
+                // the server open through a graceful drain until it is destroyed.
+                releaseAbandoned(res);
                 return;
             }
             const flushed = (res as ServerResponse).write(value);
@@ -174,13 +237,22 @@ export async function writeResponse(res: AnyOutgoing, response: Response): Promi
                 // the response forever - the next loop iteration sees destroyed and stops.
                 await new Promise<void>((resolve) =>
                 {
+                    // Already gone: the events below have fired and will not fire again, so
+                    // waiting for them parks this loop forever.
+                    if (responseGone(res))
+                    {
+                        resolve();
+                        return;
+                    }
+                    let detach = (): void => undefined;
                     const onDrain = (): void =>
                     {
-                        res.off('close', onDrain);
+                        res.off('drain', onDrain);
+                        detach();
                         resolve();
                     };
                     res.once('drain', onDrain);
-                    res.once('close', onDrain);
+                    detach = onPeerGone(res, onDrain);
                 });
             }
         }
