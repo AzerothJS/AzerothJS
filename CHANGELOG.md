@@ -196,6 +196,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A streaming client's disconnect tore the request down while the producer was still
+  unwinding.** Cancelling a response body resolves the in-flight read with `done: true` before
+  the source's own `cancel()` runs, so the kernel's pull woke, called `close()` on a
+  controller the consumer had already closed - throwing a `TypeError` manufactured out of an
+  ordinary disconnect - and its catch then ran the request's cleanups immediately. Measured:
+  teardown at 1ms against a source cancel finishing at 201ms. That inverts the guarantee the
+  wrapper exists for, which is that teardown releasing a pooled connection, transaction, or lock
+  must not fire while the stream is still pulling through it. The cancel branch now owns the
+  settle. This also clears the way for reporting genuine mid-stream producer faults, which
+  previously could not be distinguished from this manufactured one.
+
 - **A streamed page that failed after the shell had flushed reported the failure to nobody.**
   `renderToStream` surfaces a Suspense boundary's rejection through its `onError`, and kit
   constructed it without one - so the client received a page missing a boundary while the server

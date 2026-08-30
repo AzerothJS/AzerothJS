@@ -282,12 +282,34 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
     // continuations would otherwise resolve the DEFAULT scope from pull #2 on. A pull
     // arriving after the abort path already released re-enters harmlessly: reads land on
     // the cache's silent released path, and request-scoped state keeps its instance.
+    // A CANCEL LANDS INSIDE AN IN-FLIGHT PULL, and without this latch the pull settles the
+    // request instead of the cancel branch. Cancelling `monitored` runs the cancel algorithm
+    // below, whose `reader.cancel` resolves the pending inner read with `done: true`; the
+    // pull then resumes and calls `close()` on a controller the consumer already closed, which
+    // THROWS into the catch. Two things go wrong there: a kernel TypeError is manufactured out
+    // of an ordinary client disconnect, and - the reason this is a correctness bug rather than
+    // noise - the catch runs the cleanups IMMEDIATELY, while the source's own `cancel()` is
+    // still running. Measured: teardown at 1ms against a source cancel finishing at 201ms. That
+    // is exactly what this wrapper exists to prevent, per its own contract above: teardown that
+    // releases a pooled connection, transaction, or lock must not fire while the stream is still
+    // unwinding through it. The cancel branch owns the settle; a pull that wakes after it has
+    // nothing left to do.
+    let cancelled = false;
     const monitored = new ReadableStream<Uint8Array>({
         pull: (controller) => storage.run(scope, async () =>
         {
             try
             {
                 const { done, value } = await reader.read();
+                if (cancelled)
+                {
+                    // The cancel branch owns the settle and is already awaiting the source's
+                    // own teardown. Returning here is also what keeps the catch below clean:
+                    // without it, close() on the consumer's already-closed controller throws,
+                    // and the catch cannot tell that manufactured TypeError from a real
+                    // producer fault.
+                    return;
+                }
                 if (done)
                 {
                     controller.close();
@@ -304,6 +326,8 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
         }),
         cancel: (reason) => storage.run(scope, async () =>
         {
+            // Set BEFORE reader.cancel, which is what resolves the in-flight read.
+            cancelled = true;
             await reader.cancel(reason);
             await runCleanups(scope, options);
         })
