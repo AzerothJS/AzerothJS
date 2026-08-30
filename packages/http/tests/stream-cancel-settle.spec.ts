@@ -155,3 +155,80 @@ describe('a consumer cancel owns the request settle', () =>
         expect(cleanupRan).toBe(true);
     });
 });
+
+// -----------------------------------------------------------------------------------------
+// The arms above drive app.handle() with NO socket, which is exactly why they could not see
+// the following. Over a real socket the client's disconnect ALSO aborts request.signal, and the
+// request root's abort-as-settle listener runs teardown directly - beating the cancel branch it
+// is supposed to defer to. This arm exists so that axis is measured rather than assumed, and it
+// pins the CURRENT behaviour as a KNOWN GAP: when the abort listener learns to wait for an
+// in-flight source cancel, this assertion flips and the comment goes with it.
+describe('the same question over a REAL socket', () =>
+{
+    it('KNOWN GAP: an abort still settles the root ahead of the source unwinding', async () =>
+    {
+        const { serve } = await import('../src/adapter-node.ts');
+        const { connect } = await import('node:net');
+
+        const marks: Array<[string, number]> = [];
+        let t0 = 0;
+        const app = new App();
+        app.get('/live', () =>
+        {
+            onWorkUnitCleanup(() => void marks.push(['cleanup', Date.now() - t0]));
+            return new Response(new ReadableStream<Uint8Array>({
+                start(controller)
+                {
+                    controller.enqueue(new TextEncoder().encode('open\n'));
+                },
+                pull(controller)
+                {
+                    // Keeps producing, so the adapter's loop notices the dead socket and
+                    // cancels - the path where the cancel branch actually runs.
+                    controller.enqueue(new TextEncoder().encode('x'.repeat(64)));
+                },
+                cancel()
+                {
+                    return new Promise<void>((resolve) => setTimeout(() =>
+                    {
+                        marks.push(['source-cancel-end', Date.now() - t0]);
+                        resolve();
+                    }, SLOW_CANCEL_MS));
+                }
+            }), { headers: { 'content-type': 'text/plain' } });
+        });
+
+        const served = await serve(app, { port: 0 });
+        try
+        {
+            await new Promise<void>((resolve) =>
+            {
+                const socket = connect(served.port, '127.0.0.1', () =>
+                    socket.write('GET /live HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n'));
+                socket.on('data', () =>
+                {
+                    t0 = Date.now();
+                    setTimeout(() =>
+                    {
+                        socket.resetAndDestroy();
+                        resolve();
+                    }, 10);
+                });
+                socket.on('error', () => resolve());
+            });
+            await new Promise((resolve) => setTimeout(resolve, SLOW_CANCEL_MS + 300));
+        }
+        finally
+        {
+            await served.shutdown({ gracePeriodMs: 500 });
+        }
+
+        const cleanupAt = marks.find((mark) => mark[0] === 'cleanup')?.[1] ?? -1;
+        const cancelEndAt = marks.find((mark) => mark[0] === 'source-cancel-end')?.[1] ?? -1;
+        expect(cleanupAt).toBeGreaterThanOrEqual(0);
+        expect(cancelEndAt).toBeGreaterThanOrEqual(SLOW_CANCEL_MS);
+        // The gap, asserted so it cannot regress further and so the eventual fix has a target:
+        // teardown currently precedes the source finishing.
+        expect(cleanupAt).toBeLessThan(cancelEndAt);
+    });
+});

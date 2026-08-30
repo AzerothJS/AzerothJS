@@ -226,8 +226,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   teardown at 1ms against a source cancel finishing at 201ms. That inverts the guarantee the
   wrapper exists for, which is that teardown releasing a pooled connection, transaction, or lock
   must not fire while the stream is still pulling through it. The cancel branch now owns the
-  settle. This also clears the way for reporting genuine mid-stream producer faults, which
-  previously could not be distinguished from this manufactured one.
+  settle when the body is cancelled WITHOUT the request also being aborted. This also clears the
+  way for reporting genuine mid-stream producer faults, which previously could not be
+  distinguished from this manufactured one.
+
+  Known gap, stated because the change above does not reach it: over a real socket a client
+  disconnect aborts `request.signal` at the same instant it cancels the body, and the request
+  root's abort-as-settle listener still runs teardown immediately - measured at 6ms against a
+  source whose own `cancel()` finished at 207ms. So on the socket path teardown can still
+  precede a producer finishing its unwinding. Closing that requires the abort listener to wait
+  for an in-flight source cancel, which is a separate change.
 
 - **A streamed page that failed after the shell had flushed reported the failure to nobody.**
   `renderToStream` surfaces a Suspense boundary's rejection through its `onError`, and kit
