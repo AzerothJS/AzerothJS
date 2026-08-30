@@ -124,6 +124,42 @@ describe('a consumer cancel owns the request settle', () =>
         expect(cleanupRan).toBe(true);
     });
 
+    it('a source whose own cancel() REJECTS still gets its request torn down', async () =>
+    {
+        // Ordinary code: a rollback that failed, a pool release that threw. Before the finally,
+        // that rejection skipped runCleanups entirely and every onWorkUnitCleanup - the pooled
+        // connection, the transaction, the advisory lock - leaked for the process lifetime.
+        let cleanupRan = false;
+        const app = new App();
+        app.get('/live', () =>
+        {
+            onWorkUnitCleanup(() =>
+            {
+                cleanupRan = true;
+            });
+            return new Response(new ReadableStream<Uint8Array>({
+                pull(controller)
+                {
+                    controller.enqueue(new TextEncoder().encode('x'));
+                },
+                cancel()
+                {
+                    throw new Error('rollback failed');
+                }
+            }));
+        });
+
+        const response = await app.handle(new Request('http://local/live'));
+        const reader = response.body!.getReader();
+        await reader.read();
+        // The rejection still reaches whoever cancelled - it is not swallowed, only prevented
+        // from taking the teardown with it.
+        await expect(reader.cancel()).rejects.toThrow('rollback failed');
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(cleanupRan).toBe(true);
+    });
+
     it('CONTROL: a genuine PRODUCER failure still errors the consumer and settles', async () =>
     {
         // The latch must not swallow a real fault - only a cancel-driven wake.

@@ -362,8 +362,20 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
         {
             // Set BEFORE reader.cancel, which is what resolves the in-flight read.
             cancelled = true;
-            await reader.cancel(reason);
-            await runCleanups(scope, options);
+            try
+            {
+                await reader.cancel(reason);
+            }
+            finally
+            {
+                // A source whose own cancel() REJECTS is ordinary code - a rollback that
+                // failed, a pool release that threw - and it must not cost the request its
+                // teardown. Without the finally that rejection skipped runCleanups entirely
+                // and every onWorkUnitCleanup leaked permanently. The rejection still
+                // propagates to whoever cancelled; it just no longer takes the cleanups with
+                // it.
+                await runCleanups(scope, options);
+            }
         })
     });
 

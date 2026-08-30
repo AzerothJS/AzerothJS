@@ -218,6 +218,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **A streaming source whose own `cancel()` rejected cost its request every cleanup.** A
+  rollback that fails or a pool release that throws is ordinary code, but that rejection
+  propagated out before teardown ran, so every `onWorkUnitCleanup` - the pooled connection, the
+  transaction, the advisory lock - leaked for the process lifetime. Teardown now runs in a
+  `finally`. The rejection still reaches whoever cancelled; it no longer takes the cleanups
+  with it.
+
 - **A streaming client's disconnect tore the request down while the producer was still
   unwinding.** Cancelling a response body resolves the in-flight read with `done: true` before
   the source's own `cancel()` runs, so the kernel's pull woke, called `close()` on a
