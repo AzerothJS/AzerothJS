@@ -35,6 +35,7 @@ import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
 import { flattenRoutes, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { declaredQuery, parseQuery } from './query.ts';
+import { prefixParams } from './loader-inputs.ts';
 import { inertJson } from '../reactivity/ssr.ts';
 import { latchServerData } from '../reactivity/data-cache.ts';
 
@@ -230,13 +231,22 @@ export async function matchAndLoad(
                         break;
                     }
                 }
-                // The DECLARED query, per route - the same rule the client applies, and for
-                // the reason the client applies it: this level's value is cached under a key
-                // built from the declared subset, and a navigation that leaves that key
-                // unchanged starts NO fetch. Handing the loader the raw query here produced a
-                // value whose inputs were wider than its key, which then served every other
-                // URL sharing that key. Guards keep the raw query (both paths already do).
-                const promise = route.loader({ params, query: declaredQuery(route.search, query), signal, parent });
+                // The level's own inputs, per route - the same rule the client applies, and
+                // for the reason the client applies it: this level's value is cached under a
+                // key built from the prefix params and the declared query, and a navigation
+                // that leaves that key unchanged starts NO fetch. Handing the loader wider
+                // inputs here produced a value whose preimage was larger than its key, which
+                // was then served for every other URL sharing that key - and because the
+                // SEED is what the client adopts, narrowing only the client would have fixed
+                // nothing on the path that actually renders. Guards keep the whole chain and
+                // the raw query: they key nothing, so narrowing them would only remove
+                // information an authorization decision may legitimately use.
+                const promise = route.loader({
+                    params: prefixParams(entry.matched, level, params),
+                    query: declaredQuery(route.search, query),
+                    signal,
+                    parent
+                });
                 slots[level] = promise;
                 return promise;
             }));

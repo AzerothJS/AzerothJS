@@ -80,24 +80,31 @@ describe('a retained layout\'s loader HOLDS across a leaf navigation', () =>
         const { router, container, cleanup } = mountApp(routes, '/users/1');
         await flush();
         const layout = container.querySelector('#layout');
-        expect(container.querySelector('#status')!.textContent).toBe('v:1');
+        // A layout loader CANNOT see a descendant's param. It is keyed on the params at or
+        // above its own level, and a navigation that leaves that key unchanged starts no
+        // fetch - so a value derived from `:id` would be served for every other `:id`.
+        // This test previously asserted 'v:1' here, which was the disclosure written down
+        // as intended behaviour, with a comment sanctioning revalidate() as the escape
+        // hatch. There is no escape hatch, because there is nothing to escape: read a
+        // descendant's param in a COMPONENT via useParams, or its data via useLoader.
+        expect(container.querySelector('#status')!.textContent).toBe('v:none');
         expect(runs).toBe(1);
 
         router.navigate('/users/2');
         await flush();
-        // The layout's own inputs did not change: its loader does NOT re-run on a
-        // leaf param change, its data holds, and loading never flips. (A parent
-        // loader reading a DESCENDANT's param is outside its declared inputs -
-        // revalidate() is the sanctioned way to re-run it.)
+        // The layout's own inputs did not change: its loader does NOT re-run on a leaf
+        // param change, its data holds, and loading never flips. That blast-radius
+        // property is the reason the key is the prefix slice, and it is preserved.
         expect(runs).toBe(1);
         expect(container.querySelector('#layout')).toBe(layout);
-        expect(container.querySelector('#status')!.textContent).toBe('v:1');
+        expect(container.querySelector('#status')!.textContent).toBe('v:none');
 
         await router.revalidate();
         await flush();
-        // The re-run receives the CURRENT staged arguments.
+        // revalidate() re-runs it with the CURRENT staged arguments - which are still the
+        // level's own, so the value is stable rather than a smuggled descendant param.
         expect(runs).toBe(2);
-        expect(container.querySelector('#status')!.textContent).toBe('v:2');
+        expect(container.querySelector('#status')!.textContent).toBe('v:none');
         cleanup();
     });
 });

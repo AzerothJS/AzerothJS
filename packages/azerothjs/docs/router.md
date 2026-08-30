@@ -133,6 +133,8 @@ loader: async ({ params, query, signal, parent }) =>
     // `parent` resolves with the nearest ancestor loader's data.
     // Await it ONLY when this level truly depends on it - parallel is the default.
     const account = await parent;
+    // `params` holds what THIS level and its ancestors bind, never a descendant's -
+    // that is the set this level's result is cached under.
     return fetchOrders(params.id, signal);
 }
 ```
@@ -141,8 +143,13 @@ loader: async ({ params, query, signal, parent }) =>
   ancestor that loads); `useLoader(handle)` is exact and typed.
 - `router.pending()` is true while any loader or lazy chunk of the current navigation
   is in flight - the top-bar signal.
-- Loaders re-run when params change and abort (via `signal`) when navigation supersedes
-  them.
+- Loaders re-run when THEIR OWN inputs change - the params bound at or above their level
+  and their declared query - and abort (via `signal`) when navigation supersedes them. A
+  layout does not re-run when only a leaf param changes, which is why its loader receives
+  the params at or above its level and never a descendant's: its result is cached under
+  that same slice, so a value derived from a descendant's param would be served for every
+  other value that param can take. To use a descendant's param, read it in a COMPONENT via
+  `useParams()`, or read that level's data via `useLoader(handle)`.
 
 ## Guards, redirects, blockers
 

@@ -118,12 +118,14 @@ export function stringifyQuery(query: Query): string
  * THE DECLARED QUERY a level's loader receives - the ONE definition of it, applied
  * identically by the client router, the SSR handoff, and `useSearch`.
  *
- * The invariant it exists to hold: **a loader's argument must be exactly the preimage of
- * the key its entry is cached under.** The client skips the fetch entirely when a
- * navigation leaves the level key unchanged, so a value produced from inputs WIDER than
- * the key is served, unfetched, for every other URL that shares that key. Keying on the
- * declared subset is what makes the key a complete description of the value; passing the
- * raw query alongside it is the one combination that cannot be sound.
+ * THE INVARIANT, one-directional: **a level's cache key must never be COARSER than the
+ * argument its loader receives.** The client skips the fetch entirely when a navigation
+ * leaves the level key unchanged, so a value produced from inputs WIDER than its key is
+ * served, unfetched, for every other URL sharing that key. A key FINER than the argument
+ * is merely a lost cache hit, which is why the schema-less case can key on the raw search
+ * STRING while handing the loader the parsed object. Exactness is the goal where it is
+ * cheap; never-coarser is the rule, and passing a raw query alongside a declared key is
+ * the one combination that violates it.
  *
  * A route with no schema declares nothing, so its whole parsed query IS its declared
  * input, and the key widens to match - the two stay in step either way.

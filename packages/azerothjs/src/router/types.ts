@@ -292,7 +292,15 @@ export interface GuardContext
 /** What a route {@link Route.loader} receives. */
 export interface RouteLoaderArgs
 {
-    /** Path params of the full matched chain. */
+    /**
+     * The path params bound AT OR ABOVE this level: those this route's own pattern and its
+     * ancestors' declare, never a descendant's. Not the full matched chain - this value's
+     * cache key is built from that same prefix slice, and a navigation that leaves the key
+     * unchanged starts no fetch, so a loader reading a descendant's param would have its
+     * result served for every other value that param can take. Read a descendant's param in
+     * a COMPONENT through useParams, or a descendant level's data through useLoader(handle).
+     * Guards, which key nothing, receive the whole chain.
+     */
     params: Params;
 
     /**

@@ -12,6 +12,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A layout loader was handed a descendant's route param but keyed without it, so it
+  served one document's data under another's URL.** A layout at `/w/:workspaceId` with a
+  child `doc/:docId` received `{ workspaceId, docId }` while its result was cached under
+  the workspace alone. Visiting `/w/1/doc/SECRET-A` and then `/w/1/doc/PUBLIC-B` left the
+  layout still serving `SECRET-A`'s data - permanently, because a navigation that leaves
+  the level key unchanged starts no fetch at all, and because the server-rendered value is
+  adopted without fetching. A loader now receives the params bound AT OR ABOVE its own
+  level, on the client and the server alike; a leaf still sees its ancestors', and only a
+  layout stops seeing what it cannot key on. The alternative - widening the key to the
+  whole chain - was rejected because it would make every layout loader re-run on any
+  descendant param change. To use a descendant's param, read it in a component with
+  `useParams()` or read that level's data with `useLoader(handle)`. Guards are unchanged
+  and still receive the whole chain: they key nothing. On a typed route handle, params
+  other than the route's own are now `string | undefined` rather than `string`.
+
 - **A server-rendered loader received a wider query than the key its result was cached
   under, and that result was then served for other URLs.** Server-side `matchAndLoad`
   ignored the route's declared `search` schema and handed every loader the raw query,

@@ -53,12 +53,13 @@ import type {
 } from './types.ts';
 import { isExternalUrl, externalRedirectMessage } from '../semantics.ts';
 import { acceptRedirectTarget } from './redirect-target.ts';
-import { compilePath, paramNamesOf, type PathMatcher } from './path-pattern.ts';
+import { compilePath, type PathMatcher } from './path-pattern.ts';
 import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cache.ts';
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
 import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
 import { declaredQuery, parseQuery, stringifyQuery } from './query.ts';
+import { prefixParams } from './loader-inputs.ts';
 import { createBrowserHistory } from './history.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
 
@@ -1162,23 +1163,10 @@ function buildRouter(config: RouterConfig): Router
         {
             return null;
         }
-        const prefix: Params = {};
-        for (let i = 0; i <= level; i++)
-        {
-            const above = m.matched[i];
-            if (above === undefined)
-            {
-                continue;
-            }
-            for (const name of paramNamesOf(above.path))
-            {
-                const value = m.params[name];
-                if (value !== undefined)
-                {
-                    prefix[name] = value;
-                }
-            }
-        }
+        // The SAME slice the loader argument is built from, so the key cannot describe less
+        // than the value describes. The schema-less search component stays the raw STRING:
+        // a key FINER than the argument only costs a cache hit, which is the safe direction.
+        const prefix = prefixParams(m.matched, level, m.params);
         const searchComponent = route.search === undefined ? search : levelQuery(route, search);
         return `${ positionIds.get(m.matched)?.[level] ?? -1 }#${ level }|${ stableSerialize(prefix) }|${ stableSerialize(searchComponent) }`;
     }
@@ -1362,7 +1350,7 @@ function buildRouter(config: RouterConfig): Router
                 stageTrigger(key, {
                     level,
                     loader: (m0.matched[level] as Route & { loader: NonNullable<Route['loader']> }).loader,
-                    params: m0.params,
+                    params: prefixParams(m0.matched, level, m0.params),
                     query: levelQuery(m0.matched[level] as Route, initialState.search),
                     parentKey: parentKeyFor(m0, initialState.search, level)
                 });
@@ -1425,7 +1413,7 @@ function buildRouter(config: RouterConfig): Router
                     stageTrigger(key, {
                         level,
                         loader: route.loader,
-                        params: m.params,
+                        params: prefixParams(m.matched, level, m.params),
                         query: levelQuery(route, search),
                         parentKey: parentKeyFor(m, search, level)
                     });

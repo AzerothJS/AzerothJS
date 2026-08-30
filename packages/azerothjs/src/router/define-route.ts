@@ -107,7 +107,12 @@ export interface DefineRouteConfig<Path extends string, Data, Search>
      * this loader returns is cached under a key built from the declared subset alone.
      */
     loader?: (args: {
-        params: RoutePathParams<Path> & Record<string, string>;
+        // Own params are always present. Everything else is OPTIONAL because this handle
+        // cannot know its ancestors (a nested path is relative), and a DESCENDANT's param is
+        // absent at runtime - the loader is keyed on the params at or above its own level.
+        // A flat `Record<string, string>` would type a descendant read as `string` and hand
+        // back undefined.
+        params: RoutePathParams<Path> & Partial<Record<string, string>>;
         query: [Search] extends [never] ? Query : Search;
         signal: AbortSignal;
         parent: Promise<unknown>;
