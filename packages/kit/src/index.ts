@@ -398,6 +398,12 @@ async function renderOrShell(
             context.url.pathname + context.url.search,
             shell,
             {
+                signal: context.request.signal,
+                // A `server` page is uncached and uncoalesced: this render exists for THIS
+                // request and nobody else can adopt it. So the client's disconnect signal is
+                // the render's own lifetime, exactly as on the streamed path below - without
+                // it, a client that opens connections and drops them still buys every loader's
+                // full fan-out to the backing services, with no one left to read the answer.
                 handoffMeta: { build: await buildId, at: Date.now() },
                 ...(nonce !== undefined ? { scriptNonce: nonce } : {})
             });

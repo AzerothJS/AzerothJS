@@ -498,10 +498,15 @@ export function registerIsr(registration: IsrRegistration): void
      * `private, no-store`, a 200 with no freshness headers is heuristically cacheable and
      * a CDN one hop out re-creates the very bypass this path exists to prevent.
      */
-    const guardedLive = async (target: Target): Promise<Response> =>
+    const guardedLive = async (target: Target, signal: AbortSignal): Promise<Response> =>
     {
         reportGuarded(target.pathname);
-        const result = await renderer(target.url, await shell, { handoffMeta: { build: await buildId, at: Date.now() } });
+        // Guarded output is per-request and `private, no-store` - never cached, never shared,
+        // never coalesced - so this render's only consumer is the client now waiting on it,
+        // and its disconnect ends the render's reason to exist. The two SHARED render paths
+        // in this file deliberately take no request signal; see `produce` and `regenerate`.
+        const result = await renderer(target.url, await shell,
+            { signal, handoffMeta: { build: await buildId, at: Date.now() } });
         return pageResponse(result, await shell, {
             'cache-control': 'private, no-store',
             'x-azeroth-cache': 'live'
@@ -661,6 +666,15 @@ export function registerIsr(registration: IsrRegistration): void
         return { live: result };
     }
 
+    /**
+     * NO REQUEST SIGNAL, deliberately. This flight is SHARED: every request arriving for the
+     * same key while it runs adopts this one promise, and its result may be written to the
+     * cache for requests that have not arrived yet. Cancelling it on one waiter's disconnect
+     * would abort a render the other waiters are still awaiting - turning a departed client
+     * into a failure for everyone coalesced behind it. Bounding this path needs a signal that
+     * aborts only when EVERY waiter has gone, which is a composite-signal design, not a
+     * parameter. `guardedLive` takes the request signal precisely because it shares nothing.
+     */
     function produceOnce(target: Target): { task: Promise<Produced>; created: boolean }
     {
         const existing = inflight.get(target.key);
@@ -673,6 +687,13 @@ export function registerIsr(registration: IsrRegistration): void
         return { task, created: true };
     }
 
+    /**
+     * NO REQUEST SIGNAL either, for a different reason: this render has no waiter at all. The
+     * request that triggered it was already answered from the stale copy, so tying the refresh
+     * to that client's connection would cancel work whose entire purpose is to serve the NEXT
+     * visitor - and would make a page's freshness depend on whether the one visitor who
+     * happened to trip the window stayed on it.
+     */
     function regenerate(target: Target): void
     {
         if (regenerating.has(target.key))
@@ -742,7 +763,7 @@ export function registerIsr(registration: IsrRegistration): void
         // traffic must never populate, read, or coalesce on shared state.
         if (guarded(target.url) || learned.has(target.pathname))
         {
-            return guardedLive(target);
+            return guardedLive(target, context.request.signal);
         }
         let entry = await readCache(target.key);
         if (entry !== undefined && await supersededByDeploy(entry))
@@ -767,7 +788,7 @@ export function registerIsr(registration: IsrRegistration): void
                     // request re-renders under its own. Direct - never produceOnce, which
                     // would coalesce resuming joiners into a second shared flight. The
                     // pathname is learned by now, so later requests skip flights entirely.
-                    return guardedLive(target);
+                    return guardedLive(target, context.request.signal);
                 }
                 return pageResponse(live, await shell);
             }

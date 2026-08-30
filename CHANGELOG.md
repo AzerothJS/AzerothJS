@@ -12,6 +12,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A server-rendered page kept rendering for clients that had already disconnected.** The
+  streamed path passed the request's abort signal to the renderer; the BUFFERED
+  `render: 'server'` path - the default whenever a renderer is configured - and the guarded
+  live path passed none. A client could open connections to a data-heavy page and drop them,
+  and the server would still run every loader's full fan-out to the backing services with
+  nobody left to read the answer. Both now receive `request.signal`, which the router already
+  threads into every loader. Two render paths deliberately still take no request signal, and
+  each has a test pinning that: a coalesced ISR production is SHARED with every request queued
+  on the same key, so one waiter's disconnect must not abort it for the others, and a
+  background regeneration has no waiting client at all. Note the boundary: this cancels loader
+  I/O and can skip a render that has not started, but the render pass itself is synchronous and
+  cannot be interrupted once begun.
+
 - **A layout loader was handed a descendant's route param but keyed without it, so it
   served one document's data under another's URL.** A layout at `/w/:workspaceId` with a
   child `doc/:docId` received `{ workspaceId, docId }` while its result was cached under

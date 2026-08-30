@@ -175,6 +175,34 @@ decoding before keying would make it collide with `/article/a?b`, a different pa
 cost is that two spellings of the same page (`/tag/caf%C3%A9` and `/tag/café`) occupy two entries
 rather than one. That is a duplicate, never a wrong page, and the entry cap bounds it.
 
+### A cache bounds REPEAT cost, not FIRST-render cost
+
+Worth stating plainly, because the cache invites the opposite assumption: nothing above puts a
+ceiling on how much rendering a single client can ask for. A cold key must be rendered before
+it can be served, distinct query strings are distinct cold keys, and `render: 'server'` is
+uncached by design and renders on EVERY request - it is also the default mode whenever a
+renderer is configured. The entry cap bounds what the cache KEEPS; it does not bound what the
+server RENDERS.
+
+Bounding that is an arrival-rate decision about your traffic and your identities, which is why
+the kit does not guess at it. Put a limit at the edge:
+
+```ts
+import { rateLimit } from '@azerothjs/http';
+
+app.use(rateLimit({ limit: 60, windowMs: 60_000 }));
+```
+
+It keys on the client IP through the same trusted-proxy boundary as `clientIp`, answers 429
+with `Retry-After`, and stamps `RateLimit-*` headers so a well-behaved client paces itself
+before it is ever refused. Size it against your render budget, not just your cache hit rate.
+
+What the kit does do on its own is stop paying for work nobody is waiting for: a
+`render: 'server'` page and a guarded live render both receive the request's disconnect signal,
+so a client that goes away takes its loaders' fan-out with it. Two render paths deliberately do
+NOT take it - a coalesced ISR production is shared with every other request queued on the same
+key, and a background regeneration has no waiting client at all.
+
 ### A deploy makes a shared cache go cold
 
 Every entry is stamped with a **build identity** - the client shell's content hash - and an entry
