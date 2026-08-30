@@ -12,6 +12,30 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **Added `responseTimeoutMs`: a handler that never produced a response held its socket
+  forever.** Nothing bounded handler execution. The node adapter's `requestMs` bounds only
+  RECEIPT of the request - measured, a client sending incomplete headers is hung up on at
+  1552ms while a completed request whose handler never resolves is never released at all - so a
+  wedged upstream pinned a socket, a request scope, and its per-key state for the process's
+  lifetime with no self-healing. Opt-in with no default: only the application knows how long its
+  own code should take, and the clock includes reading the request body, so a value below
+  `requestMs` (default 300000) would refuse slow uploads the adapter explicitly permits. It
+  frees the socket and answers 503; it does NOT cancel the handler, which keeps its memory, its
+  pool slot, and its upstream connection until it settles - the deadline bounds the client's
+  wait, not the server's resources. It does not bound a streaming body either: the clock stops
+  at the Response, so SSE and file serving are unaffected. The deadline deliberately touches
+  nothing inside the request scope, and both refusals have tests: marking a still-running
+  handler settled would fire the `release()` it registers on acquiring a connection and let it
+  keep using a connection already back in the pool, and releasing its data cache would resolve
+  an in-flight cached read to `undefined` rather than letting it fetch.
+
+- **h2c advertised no limit on concurrent streams.** `serveH2c` inherited Node's default of
+  4294967295, so ONE session could open unbounded concurrent requests, each with its own request
+  root, store scope, and cleanup registry. (The 100 that looks like a default elsewhere is
+  `http2.connect`'s client-side self-limit, which stops applying once the server's settings
+  arrive.) Now bounded to 100 by default, matching the two session limits beside it, and
+  tunable with `maxConcurrentStreams`.
+
 - **A server-rendered page kept rendering for clients that had already disconnected.** The
   streamed path passed the request's abort signal to the renderer; the BUFFERED
   `render: 'server'` path - the default whenever a renderer is configured - and the guarded

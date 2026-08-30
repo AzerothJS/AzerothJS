@@ -272,6 +272,23 @@ agree with the route that ran. Behind a proxy also declare `trustProxy`/`trusted
 bucket; on a fetch-hosted runtime there is no socket at all, so give the limiter an explicit
 `key`.
 
+Those timeouts bound the PEER. Nothing bounds YOUR handler, and the difference matters: a
+handler awaiting a wedged upstream holds its socket until the process dies. `new App({
+responseTimeoutMs })` bounds how long a handler may take to produce a Response and answers 503
+when it does not. It is opt-in and has no default, because only your application knows how long
+its own code should take - and because the clock includes reading the request body, so a value
+below `requestMs` (default 300000) would refuse slow uploads the adapter explicitly permits.
+
+Be clear about what it buys, because it is less than it looks. A JavaScript promise cannot be
+cancelled from outside, so the handler runs on and keeps its memory, its pool slot, and its
+upstream connection until it settles by itself. The deadline frees the SOCKET and answers the
+client; it bounds your users' wait, not your server's resources. Under a sustained upstream
+stall the connection pool still exhausts - but sockets are released, clients get a 503 instead
+of hanging, and a health check fails fast enough to take the instance out of rotation. It does
+not bound a streaming body: the clock stops at the Response, so SSE and file serving are
+unaffected by design. One drain caveat: the 503 closes the response, so a graceful shutdown
+stops counting that request as in-flight and may exit while its handler is still running.
+
 For a full deployment: `timeouts` also takes `requestMs` (whole-request bound for slow bodies)
 and `checkIntervalMs` (how promptly a slow connection is reclaimed); `new App({ observe:
 logRequests(createLogger()) })` - the logger is `@azerothjs/logger`'s - emits one JSON log line

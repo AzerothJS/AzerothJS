@@ -34,7 +34,7 @@ import { RadixRouter, segmentsOf } from './router.ts';
 import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
 import { markServerRuntime } from 'azerothjs/internal';
-import { runInRequestRoot } from './request-root.ts';
+import { runInRequestRoot, type WorkUnitOptions } from './request-root.ts';
 import { attachErrorPolicy, guardLayer, isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
 /**
@@ -115,6 +115,29 @@ export interface AppOptions
 
     /** Observes every completed request (logging/metrics/tracing seam). */
     observe?: RequestObserver | undefined;
+
+    /**
+     * How long a handler may take to PRODUCE its response before the client is answered 503.
+     * Opt-in with no default, because only the application knows how long its own code should
+     * take - the socket timeouts in the node adapter bound the PEER, which the framework can
+     * size, and this bounds YOUR CODE, which it cannot.
+     *
+     * What it does: frees the socket and answers the client. What it does NOT do, and cannot:
+     *
+     * - It does not cancel the handler. A JavaScript promise cannot be cancelled from outside,
+     *   so the handler runs on and keeps its memory, its pool slot, and its upstream connection
+     *   until it settles by itself. This bounds the CLIENT's wait, not the server's resources.
+     * - It does not bound a streaming body. The clock stops when the handler returns a
+     *   `Response`, so SSE, static files, and multipart may stream for as long as they like -
+     *   a bound on total duration would break all three by design.
+     * - It DOES include reading the request body, because that happens inside the handler.
+     *   Keep it above {@link SocketTimeouts.requestMs} (default 300000) or a slow upload the
+     *   adapter explicitly permits will be refused here.
+     *
+     * Note for a graceful drain: the 503 closes the response, so the drain stops counting this
+     * request as in-flight and may exit while its handler is still running.
+     */
+    responseTimeoutMs?: number | undefined;
 }
 
 /**
@@ -692,9 +715,33 @@ export class App<Ctx extends object = object>
                         onError(error, new HttpError(500, 'Request cleanup failed', { cause: error }));
                     }
                     : undefined;
-            })()
+            })(),
+            ...(this.#options.responseTimeoutMs !== undefined
+                ? { responseDeadline: { ms: this.#options.responseTimeoutMs, answer: (): Response => this.#deadlineAnswer() } }
+                : {})
         };
         return await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
+    }
+
+    /**
+     * @internal The answer a blown {@link AppOptions.responseTimeoutMs} sends.
+     *
+     * `expose: true` is deliberate: HttpError hides the message of any 5xx by default, which
+     * would put a bare "Internal server error" on the wire and make a deadline
+     * indistinguishable from a crash - for the one status where the client's correct next move
+     * (retry later) depends on telling them apart. The error also reaches `onError`, since a
+     * handler that blew its deadline is exactly what an operator needs to see.
+     */
+    #deadlineAnswer(): Response
+    {
+        const error = new HttpError(503, 'The server took too long to produce a response.',
+            { expose: true, headers: { 'retry-after': '1' } });
+        this.#options.onError?.(error, error);
+        return errorResponse(error, {
+            dev: this.#options.dev,
+            observe: undefined,
+            serialize: this.#options.serializeError
+        });
     }
 
     /** @internal The one error path with this app's policy applied; one stable reference
@@ -732,7 +779,7 @@ export class App<Ctx extends object = object>
     };
 
     /** @internal Built once on first use; see #dispatchOnly. */
-    #rootOptions: { onCleanupError?: ((error: unknown) => void) | undefined } | null = null;
+    #rootOptions: WorkUnitOptions | null = null;
 
     /**
      * @internal The throwing core #dispatchBound wraps. Synchronous end to end when the

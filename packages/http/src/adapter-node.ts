@@ -589,10 +589,20 @@ export async function serve(
  * session (`timeouts.requestMs`, same default as {@link serve}), and a session that floods
  * invalid frames or rejected streams is closed.
  */
-export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; timeouts?: SocketTimeouts; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
+export function serveH2c(app: WebHandler, options: { port?: number; hostname?: string; timeouts?: SocketTimeouts; maxConcurrentStreams?: number; trustProxy?: TrustProxyOptions } = {}): Promise<Served<Http2Server>>
 {
     markServerRuntime();
-    const server = createH2cServer({ maxSessionInvalidFrames: 100, maxSessionRejectedStreams: 100 });
+    // Node advertises maxConcurrentStreams as 4294967295 by default - effectively unbounded -
+    // so without this ONE session can open unbounded concurrent requests, each with its own
+    // request root, store scope, and cleanup registry. The 100 that looks like a default
+    // elsewhere is `http2.connect`'s CLIENT-side peerMaxConcurrentStreams, which is a client
+    // self-limit and stops applying the moment our SETTINGS arrive. Bounded here to match the
+    // two session limits below; raise it for a trusted internal peer that pipelines heavily.
+    const server = createH2cServer({
+        maxSessionInvalidFrames: 100,
+        maxSessionRejectedStreams: 100,
+        settings: { maxConcurrentStreams: options.maxConcurrentStreams ?? 100 }
+    });
     // h2 has no per-phase header/request timers - one socket-inactivity bound covers both.
     // requestMs rather than keepAliveMs: no bytes move while a slow handler computes, and
     // an idle-keep-alive-sized timer would sever the session mid-request. With no 'timeout'

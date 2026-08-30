@@ -7,7 +7,8 @@
 // graceful shutdown semantics, and the same app served over cleartext HTTP/2.
 
 import { describe, it, expect, vi } from 'vitest';
-import { connect as h2connect } from 'node:http2';
+import { connect as h2connect, getDefaultSettings } from 'node:http2';
+import type { Http2Server } from 'node:http2';
 import { App } from '../src/app.ts';
 import { json, text, noContent } from '../src/respond.ts';
 import { readJson } from '../src/body.ts';
@@ -269,6 +270,56 @@ describe('the same app over cleartext HTTP/2', () =>
         try
         {
             expect((tuned.server as unknown as { timeout: number }).timeout).toBe(1234);
+        }
+        finally
+        {
+            await tuned.shutdown({ gracePeriodMs: 500 });
+        }
+    });
+
+    it('h2c bounds concurrent streams per session - Node advertises no bound of its own', async () =>
+    {
+        // Node's own default is 4294967295, so ONE session could otherwise open unbounded
+        // concurrent requests, each with its own request root, store scope, and cleanups. The
+        // 100 that looks like a default elsewhere is http2.connect's CLIENT-side self-limit.
+        expect(getDefaultSettings().maxConcurrentStreams).toBe(4_294_967_295);
+
+        const app = new App();
+        app.get('/x', () => noContent());
+
+        const advertised = async (served: Served<Http2Server>): Promise<number | undefined> =>
+        {
+            const port = (served.server.address() as { port: number }).port;
+            const client = h2connect(`http://127.0.0.1:${ port }`);
+            try
+            {
+                return await new Promise<number | undefined>((resolve, reject) =>
+                {
+                    client.on('remoteSettings', (settings: { maxConcurrentStreams?: number }) =>
+                        resolve(settings.maxConcurrentStreams));
+                    client.on('error', reject);
+                });
+            }
+            finally
+            {
+                client.close();
+            }
+        };
+
+        const defaulted = await serveH2c(app);
+        try
+        {
+            expect(await advertised(defaulted)).toBe(100);
+        }
+        finally
+        {
+            await defaulted.shutdown({ gracePeriodMs: 500 });
+        }
+
+        const tuned = await serveH2c(app, { maxConcurrentStreams: 8 });
+        try
+        {
+            expect(await advertised(tuned)).toBe(8);
         }
         finally
         {

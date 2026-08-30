@@ -146,6 +146,16 @@ async function runLate(fn: () => void | Promise<void>, scope: RequestScope): Pro
 export interface WorkUnitOptions
 {
     onCleanupError?: ((error: unknown) => void) | undefined;
+
+    /**
+     * Bounds how long the unit may take to PRODUCE its result, answering with `answer()` when
+     * it does not. Opt-in; absent means no bound, which is the shipped default.
+     *
+     * `answer` is called only on fire and its value is returned in the unit's place, so the
+     * caller decides the wire shape (the App sends a 503). See {@link raceDeadline} for what
+     * this deliberately does NOT do to the scope.
+     */
+    responseDeadline?: { ms: number; answer: () => unknown } | undefined;
 }
 
 /**
@@ -306,6 +316,93 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
     });
 }
 
+/** @internal Brands the deadline branch, so no value a handler can return is mistaken for it. */
+const TIMED_OUT = Symbol('azeroth.responseDeadline');
+
+/**
+ * @internal Races a unit against its response deadline.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO, because each one is a bug rather than a nicety:
+ *
+ * - It does NOT run cleanups and does NOT set `settled`. {@link onWorkUnitCleanup} runs a
+ *   registration IMMEDIATELY once a scope is settled - that late path exists for a request
+ *   that is genuinely over - so marking a still-running handler settled means the `release()`
+ *   it registers after acquiring a connection fires at once, and the handler then keeps using
+ *   a connection already back in the pool. A deadline must not manufacture a use-after-release.
+ * - It does NOT release the data cache. Releasing resolves an in-flight `cached()` read to
+ *   `undefined` rather than letting it fetch, so a unit that continues past its deadline would
+ *   compute on missing data - harmless for a GET, silent corruption for a write.
+ *
+ * So the deadline frees the SOCKET and answers the client, and nothing else. The handler is not
+ * cancelled: its memory, its pool slot, and its upstream connection stay held until it settles
+ * on its own. The losing promise keeps a continuation that settles the scope at that true end
+ * and CANCELS a late streaming body - without it, a handler that returns a stream after the
+ * deadline leaves a response nobody will ever pull, so its cleanups would never run at all.
+ */
+async function raceDeadline<T>(
+    scope: RequestScope,
+    fn: (arg: never) => unknown,
+    arg: unknown,
+    deadline: { ms: number; answer: () => unknown },
+    options: WorkUnitOptions
+): Promise<{ value: T } | { [TIMED_OUT]: true; answer: T }>
+{
+    // storage.run is called synchronously here so the unit still opens inside its own scope.
+    const running = Promise.resolve(storage.run(scope, fn as (arg: unknown) => T, arg));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fired = new Promise<typeof TIMED_OUT>((resolve) =>
+    {
+        timer = setTimeout(() => resolve(TIMED_OUT), deadline.ms);
+        // An armed timer must not be what keeps a finished process alive.
+        (timer as unknown as { unref?: () => void }).unref?.();
+    });
+
+    let outcome: T | typeof TIMED_OUT;
+    try
+    {
+        outcome = await Promise.race([running, fired]);
+    }
+    catch (error)
+    {
+        clearTimeout(timer);
+        await runCleanups(scope, options);
+        throw error;
+    }
+    clearTimeout(timer);
+
+    if (outcome !== TIMED_OUT)
+    {
+        return { value: outcome };
+    }
+
+    void running.then(
+        async (late: T): Promise<void> =>
+        {
+            // The handler finally produced something nobody is waiting for. A streaming body
+            // would otherwise sit unread forever, holding whatever its producer holds, so
+            // cancel it - that runs the producer's own cancel - and then settle normally.
+            if (isStreamingResponse(late))
+            {
+                try
+                {
+                    await (late as Response).body?.cancel();
+                }
+                catch
+                {
+                    // A body already locked or errored is still a body nobody will read.
+                }
+            }
+            await runCleanups(scope, options);
+        },
+        async (): Promise<void> =>
+        {
+            await runCleanups(scope, options);
+        }
+    ).catch(() => undefined);
+
+    return { [TIMED_OUT]: true, answer: deadline.answer() as T };
+}
+
 /**
  * Runs `fn` inside a fresh request root. The App wraps every dispatch in this; adapters and
  * user code never call it directly. Cleanups ALWAYS run when the request settles: a throw or a
@@ -325,14 +422,29 @@ export async function runInRequestRoot<T, A>(
     // the caller passes ONE stable function for the app's lifetime.
     const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null };
     let result: T;
-    try
+    const deadline = options.responseDeadline;
+    if (deadline !== undefined)
     {
-        result = await storage.run(scope, fn, arg);
+        const raced = await raceDeadline<T>(scope, fn, arg, deadline, options);
+        if (TIMED_OUT in raced)
+        {
+            // EARLY RETURN, and the early part is the point: falling through would reach the
+            // settle below and tear down a scope whose handler is still running.
+            return raced.answer;
+        }
+        result = raced.value;
     }
-    catch (error)
+    else
     {
-        await runCleanups(scope, options);
-        throw error;
+        try
+        {
+            result = await storage.run(scope, fn, arg);
+        }
+        catch (error)
+        {
+            await runCleanups(scope, options);
+            throw error;
+        }
     }
 
     // A live streaming body outlives the handler return: hand the cleanups to the stream so
