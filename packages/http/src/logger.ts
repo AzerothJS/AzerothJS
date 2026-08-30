@@ -58,7 +58,17 @@ export function logRequests(logger: RequestLogger): { onComplete(request: Reques
             {
                 fields.requestId = id;
             }
-            if (response.status >= 500)
+            // A 5xx whose CLIENT had already hung up is an abandoned navigation, not a server
+            // fault: a handler that honours request.signal rejects on disconnect and maps to
+            // 500 like anything else, so escalating it burns an error budget on ordinary user
+            // behaviour. The signal is read only on this branch - a 2xx never touches the lazy
+            // getter - and the event is still recorded, at info, carrying clientGone so it stays
+            // countable. It is NOT dropped: the abort may have interrupted real work.
+            if (response.status >= 500 && request.signal.aborted)
+            {
+                logger.info('request abandoned by client', { ...fields, clientGone: true });
+            }
+            else if (response.status >= 500)
             {
                 logger.error('request failed', fields);
             }

@@ -717,7 +717,7 @@ export class App<Ctx extends object = object>
                     : undefined;
             })(),
             ...(this.#options.responseTimeoutMs !== undefined
-                ? { responseDeadline: { ms: this.#options.responseTimeoutMs, answer: (): Response => this.#deadlineAnswer() } }
+                ? { responseDeadline: { ms: this.#options.responseTimeoutMs, answer: (arg: unknown): Response => this.#deadlineAnswer(arg as Request) } }
                 : {})
         };
         return await runInRequestRoot(this.#dispatchBound, request, this.#rootOptions);
@@ -732,11 +732,11 @@ export class App<Ctx extends object = object>
      * (retry later) depends on telling them apart. The error also reaches `onError`, since a
      * handler that blew its deadline is exactly what an operator needs to see.
      */
-    #deadlineAnswer(): Response
+    #deadlineAnswer(request: Request): Response
     {
         const error = new HttpError(503, 'The server took too long to produce a response.',
             { expose: true, headers: { 'retry-after': '1' } });
-        this.#options.onError?.(error, error);
+        this.#options.onError?.(error, error, { clientGone: request.signal.aborted });
         return errorResponse(error, {
             dev: this.#options.dev,
             observe: undefined,

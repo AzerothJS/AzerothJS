@@ -196,6 +196,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **An abandoned request was reported as a server fault.** A handler or loader that honours
+  `request.signal` - the shape the router documents - rejects when the client disconnects, and
+  that rejection mapped to a 500 like any other: measured, 20 of 20 abandoned requests produced
+  an `onError` call and a 500 in `observe.onComplete`, which `logRequests` escalated to
+  error level. A deployment that alerts on 5xx counts therefore read its page-abandon rate as
+  its server error rate. The error observer now receives a third argument, `{ clientGone }`,
+  and `logRequests` records an abandoned 5xx at info with `clientGone: true` instead of
+  escalating it. Nothing is suppressed and no status changed: "aborted" does not prove the abort
+  CAUSED the error - a handler's own timeout controller, a mutating call handed the request
+  signal, and a graceful-shutdown drain all raise `AbortError` on an aborted request while
+  being real faults - so the report still fires and the flag is there to classify it. The signal
+  is read only on paths already failing, so an ordinary request never materializes it.
+
 - **The server re-flattened the whole route table on every selection; it is now memoized per
   route array.** Every server-side selection paid one full flatten plus a `compilePath` per
   leaf - a warm ISR hit pays one (the guarded predicate runs before the cache read), an SSR

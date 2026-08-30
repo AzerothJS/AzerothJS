@@ -155,7 +155,7 @@ export interface WorkUnitOptions
      * caller decides the wire shape (the App sends a 503). See {@link raceDeadline} for what
      * this deliberately does NOT do to the scope.
      */
-    responseDeadline?: { ms: number; answer: () => unknown } | undefined;
+    responseDeadline?: { ms: number; answer: (arg: unknown) => unknown } | undefined;
 }
 
 /**
@@ -343,7 +343,7 @@ async function raceDeadline<T>(
     scope: RequestScope,
     fn: (arg: never) => unknown,
     arg: unknown,
-    deadline: { ms: number; answer: () => unknown },
+    deadline: { ms: number; answer: (arg: unknown) => unknown },
     options: WorkUnitOptions
 ): Promise<{ value: T } | { [TIMED_OUT]: true; answer: T }>
 {
@@ -400,7 +400,7 @@ async function raceDeadline<T>(
         }
     ).catch(() => undefined);
 
-    return { [TIMED_OUT]: true, answer: deadline.answer() as T };
+    return { [TIMED_OUT]: true, answer: deadline.answer(arg) as T };
 }
 
 /**

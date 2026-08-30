@@ -233,8 +233,28 @@ export function notFoundResponse(): Response
     return new PayloadResponse(NOT_FOUND_BODY, 404, NOT_FOUND_HEADERS);
 }
 
+/** What the kernel knows about an error's context beyond the error itself. */
+export interface ErrorContext
+{
+    /**
+     * The CLIENT had already disconnected when this error was mapped.
+     *
+     * A handler that honours `request.signal` rejects when the client hangs up, and that
+     * rejection maps to a 500 like any other - so without this flag an ordinary abandoned
+     * navigation is indistinguishable from a server fault, and a dashboard fed by this seam
+     * counts it as one.
+     *
+     * It is deliberately a FACT rather than a filter: the kernel does not suppress the report,
+     * because "aborted" does not prove the abort CAUSED the error. A handler's own timeout
+     * controller, a mutating call handed `request.signal`, and a graceful-shutdown drain all
+     * raise `AbortError` on an aborted request while being real faults worth seeing. Classify
+     * on this flag; do not assume it means nothing happened.
+     */
+    clientGone: boolean;
+}
+
 /** How `errorResponse` reports the errors it maps (the observability seam's first consumer). */
-export type ErrorObserver = (error: unknown, mapped: HttpError) => void;
+export type ErrorObserver = (error: unknown, mapped: HttpError, context?: ErrorContext) => void;
 
 /** The context a custom error serializer receives - everything needed to shape the wire body. */
 export interface ErrorSerializerContext
@@ -362,7 +382,9 @@ export function errorResponse(
     {
         try
         {
-            options.observe(error, mapped);
+            // The signal is read ONLY here, on a path already failing, so the lazy AbortController
+        // (and its socket listener) is never materialized by an ordinary request.
+            options.observe(error, mapped, { clientGone: options.request?.signal.aborted === true });
         }
         catch
         {
