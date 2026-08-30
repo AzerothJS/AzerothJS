@@ -196,6 +196,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **Added `onStreamError`: a streaming producer that failed after the headers were sent
+  reported to nobody.** Such a failure cannot become a status - the headers left long ago - so
+  the consumer received a truncated body while the server recorded the 2xx it had already sent,
+  and over h2c that truncation is byte-identical to a normal end, invisible on both sides. The
+  new `AppOptions.onStreamError` receives the error and its request. It is deliberately NOT
+  `onError`: that seam hands over a mapped `HttpError` carrying a status, and a committed
+  stream has none left to map, so routing through it would mean fabricating a response that
+  never existed. A throwing reporter is isolated, so it can take down neither the consumer's
+  error propagation nor the request's teardown. Coverage is honest: this is a streaming
+  `Response` the kernel monitors. An SSE stream closes cleanly on a producer rejection and
+  reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
+  took its own reader) is still unreported.
+
 - **A streaming client's disconnect tore the request down while the producer was still
   unwinding.** Cancelling a response body resolves the in-flight read with `done: true` before
   the source's own `cancel()` runs, so the kernel's pull woke, called `close()` on a

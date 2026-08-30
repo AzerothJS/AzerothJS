@@ -156,6 +156,20 @@ export interface WorkUnitOptions
      * this deliberately does NOT do to the scope.
      */
     responseDeadline?: { ms: number; answer: (arg: unknown) => unknown } | undefined;
+
+    /**
+     * Hears a STREAMING body's producer failing after the response was already committed.
+     *
+     * Such a failure cannot become a status - the headers left long ago - so without this it
+     * reaches nobody: the consumer gets a truncated body and the server records the clean 2xx
+     * it already sent. On h2c the truncation is byte-identical to a normal end, so neither side
+     * can see it.
+     *
+     * The second argument is the unit's own `arg`, typed `unknown` on purpose: {@link
+     * runInRequestRoot} is generic and public, and is called in-repo with a non-Request arg, so
+     * a reporter must narrow rather than assume.
+     */
+    onStreamError?: ((error: unknown, arg: unknown) => void) | undefined;
 }
 
 /**
@@ -273,7 +287,7 @@ function isStreamingResponse(result: unknown): result is Response & { body: Read
  *
  * @internal
  */
-function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Array> }, scope: RequestScope, options: WorkUnitOptions): Response
+function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Array> }, scope: RequestScope, options: WorkUnitOptions, arg: unknown): Response
 {
     const reader = response.body.getReader();
     // Each pull/cancel re-enters the request context EXPLICITLY and unconditionally: a
@@ -320,6 +334,19 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
             }
             catch (error)
             {
+                // Reachable only by a GENUINE producer fault: a cancel-driven wake returns
+                // above, so this is no longer a mix of real failures and manufactured ones.
+                // Reported BEFORE the stream is failed, so a consumer that has already gone
+                // does not cost us the only record of it.
+                try
+                {
+                    options.onStreamError?.(error, arg);
+                }
+                catch
+                {
+                    // The sink's own failure has nowhere to go - and must not take the
+                    // stream's error propagation or this request's teardown down with it.
+                }
                 controller.error(error);
                 await runCleanups(scope, options);
             }
@@ -499,7 +526,7 @@ export async function runInRequestRoot<T, A>(
         }
         try
         {
-            return deferCleanupsToBody(result, scope, options) as T;
+            return deferCleanupsToBody(result, scope, options, arg) as T;
         }
         catch
         {

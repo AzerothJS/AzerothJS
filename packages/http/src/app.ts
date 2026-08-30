@@ -138,6 +138,22 @@ export interface AppOptions
      * request as in-flight and may exit while its handler is still running.
      */
     responseTimeoutMs?: number | undefined;
+
+    /**
+     * Hears a STREAMING response whose producer failed after the headers were sent.
+     *
+     * Deliberately NOT {@link onError}: that seam hands over a mapped {@link HttpError} with a
+     * status, and a committed stream has no status left to map - reporting one would mean
+     * fabricating a response that never existed. This failure is real and currently invisible:
+     * the client gets a truncated body while the server records the 2xx it already sent, and
+     * over h2c that truncation is byte-identical to a normal end.
+     *
+     * Covers a streaming `Response` the kernel monitors. It does NOT cover an SSE stream,
+     * which closes cleanly on a producer rejection and reports through `sse()`'s own
+     * `onError`, nor a body the kernel could not monitor because the handler took its own
+     * reader.
+     */
+    onStreamError?: ((error: unknown, request: Request) => void) | undefined;
 }
 
 /**
@@ -716,6 +732,17 @@ export class App<Ctx extends object = object>
                     }
                     : undefined;
             })(),
+            ...(this.#options.onStreamError !== undefined
+                ? { onStreamError: (error: unknown, arg: unknown): void =>
+                {
+                    // The arg is this unit's own; narrow rather than assume, since
+                    // runInRequestRoot is generic and public.
+                    if (arg instanceof Request)
+                    {
+                        this.#options.onStreamError?.(error, arg);
+                    }
+                } }
+                : {}),
             ...(this.#options.responseTimeoutMs !== undefined
                 ? { responseDeadline: { ms: this.#options.responseTimeoutMs, answer: (arg: unknown): Response => this.#deadlineAnswer(arg as Request) } }
                 : {})
