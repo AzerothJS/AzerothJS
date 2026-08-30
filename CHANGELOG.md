@@ -196,6 +196,12 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A declared `routes.stream` producer failure reached stderr instead of your observer.**
+  `register` built every SSE route without an `onError`, so `sse()` fell back to its own
+  stderr notice - correct as a last resort, but it meant the framework's flagship streaming
+  shape was the one place a real fault bypassed the app's configured observer. Declared stream
+  routes now report through `AppOptions.onStreamError` like any other post-commit stream fault.
+
 - **Added `onStreamError`: a streaming producer that failed after the headers were sent
   reported to nobody.** An SSE client dropped for
   falling `maxBufferedBytes` behind is deliberately excluded: ending its stream requires

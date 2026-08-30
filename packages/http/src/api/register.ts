@@ -129,7 +129,13 @@ function installRoute(app: App, declaration: AnyDecl, fullPath: string, guards: 
             // took.
             // The cast restores what feature.ts:281 already declares - `void | Promise<void>` -
             // after line 88 widened every kind's handler to `unknown` for the shared call sites.
-            return sse(context.request, (connection) => handler(context, connection) as void | Promise<void>);
+            // A producer failure here cannot become a status - the event-stream headers left
+            // with the 200 - so route it to the app's own stream observer rather than letting
+            // sse() fall back to its stderr notice. A dropped slow client does NOT arrive here:
+            // that path errors the stream directly and is branded client-caused.
+            const observer = app.streamErrorObserver;
+            return sse(context.request, (connection) => handler(context, connection) as void | Promise<void>,
+                observer !== undefined ? { onError: (error: unknown): void => observer(error, context.request) } : {});
         }
 
         const shaped = context as { input?: unknown; query?: unknown };

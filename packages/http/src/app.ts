@@ -805,6 +805,17 @@ export class App<Ctx extends object = object>
         }
     };
 
+    /**
+     * @internal The app's stream-fault observer, for kernel-adjacent callers that construct a
+     * streaming response ON THE APP'S BEHALF - today the api layer's `sse()`. Without it a
+     * declared `routes.stream` producer failure falls back to `sse()`'s own stderr notice
+     * instead of reaching the observer the app already configured.
+     */
+    public get streamErrorObserver(): ((error: unknown, request: Request) => void) | undefined
+    {
+        return this.#options.onStreamError;
+    }
+
     /** @internal Built once on first use; see #dispatchOnly. */
     #rootOptions: WorkUnitOptions | null = null;
 
