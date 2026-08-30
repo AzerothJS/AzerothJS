@@ -218,6 +218,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **On h2c, `request.signal` reported that the client had hung up on every SUCCESSFUL
+  request.** `incoming.socket` is a per-stream proxy there rather than the connection, so its
+  `close` fires on a normal end exactly as on a reset. Four things now read that value -
+  `clientGone`, the log de-escalation of a 5xx, the `onStreamError` exclusions, and SSE's
+  abort-to-end - so it mattered. h2 now takes the request's `'aborted'` event, which Node emits
+  for a reset and skips for a clean finish; http1 keeps its socket-close path untouched, because
+  on that transport the body-limit path's own `destroy()` emits `'aborted'` for a client that
+  never left. The trade is stated in the code rather than hidden: a client that resets AFTER the
+  response was written no longer aborts on h2, where http1 still does - a false positive on every
+  successful request exchanged for a false negative on a request whose work was already finished.
+  Nothing in the framework reads the signal that late.
+
 - **On h2c the server never noticed a client disconnect, so every such request leaked and a
   graceful drain never returned.** `Http2ServerResponse` has no `destroyed` property at all -
   `'destroyed' in res` is false - so the adapter's liveness checks read as "still alive" on

@@ -15,11 +15,12 @@
  *
  *   - `method`/`url` are string work only;
  *   - `headers` builds the real Headers once, when someone actually reads a header;
- *   - `signal` allocates its AbortController and attaches its socket listener only for
- *     handlers that use cancellation - which also fixes a real leak: an unconditional
+ *   - `signal` allocates its AbortController and attaches its listener only for handlers
+ *     that use cancellation - which also fixes a real leak: on http1 an unconditional
  *     per-request `socket.once('close')` accumulates listeners for the lifetime of a
- *     keep-alive socket (MaxListenersExceededWarning under load). The lazy listener is
- *     removed when the request completes;
+ *     keep-alive socket (MaxListenersExceededWarning under load), so that listener is
+ *     removed when the request completes. On h2 there is nothing to detach: the listener
+ *     lives on the per-stream request and dies with it;
  *   - `body` wraps the incoming stream on demand;
  *   - everything exotic (clone, formData, blob, cache, integrity, ...) delegates to a real
  *     Request materialized at that moment - full spec behavior, paid only when used.
@@ -188,10 +189,51 @@ class AdapterRequest implements Request
         return this.#headers;
     }
 
+    /**
+     * @internal The h2 disconnect signal.
+     *
+     * On h2 `incoming.socket` is a PER-STREAM proxy, not the connection, so its `close`
+     * fires on a NORMAL end exactly as on a reset - which made every completed h2c request
+     * report that its client had hung up. `'aborted'` is the only discriminator available:
+     * Node emits it from `closeStream` and skips it once the writable side is ending, so it
+     * fires for a reset DURING the response and never for a clean finish. Repairing the
+     * proxy's detach instead does not work - the request's own `close` that would trigger it
+     * is emitted from inside the same stream `close` emit.
+     *
+     * THE TRADE, stated because it is real: a client that resets AFTER the response was
+     * written does not fire `'aborted'` (Node skips it once the writable is ending), so this
+     * signal reads `false` there where http1's reads `true`. That swaps a false positive on
+     * every successful request for a false negative on a post-response reset - a request whose
+     * work is already done. Nothing in this repo reads the signal that late; user code holding
+     * it past the response should not treat `false` as proof the client is still there.
+     *
+     * Note the adapter can also make this fire without the client leaving: `writeResponse`
+     * destroys the response on a producer fault, and on h2 that destroys the stream with the
+     * writable still open, which emits `'aborted'`. http1 behaves identically, so it is a
+     * shared quirk rather than a transport difference.
+     */
+    #h2Signal(): AbortSignal
+    {
+        // Already reset before anyone asked: the truthful answer needs no listener.
+        if ((this.#incoming as { aborted?: boolean }).aborted === true)
+        {
+            return AbortSignal.abort();
+        }
+        const controller = new AbortController();
+        // Per-stream, so it dies with the stream - a long-lived session accumulates nothing.
+        this.#incoming.once('aborted', () => controller.abort());
+        return controller.signal;
+    }
+
     public get signal(): AbortSignal
     {
         if (this.#signal === null)
         {
+            if (this.#incoming.httpVersionMajor === 2)
+            {
+                this.#signal = this.#h2Signal();
+                return this.#signal;
+            }
             const socket = this.#incoming.socket;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types .socket as always-present; h2 compat streams can lose it at runtime
             if (socket === undefined || socket.destroyed)
