@@ -115,3 +115,50 @@ describe('the refresh-directive parse (HTML shared declarative refresh steps)', 
         expect(isExternalUrl(refreshTarget('0;url=/local')!)).toBe(false);
     });
 });
+
+// A BACKSLASH IS A SLASH in the authority position, and nothing here tested one.
+//
+// The URL parser folds `\` to `/` for a special scheme, so `/\host`, `\host`, `\/host` and
+// `/\/host` all resolve to `host` exactly as `//host` does - but the classifier matched only on
+// `//`, so every one of those spellings was judged an internal path while a browser navigated
+// off-origin. That is an open redirect straight through the boundary written to refuse them,
+// reachable by the documented `guard: ({ query }) => redirect(String(query.next))` idiom with
+// `?next=/%5Cevil.example/phish`.
+//
+// The arms are built from a codepoint rather than written as literals, because a backslash in a
+// test fixture is exactly the character an editor, a shell or a copy-paste can silently eat -
+// which is how it stayed untested in the first place.
+describe('a backslash in the authority position is external', () =>
+{
+    const BACKSLASH = String.fromCharCode(92);
+    const BASE = 'https://app.example/page';
+
+    const offOrigin = [
+        ['slash-backslash', `/${ BACKSLASH }evil.example/x`],
+        ['double backslash', `${ BACKSLASH }${ BACKSLASH }evil.example/x`],
+        ['backslash-slash', `${ BACKSLASH }/evil.example/x`],
+        ['slash-backslash-slash', `/${ BACKSLASH }/evil.example/x`]
+    ] as const;
+
+    it.each(offOrigin)('refuses %s, which really does leave the origin', (_name, target) =>
+    {
+        // The premise, asserted rather than assumed: a browser resolves this off-origin.
+        expect(new URL(target, BASE).origin).toBe('https://evil.example');
+        expect(isExternalUrl(target)).toBe(true);
+    });
+
+    it('CONTROL: a same-origin path carrying a backslash is still internal', () =>
+    {
+        // Only the leading pair is folded, so an ordinary path or query keeps working.
+        const target = `/search?q=a${ BACKSLASH }b`;
+        expect(new URL(target, BASE).origin).toBe('https://app.example');
+        expect(isExternalUrl(target)).toBe(false);
+    });
+
+    it('CONTROL: a single leading backslash is a path, not an authority', () =>
+    {
+        const target = `${ BACKSLASH }evil.example`;
+        expect(new URL(target, BASE).origin).toBe('https://app.example');
+        expect(isExternalUrl(target)).toBe(false);
+    });
+});

@@ -218,6 +218,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **The off-origin redirect refusal was bypassed by a backslash.** A URL parser folds a
+  backslash to a slash in the authority position for a special scheme, so `/host`,
+  `\host`, `/host` and `//host` all resolve to `host` exactly as `//host` does -
+  but the classifier matched only on `//`, so every one of those spellings was judged an
+  internal path while a browser navigated off-origin. Verified: all four resolve to a foreign
+  origin with the refusal returning false. That made the documented
+  `guard: ({ query }) => redirect(String(query.next))` idiom an open redirect via
+  `?next=/%5Cevil.example`, through the boundary that exists to refuse exactly that, and it
+  reached both the redirect Location and a `useHead` meta-refresh. Only the leading pair is
+  folded, so an ordinary path or query carrying a backslash is unaffected.
+
 - **An over-limit request body was recorded as a broken upload rather than as too large.**
   `destroy()` synchronously emits `'aborted'`, whose listener rejected first, so the honest
   `PayloadTooLargeError` lost a race with "the request body was not fully received" and the

@@ -643,10 +643,18 @@ export function executableScriptMessage(): string
 
 /**
  * Matches a string starting with a URL scheme (`https:`, `mailto:`, `tel:`, ...) or a
- * protocol-relative URL (`//host`). Such targets are EXTERNAL: they leave the app's origin
- * rather than address a route within it.
+ * protocol-relative URL. Such targets are EXTERNAL: they leave the app's origin rather than
+ * address a route within it.
+ *
+ * A BACKSLASH COUNTS AS A SLASH in the authority position, because that is what the URL
+ * parser does: for a special scheme WHATWG folds `\` to `/`, so `/\host`, `\\host`, `\/host`
+ * and `/\/host` all resolve to `host` exactly as `//host` does. Matching only on `//` left
+ * every one of those spellings classified as an internal path while a browser navigated
+ * off-origin - an open redirect through the boundary that exists to refuse them. Only the
+ * leading PAIR is treated this way, so an ordinary path or query carrying a backslash
+ * (`/search?q=a\b`) is untouched.
  */
-const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+const EXTERNAL_URL = /^(?:[a-z][a-z0-9+.-]*:|[/\\]{2})/i;
 
 /**
  * Whether a navigation target is EXTERNAL (scheme or protocol-relative), judged on the
