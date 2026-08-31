@@ -38,7 +38,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { abortDataCacheFetches, markServerRuntime, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
-import { isClientFault } from './errors.ts';
+import { isClientFault, reportIsolated } from './errors.ts';
 
 /** What the async context carries for one request. @internal */
 interface RequestScope
@@ -133,7 +133,7 @@ async function runLate(fn: () => void | Promise<void>, scope: RequestScope): Pro
         {
             try
             {
-                scope.options.onCleanupError?.(error);
+                reportIsolated(scope.options.onCleanupError, error);
             }
             catch
             {
@@ -242,7 +242,7 @@ async function teardownOnce(scope: RequestScope, options: WorkUnitOptions): Prom
                 {
                     try
                     {
-                        options.onCleanupError?.(error);
+                        reportIsolated(options.onCleanupError, error);
                     }
                     catch
                     {
@@ -339,20 +339,16 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
                 // above, so this is no longer a mix of real failures and manufactured ones.
                 // Reported BEFORE the stream is failed, so a consumer that has already gone
                 // does not cost us the only record of it.
-                try
+                // A fault the client caused is not a server fault, however it arrives: an
+                // SSE slow-client drop errors its own stream ON PURPOSE, and reporting that
+                // would mislabel policy working correctly.
+                if (!isClientFault(error))
                 {
-                    // A fault the client caused is not a server fault, however it arrives: an
-                    // SSE slow-client drop errors its own stream ON PURPOSE, and reporting that
-                    // would mislabel policy working correctly.
-                    if (!isClientFault(error))
-                    {
-                        options.onStreamError?.(error, arg);
-                    }
-                }
-                catch
-                {
-                    // The sink's own failure has nowhere to go - and must not take the
-                    // stream's error propagation or this request's teardown down with it.
+                    // reportIsolated, not a try/catch: the guard that used to be here wrapped
+                    // the CALL and not the promise, so an `async` sink's rejection escaped it
+                    // and exited the process. Measured, with the synchronous throw already
+                    // contained by that same guard.
+                    reportIsolated(options.onStreamError, error, arg);
                 }
                 controller.error(error);
                 await runCleanups(scope, options);

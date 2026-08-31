@@ -336,6 +336,19 @@ function manage<S extends Server | Http2Server>(
     {
         inFlight.add(res);
         res.once('close', () => inFlight.delete(res));
+        /** The one failure end for a dispatch, reached by a rejection or a synchronous throw. */
+        const dispatchFailed = (): void =>
+        {
+            if (!res.destroyed && !res.headersSent)
+            {
+                (res as ServerResponse).writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+                res.end('Internal Server Error');
+                return;
+            }
+            // Headers are already on the wire, so the framing cannot be corrected; dropping the
+            // connection is the only honest end to the message.
+            res.destroy();
+        };
         const dispatch = (): void =>
         {
             // The LAST line of defence for the process. `App.handle` cannot reject, but a
@@ -344,40 +357,62 @@ function manage<S extends Server | Http2Server>(
             // an invalid status or a header value Node refuses throws from writeHead. Without
             // this catch either becomes an unhandled rejection, and Node's default policy for
             // one is to terminate: a single request would take down every live connection.
-            app.handle(createAdapterRequest(req, 'http', trust))
-                .then((response) => writeResponse(res, response))
-                .catch(() =>
-                {
-                    if (!res.destroyed && !res.headersSent)
-                    {
-                        (res as ServerResponse).writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-                        res.end('Internal Server Error');
-                        return;
-                    }
-                    // Headers are already on the wire, so the framing cannot be corrected;
-                    // dropping the connection is the only honest end to the message.
-                    res.destroy();
-                });
+            //
+            // The try is the other half of that same sentence, and it was missing: a
+            // `WebHandler` whose `handle` throws SYNCHRONOUSLY never produces a promise, so
+            // `.catch` is never reached and the throw unwinds out of this 'request' listener as
+            // an uncaughtException - the exact process kill the catch exists to prevent, through
+            // the one shape it could not see. Measured: an identical throw one frame deeper (an
+            // App route, a pipeline middleware) is a clean 500 with the server alive, while here
+            // it exited the process and reset an unrelated request that was already in flight.
+            try
+            {
+                app.handle(createAdapterRequest(req, 'http', trust))
+                    .then((response) => writeResponse(res, response))
+                    .catch(dispatchFailed);
+            }
+            catch
+            {
+                dispatchFailed();
+            }
         };
         if (before !== undefined)
         {
-            // The middleware either answers (dev-server asset/HMR traffic) or nexts into the
-            // app. An error passed to next() flows through the app's error path via a throw
-            // inside handle()'s reach - here the pragmatic mapping is a plain 500, because a
-            // connect middleware failing is a dev-tooling crash, not an application error.
-            before(req as import('node:http').IncomingMessage, res as ServerResponse, (error) =>
+            // A connect middleware failing is a dev-tooling crash, not an application error, so
+            // every way it can fail ends the same way: a plain 500 if nothing is on the wire yet.
+            const middlewareFailed = (): void =>
             {
-                if (error !== undefined && error !== null)
+                if (!res.destroyed && !res.headersSent)
                 {
-                    if (!res.destroyed && !res.headersSent)
-                    {
-                        (res as ServerResponse).writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-                        res.end('Dev middleware error');
-                    }
-                    return;
+                    (res as ServerResponse).writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+                    res.end('Dev middleware error');
                 }
-                dispatch();
-            });
+            };
+            // THREE ways to fail, and only the first was handled. `next(error)` was; a
+            // SYNCHRONOUS throw unwound out of this 'request' listener and killed the process;
+            // and an `async` middleware's rejection was discarded, which killed it too - even
+            // after the middleware had already called next() and the request had been answered
+            // normally. Measured 3/3 deterministically, each taking an unrelated in-flight
+            // request down with it. The shipped arm for this seam drives only `next(error)`,
+            // which is why the other two never showed.
+            try
+            {
+                const settled = before(req as import('node:http').IncomingMessage, res as ServerResponse, (error) =>
+                {
+                    if (error !== undefined && error !== null)
+                    {
+                        middlewareFailed();
+                        return;
+                    }
+                    dispatch();
+                });
+                // A connect middleware is callback-shaped, but nothing stops one being `async`.
+                void Promise.resolve(settled).catch(middlewareFailed);
+            }
+            catch
+            {
+                middlewareFailed();
+            }
             return;
         }
         dispatch();

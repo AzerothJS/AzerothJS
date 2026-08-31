@@ -218,6 +218,29 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **A failing error observer could take the whole server down.** These sinks are consumer code
+  the framework calls to TELL it something, so a failure has nowhere to go and must not
+  propagate - but two shapes had to be contained and only one was. A SYNCHRONOUS throw inside a
+  floating promise becomes an uncaughtException, whose default disposition exits the process; an
+  `async` sink declared `void` rejects in a way a `try/catch` around the CALL never sees.
+  Measured in a child process: a throwing `onStreamError` on a declared `routes.stream` route
+  exited(1), taking every other live connection with it, and an async-rejecting one exited(1)
+  through a seam whose synchronous throw was already guarded. Every reporting sink now goes
+  through one isolation helper that normalizes both shapes - `onStreamError` at all three call
+  sites, `sse()`'s own `onError`, and `onCleanupError`.
+
+  A sweep for the same defect class then found two more, both in the node adapter and both
+  outside any promise chain. `serve(app, { before })` - the connect-middleware seam the docs
+  suggest for `vite.middlewares` - was invoked bare inside the `'request'` listener, so a
+  throwing middleware exited the process and an `async` one did too, even after it had already
+  called `next()` and the request had been answered normally. And a `WebHandler` whose
+  `handle` throws SYNCHRONOUSLY never produces the promise the adapter's `.catch` guards, so
+  that throw escaped the listener as well - through the one shape the comment calling it "the
+  LAST line of defence for the process" could not see. Both now end in the same 500 the seam
+  already used for `next(error)`. Measured: each killed the process deterministically and reset
+  an unrelated request that was in flight at the time, while an identical throw one frame deeper
+  was a clean 500 with the server alive.
+
 - **The off-origin redirect refusal was bypassed by a backslash.** A URL parser folds a
   backslash to a slash in the authority position for a special scheme, so `/host`,
   `\host`, `/host` and `//host` all resolve to `host` exactly as `//host` does -

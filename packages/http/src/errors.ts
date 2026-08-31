@@ -251,6 +251,40 @@ export function markClientFault<E extends object>(error: E): E
     return error;
 }
 
+/**
+ * @internal Invokes a REPORTING sink so its own failure cannot take the server down.
+ *
+ * Every one of these sinks is consumer code the framework calls to TELL it something, never to
+ * ask it anything - so its failure has nowhere meaningful to go, and must not propagate. Two
+ * shapes have to be contained, and guarding only the first is the trap this exists to close:
+ *
+ *   - a SYNCHRONOUS throw, which inside a floating promise or an event handler becomes an
+ *     uncaughtException, whose default disposition exits the process;
+ *   - an ASYNC rejection from a sink declared `void` but written `async`, which a plain
+ *     try/catch around the CALL never sees, because the call itself returned fine.
+ *
+ * Measured before this existed: a throwing observer on a declared stream route exited the
+ * process (taking every other live connection with it), and an async-rejecting one did the same
+ * through a sink whose synchronous throw was already guarded.
+ */
+export function reportIsolated<A extends unknown[]>(sink: ((...args: A) => unknown) | undefined, ...args: A): void
+{
+    if (sink === undefined)
+    {
+        return;
+    }
+    try
+    {
+        // Promise.resolve() normalizes a sink that is async, returns a thenable, or returns
+        // nothing at all, so one catch covers every shape.
+        void Promise.resolve(sink(...args)).catch(() => undefined);
+    }
+    catch
+    {
+        // The sink is the last stop; its own failure has nowhere left to be reported.
+    }
+}
+
 /** @internal Whether {@link markClientFault} branded this value. */
 export function isClientFault(error: unknown): boolean
 {

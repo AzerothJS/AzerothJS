@@ -37,7 +37,7 @@
  */
 
 import { captureRequestContext } from './request-root.ts';
-import { markClientFault } from './errors.ts';
+import { markClientFault, reportIsolated } from './errors.ts';
 
 export interface SseSendOptions
 {
@@ -203,7 +203,11 @@ export function sse(
     {
         if (options.onError !== undefined)
         {
-            options.onError(error);
+            // ISOLATED. The notice below explains that a producer failure must not take the
+            // server down with it - but that reasoning applies just as much to the OBSERVER as
+            // to the producer, and this call was bare. Measured: a throwing onError exited the
+            // process, and so did an async-rejecting one.
+            reportIsolated(options.onError, error);
             return;
         }
         // Loud, but survivable: ONE stream's producer failing must not take the server down

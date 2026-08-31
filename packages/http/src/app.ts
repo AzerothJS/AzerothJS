@@ -31,7 +31,7 @@
 
 import type { PathParams } from './router.ts';
 import { RadixRouter, segmentsOf } from './router.ts';
-import { BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
+import { reportIsolated, BadRequestError, HttpError, MethodNotAllowedError, NotFoundError, errorResponse, notFoundResponse, type ErrorObserver, type ErrorSerializer } from './errors.ts';
 import { mergeAdditions } from './context-merge.ts';
 import { markServerRuntime } from 'azerothjs/internal';
 import { runInRequestRoot, type WorkUnitOptions } from './request-root.ts';
@@ -739,7 +739,7 @@ export class App<Ctx extends object = object>
                     // runInRequestRoot is generic and public.
                     if (arg instanceof Request)
                     {
-                        this.#options.onStreamError?.(error, arg);
+                        reportIsolated(this.#options.onStreamError, error, arg);
                     }
                 } }
                 : {}),
