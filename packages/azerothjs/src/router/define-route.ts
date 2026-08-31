@@ -113,7 +113,19 @@ export interface DefineRouteConfig<Path extends string, Data, Search>
         // A flat `Record<string, string>` would type a descendant read as `string` and hand
         // back undefined.
         params: RoutePathParams<Path> & Partial<Record<string, string>>;
-        query: [Search] extends [never] ? Query : Search;
+        /**
+         * The DECLARED search, or the raw query when no schema was declared.
+         *
+         * Tested on the VALUE type rather than on `Search` itself, because the default is
+         * `Record<string, never>` and that does not extend `never` - so the old
+         * `[Search] extends [never]` guard was unreachable, and a schema-less route typed every
+         * query read as `never`. That is silent rather than loud: `never` assigns to anything,
+         * so nothing errors at the read; it propagates into whatever the loader builds and
+         * poisons the handle's inferred `Data`, while the runtime hands over the raw query.
+         * `Search[keyof Search]` is `never` for both the default and an explicit `never`, and
+         * is the real value type for any declared schema.
+         */
+        query: [Search[keyof Search]] extends [never] ? Query : Search;
         signal: AbortSignal;
         parent: Promise<unknown>;
     }) => Promise<Data>;

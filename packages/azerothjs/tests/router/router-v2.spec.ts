@@ -4,7 +4,17 @@
 // schema-validated search params. Real promises, memory history, createRoot scoping -
 // the same harness discipline as the v1 specs.
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
-import { object, number, enumOf } from '@azerothjs/schema';
+import { object, number, string, enumOf } from '@azerothjs/schema';
+
+/**
+ * True when a query read carries NOTHING readable.
+ *
+ * Under the repo's `noUncheckedIndexedAccess`, a broken search guard collapses a schema-less
+ * route's query to `Record<string, never>`, and indexing that yields `undefined` rather than
+ * `never` - so an `IsNever` check reads false and asserts nothing. This is the shape that
+ * actually discriminates.
+ */
+type IsUnreadable<T> = [T] extends [undefined] ? true : false;
 import {
     createRoot, render, h,
     createRouter, createMemoryHistory, defineRoute,
@@ -331,6 +341,44 @@ describe('defineRoute typed handles', () =>
         void userRoute.to({ id: '1' }, { search: { nope: true } });
         const staticRoute = defineRoute('/about', { component: leaf });
         expect(staticRoute.to()).toEqual({ pathname: '/about' });
+    });
+
+    it('a SCHEMA-LESS route hands its loader the raw query, not a never-typed one', () =>
+    {
+        // The guard used to read `[Search] extends [never]`, but the default is
+        // `Record<string, never>`, which does not extend `never` - so the branch was
+        // unreachable and every query read typed as `never`. That failed SILENTLY: `never`
+        // assigns to anything, so nothing errored at the read; it propagated into whatever the
+        // loader built and poisoned the handle's inferred Data, while the runtime handed over
+        // the raw query all along.
+        const listRoute = defineRoute('/list', {
+            component: leaf,
+            loader: ({ query }) =>
+            {
+                // A plain conditional type, NOT expectTypeOf: vitest's matcher accepted the
+                // broken shape, so it was no assertion at all. This one is checked by the
+                // repo's own `npm run typecheck` - with the guard broken the read is
+                // `undefined` and assigning `false` is TS2322.
+                const queryIsUsable: IsUnreadable<typeof query.page> = false;
+                void queryIsUsable;
+                return Promise.resolve(query.page);
+            }
+        });
+        expect(listRoute.path).toBe('/list');
+
+        // CONTROL: a DECLARED schema still narrows, rather than widening back to a raw query.
+        const searchRoute = defineRoute('/find', {
+            component: leaf,
+            search: object({ term: string() }),
+            loader: ({ query }) =>
+            {
+                const termIsTyped: IsUnreadable<typeof query.term> = false;
+                void termIsTyped;
+                expectTypeOf(query.term).toEqualTypeOf<string>();
+                return Promise.resolve(query.term);
+            }
+        });
+        expect(searchRoute.path).toBe('/find');
     });
 
     it('.to() on a relative (nested-child) pattern refuses - it cannot address a navigation', () =>

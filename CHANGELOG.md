@@ -241,6 +241,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   an unrelated request that was in flight at the time, while an identical throw one frame deeper
   was a clean 500 with the server alive.
 
+- **A route with no search schema typed its loader's query as unreadable.** The branch that
+  hands back the raw query was guarded by `[Search] extends [never]`, but the default is
+  `Record<string, never>`, which does not extend `never` - so the branch was unreachable and
+  every query read on a schema-less route collapsed to nothing (`never`, or `undefined` under
+  `noUncheckedIndexedAccess`). It failed silently rather than loudly: nothing errors at the
+  read, it propagates into whatever the loader builds and poisons the handle's inferred data,
+  while the runtime hands over the raw query all along. The guard now tests the VALUE type, which
+  is empty for both the default and an explicit `never` and real for any declared schema, so a
+  schema-less route reads its raw query again and a declared one still narrows.
+
 - **The off-origin redirect refusal was bypassed by a backslash.** A URL parser folds a
   backslash to a slash in the authority position for a special scheme, so `/host`,
   `\host`, `/host` and `//host` all resolve to `host` exactly as `//host` does -
