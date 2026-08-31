@@ -218,6 +218,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reports through `sse()`'s own `onError`; a body the kernel could not monitor (the handler
   took its own reader) is still unreported.
 
+- **An over-limit request body was recorded as a broken upload rather than as too large.**
+  `destroy()` synchronously emits `'aborted'`, whose listener rejected first, so the honest
+  `PayloadTooLargeError` lost a race with "the request body was not fully received" and the
+  server's own log named a network fault that never happened. The rejection now precedes the
+  destroy. Scope worth stating: on http1 the client receives no response either way, because the
+  destroy resets the connection - this corrects what the SERVER records. On h2c the client does
+  receive its 413, which is why the limit path deliberately does not reset the stream: doing so
+  discards that response entirely, and silently.
+
 - **On h2c, `request.signal` reported that the client had hung up on every SUCCESSFUL
   request.** `incoming.socket` is a per-stream proxy there rather than the connection, so its
   `close` fires on a normal end exactly as on a reset. Four things now read that value -

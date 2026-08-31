@@ -331,8 +331,15 @@ class AdapterRequest implements Request
                 total += chunk.byteLength;
                 if (total > limit)
                 {
-                    incoming.destroy();
+                    // REJECT FIRST. `destroy()` synchronously emits 'aborted' on http1, and the
+                    // listener below then rejects with "the body was not fully received" - so
+                    // the honest error lost a race with a message about a broken upload, and
+                    // the server's own log named the wrong fault. Settling first makes that
+                    // later rejection a no-op. Note the scope: on http1 the client receives no
+                    // response either way (the destroy resets the connection), so this corrects
+                    // what the SERVER records, not what the client is told.
                     reject(new PayloadTooLargeError(`Body exceeds the ${ limit }-byte limit.`));
+                    incoming.destroy();
                     return;
                 }
                 chunks.push(chunk);
