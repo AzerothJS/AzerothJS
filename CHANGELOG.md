@@ -211,6 +211,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **`<Image>` froze its `alt` and `src` when they came from markup.** Markup passes a component
+  prop as a GETTER on the props object, so reading one during setup resolves it once and discards
+  the laziness the protocol exists to provide - which is exactly what the component did. On a page
+  whose language can change, the picture kept its original alt text: a sighted reader saw the page
+  switch language and a screen-reader user did not. `alt` now accepts a getter like `src` already
+  did, and every attribute that can change is handed to the renderer as a function, so a literal, a
+  markup expression and an explicit getter all behave the same way.
+
+  Worth stating plainly, because the type suggested otherwise: `src` was affected too. It was
+  reactive only when the caller passed an explicit function, which markup interpolation never
+  produces - so `src={ url() }` was as frozen as `alt` was, and the two-branch code that forked on
+  whether the caller happened to pass a function is now one path. Widening `alt`'s type alone would
+  NOT have fixed this: `alt={ expr }` compiles to a getter returning a string, so a `typeof value
+  === 'function'` test still misses it.
+
 - **A scaffolded app rendered nothing when the devtools panel failed to load.** The generated
   entry point installed the development panel behind a TOP-LEVEL `await import(...)`. That await
   is part of module evaluation, so any rejection aborted the module and the `render`/`bootClient`

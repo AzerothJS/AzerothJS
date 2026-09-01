@@ -35,14 +35,34 @@ export const DEVICE_WIDTHS: readonly number[] = [16, 32, 48, 64, 96, 128, 256, 3
 /** App-wide enablement: provide `{ endpoint }` once instead of `optimize` per image. */
 export const ImageConfig: Context<{ endpoint: string } | undefined> = createContext(undefined, 'ImageConfig');
 
+/**
+ * Reads a prop that may be a literal, a COMPILER-EMITTED GETTER, or an explicit function.
+ *
+ * Markup passes a component prop as a getter on the props object (`{ get alt() { ... } }`), so
+ * reading one during setup resolves it ONCE and throws away the laziness the protocol exists to
+ * provide. Every attribute below is therefore handed to `h()` as a FUNCTION, which binds it, and
+ * this resolves the current value each time that binding runs - so a literal, a markup
+ * expression and an explicit getter all behave the same way.
+ */
+function readProp<T>(value: T | (() => T)): T
+{
+    return typeof value === 'function' ? (value as () => T)() : value;
+}
+
 /** Props for {@link Image}. */
 export interface ImageProps
 {
     /** The source path (or a reactive getter of one). Local paths serve through the endpoint. */
     src: string | (() => string);
 
-    /** Required - an image without alternative text is an accessibility bug, typed as one. */
-    alt: string;
+    /**
+     * Required - an image without alternative text is an accessibility bug, typed as one.
+     *
+     * Reactive like {@link ImageProps.src}: on a page whose language can change, alt text that
+     * cannot follow it is the accessibility defect the requirement exists to prevent - a sighted
+     * reader sees the page switch language, a screen-reader user does not.
+     */
+    alt: string | (() => string);
 
     /** Rendered width in CSS pixels; also the box reservation and the srcset anchor. */
     width?: number;
@@ -116,7 +136,7 @@ export function Image(props: ImageProps): MountNode
     const quality = props.quality ?? 75;
 
     const attrs: Record<string, unknown> = {
-        alt: props.alt,
+        alt: (): string => readProp(props.alt),
         loading: props.loading ?? 'lazy',
         decoding: props.decoding ?? 'async'
     };
@@ -134,7 +154,7 @@ export function Image(props: ImageProps): MountNode
     }
     if (props.class !== undefined)
     {
-        attrs['class'] = props.class;
+        attrs['class'] = (): string | undefined => readProp(props.class);
     }
     if (props.fetchpriority !== undefined)
     {
@@ -143,11 +163,10 @@ export function Image(props: ImageProps): MountNode
 
     if (endpoint === undefined)
     {
-        attrs['src'] = props.src;
+        attrs['src'] = (): string => readProp(props.src);
         return h('img', attrs);
     }
 
-    const source = props.src;
     const srcFor = (value: string): string =>
         transformUrl(endpoint, value, props.width !== undefined ? snapUp(props.width) : undefined, quality);
     const srcsetFor = (value: string): string | undefined =>
@@ -170,21 +189,13 @@ export function Image(props: ImageProps): MountNode
             + `${ transformUrl(endpoint, value, snapUp(props.width * 2), quality) } 2x`;
     };
 
-    if (typeof source === 'function')
+    // ONE path, not a fork on whether the caller happened to pass a function. Whether a srcset
+    // applies is structural (it needs `width`), so it is decided with a probe value rather than
+    // by reading the source here - which would freeze it again.
+    attrs['src'] = (): string => srcFor(readProp(props.src));
+    if (srcsetFor('probe') !== undefined)
     {
-        attrs['src'] = (): string => srcFor(source());
-        const set = srcsetFor('probe');
-        if (set !== undefined)
-        {
-            attrs['srcset'] = (): string => srcsetFor(source()) as string;
-        }
-        return h('img', attrs);
-    }
-    attrs['src'] = srcFor(source);
-    const srcset = srcsetFor(source);
-    if (srcset !== undefined)
-    {
-        attrs['srcset'] = srcset;
+        attrs['srcset'] = (): string => srcsetFor(readProp(props.src)) as string;
     }
     return h('img', attrs);
 }

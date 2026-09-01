@@ -4,8 +4,9 @@
 // cardinality stays bounded. Dimensions pass through so the browser reserves space (CLS).
 import { describe, expect, it } from 'vitest';
 import { DEVICE_WIDTHS, Image, ImageConfig, createRoot, createSignal, h, provideContext, render, renderToString } from 'azerothjs';
+import type { MountNode } from 'azerothjs';
 
-function mounted(build: () => HTMLElement): HTMLElement
+function mounted(build: () => MountNode): HTMLElement
 {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -96,5 +97,92 @@ describe('Image with an endpoint', () =>
         expect(html).toContain('src="/_image?src=%2Fhero.png&amp;w=384&amp;q=75"');
         expect(html).toContain('alt="He &gt;o&lt;"');
         expect(html).toContain('loading="lazy"');
+    });
+});
+
+// MARKUP passes a component prop as a GETTER on the props object - `<Image alt={ t(x) }/>`
+// compiles to `Image({ get alt() { return t(x); } })`. Reading such a prop during setup resolves
+// it once and freezes it, which is what <Image> used to do: on a page whose language changed,
+// the picture kept its old alt text and its old src. The existing reactive arm above passes a
+// signal FUNCTION directly, a shape markup never produces, which is why this survived.
+describe('Image props arriving as markup getters stay live', () =>
+{
+    it('alt follows the value it was given', () =>
+    {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        createRoot(() =>
+        {
+            const [lang, setLang] = createSignal('en');
+            render(() => h('div', {}, Image({
+                src: '/a.jpg',
+                get alt()
+                {
+                    return lang() === 'en' ? 'Portrait' : 'Tasvir';
+                },
+                width: 880
+            })), container);
+            const img = container.querySelector('img') as HTMLElement;
+            expect(img.getAttribute('alt')).toBe('Portrait');
+            setLang('fa');
+            expect(img.getAttribute('alt')).toBe('Tasvir');
+        });
+        container.remove();
+    });
+
+    it('src follows the value it was given, with no endpoint', () =>
+    {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        createRoot(() =>
+        {
+            const [lang, setLang] = createSignal('en');
+            render(() => h('div', {}, Image({
+                get src()
+                {
+                    return lang() === 'en' ? '/en.jpg' : '/fa.jpg';
+                },
+                alt: 'flag',
+                width: 880
+            })), container);
+            const img = container.querySelector('img') as HTMLElement;
+            expect(img.getAttribute('src')).toBe('/en.jpg');
+            setLang('fa');
+            expect(img.getAttribute('src')).toBe('/fa.jpg');
+        });
+        container.remove();
+    });
+
+    it('src and srcset follow through the transform endpoint too', () =>
+    {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        createRoot(() =>
+        {
+            const [pick, setPick] = createSignal('/one.png');
+            render(() => h('div', {}, Image({
+                get src()
+                {
+                    return pick();
+                },
+                alt: 'x',
+                width: 100,
+                optimize: true
+            })), container);
+            const img = container.querySelector('img') as HTMLElement;
+            expect(img.getAttribute('src')).toBe('/_image?src=%2Fone.png&w=128&q=75');
+            expect(img.getAttribute('srcset')).toContain('%2Fone.png');
+            setPick('/two.png');
+            expect(img.getAttribute('src')).toBe('/_image?src=%2Ftwo.png&w=128&q=75');
+            expect(img.getAttribute('srcset')).toContain('%2Ftwo.png');
+        });
+        container.remove();
+    });
+
+    it('CONTROL: a plain string prop still renders, and renders once', () =>
+    {
+        const img = mounted(() => Image({ src: '/static.png', alt: 'static alt', width: 100 }));
+        expect(img.getAttribute('alt')).toBe('static alt');
+        expect(img.getAttribute('src')).toBe('/static.png');
     });
 });
