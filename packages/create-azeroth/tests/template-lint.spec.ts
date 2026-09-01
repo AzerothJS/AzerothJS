@@ -69,3 +69,41 @@ describe('shipped template markup', () =>
         }
     );
 });
+
+// A scaffolded entry point installs the devtools panel behind a TOP-LEVEL await. That await is
+// part of module evaluation, so a rejection aborts the module and the render/boot call after it
+// never runs: the page comes up completely blank, and the only console error names the devtools
+// module rather than the application - so the obvious reading, "devtools is broken", is wrong.
+// Reproduced in a real browser against a failing import: #root had 0 children and the body was
+// empty. A development-only diagnostic must never be able to stop the app from starting.
+describe('a scaffolded entry point survives a failing devtools import', () =>
+{
+    const entryPoints = files.filter((file) => file.endsWith('main.azeroth'));
+
+    it('finds the entry points to check (a silent empty set would defeat the guard)', () =>
+    {
+        expect(entryPoints.length).toBeGreaterThan(0);
+    });
+
+    for (const file of entryPoints)
+    {
+        const name = relative(PACKAGE_ROOT, file);
+
+        it(`guards the top-level dynamic import in ${ name }`, () =>
+        {
+            const text = readFileSync(file, 'utf8');
+            const awaitAt = text.indexOf('await import(');
+            if (awaitAt === -1)
+            {
+                return;
+            }
+
+            // Positional, not merely "the file mentions try somewhere": the guard has to bracket
+            // the await itself.
+            const tryAt = text.lastIndexOf('try', awaitAt);
+            const catchAt = text.indexOf('catch', awaitAt);
+            expect(tryAt, `${ name }: the top-level await import( is not inside a try block`).toBeGreaterThan(-1);
+            expect(catchAt, `${ name }: the top-level await import( has no catch after it`).toBeGreaterThan(awaitAt);
+        });
+    }
+});

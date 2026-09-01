@@ -211,6 +211,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A scaffolded app rendered nothing when the devtools panel failed to load.** The generated
+  entry point installed the development panel behind a TOP-LEVEL `await import(...)`. That await
+  is part of module evaluation, so any rejection aborted the module and the `render`/`bootClient`
+  call after it never ran: a completely blank page whose only console error named the devtools
+  module. The obvious reading - "devtools is broken" - was wrong; the app was broken, by devtools.
+  The import is now guarded in both the frontend and fullstack templates, so the panel failing
+  costs the panel and nothing else. A development-only diagnostic must never be able to stop the
+  application from starting, whatever the trigger: a stale build, a partially installed package,
+  or a dev server that will not serve the path (which is the ordinary case when a project links a
+  framework checkout outside its own root, since that is served through a path the dev server
+  restricts by default).
+
 - **A fragment-rooted component crashed on the client and never hydrated.** `<>...</>` is
   normative grammar, and the compiler's own multiple-root diagnostic tells authors to wrap
   sibling roots in one - so this was reachable through the recommended fix. Both compiler

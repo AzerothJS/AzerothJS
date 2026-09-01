@@ -4,10 +4,23 @@ import App from './App.azeroth';
 
 // Before render, or the panel misses the first render's primitives. DEV is replaced with
 // false in a build, so the branch and its import are eliminated.
+//
+// The import is GUARDED because this await is top level: a rejection here would abort the
+// module and the render() below would never run, leaving a blank page whose only console error
+// names devtools rather than the app. A development-only panel must never be able to stop the
+// application from starting - whatever the cause (a stale build, a partially installed package,
+// a dev server that will not serve the path), the right outcome is no panel, never no app.
 if (import.meta.env.DEV)
 {
-    const { installDevtools } = await import('@azerothjs/devtools');
-    installDevtools();
+    try
+    {
+        const { installDevtools } = await import('@azerothjs/devtools');
+        installDevtools();
+    }
+    catch (error)
+    {
+        console.warn('[dev] devtools unavailable; continuing without the panel.', error);
+    }
 }
 
 render(() => App(), document.getElementById('root')!);
