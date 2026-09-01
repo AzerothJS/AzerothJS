@@ -28,7 +28,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { html as htmlResponse } from '@azerothjs/http';
+import { html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
 import type { App } from '@azerothjs/http';
 
 import type { PageResult } from './ssr.ts';
@@ -656,7 +656,21 @@ export function registerIsr(registration: IsrRegistration): void
                 // No seed on disk - render live.
             }
         }
-        const result = await renderer(target.url, await shell, { handoffMeta: { build: await buildId, at: Date.now() } });
+        // ITS OWN WORK UNIT. This render is SHARED - its html is written to the process-wide
+        // page cache - but it is started inside the triggering visitor's request root, so every
+        // scope-resolved read (a createStore instance, the data cache) resolves to THAT visitor
+        // and is baked into the entry everyone else is served. Measured over real sockets: the
+        // first visitor's per-request store value came back to the NEXT visitor from the cache.
+        //
+        // The guarded branch below already states the rule - "the body belongs to the visitor
+        // whose request produced it" - and answers it by refusing to cache. A page that reads
+        // request state WITHOUT a guard was never caught by that, so the scope is made neutral
+        // here instead. runInWorkUnit is the shipped seam for exactly this; its own docblock
+        // names background regeneration among the units to wrap.
+        const shellText = await shell;
+        const buildValue = await buildId;
+        const result = await runInWorkUnit(
+            () => renderer(target.url, shellText, { handoffMeta: { build: buildValue, at: Date.now() } }));
         if (result.kind === 'html' && result.guarded === true)
         {
             // The renderer's own table says this chain is guarded: the body belongs to the
@@ -716,7 +730,15 @@ export function registerIsr(registration: IsrRegistration): void
         {
             try
             {
-                const result = await renderer(target.url, await shell, { handoffMeta: { build: await buildId, at: Date.now() } });
+                // ITS OWN WORK UNIT, for the same reason produce() has one, and one more: this
+                // body is started synchronously inside the triggering request handler, so it also
+                // inherited that request's TEARDOWN - which aborts in-flight cached() reads, and
+                // those resolve to undefined rather than rejecting, writing a data-less 200 into
+                // the shared cache with nothing reported.
+                const shellText = await shell;
+                const buildValue = await buildId;
+                const result = await runInWorkUnit(
+                    () => renderer(target.url, shellText, { handoffMeta: { build: buildValue, at: Date.now() } }));
                 if (result.kind === 'html' && result.guarded === true)
                 {
                     // The refresh proved the chain guarded. Learn FIRST, then drop: requests

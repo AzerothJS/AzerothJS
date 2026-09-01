@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A cached page could carry the identity of whichever visitor happened to render it.** Both
+  paths that produce a SHARED page - the cold-miss render and the background revalidation - ran
+  inside the triggering visitor's request scope, so any request-scoped read during that render
+  (a `createStore` instance, the data cache) resolved to THAT visitor and was written into the
+  process-wide page cache. Measured over real sockets: the first visitor's per-request value came
+  back to the next visitor, and the revalidating visitor's value was then served to everyone
+  after. Both renders now run in their own work unit, so a shared render resolves a neutral scope
+  and carries no identity. The guarded path is unchanged: it stays per-request and is never
+  cached.
+
+  The same inheritance had a second effect. Because the background revalidation also inherited
+  the triggering request's teardown, that teardown aborted the revalidation's in-flight cached
+  reads - which resolve to `undefined` rather than rejecting - so a DATA-LESS page was written to
+  the shared cache with nothing reported to the error observer. Both are closed by the same
+  change, each with its own regression test and revert proof.
+
 - **A throwing error observer hung the streamed page and then killed the process.** The
   Suspense boundary catch called the user's `onError` bare, and the pending-boundary counter was
   decremented by the statement AFTER it. So an observer that threw skipped that decrement: the

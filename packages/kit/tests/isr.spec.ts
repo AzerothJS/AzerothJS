@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { App } from '@azerothjs/http';
 import { FilePageCache, MemoryPageCache, mountPages, type PageCache, type PageEntry, type PageRoute } from '@azerothjs/kit';
+import { cached, createStore } from 'azerothjs';
 import type { PageResult } from '@azerothjs/kit/ssr';
 
 const SHELL = '<!doctype html><html><head><title>t</title></head><body><div id="root"></div></body></html>';
@@ -858,5 +859,143 @@ describe('an unproven query key may render but may not evict', () =>
         }
         const warm = await fetch(rig.app, '/blog');
         expect(warm.headers.get('x-azeroth-cache')).toBe('miss');
+    });
+});
+
+// A SHARED render must carry no visitor identity. Both shared paths - the cold-miss `produce`
+// and the background `regenerate` - used to start inside the TRIGGERING request's root, so every
+// scope-resolved read (a createStore instance, the data cache) resolved to that one visitor and
+// was written into the process-wide page cache. Measured over real sockets before the fix: the
+// first visitor's store value was served to the next visitor, and the regeneration's value was
+// served to everyone after it.
+describe('a shared ISR render carries no visitor identity', () =>
+{
+    // One store instance per scope: inside a request it is that request's, inside a work unit
+    // it is that unit's.
+    const useUser = createStore(() => ({ name: 'anonymous' }));
+
+    function identityRig(revalidate: number): Rig
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+        let count = 0;
+        const errors: Rig['errors'] = [];
+        const app = new App();
+        app.use((context) =>
+        {
+            useUser().name = context.request.headers.get('x-user') ?? 'anonymous';
+        });
+        mountPages(app, {
+            routes: [{ path: '/news', component, render: 'static', revalidate }],
+            clientDir: dir,
+            renderer: (): Promise<PageResult> =>
+            {
+                count++;
+                return Promise.resolve({ kind: 'html', status: 200, html: `<html><body>FOR-${ useUser().name }-${ count }</body></html>` });
+            },
+            onError: (error, context) => void errors.push({ error, path: context.path, phase: context.phase })
+        });
+        return { app, dir, calls: () => count, errors };
+    }
+
+    const as = (app: App, who: string): Promise<Response> =>
+        app.handle(new Request('http://local/news', { headers: { 'x-user': who } }));
+
+    it('the COLD MISS render does not bake the first visitor into the shared entry', async () =>
+    {
+        const rig = identityRig(60);
+        await as(rig.app, 'alice');
+        const second = await as(rig.app, 'bob');
+        const body = await second.text();
+
+        expect(second.headers.get('x-azeroth-cache')).toBe('hit');
+        expect(body).not.toContain('alice');
+        expect(body).toContain('anonymous');
+    });
+
+    it('the BACKGROUND REGENERATION does not bake its triggering visitor into the shared entry', async () =>
+    {
+        const rig = identityRig(0.01);
+        await as(rig.app, 'alice');
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        // mallory trips the stale window and starts the regeneration.
+        await as(rig.app, 'mallory');
+        await settle();
+
+        const body = await (await as(rig.app, 'bob')).text();
+        expect(body).not.toContain('mallory');
+        expect(body).toContain('anonymous');
+    });
+
+    // Without this, the two arms above would pass just as well if the store mechanism did not
+    // work at all in this harness - "nobody sees anybody" is not the property under test.
+    it('CONTROL: a per-request render DOES see its own visitor', async () =>
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+        const app = new App();
+        app.use((context) =>
+        {
+            useUser().name = context.request.headers.get('x-user') ?? 'anonymous';
+        });
+        mountPages(app, {
+            routes: [{ path: '/news', component, render: 'server' }],
+            clientDir: dir,
+            renderer: (): Promise<PageResult> => Promise.resolve({ kind: 'html', status: 200, html: `<html><body>FOR-${ useUser().name }</body></html>` }),
+            onError: () => undefined
+        });
+
+        expect(await (await as(app, 'carol')).text()).toContain('carol');
+        expect(await (await as(app, 'dave')).text()).toContain('dave');
+    });
+});
+
+// The SAME inheritance had a second consequence, filed separately: the background render also
+// inherited the triggering request's TEARDOWN, which aborts in-flight cached() reads. Those
+// resolve to `undefined` rather than rejecting, so a DATA-LESS 200 was written to the shared
+// cache with nothing reported. Measured before the fix, over real sockets: the entry every later
+// visitor received read `DATA=undefined`, and the error observer saw nothing.
+describe('a background regeneration keeps its own data reads', () =>
+{
+    it('does not cache a data-less page when the triggering request settles first', async () =>
+    {
+        const dir = makeClientDir();
+        dirs.push(dir);
+
+        // Slower than the triggering request lives, so the read is in flight at its teardown.
+        const load = cached('isr-arm-news', async () =>
+        {
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            return 'REAL-DATA';
+        });
+
+        const app = new App();
+        let renders = 0;
+        mountPages(app, {
+            routes: [{ path: '/news', component, render: 'static', revalidate: 0.01 }],
+            clientDir: dir,
+            renderer: async (): Promise<PageResult> =>
+            {
+                renders++;
+                const data = await load();
+                // Interpolated directly: the declared type is string, and the whole point of the
+                // arm is that a BROKEN regeneration hands over undefined at runtime, which renders
+                // as the literal "undefined" the assertion below looks for.
+                return { kind: 'html', status: 200, html: `<html><body>DATA=${ data }-${ renders }</body></html>` };
+            },
+            onError: () => undefined
+        });
+
+        const hit = (): Promise<Response> => app.handle(new Request('http://local/news'));
+
+        await hit();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await hit();                                             // trips stale, starts the refresh
+        await new Promise((resolve) => setTimeout(resolve, 200)); // well past the 60ms read
+
+        const body = await (await hit()).text();
+        expect(body).not.toContain('undefined');
+        expect(body).toContain('REAL-DATA');
     });
 });
