@@ -29,7 +29,7 @@ import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch, renderAsDenied, targetToFullPath } from 'azerothjs/internal';
+import { collectHead, guardedMatch, loaderFailures, renderAsDenied, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -51,6 +51,11 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *                  blocked UI. The protected component is never in it: the render is pinned
  *                  to the blocked state, which is what stops the guard-veto authorization
  *                  bypass. Never cache or prerender this arm - it is identity-dependent.
+ *   - `error`    - a LOADER failed. The page still renders - the ancestors that loaded keep
+ *                  their data and their DOM, and the failed level shows its own failure UI,
+ *                  which is what the client already does for the same fault - but the status
+ *                  is a real 500 and the result must never be cached or prerendered. The
+ *                  failure itself is reported through `onError`, never put on the wire.
  *   - `stream`   - a streaming render: the full document as bytes, shell first, Suspense
  *                  chunks as they settle. Produced only when the caller ASKED to stream;
  *                  redirects/vetoes/404-status detection stay buffered (they resolve before
@@ -60,6 +65,7 @@ export type PageResult =
     | { kind: 'html'; html: string; status: number; guarded?: boolean }
     | { kind: 'redirect'; to: string; replace: boolean }
     | { kind: 'blocked'; status: 401 | 403; html: string }
+    | { kind: 'error'; status: 500; html: string }
     | { kind: 'refused-redirect'; target: string }
     | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean };
 
@@ -298,6 +304,16 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         const notFound = loaded !== null && 'notFound' in loaded;
         const handoff = loaded !== null && 'version' in loaded ? loaded : undefined;
 
+        // A level's loader REJECTED. The render still happens: every other level keeps the data
+        // it loaded, and the failed one settles errored so it shows its own failure UI - the
+        // state the client reaches for the same fault. Only the status and the reporting differ.
+        // The reasons are read HERE, on the server, and go nowhere near the payload.
+        const failedLevels = handoff?.failed ?? [];
+        for (const reason of handoff === undefined ? [] : loaderFailures(handoff))
+        {
+            options?.onError?.(reason);
+        }
+
         // The handoff is ALWAYS emitted - a loader-less page carries an empty envelope so
         // the client still has the build/at baseline for deploy-aware adoption.
         const pageUrl = new URL(url, 'http://azeroth.local');
@@ -309,10 +325,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                 + 'the client index.html must keep an empty root element.');
         }
 
-        // A denial never streams: the status is known before any byte and the blocked body is
-        // small, so the buffered path answers it and the stream machinery stays out of a
-        // security-relevant render.
-        if (options?.stream === true && denied === null)
+        // Neither a denial nor a loader fault streams: both are known before any byte, and a
+        // status that has already left with the shell cannot be corrected. The buffered path
+        // answers them.
+        if (options?.stream === true && denied === null && failedLevels.length === 0)
         {
             // STREAMING: the loader handoff is fully known BEFORE any byte flushes (the
             // loaders ran above), so the script still rides the head; only Suspense
@@ -413,6 +429,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         if (denied !== null)
         {
             return { kind: 'blocked', status: denied, html };
+        }
+        if (failedLevels.length > 0)
+        {
+            return { kind: 'error', status: 500, html };
         }
         return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded ? { guarded: true } : {}) };
     };

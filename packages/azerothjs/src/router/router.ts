@@ -1174,6 +1174,20 @@ function buildRouter(config: RouterConfig): Router
         && Array.isArray(seed.data)
         && seed.path === initialState.pathname + initialState.search;
 
+    /**
+     * Whether the server could not load this level. Its resource is seeded ERRORED rather
+     * than left to fetch: the server rendered that level's own failure UI, and a client
+     * that boots it loading renders something the server did not - a hydration mismatch,
+     * not a cosmetic difference. The reason never crosses the wire (see LoaderHandoff.failed),
+     * so the client's error is a generic one; the server logged the real fault.
+     */
+    const seedFailed = (level: number): boolean =>
+        adopt && Array.isArray(seed.failed) && seed.failed.includes(level);
+
+    /** The failure a seeded level reports. Built per level, so no two share an identity. */
+    const seededFailure = (): Error =>
+        new Error('This route\'s data could not be loaded on the server.');
+
     // The raw search string, isolated so loaders can depend on it WITHOUT depending on the
     // whole location. `match` is deliberately query-blind (a structural memo over the matched
     // chain), so a source that read only match never re-evaluated for `?q=a` -> `?q=b` and the
@@ -1448,7 +1462,9 @@ function buildRouter(config: RouterConfig): Router
         {
             for (let level = 0; level < seed.data.length; level++)
             {
-                if (seed.data[level] === undefined)
+                // A failed level has no value to share. The cache holds VALUES, so writing
+                // one here would hand the failure's absence to every other reader of the key.
+                if (seed.data[level] === undefined || seedFailed(level))
                 {
                     continue;
                 }
@@ -1531,9 +1547,11 @@ function buildRouter(config: RouterConfig): Router
                 return key;
             },
             brandedLoaderFetcher,
-            adopt && (seed.data)[level] !== undefined
-                ? { initialValue: (seed.data)[level] }
-                : undefined
+            seedFailed(level)
+                ? { initialError: seededFailure() }
+                : adopt && (seed.data)[level] !== undefined
+                    ? { initialValue: (seed.data)[level] }
+                    : undefined
         ));
     }
 

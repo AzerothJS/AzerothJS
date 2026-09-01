@@ -275,8 +275,14 @@ export class FilePageCache implements PageCache
     }
 }
 
-/** The kit's background-failure seam; `phase` names which machinery failed. */
-export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' | 'stream' }) => void;
+/**
+ * The kit's failure seam; `phase` names which machinery failed.
+ *
+ * `render` is a LOADER that rejected while serving a request. The page still renders and the
+ * status is a real 500, so unlike a thrown fault it never reaches the app's error path - this
+ * is the only place it is reported, and an operator who ignores it sees a 500 with no cause.
+ */
+export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' | 'stream' | 'render' }) => void;
 
 /**
  * A finished BUFFERED {@link PageResult} as the response `mountPages` serves - the ONE
@@ -314,6 +320,15 @@ export function pageResponse(result: PageResult, shell: string, headers: Record<
     // protected page, which the render was pinned against constructing. Identity-dependent by
     // definition, so it is stamped uncacheable without consulting the `guarded` flag.
     if (result.kind === 'blocked')
+    {
+        return htmlResponse(result.html, {
+            status: result.status,
+            headers: { 'cache-control': 'private, no-store', ...headers }
+        });
+    }
+    // A loader failed: the app's own page at a real 500, never stored anywhere. Kept out of
+    // every cache by its KIND, not by a status check a later caller could forget.
+    if (result.kind === 'error')
     {
         return htmlResponse(result.html, {
             status: result.status,

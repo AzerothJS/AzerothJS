@@ -520,6 +520,15 @@ export interface LoaderHandoff
      * adopt the not-found UI over blocked markup and fail the hydration outright.
      */
     denied?: 401 | 403;
+
+    /**
+     * The levels whose loader REJECTED, root-to-leaf indices. The FACT only: the failure's
+     * message never crosses the wire, because a 5xx message can hold server internals and the
+     * kernel's own error path refuses to expose one. The server reports the real error to its
+     * observer; the client rebuilds a generic failure so the level lands in the same state the
+     * server rendered, and hydration matches.
+     */
+    failed?: number[];
 }
 
 /**

@@ -12,6 +12,30 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A rate-limited request answered in the wrong envelope, so a client read it as a success.**
+  `rateLimit` built its own refusal rather than raising one, so the 429 carried the kernel's
+  default error body instead of the app's. An application that publishes an envelope with an
+  `ok` field, which the scaffolded backend does, therefore emitted one response on the wire
+  without it, and a client written against the documented shape read `body.ok` as `undefined`
+  and treated being rate limited as success. The same path also skipped the app's error
+  observer, so a limiter that could not key on a client identity answered 500 and reported to
+  nobody: a limiter doing nothing, silently.
+
+  A refusal is now THROWN, which is what `pipeline()` already knew how to answer: it maps a
+  middleware throw through the app's own error policy, so the 429 takes the app's envelope, its
+  serializer and its observer, exactly as a refusal raised inside the app does. The limiter's
+  `RateLimit-*` headers ride the error, so nothing a returned response carried is lost, and
+  fail-closed behaviour is unchanged. `TooManyRequestsError` gains an optional third parameter
+  for those headers.
+
+- **A failed loader must not put its reason on the wire.** With server-side loader failures now
+  rendering a page rather than throwing (see Changed), the handoff had to say something about
+  them. It says WHICH levels failed and nothing else. A 5xx message can hold a connection
+  string, a user name or a query, and the kernel's own error path already refuses to expose
+  one; the client rebuilds a generic failure so its level lands in the state the server
+  rendered, and the real error goes to the host's error observer instead. The reasons ride a
+  non-enumerable symbol on the server's own object, so no serializer can carry them by accident.
+
 - **Errors could silently bypass the error observer.** `onError` documents itself as observing
   every error the app maps, and the mapping path reads `request.signal` to record whether the
   client had already gone. That read went through a guard which handled a MISSING socket but not
@@ -361,7 +385,55 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `renderTest`) all use the one type. Widening it is what surfaced the two runtime defects above;
   fixing only the type would have turned a compile error into a crash.
 
+### Changed
+
+- **A guard veto is now its own state, and it lands on the URL it denied. BREAKING.** A denied
+  navigation used to rewind to the previous location, and a cold load of a denied URL rendered
+  the `<Routes fallback>` - the same UI as a genuinely unknown URL, while the server answered
+  403 for one and 404 for the other. Three behaviours for one state, none of which the app could
+  observe: clicking a link to a denied route was a silent no-op, and a deep link to it showed a
+  "not found" page under a 403.
+
+  A veto now settles AT the target URL in the blocked state. `router.state()` reports it, and
+  `<Routes blocked={...}>` renders it with the status. Apps that declare no `blocked` keep
+  rendering `fallback`, exactly as before. What changes for every app is the URL after a vetoed
+  in-app navigation: it is the target, not the previous page. If you relied on the rewind, read
+  `router.state()` and navigate yourself.
+
+- **A loader that fails no longer costs the whole page. BREAKING for a host that caught it.**
+  `matchAndLoad` ran the chain's loaders all-or-nothing, so one failing level threw away every
+  other level's data and the request became a bare JSON 500 with no page at all - while the same
+  failure on the client cost exactly that one level and left the layout standing. The two modes
+  disagreed about the same fault.
+
+  The chain now settles per level. Levels that loaded keep their data and render; the failed one
+  settles errored, so the component's own `useLoader().error()` branch shows its failure UI, and
+  the request is answered with that page at a real 500. `matchAndLoad` therefore RESOLVES where
+  it used to reject: a host that wrapped it in `try`/`catch` to detect loader faults must read
+  `handoff.failed` instead. The renderer reports the fault through the render's error observer
+  (`phase: 'render'`) and answers a new `error` result kind, which every caching and prerender
+  path already refuses by kind. Nothing about client-side navigation changes.
+
+- **The loader handoff wire format is now v4.** It carries the two new facts above -
+  `denied` and `failed`. A client reading an older server's payload ignores it and fetches
+  normally, which is the existing skew behaviour. The version constant moved to its own module,
+  because `router.ts` had the number written out as a literal: bumping the stamp alone would
+  have made every client silently reject every handoff.
+
 ### Added
+
+- **`unauthorized()` and `forbidden()`: a guard can say WHICH refusal it means.** `return false`
+  has always vetoed, and the server answered 403 for it, which is right for exactly one of the
+  two cases. A signed-out visitor needs 401 so a client, a crawler or an edge cache can tell
+  "authenticate and retry" from "never, for you". Both are sentinels in the same family as
+  `redirect()` and `notFound()`; `false` keeps meaning 403. The server answers the status and
+  server-renders the app's own blocked UI, with the protected component never constructed.
+
+- **`router.state()`: the settled routing verdict.** `match` alone answers null for both an
+  unknown URL and a denied one, which is why they used to render the same thing. `state()`
+  returns `{ kind: 'match' }`, `{ kind: 'not-found' }` or `{ kind: 'blocked', status }`.
+  `<Routes>` dispatches on it, so most applications need it only for a header badge, an
+  analytics event or a sign-in prompt outside the routed region.
 
 - **`notFound()`: a loader can declare that its content does not exist.** A route table can only
   answer "no such ROUTE" - whether `/users/42` has a user behind it is something only the loader
@@ -401,6 +473,46 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   seams are structural types: ws and cron stay zero-dependency.
 
 ### Fixed
+
+- **A deep link to an unknown URL got a JSON error instead of your 404 page.** `mountPages`
+  registered every declared page path and then an asset fallback, so a URL matching no page and
+  no file was answered by the asset handler as `application/json`. The page renderer already
+  implements the other answer - render the app's own fallback UI at a real 404 - and the client
+  router renders that same `<Routes fallback>` for the same URL, so the two modes disagreed
+  about one state and the branch was simply unreachable.
+
+  An unrouted request that ACCEPTS HTML now falls through to the renderer, so a browser
+  navigation gets the app's 404 page with a 404 status. A missing image and an unrouted
+  `fetch()` still get the JSON their callers can read, because the fall-through is negotiated on
+  `Accept`. A client-rendered app gets its shell at a real 404 rather than a soft 404 at 200.
+
+- **`npm start` ran the framework in development mode.** The server templates treat an unset
+  `NODE_ENV` as production - the fail-safe default, so a deploy that forgot the variable does not
+  put stack traces on the wire - while the runtime computes `DEV` from `NODE_ENV !== 'production'`
+  and therefore ran dev warnings, dev checks and dev cost paths on that same deploy. Writing the
+  variable into `.env` does not help and never could: the runtime latches the flag while modules
+  evaluate, and `process.loadEnvFile()` runs afterwards, so the value reaches the app's config
+  and never the runtime's. Only the process environment can, which the shipped Dockerfiles
+  already set and `npm start` did not.
+
+  `start` now runs `node --import ./src/deploy-env.ts`, a two-line launcher that sets
+  `NODE_ENV` only when it is unset, so `azeroth dev`, a Dockerfile and a process manager all
+  keep the mode they declared.
+
+- **A render failure could reach nobody.** `mountPages` documents `console.error` as the default
+  for `onError`, and the ISR path had it while both render paths used the observer only if one
+  was supplied. An application that wired nothing therefore lost every render-time failure in
+  silence, including a streamed boundary that rejected after the shell had flushed. All four
+  paths now resolve the observer the same way.
+
+- **The router guide's nested-layout example did not type-check.** It declared
+  `props: { children?: unknown }`, which `<Outlet>` refuses. The repair - `MountNode` - is
+  exported and always was; the example simply predated it. The guard that should have caught
+  this could not: the harness that type-checks shipped examples passed a virtual file path, so
+  module resolution had nothing above it, `azerothjs` never resolved, every imported type was
+  `any`, and every cross-module error it exists to catch silently vanished. It now checks
+  against a real path, as does a new harness over the complete `.azeroth` examples printed in
+  the documentation.
 
 - **A declared `routes.stream` producer failure reached stderr instead of your observer.**
   `register` built every SSE route without an `onError`, so `sse()` fell back to its own

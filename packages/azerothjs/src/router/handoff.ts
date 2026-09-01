@@ -46,7 +46,10 @@ import { latchServerData } from '../reactivity/data-cache.ts';
  * What {@link matchAndLoad} produces - EVERY server-side routing outcome, kept distinct so a
  * renderer never confuses "authorized, nothing to load" with "a guard said no":
  *
- *   - `LoaderHandoff`                    - matched, loaders ran; render and embed the data.
+ *   - `LoaderHandoff`                    - matched, loaders ran; render and embed the data. A
+ *                                          level whose loader REJECTED is listed in `failed`:
+ *                                          the page still renders, that level shows its own
+ *                                          failure UI, and the host answers 500.
  *   - `{ redirect, replace }`            - a guard or loader redirected; answer with a 302.
  *   - `{ blocked: true, status }`        - a guard VETOED (`false`, `unauthorized()` or
  *                                          `forbidden()`); the route MUST NOT render. Answer
@@ -75,6 +78,35 @@ function redirectOutcome(to: NavigateTarget, replace: boolean): MatchAndLoadResu
     return verdict.accepted
         ? { redirect: verdict.to, replace }
         : { refusedRedirect: true, target: verdict.target };
+}
+
+/**
+ * @internal The key holding a handoff's loader failures. A SYMBOL and non-enumerable, so
+ * `JSON.stringify` and every spread of the payload skip it: the wire carries which levels
+ * failed, never why, and this is what keeps that true by construction rather than by every
+ * serializer remembering to strip a field.
+ */
+const REASONS: unique symbol = Symbol('azerothjs.router.loaderFailures');
+
+/**
+ * @internal Attaches the failure reasons to a handoff without making them serializable.
+ * Defined ON the payload rather than spread INTO one: a spread copies only enumerable
+ * properties, so the non-enumerable slot that keeps the reasons off the wire also keeps them
+ * out of any copy - which is the point everywhere except here, where the object is built once.
+ */
+function withReasons(handoff: LoaderHandoff, reasons: readonly unknown[]): LoaderHandoff
+{
+    return Object.defineProperty(handoff, REASONS, { value: reasons, enumerable: false });
+}
+
+/**
+ * SERVER: why each level in `handoff.failed` failed, in the same order. Empty for any handoff
+ * that did not come from this process's own `matchAndLoad`, which is the point - a payload
+ * that crossed the wire has no reasons to give.
+ */
+export function loaderFailures(handoff: LoaderHandoff): readonly unknown[]
+{
+    return (handoff as { [REASONS]?: readonly unknown[] })[REASONS] ?? [];
 }
 
 export type MatchAndLoadResult =
@@ -221,47 +253,57 @@ export async function matchAndLoad(
         // All levels start together; `parent` resolves to the nearest ancestor
         // loader's promise - the same slot discipline the client router applies.
         const slots: Array<Promise<unknown> | undefined> = [];
-        let data: unknown[];
-        try
+        const settlements = await Promise.allSettled(entry.matched.map((route, level) =>
         {
-            data = await Promise.all(entry.matched.map((route, level) =>
+            if (!route.loader)
             {
-                if (!route.loader)
+                return Promise.resolve(undefined);
+            }
+            let parent: Promise<unknown> = Promise.resolve(undefined);
+            for (let above = level - 1; above >= 0; above--)
+            {
+                const slot = slots[above];
+                if (slot !== undefined)
                 {
-                    return Promise.resolve(undefined);
+                    parent = slot;
+                    break;
                 }
-                let parent: Promise<unknown> = Promise.resolve(undefined);
-                for (let above = level - 1; above >= 0; above--)
-                {
-                    const slot = slots[above];
-                    if (slot !== undefined)
-                    {
-                        parent = slot;
-                        break;
-                    }
-                }
-                // The level's own inputs, per route - the same rule the client applies, and
-                // for the reason the client applies it: this level's value is cached under a
-                // key built from the prefix params and the declared query, and a navigation
-                // that leaves that key unchanged starts NO fetch. Handing the loader wider
-                // inputs here produced a value whose preimage was larger than its key, which
-                // was then served for every other URL sharing that key - and because the
-                // SEED is what the client adopts, narrowing only the client would have fixed
-                // nothing on the path that actually renders. Guards keep the whole chain and
-                // the raw query: they key nothing, so narrowing them would only remove
-                // information an authorization decision may legitimately use.
-                const promise = route.loader({
-                    params: prefixParams(entry.matched, level, params),
-                    query: declaredQuery(route.search, query),
-                    signal,
-                    parent
-                });
-                slots[level] = promise;
-                return promise;
-            }));
-        }
-        catch (error)
+            }
+            // The level's own inputs, per route - the same rule the client applies, and
+            // for the reason the client applies it: this level's value is cached under a
+            // key built from the prefix params and the declared query, and a navigation
+            // that leaves that key unchanged starts NO fetch. Handing the loader wider
+            // inputs here produced a value whose preimage was larger than its key, which
+            // was then served for every other URL sharing that key - and because the
+            // SEED is what the client adopts, narrowing only the client would have fixed
+            // nothing on the path that actually renders. Guards keep the whole chain and
+            // the raw query: they key nothing, so narrowing them would only remove
+            // information an authorization decision may legitimately use.
+            const promise = route.loader({
+                params: prefixParams(entry.matched, level, params),
+                query: declaredQuery(route.search, query),
+                signal,
+                parent
+            });
+            slots[level] = promise;
+            return promise;
+        }));
+
+        // Settled, not all-or-nothing. `Promise.all` rejected the WHOLE chain on one level's
+        // failure, so a failing leaf threw away its layout's data too and the page became a
+        // bare 500 - while the same failure on the client costs exactly that one level and
+        // leaves the layout standing. The chain is walked root-to-leaf rather than taken in
+        // settlement order, so which outcome wins is a property of the route tree and not of
+        // which upstream happened to answer first.
+        const failed: number[] = [];
+        for (let level = 0; level < settlements.length; level++)
         {
+            const settlement = settlements[level];
+            if (settlement === undefined || settlement.status === 'fulfilled')
+            {
+                continue;
+            }
+            const error: unknown = settlement.reason;
             if (isRedirect(error))
             {
                 return redirectOutcome(error.to, error.replace);
@@ -270,10 +312,23 @@ export async function matchAndLoad(
             {
                 return { notFound: true };
             }
-            throw error;
+            failed.push(level);
         }
 
-        return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
+        const data = settlements.map((settlement) =>
+            (settlement.status === 'fulfilled' ? settlement.value : undefined));
+
+        if (failed.length === 0)
+        {
+            return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
+        }
+        // The errors themselves ride a non-enumerable slot, for the HOST to report - never for
+        // the wire, which carries WHICH level failed and not why.
+        return withReasons(
+            { version: LOADER_HANDOFF_VERSION, path: pathname + search, data, failed },
+            // Annotated: `PromiseRejectedResult.reason` is `any`, and a rejection reason is the
+            // one value in this file that genuinely is unknown.
+            failed.map((level): unknown => (settlements[level] as PromiseRejectedResult).reason));
     }
 }
 

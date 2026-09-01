@@ -7,12 +7,12 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { App, json } from '@azerothjs/http';
 import { flattenPages, mountPages, prerenderFileFor, type PageRoute } from '@azerothjs/kit';
 import { prerender } from '@azerothjs/kit/prerender';
-import type { PageResult } from '@azerothjs/kit/ssr';
+import type { PageRenderOptions, PageResult } from '@azerothjs/kit/ssr';
 
 const SHELL = '<!doctype html><html><head><title>t</title></head><body><div id="root"></div><script src="/assets/app.js"></script></body></html>';
 
@@ -27,8 +27,18 @@ function makeClientDir(): string
 
 const component = (): HTMLElement => (undefined as unknown as HTMLElement); // never rendered here
 
-const fakeRenderer = (url: string, shell: string): Promise<PageResult> =>
+const fakeRenderer = (url: string, shell: string, options?: PageRenderOptions): Promise<PageResult> =>
 {
+    if (url.startsWith('/faulty'))
+    {
+        // What createPageRenderer does for a rejected loader: report the real fault to the
+        // host, serve the app's page at 500.
+        options?.onError?.(new Error('the orders service is down'));
+        return Promise.resolve({
+            kind: 'error', status: 500,
+            html: shell.replace('<div id="root"></div>', '<div id="root">SCOPED FAILURE</div>')
+        });
+    }
     if (url.startsWith('/locked'))
     {
         return Promise.resolve({ kind: 'redirect', to: '/login', replace: true });
@@ -204,6 +214,41 @@ describe('mountPages', () =>
         // Never a soft 404: the router picks its fallback once it boots, and the status says so.
         expect(response.status).toBe(404);
         expect(await response.text()).toContain('<div id="root"></div>');
+    });
+
+    it('a loader fault serves the app page at 500 and is never stored', async () =>
+    {
+        const onError = vi.fn();
+        const dir = makeClientDir();
+        dirs.push(dir);
+        const app = new App();
+        mountPages(app, { routes: [{ path: '/faulty', component }], clientDir: dir, renderer: fakeRenderer, onError });
+
+        const response = await app.handle(new Request('http://local/faulty'));
+        expect(response.status).toBe(500);
+        expect(await response.text()).toContain('SCOPED FAILURE');
+        // A 500 built from a failed load must not be held by anything downstream.
+        expect(response.headers.get('cache-control')).toBe('private, no-store');
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0]?.[1]).toEqual({ path: '/faulty', phase: 'render' });
+    });
+
+    it('reports a render fault even when the mount was given NO observer', async () =>
+    {
+        // The option documents console.error as its default, and the ISR path had it while the
+        // render paths did not - so an app that wired nothing lost the only trace of a 500.
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try
+        {
+            const { app } = build([{ path: '/faulty', component }], true);
+            expect((await fetch(app, '/faulty')).status).toBe(500);
+            expect(spy).toHaveBeenCalledTimes(1);
+            expect(String(spy.mock.calls[0]?.[0])).toContain('render');
+        }
+        finally
+        {
+            spy.mockRestore();
+        }
     });
 
     it("render: 'static' serves the prerendered file; assets fall through; misses 404", async () =>

@@ -122,6 +122,15 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             throw new Error(`kit prerender: "${ path }" was blocked by a guard (status ${ result.status }) during prerender - `
                 + 'a static page cannot be guarded; drop the guard or use render: \'server\'.');
         }
+        // A loader that rejected still renders a page - at 500, with that level showing its
+        // failure UI. Serving that live is right; WRITING it as a build artifact is not, since
+        // the file would outlive the outage and be served as content forever.
+        if (result.kind === 'error')
+        {
+            throw new Error(`kit prerender: "${ path }" could not load its data - a loader rejected during `
+                + 'the prerender pass, and a page built from a failed load must not be written. The reason '
+                + 'was reported through the render\'s error observer.');
+        }
         // Prerender never asks for streaming; anything but finished markup here is a
         // renderer bug worth a loud build failure, not a written file of garbage.
         if (result.kind !== 'html')

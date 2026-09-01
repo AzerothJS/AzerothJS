@@ -11,9 +11,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, h, renderToDocument, renderToString, RouterProvider, Routes } from 'azerothjs';
 import { App, html } from '@azerothjs/http';
+import { loaderFailures } from 'azerothjs/internal';
 import {
     createRouter, createMemoryHistory,
     matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION,
+    type LoaderHandoff,
     notFound, isNotFound,
     type Route, type Router
 } from 'azerothjs';
@@ -328,7 +330,7 @@ describe('a loader can declare not-found', () =>
     });
 
     // The discriminating half: a real failure must stay a failure, or every bug becomes a 404.
-    it('CONTROL: an ordinary loader throw is still a fault, not a not-found', async () =>
+    it('CONTROL: an ordinary loader throw is a FAULT, not a not-found', async () =>
     {
         const routes: Route[] = [{
             path: '/item/:id',
@@ -338,7 +340,57 @@ describe('a loader can declare not-found', () =>
                 throw new Error('database is down');
             }
         }];
-        await expect(matchAndLoad(routes, '/item/42')).rejects.toThrow('database is down');
+        const outcome = await matchAndLoad(routes, '/item/42') as LoaderHandoff;
+        expect(outcome).not.toHaveProperty('notFound');
+        expect(outcome.failed).toEqual([0]);
+        // Reported to the SERVER, in full - and only there.
+        expect(loaderFailures(outcome)).toEqual([expect.objectContaining({ message: 'database is down' })]);
+        // The wire carries which level failed, never why.
+        expect(JSON.stringify(outcome)).not.toContain('database is down');
+    });
+
+    it('a failing LEAF keeps its ancestors\' data instead of losing the whole chain', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/shop',
+            component: leaf,
+            loader: async () => 'LAYOUT',
+            children: [{
+                path: 'item/:id',
+                component: leaf,
+                loader: async () =>
+                {
+                    throw new Error('database is down');
+                }
+            }]
+        }];
+        const outcome = await matchAndLoad(routes, '/shop/item/42') as LoaderHandoff;
+        expect(outcome.failed).toEqual([1]);
+        // The layout loaded; an all-or-nothing chain threw its value away with the leaf's.
+        expect(outcome.data[0]).toBe('LAYOUT');
+        expect(outcome.data[1]).toBeUndefined();
+    });
+
+    it('the FIRST failing level decides the outcome by tree order, not by which settled first', async () =>
+    {
+        // The leaf rejects immediately and the layout rejects late, so settlement order and
+        // tree order disagree - and a not-found from the ROOT must still win over a leaf fault.
+        const routes: Route[] = [{
+            path: '/shop',
+            component: leaf,
+            loader: async () =>
+            {
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw notFound();
+            },
+            children: [{
+                path: 'item/:id',
+                component: leaf,
+                loader: () => Promise.reject(new Error('leaf first'))
+            }]
+        }];
+        expect(await matchAndLoad(routes, '/shop/item/42')).toEqual({ notFound: true });
     });
 
     it('CONTROL: a loader that returns normally still hands off its data', async () =>

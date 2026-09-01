@@ -134,6 +134,20 @@ export interface KitOptions
 }
 
 /**
+ * @internal The mount's failure observer, defaulted in ONE place. The ISR path had the
+ * console.error default the option documents while the render paths used `options.onError?.()`,
+ * so an app that wired nothing lost every render-time failure in silence - including a loader
+ * fault, whose 500 is otherwise the only trace it leaves anywhere.
+ */
+function observerFor(options: KitOptions): KitErrorObserver
+{
+    return options.onError ?? ((error, context): void =>
+    {
+        console.error(`kit ${ context.phase } failed for ${ context.path }:`, error);
+    });
+}
+
+/**
  * @internal Drops every trailing slash in one linear pass. The regex form (`/\/+$/`)
  * backtracks quadratically on a path made of slashes, and route paths are library input.
  */
@@ -267,6 +281,7 @@ export function mountPages(app: App, options: KitOptions): void
         .then((shell) => createHash('sha256').update(shell).digest('hex').slice(0, 16))
         .catch(() => randomUUID());
 
+    const report = observerFor(options);
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
     const seedFile = (key: string): string | null =>
@@ -324,10 +339,7 @@ export function mountPages(app: App, options: KitOptions): void
                 shell: shellPromise,
                 seedFile,
                 buildId: buildIdPromise,
-                onError: options.onError ?? ((error, context): void =>
-                {
-                    console.error(`kit ${ context.phase } failed for ${ context.path }:`, error);
-                })
+                onError: report
             });
             continue;
         }
@@ -362,7 +374,7 @@ export function mountPages(app: App, options: KitOptions): void
     {
         app.get('/_image', imageHandler({
             root: options.clientDir,
-            ...(options.onError !== undefined ? { onError: options.onError } : {}),
+            onError: report,
             ...(options.images === true ? {} : options.images)
         }));
     }
@@ -432,6 +444,11 @@ async function renderOrShell(
             shell,
             {
                 signal: context.request.signal,
+                // A rejected loader no longer throws out of the render - the page is served at
+                // 500 with that level's own failure UI - so this is the ONLY place the fault
+                // is reported. Without it a 500 arrives with no cause anywhere.
+                onError: (error: unknown): void =>
+                    observerFor(options)(error, { path: context.url.pathname, phase: 'render' }),
                 // A `server` page is uncached and uncoalesced: this render exists for THIS
                 // request and nobody else can adopt it. So the client's disconnect signal is
                 // the render's own lifetime, exactly as on the streamed path below - without
@@ -476,7 +493,7 @@ function registerDynamic(
                     // A boundary that rejects AFTER the shell flushed cannot change the status,
                     // so without this the failure reaches nobody: the client gets a page missing
                     // a boundary and the server records a clean 200.
-                    onError: (error: unknown): void => options.onError?.(error, { path: context.url.pathname, phase: 'stream' }),
+                    onError: (error: unknown): void => observerFor(options)(error, { path: context.url.pathname, phase: 'stream' }),
                     handoffMeta: { build: await buildId, at: Date.now() },
                     ...(nonce !== undefined ? { scriptNonce: nonce } : {})
                 });

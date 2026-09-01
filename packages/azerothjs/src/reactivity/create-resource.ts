@@ -88,6 +88,19 @@ export interface ResourceOptions<T>
      */
     initialValue?: T;
 
+    /**
+     * Seeds the resource as already settled in the FAILED state: `error()` returns this
+     * synchronously and the first fetch is skipped, exactly as {@link initialValue} does for a
+     * success.
+     *
+     * The other half of the SSR handoff seam. A server that could not load a level still
+     * renders that level's own failure UI, so a client adopting the markup has to reach the
+     * same state on its first pass - seeding the data instead (or leaving the level loading)
+     * makes the client render something the server did not, which is an unrecoverable
+     * hydration mismatch rather than a cosmetic one.
+     */
+    initialError?: unknown;
+
     /** Debug name for devtools; groups the resource's data, loading, error and fetch nodes. */
     name?: string;
 }
@@ -227,7 +240,9 @@ export function createResource<T, S>(
     const options = hasSource ? maybeOptions : maybeFetcherOrOptions;
 
     // The hydration seed, consumed or discarded at the effect's first run. See ResourceOptions.
-    let pendingInitial = options !== undefined && 'initialValue' in options;
+    // A FAILURE seed settles the resource exactly as a value seed does - the point of both is
+    // that the first run starts no fetch and `loading` never flips.
+    let pendingInitial = options !== undefined && ('initialValue' in options || 'initialError' in options);
 
     // Captured at construction, as an effect captures its catchError scope: a subscriber that
     // throws while this resource settles has nowhere else to send the error, because the settle
@@ -238,7 +253,7 @@ export function createResource<T, S>(
     const [data, setData] = createSignal<T | undefined>(options?.initialValue, { name: 'data' });
     const [loading, setLoading] = createSignal<boolean>(false, { name: 'loading' });
     const [refreshing, setRefreshing] = createSignal<boolean>(false, { name: 'refreshing' });
-    const [error, setError] = createSignal<unknown>(null, { name: 'error' });
+    const [error, setError] = createSignal<unknown>(options !== undefined && 'initialError' in options ? options.initialError : null, { name: 'error' });
 
     // refetch() bumps `tick` to force the effect to re-run on the same source value.
     const [tick, setTick] = createSignal(0, { name: 'tick' });
