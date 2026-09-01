@@ -19,7 +19,8 @@ const config = loadConfig({
     // Unset means production: `azeroth dev` declares development for its children, so anything
     // that did NOT come from the dev command is a deploy. Defaulting the other way makes a
     // deployment that forgot the variable run with `dev: true`, which exposes thrown-error
-    // messages and stack traces to whoever asked.
+    // messages and stack traces to whoever asked. `npm start` declares the same thing to the
+    // FRAMEWORK runtime through src/deploy-env.ts, which is the only place early enough.
     env: oneOf('NODE_ENV', ['development', 'production', 'test'], { default: 'production' })
 });
 const isProduction = config.env === 'production';

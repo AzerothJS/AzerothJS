@@ -11,7 +11,7 @@
         "check": "azeroth check",
         "build": "azeroth build",
         "test": "azeroth test",
-        "start": "node src/main.ts"
+        "start": "node --import ./src/deploy-env.ts src/main.ts"
     },
     "dependencies": {
         "@azerothjs/http": "{{version}}",

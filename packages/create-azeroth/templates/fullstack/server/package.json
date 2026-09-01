@@ -10,7 +10,7 @@
         "dev": "azeroth dev",
         "check": "azeroth check",
         "test": "vitest run",
-        "start": "node src/main.ts"
+        "start": "node --import ./src/deploy-env.ts src/main.ts"
     },
     "dependencies": {
         "@azerothjs/http": "{{version}}",
