@@ -27,6 +27,7 @@ import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError
 import { destroyComponent } from '../component/index.ts';
 import { isSlotHandle, slotDriverOf, refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean } from './ssr.ts';
+import type { PeerAttr } from './ssr.ts';
 import { writeSelectValue, settleSelectValue } from './select-value.ts';
 import { attachEvent } from './delegate.ts';
 import { isChildResolvedProperty } from '../semantics.ts';
@@ -159,6 +160,14 @@ export function h(tag: string, props: Props | null, ...children: Child[]): HTMLE
  */
 function applyProps(el: HTMLElement, props: Props): void
 {
+    // Untracked: reading a sibling to JUDGE a write must not subscribe the writing effect to
+    // it, which would re-run this attribute whenever an unrelated one changed.
+    const peer = (attr: string): unknown =>
+    {
+        const raw = props[attr];
+        return typeof raw === 'function' ? untrack(() => resolveReactive(raw)) : raw;
+    };
+
     // for...in rather than Object.entries: this runs once per element created, and entries()
     // allocates an array of tuples each call.
     for (const key in props)
@@ -197,12 +206,12 @@ function applyProps(el: HTMLElement, props: Props): void
             createEffect(() =>
             {
                 const resolved = resolveReactive(value);
-                setProperty(el, key, resolved);
+                setProperty(el, key, resolved, peer);
             });
             continue;
         }
 
-        setProperty(el, key, value);
+        setProperty(el, key, value, peer);
     }
 }
 
@@ -275,7 +284,7 @@ function applyRef(el: HTMLElement, ref: unknown): void
  *
  * @internal
  */
-function setProperty(el: HTMLElement, key: string, value: unknown): void
+function setProperty(el: HTMLElement, key: string, value: unknown, peer: PeerAttr): void
 {
     if (DOM_PROPERTIES.has(key))
     {
@@ -308,7 +317,7 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
         return;
     }
 
-    assertSafeAttribute(key, value, el.tagName);
+    assertSafeAttribute(key, value, el.tagName, peer);
 
     // ARIA booleans are STRINGS, not HTML boolean attributes - see isAriaBoolean.
     if (isAriaBoolean(key, value))
@@ -352,7 +361,7 @@ function setProperty(el: HTMLElement, key: string, value: unknown): void
  */
 export function setProp(el: HTMLElement, name: string, value: unknown): void
 {
-    setProperty(el, name, resolveReactive(value));
+    setProperty(el, name, resolveReactive(value), (attr) => el.getAttribute(attr));
 }
 
 /**

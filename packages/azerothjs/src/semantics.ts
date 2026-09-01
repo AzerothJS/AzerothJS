@@ -782,3 +782,30 @@ export function refreshTarget(content: string): string | null
     }
     return target.length === 0 ? null : target;
 }
+
+/**
+ * The refusal for a `<meta http-equiv="refresh">` whose target leaves the app's origin, or
+ * null when there is nothing to refuse.
+ *
+ * BOTH halves are needed to judge either: `content` alone is inert markup, and `refresh` with
+ * no target navigates nowhere. So a writer calls this with the pair rather than with the one
+ * attribute it happens to be writing - which is why the render gate takes a peer resolver
+ * instead of judging attributes in isolation.
+ *
+ * The target is judged by the same rule a guard or loader redirect answers to: a refresh IS an
+ * automatic navigation, so an off-origin one is the open-redirect shape whether it was built
+ * from data or typed by hand.
+ */
+export function refreshRefusal(tag: string | undefined, pragma: unknown, content: string): string | null
+{
+    if (tag === undefined || tag.toLowerCase() !== 'meta')
+    {
+        return null;
+    }
+    if (typeof pragma !== 'string' || pragma.trim().toLowerCase() !== 'refresh')
+    {
+        return null;
+    }
+    const target = refreshTarget(content);
+    return target !== null && isExternalUrl(target) ? externalRedirectMessage(target) : null;
+}

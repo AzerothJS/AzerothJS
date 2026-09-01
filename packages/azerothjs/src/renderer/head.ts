@@ -32,7 +32,7 @@ import { DEV } from '../reactivity/dev.ts';
 import { currentFrame, resetAllFrames, strayWriteFrame, takeSlotHead } from './frame.ts';
 import type { RenderFrame } from './frame.ts';
 import { escapeText, escapeAttr, inertJson } from '../reactivity/ssr.ts';
-import { refreshTarget, isExternalUrl, externalRedirectMessage } from '../semantics.ts';
+import { refreshRefusal } from '../semantics.ts';
 import { unbrandUrl } from './ssr.ts';
 import { serializeElement } from './ssr.ts';
 import type { Props } from './types.ts';
@@ -200,12 +200,12 @@ function buildEntry(input: HeadInput, resolve: (value: HeadValue) => string): He
         // where it can be built from data. An off-origin target is the open-redirect shape,
         // judged by the same rule a guard/loader redirect answers to. Only `refresh` is
         // inspected: `og:url` and friends carry legitimate absolute URLs in `content`.
-        if (attr === 'http-equiv' && value.toLowerCase() === 'refresh')
+        if (attr === 'http-equiv' && unbrandUrl(meta.content) === null)
         {
-            const target = refreshTarget(content);
-            if (target !== null && unbrandUrl(meta.content) === null && isExternalUrl(target))
+            const refusal = refreshRefusal('meta', value, content);
+            if (refusal !== null)
             {
-                droppedHead('meta', new Error(externalRedirectMessage(target)));
+                droppedHead('meta', new Error(refusal));
                 continue;
             }
         }

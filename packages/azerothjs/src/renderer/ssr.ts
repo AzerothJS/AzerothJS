@@ -45,7 +45,8 @@ import {
     executableUrlMessage,
     srcdocMessage,
     refusedTagMessage,
-    executableScriptMessage
+    executableScriptMessage,
+    refreshRefusal
 } from '../semantics.ts';
 
 /**
@@ -228,7 +229,15 @@ export function unsafeTag(name: string): string
  *
  * @internal
  */
-export function assertSafeAttribute(key: string, value: unknown, tag?: string): void
+/**
+ * Reads another attribute of the SAME element, so a rule needing sibling context can ask for
+ * it. Resolved, so a reactive sibling is judged as the value it writes.
+ *
+ * @internal
+ */
+export type PeerAttr = (attr: string) => unknown;
+
+export function assertSafeAttribute(key: string, value: unknown, tag?: string, peer?: PeerAttr): void
 {
     if (key === '' || INVALID_ATTR_NAME.test(key))
     {
@@ -245,7 +254,7 @@ export function assertSafeAttribute(key: string, value: unknown, tag?: string): 
         throw new Error(`azeroth: ${ JSON.stringify(key) } is in the on* event namespace and is never written as an attribute.`);
     }
 
-    assertSafeUrl(key, value, tag);
+    assertSafeUrl(key, value, tag, peer);
 }
 
 /**
@@ -256,7 +265,7 @@ export function assertSafeAttribute(key: string, value: unknown, tag?: string): 
  *
  * @internal
  */
-function assertSafeUrl(key: string, value: unknown, tag?: string): void
+function assertSafeUrl(key: string, value: unknown, tag?: string, peer?: PeerAttr): void
 {
     if (value === false || value === null || value === undefined || unbrand(value, 'url') !== null)
     {
@@ -283,6 +292,22 @@ function assertSafeUrl(key: string, value: unknown, tag?: string): void
         if (written !== null && isExecutableUrl(written, rendersAsImage(tag, name)))
         {
             throw new Error(`azeroth: ${ executableUrlMessage(key, written) }`);
+        }
+    }
+
+    // `content` is a URL sink on exactly one element: under `http-equiv="refresh"` it is a
+    // navigation directive. Judged on the CONTENT write rather than on the pragma, because
+    // that is the half that carries the value - and its `unsafeUrl` opt-out, honoured by the
+    // early return above. Every writer has the pragma in hand by then: two of them hold the
+    // whole props object, and the compiled path bakes a static `http-equiv` into the template
+    // before any setProp runs.
+    if (name === 'content' && peer !== undefined)
+    {
+        const written = asWritten(candidate);
+        const refusal = written === null ? null : refreshRefusal(tag, peer('http-equiv'), written);
+        if (refusal !== null)
+        {
+            throw new Error(`azeroth: ${ refusal }`);
         }
     }
 }
@@ -515,7 +540,7 @@ function serializeAttrs(props: Props, tag?: string): string
         // Gated on the RESOLVED value, exactly as the DOM path gates the value its effect
         // resolved: a reactive `href={() => url()}` must meet the same policy as a literal one,
         // and checking the raw thunk here would see a function and wave every reactive prop past.
-        assertSafeAttribute(key, value, tag);
+        assertSafeAttribute(key, value, tag, (attr) => resolveValue(props[attr]));
 
         // `<select value>` has no attribute form; the selection is expressed as `selected` on the
         // matching <option> (see serializeElement). Emitting it would be inert markup that makes

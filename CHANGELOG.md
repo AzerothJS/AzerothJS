@@ -28,6 +28,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   fail-closed behaviour is unchanged. `TooManyRequestsError` gains an optional third parameter
   for those headers.
 
+- **A `<meta http-equiv="refresh">` could send a visitor off-origin, and no gate looked at it.**
+  `content` is a URL sink on exactly one element: under a refresh pragma the browser treats it as
+  a navigation directive. The render gate never inspected it, because the gate judges one
+  attribute at a time and `content` is only dangerous in the PAIR - so a target built from data
+  reached the document with no check, while the same string in an `href` was refused. The
+  `useHead()` path was closed previously; markup was not, on either face.
+
+  Both are now judged by one rule, the same one a guard or loader redirect answers to: an
+  off-origin refresh target is refused as the open-redirect shape. The gate reads the sibling
+  attribute it needs, so every writer is covered - the props object serves `h()` and the
+  serializer, the element serves the compiler's `setProp`, and a fully static one is refused at
+  BUILD time in both compile targets, where a folded template would otherwise reach the
+  document unchecked. All six legal spellings of the directive are parsed, including the four
+  a `url=` scan misses.
+
+  Narrow by construction: only `refresh` is inspected, so `og:url`, `og:image` and every other
+  meta keep carrying absolute URLs; a same-origin refresh is untouched; and `unsafeUrl(...)`
+  opts a deliberate off-origin target out, exactly as it does for every other URL sink.
+
 - **A failed loader must not put its reason on the wire.** With server-side loader failures now
   rendering a page rather than throwing (see Changed), the handoff had to say something about
   them. It says WHICH levels failed and nothing else. A 5xx message can hold a connection
@@ -435,6 +454,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   have made every client silently reject every handoff.
 
 ### Added
+
+- **A head and SEO guide.** `useHead()` shipped without user-facing documentation: it was
+  reachable from the package entry and described only in its own JSDoc, so the rules that
+  decide whether a fact reaches a crawler were not written down anywhere a reader would look.
+  `docs/head.md` covers what can be declared, how nesting decides precedence, what the client
+  does on unmount, the refusal rules above, and the one rule that matters on the server:
+  a head fact must be resolvable during the synchronous main pass, which is where a route
+  loader's data already is.
+
+  It states the streaming limit plainly rather than leaving it to be discovered. On
+  `render: 'stream'` the shell has flushed before a Suspense boundary settles, so a `useHead()`
+  declared inside that boundary cannot reach the served document - bytes that have left
+  cannot be edited. The declaration is dropped with a development warning naming the remedy.
+  This is worth stating because the client applies the same declaration after hydration, so
+  the page looks correct in a browser while a crawler never sees it. Both halves of that
+  contract are now pinned by tests end to end over a real server: the drop and its
+  diagnostic, and loader-derived facts reaching the flushed head on a streamed route.
 
 - **`<Form>`: the same form, enhanced when there is JS.** It renders an ordinary
   `<form method="post">` carrying the CSRF token, so a browser with scripting off posts it

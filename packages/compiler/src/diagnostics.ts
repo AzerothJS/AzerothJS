@@ -86,6 +86,7 @@ import {
     executableUrlMessage,
     srcdocMessage,
     refusedTagMessage,
+    refreshRefusal,
     executableScriptMessage
 } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
@@ -3089,6 +3090,31 @@ function renderSafetyRules(el: MarkupElement, out: AzerothDiagnostic[]): void
                 start: el.start,
                 end: el.start + tag.length + 1
             });
+        }
+    }
+
+    // A refresh pragma's target: dangerous only in the PAIR, which is why the runtime gate
+    // reads a sibling and this one reads the whole element. Folded values only - a dynamic
+    // content is hoisted and judged at runtime with its real value, exactly as a dynamic
+    // `<script type>` is above.
+    if (tag === 'meta')
+    {
+        const pragma = el.attributes.find(attr => !attr.spread && attr.name?.toLowerCase() === 'http-equiv');
+        const content = el.attributes.find(attr => !attr.spread && attr.name?.toLowerCase() === 'content');
+        if (pragma !== undefined && content !== undefined)
+        {
+            const written = foldedValue(content.value);
+            const refusal = written === null ? null : refreshRefusal(tag, foldedValue(pragma.value), written);
+            if (refusal !== null)
+            {
+                out.push({
+                    code: 'azeroth/unsafe-url',
+                    severity: 'error',
+                    message: `${ refusal } (Refused at build time because a folded template reaches the document unchecked.)`,
+                    start: content.start,
+                    end: content.end
+                });
+            }
         }
     }
 

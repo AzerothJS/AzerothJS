@@ -330,7 +330,9 @@ describe('render-safety binds every writer, the folded template included', () =>
         ['srcdoc, an inline document', '<iframe srcdoc="<img onerror=alert(1)>"></iframe>', /inline DOCUMENT/],
         ['a refused tag', '<div><base href="//evil.test/" /></div>', /refusing to render <base>/],
         ['an executable script', '<div><script>alert(1)</script></div>', /executable <script>/],
-        ['a handler-form name given a STRING, the one shape that yields live code', '<div onClick="alert(1)">x</div>', /expects a function handler/]
+        ['a handler-form name given a STRING, the one shape that yields live code', '<div onClick="alert(1)">x</div>', /expects a function handler/],
+        ['an off-origin meta refresh, dangerous only as a PAIR', '<meta http-equiv="refresh" content="0;url=https://evil.test/" />', /leaves this app's origin/],
+        ['a meta refresh in the spelling with no url= token', '<meta http-equiv="refresh" content="0;https://evil.test/" />', /leaves this app's origin/]
     ];
 
     for (const [label, markup, rule] of REJECTED)
@@ -353,7 +355,10 @@ describe('render-safety binds every writer, the folded template included', () =>
         ['a data-block script', '<div><script type="application/ld+json">{}</script></div>'],
         ['a script whose type is dynamic, which the runtime gate judges instead', '<div><script type={ t }>{ "{}" }</script></div>'],
         ['an ordinary relative URL', '<a href="/docs">x</a>'],
-        ['a handler given a function', '<div onClick={ go }>x</div>']
+        ['a handler given a function', '<div onClick={ go }>x</div>'],
+        ['a SAME-ORIGIN meta refresh, which navigates nowhere it should not', '<meta http-equiv="refresh" content="3;url=/next" />'],
+        ['an absolute og:url, where content is not a navigation directive', '<meta property="og:url" content="https://example.com/a" />'],
+        ['a refresh whose content is dynamic, which the runtime gate judges instead', '<meta http-equiv="refresh" content={ t } />']
     ];
 
     for (const [label, markup] of ACCEPTED)
