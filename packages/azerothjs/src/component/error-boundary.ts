@@ -126,7 +126,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): MountNode
             const { content, end } = cursor.takeCoBalanced();
             const parent = cursor.parent;
 
-            const real = runInMode('dom', () => ErrorBoundary(props));
+            // ErrorBoundary's dom-mode return is the anchored fragment it builds below, always a
+            // single node - narrower than the MountNode it is declared as, which also admits the
+            // ARRAY form of a fragment-rooted USER component. This is the boundary itself, not its
+            // children, so the narrowing is a statement about this function.
+            const real = runInMode('dom', () => ErrorBoundary(props)) as DocumentFragment;
             parent.insertBefore(real, start);
             for (const node of content)
             {

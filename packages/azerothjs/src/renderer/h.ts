@@ -412,7 +412,16 @@ function appendChildren(parent: HTMLElement | DocumentFragment, children: Child[
  *
  * @internal
  */
-function appendChild(parent: HTMLElement | DocumentFragment, child: Child): void
+/**
+ * Appends ONE child, normalising every shape the renderer can produce: an array (a
+ * fragment), a getter (a reactive text node), any DOM node, a slot handle, or a primitive
+ * (a text node). Exported because the ROOT append in `render` must use this same routine -
+ * a fragment-rooted component returns the array form, whose static text children are plain
+ * strings, and a hand-rolled root loop that only knew about Nodes crashed on them.
+ *
+ * @internal
+ */
+export function appendChild(parent: HTMLElement | DocumentFragment, child: Child): void
 {
     if (child === null || child === undefined || child === false)
     {

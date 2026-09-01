@@ -114,7 +114,7 @@ export {
     type FamilyRecord
 } from './reactivity/data-cache.ts';
 export { inertJson } from './reactivity/ssr.ts';
-export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild } from './renderer/h.ts';
+export { bindHole, bindContent, bindEvent, bindSlot, bindProps, setProp, hydrateChild, appendChild } from './renderer/h.ts';
 export { tmpl } from './renderer/template.ts';
 
 // Builtin components (usable in markup with no import).

@@ -1,3 +1,5 @@
+import type { Child } from '../renderer/types.ts';
+
 /**
  * Copyright (c) 2026 AzerothJS.
  *
@@ -22,4 +24,16 @@ export type DestroyHook = () => void;
  * as a child. SSR and hydration return mode-specific descriptors cast through this
  * type at their documented mode boundaries.
  */
-export type MountNode = HTMLElement | DocumentFragment;
+/**
+ * What a component renders, and what `render`/`hydrate` mount.
+ *
+ * The ARRAY form is a FRAGMENT root. It is not a convenience: `<>...</>` is normative grammar
+ * (GRAMMAR.md 6), the compiler emits a fragment as a JS array from BOTH backends (codegen and
+ * the projection), and the compiler's own multiple-root diagnostic tells authors to wrap
+ * sibling roots in one. Typing it out meant the recommended fix did not type-check, and the
+ * implementation had to cast past its own signature to iterate what it was really handed.
+ *
+ * Members are {@link Child} because a fragment's children are ordinary children - the compiler
+ * emits static text among them as a plain string, not a Text node.
+ */
+export type MountNode = HTMLElement | DocumentFragment | Child[];

@@ -25,6 +25,7 @@ import { getStoreScope } from '../reactivity/store-scope.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeRenderWindow, openRenderWindow } from '../renderer/frame.ts';
 import type { RenderFrame } from '../renderer/frame.ts';
+import type { MountNode } from '../component/index.ts';
 
 /**
  * Renders `component` to an HTML string in 'string' mode with hydration markers toggled per
@@ -36,7 +37,7 @@ import type { RenderFrame } from '../renderer/frame.ts';
  * @param markers - Whether to emit hydration markers.
  * @returns The serialized HTML.
  */
-function renderBody(component: () => HTMLElement | DocumentFragment, markers: boolean, hostFrame?: RenderFrame): string
+function renderBody(component: () => MountNode, markers: boolean, hostFrame?: RenderFrame): string
 {
     if (typeof component !== 'function')
     {
@@ -167,7 +168,7 @@ export interface RenderToStringOptions
  *
  * @see {@link renderToDocument} for a full document.
  */
-export function renderToString(component: () => HTMLElement | DocumentFragment, options: RenderToStringOptions = {}): string
+export function renderToString(component: () => MountNode, options: RenderToStringOptions = {}): string
 {
     return renderBody(component, options.markers ?? true, options.frame);
 }

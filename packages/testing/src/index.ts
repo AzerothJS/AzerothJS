@@ -26,6 +26,8 @@
 
 import { createRoot, type Getter, destroyComponent } from 'azerothjs';
 import { subscriberCount } from 'azerothjs/internal';
+import type { MountNode } from 'azerothjs';
+import { appendChild } from 'azerothjs/internal';
 
 /** A mounted test tree. */
 export interface RenderResult
@@ -69,7 +71,7 @@ const mounted = new Set<RenderResult>();
  * unmount();
  * ```
  */
-export function renderTest(component: () => HTMLElement | DocumentFragment): RenderResult
+export function renderTest(component: () => MountNode): RenderResult
 {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -78,7 +80,11 @@ export function renderTest(component: () => HTMLElement | DocumentFragment): Ren
     createRoot((d) =>
     {
         dispose = d;
-        container.appendChild(component());
+        // The same routine render() mounts through, so a component under test behaves here
+        // exactly as it does in an app. A bare container.appendChild cannot take the ARRAY a
+        // fragment-rooted component returns, nor the plain strings the compiler emits for
+        // static text inside one.
+        appendChild(container, component());
     });
 
     let unmounted = false;

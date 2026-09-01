@@ -34,7 +34,7 @@ function mountBoundary(props: Parameters<typeof ErrorBoundary>[0]): {
     createRoot((d) =>
     {
         dispose = d;
-        container.appendChild(ErrorBoundary(props));
+        container.appendChild(ErrorBoundary(props) as Node);
     });
 
     return { container, dispose };

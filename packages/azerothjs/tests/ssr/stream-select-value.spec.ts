@@ -16,7 +16,7 @@
 // CLIENT. A chunk landing AFTER hydration is repaired by the select's own MutationObserver - the
 // swap inserts options into its subtree, which is exactly what that observer watches.
 import { describe, expect, it } from 'vitest';
-import { Suspense, createResource, h, hydrate, renderToStream, type MountNode } from 'azerothjs';
+import { Suspense, createResource, h, hydrate, renderToStream } from 'azerothjs';
 import { azsRuntime } from '../../src/renderer/stream-swap.ts';
 
 /** Applies one wire chunk the way a browser would: inert insert, then the swap call. */
@@ -54,7 +54,7 @@ describe('streamed options reaching a hydrated <select>', () =>
                 Suspense({
                     fallback: () => h('option', { value: '' }, 'loading'),
                     on: [list],
-                    children: () => (list.data() ?? []).map((o) => h('option', { value: o }, o)) as unknown as MountNode
+                    children: () => (list.data() ?? []).map((o) => h('option', { value: o }, o))
                 }));
         };
 
@@ -97,7 +97,7 @@ describe('streamed options reaching a hydrated <select>', () =>
                 Suspense({
                     fallback: () => h('option', { value: '' }, 'loading'),
                     on: [list],
-                    children: () => (list.data() ?? []).map((o) => h('option', { value: o }, o)) as unknown as MountNode
+                    children: () => (list.data() ?? []).map((o) => h('option', { value: o }, o))
                 }));
         };
 

@@ -16,6 +16,7 @@ import { collectHead } from '../renderer/head.ts';
 import { escapeText, escapeAttr } from '../reactivity/index.ts';
 import { renderToString } from './render-to-string.ts';
 import { createRenderFrame } from '../renderer/frame.ts';
+import type { MountNode } from '../component/index.ts';
 
 /**
  * Options for {@link renderToDocument}.
@@ -61,7 +62,7 @@ export interface RenderToDocumentOptions
  *
  * @see {@link renderToString} when you only need the body.
  */
-export function renderToDocument(component: () => HTMLElement | DocumentFragment, options: RenderToDocumentOptions = {}): string
+export function renderToDocument(component: () => MountNode, options: RenderToDocumentOptions = {}): string
 {
     const lang = options.lang ?? 'en';
 

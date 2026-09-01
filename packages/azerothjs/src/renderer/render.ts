@@ -15,6 +15,7 @@
 import { createRoot } from '../reactivity/index.ts';
 import { destroyComponent, type MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
+import { appendChild } from './h.ts';
 
 /**
  * Mounts a component into `container`, clearing whatever was there and owning the new tree
@@ -62,19 +63,12 @@ export function render(component: () => MountNode, container: HTMLElement): void
     createRoot((dispose) =>
     {
         containerDisposers.set(container, dispose);
-        // A fragment-rooted component returns an ARRAY of nodes; append each so a multi-node root
-        // mounts as direct children instead of crashing on appendChild.
-        const output = component();
-        if (Array.isArray(output))
-        {
-            for (const node of output as Node[])
-            {
-                container.appendChild(node);
-            }
-        }
-        else
-        {
-            container.appendChild(output);
-        }
+        // Through the renderer's ONE child-append routine, not a root-only reimplementation of
+        // it. A fragment-rooted component returns the array form, and the compiler emits static
+        // text inside it as a plain STRING - so a root loop that assumed every item was a Node
+        // crashed on `<> hello <b>x</b> </>`, a shape the compiler's own diagnostic recommends.
+        // appendChild already resolves arrays, getters, nodes, slot handles and primitives, and
+        // is what every non-root child in the framework goes through.
+        appendChild(container, component());
     });
 }

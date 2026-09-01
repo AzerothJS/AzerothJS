@@ -209,6 +209,33 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
     identity without a guard is invisible to it - keep personalized loaders off ISR and
     static pages.
 
+### Fixed
+
+- **A fragment-rooted component crashed on the client and never hydrated.** `<>...</>` is
+  normative grammar, and the compiler's own multiple-root diagnostic tells authors to wrap
+  sibling roots in one - so this was reachable through the recommended fix. Both compiler
+  backends emit a fragment as an ARRAY, with static text inside it as a plain string, and the
+  three mount paths each re-implemented their own narrower handling of the root instead of using
+  the renderer routine every other child goes through. `render` appended array items straight to
+  the container, so `<> hello <b>x</b> </>` threw on the string; `renderTest` did not handle the
+  array at all; and `hydrate` rejected an array as unhydratable and fell back to a FULL CLIENT
+  RENDER, throwing away and rebuilding server markup on every fragment-rooted page - silently,
+  because the warning is development-only and the resulting HTML is byte-identical. Only node
+  identity revealed it. All three now go through the shared routines (`appendChild` on the mount
+  side, `hydrateChild` on the adopt side), which already resolved arrays, getters, nodes, slot
+  handles and text for every non-root child. The hydration mismatch net is not weakened by this:
+  it moves from a test of the root VALUE's shape to the cursor exhaustion check, which validates
+  the whole consumed range.
+
+- **`MountNode` did not describe what a component can return.** It admitted only a single element
+  or fragment node, while the compiler emits the array form for a fragment root, `render`
+  documented the array in its own JSDoc, and the implementation cast past its signature to
+  iterate it. The documented, diagnostic-recommended pattern therefore failed to type-check. It
+  now includes the fragment form, and the five entry points that had restated a narrower version
+  of the same idea by hand (`renderToString`, `renderToStream`, `renderToDocument`, `renderBody`,
+  `renderTest`) all use the one type. Widening it is what surfaced the two runtime defects above;
+  fixing only the type would have turned a compile error into a crash.
+
 ### Added
 
 - **Work units: any server-side unit of work can own the scope a request gets.**

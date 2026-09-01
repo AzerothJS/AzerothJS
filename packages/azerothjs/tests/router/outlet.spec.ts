@@ -46,7 +46,7 @@ describe('Outlet', () =>
         const child = document.createElement('div');
         child.appendChild(document.createElement('p'));
         const result = Outlet({ children: child });
-        expect(result.querySelector('p')).not.toBeNull();
+        expect((result as HTMLElement).querySelector('p')).not.toBeNull();
     });
 
     it('allocates a fresh placeholder per leaf call (no shared singleton)', () =>

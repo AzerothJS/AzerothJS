@@ -17,7 +17,7 @@ const UsersLayout = (props: { children?: MountNode | undefined }): MountNode =>
     const el = document.createElement('div');
     if (props.children)
     {
-        el.appendChild(props.children);
+        el.appendChild(props.children as Node);
     }
     return el;
 };

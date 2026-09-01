@@ -397,7 +397,7 @@ describe('TransitionGroup - a leaving row stops being interactive too', () =>
                     button.textContent = item.id;
                     return button;
                 }
-            }));
+            }) as Node);
             return d;
         });
 

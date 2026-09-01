@@ -28,6 +28,7 @@ import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeContinuationWindow, closeRenderWindow, openContinuationWindow, openRenderWindow } from '../renderer/frame.ts';
 import type { RenderFrame, RenderWindow } from '../renderer/frame.ts';
+import type { MountNode } from '../component/index.ts';
 
 /** How {@link renderToStream} behaves; every field optional. */
 export interface RenderToStreamOptions
@@ -106,7 +107,7 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
  * @see {@link collectStyleSheet} for the style drain the caller owes this render.
  */
 export function renderToStream(
-    component: () => HTMLElement | DocumentFragment,
+    component: () => MountNode,
     options: RenderToStreamOptions = {}
 ): ReadableStream<Uint8Array>
 {

@@ -18,10 +18,11 @@
 
 import { createRoot } from '../reactivity/index.ts';
 import { DEV } from '../reactivity/dev.ts';
-import { isHydrationNode, HydrationCursor, HydrationMismatchError, resetSeedScopes, beginHydrationPass, runInPass, settleHydrationPass } from '../reactivity/internal.ts';
+import { HydrationCursor, HydrationMismatchError, resetSeedScopes, beginHydrationPass, runInPass, settleHydrationPass } from '../reactivity/internal.ts';
 import type { MountNode } from '../component/index.ts';
 import { containerDisposers } from './container-disposers.ts';
 import { render } from './render.ts';
+import { hydrateChild } from './h.ts';
 
 /**
  * Adopts the server-rendered DOM in `container`, attaching listeners and effects to the
@@ -95,14 +96,19 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
             {
                 containerDisposers.set(container, dispose);
 
-                const root = component() as unknown;
-                if (!isHydrationNode(root))
-                {
-                    throw new HydrationMismatchError('root component did not produce a hydratable node');
-                }
-
+                // Through the renderer's ONE child-adopt routine, for the same reason the mount
+                // side goes through appendChild. A fragment-rooted component returns an ARRAY,
+                // which is not itself a hydration node - so the old root-shape test rejected
+                // every fragment-rooted page and fell back to a FULL CLIENT RENDER, silently in
+                // production (the warning is DEV-only). Measured: the server nodes were replaced
+                // rather than adopted, while a single-element root adopted them.
+                //
+                // The mismatch net is not weakened by dropping that test, it is strengthened:
+                // hydrateChild resolves arrays, hydration nodes, getters, slot handles and static
+                // text, and assertExhausted below still validates the WHOLE consumed range rather
+                // than only the root value's shape.
                 const cursor = new HydrationCursor(container);
-                root.hydrate(cursor);
+                hydrateChild(component(), cursor);
                 cursor.assertExhausted('root container');
 
             });
