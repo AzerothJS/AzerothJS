@@ -375,17 +375,50 @@ export function mountPages(app: App, options: KitOptions): void
         app.get('/assets/*path', staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' }));
     }
 
-    // Everything else is an asset (favicons, prerendered files, public/ copies).
-    app.get('/*path', assets);
+    // Everything else is an asset (favicons, prerendered files, public/ copies) - or, when no
+    // such file exists, a navigation to a URL this app does not route. The renderer already
+    // answers that with the app's own fallback UI at a real 404, and the client router renders
+    // the same `<Routes fallback>` for it; without this the branch was unreachable and the two
+    // modes disagreed, a deep link to a stale path getting the asset handler's JSON error where
+    // an in-app navigation got the 404 page. Negotiated on Accept, so a missing image or a
+    // fetch() still gets the JSON its caller can read.
+    app.get('/*path', async (context) =>
+    {
+        try
+        {
+            return await assets(context);
+        }
+        catch (error)
+        {
+            if (!(error instanceof NotFoundError) || !acceptsHtml(context.request))
+            {
+                throw error;
+            }
+        }
+        return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise, 404);
+    });
 }
 
-/** @internal The SSR-or-shell response for one request - shared by every dynamic path. */
+/** @internal Whether the client asked for a document rather than an asset or a JSON API. */
+function acceptsHtml(request: Request): boolean
+{
+    return (request.headers.get('accept') ?? '')
+        .split(',')
+        .some((entry) => entry.trim().toLowerCase().startsWith('text/html'));
+}
+
+/**
+ * @internal The SSR-or-shell response for one request - shared by every dynamic path.
+ * `shellStatus` answers the client-rendered case, where there is no server render to carry a
+ * status and the shell itself is the whole answer.
+ */
 async function renderOrShell(
     context: RequestContext,
     mode: PageRoute['render'],
     options: KitOptions,
     shell: string,
-    buildId: Promise<string>
+    buildId: Promise<string>,
+    shellStatus = 200
 ): Promise<Response>
 {
     if (mode === 'server' && options.renderer !== undefined)
@@ -409,7 +442,7 @@ async function renderOrShell(
             });
         return pageResponse(result, shell);
     }
-    return htmlResponse(shell);
+    return htmlResponse(shell, { status: shellStatus });
 }
 
 /** @internal An SSR-or-shell handler for one path; `'stream'` answers a streaming Response. */

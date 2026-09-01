@@ -33,12 +33,22 @@ const fakeRenderer = (url: string, shell: string): Promise<PageResult> =>
     {
         return Promise.resolve({ kind: 'redirect', to: '/login', replace: true });
     }
+    if (url.startsWith('/unrouted'))
+    {
+        // What createPageRenderer answers for a URL no route matches: the app's own fallback UI
+        // at a real 404.
+        return Promise.resolve({ kind: 'html', status: 404, html: shell.replace('<div id="root"></div>', '<div id="root">APP-404</div>') });
+    }
     if (url.startsWith('/forbidden'))
     {
         return Promise.resolve({ kind: 'blocked', status: 403 });
     }
     return Promise.resolve({ kind: 'html', status: 200, html: shell.replace('<div id="root"></div>', `<div id="root">SSR:${ url }</div>`) });
 };
+
+/** What a browser sends navigating, what it sends for an <img>, and what fetch() sends. */
+const NAVIGATE = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+const IMAGE = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
 
 const dirs: string[] = [];
 afterAll(() =>
@@ -158,6 +168,35 @@ describe('mountPages', () =>
         const shellPage = await (await fetch(app, '/spa')).text();
         expect(shellPage).toContain('<div id="root"></div>'); // empty root: the browser renders
         expect(((await (await fetch(app, '/api/ping')).json()) as { ok: boolean }).ok).toBe(true);
+    });
+
+    it("a navigation to an unrouted URL gets the app's own 404 page; a fetch or an image does not", async () =>
+    {
+        const { app } = build([{ path: '/', component }], true);
+
+        const navigation = await app.handle(new Request('http://local/unrouted/page', { headers: { accept: NAVIGATE } }));
+        expect(navigation.status).toBe(404);
+        expect(navigation.headers.get('content-type')).toContain('text/html');
+        expect(await navigation.text()).toContain('APP-404');
+
+        // The controls. A missing image or an unrouted fetch must still get the JSON its
+        // caller can read - serving them a document is how a broken <img> becomes a parse error.
+        const image = await app.handle(new Request('http://local/unrouted/logo.png', { headers: { accept: IMAGE } }));
+        expect(image.status).toBe(404);
+        expect(image.headers.get('content-type')).toContain('application/json');
+
+        const api = await app.handle(new Request('http://local/api/nope', { headers: { accept: '*/*' } }));
+        expect(api.status).toBe(404);
+        expect(api.headers.get('content-type')).toContain('application/json');
+    });
+
+    it('a client-rendered app answers an unrouted navigation with the shell at a real 404', async () =>
+    {
+        const { app } = build([{ path: '/', component, render: 'client' }], false);
+        const response = await app.handle(new Request('http://local/unrouted/page', { headers: { accept: NAVIGATE } }));
+        // Never a soft 404: the router picks its fallback once it boots, and the status says so.
+        expect(response.status).toBe(404);
+        expect(await response.text()).toContain('<div id="root"></div>');
     });
 
     it("render: 'static' serves the prerendered file; assets fall through; misses 404", async () =>
