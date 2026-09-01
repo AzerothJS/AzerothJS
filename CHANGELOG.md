@@ -12,6 +12,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A throwing error observer hung the streamed page and then killed the process.** The
+  Suspense boundary catch called the user's `onError` bare, and the pending-boundary counter was
+  decremented by the statement AFTER it. So an observer that threw skipped that decrement: the
+  counter never reached zero, the client waited out the entire settle timeout (10 seconds by
+  default) for a page whose bytes were already decided, and the throw escaped the floating
+  promise driving the boundary as an unhandled rejection, taking the process with it. Measured at
+  1515ms against a 1500ms timeout, versus 3ms for an observer that returns. The observer is now
+  isolated, and the boundary accounting runs in a `finally` so that being the last statement is
+  no longer what makes it safe. This is reachable in ordinary code: an observer written as an
+  exhaustive `switch` over the error phase began throwing when that union gained `'stream'`.
+
 - **A loader redirect was the one redirect boundary that judged nothing.** A redirect is
   consumed at four places: the SSR guard and loader paths, the client guard path, and the client
   LOADER path. The first three ran the target through the shared judgement and failed closed; the
@@ -363,7 +374,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   constructed it without one - so the client received a page missing a boundary while the server
   recorded a clean 200, the one shape no observability seam can see. It cannot be a status: the
   head left long before the failure. `PageRenderOptions` gains `onError`, `mountPages` wires
-  it to the observer you already pass, and `KitErrorObserver`'s phase gains `'stream'`. Note
+  it to the observer you already pass, and `KitErrorObserver`'s phase gains `'stream'`.
+
+  MIGRATION: widening that union is a source-compatible change that can still fail at RUNTIME.
+  An observer written as an exhaustive `switch (phase)` with a throwing `default` keeps
+  compiling and starts throwing the first time a stream fails, and an observer's throw is
+  reached on the unhappiest path there is. Check any exhaustive handling of `phase` before
+  upgrading.
+
+  Note
   the honest boundary: this covers kit's streamed SSR. A hand-rolled `new Response(stream)`
   whose producer throws mid-body is still unreported by the kernel, and routing SSE's producer
   failures (today stderr, via `sse()`'s default) to the app's observer is likewise still open.

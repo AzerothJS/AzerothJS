@@ -390,3 +390,67 @@ describe('renderToStream - lifecycle and isolation', () =>
         expect(rest).toContain('\\u003c/script');
     });
 });
+
+// onError is USER code called from inside the boundary catch, and settleOne() - the pending
+// counter that ends the stream - used to sit after it as the last statement. So an observer
+// that threw stranded the counter: the client waited out the whole settle timeout and the throw
+// escaped the floating promise driving the boundary as an unhandled rejection. Measured before
+// the fix at 1515ms against a 1500ms timeout, versus 3ms for an observer that returns.
+describe('renderToStream - a failing error observer', () =>
+{
+    // A page whose Suspense continuation throws, which is what enters the boundary catch.
+    const throwingPage = (): HTMLElement =>
+    {
+        const resource = createResource(async () => 'ready');
+        return h('main', {},
+            h('h1', {}, 'shell'),
+            Suspense({
+                fallback: () => h('p', {}, 'loading'),
+                on: [resource],
+                children: () =>
+                {
+                    throw new Error('boundary blew up');
+                }
+            }));
+    };
+
+    it('a THROWING onError neither hangs the stream nor escapes the boundary', async () =>
+    {
+        const SETTLE_MS = 2000;
+        let observed = 0;
+        const started = Date.now();
+        const chunks = await readAll(renderToStream(throwingPage, {
+            settleTimeoutMs: SETTLE_MS,
+            onError: () =>
+            {
+                observed += 1;
+                throw new Error('observer blew up');
+            }
+        }));
+        const elapsed = Date.now() - started;
+
+        // The observer really ran, so the arm is exercising the path it claims to.
+        expect(observed).toBe(1);
+        // Settled through its own accounting rather than through the timeout. Broken, this
+        // is ~SETTLE_MS; fixed, it is single-digit milliseconds.
+        expect(elapsed).toBeLessThan(SETTLE_MS / 2);
+        expect(chunks.join('')).toContain('shell');
+    });
+
+    it('CONTROL: an onError that returns normally behaves identically', async () =>
+    {
+        const SETTLE_MS = 2000;
+        let observed = 0;
+        const started = Date.now();
+        const chunks = await readAll(renderToStream(throwingPage, {
+            settleTimeoutMs: SETTLE_MS,
+            onError: () =>
+            {
+                observed += 1;
+            }
+        }));
+        expect(observed).toBe(1);
+        expect(Date.now() - started).toBeLessThan(SETTLE_MS / 2);
+        expect(chunks.join('')).toContain('shell');
+    });
+});

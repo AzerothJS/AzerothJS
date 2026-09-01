@@ -262,7 +262,21 @@ export function renderToStream(
                     {
                         // The fallback DOM stays; the client's unseeded resources refetch
                         // after hydration and the error re-surfaces through client Suspense.
-                        options.onError?.(error);
+                        //
+                        // ISOLATED: onError is USER code, and an observer is the last stop. Bare,
+                        // its throw escaped this catch, skipped the settleOne() below, and left
+                        // `pending` above zero - so the client waited out the whole settle timeout
+                        // (measured: 1515ms against a 1500ms timeout, versus 3ms for an observer
+                        // that returns) and the throw surfaced as an unhandled rejection out of
+                        // the floating promise that drives this boundary.
+                        try
+                        {
+                            options.onError?.(error);
+                        }
+                        catch
+                        {
+                            // Nowhere left to report it: reporting is what just failed.
+                        }
                     }
                     finally
                     {
@@ -275,22 +289,40 @@ export function renderToStream(
                             closeContinuationWindow(continuation);
                         }
                     }
-                    if (childrenHtml !== null)
+                    // settleOne() is the boundary's accounting and runs NO MATTER WHAT. Being the
+                    // LAST STATEMENT was the shape of the defect above, not an incidental detail:
+                    // anything throwing before it strands the counter and hangs the stream to its
+                    // settle timeout. A boundary that has finished is finished even if delivering
+                    // it failed.
+                    //
+                    // DEFENCE IN DEPTH, and deliberately not claimed as more: with the observer
+                    // isolated there is no reachable second throw here (the closed/finalized check
+                    // sits in this same synchronous block as the enqueue), and removing this
+                    // try/finally was MEASURED to break no arm. It is kept because it makes the
+                    // invariant structural instead of positional, so the next statement added
+                    // above it cannot quietly bring the hang back.
+                    try
                     {
-                        // Boundaries the continuation itself registered (nested Suspense)
-                        // join the pending set BEFORE this one settles the counter.
-                        for (const nested of session.takeBoundaries())
+                        if (childrenHtml !== null)
                         {
-                            pending++;
-                            drive(nested);
+                            // Boundaries the continuation itself registered (nested Suspense)
+                            // join the pending set BEFORE this one settles the counter.
+                            for (const nested of session.takeBoundaries())
+                            {
+                                pending++;
+                                drive(nested);
+                            }
+                            // One enqueue per settled boundary: the runtime (first time) and the
+                            // chunk travel together, so a reader never sees a half-delivered swap.
+                            const prefix = runtimeSent ? '' : streamRuntimeScript(nonce);
+                            runtimeSent = true;
+                            enqueue(prefix + chunkFor(boundary, childrenHtml, nonce));
                         }
-                        // One enqueue per settled boundary: the runtime (first time) and the
-                        // chunk travel together, so a reader never sees a half-delivered swap.
-                        const prefix = runtimeSent ? '' : streamRuntimeScript(nonce);
-                        runtimeSent = true;
-                        enqueue(prefix + chunkFor(boundary, childrenHtml, nonce));
                     }
-                    settleOne();
+                    finally
+                    {
+                        settleOne();
+                    }
                 });
             };
 
