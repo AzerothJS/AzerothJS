@@ -70,6 +70,8 @@ go through one implementation.
 | `create-root.ts` | `createRoot`, ownership and disposal scopes. |
 | `on-cleanup.ts`, `on-root-dispose.ts` | Cleanup registration. |
 | `create-resource.ts` | `createResource`: async data as a signal. |
+| `data-cache.ts` | `cached`, `revalidate`: the shared read cache behind resources and loaders. |
+| `create-mutation.ts` | `createMutation`: writes, with the optimistic guess in the shared cache. |
 | `create-stream.ts` | `createStream`: streamed/incremental async data. |
 | `create-deferred.ts`, `create-selector.ts` | Deferred values and keyed selection. |
 | `catch-error.ts` | `catchError`: scoped error handling for reactive code. |
@@ -80,6 +82,53 @@ go through one implementation.
 A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is
 `() => T` and `Setter<T>` is `(next: T | ((prev: T) => T)) => void`.
 
+
+## Mutations
+
+A mutation is the write half of the data layer: the thing a form, a button or a keypress
+submits to. It owns the optimistic guess, the rollback, the invalidation and the pending state.
+
+```ts
+import { cached, createMutation, createResource } from 'azerothjs';
+
+const getCart = cached('cart', () => api.cart.get());
+
+const addToCart = createMutation(
+    (item: CartItem) => api.cart.add(item),
+    {
+        optimistic: (item, patch) =>
+        {
+            patch(getCart, cart => ({ ...cart, count: cart.count + item.qty }));
+        }
+        // invalidates defaults to what the patch touched
+    });
+
+addToCart.pending();        // reactive: any run in flight
+addToCart.error();          // reactive: the last failure, or null
+await addToCart.run(item);  // { ok: true, data } | { ok: false, error }
+```
+
+The guess goes into the CACHE, not beside one resource, so every reader of `getCart` moves
+together: a header badge and the cart page show the new number in the same frame. A guess held
+in one component's own signal moves only that component, which is how a badge ends up lagging
+the page by a full round trip.
+
+What the mutation guarantees:
+
+- **Rollback is per run.** Two writes in flight are two layers; one failing removes exactly its
+  own guess and leaves the other standing.
+- **No double count.** On success the guess is promoted into the entry and removed in the same
+  synchronous step, so nothing ever renders the confirmed value with its own guess still on top.
+  A refetch that is slow, or that fails, cannot revert a change the server already accepted.
+- **`run` does not reject** for a failed write - it answers `{ ok: false, error }`, so a
+  fire-and-forget `onClick` cannot become an unhandled rejection. Misuse (patching something
+  that is not a `cached` fetcher) still throws, because that is a bug rather than a refusal.
+
+Two things it does not do. A patch projection must be PURE: it re-runs on every read and on
+every other run's failure. And guesses stack in CALL order while a server applies writes in
+COMPLETION order, so two concurrent writes that do not commute can disagree until the
+revalidation lands - which is why `invalidates` defaults to what you patched rather than being
+opt-in.
 
 ## Examples
 

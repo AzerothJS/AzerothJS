@@ -436,6 +436,36 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **`createMutation`: the write half of the data layer.** A mutation is the thing a form, a
+  button or a keypress submits to. Until now the framework owned reads - `cached`, loaders,
+  `revalidate` - and left every application to rebuild the write side around a bare
+  `await api.cart.add(item)`: the optimistic guess, the rollback, the invalidation and the
+  pending state.
+
+  `createMutation(write, { optimistic, invalidates })` returns `pending()`, `error()` and
+  `run(input)`. The optimistic guess goes into the CACHE rather than beside one resource, which
+  is the part that could not be built on top: measured before this existed, a header badge and a
+  cart page reading the same `cached` family SPLIT during the optimistic window - the page
+  showed the new number while the badge sat on the old one for the whole round trip, because a
+  guess held in one component cannot leave that component. Both now move in the same frame.
+
+  Guesses are LAYERS on the entry, so two writes in flight are two layers and one failing removes
+  exactly its own. On success the guess is promoted into the entry and removed in one synchronous
+  step, so nothing renders the confirmed value with its own guess still on top - the double count
+  the hand-rolled shape produces between the refetch landing and the override being released. A
+  refetch that is slow, or that fails, therefore cannot revert a change the server already took.
+  `invalidates` defaults to whatever the guess patched, since omitting it is the mistake that
+  silently leaves the screen stale.
+
+  `run` does not reject for a failed write - it answers `{ ok: true, data }` or
+  `{ ok: false, error }`, so a fire-and-forget `onClick` cannot become an unhandled rejection.
+  Misuse still throws: a patch aimed at something other than a `cached` fetcher is a bug in the
+  mutation, not a refusal by the server, and reporting it as an ordinary failure would hide it
+  behind a retry button. Two limits are documented rather than papered over: a patch projection
+  must be PURE, because it re-runs on every read and on every other run's failure; and guesses
+  stack in CALL order while a server applies writes in COMPLETION order, so two concurrent writes
+  that do not commute disagree until the revalidation lands.
+
 - **`unauthorized()` and `forbidden()`: a guard can say WHICH refusal it means.** `return false`
   has always vetoed, and the server answered 403 for it, which is right for exactly one of the
   two cases. A signed-out visitor needs 401 so a client, a crawler or an edge cache can tell

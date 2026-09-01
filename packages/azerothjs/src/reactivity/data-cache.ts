@@ -76,6 +76,28 @@ type DropTrailingSignal<P extends unknown[]> = P extends [...infer Rest, AbortSi
 const DEFAULT_RETAIN_MS = 5 * 60 * 1000;
 
 /** One key's state. Fetches belong to the entry, never to a subscriber. */
+/**
+ * One in-flight optimistic guess over an entry's value.
+ *
+ * A guess belongs on the ENTRY rather than beside one resource, because every reader of the
+ * family is showing the same number: a cart badge in the header and the cart page itself must
+ * move together, and a guess held in one component's scope moves only that component.
+ *
+ * Layers are a STACK, applied oldest-first on read. Two mutations in flight are two layers, so
+ * neither has to know about the other, and a failure removes exactly its own - the projection
+ * is recomputed from the base on every read, so nothing needs repairing.
+ */
+export interface OptimisticLayer
+{
+    id: number;
+
+    /** Pure: receives the value below it in the stack and returns the guessed one. */
+    project: (value: unknown) => unknown;
+
+    /** True once its mutation succeeded; a settled layer folds into the base at the bottom. */
+    settled: boolean;
+}
+
 export interface CacheEntry
 {
     key: string;
@@ -98,6 +120,9 @@ export interface CacheEntry
     retainTimer: ReturnType<typeof setTimeout> | null;
     zeroCheckScheduled: boolean;
     args: unknown[];
+
+    /** Optimistic guesses over {@link value}, oldest first. Empty for all but a mutating entry. */
+    layers: OptimisticLayer[];
     parentKey: string | null;
     usedParent: boolean;
     family: FamilyRecord;
@@ -107,6 +132,24 @@ export interface CacheEntry
 
     /** The seed's produce time, when adopted from a handoff. */
     seededAt?: number;
+}
+
+/** Distinguishes every optimistic layer this process creates. */
+let layerSerial = 0;
+
+/**
+ * The value a reader sees: the entry's own value with every optimistic guess applied, oldest
+ * first. Computed on READ rather than stored, so removing a failed guess needs no repair - the
+ * remaining layers simply project the base again.
+ */
+export function projectedValue(entry: CacheEntry): unknown
+{
+    let value = entry.value;
+    for (const layer of entry.layers)
+    {
+        value = layer.project(value);
+    }
+    return value;
 }
 
 let serverLatched = false;
@@ -287,6 +330,7 @@ export class DataCache
                 retainTimer: null,
                 zeroCheckScheduled: false,
                 args,
+                layers: [],
                 parentKey: null,
                 usedParent: false,
                 family
@@ -673,6 +717,64 @@ export class DataCache
         });
     }
 
+    /**
+     * Pushes an optimistic guess onto an entry and notifies every reader of the family.
+     * Returns the layer's id, which is how its author later settles or drops exactly its own.
+     */
+    public patchEntry(entry: CacheEntry, project: (value: unknown) => unknown): number
+    {
+        const id = ++layerSerial;
+        entry.layers.push({ id, project, settled: false });
+        entry.bumpVersion();
+        return id;
+    }
+
+    /**
+     * Marks a guess CONFIRMED and folds it into the entry's value, so a later refetch failure
+     * cannot revert what the server already accepted.
+     *
+     * Folding runs from the BOTTOM of the stack and stops at the first unsettled layer. A layer
+     * projects the value below it, so promoting one out of order would apply its predecessor
+     * twice; waiting is both correct and invisible, since the projection already shows the
+     * guess. The fold and the removal are one SYNCHRONOUS step, and a reader only re-reads on
+     * the version effect, so nobody can observe the promoted value with its own guess still on
+     * top - which is the double count an application sequencing this by hand has to avoid.
+     */
+    public settleLayer(entry: CacheEntry, id: number): void
+    {
+        const layer = entry.layers.find((candidate) => candidate.id === id);
+        if (layer === undefined)
+        {
+            return;
+        }
+        layer.settled = true;
+        let folded = false;
+        while (entry.layers[0]?.settled === true)
+        {
+            const bottom = entry.layers.shift() as OptimisticLayer;
+            entry.value = bottom.project(entry.value);
+            entry.hasValue = true;
+            folded = true;
+        }
+        if (folded)
+        {
+            entry.writtenAt = Date.now();
+        }
+        entry.bumpVersion();
+    }
+
+    /** Drops a guess the server refused. The remaining layers re-project the base on next read. */
+    public dropLayer(entry: CacheEntry, id: number): void
+    {
+        const index = entry.layers.findIndex((candidate) => candidate.id === id);
+        if (index === -1)
+        {
+            return;
+        }
+        entry.layers.splice(index, 1);
+        entry.bumpVersion();
+    }
+
     /** The mutation seam: writes a settled value as if fetched, notifying subscribers. */
     public writeEntry(entry: CacheEntry, value: unknown): void
     {
@@ -1002,7 +1104,9 @@ export function readValue<T>(cache: DataCache, family: FamilyRecord, args: unkno
     const entry = cache.entryFor(family, args);
     if (entry.inflight === null && entry.hasValue && !entry.stale && !entry.hasError)
     {
-        return Promise.resolve(entry.value as T);
+        // The PROJECTED value, so a one-shot read and a subscribed resource never disagree about
+        // the same entry while a guess is in flight.
+        return Promise.resolve(projectedValue(entry) as T);
     }
     // A one-shot reader is its own audience: it holds a waiter, so a stale or errored entry
     // fetches for it even with zero subscribers (a fresh consumer always retries).

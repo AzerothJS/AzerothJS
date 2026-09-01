@@ -26,7 +26,7 @@ import { dtEnterPrimitive, dtExitPrimitive } from './devtools.ts';
 import { currentStreamSession, isHydrating, isStringMode } from './render-mode.ts';
 import { allocateSeedId, takeStreamSeed } from './stream-seeds.ts';
 import { untrack } from './untrack.ts';
-import { cachedFamilyOf, getDataCache, readValue as readCachedValue } from './data-cache.ts';
+import { cachedFamilyOf, getDataCache, projectedValue, readValue as readCachedValue } from './data-cache.ts';
 
 /**
  * The reactive shape returned by {@link createResource}.
@@ -283,7 +283,7 @@ export function createResource<T, S>(
         const fetching = entry.inflight !== null;
         batch(() =>
         {
-            setData(() => (entry.hasValue ? entry.value as T : undefined));
+            setData(() => (entry.hasValue || entry.layers.length > 0 ? projectedValue(entry) as T : undefined));
             setError(() => (entry.hasError ? entry.error : null));
             setLoading(fetching && !entry.hasValue);
             setRefreshing(fetching && entry.hasValue);
