@@ -401,6 +401,24 @@ const FLATTENED = new WeakMap<Route[], LeafEntry[]>();
  * API; a server that builds routes per request should build a NEW array, which simply misses
  * the memo.
  *
+ * That invariant is left UNENFORCED deliberately, and these are the measurements behind that
+ * choice rather than an assumption:
+ *
+ *   - Appending a route, or pushing into a nested `children` array, is invisible here. Both.
+ *     So a top-level length check would be an INCOMPLETE guard - it catches the append and
+ *     misses the child push - and a partial check on a security-relevant invariant buys false
+ *     confidence rather than safety.
+ *   - Setting `.guard` on an EXISTING route object IS seen, because a leaf entry holds the
+ *     route by reference. That is how authorization is actually added to a table, which is why
+ *     the exposed shape is the exotic one (restructuring a live, shared array mid-flight).
+ *   - {@link buildRouter} has ALWAYS flattened once at construction (it deliberately does not
+ *     come through here), so an app mutating a shared routes array was already broken on the
+ *     router path before this memo existed. The memo did not open that door; it made the
+ *     stateless selection path agree with the long-standing router semantics.
+ *
+ * Enforcement would therefore have to re-flatten to be sound, which is exactly the cost this
+ * memo exists to remove.
+ *
  * @internal
  */
 export function flattenRoutesFor(routes: Route[]): LeafEntry[]
