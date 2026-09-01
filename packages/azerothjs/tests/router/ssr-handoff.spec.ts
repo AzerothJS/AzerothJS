@@ -14,6 +14,7 @@ import { App, html } from '@azerothjs/http';
 import {
     createRouter, createMemoryHistory,
     matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID,
+    notFound, isNotFound,
     type Route, type Router
 } from 'azerothjs';
 
@@ -269,5 +270,116 @@ describe('string-mode rendering: the guarded match resolves SYNCHRONOUSLY at con
             return RouterProvider({ router, children: () => Routes({}) });
         });
         expect(rendered).toContain('admin');
+    });
+});
+
+// A route table can only answer "no such ROUTE". Whether /users/42 has a user behind it is
+// something only the loader knows, and its only channel used to be an ordinary throw - a server
+// FAULT - so the commonest not-found in an application answered 500 to clients, crawlers and
+// caches. `notFound()` is the second member of redirect()'s family and travels the same path.
+describe('a loader can declare not-found', () =>
+{
+    const leaf = (): HTMLElement => document.createElement('div');
+
+    it('surfaces as the notFound outcome, which the SSR layer already maps to 404', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/item/:id',
+            component: leaf,
+            loader: async () =>
+            {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw notFound();
+            }
+        }];
+        expect(await matchAndLoad(routes, '/item/42')).toEqual({ notFound: true });
+    });
+
+    // The discriminating half: a real failure must stay a failure, or every bug becomes a 404.
+    it('CONTROL: an ordinary loader throw is still a fault, not a not-found', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/item/:id',
+            component: leaf,
+            loader: async () =>
+            {
+                throw new Error('database is down');
+            }
+        }];
+        await expect(matchAndLoad(routes, '/item/42')).rejects.toThrow('database is down');
+    });
+
+    it('CONTROL: a loader that returns normally still hands off its data', async () =>
+    {
+        const routes: Route[] = [{ path: '/item/:id', component: leaf, loader: async () => 'ITEM' }];
+        const outcome = await matchAndLoad(routes, '/item/42') as { data: unknown[] };
+        expect(outcome.data).toEqual(['ITEM']);
+    });
+
+    it('leaves an ancestor layout intact - the state belongs to the level that declared it', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/shop',
+            component: leaf,
+            loader: async () => 'LAYOUT-DATA',
+            children: [{
+                path: 'item/:id',
+                component: leaf,
+                loader: async () =>
+                {
+                    // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                    throw notFound();
+                }
+            }]
+        }];
+
+        let router!: Router;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            router = createRouter({ routes, history: createMemoryHistory('/shop/item/42') });
+        });
+        try
+        {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            // The layout resolved its own data and carries no error; only the missing level does.
+            expect(router.loaders[0]?.data()).toBe('LAYOUT-DATA');
+            expect(isNotFound(router.loaders[0]?.error())).toBe(false);
+            expect(isNotFound(router.loaders[1]?.error())).toBe(true);
+        }
+        finally
+        {
+            dispose();
+        }
+    });
+
+    it('CONTROL on the client too: an ordinary throw is not reported as not-found', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/broken',
+            component: leaf,
+            loader: async () =>
+            {
+                throw new Error('real fault');
+            }
+        }];
+        let router!: Router;
+        let dispose!: () => void;
+        createRoot((d) =>
+        {
+            dispose = d;
+            router = createRouter({ routes, history: createMemoryHistory('/broken') });
+        });
+        try
+        {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(isNotFound(router.loaders[0]?.error())).toBe(false);
+            expect((router.loaders[0]?.error() as Error).message).toBe('real fault');
+        }
+        finally
+        {
+            dispose();
+        }
     });
 });

@@ -19,6 +19,7 @@
 export { createRouter, targetToFullPath, resolveRouteComponent } from './router.ts';
 export { defineRoute } from './define-route.ts';
 export { redirect } from './redirect.ts';
+export { notFound, isNotFound } from './not-found.ts';
 export { createBrowserHistory, createMemoryHistory } from './history.ts';
 export { compilePath } from './path-pattern.ts';
 export { parseQuery, stringifyQuery } from './query.ts';
@@ -66,6 +67,7 @@ export type {
 } from './types.ts';
 export type { RouteHandle, RoutePathParams, DefineRouteConfig, ToOptions, LoaderDataOf, SearchOf } from './define-route.ts';
 export type { Redirect } from './redirect.ts';
+export type { NotFound } from './not-found.ts';
 export type { MatchAndLoadResult } from './handoff.ts';
 export type { RouterProviderProps } from './provider.ts';
 

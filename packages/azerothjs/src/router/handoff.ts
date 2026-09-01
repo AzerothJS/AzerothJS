@@ -34,6 +34,7 @@ import { acceptRedirectTarget } from './redirect-target.ts';
 import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
 import { flattenRoutesFor, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
+import { isNotFound } from './not-found.ts';
 import { declaredQuery, parseQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
 import { inertJson } from '../reactivity/ssr.ts';
@@ -258,6 +259,10 @@ export async function matchAndLoad(
             if (isRedirect(error))
             {
                 return redirectOutcome(error.to, error.replace);
+            }
+            if (isNotFound(error))
+            {
+                return { notFound: true };
             }
             throw error;
         }

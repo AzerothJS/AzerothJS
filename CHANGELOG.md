@@ -363,6 +363,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **`notFound()`: a loader can declare that its content does not exist.** A route table can only
+  answer "no such ROUTE" - whether `/users/42` has a user behind it is something only the loader
+  knows, and its only channel was an ordinary throw, which is a server FAULT. So the commonest
+  not-found in an application answered 500 to clients, crawlers and caches alike.
+
+  `notFound()` is the second member of `redirect()`'s family and travels the same path: thrown
+  from a loader, the server answers 404 instead of 500, and on the client it stays that level's
+  loader error where `isNotFound()` tells it apart from a failure. Because the state belongs to
+  the level that declared it, an ancestor layout keeps rendering and only the missing level shows
+  its empty state. An ordinary throw is still a fault, so a bug does not become a 404.
+
 - **`handleShutdownSignals` gains `beforeShutdown`, a hook that runs while connections are still
   live.** The only lifecycle hook was `beforeExit`, which runs after the drain has already
   finished - the wrong side for anything that needs the sockets to still be there. The
