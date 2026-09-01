@@ -55,7 +55,10 @@ server.listen(3000);
 // detach(): stop upgrading and destroy live sockets (clients see close code 1006; for a
 // clean 1001 goodbye, close() each socket yourself first). Shutdown no longer needs this
 // to finish - it destroys held sockets itself - but detach() before shutdown is still the
-// polite order.
+// polite order. Wire it through handleShutdownSignals' `beforeShutdown`, which runs while
+// the sockets are still live:
+//
+//   handleShutdownSignals(served, { beforeShutdown: () => detach() });
 ```
 
 > [!TIP]

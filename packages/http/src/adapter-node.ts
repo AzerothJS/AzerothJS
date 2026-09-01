@@ -789,6 +789,14 @@ export interface ShutdownSignalOptions
     onError?: (error: unknown) => void;
 
     /**
+     * Runs BEFORE the drain, while connections are still live: closing WebSockets with 1001,
+     * detaching a socket server, flipping a readiness probe. Awaited. Its throw goes to
+     * `onError` and the drain proceeds anyway - a failed pre-stop must not leave the process
+     * holding its port.
+     */
+    beforeShutdown?: () => void | Promise<void>;
+
+    /**
      * Runs AFTER the server has drained, BEFORE the process exits - the seam for
      * everything else that needs a graceful stop beside the HTTP server: a cron
      * scheduler's `stop({ drain: true })`, a log sink's `close()`, a DB pool's end.
@@ -806,9 +814,9 @@ export interface ShutdownSignalOptions
  * WebSockets included - a live socket exits in milliseconds, not after the grace), then exits
  * 0. This is the piece that makes rolling deploys and orchestrator restarts stop dropping
  * requests mid-flight AND stop hanging until SIGKILL - the incumbents leave it to a process
- * manager and hope. An app that wants clean WebSocket closes (1001) sends them from its own
- * pre-shutdown hook before the drain. Returns a disposer that removes the listeners (so
- * tests and re-wiring do not leak process handlers).
+ * manager and hope. An app that wants clean WebSocket closes (1001) sends them from
+ * `beforeShutdown`, which runs while the connections are still live. Returns a disposer that
+ * removes the listeners (so tests and re-wiring do not leak process handlers).
  */
 export function handleShutdownSignals(served: Served, options: ShutdownSignalOptions = {}): () => void
 {
@@ -826,7 +834,18 @@ export function handleShutdownSignals(served: Served, options: ShutdownSignalOpt
             return; // a second signal during the drain must not start a second drain
         }
         draining = true;
-        void served.shutdown({ gracePeriodMs: options.gracePeriodMs })
+        void (async (): Promise<void> =>
+        {
+            try
+            {
+                await options.beforeShutdown?.();
+            }
+            catch (error: unknown)
+            {
+                options.onError?.(error);
+            }
+        })()
+            .then(async () => served.shutdown({ gracePeriodMs: options.gracePeriodMs }))
             .then(async () => options.beforeExit?.())
             .catch((error: unknown) => options.onError?.(error))
             .finally(() => exit(0));

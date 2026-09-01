@@ -127,6 +127,64 @@ describe('handleShutdownSignals', () =>
         dispose();
     });
 
+    it('beforeShutdown runs before the drain, while connections are still live', async () =>
+    {
+        const served = await serve(new App());
+        const order: string[] = [];
+        let exited = false;
+        const dispose = handleShutdownSignals(served, {
+            signals: ['SIGTERM'],
+            gracePeriodMs: 200,
+            beforeShutdown: async () =>
+            {
+                order.push(served.server.listening ? 'server-still-up' : 'after-drain');
+            },
+            beforeExit: async () =>
+            {
+                order.push(served.server.listening ? 'server-still-up' : 'after-drain');
+            },
+            exit: () =>
+            {
+                order.push('exit');
+                exited = true;
+            }
+        });
+        const listeners = process.listeners('SIGTERM');
+        (listeners[listeners.length - 1] as () => void)();
+        await vi.waitFor(() => expect(exited).toBe(true));
+        // The two hooks sit on opposite sides of the drain: one while the server still accepts,
+        // one once it has stopped.
+        expect(order).toEqual(['server-still-up', 'after-drain', 'exit']);
+        dispose();
+    });
+
+    it('a throwing beforeShutdown is reported and the drain still runs', async () =>
+    {
+        const served = await serve(new App());
+        const seen: unknown[] = [];
+        let exited = false;
+        const dispose = handleShutdownSignals(served, {
+            signals: ['SIGTERM'],
+            gracePeriodMs: 200,
+            beforeShutdown: () =>
+            {
+                throw new Error('pre-stop failed');
+            },
+            onError: (error) => void seen.push(error),
+            exit: () =>
+            {
+                exited = true;
+            }
+        });
+        const listeners = process.listeners('SIGTERM');
+        (listeners[listeners.length - 1] as () => void)();
+        await vi.waitFor(() => expect(exited).toBe(true));
+        expect((seen[0] as Error).message).toBe('pre-stop failed');
+        // A failed pre-stop must not leave the process holding its port.
+        expect(served.server.listening).toBe(false);
+        dispose();
+    });
+
     it('the disposer removes the listener it added', async () =>
     {
         const served = await serve(new App());

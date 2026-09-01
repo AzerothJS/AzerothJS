@@ -363,6 +363,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **`handleShutdownSignals` gains `beforeShutdown`, a hook that runs while connections are still
+  live.** The only lifecycle hook was `beforeExit`, which runs after the drain has already
+  finished - the wrong side for anything that needs the sockets to still be there. The
+  documentation told applications to send WebSocket 1001 closes "from its own pre-shutdown hook",
+  and no such hook existed, so detaching a socket server or flipping a readiness probe could not
+  be wired through the documented path at all. The new hook is awaited before the drain begins,
+  and its own failure is reported and then ignored, because a failed pre-stop must not leave the
+  process holding its port.
+
 - **Work units: any server-side unit of work can own the scope a request gets.**
   `runInWorkUnit(fn)` (from `@azerothjs/http`) runs `fn` with a fresh store scope and a
   cleanup registry, released when it settles - wrap a ws `onConnection` body, background
