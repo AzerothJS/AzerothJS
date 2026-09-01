@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createRoot, createResource, cached, revalidate } from 'azerothjs';
 import type { Resource } from 'azerothjs';
-import { resetDataCache, latchServerData } from 'azerothjs/internal';
+import { resetDataCache, latchServerData, stableSerialize } from 'azerothjs/internal';
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -553,5 +553,59 @@ describe('retention', () =>
         {
             back.dispose();
         }
+    });
+});
+
+// A cache key must be INJECTIVE. A value with no enumerable identity cannot produce one, and the
+// production path used to approximate it with String(value) - the constant "[object Object]" for
+// every class instance - so two distinct callers shared an entry and were served each other's
+// data. Refusing is the only safe answer, and it is the same answer in both modes: a boundary that
+// behaves differently in production can only be discovered there.
+describe('cache key derivation refuses what it cannot distinguish', () =>
+{
+    class Tenant
+    {
+        readonly #id: string;
+
+        constructor(id: string)
+        {
+            this.#id = id;
+        }
+
+        public id(): string
+        {
+            return this.#id;
+        }
+    }
+
+    it('refuses a class instance rather than collapsing distinct ones onto one key', () =>
+    {
+        expect(() => stableSerialize(new Tenant('acme'))).toThrow(TypeError);
+        expect(() => stableSerialize(new Tenant('globex'))).toThrow(TypeError);
+    });
+
+    it('refuses a Map, a Set, a function and a symbol', () =>
+    {
+        expect(() => stableSerialize(new Map([['a', 1]]))).toThrow(TypeError);
+        expect(() => stableSerialize(new Set([1]))).toThrow(TypeError);
+        expect(() => stableSerialize(() => 1)).toThrow(TypeError);
+        expect(() => stableSerialize(Symbol('s'))).toThrow(TypeError);
+    });
+
+    it('CONTROL: plain data of every shape still serializes, and stays distinct', () =>
+    {
+        expect(stableSerialize({ id: 'acme' })).not.toBe(stableSerialize({ id: 'globex' }));
+        expect(stableSerialize({ b: 2, a: 1 })).toBe(stableSerialize({ a: 1, b: 2 }));
+        expect(stableSerialize([1, 2])).not.toBe(stableSerialize([2, 1]));
+        expect(stableSerialize(new Date(0))).toContain('1970');
+        expect(stableSerialize(Object.assign(Object.create(null), { id: 'x' }))).toBe('{"id":"x"}');
+    });
+
+    // Its String() form IS injective, so it is supported rather than refused - and tagged, so a
+    // bigint and the string of the same digits cannot share an entry.
+    it('CONTROL: bigints are keyed distinctly, and apart from the equivalent string', () =>
+    {
+        expect(stableSerialize(1n)).not.toBe(stableSerialize(2n));
+        expect(stableSerialize(1n)).not.toBe(stableSerialize('1'));
     });
 });

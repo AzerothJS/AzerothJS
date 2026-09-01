@@ -12,6 +12,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **Two different callers could share one cache entry in production.** A cache key must tell
+  distinct inputs apart. A value with no enumerable identity - a class instance, an ORM entity, a
+  `Map`, a `Set` - cannot produce one, and development refused it while production fell back to
+  `String(value)`: the constant `"[object Object]"` for every class instance. Two tenants keyed on
+  their own entity object therefore collapsed onto the SAME entry, and one was served the other's
+  data. The dangerous behaviour existed only where nothing was watching, so it could not be found
+  in development.
+
+  Such a value is now refused in both modes, with the message development already gave. An
+  application passing an entity as a cache key part was not working before this change, it was
+  colliding, so the error replaces silent wrong data rather than correct behaviour. Plain objects,
+  arrays, null-prototype objects, anything carrying `toJSON` (a `Date`, a `URL`) and the
+  primitives are unaffected. `bigint` is now keyed explicitly and distinctly from the equivalent
+  string, where it previously relied on the same lossy fallback.
+
 - **A refused upload could hold its connection open indefinitely.** When a handler answers without
   reading the request body - which is what an over-limit refusal does - Node considers the request
   satisfied and stops policing the connection, so the period afterwards was bounded by nothing. A

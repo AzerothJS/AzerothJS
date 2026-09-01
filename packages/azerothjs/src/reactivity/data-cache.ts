@@ -152,8 +152,11 @@ const executingKeys = new Set<string>();
 
 /**
  * Serializes a key part deterministically: object keys sorted, array order significant.
- * Non-serializable values throw in DEV; in PROD they degrade to `String(value)`, which
- * collapses distinct values into one entry - the documented risk of the degradation.
+ *
+ * A cache key must be INJECTIVE, so a value this cannot distinguish is refused rather than
+ * approximated - in production as well as development. Degrading to `String(value)` returned the
+ * constant "[object Object]" for every class instance, collapsing distinct callers onto one entry
+ * and serving them each other's data, and it did so only in production where nothing is watching.
  */
 export function stableSerialize(value: unknown): string
 {
@@ -165,6 +168,12 @@ export function stableSerialize(value: unknown): string
     if (value === undefined)
     {
         return 'undefined';
+    }
+    if (typeof value === 'bigint')
+    {
+        // Distinct bigints stringify distinctly, so this is a faithful key. Tagged so 1n and
+        // "1" cannot share an entry.
+        return `${ String(value) }n`;
     }
     if (Array.isArray(value))
     {
@@ -184,24 +193,14 @@ export function stableSerialize(value: unknown): string
         const proto: unknown = Object.getPrototypeOf(value);
         if (proto !== Object.prototype && proto !== null)
         {
-            if (DEV)
-            {
-                const name = (proto as { constructor?: { name?: string } } | null)?.constructor?.name ?? 'unknown';
-                throw new TypeError(`[azeroth] cached key parts must be plain data or carry toJSON; received an instance of ${ name }.`);
-            }
-            // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the PROD degradation is documented lossy
-            return JSON.stringify(String(value));
+            const name = (proto as { constructor?: { name?: string } } | null)?.constructor?.name ?? 'unknown';
+            throw new TypeError(`[azeroth] cached key parts must be plain data or carry toJSON; received an instance of ${ name }.`);
         }
         const record = value as Record<string, unknown>;
         const keys = Object.keys(record).sort();
         return `{${ keys.map(k => `${ JSON.stringify(k) }:${ stableSerialize(record[k]) }`).join(',') }}`;
     }
-    if (DEV)
-    {
-        throw new TypeError(`[azeroth] cached key parts must be JSON-serializable, received ${ kind }.`);
-    }
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- the PROD degradation is documented lossy
-    return JSON.stringify(String(value));
+    throw new TypeError(`[azeroth] cached key parts must be JSON-serializable, received ${ kind }.`);
 }
 
 /** The entry key for a family and argument list. */
