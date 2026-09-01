@@ -455,6 +455,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **One url per language, and the `hreflang` that needs it.** `locales.routing: 'prefix'`
+  gives every language its own address - `/fa/about` beside `/en/about` - and redirects the
+  unprefixed path to the reader's own. A shared link then means one thing: `/fa/about` is
+  Persian for everyone who opens it, whatever their browser asks for.
+
+  `hreflang` annotations are emitted only in this mode, and that is the point rather than a
+  limitation: they annotate a relationship BETWEEN urls, so a set of them all naming one
+  negotiated address tells a crawler nothing while looking like the page was annotated. They
+  are reciprocal - every language's page carries the whole set including itself, which is
+  what crawlers require and the most common way hand-built annotations are wrong - with an
+  `x-default` pointing at the negotiating path.
+
+  A prefixed page also carries no `Vary`: the url already says which document it is, so a
+  shared cache holds every language at once instead of fragmenting on a header. The route
+  table, loaders and prerendered file names are untouched, because the prefix is stripped
+  before anything downstream sees the path. The redirect is a 302 rather than a 301, since
+  which language a reader gets depends on who is asking.
+
 - **Message catalogues, with the plural rules the reader's language actually uses.**
   `createMessages()` takes plain TypeScript objects - no format this framework invented - and
   the first one is the reference, so its keys become the type and a translation that forgets a

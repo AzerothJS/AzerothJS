@@ -131,6 +131,15 @@ export interface PageRenderOptions
      * during the render, so the markup and its language are decided together.
      */
     locale?: string;
+
+    /**
+     * This page's other languages, as `rel="alternate"` annotations.
+     *
+     * Emitted into the head verbatim. They are meaningful only between DISTINCT urls - a set of
+     * annotations all naming one negotiated url tells a crawler nothing - so the host supplies
+     * them only when each language has its own address.
+     */
+    alternates?: ReadonlyArray<{ hreflang: string; href: string }>;
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -171,6 +180,21 @@ function shellElementPattern(item: CollectedHead['replacements'][number]): RegEx
         ? `(?=[^>]*\\bmedia\\s*=\\s*"${ regexEscape(item.media) }")`
         : '(?![^>]*\\bmedia\\s*=)';
     return new RegExp(`<${ item.kind }\\b${ requires }${ media }[^>]*/?>`, 'i');
+}
+
+/**
+ * @internal The `rel="alternate"` links for a page that exists in more than one language.
+ *
+ * A crawler learns the set from any one member, so every language's page carries the WHOLE set
+ * including itself - that is the annotation being reciprocal, which is what Google requires and
+ * the most common way hand-built hreflang is wrong.
+ */
+function alternateLinks(alternates: ReadonlyArray<{ hreflang: string; href: string }>): string
+{
+    return alternates
+        .map((alternate) => `<link rel="alternate" hreflang="${ escapeAttr(alternate.hreflang) }" `
+            + `href="${ escapeAttr(alternate.href) }" data-azeroth-head="link:alternate:${ escapeAttr(alternate.hreflang) }">`)
+        .join('');
 }
 
 /**
@@ -449,7 +473,8 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             // Style and handoff ride in as the prelude, so the emitted order is
             // style -> handoff -> head additions in BOTH modes, all at one anchor located
             // before any of them is inserted.
-            head = applyHeadToShell(head, frames.head, frames.styleTag + script);
+            head = applyHeadToShell(head, frames.head,
+                frames.styleTag + script + alternateLinks(options.alternates ?? []));
             const encoder = new TextEncoder();
             const reader = body.getReader();
             const stream = new ReadableStream<Uint8Array>({
@@ -506,7 +531,8 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         const script = loaderHandoffScript(stamped ?? loaded, handoffMeta);
         // Title surgery, keyed replacements, additions - order in the document:
         // style -> handoff -> head, all at one anchor located before any of them is inserted.
-        html = applyHeadToShell(html, frames.head, frames.styleTag + script);
+        html = applyHeadToShell(html, frames.head,
+            frames.styleTag + script + alternateLinks(options?.alternates ?? []));
         if (denied !== null)
         {
             return { kind: 'blocked', status: denied, html };

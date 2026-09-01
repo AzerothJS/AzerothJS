@@ -160,6 +160,20 @@ export interface KitOptions
          * Defaults to `locale`, the name `setLocale()` writes.
          */
         cookie?: string;
+
+        /**
+         * How a language is expressed in the url.
+         *
+         * `'negotiate'` (the default) keeps one url per page and decides per request. Simple, and
+         * it is what a site with a language switcher and no search-engine ambitions wants.
+         *
+         * `'prefix'` gives every language its own url - `/fa/about` beside `/en/about` - and
+         * redirects the unprefixed path to the reader's own. This is what search engines require:
+         * `hreflang` annotations only mean anything between DISTINCT urls, so they are emitted
+         * only in this mode. It also makes every page cacheable by a shared cache without `Vary`,
+         * since the url alone now says which document it is.
+         */
+        routing?: 'negotiate' | 'prefix';
     };
 
     /**
@@ -377,6 +391,13 @@ export function mountPages(app: App, options: KitOptions): void
     };
     let isrCache: PageCache | undefined;
 
+    // In prefix mode a page exists once per language and the bare path redirects to the
+    // reader's own, so there is exactly ONE canonical url per (page, language) - which is what
+    // hreflang annotates and what stops the same content being indexed twice.
+    const prefixes = localePrefixes(options);
+    const mountPaths = (path: string): string[] =>
+        (prefixes.length === 0 ? [path] : prefixes.map((tag) => (path === '/' ? `/${ tag }` : `/${ tag }${ path }`)));
+
     for (const page of flattenPages(options.routes))
     {
         const mode = page.render ?? defaultMode;
@@ -414,20 +435,25 @@ export function mountPages(app: App, options: KitOptions): void
                     + 'ISR regenerates through the SSR bundle\'s renderer.');
             }
             isrCache ??= options.cache ?? new MemoryPageCache();
-            registerIsr({
-                app,
-                path: page.path,
-                revalidate: page.revalidate,
-                guarded: (url) => guardedMatch(options.routes, url),
-                cache: isrCache,
-                renderer: options.renderer,
-                shell: shellPromise,
-                seedFile,
-                buildId: buildIdPromise,
-                onError: report,
-                locale: (request: Request) => localeFor(request, options),
-                vary: (request: Request) => varyFor(request, options)
-            });
+            for (const mounted of mountPaths(page.path))
+            {
+                registerIsr({
+                    app,
+                    path: mounted,
+                    revalidate: page.revalidate,
+                    guarded: (url) => guardedMatch(options.routes, url),
+                    cache: isrCache,
+                    renderer: options.renderer,
+                    shell: shellPromise,
+                    seedFile,
+                    buildId: buildIdPromise,
+                    onError: report,
+                    locale: (request: Request, pathname: string) => localeFor(request, options, pathname),
+                    vary: (request: Request, pathname: string) => varyFor(request, options, pathname),
+                    strip: (pathname: string) => splitLocalePath(pathname, options).path
+                });
+            }
+            registerLocaleRedirect(app, page.path, options);
             continue;
         }
         if (page.path.includes(':') || page.path.includes('*'))
@@ -436,13 +462,21 @@ export function mountPages(app: App, options: KitOptions): void
             {
                 // An enumerated static page: try the prerendered file for the matched
                 // params first, live-render anything the enumeration did not list.
-                registerStaticFirst(app, page.path, options, shellPromise, assets, buildIdPromise);
+                for (const mounted of mountPaths(page.path))
+                {
+                    registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise);
+                }
+                registerLocaleRedirect(app, page.path, options);
             }
             else
             {
                 // A wildcard cannot prerender one file: 'static' downgrades to
                 // per-request SSR when a renderer exists, else to the shell.
-                registerDynamic(app, page.path, mode === 'static' ? defaultMode : mode, options, shellPromise, buildIdPromise);
+                for (const mounted of mountPaths(page.path))
+                {
+                    registerDynamic(app, mounted, mode === 'static' ? defaultMode : mode, options, shellPromise, buildIdPromise);
+                }
+                registerLocaleRedirect(app, page.path, options);
             }
             continue;
         }
@@ -461,9 +495,9 @@ export function mountPages(app: App, options: KitOptions): void
                 const servers = new Map<string, Handler>(localized.map((tag) =>
                     [tag, staticFiles(options.clientDir, { index: prerenderFileFor(page.path, tag), param: '__none' })]));
                 const fallback = staticFiles(options.clientDir, { index: plain, param: '__none' });
-                app.get(page.path, async (context: RequestContext): Promise<Response> =>
+                const staticHandler = async (context: RequestContext): Promise<Response> =>
                 {
-                    const tag = localeFor(context.request, options);
+                    const tag = localeFor(context.request, options, context.url.pathname);
                     const server = tag === undefined ? undefined : servers.get(tag);
                     try
                     {
@@ -477,12 +511,21 @@ export function mountPages(app: App, options: KitOptions): void
                         }
                         return withVary(await fallback(context), context, options);
                     }
-                });
+                };
+                for (const mounted of mountPaths(page.path))
+                {
+                    app.get(mounted, staticHandler);
+                }
+                registerLocaleRedirect(app, page.path, options);
             }
         }
         else
         {
-            registerDynamic(app, page.path, mode, options, shellPromise, buildIdPromise);
+            for (const mounted of mountPaths(page.path))
+            {
+                registerDynamic(app, mounted, mode, options, shellPromise, buildIdPromise);
+            }
+            registerLocaleRedirect(app, page.path, options);
         }
     }
 
@@ -637,9 +680,103 @@ function tokenFor(request: Request, options: KitOptions): { token: string; minte
  * their behalf. So an explicit choice wins outright, and only in its absence is the header
  * negotiated - in preference order, which is the half hand-rolled detectors get wrong.
  */
-function localeFor(request: Request, options: KitOptions): string | undefined
+function localeFor(request: Request, options: KitOptions, pathname?: string): string | undefined
 {
-    return negotiate(request, options)?.locale;
+    return negotiate(request, options, pathname)?.locale;
+}
+
+/**
+ * @internal Sends the unprefixed path to the reader's own language.
+ *
+ * A no-op outside prefix mode. Inside it, this is the ONE place negotiation still happens: the
+ * reader's cookie or headers choose which language they are sent to, and every url after that
+ * names its own language. 302 rather than 301, because the answer depends on who is asking and a
+ * permanent redirect would be cached by the browser for everyone who follows.
+ */
+function registerLocaleRedirect(app: App, path: string, options: KitOptions): void
+{
+    const prefixes = localePrefixes(options);
+    if (prefixes.length === 0)
+    {
+        return;
+    }
+    app.get(path, (context) =>
+    {
+        const tag = negotiate(context.request, options)?.locale ?? prefixes[0] ?? '';
+        const target = (path === '/' ? `/${ tag }` : `/${ tag }${ context.url.pathname }`) + context.url.search;
+        return new Response(null, {
+            status: 302,
+            headers: {
+                location: target,
+                // The target depends on the reader, so a shared cache must not replay one
+                // reader's redirect for the next.
+                vary: 'accept-language, cookie',
+                'cache-control': 'private, no-store'
+            }
+        });
+    });
+}
+
+/** @internal The language prefixes this mount routes under, or none (negotiate mode). */
+function localePrefixes(options: KitOptions): readonly string[]
+{
+    return options.locales?.routing === 'prefix' ? options.locales.supported : [];
+}
+
+/**
+ * @internal Splits `/fa/about` into the language and the APP path `/about`.
+ *
+ * The route table, the prerendered file names and the client router all speak unprefixed paths,
+ * so the prefix is peeled off once, here, and everything downstream is unchanged by the mode.
+ */
+function splitLocalePath(pathname: string, options: KitOptions): { locale?: string; path: string }
+{
+    for (const tag of localePrefixes(options))
+    {
+        if (pathname === `/${ tag }`)
+        {
+            return { locale: tag, path: '/' };
+        }
+        if (pathname.startsWith(`/${ tag }/`))
+        {
+            return { locale: tag, path: pathname.slice(tag.length + 1) };
+        }
+    }
+    return { path: pathname };
+}
+
+/**
+ * @internal Every language this page exists in, as absolute urls.
+ *
+ * Empty outside prefix mode, deliberately: hreflang annotates a RELATIONSHIP BETWEEN URLS, and a
+ * set of them all pointing at one negotiated address says nothing a crawler can act on. Emitting
+ * them there would be worse than omitting them, because it looks like the page is annotated.
+ *
+ * `x-default` names the unprefixed path - the one that negotiates - which is exactly what that
+ * annotation is for: where to send a reader whose language the site does not publish.
+ */
+function alternatesFor(context: RequestContext, options: KitOptions): Array<{ hreflang: string; href: string }>
+{
+    const prefixes = localePrefixes(options);
+    if (prefixes.length === 0)
+    {
+        return [];
+    }
+    const { path } = splitLocalePath(context.url.pathname, options);
+    const origin = context.url.origin;
+    const search = context.url.search;
+    const alternates = prefixes.map((tag) => ({
+        hreflang: tag,
+        href: `${ origin }${ path === '/' ? `/${ tag }` : `/${ tag }${ path }` }${ search }`
+    }));
+    alternates.push({ hreflang: 'x-default', href: `${ origin }${ path }${ search }` });
+    return alternates;
+}
+
+/** @internal The app path this request renders, with any language prefix removed. */
+function appPath(context: RequestContext, options: KitOptions): string
+{
+    return splitLocalePath(context.url.pathname, options).path + context.url.search;
 }
 
 /**
@@ -659,8 +796,14 @@ function localesOf(options: KitOptions): readonly string[]
  * never chose, while omitting it when it decided the answer lets a CDN serve one reader's chosen
  * language to another.
  */
-function varyFor(request: Request, options: KitOptions): string | undefined
+function varyFor(request: Request, options: KitOptions, pathname?: string): string | undefined
 {
+    if (pathname !== undefined && splitLocalePath(pathname, options).locale !== undefined)
+    {
+        // The url already names the language, so this response is the same for every reader who
+        // asks for it - which is the whole reason prefix routing exists for a cached site.
+        return undefined;
+    }
     const negotiated = negotiate(request, options);
     if (negotiated === undefined)
     {
@@ -669,12 +812,22 @@ function varyFor(request: Request, options: KitOptions): string | undefined
     return negotiated.fromCookie ? 'accept-language, cookie' : 'accept-language';
 }
 
-function negotiate(request: Request, options: KitOptions): NegotiatedLocale | undefined
+function negotiate(request: Request, options: KitOptions, pathname?: string): NegotiatedLocale | undefined
 {
     const config = options.locales;
     if (config === undefined || config.supported.length === 0)
     {
         return undefined;
+    }
+    // In prefix mode the URL says which document this is, so nothing is negotiated and nothing
+    // varies: the language is already part of what was asked for.
+    if (pathname !== undefined)
+    {
+        const fromPath = splitLocalePath(pathname, options).locale;
+        if (fromPath !== undefined)
+        {
+            return { locale: fromPath, fromCookie: false };
+        }
     }
     // The SAME rule any handler can call, rather than a copy that would drift from it: a site
     // whose API answers in a different language from its pages is worse than one that only
@@ -691,7 +844,7 @@ function negotiate(request: Request, options: KitOptions): NegotiatedLocale | un
  */
 function withVary(response: Response, context: RequestContext, options: KitOptions): Response
 {
-    const vary = varyFor(context.request, options);
+    const vary = varyFor(context.request, options, context.url.pathname);
     if (vary === undefined)
     {
         return response;
@@ -775,7 +928,9 @@ async function renderOrShell(
 {
     // Resolved before the render, so `<Form>` renders the same value the browser will hold.
     const csrf = tokenFor(context.request, options);
-    const locale = localeFor(context.request, options);
+    const locale = localeFor(context.request, options, context.url.pathname);
+    const url = appPath(context, options);
+    const alternates = alternatesFor(context, options);
     if (mode === 'server' && options.renderer !== undefined)
     {
         // The nonce reaches the buffered path too, not just the streamed one: a server-rendered
@@ -783,7 +938,7 @@ async function renderOrShell(
         // refuses it and the page paints unstyled until hydration.
         const nonce = options.scriptNonce?.(context);
         const result = await options.renderer(
-            context.url.pathname + context.url.search,
+            url,
             shell,
             {
                 signal: context.request.signal,
@@ -793,6 +948,7 @@ async function renderOrShell(
                 onError: (error: unknown): void =>
                     observerFor(options)(error, { path: context.url.pathname, phase: 'render' }),
                 ...(locale !== undefined ? { locale } : {}),
+                ...(alternates.length > 0 ? { alternates } : {}),
                 // A `server` page is uncached and uncoalesced: this render exists for THIS
                 // request and nobody else can adopt it. So the client's disconnect signal is
                 // the render's own lifetime, exactly as on the streamed path below - without
@@ -849,7 +1005,7 @@ function registerDynamic(
             }
             const nonce = options.scriptNonce?.(context);
             const result = await options.renderer(
-                context.url.pathname + context.url.search,
+                appPath(context, options),
                 shell,
                 {
                     stream: true,
@@ -860,8 +1016,11 @@ function registerDynamic(
                     onError: (error: unknown): void => observerFor(options)(error, { path: context.url.pathname, phase: 'stream' }),
                     handoffMeta: { build: await buildId, at: Date.now() },
                     ...(nonce !== undefined ? { scriptNonce: nonce } : {}),
-                    ...(localeFor(context.request, options) !== undefined
-                        ? { locale: localeFor(context.request, options) as string }
+                    ...(localeFor(context.request, options, context.url.pathname) !== undefined
+                        ? { locale: localeFor(context.request, options, context.url.pathname) as string }
+                        : {}),
+                    ...(alternatesFor(context, options).length > 0
+                        ? { alternates: alternatesFor(context, options) }
                         : {})
                 });
             if (result.kind === 'stream')
@@ -912,7 +1071,7 @@ function registerStaticFirst(
             // prerender pass resolved, so the lookup and the write agree by construction.
             // A fresh object (not a merge) carries the file path, so staticFiles' full
             // machinery (containment, ETag, ranges) serves the prerendered bytes.
-            const tag = localeFor(context.request, options);
+            const tag = localeFor(context.request, options, context.url.pathname);
             if (tag !== undefined)
             {
                 try

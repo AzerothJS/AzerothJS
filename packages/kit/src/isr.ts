@@ -380,13 +380,19 @@ export interface IsrRegistration
      * url, and it is handed to the renderer so a regenerated copy is produced in the language it
      * is filed under.
      */
-    locale?: (request: Request) => string | undefined;
+    locale?: (request: Request, pathname: string) => string | undefined;
 
     /**
      * What a negotiated response varies on, for the caches this one does not key itself.
      * Undefined on a single-language site, which gains no header and no fragmentation.
      */
-    vary?: (request: Request) => string | undefined;
+    vary?: (request: Request, pathname: string) => string | undefined;
+
+    /**
+     * Removes a language prefix from a pathname, so the renderer, the seed lookup and the
+     * guarded-pathname set all speak the app's own paths whatever the url mode is.
+     */
+    strip?: (pathname: string) => string;
 
     /**
      * Identity of the build being served - the client shell's content hash, computed once at
@@ -447,11 +453,12 @@ export function registerIsr(registration: IsrRegistration): void
     const { app, path, revalidate, cache, renderer, shell, seedFile, guarded, onError, buildId } = registration;
     const localeOf = registration.locale ?? ((): undefined => undefined);
     const varyOf = registration.vary ?? ((): undefined => undefined);
+    const stripLocale = registration.strip ?? ((pathname: string): string => pathname);
 
     /** Stamps the negotiated Vary onto a response without disturbing one it already carries. */
     const varied = (response: Response, request: Request): Response =>
     {
-        const vary = varyOf(request);
+        const vary = varyOf(request, new URL(request.url).pathname);
         if (vary === undefined)
         {
             return response;
@@ -688,12 +695,13 @@ export function registerIsr(registration: IsrRegistration): void
     const targetOf = (context: { path: string; url: URL; request: Request }): Target =>
     {
         const search = context.url.search;
-        const locale = localeOf(context.request);
+        const locale = localeOf(context.request, context.url.pathname);
+        const bare = stripLocale(context.url.pathname);
         return {
-            path: context.path,
-            pathname: context.url.pathname,
-            url: context.url.pathname + search,
-            key: cacheKeyFor(context.url.pathname, search, locale),
+            path: stripLocale(context.path),
+            pathname: bare,
+            url: bare + search,
+            key: cacheKeyFor(bare, search, locale),
             seedable: (search === '' || search === '?') && locale === undefined,
             ...(locale !== undefined ? { locale } : {})
         };
