@@ -12,6 +12,29 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A loader redirect was the one redirect boundary that judged nothing.** A redirect is
+  consumed at four places: the SSR guard and loader paths, the client guard path, and the client
+  LOADER path. The first three ran the target through the shared judgement and failed closed; the
+  fourth handed it straight to the navigator. Because a loader derives its target from DATA, an
+  app whose loader built a redirect out of a response field could be steered off-origin by that
+  field - the open-redirect shape, on the only boundary the earlier hardening never reached. Now
+  judged exactly like a guard redirect, and a refusal stops the scan rather than falling through
+  to the next level. The judge is the shared target check rather than a plain external-URL test,
+  because it also unwraps an author-vetted `unsafeUrl(...)`: that returns a brand OBJECT typed as
+  a string, and the object branch of the path builder was reading a `pathname` that is not there,
+  so a vetted loader redirect navigated to the literal string "undefined".
+
+- **`unsafeUrl(...)` did not work, on any client path.** The deliberate off-origin escape hatch -
+  the one the refusal message itself recommends - was accepted at the boundary and then threw at
+  the commit step, because `pushState`/`replaceState` cannot write a cross-origin URL. The
+  SecurityError escaped from inside the effect committing the navigation, with the history
+  bookkeeping already advanced, on both the guard and loader paths. Leaving the app is a DOCUMENT
+  navigation, so an off-origin target now exits through `window.location` instead. The target is
+  resolved against the document rather than matched syntactically, so an absolute SAME-ORIGIN URL
+  stays an ordinary in-app navigation. Only http(s) may leave: a document navigation EXECUTES a
+  `javascript:` URL where `pushState` merely threw, so anything else is refused rather than
+  quietly turning a crash into a script-execution sink.
+
 - **Added `responseTimeoutMs`: a handler that never produced a response held its socket
   forever.** Nothing bounded handler execution. The node adapter's `requestMs` bounds only
   RECEIPT of the request - measured, a client sending incomplete headers is hung up on at

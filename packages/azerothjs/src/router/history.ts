@@ -82,6 +82,51 @@ export function createBrowserHistory(): HistoryAdapter
         notify(readCurrent());
     }
 
+    // An off-origin target cannot be written with pushState/replaceState at all: the History
+    // API refuses a cross-origin URL with SecurityError. Leaving the app is a DOCUMENT
+    // navigation, so a target that resolves to another origin exits through window.location
+    // instead. Without this, an author-vetted `unsafeUrl(...)` target - the escape hatch the
+    // redirect refusal message itself recommends - was accepted at the boundary and then threw
+    // from inside the effect that committed it, on both the guard and loader paths.
+    //
+    // Resolved against the document rather than tested syntactically, so an ABSOLUTE same-origin
+    // URL stays an ordinary SPA navigation instead of forcing a full page load.
+    //
+    // Only http(s) may leave. A document navigation EXECUTES a `javascript:` URL, where
+    // pushState merely threw, so widening the commit step must not quietly open that sink;
+    // anything else is refused loudly and the app stays put.
+    function exitTo(fullPath: string, replace: boolean): boolean
+    {
+        let url: URL;
+        try
+        {
+            url = new URL(fullPath, window.location.href);
+        }
+        catch
+        {
+            return false;
+        }
+        if (url.origin === window.location.origin)
+        {
+            return false;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:')
+        {
+            console.error(`[azerothjs/router] refusing to leave the app for "${ fullPath }": only http(s) targets may be navigated to. `
+                + 'A javascript:, data: or blob: URL is script execution, not a navigation.');
+            return true;
+        }
+        if (replace)
+        {
+            window.location.replace(url.href);
+        }
+        else
+        {
+            window.location.assign(url.href);
+        }
+        return true;
+    }
+
     return {
         current(): string
         {
@@ -90,6 +135,10 @@ export function createBrowserHistory(): HistoryAdapter
 
         push(fullPath: string, state?: unknown): void
         {
+            if (exitTo(fullPath, false))
+            {
+                return;
+            }
             window.history.pushState(state, '', fullPath);
             // pushState is silent, so fan out manually so the router sees its
             // own navigations.
@@ -98,6 +147,10 @@ export function createBrowserHistory(): HistoryAdapter
 
         replace(fullPath: string, state?: unknown): void
         {
+            if (exitTo(fullPath, true))
+            {
+                return;
+            }
             window.history.replaceState(state, '', fullPath);
             notify(readCurrent());
         },

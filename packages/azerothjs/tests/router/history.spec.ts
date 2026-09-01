@@ -3,7 +3,7 @@
 // clamping, subscribe notification) and createBrowserHistory wired to happy-dom's
 // real window.history (push/replace notify, back/forward via popstate, the lazily
 // attached shared popstate listener). Real execution - no mocked history.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMemoryHistory, createBrowserHistory } from 'azerothjs';
 
 describe('createMemoryHistory', () =>
@@ -265,5 +265,101 @@ describe('createBrowserHistory', () =>
         expect(seenA).toEqual(['/shared']);
         expect(seenB).toEqual([]);
         expect(b.current()).toBe('/shared');
+    });
+});
+
+// Leaving the app is a DOCUMENT navigation, not a history write: pushState/replaceState
+// refuse a cross-origin URL with SecurityError, which used to escape from inside the effect
+// that committed a guard or loader redirect. These arms pin the exit AND its allowlist.
+describe('createBrowserHistory - leaving the origin', () =>
+{
+    it('push sends an off-origin http target through location.assign, not history', () =>
+    {
+        const h = createBrowserHistory();
+        const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => undefined);
+        const before = window.history.length;
+        try
+        {
+            h.push('http://other.example:5400/page');
+            expect(assign).toHaveBeenCalledWith('http://other.example:5400/page');
+            expect(window.history.length).toBe(before);
+        }
+        finally
+        {
+            assign.mockRestore();
+        }
+    });
+
+    it('replace sends an off-origin target through location.replace', () =>
+    {
+        const h = createBrowserHistory();
+        const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => undefined);
+        try
+        {
+            h.replace('https://other.example/page');
+            expect(replace).toHaveBeenCalledWith('https://other.example/page');
+        }
+        finally
+        {
+            replace.mockRestore();
+        }
+    });
+
+    // A document navigation EXECUTES a javascript: URL, where pushState merely threw. Widening
+    // the commit step to location.assign must not open that sink: measured in a real browser,
+    // removing this guard runs the script.
+    it('REFUSES a javascript: target instead of navigating to it', () =>
+    {
+        const h = createBrowserHistory();
+        const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => undefined);
+        const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => undefined);
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try
+        {
+            h.push('javascript:window.__pwned = 1');
+            expect(assign).not.toHaveBeenCalled();
+            expect(replace).not.toHaveBeenCalled();
+            expect(errors).toHaveBeenCalled();
+        }
+        finally
+        {
+            assign.mockRestore();
+            replace.mockRestore();
+            errors.mockRestore();
+        }
+    });
+
+    // The arm that fails a syntactic external-URL test: an ABSOLUTE same-origin URL must stay
+    // an ordinary SPA navigation rather than forcing a full page load.
+    it('CONTROL: an absolute SAME-ORIGIN url still writes history', () =>
+    {
+        const h = createBrowserHistory();
+        const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => undefined);
+        try
+        {
+            h.push(window.location.origin + '/deep/page');
+            expect(assign).not.toHaveBeenCalled();
+            expect(h.current()).toBe('/deep/page');
+        }
+        finally
+        {
+            assign.mockRestore();
+        }
+    });
+
+    it('CONTROL: an ordinary in-app path still writes history', () =>
+    {
+        const h = createBrowserHistory();
+        const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => undefined);
+        try
+        {
+            h.push('/plain/path');
+            expect(assign).not.toHaveBeenCalled();
+            expect(h.current()).toBe('/plain/path');
+        }
+        finally
+        {
+            assign.mockRestore();
+        }
     });
 });
