@@ -12,7 +12,7 @@ import { App } from '../src/app.ts';
 import { sse } from '../src/sse.ts';
 import { text } from '../src/respond.ts';
 import { compressResponse } from '../src/compress.ts';
-import { serve } from '../src/adapter-node.ts';
+import { serve } from './support/serve.ts';
 
 async function bodyText(response: Response): Promise<string>
 {

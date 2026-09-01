@@ -7,20 +7,21 @@
 // graceful shutdown semantics, and the same app served over cleartext HTTP/2.
 
 import { describe, it, expect, vi } from 'vitest';
+import { readFile, readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { connect as h2connect, getDefaultSettings } from 'node:http2';
 import type { Http2Server } from 'node:http2';
 import { App } from '../src/app.ts';
 import { json, text, noContent } from '../src/respond.ts';
 import { readJson } from '../src/body.ts';
-import { serve, serveH2c, toWebRequest, type Served } from '../src/adapter-node.ts';
+import { toWebRequest } from '../src/adapter-node.ts';
+import { serve, serveH2c, type Served } from './support/serve.ts';
 import { bindReachable } from './support/ports.ts';
 
 async function withServer(app: App, run: (base: string, served: Served) => Promise<void>): Promise<void>
 {
-    const served = await bindReachable(
-        () => serve(app),
-        (bound) => bound.port,
-        (bound) => bound.shutdown({ gracePeriodMs: 0 }));
+    const served = await serve(app);
     try
     {
         await run(`http://127.0.0.1:${ served.port }`, served);
@@ -176,10 +177,7 @@ describe('graceful shutdown', () =>
             await new Promise((r) => setTimeout(r, 120));
             return text('done');
         });
-        const served = await bindReachable(
-            () => serve(app),
-            (bound) => bound.port,
-            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
+        const served = await serve(app);
         const base = `http://127.0.0.1:${ served.port }`;
 
         const inFlight = fetch(`${ base }/work`);
@@ -210,10 +208,7 @@ describe('graceful shutdown', () =>
             arrived();
             return new Promise<Response>(() => undefined); // never resolves
         });
-        const served = await bindReachable(
-            () => serve(app),
-            (bound) => bound.port,
-            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
+        const served = await serve(app);
         const base = `http://127.0.0.1:${ served.port }`;
 
         void fetch(`${ base }/stuck`).catch(() => null);
@@ -344,10 +339,7 @@ describe('post-listen server errors', () =>
     {
         const app = new App();
         app.get('/ping', () => text('ok'));
-        const served = await bindReachable(
-            () => serve(app),
-            (bound) => bound.port,
-            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
+        const served = await serve(app);
         try
         {
             // Accept-time failures (fd pressure) surface as 'error' on the listening server.
@@ -599,5 +591,50 @@ describe('serve() never hands back an unusable address', () =>
         {
             await Promise.all(servers.map((served) => served.shutdown({ gracePeriodMs: 500 })));
         }
+    });
+
+    // The retry itself, driven rather than waited for: the OS hands out an unsafe-listed port
+    // too rarely to observe on demand, and when it does, every fetch in the file fails with
+    // "bad port" - the whole reason the door exists.
+    it('rebinds past a port a client would refuse, closing what it discards', async () =>
+    {
+        const allocation = [6667, 6000, 45123];
+        const closed: number[] = [];
+        const bound = await bindReachable(
+            () => Promise.resolve({ port: allocation.shift() ?? 0 }),
+            (candidate) => candidate.port,
+            (candidate) =>
+            {
+                closed.push(candidate.port);
+                return Promise.resolve();
+            });
+        expect(bound.port).toBe(45123);
+        expect(closed).toEqual([6667, 6000]);
+    });
+
+    // The rebind lives in one place. A test that reaches past it for the adapter's own
+    // binders reopens the class for its whole file, so the door is checked, not remembered.
+    it('every test binds through the reachable-port door', async () =>
+    {
+        const clauses = /(?:import|const)\s*(\{[^}]*\})\s*(?:from|=\s*await\s+import\()\s*['"]([^'"]+)['"]/g;
+        const adapter = /(?:adapter-node\.ts|src\/node\.ts|@azerothjs\/http\/node)$/;
+        const dir = dirname(fileURLToPath(import.meta.url));
+        const offenders: string[] = [];
+        for (const entry of await readdir(dir, { recursive: true, withFileTypes: true }))
+        {
+            if (!entry.isFile() || !/\.(ts|mjs)$/.test(entry.name) || entry.name === 'serve.ts')
+            {
+                continue;
+            }
+            const source = await readFile(join(entry.parentPath, entry.name), 'utf8');
+            for (const [, bindings = '', specifier = ''] of source.matchAll(clauses))
+            {
+                if (adapter.test(specifier) && /\bserve(H2c)?\b/.test(bindings))
+                {
+                    offenders.push(`${ entry.name } <- ${ specifier }`);
+                }
+            }
+        }
+        expect(offenders).toEqual([]);
     });
 });

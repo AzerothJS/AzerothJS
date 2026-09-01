@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { cached } from 'azerothjs';
 import { latchServerData, resetDataCache } from 'azerothjs/internal';
 import { App, runInRequestRoot, toFetchHandler } from '@azerothjs/http';
-import { serve, serveH2c } from '@azerothjs/http/node';
+import { serve, serveH2c } from './support/serve.ts';
 import { attachWebSockets } from '@azerothjs/ws';
 import { createScheduler } from '@azerothjs/cron';
 

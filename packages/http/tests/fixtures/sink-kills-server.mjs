@@ -9,7 +9,7 @@
 // green whenever the build is stale - which is exactly how the first version of this test
 // passed against a deliberately reverted fix.
 import { App } from '../../src/app.ts';
-import { serve } from '../../src/adapter-node.ts';
+import { serve } from '../support/serve.ts';
 import { feature } from '../../src/api/feature.ts';
 import { register } from '../../src/api/register.ts';
 

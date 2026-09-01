@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BLOCKED_PORTS } from './support/ports.ts';
 
 /** Absolute file: URL of the kernel source, so a spawned runtime imports what this repo builds. */
 const KERNEL = new URL('../src/index.ts', import.meta.url).href;
@@ -70,7 +71,7 @@ const fetchHandler = toFetchHandler(handler);
 const isDeno = typeof Deno !== 'undefined';
 // A client REFUSES the unsafe-port list even though the OS will happily bind one for port 0,
 // so an unlucky allocation makes every check below fail as if the contract were broken.
-const BLOCKED = new Set([1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080]);
+const BLOCKED = new Set(${ JSON.stringify(BLOCKED_PORTS) });
 let server;
 let port;
 for (let attempt = 0; attempt < 8; attempt++)

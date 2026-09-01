@@ -315,7 +315,7 @@ describe('a handler reason phrase reaches the wire', () =>
 {
     it('statusText is written rather than replaced by the default phrase', async () =>
     {
-        const { serve } = await import('../src/node.ts');
+        const { serve } = await import('./support/serve.ts');
         const net = await import('node:net');
 
         const app = new App({ dev: false });

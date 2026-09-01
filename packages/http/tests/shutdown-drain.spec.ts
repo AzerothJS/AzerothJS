@@ -15,7 +15,7 @@ import { connect as netConnect, type Socket } from 'node:net';
 import { connect as h2connect } from 'node:http2';
 import { App } from '../src/app.ts';
 import { text } from '../src/respond.ts';
-import { serve, serveH2c } from '../src/adapter-node.ts';
+import { serve, serveH2c } from './support/serve.ts';
 
 /** Opens a raw socket and completes a WebSocket-shaped upgrade against a test 101-responder. */
 function upgradeSocket(port: number): Promise<Socket>

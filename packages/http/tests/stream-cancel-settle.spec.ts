@@ -203,7 +203,7 @@ describe('the same question over a REAL socket', () =>
 {
     it('KNOWN GAP: an abort still settles the root ahead of the source unwinding', async () =>
     {
-        const { serve } = await import('../src/adapter-node.ts');
+        const { serve } = await import('./support/serve.ts');
         const { connect } = await import('node:net');
 
         const marks: Array<[string, number]> = [];

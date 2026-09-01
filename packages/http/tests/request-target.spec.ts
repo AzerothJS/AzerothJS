@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import net from 'node:net';
 
 import { App, json } from '../src/index.ts';
-import { serve } from '../src/node.ts';
+import { serve } from './support/serve.ts';
 
 const app = new App({ dev: false });
 const describeTarget = (context: { path: string; url: URL }): Response =>

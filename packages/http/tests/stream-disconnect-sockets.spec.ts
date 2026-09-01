@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { App } from '../src/app.ts';
 import { onWorkUnitCleanup } from '../src/request-root.ts';
-import { serve, serveH2c, type Served } from '../src/adapter-node.ts';
+import { serve, serveH2c, type Served } from './support/serve.ts';
 
 const open: Array<Served<never>> = [];
 
