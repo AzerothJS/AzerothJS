@@ -254,6 +254,21 @@ export interface Router
     revalidate: () => Promise<void>;
 
     /**
+     * Warms a URL before anyone navigates to it: its lazy chunks download and its loaders run,
+     * into the SAME cache entries the navigation will read.
+     *
+     * That sharing is the whole design. A prefetch is not a second cache in front of the first
+     * - it fills the first - so hovering and then clicking fetches ONCE, two links to the same
+     * place cost one fetch, and a prefetch that is still in flight when the click lands is
+     * joined rather than restarted.
+     *
+     * Resolves when the warming settles, so a caller can await it; failures are swallowed,
+     * because a prefetch nobody asked for must never surface as an error. A URL that matches
+     * no route, or is off-origin, does nothing.
+     */
+    prefetch: (to: NavigateTarget) => Promise<void>;
+
+    /**
      * Reactive: true while ANY of the current navigation's work is in flight -
      * a level loader still loading or a lazy route chunk still downloading.
      * The pending-indicator signal (top bars, spinners).
@@ -1506,6 +1521,15 @@ function buildRouter(config: RouterConfig): Router
     // with a deferred heal for one older than the adoption bound (a page cache served it
     // stale - the client revalidates once after hydration instead of pinning that age in).
     const SEED_FRESH_MS = 30_000;
+
+    /**
+     * How long a prefetched value stays worth serving to the click it was fetched for.
+     *
+     * Long enough for the navigation a hover predicts, short enough that a prefetch nobody
+     * used does not hand month-old data to a click minutes later - the loader family retains
+     * for five, which is a lifetime for a screen the user is about to read.
+     */
+    const PREFETCH_WARM_MS = 30_000;
     if (adopt)
     {
         const cache = getDataCache();
@@ -1857,6 +1881,62 @@ function buildRouter(config: RouterConfig): Router
                 }
             }
             return Promise.all(settlements).then(() => undefined);
+        },
+        prefetch(to): Promise<void>
+        {
+            const full = resolve(to);
+            if (isExternalUrl(full))
+            {
+                return Promise.resolve();
+            }
+            const { pathname: rawPathname, search: query } = splitFullPath(full);
+            const inner = stripBase(rawPathname);
+            const m = inner === null ? null : matchPathname(inner);
+            if (m === null)
+            {
+                return Promise.resolve();
+            }
+            const work: Promise<unknown>[] = [];
+
+            // The chunk and the data race, exactly as they do on a real navigation - the point
+            // is to have paid for both before the click, not to serialize them now.
+            for (const route of m.matched)
+            {
+                if (route.lazy !== undefined)
+                {
+                    work.push(resolveRouteComponent(route).catch(() => undefined));
+                }
+            }
+
+            const cache = getDataCache();
+            if (cache !== null)
+            {
+                for (let level = 0; level < m.matched.length; level++)
+                {
+                    const key = levelKeyFor(m, query, level);
+                    if (key === null)
+                    {
+                        continue;
+                    }
+                    const route = m.matched[level] as Route & { loader: NonNullable<Route['loader']> };
+                    // Staged the same way a navigation stages it, so the entry the prefetch
+                    // fills is the entry the navigation subscribes to - not a lookalike.
+                    stageTrigger(key, {
+                        level,
+                        loader: route.loader,
+                        params: prefixParams(m.matched, level, m.params),
+                        query: levelQuery(route, query),
+                        parentKey: parentKeyFor(m, query, level)
+                    });
+                    // Held BEFORE the read, so a value already in the cache is claimed too and
+                    // a second prefetch does not fetch merely to re-establish the hold.
+                    cache.holdWarm(cache.entryFor(loaderFamily, [key]), Date.now() + PREFETCH_WARM_MS);
+                    // readValue serves a fresh entry without fetching and JOINS one in flight,
+                    // so repeat prefetches and a prefetch-then-click cost one request.
+                    work.push(readValue(cache, loaderFamily, [key]).catch(() => undefined));
+                }
+            }
+            return Promise.all(work).then(() => undefined);
         },
         pending,
         chainReady,

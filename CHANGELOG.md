@@ -474,6 +474,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   stripped before the action sees the form. Give `mountPages` the same `csrf` options you gave
   `csrfCookie`; the defaults agree, and a mismatch fails closed.
 
+- **Prefetching: `<Link prefetch>` and `router.prefetch(to)`.** A link can warm its
+  destination before anyone clicks it - lazy chunks download and loaders run - on `"hover"`
+  (pointer-enter or keyboard focus), `"viewport"`, or `"render"`. Off unless asked for:
+  prefetching spends a visitor's bandwidth on a guess.
+
+  It fills the SAME cache entries the navigation reads, rather than a cache in front of them,
+  which is what makes it worth having: hovering and then clicking fetches once, two links to
+  one place cost one fetch, and a click landing mid-prefetch joins it instead of starting a
+  second. Verified over real network requests in Chromium.
+
+  A warmed value is now held for its first reader for 30 seconds. Without that hold a
+  prefetch was discarded by the very navigation it was meant to make instant: a loader entry
+  with no subscribers is refetched the moment something subscribes, which is right when
+  nobody asked for its value and wrong when somebody asked early. The hold is spent by that
+  first reader, so a later visit refetches like any other.
+
 - **Mutations can be cancelled, and can say what overlapping runs do.** `run(input, { signal })`
   cancels one run and `mutation.cancel()` abandons every run in flight; the write now receives
   the signal as its second argument, so it can stop the request itself. A run whose signal is

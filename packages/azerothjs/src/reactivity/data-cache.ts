@@ -132,6 +132,18 @@ export interface CacheEntry
 
     /** The seed's produce time, when adopted from a handoff. */
     seededAt?: number;
+
+    /**
+     * Until when a PREFETCHED value may be served to its first subscriber without refetching.
+     *
+     * A zero-subscriber entry is normally refetched the moment something subscribes, which is
+     * right when nobody asked for its value - but a prefetch is somebody asking, just early.
+     * Without this hold every prefetch would be thrown away by the very navigation it was meant
+     * to make instant, and would look like it worked.
+     *
+     * Consumed by that first subscriber, so a hold can serve once and never twice.
+     */
+    warmUntil?: number;
 }
 
 /** Distinguishes every optimistic layer this process creates. */
@@ -487,12 +499,24 @@ export class DataCache
         }
         if (flags.subscribing === true && flags.fromZero === true)
         {
+            const warm = entry.warmUntil !== undefined && Date.now() < entry.warmUntil;
+            delete entry.warmUntil;
             const age = Date.now() - entry.writtenAt;
-            if (!(age < entry.family.fresh))
+            if (!warm && !(age < entry.family.fresh))
             {
                 this.ensureFetch(entry);
             }
         }
+    }
+
+    /**
+     * Holds a prefetched value for its first subscriber, so the navigation a prefetch predicted
+     * reads it instead of fetching it again. `until` bounds how long that claim is worth
+     * anything: past it the entry is an ordinary unheld value and the usual rule applies.
+     */
+    public holdWarm(entry: CacheEntry, until: number): void
+    {
+        entry.warmUntil = until;
     }
 
     public ensureFetch(entry: CacheEntry): void

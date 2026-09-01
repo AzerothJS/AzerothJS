@@ -252,6 +252,36 @@ The refusal arrives in the same `useActionResult()` either way, so the page is w
 behaves the same whether or not the enhancement ran. `onSettled` hears the enhanced outcome;
 it is never called on the native path, where the answer is a navigation rather than a value.
 
+## Prefetching
+
+A link can warm its destination before anyone clicks it - the lazy chunks download and the
+loaders run, into the SAME cache entries the navigation will read.
+
+```azeroth
+<Link to="/users/42" prefetch="hover">Ada</Link>
+```
+
+| `prefetch` | when |
+| --- | --- |
+| absent | never. Prefetching spends a visitor's bandwidth on a guess, so it is opt-in |
+| `"hover"` | pointer-enter or keyboard focus - the intent signal with the best hit rate |
+| `"viewport"` | the first time the link is scrolled into view |
+| `"render"` | immediately. Suits a small primary nav and nothing else |
+
+`router.prefetch(to)` does the same thing programmatically, and resolves when the warming
+settles. Failures are swallowed: a fetch nobody asked for must never surface as an error.
+
+The sharing is the whole design. A prefetch fills the cache the navigation reads rather than
+a cache of its own, so hovering and then clicking fetches ONCE, two links to the same place
+cost one fetch, and a click that lands while the prefetch is still in flight JOINS it instead
+of starting a second.
+
+A warmed value is held for its first reader for 30 seconds. Without that hold every prefetch
+would be discarded by the very navigation it was meant to make instant - a loader entry with
+no subscribers is otherwise refetched the moment something subscribes, which is right when
+nobody asked for it and wrong when somebody asked early. The hold is spent by that first
+reader, so returning to the page later refetches like any other visit.
+
 ## The location payload
 
 ```ts

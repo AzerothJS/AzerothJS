@@ -26,6 +26,7 @@
  * technology announces the current location correctly.
  */
 
+import { onCleanup } from '../reactivity/index.ts';
 import { h } from '../renderer/index.ts';
 import { hostEventType } from '../semantics.ts';
 import type { Child } from '../renderer/index.ts';
@@ -76,6 +77,20 @@ export interface LinkProps
      */
     end?: boolean;
 
+    /**
+     * When to warm this link's destination - its lazy chunks and its loaders, into the same
+     * cache entries the navigation will read.
+     *
+     * `'hover'` on pointer-enter or keyboard focus, which is the intent signal with the best
+     * ratio of hits to wasted requests. `'viewport'` the first time the link is scrolled into
+     * view, for a list whose rows are all plausible next steps. `'render'` immediately, which
+     * suits a small primary nav and nothing else.
+     *
+     * OFF by default. A prefetch spends a visitor's bandwidth on a guess, and the framework
+     * does not make that trade on anyone's behalf.
+     */
+    prefetch?: 'hover' | 'viewport' | 'render';
+
     /** Optional user click handler. Runs before the interception logic. */
     onClick?: (event: MouseEvent) => void;
 
@@ -123,7 +138,7 @@ function targetPathname(target: NavigateTarget): string
 
 /** The props Link consumes itself; everything else is forwarded to the anchor. @internal */
 const OWN_PROPS = new Set([
-    'to', 'router', 'replace', 'scroll', 'target', 'activeClass', 'end', 'onClick', 'class', 'children'
+    'to', 'router', 'replace', 'scroll', 'target', 'activeClass', 'end', 'onClick', 'class', 'children', 'prefetch'
 ]);
 
 /**
@@ -294,6 +309,57 @@ export function Link(props: LinkProps): HTMLElement
     }
     linkAttrs.href = href;
     linkAttrs.onClick = handleClick;
+
+    if (props.prefetch !== undefined)
+    {
+        // Once per element. A pointer that leaves and returns, or a row scrolled past twice,
+        // must not re-ask: the cache would dedupe the request anyway, but the walk that
+        // computes the keys is not free either.
+        let warmed = false;
+        const warm = (): void =>
+        {
+            if (warmed)
+            {
+                return;
+            }
+            warmed = true;
+            void router.prefetch(typeof props.to === 'function' ? props.to() : props.to);
+        };
+
+        if (props.prefetch === 'hover')
+        {
+            // Focus counts as intent too: a keyboard user tabbing to a link is as likely to
+            // follow it as a pointer hovering one, and gets nothing from a pointer-only rule.
+            linkAttrs.onPointerEnter = warm;
+            linkAttrs.onFocus = warm;
+        }
+        else if (props.prefetch === 'render')
+        {
+            warm();
+        }
+        else
+        {
+            linkAttrs.ref = (element: HTMLElement): void =>
+            {
+                if (typeof IntersectionObserver === 'undefined')
+                {
+                    // No observer (an older browser, a DOM shim): the link still works, it just
+                    // does not warm. A prefetch is an optimisation and never a requirement.
+                    return;
+                }
+                const observer = new IntersectionObserver((entries) =>
+                {
+                    if (entries.some((entry) => entry.isIntersecting))
+                    {
+                        observer.disconnect();
+                        warm();
+                    }
+                });
+                observer.observe(element);
+                onCleanup(() => observer.disconnect());
+            };
+        }
+    }
     linkAttrs.class = classProp;
 
     if (props.target !== undefined)
