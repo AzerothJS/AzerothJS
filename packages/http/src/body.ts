@@ -44,6 +44,12 @@ export const fastRawBody: unique symbol = Symbol.for('azerothjs.http.fastRawBody
 /** Capability key: the peer address, which the web-standard Request does not expose. */
 export const socketAddress: unique symbol = Symbol.for('azerothjs.http.socketAddress') as never;
 
+/**
+ * Releases the request's client-disconnect watch. The adapter calls it when the RESPONSE
+ * closes, which is the only event that bounds both the request and a still-streaming body.
+ */
+export const releaseSignal: unique symbol = Symbol.for('azerothjs.http.releaseSignal') as never;
+
 /** The shapes behind the capability symbols. */
 export interface FastCapabilities
 {
@@ -55,6 +61,14 @@ export interface FastCapabilities
 
     /** The peer's remote IP as the socket sees it (before any proxy header), or null off-socket. */
     [socketAddress]?(): string | null;
+
+    /**
+     * @see releaseSignal
+     *
+     * Optional on the capability bag, because a Request from another runtime has no such
+     * method - the node adapter's own request always does, and its return type says so.
+     */
+    [releaseSignal]?(): void;
 }
 
 const DECODER = new TextDecoder();

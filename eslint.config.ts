@@ -20,6 +20,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
         '**/out/**',
         '**/.intellijPlatform/**',
         '**/.azeroth/**',
+        '.claude/worktrees/**',
         'packages/typescript-plugin/tests/fixtures/**',
         'packages/create-azeroth/templates/**',
         'packages/create-azeroth/overlays/**'

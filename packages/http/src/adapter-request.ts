@@ -35,7 +35,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Http2ServerRequest } from 'node:http2';
 import { Readable } from 'node:stream';
 import { BadRequestError, PayloadTooLargeError } from './errors.ts';
-import { fastHeaderLookup, fastRawBody, socketAddress, type FastCapabilities } from './body.ts';
+import { fastHeaderLookup, fastRawBody, releaseSignal, socketAddress, type FastCapabilities } from './body.ts';
 import { replacedForwardedValue } from './client-ip.ts';
 
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
@@ -107,6 +107,12 @@ class AdapterRequest implements Request
     #headers: Headers | null = null;
 
     #signal: AbortSignal | null = null;
+
+    /** Removes the socket watch this request installed; null when it never installed one. */
+    #detachSocketWatch: (() => void) | null = null;
+
+    /** True once the adapter reported the response closed. */
+    #signalReleased = false;
 
     #body: ReadableStream<Uint8Array<ArrayBuffer>> | null | undefined = undefined;
 
@@ -244,12 +250,25 @@ class AdapterRequest implements Request
             }
             else
             {
+                if (this.#signalReleased)
+                {
+                    // The exchange is already over, so there is nothing left to watch and a
+                    // watch added now could never be detached.
+                    this.#signal = new AbortController().signal;
+                    return this.#signal;
+                }
                 const controller = new AbortController();
                 const onClose = (): void => controller.abort();
                 socket.once('close', onClose);
-                // Detach when THIS request finishes, so a keep-alive socket serving thousands
-                // of requests does not accumulate one listener per request served.
-                this.#incoming.once('close', () => socket.removeListener('close', onClose));
+                // Detached when the RESPONSE closes, not when the request does. On http1 a
+                // fully consumed IncomingMessage closes at the END OF ITS BODY - long before a
+                // streaming response finishes - so hanging the detach on `incoming` was wrong
+                // in both directions: register it after that close and it never fires, leaving
+                // one listener, one AbortController and one live closure per request for the
+                // life of a keep-alive connection (measured: 32 listeners over 30 requests, and
+                // a MaxListenersExceededWarning at the eleventh). The response's close is the
+                // only event that bounds the request AND a body still being written.
+                this.#detachSocketWatch = (): void => void socket.removeListener('close', onClose);
                 this.#signal = controller.signal;
             }
         }
@@ -285,6 +304,20 @@ class AdapterRequest implements Request
     {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types .socket as always-present; h2 compat streams can lose it at runtime
         return this.#incoming.socket?.remoteAddress ?? null;
+    }
+
+    /**
+     * The adapter reporting that the response is closed, so the disconnect watch can come off.
+     *
+     * Idempotent, and safe to call for a request that never read its signal - most do not, and
+     * the getter is lazy precisely so they pay nothing.
+     */
+    public [releaseSignal](): void
+    {
+        this.#signalReleased = true;
+        const detach = this.#detachSocketWatch;
+        this.#detachSocketWatch = null;
+        detach?.();
     }
 
     /** Kernel fast lane: one header, straight off the raw record - no Headers object. */
@@ -468,7 +501,7 @@ Object.setPrototypeOf(AdapterRequest.prototype, Request.prototype);
  * isolatedDeclarations (computed symbol-keyed class methods cannot be emitted), and the
  * class stays module-internal - its whole public shape IS `Request & FastCapabilities`.
  */
-export function createAdapterRequest(incoming: AnyIncoming, scheme: 'http' | 'https', trust: ForwardedTrust = {}): Request & FastCapabilities
+export function createAdapterRequest(incoming: AnyIncoming, scheme: 'http' | 'https', trust: ForwardedTrust = {}): Request & FastCapabilities & { [releaseSignal](): void }
 {
     return new AdapterRequest(incoming, scheme, trust);
 }

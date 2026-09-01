@@ -241,6 +241,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   an unrelated request that was in flight at the time, while an identical throw one frame deeper
   was a clean 500 with the server alive.
 
+- **A keep-alive connection accumulated one disconnect watch per request it served.** The
+  watch was detached from the REQUEST's close, but on http1 a fully consumed IncomingMessage
+  closes at the end of its body - long before a streaming response finishes - so a watch
+  installed after that point was never detached at all. Measured over one raw keep-alive socket:
+  32 socket listeners across 30 requests, with a MaxListenersExceededWarning at the eleventh,
+  each holding a live AbortController and closure until the connection finally closed. It was
+  never error-path-specific: a plain successful response counts as streaming, so the request
+  root reads the signal there too, and a 200 control leaked identically. The watch is now
+  released when the RESPONSE closes, which is the only event that bounds both the request and a
+  body still being written - measured flat at 2 afterwards, with a control confirming a real
+  client disconnect still aborts.
+
 - **A route with no search schema typed its loader's query as unreadable.** The branch that
   hands back the raw query was guarded by `[Search] extends [never]`, but the default is
   `Record<string, never>`, which does not extend `never` - so the branch was unreachable and

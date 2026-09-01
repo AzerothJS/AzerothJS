@@ -38,6 +38,7 @@ import { networkInterfaces } from 'node:os';
 import { printBanner } from '@azerothjs/logger';
 import { markServerRuntime } from 'azerothjs/internal';
 import { createAdapterRequest, type AnyIncoming, type ForwardedTrust } from './adapter-request.ts';
+import { releaseSignal } from './body.ts';
 import { PayloadResponse } from './payload.ts';
 import type { WebHandler } from './edge.ts';
 
@@ -335,7 +336,16 @@ function manage<S extends Server | Http2Server>(
     server.on('request', (req: AnyIncoming, res: AnyOutgoing) =>
     {
         inFlight.add(res);
-        res.once('close', () => inFlight.delete(res));
+        // The request is hoisted so the response's own close can release its disconnect watch.
+        // That watch cannot be detached from the REQUEST's close: on http1 a consumed body
+        // closes the IncomingMessage long before a streaming response finishes.
+        let current: { [releaseSignal](): void } | null = null;
+        res.once('close', () =>
+        {
+            inFlight.delete(res);
+            current?.[releaseSignal]();
+            current = null;
+        });
         /** The one failure end for a dispatch, reached by a rejection or a synchronous throw. */
         const dispatchFailed = (): void =>
         {
@@ -367,7 +377,9 @@ function manage<S extends Server | Http2Server>(
             // it exited the process and reset an unrelated request that was already in flight.
             try
             {
-                app.handle(createAdapterRequest(req, 'http', trust))
+                const request = createAdapterRequest(req, 'http', trust);
+                current = request;
+                app.handle(request)
                     .then((response) => writeResponse(res, response))
                     .catch(dispatchFailed);
             }
