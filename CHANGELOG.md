@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A refused upload could hold its connection open indefinitely.** When a handler answers without
+  reading the request body - which is what an over-limit refusal does - Node considers the request
+  satisfied and stops policing the connection, so the period afterwards was bounded by nothing. A
+  peer that had already been refused could hold a socket, its request scope and its file
+  descriptor for as long as it cared to dribble the body it was told not to send: measured at one
+  byte every 200ms, with the request timeout at two seconds and the sweep at 250ms.
+
+  The upload cannot be stopped at the refusal itself without losing the refusal - closing a socket
+  that still holds unread data forces a TCP reset, and the reset discards the response already
+  queued for the client. The bound is therefore on time: `requestMs` now also governs the drain
+  after a response, adding a fourth phase to the socket timeouts beside headers, request and idle
+  keep-alive. It arms only when the body is unfinished, so ordinary keep-alive traffic is
+  unaffected, and a client that finishes its upload promptly keeps both its response and its
+  connection. The bytes such a client sends are unchanged: that cost is symmetric and bounded by
+  the declared length, and cannot be reduced without withholding the response.
+
 - **A truncated upload could be handed to a handler as a complete body.** The raw-body fast lane
   treated the stream's `end` as proof the body was complete. It is not: `end` means the stream
   stopped, not that it delivered what it promised. Completeness was inferred instead from Node

@@ -248,3 +248,114 @@ describe('a body short of its declared length is refused', () =>
         expect(seen[0]).toBe('RESOLVED:5');
     });
 });
+
+// A response can finish while its request body is still arriving - any handler that answers
+// without reading the body, an over-limit refusal being the obvious one. Node stops policing the
+// connection at that point, so nothing bounded what followed: a peer that had ALREADY been refused
+// held its socket for as long as it dribbled, one byte every 200ms, measured with requestTimeout
+// at 2s and the sweep at 250ms. That is a post-response slowloris.
+//
+// The upload cannot be stopped at the refusal without LOSING the refusal - closing a socket that
+// still holds unread data forces a TCP RST which discards the queued response, measured the same
+// for socket.end(), req.destroy(), socket.destroy() and a byte-capped lingering close. So the
+// bound is on TIME, and these arms pin both halves: the dribbler is cut, and everyone else is not.
+describe('an abandoned request body cannot hold the connection forever', () =>
+{
+    const CRLF = String.fromCharCode(13, 10);
+
+    function refusingApp(): App
+    {
+        const app = new App({ onError: () => undefined });
+        app.post('/upload', async (context) =>
+        {
+            await readText(context.request, { limit: 64 });
+            return new Response('ok');
+        });
+        app.get('/ping', () => new Response('pong'));
+        return app;
+    }
+
+    it('cuts a peer still dribbling an abandoned body past the deadline, AFTER delivering the refusal', async () =>
+    {
+        const served = await serve(refusingApp(), { port: 0, timeouts: { requestMs: 600, checkIntervalMs: 100 } });
+        openServers.push(served as unknown as Served<never>);
+
+        const socket = connectTcp(served.port, '127.0.0.1');
+        await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+        let response = '';
+        // A holder, not a let: assigned only inside a callback, TypeScript narrows a let to its
+        // initial type and the loop guard below becomes a constant.
+        const closed: { at: number | null } = { at: null };
+        const started = Date.now();
+        socket.on('data', (buffer: Buffer) =>
+        {
+            response += buffer.toString('latin1');
+        });
+        socket.on('close', () =>
+        {
+            closed.at = Date.now() - started;
+        });
+        socket.on('error', () => undefined);
+
+        socket.write(`POST /upload HTTP/1.1${ CRLF }Host: local${ CRLF }Content-Length: 67108864${ CRLF }${ CRLF }`);
+        for (let i = 0; i < 15 && closed.at === null; i++)
+        {
+            socket.write('a');
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        // The refusal is delivered - bounding the drain must not cost the client its answer.
+        expect(response).toContain('413');
+        // And the socket is reclaimed rather than held for as long as the peer cares to dribble.
+        expect(closed.at).not.toBeNull();
+        socket.destroy();
+    });
+
+    it('CONTROL: an ordinary keep-alive request is never cut, and the connection is reused', async () =>
+    {
+        const served = await serve(refusingApp(), { port: 0, timeouts: { requestMs: 600, checkIntervalMs: 100 } });
+        openServers.push(served as unknown as Served<never>);
+
+        const socket = connectTcp(served.port, '127.0.0.1');
+        await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+        let response = '';
+        socket.on('data', (buffer: Buffer) =>
+        {
+            response += buffer.toString('latin1');
+        });
+        socket.on('error', () => undefined);
+
+        socket.write(`GET /ping HTTP/1.1${ CRLF }Host: local${ CRLF }${ CRLF }`);
+        await new Promise((resolve) => setTimeout(resolve, 900));   // well past the deadline
+        socket.write(`GET /ping HTTP/1.1${ CRLF }Host: local${ CRLF }${ CRLF }`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Two answers on ONE socket: the deadline never armed for a request that had no
+        // unfinished body, so ordinary keep-alive traffic is untouched.
+        expect(response.split('pong').length - 1).toBe(2);
+        socket.destroy();
+    });
+
+    it('CONTROL: a body the handler READS leaves the connection usable', async () =>
+    {
+        const served = await serve(refusingApp(), { port: 0, timeouts: { requestMs: 600, checkIntervalMs: 100 } });
+        openServers.push(served as unknown as Served<never>);
+
+        const socket = connectTcp(served.port, '127.0.0.1');
+        await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+        let response = '';
+        socket.on('data', (buffer: Buffer) =>
+        {
+            response += buffer.toString('latin1');
+        });
+        socket.on('error', () => undefined);
+
+        socket.write(`POST /upload HTTP/1.1${ CRLF }Host: local${ CRLF }Content-Length: 5${ CRLF }${ CRLF }hello`);
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        socket.write(`GET /ping HTTP/1.1${ CRLF }Host: local${ CRLF }${ CRLF }`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        expect(response).toContain('pong');
+        socket.destroy();
+    });
+});

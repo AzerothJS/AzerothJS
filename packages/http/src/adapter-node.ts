@@ -346,6 +346,47 @@ function manage<S extends Server | Http2Server>(
             current?.[releaseSignal]();
             current = null;
         });
+        // Node stops policing a connection once the response finishes, so a request whose body is
+        // still arriving enters a phase nothing bounds - a peer that has already been refused can
+        // hold the socket by dribbling the body it was told not to send.
+        //
+        // The upload cannot be stopped at the refusal without losing the refusal: closing a socket
+        // that still holds unread data forces a TCP RST, which discards the queued response. The
+        // bound is therefore on time, not bytes.
+        res.once('finish', () =>
+        {
+            if (req.complete)
+            {
+                return;
+            }
+            const budget = (server as Partial<Server>).requestTimeout;
+            if (budget === undefined || budget <= 0)
+            {
+                return;
+            }
+            const cut = setTimeout(() =>
+            {
+                const stream = (res as Http2ServerResponse).stream as { destroyed: boolean; destroy: () => void } | undefined;
+                if (stream !== undefined)
+                {
+                    if (!stream.destroyed)
+                    {
+                        stream.destroy();
+                    }
+                    return;
+                }
+                req.socket.destroy();
+            }, budget);
+            cut.unref();
+            // Disarmed by the request, never by the response: `res` emits 'close' immediately
+            // after 'finish', which would clear the deadline on the tick it was armed.
+            const disarm = (): void =>
+            {
+                clearTimeout(cut);
+            };
+            req.once('end', disarm);
+            req.once('close', disarm);
+        });
         /** The one failure end for a dispatch, reached by a rejection or a synchronous throw. */
         const dispatchFailed = (): void =>
         {
