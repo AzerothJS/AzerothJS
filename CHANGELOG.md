@@ -12,6 +12,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A truncated upload could be handed to a handler as a complete body.** The raw-body fast lane
+  treated the stream's `end` as proof the body was complete. It is not: `end` means the stream
+  stopped, not that it delivered what it promised. Completeness was inferred instead from Node
+  emitting `aborted`, and that varies by transport AND by Node version - an h2c stream reset was
+  measured pushing EOF with no `aborted` at all, resolving 16384 of 100000 declared bytes as a
+  successful read, while a session destroy on the same transport rejected correctly. Since this
+  package supports Node 22 and newer, whether a handler saw a partial upload as whole depended on
+  the runtime it happened to be deployed on. A handler acting on a partial body it believes is
+  complete is silent wrong data, which is worse than an error.
+
+  A declared `Content-Length` is a promise about the message, and the read already counted the
+  bytes, so the count is now VERIFIED against it and a short body is refused as incomplete. The
+  guarantee no longer depends on which events the platform chooses to emit; it holds identically
+  on HTTP/1.1, h2c and any future adapter. Chunked bodies declare no length and are unaffected, a
+  malformed `Content-Length` is treated as absent rather than as zero, and the abort listener
+  remains for the case where a stream never ends at all.
+
 - **A value interpolated into `css` could write its own CSS rules.** The template parts are the
   author's CSS, but the interpolated values are data, and they were concatenated in raw. A value
   containing a closing brace ended its declaration and its rule and opened new ones; a value

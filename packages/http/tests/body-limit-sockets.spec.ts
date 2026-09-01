@@ -14,7 +14,7 @@ import { connect as connectTcp } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { App } from '../src/app.ts';
-import { readText } from '../src/body.ts';
+import { readRaw, readText } from '../src/body.ts';
 import { serve, serveH2c, type Served } from '../src/adapter-node.ts';
 
 const LIMIT = 64;
@@ -140,5 +140,111 @@ describe('an over-limit upload names the right fault', () =>
 
         expect(seen).toEqual(['PayloadTooLargeError']);
         expect(status).toBe(413);
+    });
+});
+
+// A body short of its DECLARED Content-Length is a truncated message, and handing it to a handler
+// as a successful read is silent wrong data - the handler acts on a partial upload believing it is
+// whole. Completeness used to be inferred from Node emitting 'aborted', which varies by transport
+// AND by Node version: an h2c STREAM RESET was measured pushing EOF with no 'aborted' at all
+// (resolving 16384 of 100000 bytes) while a session destroy on the same transport rejected. This
+// package supports node >=22, so that made a data-integrity guarantee depend on the runtime.
+//
+// The declared length is now VERIFIED. These arms pin the invariant on both transports; removing
+// the 'aborted' listener entirely leaves them green, which is the point - the check, not the
+// platform event, is what closes it.
+describe('a body short of its declared length is refused', () =>
+{
+    const DECLARED = 100000;
+    const SENT = 16384;
+
+    function recordingApp(seen: string[]): App
+    {
+        const app = new App({ onError: () => undefined });
+        app.post('/upload', async (context) =>
+        {
+            try
+            {
+                const body = await readRaw(context.request, { limit: 10_000_000 });
+                seen.push(`RESOLVED:${ body.byteLength }`);
+            }
+            catch (error)
+            {
+                seen.push(`REJECTED:${ (error as Error).constructor.name }`);
+            }
+            return new Response('ok');
+        });
+        return app;
+    }
+
+    it('h2c: a STREAM RESET mid-upload is a truncated body, not a successful read', async () =>
+    {
+        const seen: string[] = [];
+        const served = await serveH2c(recordingApp(seen), { port: 0 });
+        openServers.push(served as unknown as Served<never>);
+
+        const client = connectH2(`http://127.0.0.1:${ served.port }`);
+        await new Promise<void>((resolve) => client.once('connect', () => resolve()));
+        const request = client.request({ ':method': 'POST', ':path': '/upload', 'content-length': String(DECLARED) });
+        request.on('error', () => undefined);
+        request.write(Buffer.alloc(SENT, 0x61));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        request.close(8);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        client.destroy();
+
+        expect(seen[0]).toBe('REJECTED:BadRequestError');
+    });
+
+    it('http1: a client that vanishes mid-upload is a truncated body', async () =>
+    {
+        const seen: string[] = [];
+        const served = await serve(recordingApp(seen), { port: 0 });
+        openServers.push(served as unknown as Served<never>);
+
+        const socket = connectTcp(served.port, '127.0.0.1');
+        await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+        const CRLF = String.fromCharCode(13, 10);
+        socket.write(`POST /upload HTTP/1.1${ CRLF }Host: local${ CRLF }Content-Length: ${ DECLARED }${ CRLF }${ CRLF }`);
+        socket.write(Buffer.alloc(SENT, 0x61));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        socket.destroy();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        expect(seen[0]).toBe('REJECTED:BadRequestError');
+    });
+
+    it('CONTROL: a COMPLETE body of the declared length resolves with every byte', async () =>
+    {
+        const seen: string[] = [];
+        const served = await serveH2c(recordingApp(seen), { port: 0 });
+        openServers.push(served as unknown as Served<never>);
+
+        const client = connectH2(`http://127.0.0.1:${ served.port }`);
+        await new Promise<void>((resolve) => client.once('connect', () => resolve()));
+        const request = client.request({ ':method': 'POST', ':path': '/upload', 'content-length': String(SENT) });
+        request.on('error', () => undefined);
+        request.end(Buffer.alloc(SENT, 0x61));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        client.destroy();
+
+        expect(seen[0]).toBe(`RESOLVED:${ SENT }`);
+    });
+
+    it('CONTROL: a CHUNKED body, which declares no length, still resolves', async () =>
+    {
+        const seen: string[] = [];
+        const served = await serve(recordingApp(seen), { port: 0 });
+        openServers.push(served as unknown as Served<never>);
+
+        const socket = connectTcp(served.port, '127.0.0.1');
+        await new Promise<void>((resolve) => socket.once('connect', () => resolve()));
+        const CRLF = String.fromCharCode(13, 10);
+        socket.write(`POST /upload HTTP/1.1${ CRLF }Host: local${ CRLF }Transfer-Encoding: chunked${ CRLF }${ CRLF }`);
+        socket.write(`5${ CRLF }hello${ CRLF }0${ CRLF }${ CRLF }`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        socket.destroy();
+
+        expect(seen[0]).toBe('RESOLVED:5');
     });
 });

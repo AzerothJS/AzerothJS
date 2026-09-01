@@ -349,6 +349,9 @@ class AdapterRequest implements Request
             return Promise.reject(new TypeError('Invalid state: the request body has already been read.'));
         }
         const declared = this[fastHeaderLookup]('content-length');
+        // Parsed ONCE: a non-numeric or negative declaration is treated as absent rather than as
+        // zero, so a junk header cannot make an ordinary body look truncated.
+        const declaredLength = declared !== null && /^\d+$/.test(declared.trim()) ? Number(declared) : null;
         if (declared !== null && Number(declared) > limit)
         {
             return Promise.reject(new PayloadTooLargeError(`Body of ${ declared } bytes exceeds the ${ limit }-byte limit.`));
@@ -377,7 +380,30 @@ class AdapterRequest implements Request
                 }
                 chunks.push(chunk);
             });
-            incoming.once('end', () => resolve(chunks[0] !== undefined && chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total)));
+            incoming.once('end', () =>
+            {
+                // 'end' means the stream STOPPED, not that it delivered what it promised. A
+                // declared Content-Length is a promise the peer made about the message (RFC 9110),
+                // and it is the only completeness fact available here that does not depend on the
+                // platform, so it is CHECKED rather than assumed.
+                //
+                // Without this the guarantee rests entirely on Node emitting 'aborted' below, and
+                // that varies: an h2c STREAM RESET was measured pushing EOF with no 'aborted' at
+                // all, resolving a truncated upload as a successful read, while a session destroy
+                // on the same transport rejected correctly. This package supports node >=22, so
+                // which answer an operator gets would otherwise depend on their runtime. Proven by
+                // removing the 'aborted' listener: the reset arm resolves 16384 of 100000 bytes.
+                //
+                // A handler acting on a partial body it believes is whole is silent wrong data -
+                // worse than an error - so the short read is named as what it is.
+                if (declaredLength !== null && total < declaredLength)
+                {
+                    reject(new BadRequestError('The request body was not fully received: '
+                        + `${ total } of ${ declaredLength } declared bytes.`));
+                    return;
+                }
+                resolve(chunks[0] !== undefined && chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total));
+            });
             incoming.once('error', reject);
             // A client that vanishes mid-upload must settle this promise too: 'end' never comes,
             // and without a terminal event the read would hang for the process lifetime.

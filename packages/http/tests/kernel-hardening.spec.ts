@@ -340,3 +340,52 @@ describe('a handler reason phrase reaches the wire', () =>
         expect(line).toBe('HTTP/1.1 418 I am a teapot');
     });
 });
+
+// The arms in body-limit-sockets.spec.ts pin the invariant over real transports, but on a Node
+// that DOES emit 'aborted' they would pass with or without the completeness check. This one drives
+// the fast lane against a stream that ends SHORT and never aborts - the exact shape an h2c stream
+// reset was measured producing - so it is the check itself that is under test.
+describe('the raw-body fast lane verifies the declared length', () =>
+{
+    async function readShortBody(declared: string, sent: number): Promise<string>
+    {
+        const { createAdapterRequest } = await import('../src/adapter-request.ts');
+        const { fastRawBody } = await import('../src/body.ts');
+        const { Readable } = await import('node:stream');
+
+        // Ends normally after fewer bytes than it declared, and never emits 'aborted'.
+        const incoming = Readable.from([Buffer.alloc(sent, 0x61)]) as unknown as Parameters<typeof createAdapterRequest>[0];
+        Object.assign(incoming, { method: 'POST', url: '/x', headers: { host: 'x', 'content-length': declared } });
+
+        const request = createAdapterRequest(incoming, 'http', {});
+        const lane = (request as unknown as Record<symbol, ((limit: number) => Promise<Uint8Array>) | undefined>)[fastRawBody];
+        if (lane === undefined)
+        {
+            throw new Error('the adapter request no longer exposes the raw-body fast lane');
+        }
+        try
+        {
+            const body = await lane.call(request, 1_000_000);
+            return `RESOLVED:${ body.byteLength }`;
+        }
+        catch (error)
+        {
+            return `REJECTED:${ (error as Error).constructor.name }`;
+        }
+    }
+
+    it('rejects a body that ends short of its declared length, with no abort event', async () =>
+    {
+        expect(await readShortBody('100000', 16384)).toBe('REJECTED:BadRequestError');
+    });
+
+    it('CONTROL: accepts a body that matches its declared length exactly', async () =>
+    {
+        expect(await readShortBody('16384', 16384)).toBe('RESOLVED:16384');
+    });
+
+    it('CONTROL: a junk Content-Length is treated as absent, not as zero', async () =>
+    {
+        expect(await readShortBody('not-a-number', 16384)).toBe('RESOLVED:16384');
+    });
+});
