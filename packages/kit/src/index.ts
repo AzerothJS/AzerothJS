@@ -30,9 +30,10 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import type { Route } from 'azerothjs';
-import { guardedMatch } from 'azerothjs/internal';
+import { guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { html as htmlResponse, NotFoundError } from '@azerothjs/http';
+import { html as htmlResponse, readForm, verifyCsrfField, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
+import type { CsrfOptions } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
@@ -69,8 +70,44 @@ export interface PageRoute extends Route
      */
     revalidate?: number;
 
+    /**
+     * What a form on this page POSTs to. Declared on the ROUTE because the route already owns
+     * the read (its loader) and the write belongs beside it.
+     *
+     * This is the no-JS path: a plain `<form method="post">` needs no fetch, no bundle and no
+     * event handler, and `mountPages` registers a POST for the page's own path so the page can
+     * receive the form it renders. Without one it cannot - the mount is GET-only, and a submit
+     * answers 405.
+     *
+     * Returning `undefined` means the write succeeded: the response is a 303 back to this same
+     * URL, so the loader re-runs, the page shows the change, and a refresh cannot re-submit it
+     * (POST/Redirect/GET). Returning a VALUE means it did not: the page re-renders at 422 with
+     * that value readable through `useActionResult()`, which is where field errors go. Throwing
+     * `redirect(...)` sends the visitor somewhere else entirely.
+     *
+     * CSRF is enforced before the action runs, and the form must carry the token in a hidden
+     * `_csrf` field, since a plain form cannot set a header.
+     */
+    action?: (context: PageActionContext) => Promise<unknown>;
+
     /** Nested routes may carry modes too. */
     children?: PageRoute[];
+}
+
+/** What a {@link PageRoute.action} receives. */
+export interface PageActionContext
+{
+    /** The submitted fields, repeated keys preserved. */
+    form: URLSearchParams;
+
+    /** The path params of the URL that was posted to. */
+    params: Record<string, string>;
+
+    /** The submitting request, for cookies, headers and identity. */
+    request: Request;
+
+    /** The posted URL. */
+    url: URL;
 }
 
 /** The routes, client dist, and optional renderer {@link mountPages} needs. */
@@ -131,6 +168,14 @@ export interface KitOptions
      * `default-src`, which refuses the stylesheet.
      */
     scriptNonce?: (context: RequestContext) => string | undefined;
+
+    /**
+     * The cookie name and allowed origins a page ACTION verifies its CSRF token against - the
+     * same options `csrfProtect` takes, so a mount and its api guard share one
+     * configuration. Defaults match `csrfCookie`, which is what the scaffolded server
+     * installs.
+     */
+    csrf?: CsrfOptions;
 }
 
 /**
@@ -171,6 +216,9 @@ export interface FlatPage
     staticParams?: PageRoute['staticParams'];
     revalidate?: number;
 
+    /** What a form on this page posts to; see {@link PageRoute.action}. */
+    action?: PageRoute['action'];
+
     /**
      * The joined path of the TOPMOST guard-carrying route in this page's chain, when any
      * route on it has a guard. A guard makes the render identity-dependent, and every
@@ -205,6 +253,10 @@ export function flattenPages(
         else
         {
             const page: FlatPage = { path: full, render: mode };
+            if (route.action !== undefined)
+            {
+                page.action = route.action;
+            }
             if (route.staticParams !== undefined)
             {
                 page.staticParams = route.staticParams;
@@ -370,6 +422,16 @@ export function mountPages(app: App, options: KitOptions): void
         }
     }
 
+    // The POST half, registered for exactly the pages that declare an action. A page with no
+    // action keeps answering 405, which is the honest response: nothing there accepts a write.
+    for (const page of flattenPages(options.routes))
+    {
+        if (page.action !== undefined)
+        {
+            registerAction(app, page, page.action, options, shellPromise, buildIdPromise, report);
+        }
+    }
+
     if (options.images !== undefined)
     {
         app.get('/_image', imageHandler({
@@ -411,6 +473,72 @@ export function mountPages(app: App, options: KitOptions): void
     });
 }
 
+/**
+ * @internal Runs one page action for a form submit.
+ *
+ * The order is load-bearing. The body is read FIRST because the CSRF token arrives in it - a
+ * plain form cannot set a header - and the token is checked before the action runs, so a
+ * cross-site submit never reaches application code. On success the answer is a 303 rather than
+ * rendered markup: that is what stops a refresh from re-posting, and it makes the loader the
+ * single source of what the page then shows.
+ */
+function registerAction(
+    app: App,
+    page: FlatPage,
+    action: NonNullable<PageRoute['action']>,
+    options: KitOptions,
+    shellPromise: Promise<string>,
+    buildId: Promise<string>,
+    report: KitErrorObserver
+): void
+{
+    app.post(page.path, async (context) =>
+    {
+        const form = await readForm(context.request);
+        verifyCsrfField(context.request, context.url, form.get(CSRF_FIELD), options.csrf ?? {});
+        // The token is not the application's business, and leaving it in would put it in front
+        // of every schema that validates the submitted fields.
+        form.delete(CSRF_FIELD);
+
+        let result: unknown;
+        try
+        {
+            result = await action({ form, params: context.params, request: context.request, url: context.url });
+        }
+        catch (error)
+        {
+            if (isRedirect(error))
+            {
+                const target = error.to;
+                return seeOther(typeof target === 'string' ? target : targetToFullPath(target));
+            }
+            throw error;
+        }
+        if (result === undefined)
+        {
+            // POST/Redirect/GET: the visitor lands on a GET, so a refresh re-reads instead of
+            // re-writing, and the browser's back button does not offer to resubmit.
+            return seeOther(context.url.pathname + context.url.search);
+        }
+        // A returned value is a REFUSAL - the classic validation re-render. The page renders
+        // again at 422 with the value in hand, which is where field errors reach the form.
+        return renderOrShell(
+            context,
+            options.renderer !== undefined ? 'server' : 'client',
+            options,
+            await shellPromise,
+            buildId,
+            422,
+            { result, report });
+    });
+}
+
+/** @internal The POST/Redirect/GET answer. 303 so the follow-up is a GET on every client. */
+function seeOther(location: string): Response
+{
+    return new Response(null, { status: 303, headers: { location, 'cache-control': 'private, no-store' } });
+}
+
 /** @internal Whether the client asked for a document rather than an asset or a JSON API. */
 function acceptsHtml(request: Request): boolean
 {
@@ -430,7 +558,8 @@ async function renderOrShell(
     options: KitOptions,
     shell: string,
     buildId: Promise<string>,
-    shellStatus = 200
+    shellStatus = 200,
+    refusal?: { result: unknown; report: KitErrorObserver }
 ): Promise<Response>
 {
     if (mode === 'server' && options.renderer !== undefined)
@@ -455,9 +584,17 @@ async function renderOrShell(
                 // it, a client that opens connections and drops them still buys every loader's
                 // full fan-out to the backing services, with no one left to read the answer.
                 handoffMeta: { build: await buildId, at: Date.now() },
-                ...(nonce !== undefined ? { scriptNonce: nonce } : {})
+                ...(nonce !== undefined ? { scriptNonce: nonce } : {}),
+                ...(refusal !== undefined ? { actionResult: refusal.result } : {}),
+                ...(refusal !== undefined
+                    ? { onError: (error: unknown): void => refusal.report(error, { path: context.url.pathname, phase: 'render' }) }
+                    : {})
             });
-        return pageResponse(result, shell);
+        // A refused action re-renders at ITS status, not the render's: the page is fine, the
+        // write was not, and 422 is what tells a client which of the two happened.
+        return refusal === undefined
+            ? pageResponse(result, shell)
+            : pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell);
     }
     return htmlResponse(shell, { status: shellStatus });
 }

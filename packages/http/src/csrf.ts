@@ -155,35 +155,81 @@ export function csrfProtect(options: CsrfOptions = {}): (context: GuardContext) 
         {
             return;
         }
-        const origin = context.request.headers.get('origin');
-        const originAllowed = origin !== null && (origin === context.url.origin || allowed.has(origin));
-        const site = context.request.headers.get('sec-fetch-site');
-        // `same-site` is a SIBLING subdomain - not this origin; only an allowlist re-admits it.
-        if (site !== null && site !== 'same-origin' && site !== 'none' && !originAllowed)
-        {
-            throw new ForbiddenError('Cross-site request rejected.', { code: 'csrf' });
-        }
-        if (origin !== null && origin !== context.url.origin && !allowed.has(origin))
-        {
-            // An https Origin against the same host's http URL, with a forwarded proto nothing
-            // honored, is a TLS terminator in front of a serve() that never declared trustProxy.
-            // Still fail closed - but name the fix, or every same-origin POST reads as hostile.
-            if (context.url.protocol === 'http:'
-                && origin === `https://${ context.url.host }`
-                && context.request.headers.get('x-forwarded-proto') !== null)
-            {
-                throw new ForbiddenError(
-                    'Request origin rejected: the Origin is https but the request URL is http. '
-                    + 'Behind a TLS-terminating proxy, set trustProxy on serve() so the forwarded scheme is honored.',
-                    { code: 'csrf' });
-            }
-            throw new ForbiddenError('Request origin rejected.', { code: 'csrf' });
-        }
-        const cookie = parseCookies(context.request)[name];
-        const mirrored = context.request.headers.get(header);
-        if (cookie === undefined || cookie.length < MIN_TOKEN_LENGTH || mirrored === null || !tokensEqual(cookie, mirrored))
-        {
-            throw new ForbiddenError('Missing or mismatched CSRF token.', { code: 'csrf' });
-        }
+        assertSameOrigin(context.request, context.url, allowed);
+        assertTokenMirrored(context.request, name, context.request.headers.get(header));
     };
+}
+
+/**
+ * @internal The origin half of the CSRF rule. Extracted so the header guard and the FORM
+ * verifier below cannot drift: they enforce the same thing, and a divergence would show up
+ * only as a hole on whichever path was updated second.
+ */
+function assertSameOrigin(request: Request, url: URL, allowed: ReadonlySet<string>): void
+{
+    const origin = request.headers.get('origin');
+    const originAllowed = origin !== null && (origin === url.origin || allowed.has(origin));
+    const site = request.headers.get('sec-fetch-site');
+    // `same-site` is a SIBLING subdomain - not this origin; only an allowlist re-admits it.
+    if (site !== null && site !== 'same-origin' && site !== 'none' && !originAllowed)
+    {
+        throw new ForbiddenError('Cross-site request rejected.', { code: 'csrf' });
+    }
+    if (origin !== null && origin !== url.origin && !allowed.has(origin))
+    {
+        // An https Origin against the same host's http URL, with a forwarded proto nothing
+        // honored, is a TLS terminator in front of a serve() that never declared trustProxy.
+        // Still fail closed - but name the fix, or every same-origin POST reads as hostile.
+        if (url.protocol === 'http:'
+            && origin === `https://${ url.host }`
+            && request.headers.get('x-forwarded-proto') !== null)
+        {
+            throw new ForbiddenError(
+                'Request origin rejected: the Origin is https but the request URL is http. '
+                + 'Behind a TLS-terminating proxy, set trustProxy on serve() so the forwarded scheme is honored.',
+                { code: 'csrf' });
+        }
+        throw new ForbiddenError('Request origin rejected.', { code: 'csrf' });
+    }
+}
+
+/** @internal The token half: the cookie must exist, be long enough, and match what was mirrored. */
+function assertTokenMirrored(request: Request, name: string, mirrored: string | null): void
+{
+    const cookie = parseCookies(request)[name];
+    if (cookie === undefined || cookie.length < MIN_TOKEN_LENGTH || mirrored === null || !tokensEqual(cookie, mirrored))
+    {
+        throw new ForbiddenError('Missing or mismatched CSRF token.', { code: 'csrf' });
+    }
+}
+
+/** The hidden input a no-JS form carries its CSRF token in. */
+export const CSRF_FIELD = '_csrf';
+
+/**
+ * Verifies a request whose CSRF token arrives in the BODY rather than a header.
+ *
+ * A plain HTML form cannot set a header, so the header guard - which documents itself as
+ * reading headers only, and must keep that promise or it would consume a body the handler
+ * still needs - structurally cannot cover a no-JS submit. The caller here has already parsed
+ * the body, so it hands the field value over and no second read happens.
+ *
+ * Same two checks, same order, same errors as {@link csrfProtect}: origin first, then the
+ * mirrored token. Safe methods never reach this - a form submit is a POST by construction.
+ *
+ * @param request - The submitting request; its cookies carry the authoritative token.
+ * @param url - The request's own URL, for the origin comparison.
+ * @param submitted - The token the form carried, or null when the field was absent.
+ * @param options - The same cookie/origin options the guard takes.
+ * @throws {ForbiddenError} On a cross-site origin or a missing/mismatched token.
+ */
+export function verifyCsrfField(
+    request: Request,
+    url: URL,
+    submitted: string | null,
+    options: CsrfOptions = {}
+): void
+{
+    assertSameOrigin(request, url, new Set(options.allowedOrigins ?? []));
+    assertTokenMirrored(request, cookieNameOf(options), submitted);
 }

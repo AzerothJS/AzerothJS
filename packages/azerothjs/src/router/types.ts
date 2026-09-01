@@ -537,6 +537,16 @@ export interface LoaderHandoff
      * level's own component is true on the server exactly as it is after a client navigation.
      */
     missing?: number[];
+
+    /**
+     * What a page ACTION returned when it refused the write - the classic validation
+     * re-render's field errors. Read with `useActionResult()`.
+     *
+     * It rides the loader handoff because it is the same thing: data this render was produced
+     * with, which the hydrating client must see rather than re-derive. Without it the no-JS
+     * page would show the errors and the hydrated page would immediately lose them.
+     */
+    action?: unknown;
 }
 
 /**

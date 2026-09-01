@@ -436,6 +436,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **Page actions: a form that works with no client JS.** A route can declare an `action`, and
+  `mountPages` registers a POST for that page's own path. Measured before this existed, a plain
+  `<form method="post">` posting to its own page answered **405** with `Allow: GET, HEAD` - the
+  mount was GET-only, so a page could not receive the form it rendered.
+
+  Returning `undefined` means the write happened and the answer is a **303 back to the same URL**,
+  so the loader re-runs and a refresh cannot re-submit (POST/Redirect/GET). Returning a value
+  means it was refused: the page re-renders at **422** with that value readable through the new
+  `useActionResult()`, which is where field errors go. Throwing `redirect(...)` sends the visitor
+  elsewhere. A page with no action still answers 405.
+
+  CSRF is verified BEFORE the action runs, and it had to be built rather than reused: a plain
+  form cannot set a header, and `csrfProtect` documents itself as reading headers only so it can
+  never consume a body the handler still needs. The token therefore travels in a hidden `_csrf`
+  field, checked by the new `verifyCsrfField` against the same origin and token rules the header
+  guard applies - both now call one implementation of each, so they cannot drift. The field is
+  stripped before the action sees the form. Give `mountPages` the same `csrf` options you gave
+  `csrfCookie`; the defaults agree, and a mismatch fails closed.
+
 - **A form can submit to a mutation.** `createForm`'s `onSubmit` now accepts a
   `Mutation` as well as a function. One option, two kinds of target: a mutation is what a form
   submits to, not a second form system.

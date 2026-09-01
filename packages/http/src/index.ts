@@ -80,7 +80,7 @@ export type { MultipartBody, MultipartOptions, StreamMultipartOptions, UploadedF
 export { parseCookies, serializeCookie, expireCookie } from './cookies.ts';
 export type { CookieOptions } from './cookies.ts';
 
-export { csrfCookie, csrfProtect, csrfToken } from './csrf.ts';
+export { csrfCookie, csrfProtect, csrfToken, verifyCsrfField, CSRF_FIELD } from './csrf.ts';
 export type { CsrfOptions } from './csrf.ts';
 
 export { sse } from './sse.ts';

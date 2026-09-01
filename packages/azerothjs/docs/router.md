@@ -180,6 +180,51 @@ loader: async ({ params, query, signal, parent }) =>
   Browser back/forward blocking is best-effort and synchronous-only - use
   `window.confirm` for pop prompts.
 
+## Page actions (forms without client JS)
+
+A route can declare an `action`: what a form on that page POSTs to. `mountPages` registers
+a POST for the page's own path, so a plain `<form method="post">` works with no fetch, no
+bundle and no event handler.
+
+```ts
+{
+    path: '/todos',
+    component: TodoPage,
+    loader: () => listTodos(),
+    action: async ({ form }) =>
+    {
+        const text = (form.get('text') ?? '').trim();
+        if (text === '') { return { fields: { text: 'Required' } }; }   // refused: 422
+        await addTodo(text);
+        return undefined;                                              // accepted: 303
+    }
+}
+```
+
+- **Returning `undefined`** means the write happened: the answer is a **303 back to the same URL**,
+  so the loader re-runs, the page shows the change, and a refresh cannot re-submit it
+  (POST/Redirect/GET).
+- **Returning a value** means it did not: the page re-renders at **422** with that value readable
+  through `useActionResult()`. That is where field errors go.
+- **Throwing `redirect(...)`** sends the visitor somewhere else entirely.
+- A page with no `action` still answers **405** to a POST, which is the honest response.
+
+### CSRF
+
+A page action is a browser-reachable write, so the token is verified BEFORE the action runs.
+A plain form cannot set a header, so it travels in a hidden `_csrf` field instead, and the
+framework strips it before your action sees the fields:
+
+```html
+<input type="hidden" name="_csrf" value={ token } />
+```
+
+Pass `mountPages` the SAME options you gave `csrfCookie` (`csrf: { ... }`); the defaults
+already agree, and a mismatch fails closed with a 403 rather than silently accepting. Rendering
+the token into the form is still the application's job - note that `csrfCookie` mints it on the
+RESPONSE, so a visitor's very first page load has no cookie yet and its form would carry an
+empty token.
+
 ## The location payload
 
 ```ts

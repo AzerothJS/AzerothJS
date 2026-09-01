@@ -26,7 +26,7 @@
  */
 
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
-import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, LOADER_HANDOFF_VERSION, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
 import { collectHead, guardedMatch, loaderFailures, renderAsDenied, targetToFullPath } from 'azerothjs/internal';
@@ -104,6 +104,12 @@ export interface PageRenderOptions
      * knows these (mountPages, prerender) passes them; a bare renderer call emits none.
      */
     handoffMeta?: { build?: string; at?: number; static?: boolean };
+
+    /**
+     * What a page ACTION returned when it refused a submit. Rides the handoff so the render and
+     * the hydration that adopts it agree, and reaches the page through `useActionResult()`.
+     */
+    actionResult?: unknown;
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -320,6 +326,11 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // the client still has the build/at baseline for deploy-aware adoption.
         const pageUrl = new URL(url, 'http://azeroth.local');
         const handoffMeta = { ...(options?.handoffMeta ?? {}), path: pageUrl.pathname + pageUrl.search };
+        // A refusal is data for THIS render, so it joins the envelope the app already receives
+        // rather than travelling by a second channel the client would have to be taught about.
+        const withAction = options?.actionResult === undefined
+            ? handoff
+            : { ...(handoff ?? { version: LOADER_HANDOFF_VERSION, path: handoffMeta.path, data: [] }), action: options.actionResult };
 
         if (!shell.includes(ROOT_MARKER))
         {
@@ -356,7 +367,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             try
             {
                 body = renderToStream(
-                    () => app(handoff !== undefined ? { url, handoff } : { url }),
+                    () => app(withAction !== undefined ? { url, handoff: withAction } : { url }),
                     {
                         frame,
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
@@ -368,7 +379,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             {
                 frames = drainFrames(options.scriptNonce, frame);
             }
-            const script = loaderHandoffScript(loaded, handoffMeta);
+            const script = loaderHandoffScript(withAction ?? loaded, handoffMeta);
             // Style and handoff ride in as the prelude, so the emitted order is
             // style -> handoff -> head additions in BOTH modes, all at one anchor located
             // before any of them is inserted.
@@ -408,7 +419,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // Constructed BEFORE the render, so the finally holds it on the throw path.
         const frame = createRenderFrame();
         const render = (): string =>
-            renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }), { frame });
+            renderToString(() => app(withAction !== undefined ? { url, handoff: withAction } : { url }), { frame });
         try
         {
             body = denied === null ? render() : renderAsDenied(denied, render);
@@ -424,7 +435,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // treats the replacement verbatim.
         const rendered = `<div id="root">${ body }</div>`;
         let html = shell.replace(ROOT_MARKER, () => rendered);
-        const script = loaderHandoffScript(loaded, handoffMeta);
+        const script = loaderHandoffScript(withAction ?? loaded, handoffMeta);
         // Title surgery, keyed replacements, additions - order in the document:
         // style -> handoff -> head, all at one anchor located before any of them is inserted.
         html = applyHeadToShell(html, frames.head, frames.styleTag + script);

@@ -203,6 +203,15 @@ export interface Router
     match: Getter<RouteMatch | null>;
 
     /**
+     * What this page's ACTION returned when it refused a form submit, or undefined.
+     *
+     * Set for the render the refusal produced and for the hydration that adopts it, then
+     * cleared by the next accepted navigation - a stale refusal outliving the screen it
+     * belonged to would show yesterday's field errors on today's form.
+     */
+    actionResult: Getter<unknown>;
+
+    /**
      * The settled routing verdict: `match`, `not-found`, or `blocked` with the 401/403 a
      * guard vetoed with. `match()` answers null for both non-match states, which is why
      * an unknown URL and a denied one used to render the same UI; this tells them apart.
@@ -942,6 +951,18 @@ function buildRouter(config: RouterConfig): Router
     const [denied, setDenied] = createSignal<401 | 403 | null>(
         currentRenderDenial() ?? seededDenial(config.initialLoaderData));
 
+    // Seeded like the denial and for the same reason: the server rendered the refusal, so the
+    // client has to start holding it rather than discover it.
+    const [actionResult, setActionResult] = createSignal<unknown>(config.initialLoaderData?.action);
+
+    // WHERE that refusal belongs, captured here rather than read from `initialState` later in
+    // this function: the guard effect's first run is SYNCHRONOUS and reaches `accept` before
+    // those bindings exist, so reading one is a temporal-dead-zone ReferenceError - the same
+    // hazard the scroll and blocker state is hoisted above the effect to avoid.
+    let refusalPath: string | null = config.initialLoaderData?.action !== undefined
+        ? config.initialLoaderData.path
+        : null;
+
     /**
      * The settled routing verdict: what the tree resolved to, not merely whether a route
      * matched. Every terminal non-match used to collapse into `match === null`, so a guard
@@ -1024,6 +1045,13 @@ function buildRouter(config: RouterConfig): Router
             // seeded denial has to survive until the guard that re-derives it settles, or the
             // blocked markup is torn down and remounted as the not-found UI in between.
             setDenied(null);
+            // A refusal belongs to the submit that produced it. Navigating away accepts a new
+            // location, and carrying it over would put those field errors on the next form.
+            if (refusalPath !== null && s.pathname + s.search !== refusalPath)
+            {
+                refusalPath = null;
+                setActionResult(() => undefined);
+            }
             settle(value);
         };
         const veto = (status: 401 | 403): void =>
@@ -1784,6 +1812,7 @@ function buildRouter(config: RouterConfig): Router
         location,
         match,
         state: routeState,
+        actionResult,
         loaders,
         revalidate(): Promise<void>
         {

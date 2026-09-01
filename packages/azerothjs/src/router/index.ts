@@ -21,6 +21,7 @@ export { defineRoute } from './define-route.ts';
 export { redirect } from './redirect.ts';
 export { notFound, isNotFound } from './not-found.ts';
 export { unauthorized, forbidden, isDenied } from './denied.ts';
+export { useActionResult } from './use-action-result.ts';
 export { createBrowserHistory, createMemoryHistory } from './history.ts';
 export { compilePath } from './path-pattern.ts';
 export { parseQuery, stringifyQuery } from './query.ts';

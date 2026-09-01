@@ -131,6 +131,7 @@ export {
 export { ErrorBoundary } from './component/index.ts';
 export { Outlet } from './router/index.ts';
 export { guardedMatch, loaderFailures } from './router/handoff.ts';
+export { isRedirect } from './router/redirect.ts';
 // The SSR host pins one string render to the blocked state, so the vetoed route cannot be
 // serialized even when the app entry forwards nothing.
 export { renderAsDenied } from './router/denied.ts';
