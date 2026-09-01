@@ -96,17 +96,11 @@ export function hydrate(component: () => MountNode, container: HTMLElement): voi
             {
                 containerDisposers.set(container, dispose);
 
-                // Through the renderer's ONE child-adopt routine, for the same reason the mount
-                // side goes through appendChild. A fragment-rooted component returns an ARRAY,
-                // which is not itself a hydration node - so the old root-shape test rejected
-                // every fragment-rooted page and fell back to a FULL CLIENT RENDER, silently in
-                // production (the warning is DEV-only). Measured: the server nodes were replaced
-                // rather than adopted, while a single-element root adopted them.
-                //
-                // The mismatch net is not weakened by dropping that test, it is strengthened:
-                // hydrateChild resolves arrays, hydration nodes, getters, slot handles and static
-                // text, and assertExhausted below still validates the WHOLE consumed range rather
-                // than only the root value's shape.
+                // Through the renderer's one child-adopt routine, as the mount side goes through
+                // appendChild. A fragment root is an ARRAY, which is not itself a hydration node,
+                // so testing the root's shape rejected every fragment-rooted page and fell back to
+                // a full client render. Dropping that test does not weaken the mismatch net:
+                // assertExhausted below validates the whole consumed range, not just the root.
                 const cursor = new HydrationCursor(container);
                 hydrateChild(component(), cursor);
                 cursor.assertExhausted('root container');

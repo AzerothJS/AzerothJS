@@ -290,18 +290,11 @@ export function renderToStream(
                             closeContinuationWindow(continuation);
                         }
                     }
-                    // settleOne() is the boundary's accounting and runs NO MATTER WHAT. Being the
-                    // LAST STATEMENT was the shape of the defect above, not an incidental detail:
-                    // anything throwing before it strands the counter and hangs the stream to its
-                    // settle timeout. A boundary that has finished is finished even if delivering
-                    // it failed.
-                    //
-                    // DEFENCE IN DEPTH, and deliberately not claimed as more: with the observer
-                    // isolated there is no reachable second throw here (the closed/finalized check
-                    // sits in this same synchronous block as the enqueue), and removing this
-                    // try/finally was MEASURED to break no arm. It is kept because it makes the
-                    // invariant structural instead of positional, so the next statement added
-                    // above it cannot quietly bring the hang back.
+                    // The boundary's accounting runs whatever happens above it: anything that
+                    // throws before it strands the pending counter and hangs the stream to its
+                    // settle timeout. Defence in depth rather than a live fix - with the observer
+                    // isolated there is no reachable throw here - but it makes the invariant
+                    // structural, so a statement added above cannot reintroduce the hang.
                     try
                     {
                         if (childrenHtml !== null)

@@ -36,13 +36,11 @@ export const DEVICE_WIDTHS: readonly number[] = [16, 32, 48, 64, 96, 128, 256, 3
 export const ImageConfig: Context<{ endpoint: string } | undefined> = createContext(undefined, 'ImageConfig');
 
 /**
- * Reads a prop that may be a literal, a COMPILER-EMITTED GETTER, or an explicit function.
+ * Reads a prop that may be a literal, a compiler-emitted getter, or an explicit function.
  *
- * Markup passes a component prop as a getter on the props object (`{ get alt() { ... } }`), so
- * reading one during setup resolves it ONCE and throws away the laziness the protocol exists to
- * provide. Every attribute below is therefore handed to `h()` as a FUNCTION, which binds it, and
- * this resolves the current value each time that binding runs - so a literal, a markup
- * expression and an explicit getter all behave the same way.
+ * Markup passes a component prop as a getter, so reading one during setup resolves it once and
+ * freezes it. Every attribute below is handed to `h()` as a function instead, which binds it and
+ * re-reads through here - so all three forms stay live.
  */
 function readProp<T>(value: T | (() => T)): T
 {

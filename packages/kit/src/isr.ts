@@ -656,17 +656,11 @@ export function registerIsr(registration: IsrRegistration): void
                 // No seed on disk - render live.
             }
         }
-        // ITS OWN WORK UNIT. This render is SHARED - its html is written to the process-wide
-        // page cache - but it is started inside the triggering visitor's request root, so every
-        // scope-resolved read (a createStore instance, the data cache) resolves to THAT visitor
-        // and is baked into the entry everyone else is served. Measured over real sockets: the
-        // first visitor's per-request store value came back to the NEXT visitor from the cache.
-        //
-        // The guarded branch below already states the rule - "the body belongs to the visitor
-        // whose request produced it" - and answers it by refusing to cache. A page that reads
-        // request state WITHOUT a guard was never caught by that, so the scope is made neutral
-        // here instead. runInWorkUnit is the shipped seam for exactly this; its own docblock
-        // names background regeneration among the units to wrap.
+        // This render is SHARED - its html goes into the process-wide page cache - so it must not
+        // run in the triggering visitor's scope, or that visitor's store instances and cached
+        // reads are baked into the entry everyone else is served. The guarded branch below states
+        // the same rule for its own case and answers it by refusing to cache; an unguarded page
+        // reading request state is not caught by that, so the scope is made neutral instead.
         const shellText = await shell;
         const buildValue = await buildId;
         const result = await runInWorkUnit(
@@ -730,11 +724,10 @@ export function registerIsr(registration: IsrRegistration): void
         {
             try
             {
-                // ITS OWN WORK UNIT, for the same reason produce() has one, and one more: this
-                // body is started synchronously inside the triggering request handler, so it also
-                // inherited that request's TEARDOWN - which aborts in-flight cached() reads, and
-                // those resolve to undefined rather than rejecting, writing a data-less 200 into
-                // the shared cache with nothing reported.
+                // Its own unit, for the reason produce() has one and one more: started
+                // synchronously inside the request handler, this body also inherited that
+                // request's teardown, which aborts in-flight cached() reads - and those resolve to
+                // undefined rather than rejecting, caching a data-less page with nothing reported.
                 const shellText = await shell;
                 const buildValue = await buildId;
                 const result = await runInWorkUnit(

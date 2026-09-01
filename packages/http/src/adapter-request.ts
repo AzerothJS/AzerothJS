@@ -382,20 +382,10 @@ class AdapterRequest implements Request
             });
             incoming.once('end', () =>
             {
-                // 'end' means the stream STOPPED, not that it delivered what it promised. A
-                // declared Content-Length is a promise the peer made about the message (RFC 9110),
-                // and it is the only completeness fact available here that does not depend on the
-                // platform, so it is CHECKED rather than assumed.
-                //
-                // Without this the guarantee rests entirely on Node emitting 'aborted' below, and
-                // that varies: an h2c STREAM RESET was measured pushing EOF with no 'aborted' at
-                // all, resolving a truncated upload as a successful read, while a session destroy
-                // on the same transport rejected correctly. This package supports node >=22, so
-                // which answer an operator gets would otherwise depend on their runtime. Proven by
-                // removing the 'aborted' listener: the reset arm resolves 16384 of 100000 bytes.
-                //
-                // A handler acting on a partial body it believes is whole is silent wrong data -
-                // worse than an error - so the short read is named as what it is.
+                // 'end' means the stream stopped, not that it delivered what it promised. The
+                // declared Content-Length is the only completeness fact here that does not depend
+                // on the platform: whether 'aborted' fires for a truncated body varies by
+                // transport and by Node version, so it cannot carry this guarantee alone.
                 if (declaredLength !== null && total < declaredLength)
                 {
                     reject(new BadRequestError('The request body was not fully received: '

@@ -74,20 +74,17 @@ const CSS_VALUE_BREAKOUT = /[\\{};<]/g;
 /**
  * Escapes one interpolated value so it cannot leave its declaration.
  *
- * `css` puts DATA into CSS SOURCE. Concatenated raw, a value containing `}` closes the
- * declaration and the rule and opens new ones, injecting live rules - a `url()` is a network
- * request, so that is an exfiltration channel, and attribute selectors make it a
- * character-at-a-time one. It never has to leave the style element, so the `</style` breakout
- * guard downstream never sees it; and the registered text feeds BOTH the server prelude and the
- * client stylesheet, so the escape belongs here rather than at either consumer.
+ * An interpolation is a VALUE, not CSS source: concatenated raw, one containing `}` closes the
+ * rule and opens new ones, and a `url()` in an injected rule is a network request. The payload
+ * never leaves the style element, so the `</style` guard downstream cannot see it, and the
+ * registered text feeds both the server prelude and the client stylesheet - hence the escape
+ * belongs here rather than at either consumer.
  *
- * CSS hex escapes rather than stripping, because they are FAITHFUL where the value is legitimate:
- * inside a quoted string the escape still renders the character, so a value carrying one of these
- * keeps its meaning while losing its structure. The trailing space terminates the escape so a
- * following hex digit is not swallowed into it.
+ * Hex escapes rather than stripping: inside a quoted string the escape still renders the
+ * character, so a legitimate value keeps its meaning while losing its structure. The trailing
+ * space terminates the escape so a following hex digit is not swallowed into it.
  *
- * An interpolation is a VALUE, not CSS source. Compose rule text with a `style { }` section or a
- * CSS import, which are parsed as CSS rather than spliced into it.
+ * Compose rule text with a `style { }` section or a CSS import, not by splicing.
  */
 function escapeCssValue(value: string): string
 {
