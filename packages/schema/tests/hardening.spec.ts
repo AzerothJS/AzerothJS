@@ -186,6 +186,37 @@ describe('prototype safety', () =>
         expect(plain['constructor']).toBeUndefined();
     });
 
+    // object() shares record()'s null prototype, and the CONSEQUENCE is part of its documented
+    // contract rather than an implementation detail: a caller that interpolates a parsed value
+    // into a string gets a TypeError, not a description. Pinned so the docblock cannot drift
+    // from the behaviour, and so removing the null prototype is a loud change and not a quiet one.
+    it('a parsed object has a null prototype, and stringifying one throws rather than answers', () =>
+    {
+        const parsed = object({ name: string() }).parse({ name: 'ok' });
+        expect(Object.getPrototypeOf(parsed)).toBe(null);
+
+        // What still works, and is the overwhelmingly common way a parsed value is consumed.
+        expect(parsed.name).toBe('ok');
+        expect(Object.keys(parsed)).toEqual(['name']);
+        expect(JSON.stringify(parsed)).toBe('{"name":"ok"}');
+        expect({ ...parsed }).toEqual({ name: 'ok' });
+
+        // What does not, which is the half worth documenting. Each rule below is disabled for
+        // the same reason: they all assume a value that INHERITS Object.prototype, and the
+        // whole point of these lines is that this one does not - lint predicts
+        // '[object Object]', the runtime throws, and the arm pins the runtime.
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string -- see above
+        expect(() => String(parsed)).toThrow(TypeError);
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string, @typescript-eslint/restrict-template-expressions -- see above
+        expect(() => `${ parsed }`).toThrow(TypeError);
+        expect(() => (parsed as { toString(): string }).toString()).toThrow(TypeError);
+        // eslint-disable-next-line no-prototype-builtins -- calling it on the instance IS the probe: it throws, it does not answer
+        expect(() => (parsed as unknown as { hasOwnProperty(k: string): boolean }).hasOwnProperty('name')).toThrow(TypeError);
+
+        // The escape hatch the docblock points at.
+        expect(Object.prototype.hasOwnProperty.call(parsed, 'name')).toBe(true);
+    });
+
     it('record() strips an own __proto__ key, so a validated body is safe to merge', () =>
     {
         const schema = record(record(string()));

@@ -875,6 +875,15 @@ type Reify<T> = { [K in keyof T]: T[K] };
  * mass-assignment payload dies here); a missing required key fails THROUGH the field's own
  * schema (so its `codes` override governs the 'required' issue), and every per-field failure
  * is reported under its dot path, in field-declaration order.
+ *
+ * The parsed value has a NULL prototype, for the reason {@link record} does: a declared
+ * `__proto__` field would otherwise hit the prototype setter instead of defining a key. That is
+ * visible to consumers, so it is stated here rather than left to be discovered - the parsed
+ * object inherits NO instance methods, and `String(parsed)`, a template interpolation,
+ * `parsed.toString()` and `parsed.hasOwnProperty(k)` all throw TypeError rather than answer.
+ * Own-key reads, `Object.keys`/`entries`, spreads and `JSON.stringify` work as usual; where a
+ * prototype method is wanted, call it statically -
+ * `Object.prototype.hasOwnProperty.call(parsed, k)` - or copy into `{ ...parsed }`.
  */
 export function object<Shape extends Record<string, Schema<unknown>>>(shape: Shape, overrides?: RuleOverrides): Schema<ShapeType<Shape>>
 {
