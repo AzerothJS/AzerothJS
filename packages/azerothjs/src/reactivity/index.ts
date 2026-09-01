@@ -43,7 +43,7 @@ export type { ResourceOptions } from './create-resource.ts';
 export { createStream } from './create-stream.ts';
 export { cached, revalidate } from './data-cache.ts';
 export { createMutation } from './create-mutation.ts';
-export type { Mutation, MutationOptions, MutationResult, PatchFn } from './create-mutation.ts';
+export type { Mutation, MutationOptions, MutationPolicy, MutationResult, PatchFn } from './create-mutation.ts';
 export type { CachedFetcher, CachedOptions } from './data-cache.ts';
 
 // Error handling.

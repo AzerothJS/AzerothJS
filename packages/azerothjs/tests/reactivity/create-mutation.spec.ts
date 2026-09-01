@@ -423,3 +423,359 @@ describe('createMutation: invalidation', () =>
         });
     });
 });
+
+describe('createMutation: cancellation', () =>
+{
+    /** A cart whose write is slow enough to be cancelled mid-flight, and honours its signal. */
+    function slowCart(name: string, ms = 60)
+    {
+        const state = server();
+        const getCart = cached(name, async (): Promise<Cart> =>
+        {
+            state.loads += 1;
+            await wait(10);
+            return { count: state.cart.count };
+        });
+        const seenSignals: AbortSignal[] = [];
+        const add = createMutation(async (_input: undefined, signal: AbortSignal) =>
+        {
+            seenSignals.push(signal);
+            await new Promise<void>((resolve, reject) =>
+            {
+                const timer = setTimeout(resolve, ms);
+                signal.addEventListener('abort', () =>
+                {
+                    clearTimeout(timer);
+                    reject(new Error('aborted'));
+                }, { once: true });
+            });
+            state.cart = { count: state.cart.count + 1 };
+        }, {
+            optimistic: (_input, patch) =>
+            {
+                patch(getCart, (cart: Cart) => ({ count: cart.count + 1 }));
+            }
+        });
+        return { state, getCart, add, seenSignals };
+    }
+
+    it('withdraws the guess, aborts the request, and does not report a failure', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, seenSignals } = slowCart('cancel-basic');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const running = add.run(undefined);
+            await flush();
+            expect(cart.data()?.count).toBe(1);
+            expect(add.pending()).toBe(true);
+
+            add.cancel();
+            const outcome = await running;
+
+            expect(outcome).toMatchObject({ ok: false, cancelled: true });
+            // The write's own signal aborted, so the request stops rather than running on.
+            expect(seenSignals[0]?.aborted).toBe(true);
+            expect(add.pending()).toBe(false);
+            // A cancel is the user's own doing: nothing to show them.
+            expect(add.error()).toBeNull();
+
+            await wait(60);
+            // The guess is withdrawn and the server never moved.
+            expect(cart.data()?.count).toBe(0);
+            expect(state.cart.count).toBe(0);
+            dispose();
+        });
+    });
+
+    it('still revalidates, because aborting cannot un-do a write already committed', async () =>
+    {
+        resetDataCache();
+        const state = server();
+        const getCart = cached('cancel-revalidate', async (): Promise<Cart> =>
+        {
+            state.loads += 1;
+            await wait(10);
+            return { count: state.cart.count };
+        });
+        // Ignores its signal and commits anyway - the case a cancel cannot actually prevent.
+        const add = createMutation(async () =>
+        {
+            await wait(30);
+            state.cart = { count: state.cart.count + 5 };
+        }, {
+            optimistic: (_input, patch) =>
+            {
+                patch(getCart, (cart: Cart) => ({ count: cart.count + 1 }));
+            }
+        });
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+            const loadsBefore = state.loads;
+
+            const running = add.run(undefined);
+            await flush();
+            add.cancel();
+            expect(await running).toMatchObject({ ok: false, cancelled: true });
+
+            await wait(80);
+            // Refetched, so the screen shows what the server really did rather than the
+            // pre-cancel number it no longer has any claim to.
+            expect(state.loads).toBeGreaterThan(loadsBefore);
+            expect(cart.data()?.count).toBe(5);
+            dispose();
+        });
+    });
+
+    it('cancels only what it is asked to: one run, or all of them', async () =>
+    {
+        resetDataCache();
+        const { getCart, add, state } = slowCart('cancel-scoped', 80);
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const first = new AbortController();
+            const cancelled = add.run(undefined, { signal: first.signal });
+            const survivor = add.run(undefined);
+            await flush();
+            expect(cart.data()?.count).toBe(2);
+
+            first.abort();
+            expect(await cancelled).toMatchObject({ ok: false, cancelled: true });
+            await flush();
+            // Exactly one guess withdrawn; the other run is untouched and still in flight.
+            expect(cart.data()?.count).toBe(1);
+            expect(add.pending()).toBe(true);
+
+            expect(await survivor).toMatchObject({ ok: true });
+            await wait(80);
+            expect(state.cart.count).toBe(1);
+            expect(add.pending()).toBe(false);
+            dispose();
+        });
+    });
+
+    it('a signal already aborted never reaches the server', async () =>
+    {
+        resetDataCache();
+        const write = vi.fn(async () => undefined);
+        const add = createMutation(write);
+        const aborted = AbortSignal.abort();
+
+        await createRoot(async (dispose) =>
+        {
+            const outcome = await add.run(undefined, { signal: aborted });
+            expect(outcome).toMatchObject({ ok: false, cancelled: true });
+            // Not merely handed a dead signal: never called. A round trip nobody is waiting for
+            // is one the server should not be asked to make.
+            expect(write).not.toHaveBeenCalled();
+            expect(add.pending()).toBe(false);
+            dispose();
+        });
+    });
+
+    it('CONTROL: an uncancelled run is unaffected by cancellation existing', async () =>
+    {
+        resetDataCache();
+        const { getCart, add, state } = slowCart('cancel-control', 20);
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+            expect(await add.run(undefined)).toMatchObject({ ok: true });
+            await wait(60);
+            expect(cart.data()?.count).toBe(1);
+            expect(state.cart.count).toBe(1);
+            expect(add.error()).toBeNull();
+            dispose();
+        });
+    });
+});
+
+describe('createMutation: concurrency policies', () =>
+{
+    /**
+     * A counter whose write records the ORDER the server saw, and whose duration is per call -
+     * so a test can make the second run finish first and see which policy notices.
+     */
+    function ordered(name: string, policy?: 'parallel' | 'drop' | 'restart' | 'queue')
+    {
+        const state = server();
+        const served: string[] = [];
+        const getCart = cached(name, async (): Promise<Cart> =>
+        {
+            state.loads += 1;
+            await wait(10);
+            return { count: state.cart.count };
+        });
+        const add = createMutation(async (input: { tag: string; ms: number }, signal: AbortSignal) =>
+        {
+            await new Promise<void>((resolve, reject) =>
+            {
+                const timer = setTimeout(resolve, input.ms);
+                signal.addEventListener('abort', () =>
+                {
+                    clearTimeout(timer);
+                    reject(new Error('aborted'));
+                }, { once: true });
+            });
+            served.push(input.tag);
+            state.cart = { count: state.cart.count + 1 };
+        }, {
+            optimistic: (_input, patch) =>
+            {
+                patch(getCart, (cart: Cart) => ({ count: cart.count + 1 }));
+            },
+            ...(policy !== undefined ? { policy } : {})
+        });
+        return { state, getCart, add, served };
+    }
+
+    it('parallel (the default) lets both through and stacks their guesses', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, served } = ordered('policy-parallel');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const slow = add.run({ tag: 'first', ms: 60 });
+            const fast = add.run({ tag: 'second', ms: 15 });
+            await flush();
+            expect(cart.data()?.count).toBe(2);
+
+            expect(await fast).toMatchObject({ ok: true });
+            expect(await slow).toMatchObject({ ok: true });
+            await wait(60);
+            expect(state.cart.count).toBe(2);
+            // Both reached the server, in whatever order they finished.
+            expect([...served].sort()).toEqual(['first', 'second']);
+            dispose();
+        });
+    });
+
+    it('drop refuses the second outright: no guess, no request', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, served } = ordered('policy-drop', 'drop');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const first = add.run({ tag: 'first', ms: 40 });
+            await flush();
+            expect(cart.data()?.count).toBe(1);
+
+            const second = await add.run({ tag: 'second', ms: 40 });
+            expect(second).toMatchObject({ ok: false, cancelled: true });
+            // The refused run left NO trace: a guess applied and withdrawn would flicker.
+            expect(cart.data()?.count).toBe(1);
+
+            expect(await first).toMatchObject({ ok: true });
+            await wait(60);
+            expect(served).toEqual(['first']);
+            expect(state.cart.count).toBe(1);
+            // And a run after the first settles is accepted again.
+            expect(await add.run({ tag: 'third', ms: 5 })).toMatchObject({ ok: true });
+            dispose();
+        });
+    });
+
+    it('restart cancels what is in flight and lets the newcomer through', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, served } = ordered('policy-restart', 'restart');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const superseded = add.run({ tag: 'first', ms: 60 });
+            await flush();
+            expect(cart.data()?.count).toBe(1);
+
+            const winner = add.run({ tag: 'second', ms: 20 });
+            expect(await superseded).toMatchObject({ ok: false, cancelled: true });
+            await flush();
+            // The superseded guess is gone and only the newcomer's remains.
+            expect(cart.data()?.count).toBe(1);
+
+            expect(await winner).toMatchObject({ ok: true });
+            await wait(80);
+            // Only the last input reached the server.
+            expect(served).toEqual(['second']);
+            expect(state.cart.count).toBe(1);
+            dispose();
+        });
+    });
+
+    it('queue serves them in CALL order however the network reorders them', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, served } = ordered('policy-queue', 'queue');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            // The second would finish far sooner if both ran at once - under parallel the
+            // server sees 'second' first, which is exactly what this policy exists to prevent.
+            const first = add.run({ tag: 'first', ms: 50 });
+            const second = add.run({ tag: 'second', ms: 5 });
+            await flush();
+            // Both guesses are on screen at once; only the writes are serialized.
+            expect(cart.data()?.count).toBe(2);
+
+            expect(await first).toMatchObject({ ok: true });
+            expect(await second).toMatchObject({ ok: true });
+            expect(served).toEqual(['first', 'second']);
+            await wait(60);
+            expect(state.cart.count).toBe(2);
+            dispose();
+        });
+    });
+
+    it('a queued run cancelled before its turn never reaches the server', async () =>
+    {
+        resetDataCache();
+        const { state, getCart, add, served } = ordered('policy-queue-cancel', 'queue');
+
+        await createRoot(async (dispose) =>
+        {
+            const cart = createResource(getCart);
+            await wait(40);
+
+            const first = add.run({ tag: 'first', ms: 50 });
+            const waiting = new AbortController();
+            const second = add.run({ tag: 'second', ms: 5 }, { signal: waiting.signal });
+            await flush();
+            expect(cart.data()?.count).toBe(2);
+
+            waiting.abort();
+            expect(await second).toMatchObject({ ok: false, cancelled: true });
+            expect(await first).toMatchObject({ ok: true });
+            await wait(80);
+
+            expect(served).toEqual(['first']);
+            expect(state.cart.count).toBe(1);
+            dispose();
+        });
+    });
+});

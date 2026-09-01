@@ -474,6 +474,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   stripped before the action sees the form. Give `mountPages` the same `csrf` options you gave
   `csrfCookie`; the defaults agree, and a mismatch fails closed.
 
+- **Mutations can be cancelled, and can say what overlapping runs do.** `run(input, { signal })`
+  cancels one run and `mutation.cancel()` abandons every run in flight; the write now receives
+  the signal as its second argument, so it can stop the request itself. A run whose signal is
+  already aborted never calls the write at all.
+
+  A cancel withdraws that run's optimistic guess, drops `pending()`, leaves `error()` alone -
+  a cancel is not a failure to show anyone - and answers `{ ok: false, cancelled: true }`. Other
+  runs keep their own guesses. The invalidation STILL runs: aborting a request cannot un-do a
+  write a server may already have committed, so dropping the guess without refetching would
+  leave the screen asserting a past it no longer knows. Disposing the surrounding scope does
+  not cancel, because a click that starts a write should finish even if the component does not.
+
+  `policy` decides what a second run does while one is in flight: `parallel` (the default, and
+  what this did before the option existed), `drop` (refused before anything happens - the
+  double-submit guard), `restart` (the runs in flight are cancelled and the newcomer takes
+  over) and `queue` (the guess applies at once; the writes run one at a time in CALL order,
+  for writes that do not commute). Each is deterministic under overlap: the ordering comes
+  from when `run` was called, not from which request answered first.
+
 - **A form can submit to a mutation.** `createForm`'s `onSubmit` now accepts a
   `Mutation` as well as a function. One option, two kinds of target: a mutation is what a form
   submits to, not a second form system.

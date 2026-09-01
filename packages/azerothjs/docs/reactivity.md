@@ -124,6 +124,52 @@ What the mutation guarantees:
   fire-and-forget `onClick` cannot become an unhandled rejection. Misuse (patching something
   that is not a `cached` fetcher) still throws, because that is a bug rather than a refusal.
 
+### Cancelling
+
+`run(input, { signal })` cancels one run; `mutation.cancel()` abandons every run in flight.
+The write receives the signal as its second argument, so it can stop the request itself.
+
+What a cancel means, exactly:
+
+| | |
+| --- | --- |
+| the request | its signal aborts; an already-aborted run never calls the write at all |
+| the optimistic guess | withdrawn |
+| `pending()` | falls as the run leaves flight |
+| `error()` | untouched - a cancel is not a failure to show anyone |
+| the result | `{ ok: false, cancelled: true }` |
+| other runs | untouched; a guess belongs to one run |
+| invalidation | still runs |
+
+That last row is the one worth reading twice. Aborting a request cannot un-do a write a
+server may already have committed, so the only honest move left is to go and look. Dropping
+the guess without refetching would leave the screen asserting a past it no longer knows.
+
+Disposing the surrounding scope does NOT cancel: a click that starts a write should finish
+even if the component that started it goes away.
+
+### Concurrency
+
+`policy` decides what happens when a run starts while another is in flight. Every one of
+them is deterministic under overlap - the ordering comes from when `run` was called, never
+from which request happened to answer first.
+
+| policy | a second run while one is in flight |
+| --- | --- |
+| `parallel` (default) | both proceed; guesses stack; each settles on its own |
+| `drop` | refused before anything happens: no guess, no request. The double-submit guard |
+| `restart` | the runs in flight are cancelled and the newcomer takes over. Search-as-you-type, autosave |
+| `queue` | the guess applies at once; the writes run one at a time in CALL order |
+
+```ts
+const saveDraft = createMutation(
+    (draft: Draft, signal: AbortSignal) => api.drafts.save(draft, { signal }),
+    { policy: 'restart' });   // only the last keystroke matters
+```
+
+A dropped run reports `{ ok: false, cancelled: true }` too: it did not happen, which is all a
+caller needs to know, and there is nothing to show the user either way.
+
 Two things it does not do. A patch projection must be PURE: it re-runs on every read and on
 every other run's failure. And guesses stack in CALL order while a server applies writes in
 COMPLETION order, so two concurrent writes that do not commute can disagree until the
