@@ -68,11 +68,20 @@ const fetchHandler = toFetchHandler(handler);
 // occupied port look like a broken framework contract - with a squatter on the old fixed port,
 // every check below fetched the SQUATTER and reported false.
 const isDeno = typeof Deno !== 'undefined';
-const server = isDeno
-    ? Deno.serve({ port: 0, onListen: () => undefined }, fetchHandler)
-    : Bun.serve({ port: 0, fetch: fetchHandler });
-
-const port = isDeno ? server.addr.port : server.port;
+// A client REFUSES the unsafe-port list even though the OS will happily bind one for port 0,
+// so an unlucky allocation makes every check below fail as if the contract were broken.
+const BLOCKED = new Set([1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080]);
+let server;
+let port;
+for (let attempt = 0; attempt < 8; attempt++)
+{
+    server = isDeno
+        ? Deno.serve({ port: 0, onListen: () => undefined }, fetchHandler)
+        : Bun.serve({ port: 0, fetch: fetchHandler });
+    port = isDeno ? server.addr.port : server.port;
+    if (!BLOCKED.has(port)) { break; }
+    await (isDeno ? server.shutdown() : server.stop(true));
+}
 const base = 'http://localhost:' + port;
 const out = {};
 let r = await fetch(base + '/healthz');

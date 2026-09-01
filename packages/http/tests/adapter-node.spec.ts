@@ -13,10 +13,14 @@ import { App } from '../src/app.ts';
 import { json, text, noContent } from '../src/respond.ts';
 import { readJson } from '../src/body.ts';
 import { serve, serveH2c, toWebRequest, type Served } from '../src/adapter-node.ts';
+import { bindReachable } from './support/ports.ts';
 
 async function withServer(app: App, run: (base: string, served: Served) => Promise<void>): Promise<void>
 {
-    const served = await serve(app);
+    const served = await bindReachable(
+        () => serve(app),
+        (bound) => bound.port,
+        (bound) => bound.shutdown({ gracePeriodMs: 0 }));
     try
     {
         await run(`http://127.0.0.1:${ served.port }`, served);
@@ -172,7 +176,10 @@ describe('graceful shutdown', () =>
             await new Promise((r) => setTimeout(r, 120));
             return text('done');
         });
-        const served = await serve(app);
+        const served = await bindReachable(
+            () => serve(app),
+            (bound) => bound.port,
+            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
         const base = `http://127.0.0.1:${ served.port }`;
 
         const inFlight = fetch(`${ base }/work`);
@@ -203,7 +210,10 @@ describe('graceful shutdown', () =>
             arrived();
             return new Promise<Response>(() => undefined); // never resolves
         });
-        const served = await serve(app);
+        const served = await bindReachable(
+            () => serve(app),
+            (bound) => bound.port,
+            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
         const base = `http://127.0.0.1:${ served.port }`;
 
         void fetch(`${ base }/stuck`).catch(() => null);
@@ -334,7 +344,10 @@ describe('post-listen server errors', () =>
     {
         const app = new App();
         app.get('/ping', () => text('ok'));
-        const served = await serve(app);
+        const served = await bindReachable(
+            () => serve(app),
+            (bound) => bound.port,
+            (bound) => bound.shutdown({ gracePeriodMs: 0 }));
         try
         {
             // Accept-time failures (fd pressure) surface as 'error' on the listening server.
