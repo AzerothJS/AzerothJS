@@ -64,6 +64,37 @@ const registeredCss = new Map<string, string>();
 export type ScopedClasses = Record<string, string>;
 
 /**
+ * The characters by which an interpolated VALUE could stop being a value: the block braces, the
+ * declaration terminator, the backslash that would otherwise consume the escapes below, and `<`
+ * as defence in depth for the `</style` case, so this guarantee does not depend on a later HTML
+ * pass. Everything else is left exactly as written.
+ */
+const CSS_VALUE_BREAKOUT = /[\\{};<]/g;
+
+/**
+ * Escapes one interpolated value so it cannot leave its declaration.
+ *
+ * `css` puts DATA into CSS SOURCE. Concatenated raw, a value containing `}` closes the
+ * declaration and the rule and opens new ones, injecting live rules - a `url()` is a network
+ * request, so that is an exfiltration channel, and attribute selectors make it a
+ * character-at-a-time one. It never has to leave the style element, so the `</style` breakout
+ * guard downstream never sees it; and the registered text feeds BOTH the server prelude and the
+ * client stylesheet, so the escape belongs here rather than at either consumer.
+ *
+ * CSS hex escapes rather than stripping, because they are FAITHFUL where the value is legitimate:
+ * inside a quoted string the escape still renders the character, so a value carrying one of these
+ * keeps its meaning while losing its structure. The trailing space terminates the escape so a
+ * following hex digit is not swallowed into it.
+ *
+ * An interpolation is a VALUE, not CSS source. Compose rule text with a `style { }` section or a
+ * CSS import, which are parsed as CSS rather than spliced into it.
+ */
+function escapeCssValue(value: string): string
+{
+    return value.replace(CSS_VALUE_BREAKOUT, (char) => '\\' + (char.codePointAt(0) ?? 0).toString(16) + ' ');
+}
+
+/**
  * Component-scoped styles from a tagged template or a plain string. The rules are hashed and
  * rewritten into a unique scope, recorded once, and a map from base to scoped class name is
  * returned.
@@ -94,9 +125,12 @@ export type ScopedClasses = Record<string, string>;
  */
 export function css(strings: TemplateStringsArray | string, ...values: unknown[]): ScopedClasses
 {
+    // The template PARTS are the author's own CSS source; the VALUES are data, and are escaped.
+    // A plain-string call is entirely author source and is left alone - there is no author/data
+    // split to draw in it.
     const raw = typeof strings === 'string'
         ? strings
-        : strings.reduce((acc, part, i) => acc + part + (i < values.length ? String(values[i]) : ''), '');
+        : strings.reduce((acc, part, i) => acc + part + (i < values.length ? escapeCssValue(String(values[i])) : ''), '');
 
     // A missing key returns the key itself, so a typo degrades to a no-op class.
     return new Proxy(register(raw, true), {

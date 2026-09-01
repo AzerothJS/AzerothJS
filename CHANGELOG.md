@@ -12,6 +12,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A value interpolated into `css` could write its own CSS rules.** The template parts are the
+  author's CSS, but the interpolated values are data, and they were concatenated in raw. A value
+  containing a closing brace ended its declaration and its rule and opened new ones; a value
+  containing a semicolon added a declaration to the rule it sat in. Neither has to leave the
+  style element, so the `</style` breakout guard downstream never examined them, and because the
+  registered text is what both the server prelude and the client stylesheet are built from, the
+  injected rules reached both. This is an exfiltration channel rather than a cosmetic problem: a
+  `url()` is a network request, and attribute selectors turn it into a character-at-a-time read of
+  form values. Confirmed in a browser - unescaped, the page held three rules instead of one and
+  Chromium issued the request; escaped, one rule and no request.
+
+  Interpolated values are now CSS-escaped at the point they enter the source. The escape is
+  faithful rather than destructive: inside a quoted string it still renders the original
+  character, so a legitimate value keeps its meaning while losing its structure. A hostile value
+  additionally invalidates the one declaration it was written into, which is the intended
+  degradation - the page loses a colour rather than gaining an attacker rule. A plain-string call
+  is entirely author source and is unchanged, as is a `style { }` section. An interpolation is a
+  VALUE, not CSS source; compose rule text with a `style { }` section or a CSS import.
+
 - **A cached page could carry the identity of whichever visitor happened to render it.** Both
   paths that produce a SHARED page - the cold-miss render and the background revalidation - ran
   inside the triggering visitor's request scope, so any request-scoped read during that render

