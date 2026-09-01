@@ -6,7 +6,7 @@
 // the client render something the server did not, and a route tree mismatch is not cosmetic:
 // the pass throws and the whole page falls back to a client render.
 import { describe, it, expect, vi } from 'vitest';
-import { createRouter, createMemoryHistory, h, hydrate, matchAndLoad, renderToString, Routes, Outlet, useLoader } from 'azerothjs';
+import { createRouter, createMemoryHistory, h, hydrate, isNotFound, matchAndLoad, notFound, renderToString, Routes, Outlet, useLoader } from 'azerothjs';
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -26,9 +26,15 @@ const Leaf = (): MountNode =>
 {
     const item = useLoader<string>();
     return h('section', { id: 'leaf' }, () =>
-        (item.error() !== null
+    {
+        if (isNotFound(item.error()))
+        {
+            return h('p', { id: 'missing' }, 'NO SUCH ITEM');
+        }
+        return item.error() !== null
             ? h('p', { id: 'failed' }, 'COULD NOT LOAD')
-            : h('p', { id: 'loaded' }, item.data() ?? '')));
+            : h('p', { id: 'loaded' }, item.data() ?? '');
+    });
 };
 
 /** Counts every call, so "the client refetched" is observable rather than assumed. */
@@ -47,6 +53,11 @@ const routes: Route[] = [{
             if (params.id === 'broken')
             {
                 throw new Error('database is down');
+            }
+            if (params.id === 'gone')
+            {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw notFound();
             }
             return `ITEM ${ params.id }`;
         }
@@ -92,6 +103,31 @@ describe('hydrating a server-side loader failure', () =>
         // The failure is the level's own, readable by its component.
         expect(clientRouter.loaders[1]?.error()).toBeInstanceOf(Error);
         // And the client did not quietly re-run the loader that just failed.
+        expect(leafLoads).not.toHaveBeenCalled();
+    });
+
+    it('a declared not-found adopts as the SENTINEL, so isNotFound answers the same both sides', async () =>
+    {
+        const url = '/shop/item/gone';
+        const handoff = await matchAndLoad(routes, url) as LoaderHandoff;
+        expect(handoff.missing).toEqual([1]);
+
+        const serverRouter = createRouter({ routes, history: createMemoryHistory(url), initialLoaderData: overTheWire(handoff) });
+        const container = document.createElement('div');
+        container.innerHTML = renderToString(() => h('div', { id: 'app' }, Routes({ router: serverRouter })));
+        document.body.appendChild(container);
+        expect(container.querySelector('#missing')).not.toBeNull();
+        const serverMissing = container.querySelector('#missing');
+
+        leafLoads.mockClear();
+        const clientRouter = createRouter({ routes, history: createMemoryHistory(url), initialLoaderData: overTheWire(handoff) });
+        hydrate(() => h('div', { id: 'app' }, Routes({ router: clientRouter })), container);
+        await flush();
+
+        expect(container.querySelector('#missing')).toBe(serverMissing);
+        // The sentinel itself, rebuilt: a generic error would take the wrong branch.
+        expect(isNotFound(clientRouter.loaders[1]?.error())).toBe(true);
+        expect(container.querySelector('#failed')).toBeNull();
         expect(leafLoads).not.toHaveBeenCalled();
     });
 

@@ -47,9 +47,9 @@ import { latchServerData } from '../reactivity/data-cache.ts';
  * renderer never confuses "authorized, nothing to load" with "a guard said no":
  *
  *   - `LoaderHandoff`                    - matched, loaders ran; render and embed the data. A
- *                                          level whose loader REJECTED is listed in `failed`:
- *                                          the page still renders, that level shows its own
- *                                          failure UI, and the host answers 500.
+ *                                          level whose loader REJECTED is listed in `failed`
+ *                                          (500) or `missing` (a declared not-found, 404): the
+ *                                          page still renders and that level shows its own UI.
  *   - `{ redirect, replace }`            - a guard or loader redirected; answer with a 302.
  *   - `{ blocked: true, status }`        - a guard VETOED (`false`, `unauthorized()` or
  *                                          `forbidden()`); the route MUST NOT render. Answer
@@ -296,6 +296,7 @@ export async function matchAndLoad(
         // settlement order, so which outcome wins is a property of the route tree and not of
         // which upstream happened to answer first.
         const failed: number[] = [];
+        const missing: number[] = [];
         for (let level = 0; level < settlements.length; level++)
         {
             const settlement = settlements[level];
@@ -304,28 +305,38 @@ export async function matchAndLoad(
                 continue;
             }
             const error: unknown = settlement.reason;
+            // A redirect is a decision about the whole NAVIGATION, so it still ends it here.
             if (isRedirect(error))
             {
                 return redirectOutcome(error.to, error.replace);
             }
-            if (isNotFound(error))
-            {
-                return { notFound: true };
-            }
-            failed.push(level);
+            // A declared not-found is not: it says this LEVEL's content is missing, which is
+            // what the client has always made of it. Collapsing the chain gave the right status
+            // and the wrong page - the level rendered as if it had simply loaded nothing, so
+            // the `isNotFound(error())` branch its own component declares never ran, and every
+            // sibling level's data was discarded with it.
+            (isNotFound(error) ? missing : failed).push(level);
         }
 
         const data = settlements.map((settlement) =>
             (settlement.status === 'fulfilled' ? settlement.value : undefined));
 
-        if (failed.length === 0)
+        if (failed.length === 0 && missing.length === 0)
         {
             return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data };
+        }
+        const levels = {
+            ...(failed.length > 0 ? { failed } : {}),
+            ...(missing.length > 0 ? { missing } : {})
+        };
+        if (failed.length === 0)
+        {
+            return { version: LOADER_HANDOFF_VERSION, path: pathname + search, data, ...levels };
         }
         // The errors themselves ride a non-enumerable slot, for the HOST to report - never for
         // the wire, which carries WHICH level failed and not why.
         return withReasons(
-            { version: LOADER_HANDOFF_VERSION, path: pathname + search, data, failed },
+            { version: LOADER_HANDOFF_VERSION, path: pathname + search, data, ...levels },
             // Annotated: `PromiseRejectedResult.reason` is `any`, and a rejection reason is the
             // one value in this file that genuinely is unknown.
             failed.map((level): unknown => (settlements[level] as PromiseRejectedResult).reason));

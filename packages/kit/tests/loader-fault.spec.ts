@@ -7,7 +7,7 @@
 // mode and the entire page in the other. This pins the parity.
 import { describe, expect, it, vi } from 'vitest';
 
-import { Outlet, RouterProvider, Routes, createMemoryHistory, createRouter, h, useLoader } from 'azerothjs';
+import { Outlet, RouterProvider, Routes, createMemoryHistory, createRouter, h, isNotFound, notFound, useLoader } from 'azerothjs';
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
 
@@ -22,9 +22,15 @@ const Leaf = (): MountNode =>
 {
     const item = useLoader<string>();
     return h('div', { id: 'leaf' }, () =>
-        (item.error() !== null
+    {
+        if (isNotFound(item.error()))
+        {
+            return h('p', { id: 'leaf-missing' }, 'NO SUCH ITEM');
+        }
+        return item.error() !== null
             ? h('p', { id: 'leaf-error' }, 'THIS ITEM COULD NOT BE LOADED')
-            : h('p', { id: 'leaf-data' }, item.data() ?? '')));
+            : h('p', { id: 'leaf-data' }, item.data() ?? '');
+    });
 };
 
 const routes: Route[] = [{
@@ -39,6 +45,11 @@ const routes: Route[] = [{
             if (params.id === 'broken')
             {
                 throw new Error(INTERNALS);
+            }
+            if (params.id === 'gone')
+            {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw notFound();
             }
             return `ITEM ${ params.id }`;
         }
@@ -93,6 +104,26 @@ describe('a rejected loader through createPageRenderer', () =>
             const payload = /id="__azeroth-loader-handoff">([^<]*)</.exec(result.html)?.[1];
             expect(JSON.parse(payload as string)).toMatchObject({ failed: [1] });
         }
+    });
+
+    it("a DECLARED not-found is 404 with the level's own missing UI, not a fault", async () =>
+    {
+        const onError = vi.fn();
+        const result = await render('/shop/item/gone', SHELL, { onError });
+
+        // 404, not 500, and not the error arm: nothing failed, the content is absent.
+        expect(result.kind).toBe('html');
+        if (result.kind === 'html')
+        {
+            expect(result.status).toBe(404);
+            expect(result.html).toContain('id="layout"');
+            // The branch the level's own component writes, taken on the SERVER too - it used to
+            // run only after a client navigation, because the chain collapsed before rendering.
+            expect(result.html).toContain('NO SUCH ITEM');
+            expect(result.html).not.toContain('THIS ITEM COULD NOT BE LOADED');
+        }
+        // A declared not-found is an answer, not a failure: nothing to report to an operator.
+        expect(onError).not.toHaveBeenCalled();
     });
 
     it('a healthy sibling is untouched: 200, data rendered, nothing reported', async () =>

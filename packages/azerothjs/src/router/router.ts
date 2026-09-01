@@ -60,6 +60,7 @@ import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } 
 import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
 import { currentRenderDenial, deniedStatus, isDenied, seededDenial } from './denied.ts';
+import { notFound } from './not-found.ts';
 import { LOADER_HANDOFF_VERSION } from './handoff-wire.ts';
 import { declaredQuery, parseQuery, reportInvalidSearch, stringifyQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
@@ -1182,11 +1183,20 @@ function buildRouter(config: RouterConfig): Router
      * so the client's error is a generic one; the server logged the real fault.
      */
     const seedFailed = (level: number): boolean =>
-        adopt && Array.isArray(seed.failed) && seed.failed.includes(level);
+        adopt && (
+            (Array.isArray(seed.failed) && seed.failed.includes(level))
+            || (Array.isArray(seed.missing) && seed.missing.includes(level)));
 
-    /** The failure a seeded level reports. Built per level, so no two share an identity. */
-    const seededFailure = (): Error =>
-        new Error('This route\'s data could not be loaded on the server.');
+    /**
+     * The failure a seeded level reports. Built per level, so no two share an identity, and a
+     * declared not-found rebuilds the real SENTINEL - `isNotFound(error())` is the branch the
+     * level's component writes, and it has to answer the same on the server as it does after a
+     * client navigation. A fault gets a generic error: its reason never crossed the wire.
+     */
+    const seededFailure = (level: number): unknown =>
+        (adopt && Array.isArray(seed.missing) && seed.missing.includes(level)
+            ? notFound()
+            : new Error('This route\'s data could not be loaded on the server.'));
 
     // The raw search string, isolated so loaders can depend on it WITHOUT depending on the
     // whole location. `match` is deliberately query-blind (a structural memo over the matched
@@ -1548,7 +1558,7 @@ function buildRouter(config: RouterConfig): Router
             },
             brandedLoaderFetcher,
             seedFailed(level)
-                ? { initialError: seededFailure() }
+                ? { initialError: seededFailure(level) }
                 : adopt && (seed.data)[level] !== undefined
                     ? { initialValue: (seed.data)[level] }
                     : undefined

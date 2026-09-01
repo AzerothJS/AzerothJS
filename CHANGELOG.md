@@ -414,8 +414,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   (`phase: 'render'`) and answers a new `error` result kind, which every caching and prerender
   path already refuses by kind. Nothing about client-side navigation changes.
 
-- **The loader handoff wire format is now v4.** It carries the two new facts above -
-  `denied` and `failed`. A client reading an older server's payload ignores it and fetches
+- **A loader's `notFound()` now reaches the level's own UI on the server too. BREAKING for a
+  host that read the outcome.** The status was already right, and that hid the rest: a declared
+  not-found collapsed the whole chain, so the server answered 404 and rendered the level as
+  though it had simply loaded nothing. The `isNotFound(error())` branch the level's own
+  component writes ran only after a client navigation, and every sibling level's data was
+  discarded with it.
+
+  It is now a per-level state like a fault, listed in `missing` and answered 404. The client
+  rebuilds the real SENTINEL from it, so `isNotFound(error())` is true on the server exactly as
+  it is on the client. `matchAndLoad` therefore returns a handoff where it used to return
+  `{ notFound: true }` for this case; that outcome now means only what it always said it meant,
+  that no route matched. A redirect is unaffected: it is a decision about the whole navigation
+  and still ends the chain, by tree order rather than by which loader settled first.
+
+- **The loader handoff wire format is now v4.** It carries the three new facts above -
+  `denied`, `failed` and `missing`. A client reading an older server's payload ignores it and fetches
   normally, which is the existing skew behaviour. The version constant moved to its own module,
   because `router.ts` had the number written out as a literal: bumping the stamp alone would
   have made every client silently reject every handoff.

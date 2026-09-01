@@ -529,6 +529,14 @@ export interface LoaderHandoff
      * server rendered, and hydration matches.
      */
     failed?: number[];
+
+    /**
+     * The levels whose loader declared `notFound()`, root-to-leaf indices. Distinct from
+     * {@link failed} because the two are answered differently - 404 against 500 - and because
+     * the client rebuilds a not-found SENTINEL for these, so `isNotFound(error())` in the
+     * level's own component is true on the server exactly as it is after a client navigation.
+     */
+    missing?: number[];
 }
 
 /**

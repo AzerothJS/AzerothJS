@@ -301,7 +301,9 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         const denied = loaded !== null && 'blocked' in loaded ? loaded.status : null;
 
         // No route matched -> render the app's own fallback UI, but with a real 404 status.
-        const notFound = loaded !== null && 'notFound' in loaded;
+        // A level whose loader DECLARED not-found is the same status reached the other way: the
+        // chain renders and that level shows its own missing-content UI.
+        const notFound = loaded !== null && ('notFound' in loaded || 'missing' in loaded);
         const handoff = loaded !== null && 'version' in loaded ? loaded : undefined;
 
         // A level's loader REJECTED. The render still happens: every other level keeps the data

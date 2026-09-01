@@ -16,7 +16,7 @@ import {
     createRouter, createMemoryHistory,
     matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION,
     type LoaderHandoff,
-    notFound, isNotFound,
+    notFound, isNotFound, redirect,
     type Route, type Router
 } from 'azerothjs';
 
@@ -326,7 +326,12 @@ describe('a loader can declare not-found', () =>
                 throw notFound();
             }
         }];
-        expect(await matchAndLoad(routes, '/item/42')).toEqual({ notFound: true });
+        // The LEVEL is marked, not the whole chain: the SSR layer maps a missing level to 404
+        // and the level's own component takes its `isNotFound(error())` branch, which is what a
+        // client navigation has always done for the same throw.
+        const outcome = await matchAndLoad(routes, '/item/42') as LoaderHandoff;
+        expect(outcome.missing).toEqual([0]);
+        expect(outcome.failed).toBeUndefined();
     });
 
     // The discriminating half: a real failure must stay a failure, or every bug becomes a 404.
@@ -371,18 +376,20 @@ describe('a loader can declare not-found', () =>
         expect(outcome.data[1]).toBeUndefined();
     });
 
-    it('the FIRST failing level decides the outcome by tree order, not by which settled first', async () =>
+    it('a REDIRECT still ends the navigation, and by tree order rather than settlement order', async () =>
     {
-        // The leaf rejects immediately and the layout rejects late, so settlement order and
-        // tree order disagree - and a not-found from the ROOT must still win over a leaf fault.
+        // A redirect is the one loader outcome that is about the whole navigation rather than
+        // one level, so it still collapses the chain. The leaf rejects immediately and the
+        // layout redirects late, so settlement order and tree order disagree: the ROOT's
+        // redirect must win, or which page a user lands on depends on upstream latency.
         const routes: Route[] = [{
             path: '/shop',
             component: leaf,
             loader: async () =>
             {
                 await new Promise((resolve) => setTimeout(resolve, 20));
-                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
-                throw notFound();
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a redirect sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw redirect('/login');
             },
             children: [{
                 path: 'item/:id',
@@ -390,7 +397,27 @@ describe('a loader can declare not-found', () =>
                 loader: () => Promise.reject(new Error('leaf first'))
             }]
         }];
-        expect(await matchAndLoad(routes, '/shop/item/42')).toEqual({ notFound: true });
+        expect(await matchAndLoad(routes, '/shop/item/42')).toEqual({ redirect: '/login', replace: true });
+    });
+
+    it('a fault and a declared not-found in one chain are both recorded, and the fault decides the status', async () =>
+    {
+        const routes: Route[] = [{
+            path: '/shop',
+            component: leaf,
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a not-found sentinel is a branded value, not an Error: rejecting with it IS the documented API
+            loader: () => Promise.reject(notFound()),
+            children: [{
+                path: 'item/:id',
+                component: leaf,
+                loader: () => Promise.reject(new Error('database is down'))
+            }]
+        }];
+        const outcome = await matchAndLoad(routes, '/shop/item/42') as LoaderHandoff;
+        expect(outcome.missing).toEqual([0]);
+        expect(outcome.failed).toEqual([1]);
+        // Only the FAULT has a reason to report; a declared not-found is not a failure to log.
+        expect(loaderFailures(outcome)).toEqual([expect.objectContaining({ message: 'database is down' })]);
     });
 
     it('CONTROL: a loader that returns normally still hands off its data', async () =>
