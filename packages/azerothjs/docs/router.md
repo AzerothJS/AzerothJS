@@ -68,9 +68,9 @@ A layout places its nested content with `<Outlet>`:
 
 ```azeroth
 // users-layout.azeroth
-import { Outlet } from 'azerothjs';
+import { Outlet, type MountNode } from 'azerothjs';
 
-export default component UsersLayout(props: { children?: unknown })
+export default component UsersLayout(props: { children?: MountNode })
 {
     <section>
         <h1>Users</h1>

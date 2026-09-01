@@ -24,9 +24,13 @@ describe('examples/*.azeroth compile and type-check', () =>
     {
         it(`compiles ${ file }`, () =>
         {
-            const src = readFileSync(path.join(examplesDir, file), 'utf8');
+            const fileName = path.join(examplesDir, file);
+            const src = readFileSync(fileName, 'utf8');
             expect(() => generateModule(src)).not.toThrow();
-            expect(typeCheckModuleTS(src)).toEqual([]);
+            // The real path, not the default virtual one: module resolution walks UP from it, so
+            // `azerothjs` resolves and the imported types exist. Checked virtually, every
+            // cross-module error this guard is for resolves to `any` and the check passes empty.
+            expect(typeCheckModuleTS(src, { fileName })).toEqual([]);
         });
     }
 });
