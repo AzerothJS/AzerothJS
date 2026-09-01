@@ -19,7 +19,7 @@
  */
 
 import { withResponseHeaders, edge, type EdgeMiddleware } from './edge.ts';
-import { errorResponse, HttpError, TooManyRequestsError } from './errors.ts';
+import { HttpError, TooManyRequestsError } from './errors.ts';
 import { clientIp, ipBucket } from './client-ip.ts';
 
 /** The outcome of counting one request against a key. */
@@ -285,8 +285,13 @@ export interface RateLimitOptions
  * Rate limiting. Counts each request against its key; once a key exceeds `limit` within
  * `windowMs`, further requests are refused with 429 + Retry-After until the window resets.
  * Every response carries RateLimit-Limit / RateLimit-Remaining / RateLimit-Reset. A throwing
- * key or store fails CLOSED (a refusal, never a rejection): request-derived input and a store
- * outage must not become an unmetered lane or a process kill.
+ * key or store fails CLOSED - a refusal, never an unmetered lane.
+ *
+ * The refusal is THROWN, so the chain owner's error policy answers it: composed through
+ * `pipeline()`, a 429 carries the app's envelope, serializer and error observer, the same as a
+ * refusal raised inside the app. Every layer between the throw and the boundary still
+ * decorates the reply, and the adapter's own guard means a hand-composed chain still cannot
+ * turn a refusal into a process kill.
  */
 export function rateLimit(options: RateLimitOptions): EdgeMiddleware
 {
@@ -317,7 +322,11 @@ export function rateLimit(options: RateLimitOptions): EdgeMiddleware
             {
                 if (error instanceof HttpError)
                 {
-                    return errorResponse(error);
+                    // Thrown on, not answered here: a limiter that cannot key on a client
+                    // identity is a misconfiguration, and answering it privately meant the
+                    // 500 carried the default envelope and reached NO error observer - a
+                    // limiter that is doing nothing, failing completely silently.
+                    throw error;
                 }
                 decision = {
                     limited: true,
@@ -334,8 +343,14 @@ export function rateLimit(options: RateLimitOptions): EdgeMiddleware
 
             if (decision.limited)
             {
-                // Refuse WITHOUT running the app; Retry-After comes from the error itself.
-                return withResponseHeaders(errorResponse(new TooManyRequestsError(decision.resetSeconds)), headers);
+                // Refuse WITHOUT running the app, by THROWING: the chain owner's error policy
+                // answers, so the 429 carries the app's envelope, its serializer and its error
+                // observer, exactly as a refusal from inside the app would. Building the
+                // response here instead emitted the DEFAULT envelope - the one response on the
+                // wire without the app's `ok` field, which a client written against the
+                // documented shape reads as a SUCCESS. The limiter's own RateLimit-* headers
+                // ride the error, so nothing a returned Response carried is lost.
+                throw new TooManyRequestsError(decision.resetSeconds, 'Too many requests', { headers });
             }
             return withResponseHeaders(await next.handle(request), headers);
         }

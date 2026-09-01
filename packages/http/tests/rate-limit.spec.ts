@@ -6,7 +6,7 @@
 // say so through onSaturation.
 
 import { describe, it, expect, vi } from 'vitest';
-import { MemoryRateStore } from '@azerothjs/http';
+import { App, MemoryRateStore, json, pipeline, rateLimit } from '@azerothjs/http';
 
 const WINDOW = 60_000;
 
@@ -252,5 +252,69 @@ describe('MemoryRateStore eviction under saturation', () =>
         enforce(store, 'a', 1);
         enforce(store, 'b', 1);
         expect(store.hit('newcomer', 1, WINDOW).limited).toBe(true);
+    });
+});
+
+describe('a refusal is answered by the chain owner, not by the limiter', () =>
+{
+    /** An app with its OWN envelope and its own error observer - what a real deployment has. */
+    function appWithPolicy(): { app: App; seen: unknown[] }
+    {
+        const seen: unknown[] = [];
+        const app = new App({
+            onError: (error) =>
+            {
+                seen.push(error);
+            },
+            serializeError: ({ error, expose }) => ({ ok: false, code: error.code, message: expose ? error.message : 'error' })
+        });
+        app.get('/x', () => json({ ok: true }));
+        return { app, seen };
+    }
+
+    it("a 429 carries the app's envelope, its observer, and the limiter's headers", async () =>
+    {
+        const { app, seen } = appWithPolicy();
+        const handler = pipeline(app, rateLimit({ limit: 1, windowMs: 60_000, key: () => 'one' }));
+
+        const allowed = await handler.handle(new Request('http://local/x'));
+        expect(allowed.status).toBe(200);
+
+        const refused = await handler.handle(new Request('http://local/x'));
+        expect(refused.status).toBe(429);
+        // The envelope the app publishes - not the kernel default. A client written against
+        // the documented `ok` field read the default shape's undefined as a SUCCESS.
+        expect(await refused.json()).toEqual({ ok: false, code: 'too-many-requests', message: 'Too many requests' });
+        // The operator hears it.
+        expect(seen).toHaveLength(1);
+        // And nothing a returned Response carried is lost.
+        expect(refused.headers.get('retry-after')).not.toBeNull();
+        expect(refused.headers.get('ratelimit-limit')).toBe('1');
+        expect(refused.headers.get('ratelimit-remaining')).toBe('0');
+        expect(refused.headers.get('ratelimit-reset')).not.toBeNull();
+    });
+
+    it('a limiter with no client identity fails LOUDLY through the same policy', async () =>
+    {
+        const { app, seen } = appWithPolicy();
+        // No key function and no socket address: the limiter cannot key, which is a
+        // misconfiguration that used to answer 500 privately and reach nobody.
+        const handler = pipeline(app, rateLimit({ limit: 1, windowMs: 60_000 }));
+
+        const response = await handler.handle(new Request('http://local/x'));
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ ok: false, code: 'rate-limit-key-unavailable' });
+        expect(seen).toHaveLength(1);
+    });
+
+    it('an allowed request is untouched: the app answers and no error is observed', async () =>
+    {
+        const { app, seen } = appWithPolicy();
+        const handler = pipeline(app, rateLimit({ limit: 5, windowMs: 60_000, key: () => 'two' }));
+        const response = await handler.handle(new Request('http://local/x'));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true });
+        expect(response.headers.get('ratelimit-remaining')).toBe('4');
+        expect(seen).toHaveLength(0);
     });
 });

@@ -171,14 +171,21 @@ export class ValidationError extends HttpError
     }
 }
 
-/** 429: rate limited; `retryAfterSeconds` becomes the Retry-After header. */
+/**
+ * 429: rate limited; `retryAfterSeconds` becomes the Retry-After header. `options.headers`
+ * carries the limiter's own RateLimit-* set, so a refusal can be THROWN - and answered by the
+ * chain owner's error policy - without losing the headers a returned Response would have kept.
+ */
 export class TooManyRequestsError extends HttpError
 {
-    constructor(retryAfterSeconds?: number, message = 'Too many requests')
+    constructor(retryAfterSeconds?: number, message = 'Too many requests', options: { headers?: Record<string, string> } = {})
     {
-        super(429, message, retryAfterSeconds !== undefined
-            ? { headers: { 'retry-after': String(retryAfterSeconds) } }
-            : {});
+        super(429, message, {
+            headers: {
+                ...options.headers,
+                ...(retryAfterSeconds !== undefined ? { 'retry-after': String(retryAfterSeconds) } : {})
+            }
+        });
         this.name = 'TooManyRequestsError';
     }
 }
