@@ -21,6 +21,7 @@
  */
 
 import type { Getter } from '../reactivity/index.ts';
+import type { Mutation } from '../reactivity/create-mutation.ts';
 import {
     createSignal,
     createMemo,
@@ -164,11 +165,19 @@ export interface FormConfig<T extends object>
     asyncDebounceMs?: number | undefined;
 
     /**
-     * Called when the form passes validation on submit. May return a Promise -
-     * `submitting()` will be true for its duration, and any rejection populates
-     * `submitError()`.
+     * What the form submits to: a function, or a {@link Mutation}.
+     *
+     * A FUNCTION is called with the values snapshot. It may return a Promise - `submitting()`
+     * is true for its duration, and any rejection populates `submitError()`.
+     *
+     * A MUTATION is run with them, and the form reads its outcome: a refused write lands in
+     * `submitError()`, and any field errors the refusal carries land on the fields themselves.
+     * This is the one place the two meet - a mutation is what a form submits to, not a second
+     * form system - and it exists because the obvious hand-wiring is silently wrong:
+     * `onSubmit: (v) => m.run(v)` resolves even when the write was refused, because `run`
+     * answers rather than rejecting, so the form reports a success the server never gave.
      */
-    onSubmit?: (values: T) => void | Promise<void>;
+    onSubmit?: ((values: T) => void | Promise<void>) | Mutation<T, unknown>;
 }
 
 /**
@@ -844,7 +853,7 @@ export function createForm<T extends object>(
         let result: void | Promise<void>;
         try
         {
-            result = config.onSubmit(snapshot);
+            result = runSubmit(config.onSubmit, snapshot);
         }
         catch (err)
         {
@@ -871,6 +880,55 @@ export function createForm<T extends object>(
         }
     }
 
+    /**
+     * Lands a refusal's field map on the fields it names.
+     *
+     * Read STRUCTURALLY rather than through `@azerothjs/http`'s `applyFieldErrors`: the
+     * framework does not depend on the server package, and a form is handed refusals by
+     * whatever transport an application chose. The first path segment is the field, which is
+     * the same rule `applyFieldErrors` applies - duplicated across the package boundary by
+     * house precedent, as `RoutePathParams` duplicates the HTTP router's params typing.
+     */
+    function applyRefusedFields(error: unknown): void
+    {
+        const fields = (error as { fields?: unknown } | null)?.fields;
+        if (typeof fields !== 'object' || fields === null)
+        {
+            return;
+        }
+        const seen = new Set<string>();
+        for (const [path, message] of Object.entries(fields as Record<string, unknown>))
+        {
+            const field = path.split('.', 1)[0] ?? path;
+            if (field === '' || seen.has(field) || typeof message !== 'string')
+            {
+                continue;
+            }
+            seen.add(field);
+            setError(field as keyof T, message);
+        }
+    }
+
+    /**
+     * Runs whatever the form submits to. A mutation ANSWERS a refusal instead of rejecting, so
+     * its outcome has to be read; a function keeps its existing contract exactly.
+     */
+    function runSubmit(target: NonNullable<FormConfig<T>['onSubmit']>, snapshot: T): void | Promise<void>
+    {
+        if (typeof target === 'function')
+        {
+            return target(snapshot);
+        }
+        return target.run(snapshot).then((outcome) =>
+        {
+            if (!outcome.ok)
+            {
+                setSubmitError(() => outcome.error);
+                applyRefusedFields(outcome.error);
+            }
+        });
+    }
+
     // Tail of the async submit path: submitting() is already true and submitError
     // already cleared. Awaits onSubmit (sync or async) and clears submitting.
     async function finishSubmitAsync(snapshot: T): Promise<void>
@@ -882,7 +940,7 @@ export function createForm<T extends object>(
         }
         try
         {
-            await config.onSubmit(snapshot);
+            await runSubmit(config.onSubmit, snapshot);
         }
         catch (err)
         {

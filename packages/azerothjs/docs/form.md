@@ -127,6 +127,46 @@ form items[] = { description: '', qty: 1 } with {
 
 `with { initial: [...] }` seeds starting rows; the `= { ... }` shape is the blank a new row gets.
 
+## Submitting to a mutation
+
+A form can submit to a `createMutation` instead of a function. That is the whole link: one
+`onSubmit`, two kinds of target, no second form system.
+
+```ts
+import { cached, createForm, createMutation } from 'azerothjs';
+
+const getProfile = cached('profile', () => api.profile.get());
+
+const saveProfile = createMutation(
+    (values: Profile) => api.profile.save(values),
+    {
+        optimistic: (values, patch) =>
+        {
+            patch(getProfile, () => values);
+        }
+    });
+
+const form = createForm({
+    initial: { name: '', email: '' },
+    schema: profileSchema,
+    onSubmit: saveProfile        // the mutation, not a wrapper around it
+});
+```
+
+The form owns validation and `submitting()`; the mutation owns the optimistic guess, the
+rollback and the invalidation. Passing the mutation itself rather than `(v) => m.run(v)` is
+load-bearing, because that hand-wiring is silently wrong: `run` ANSWERS a refusal instead of
+rejecting, so `onSubmit` resolves and `submitError()` stays null - the form reports a success
+the server never gave. Handed the mutation, the form reads the outcome:
+
+- a refused write lands in `submitError()`;
+- any field map the refusal carries lands on the fields themselves, first path segment wins,
+  which is the same rule `applyFieldErrors` applies on the api client;
+- `submitting()` covers the whole run, so a button binds to one flag rather than two.
+
+A FUNCTION `onSubmit` is unchanged, field map included: a thrown refusal still populates only
+`submitError()`, because auto-applying its fields would silently change every existing form.
+
 ## API summary
 
 | Export | Role |

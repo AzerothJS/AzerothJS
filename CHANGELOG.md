@@ -436,6 +436,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **A form can submit to a mutation.** `createForm`'s `onSubmit` now accepts a
+  `Mutation` as well as a function. One option, two kinds of target: a mutation is what a form
+  submits to, not a second form system.
+
+  Passing the mutation rather than wrapping it is load-bearing, because the obvious hand-wiring
+  is silently wrong. `onSubmit: (v) => save.run(v)` resolves even when the write was refused -
+  `run` ANSWERS a refusal instead of rejecting - so `submitError()` stayed null and a form bound
+  to it reported a success the server never gave. Handed the mutation, the form reads the
+  outcome: the refusal lands in `submitError()`, and any field map it carries lands on the
+  fields themselves (first path segment wins, the same rule `applyFieldErrors` applies on the
+  api client, read structurally so the framework keeps no dependency on the server package).
+  `submitting()` covers the whole run, so a button binds to one flag rather than two.
+
+  A FUNCTION `onSubmit` is unchanged, field map included: a thrown refusal still populates only
+  `submitError()`, because auto-applying its fields would silently change every form already
+  written against it.
+
 - **`createMutation`: the write half of the data layer.** A mutation is the thing a form, a
   button or a keypress submits to. Until now the framework owned reads - `cached`, loaders,
   `revalidate` - and left every application to rebuild the write side around a bare
