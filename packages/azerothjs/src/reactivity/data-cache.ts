@@ -1010,11 +1010,19 @@ export function readValue<T>(cache: DataCache, family: FamilyRecord, args: unkno
     const started = entry.inflight;
     if (started === null)
     {
-        // A synchronously-settled fetcher (never a real promise) - serve the outcome as-is.
+        // Not a synchronous fetcher: #startFetch sets `inflight` before calling it and settles
+        // only through a microtask, so even a fetcher that returns an already-resolved promise
+        // leaves it set. The reachable route is a fetcher that synchronously writes, forces or
+        // resets its OWN key, clearing the entry from under the read that started it.
         if (entry.hasError)
         {
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the fetcher's failure propagates VERBATIM to the reader
             return Promise.reject(entry.error);
+        }
+        if (!entry.hasValue)
+        {
+            return Promise.reject(new Error('[azeroth] a cached read found no value: its fetcher '
+                + 'cleared its own entry while the read was starting.'));
         }
         return Promise.resolve(entry.value as T);
     }

@@ -609,3 +609,27 @@ describe('cache key derivation refuses what it cannot distinguish', () =>
         expect(stableSerialize(1n)).not.toBe(stableSerialize('1'));
     });
 });
+
+// `readValue`'s no-inflight branch was documented as "a synchronously-settled fetcher", which the
+// machine cannot produce: #startFetch sets `inflight` before calling the fetcher and settles only
+// through a microtask, so even an already-resolved promise leaves it set. The branch is reachable
+// only when a fetcher clears its OWN entry while the read is starting - and it returned
+// `entry.value` there, which is a value that was never written.
+describe('a fetcher that clears its own entry', () =>
+{
+    it('is refused rather than resolved with a value that was never written', async () =>
+    {
+        const family = cached('m1537-self-reset', () =>
+        {
+            resetDataCache();
+            return Promise.resolve('written-after-the-reset');
+        });
+        await expect(family()).rejects.toThrow(/cleared its own entry/);
+    });
+
+    it('CONTROL: an ordinary fetcher returning a resolved promise is unaffected', async () =>
+    {
+        const family = cached('m1537-plain', () => Promise.resolve('plain'));
+        await expect(family()).resolves.toBe('plain');
+    });
+});
