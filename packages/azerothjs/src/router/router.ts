@@ -1517,7 +1517,22 @@ function buildRouter(config: RouterConfig): Router
             const error = resource.error();
             if (isRedirect(error))
             {
-                untrack(() => performNavigate(error.to, { replace: error.replace }));
+                // Judged exactly like a guard redirect above. A loader derives its target from
+                // DATA, so an unjudged one is the open-redirect shape, and this was the only one
+                // of the four consumption boundaries (SSR guard, SSR loader, client guard, here)
+                // that did not judge. acceptRedirectTarget is the judge rather than isExternalUrl
+                // because it also unbrands an author-vetted unsafeUrl - a brand OBJECT typed as a
+                // string, whose missing pathname the object branch of targetToFullPath otherwise
+                // reads, navigating to the literal string "undefined".
+                const accepted = acceptRedirectTarget(error.to);
+                if (!accepted.accepted)
+                {
+                    // A refusal STOPS the scan instead of falling through to the next level's
+                    // redirect: the safe outcome is staying put with the loader error visible.
+                    console.error(`[azerothjs/router] ${ externalRedirectMessage(accepted.target) }`);
+                    return;
+                }
+                untrack(() => performNavigate(accepted.to, { replace: error.replace }));
                 return;
             }
         }
