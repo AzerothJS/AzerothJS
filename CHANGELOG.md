@@ -12,6 +12,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **Errors could silently bypass the error observer.** `onError` documents itself as observing
+  every error the app maps, and the mapping path reads `request.signal` to record whether the
+  client had already gone. That read went through a guard which handled a MISSING socket but not
+  a NULL one - and Node nulls the reference the moment a connection is destroyed, which is exactly
+  the case the guard exists for. Reading the signal then threw, and because an observer must never
+  be able to break the error path, that throw was swallowed along with the report. Any error
+  mapped after the socket was gone was therefore answered correctly to the client and recorded
+  nowhere: the response said 413, the observer saw nothing, and no seam anywhere was told.
+
+  Found through `streamMultipart`, which reliably reaches that state, but it was never specific to
+  multipart: a body read over its limit and a handler throwing the same error both reported
+  correctly, and the real variable was whether the socket still existed when the error was mapped.
+  A gone socket now yields a pre-aborted signal, which is the truthful answer and what the missing
+  case already returned.
+
 - **Two different callers could share one cache entry in production.** A cache key must tell
   distinct inputs apart. A value with no enumerable identity - a class instance, an ORM entity, a
   `Map`, a `Set` - cannot produce one, and development refused it while production fell back to

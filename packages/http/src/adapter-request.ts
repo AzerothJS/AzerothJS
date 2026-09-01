@@ -240,9 +240,14 @@ class AdapterRequest implements Request
                 this.#signal = this.#h2Signal();
                 return this.#signal;
             }
-            const socket = this.#incoming.socket;
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types .socket as always-present; h2 compat streams can lose it at runtime
-            if (socket === undefined || socket.destroyed)
+            const socket: { destroyed: boolean; once: (e: string, f: () => void) => void; removeListener: (e: string, f: () => void) => void } | null | undefined = this.#incoming.socket;
+            // Node NULLS the reference once the connection is destroyed, which is exactly the case
+            // this guard exists for, so testing only `undefined` threw a TypeError here instead -
+            // and errorResponse reads this getter for `clientGone` inside a block that swallows its
+            // own throws, so every error mapped after the socket was gone silently skipped the
+            // error observer.
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types .socket as always-present; it is absent on an h2 compat stream and null after a destroy
+            if (socket === undefined || socket === null || socket.destroyed)
             {
                 // The connection is already gone (or never observable): a pre-aborted signal
                 // is the truthful answer, and nothing needs listeners.
@@ -268,7 +273,10 @@ class AdapterRequest implements Request
                 // life of a keep-alive connection (measured: 32 listeners over 30 requests, and
                 // a MaxListenersExceededWarning at the eleventh). The response's close is the
                 // only event that bounds the request AND a body still being written.
-                this.#detachSocketWatch = (): void => void socket.removeListener('close', onClose);
+                this.#detachSocketWatch = (): void =>
+                {
+                    socket.removeListener('close', onClose);
+                };
                 this.#signal = controller.signal;
             }
         }

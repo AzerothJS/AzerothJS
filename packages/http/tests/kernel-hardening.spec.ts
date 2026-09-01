@@ -389,3 +389,49 @@ describe('the raw-body fast lane verifies the declared length', () =>
         expect(await readShortBody('not-a-number', 16384)).toBe('RESOLVED:16384');
     });
 });
+
+// Node NULLS `req.socket` once the connection is destroyed, and the lazy signal getter guarded
+// only against `undefined` - so reading `request.signal` after a destroy threw a TypeError. That
+// matters far beyond the getter: errorResponse reads it to compute `clientGone`, inside a block
+// that swallows its own throws by design, so EVERY error mapped after the socket was gone silently
+// skipped the error observer that documents itself as seeing "every error the app maps".
+describe('the request signal survives a socket that is already gone', () =>
+{
+    async function signalFor(socket: unknown): Promise<{ aborted: boolean } | string>
+    {
+        const { createAdapterRequest } = await import('../src/adapter-request.ts');
+        const { Readable } = await import('node:stream');
+        const incoming = Readable.from([]) as unknown as Parameters<typeof createAdapterRequest>[0];
+        Object.assign(incoming, { method: 'GET', url: '/x', headers: { host: 'x' }, socket });
+        try
+        {
+            return createAdapterRequest(incoming, 'http', {}).signal;
+        }
+        catch (error)
+        {
+            return `THREW:${ (error as Error).constructor.name }`;
+        }
+    }
+
+    it('a NULL socket yields a pre-aborted signal, not a TypeError', async () =>
+    {
+        const signal = await signalFor(null);
+        expect(typeof signal).not.toBe('string');
+        expect((signal as { aborted: boolean }).aborted).toBe(true);
+    });
+
+    it('CONTROL: an absent socket behaves the same way', async () =>
+    {
+        const signal = await signalFor(undefined);
+        expect(typeof signal).not.toBe('string');
+        expect((signal as { aborted: boolean }).aborted).toBe(true);
+    });
+
+    it('CONTROL: a live socket yields a signal that is NOT aborted', async () =>
+    {
+        const live = { destroyed: false, once: (): void => undefined, removeListener: (): void => undefined };
+        const signal = await signalFor(live);
+        expect(typeof signal).not.toBe('string');
+        expect((signal as { aborted: boolean }).aborted).toBe(false);
+    });
+});
