@@ -375,7 +375,8 @@ function manage<S extends Server | Http2Server>(
                     }
                     return;
                 }
-                req.socket.destroy();
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- @types/node types .socket as always-present; Node nulls it on destroy, and an unguarded deref here is an uncaughtException from a timer
+                req.socket?.destroy();
             }, budget);
             cut.unref();
             // Disarmed by the request, never by the response: `res` emits 'close' immediately
