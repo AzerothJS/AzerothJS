@@ -26,10 +26,10 @@
  */
 
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
-import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, LOADER_HANDOFF_VERSION, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
+import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, LOADER_HANDOFF_VERSION, localeDirection, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch, loaderFailures, renderAsDenied, targetToFullPath } from 'azerothjs/internal';
+import { collectHead, guardedMatch, loaderFailures, renderAsDenied, renderWithLocale, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -121,6 +121,16 @@ export interface PageRenderOptions
      * and the token is going into the markup either way.
      */
     csrfToken?: string;
+
+    /**
+     * The reader's language for this render, as a BCP 47 tag.
+     *
+     * Like the CSRF token, it can only come from outside: the choice lives in a cookie, an
+     * `Accept-Language` header or a path segment, none of which the render can see. It stamps
+     * `<html lang>` and `<html dir>` on the served document and is what `useLocale()` reports
+     * during the render, so the markup and its language are decided together.
+     */
+    locale?: string;
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -161,6 +171,39 @@ function shellElementPattern(item: CollectedHead['replacements'][number]): RegEx
         ? `(?=[^>]*\\bmedia\\s*=\\s*"${ regexEscape(item.media) }")`
         : '(?![^>]*\\bmedia\\s*=)';
     return new RegExp(`<${ item.kind }\\b${ requires }${ media }[^>]*/?>`, 'i');
+}
+
+/**
+ * Stamps the reader's language onto the shell's `<html>` element.
+ *
+ * `lang` and `dir` are what a screen reader announces in and what every logical CSS property
+ * resolves against, and they live on an element the page's own markup never renders - the shell
+ * ships one `<html lang="en">` for every request - so the host is the only thing that can put
+ * the right value there. Serving a Persian page as `lang="en"` with no `dir` mislabels it for a
+ * crawler and lays it out backwards for the reader.
+ *
+ * Only the FIRST `<html` is touched, an existing `lang`/`dir` is replaced rather than joined by
+ * a second one, and a shell with no `<html` is returned unchanged - the same degrade-quietly
+ * rule the head surgery follows, since a shell this malformed has bigger problems than its
+ * language.
+ *
+ * @internal Exported for the kit test suite.
+ */
+export function applyLocaleToShell(shell: string, locale: string, dir: 'ltr' | 'rtl'): string
+{
+    const open = /<html\b([^>]*)>/i.exec(shell);
+    if (open === null)
+    {
+        return shell;
+    }
+    const attrs = (open[1] ?? '')
+        .replace(/\s+lang\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/\s+dir\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .trim();
+    const rebuilt = `<html lang="${ escapeAttr(locale) }" dir="${ dir }"${ attrs === '' ? '' : ` ${ attrs }` }>`;
+    // Spliced rather than String.replace-d: a preserved attribute can hold a $-pattern, which
+    // a replacement string would expand into the tag.
+    return shell.slice(0, open.index) + rebuilt + shell.slice(open.index + open[0].length);
 }
 
 /**
@@ -272,13 +315,20 @@ function drainFrames(scriptNonce: string | undefined, frame: RenderFrame): Drain
  */
 export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
 {
-    return async (url, shell, options) =>
+    return async (url, rawShell, options) =>
     {
         if (options?.scriptNonce !== undefined && !CSP_NONCE.test(options.scriptNonce))
         {
             throw new Error('kit: scriptNonce is not a valid CSP nonce - base64/base64url characters only. '
                 + 'Generate it per request from a CSPRNG; never derive it from request data.');
         }
+
+        // Stamped BEFORE either render path slices the shell: the streamed path cuts it at the
+        // root marker and enqueues the head half immediately, so a later stamp would arrive after
+        // those bytes had already left.
+        const shell = options?.locale === undefined
+            ? rawShell
+            : applyLocaleToShell(rawShell, options.locale, localeDirection(options.locale));
 
         const loaded = await matchAndLoad(routes, url, options?.signal !== undefined ? { signal: options.signal } : undefined);
 
@@ -387,7 +437,8 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                         frame,
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
                         ...(options.onError !== undefined ? { onError: options.onError } : {}),
-                        ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {})
+                        ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}),
+                        ...(options.locale !== undefined ? { locale: options.locale } : {})
                     });
             }
             finally
@@ -433,8 +484,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         let frames: DrainedFrames;
         // Constructed BEFORE the render, so the finally holds it on the throw path.
         const frame = createRenderFrame();
-        const render = (): string =>
+        const renderTree = (): string =>
             renderToString(() => app(stamped !== undefined ? { url, handoff: stamped } : { url }), { frame });
+        const render = (): string =>
+            (options?.locale === undefined ? renderTree() : renderWithLocale(options.locale, renderTree));
         try
         {
             body = denied === null ? render() : renderAsDenied(denied, render);

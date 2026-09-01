@@ -30,6 +30,7 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import type { Route } from 'azerothjs';
+import { localeDirection, parseAcceptLanguage, resolveLocale } from 'azerothjs';
 import { guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
@@ -38,6 +39,7 @@ import { staticFiles } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
 import type { PageRenderer } from './ssr.ts';
+import { applyLocaleToShell } from './ssr.ts';
 import { MemoryPageCache, pageResponse, registerIsr } from './isr.ts';
 import type { KitErrorObserver, PageCache } from './isr.ts';
 import { imageHandler } from './image.ts';
@@ -136,6 +138,28 @@ export interface KitOptions
 
     /** Where ISR pages live (default: one in-process {@link MemoryPageCache} per mount). */
     cache?: PageCache;
+
+    /**
+     * The languages this site is published in. Given these, every page is negotiated per request
+     * and served with its own `<html lang>` and `<html dir>`.
+     *
+     * Without it nothing is negotiated and the shell's own `<html>` stands, which is correct for
+     * a single-language site and wrong the moment there are two - a shell says one language and a
+     * request can be for another.
+     */
+    locales?: {
+        /** BCP 47 tags, best first. The first is used when nothing else matches. */
+        supported: readonly string[];
+
+        /** Served when the reader asks for nothing this site publishes. Defaults to `supported[0]`. */
+        default?: string;
+
+        /**
+         * The cookie holding a reader's explicit choice, which outranks their browser's headers.
+         * Defaults to `locale`, the name `setLocale()` writes.
+         */
+        cookie?: string;
+    };
 
     /**
      * Enables GET /_image over the client dist: `true` for the defaults (no adapter -
@@ -391,7 +415,9 @@ export function mountPages(app: App, options: KitOptions): void
                 shell: shellPromise,
                 seedFile,
                 buildId: buildIdPromise,
-                onError: report
+                onError: report,
+                locale: (request: Request) => localeFor(request, options),
+                vary: (request: Request) => varyFor(request, options)
             });
             continue;
         }
@@ -566,6 +592,86 @@ function tokenFor(request: Request, options: KitOptions): { token: string; minte
     return existing === undefined ? { token: csrfToken(), minted: true } : { token: existing, minted: false };
 }
 
+/**
+ * @internal The language to serve this request in, or undefined when the site declares none.
+ *
+ * A cookie is an answer the reader gave; `Accept-Language` is what their browser guesses on
+ * their behalf. So an explicit choice wins outright, and only in its absence is the header
+ * negotiated - in preference order, which is the half hand-rolled detectors get wrong.
+ */
+function localeFor(request: Request, options: KitOptions): string | undefined
+{
+    return negotiate(request, options)?.locale;
+}
+
+/**
+ * @internal What a negotiated response varies on.
+ *
+ * `Accept-Language` always participates once a site publishes more than one language. The COOKIE
+ * only joins when this reader actually has one, and saying so per-response matters: naming it
+ * unconditionally would make every page uncacheable by a shared cache for the sake of readers who
+ * never chose, while omitting it when it decided the answer lets a CDN serve one reader's chosen
+ * language to another.
+ */
+function varyFor(request: Request, options: KitOptions): string | undefined
+{
+    const negotiated = negotiate(request, options);
+    if (negotiated === undefined)
+    {
+        return undefined;
+    }
+    return negotiated.fromCookie ? 'accept-language, cookie' : 'accept-language';
+}
+
+function negotiate(request: Request, options: KitOptions): { locale: string; fromCookie: boolean } | undefined
+{
+    const config = options.locales;
+    if (config === undefined || config.supported.length === 0)
+    {
+        return undefined;
+    }
+    const fallback = config.default ?? config.supported[0] ?? 'en';
+    const chosen = parseCookies(request)[config.cookie ?? 'locale'];
+    if (chosen !== undefined)
+    {
+        // Still resolved rather than trusted: the cookie is reader-supplied text, and an
+        // unsupported or hostile value must not reach `<html lang>`.
+        return { locale: resolveLocale([chosen], config.supported, fallback), fromCookie: true };
+    }
+    const header = request.headers.get('accept-language');
+    return {
+        locale: header === null
+            ? fallback
+            : resolveLocale(parseAcceptLanguage(header), config.supported, fallback),
+        fromCookie: false
+    };
+}
+
+/**
+ * @internal Declares what a negotiated response varies on, without disturbing an existing Vary.
+ *
+ * A response body that depends on a request header is only safely shared if every cache in front
+ * of it is told which header. Our own page cache keys on the resolved language directly; this is
+ * for the ones we do not control.
+ */
+function withVary(response: Response, context: RequestContext, options: KitOptions): Response
+{
+    const vary = varyFor(context.request, options);
+    if (vary === undefined)
+    {
+        return response;
+    }
+    const existing = response.headers.get('vary');
+    const merged = existing === null || existing.trim() === ''
+        ? vary
+        : `${ existing }, ${ vary }`;
+    // Headers are immutable on some responses (a streamed one built with a literal init is
+    // not), so the header is set on a clone-safe copy only when it must be.
+    const headers = new Headers(response.headers);
+    headers.set('vary', merged);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 /** @internal Attaches a freshly minted CSRF cookie without disturbing the response's own. */
 function withMintedToken(response: Response, token: string, options: KitOptions): Response
 {
@@ -634,6 +740,7 @@ async function renderOrShell(
 {
     // Resolved before the render, so `<Form>` renders the same value the browser will hold.
     const csrf = tokenFor(context.request, options);
+    const locale = localeFor(context.request, options);
     if (mode === 'server' && options.renderer !== undefined)
     {
         // The nonce reaches the buffered path too, not just the streamed one: a server-rendered
@@ -650,6 +757,7 @@ async function renderOrShell(
                 // is reported. Without it a 500 arrives with no cause anywhere.
                 onError: (error: unknown): void =>
                     observerFor(options)(error, { path: context.url.pathname, phase: 'render' }),
+                ...(locale !== undefined ? { locale } : {}),
                 // A `server` page is uncached and uncoalesced: this render exists for THIS
                 // request and nobody else can adopt it. So the client's disconnect signal is
                 // the render's own lifetime, exactly as on the streamed path below - without
@@ -666,11 +774,20 @@ async function renderOrShell(
         // A refused action re-renders at ITS status, not the render's: the page is fine, the
         // write was not, and 422 is what tells a client which of the two happened.
         const answered = refusal === undefined
-            ? pageResponse(result, shell)
-            : pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell);
+            ? withVary(pageResponse(result, shell), context, options)
+            : withVary(
+                pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell),
+                context, options);
         return csrf.minted ? withMintedToken(answered, csrf.token, options) : answered;
     }
-    const bare = htmlResponse(shell, { status: shellStatus });
+    // The client-rendered page has no render to carry the language, and needs it just as much:
+    // the shell IS the served document, and its `<html lang>` is what a crawler reads and what
+    // lays the page out before a single byte of JavaScript has run.
+    const bare = withVary(
+        htmlResponse(
+            locale === undefined ? shell : applyLocaleToShell(shell, locale, localeDirection(locale)),
+            { status: shellStatus }),
+        context, options);
     return csrf.minted ? withMintedToken(bare, csrf.token, options) : bare;
 }
 
@@ -707,7 +824,10 @@ function registerDynamic(
                     // a boundary and the server records a clean 200.
                     onError: (error: unknown): void => observerFor(options)(error, { path: context.url.pathname, phase: 'stream' }),
                     handoffMeta: { build: await buildId, at: Date.now() },
-                    ...(nonce !== undefined ? { scriptNonce: nonce } : {})
+                    ...(nonce !== undefined ? { scriptNonce: nonce } : {}),
+                    ...(localeFor(context.request, options) !== undefined
+                        ? { locale: localeFor(context.request, options) as string }
+                        : {})
                 });
             if (result.kind === 'stream')
             {
@@ -719,7 +839,7 @@ function registerDynamic(
                 // and compressResponse honours it - so setting it here silently opted every
                 // streamed page out of the per-chunk-flushed compression that exists for
                 // precisely this response shape, with no header revealing the loss.
-                return new Response(result.stream, {
+                return withVary(new Response(result.stream, {
                     status: result.status,
                     headers: {
                         'content-type': 'text/html; charset=utf-8',
@@ -728,11 +848,11 @@ function registerDynamic(
                         'cache-control': result.guarded === true ? 'private, no-store' : 'no-cache',
                         'x-accel-buffering': 'no'
                     }
-                });
+                }), context, options);
             }
             // A renderer unaware of the streaming option (or a redirect/veto, which stay
             // buffered by design) answered with an ordinary result: serve it as such.
-            return pageResponse(result, shell);
+            return withVary(pageResponse(result, shell), context, options);
         }
         return renderOrShell(context, mode, options, shell, buildId);
     });

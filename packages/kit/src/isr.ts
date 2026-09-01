@@ -375,6 +375,20 @@ export interface IsrRegistration
     onError: KitErrorObserver;
 
     /**
+     * The language this request is served in, when the site publishes more than one. It joins
+     * the cache key, because a negotiated page is a different document per language at the same
+     * url, and it is handed to the renderer so a regenerated copy is produced in the language it
+     * is filed under.
+     */
+    locale?: (request: Request) => string | undefined;
+
+    /**
+     * What a negotiated response varies on, for the caches this one does not key itself.
+     * Undefined on a single-language site, which gains no header and no fragmentation.
+     */
+    vary?: (request: Request) => string | undefined;
+
+    /**
      * Identity of the build being served - the client shell's content hash, computed once at
      * mount. A cached copy stamped with a different one came from a previous deploy and names
      * assets that no longer exist, so it is discarded on read.
@@ -402,7 +416,17 @@ interface Produced
  *
  * @internal
  */
-export function cacheKeyFor(pathname: string, search: string): string
+export function cacheKeyFor(pathname: string, search: string, locale?: string): string
+{
+    // A negotiated page is a different document per language at the SAME url, so the language
+    // is part of what identifies the entry. Without it the first reader's language is cached
+    // and served to everyone after them until it expires. Prefixed with a NUL, which no
+    // pathname, query or language tag can contain, so no two inputs can collide.
+    const prefix = locale === undefined ? '' : `${ locale }\u0000`;
+    return prefix + cacheKeyBody(pathname, search);
+}
+
+function cacheKeyBody(pathname: string, search: string): string
 {
     if (search === '' || search === '?')
     {
@@ -421,6 +445,22 @@ export function cacheKeyFor(pathname: string, search: string): string
 export function registerIsr(registration: IsrRegistration): void
 {
     const { app, path, revalidate, cache, renderer, shell, seedFile, guarded, onError, buildId } = registration;
+    const localeOf = registration.locale ?? ((): undefined => undefined);
+    const varyOf = registration.vary ?? ((): undefined => undefined);
+
+    /** Stamps the negotiated Vary onto a response without disturbing one it already carries. */
+    const varied = (response: Response, request: Request): Response =>
+    {
+        const vary = varyOf(request);
+        if (vary === undefined)
+        {
+            return response;
+        }
+        const headers = new Headers(response.headers);
+        const existing = headers.get('vary');
+        headers.set('vary', existing === null || existing.trim() === '' ? vary : `${ existing }, ${ vary }`);
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    };
     // UNCAPPED, unlike `provisional` and `learned` below, and that is a known bound living
     // outside this file rather than an oversight. A production outlives the request that
     // started it, so open connections do NOT bound how many run at once: measured at 8 sockets
@@ -536,7 +576,11 @@ export function registerIsr(registration: IsrRegistration): void
         // and its disconnect ends the render's reason to exist. The two SHARED render paths
         // in this file deliberately take no request signal; see `produce` and `regenerate`.
         const result = await renderer(target.url, await shell,
-            { signal, handoffMeta: { build: await buildId, at: Date.now() } });
+            {
+                signal,
+                handoffMeta: { build: await buildId, at: Date.now() },
+                ...(target.locale !== undefined ? { locale: target.locale } : {})
+            });
         return pageResponse(result, await shell, {
             'cache-control': 'private, no-store',
             'x-azeroth-cache': 'live'
@@ -620,6 +664,9 @@ export function registerIsr(registration: IsrRegistration): void
         /** The RAW pathname alone - the unit the learned-guarded set stores. */
         pathname: string;
 
+        /** The language this copy is produced in, when the site publishes more than one. */
+        locale?: string;
+
         /** The RAW pathname plus the raw search - the request exactly as sent. */
         url: string;
 
@@ -638,15 +685,17 @@ export function registerIsr(registration: IsrRegistration): void
      * `%23` a fragment. That turns one page into another and lets two distinct requests derive one
      * cache key. `index.ts` has always passed the raw pathname on the non-ISR paths; this matches.
      */
-    const targetOf = (context: { path: string; url: URL }): Target =>
+    const targetOf = (context: { path: string; url: URL; request: Request }): Target =>
     {
         const search = context.url.search;
+        const locale = localeOf(context.request);
         return {
             path: context.path,
             pathname: context.url.pathname,
             url: context.url.pathname + search,
-            key: cacheKeyFor(context.url.pathname, search),
-            seedable: search === '' || search === '?'
+            key: cacheKeyFor(context.url.pathname, search, locale),
+            seedable: (search === '' || search === '?') && locale === undefined,
+            ...(locale !== undefined ? { locale } : {})
         };
     };
 
@@ -683,7 +732,10 @@ export function registerIsr(registration: IsrRegistration): void
         const shellText = await shell;
         const buildValue = await buildId;
         const result = await runInWorkUnit(
-            () => renderer(target.url, shellText, { handoffMeta: { build: buildValue, at: Date.now() } }));
+            () => renderer(target.url, shellText, {
+                handoffMeta: { build: buildValue, at: Date.now() },
+                ...(target.locale !== undefined ? { locale: target.locale } : {})
+            }));
         if (result.kind === 'html' && result.guarded === true)
         {
             // The renderer's own table says this chain is guarded: the body belongs to the
@@ -808,7 +860,7 @@ export function registerIsr(registration: IsrRegistration): void
         // traffic must never populate, read, or coalesce on shared state.
         if (guarded(target.url) || learned.has(target.pathname))
         {
-            return guardedLive(target, context.request.signal);
+            return varied(await guardedLive(target, context.request.signal), context.request);
         }
         let entry = await readCache(target.key);
         if (entry !== undefined && await supersededByDeploy(entry))
@@ -833,9 +885,9 @@ export function registerIsr(registration: IsrRegistration): void
                     // request re-renders under its own. Direct - never produceOnce, which
                     // would coalesce resuming joiners into a second shared flight. The
                     // pathname is learned by now, so later requests skip flights entirely.
-                    return guardedLive(target, context.request.signal);
+                    return varied(await guardedLive(target, context.request.signal), context.request);
                 }
-                return pageResponse(live, await shell);
+                return varied(pageResponse(live, await shell), context.request);
             }
             entry = produced.entry;
             // A prerendered seed IS cache content already on disk; only a live render is a miss.
@@ -844,9 +896,9 @@ export function registerIsr(registration: IsrRegistration): void
         const age = (Date.now() - entry.createdAt) / 1000;
         if (age <= revalidate)
         {
-            return respond(entry, verdict, age);
+            return varied(respond(entry, verdict, age), context.request);
         }
         regenerate(target);
-        return respond(entry, 'stale', age);
+        return varied(respond(entry, 'stale', age), context.request);
     });
 }

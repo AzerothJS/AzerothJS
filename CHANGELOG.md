@@ -455,6 +455,72 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **The language of a page is now decided by the framework.** `mountPages` takes a
+  `locales` config; given one, every request is negotiated and the page is served with its
+  own `<html lang>` and `<html dir>`.
+
+  Before this a built shell carried one `<html lang="en">` and it was emitted verbatim for
+  every request, so a bilingual site served its Persian pages labelled English with no `dir`
+  at all: laid out left-to-right for the reader, mislabelled for the crawler, and announced in
+  the wrong language by a screen reader. Nothing in the framework could fix it, because the
+  choice lives in a cookie and a header that a render cannot see.
+
+  The reader's own choice outranks their browser's guess, and the header is read in PREFERENCE
+  ORDER - a reader whose header is `en-US,fa;q=0.9` asked for English and would accept
+  Persian, and answering in Persian because Persian appears at all gets that backwards. The
+  cookie is resolved against the supported list rather than trusted, since it is reader-supplied
+  text that would otherwise reach the document element.
+
+  New API on `azerothjs`: `useLocale()` and `useDirection()` read the current language
+  reactively, so anything derived from it redraws when it changes - a number reformats into the
+  reader's digits without the component knowing it was a number. `setLocale(tag)` switches the
+  page and remembers the choice in a cookie, which is what lets the NEXT request be rendered in
+  that language on the server rather than corrected after it arrives. `parseAcceptLanguage()`,
+  `resolveLocale()` and `localeDirection()` are the negotiation rules themselves, one
+  implementation shared by both sides so they cannot drift. Direction comes from `Intl` rather
+  than a table, so the languages a hand-kept table forgets - Central Kurdish, Sindhi, Yiddish -
+  are right without anyone maintaining them.
+
+  A streamed page stays in one language, boundaries included: the locale is pinned for the
+  whole response rather than for the call that started it, so a component rendering inside a
+  Suspense boundary that settles later still answers in the reader's language instead of the
+  default. Verified in Chromium over a production build: a Persian page's inline-start border
+  sits on the right and moves to the left when the language is switched, and the switch survives
+  a reload as a server render.
+
+- **The language of a page is now decided by the framework.** `mountPages` takes a
+  `locales` config; given one, every request is negotiated and the page is served with its
+  own `<html lang>` and `<html dir>`.
+
+  Before this a built shell carried one `<html lang="en">` and it was emitted verbatim for
+  every request, so a bilingual site served its Persian pages labelled English with no `dir`
+  at all: laid out left-to-right for the reader, mislabelled for the crawler, and announced in
+  the wrong language by a screen reader. Nothing in the framework could fix it, because the
+  choice lives in a cookie and a header that a render cannot see.
+
+  The reader's own choice outranks their browser's guess, and the header is read in PREFERENCE
+  ORDER - a reader whose header is `en-US,fa;q=0.9` asked for English and would accept
+  Persian, and answering in Persian because Persian appears at all gets that backwards. The
+  cookie is resolved against the supported list rather than trusted, since it is reader-supplied
+  text that would otherwise reach the document element.
+
+  New API on `azerothjs`: `useLocale()` and `useDirection()` read the current language
+  reactively, so anything derived from it redraws when it changes - a number reformats into the
+  reader's digits without the component knowing it was a number. `setLocale(tag)` switches the
+  page and remembers the choice in a cookie, which is what lets the NEXT request be rendered in
+  that language on the server rather than corrected after it arrives. `parseAcceptLanguage()`,
+  `resolveLocale()` and `localeDirection()` are the negotiation rules themselves, one
+  implementation shared by both sides so they cannot drift. Direction comes from `Intl` rather
+  than a table, so the languages a hand-kept table forgets - Central Kurdish, Sindhi, Yiddish -
+  are right without anyone maintaining them.
+
+  A streamed page stays in one language, boundaries included: the locale is pinned for the
+  whole response rather than for the call that started it, so a component rendering inside a
+  Suspense boundary that settles later still answers in the reader's language instead of the
+  default. Verified in Chromium over a production build: a Persian page's inline-start border
+  sits on the right and moves to the left when the language is switched, and the switch survives
+  a reload as a server render.
+
 - **A head and SEO guide.** `useHead()` shipped without user-facing documentation: it was
   reachable from the package entry and described only in its own JSDoc, so the rules that
   decide whether a fact reaches a crawler were not written down anywhere a reader would look.

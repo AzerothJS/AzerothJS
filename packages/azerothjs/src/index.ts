@@ -44,3 +44,4 @@ export { unsafeUrl, unsafeTag } from './renderer/ssr.ts';
 export * from './ssr/index.ts';
 export * from './router/index.ts';
 export * from './form/index.ts';
+export * from './i18n/index.ts';

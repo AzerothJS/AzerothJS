@@ -27,6 +27,7 @@ import { streamRuntimeScript } from '../renderer/stream-swap.ts';
 import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeContinuationWindow, closeRenderWindow, openContinuationWindow, openRenderWindow } from '../renderer/frame.ts';
+import { renderWithLocale } from '../i18n/current-locale.ts';
 import type { RenderFrame, RenderWindow } from '../renderer/frame.ts';
 import type { MountNode } from '../component/index.ts';
 
@@ -54,6 +55,17 @@ export interface RenderToStreamOptions
 
     /** CSP nonce stamped onto every inline script the stream emits. */
     scriptNonce?: string;
+
+    /**
+     * The reader's language for this whole response, pinned for the main pass AND every
+     * continuation.
+     *
+     * A boundary settles long after the call that started the render returned, so a pin scoped
+     * to that call would have unwound by then and the deferred half of the page would render in
+     * a different language from the half above it. The language belongs to the RESPONSE, so it
+     * is held here rather than by whoever happens to be on the stack.
+     */
+    locale?: string;
 
     /** Hears a continuation failure (a boundary whose children threw while streaming). */
     onError?: (error: unknown) => void;
@@ -122,6 +134,10 @@ export function renderToStream(
 
     const session = new StreamSession(options.signal);
     const encoder = new TextEncoder();
+    // Applied to the main pass and to every continuation, since both render parts of ONE
+    // response. Absent locale means the host did not negotiate one, and nothing is pinned.
+    const withLocale = <T>(render: () => T): T =>
+        (options.locale === undefined ? render() : renderWithLocale(options.locale, render));
 
     // MAIN PASS: synchronous, root disposal DEFERRED to finalize. A throw finalizes (the
     // root is already registered) and propagates - the caller answers with a buffered 500.
@@ -132,7 +148,7 @@ export function renderToStream(
     const mainWindow: { current: RenderWindow | null } = { current: null };
     try
     {
-        runInMode('string', () => runInStoreScope(() =>
+        runInMode('string', () => runInStoreScope(() => withLocale(() =>
         {
             // The main-pass render window, opened inside the store scope (see
             // renderer/frame.ts). The host that passed a frame owns it; kit's drain
@@ -156,7 +172,7 @@ export function renderToStream(
             });
             closeRenderWindow(mainWindow.current, 'success');
             mainWindow.current = null;
-        }), { markers: true, session });
+        })), { markers: true, session });
     }
     catch (error)
     {
@@ -256,7 +272,8 @@ export function renderToStream(
                     {
                         continuation = openContinuationWindow();
                         childrenHtml = runInMode('string',
-                            () => runInExistingStoreScope(session.storeScope as object, () => boundary.render()),
+                            () => runInExistingStoreScope(session.storeScope as object,
+                                () => withLocale(() => boundary.render())),
                             { markers: true, session });
                     }
                     catch (error)
