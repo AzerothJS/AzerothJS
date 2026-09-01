@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { readFile, readdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect as h2connect, getDefaultSettings } from 'node:http2';
 import type { Http2Server } from 'node:http2';
@@ -622,7 +622,11 @@ describe('serve() never hands back an unusable address', () =>
         const offenders: string[] = [];
         for (const entry of await readdir(dir, { recursive: true, withFileTypes: true }))
         {
-            if (!entry.isFile() || !/\.(ts|mjs)$/.test(entry.name) || entry.name === 'serve.ts')
+            // A dot-prefixed directory is scratch another spec is writing right now (the
+            // runtime-compat probes), so it can vanish between this listing and the read - and
+            // it never holds a committed test this rule governs.
+            if (!entry.isFile() || !/[.](ts|mjs)$/.test(entry.name) || entry.name === 'serve.ts'
+                || relative(dir, entry.parentPath).split(sep).some((part) => part.startsWith('.')))
             {
                 continue;
             }
