@@ -161,3 +161,101 @@ export function localeDirection(tag: string): 'ltr' | 'rtl'
     const folded = fold(tag);
     return RTL_LANGUAGES.has(folded) || RTL_LANGUAGES.has(primary(folded)) ? 'rtl' : 'ltr';
 }
+
+/** What {@link negotiateLocale} chooses between. */
+export interface LocaleConfig
+{
+    /** BCP 47 tags this app publishes, best first. */
+    supported: readonly string[];
+
+    /** Served when the reader asks for nothing published here. Defaults to `supported[0]`. */
+    default?: string;
+
+    /** The cookie holding an explicit choice, which outranks the browser's headers. Defaults to `locale`. */
+    cookie?: string | false;
+}
+
+/** What a negotiation decided, and whether the reader's own choice decided it. */
+export interface NegotiatedLocale
+{
+    locale: string;
+
+    /**
+     * True when a cookie chose it. Callers that cache say so in `Vary`, and only when it is true -
+     * naming `Cookie` unconditionally makes every response uncacheable for the sake of readers who
+     * never chose one.
+     */
+    fromCookie: boolean;
+}
+
+/**
+ * The language to answer one request in.
+ *
+ * The same rule pages are negotiated with, callable from anywhere holding a `Request` - an SSE
+ * stream whose events carry text, a JSON endpoint returning messages, a redirect that has to pick
+ * a language before there is a page. Having one function for it is the point: a site whose API
+ * answers in a different language from its pages is worse than one that only speaks English.
+ *
+ * A cookie is an answer the reader gave and wins outright; `Accept-Language` is what their
+ * browser guesses on their behalf and is read in preference order. The cookie is RESOLVED rather
+ * than trusted, so reader-supplied text cannot become the answer.
+ *
+ * @param request - The request to answer.
+ * @param config - The languages this app publishes.
+ * @returns The chosen locale, and whether the reader's own choice chose it.
+ * @example
+ * const { locale } = negotiateLocale(request, { supported: ['en', 'fa'] });
+ * return sse(request, (send) => send({ data: greetingFor(locale) }));
+ */
+export function negotiateLocale(request: Request, config: LocaleConfig): NegotiatedLocale
+{
+    const fallback = config.default ?? config.supported[0] ?? 'en';
+    if (config.supported.length === 0)
+    {
+        return { locale: fallback, fromCookie: false };
+    }
+    if (config.cookie !== false)
+    {
+        const name = config.cookie ?? 'locale';
+        const chosen = readCookie(request, name);
+        if (chosen !== null)
+        {
+            return { locale: resolveLocale([chosen], config.supported, fallback), fromCookie: true };
+        }
+    }
+    const header = request.headers.get('accept-language');
+    return {
+        locale: header === null
+            ? fallback
+            : resolveLocale(parseAcceptLanguage(header), config.supported, fallback),
+        fromCookie: false
+    };
+}
+
+/**
+ * One cookie from the request, or null.
+ *
+ * Read here rather than through the server package's parser because this module is the shared
+ * vocabulary both faces import, and it must not depend on the server.
+ */
+function readCookie(request: Request, name: string): string | null
+{
+    const header = request.headers.get('cookie');
+    if (header === null)
+    {
+        return null;
+    }
+    for (const part of header.split(';'))
+    {
+        const at = part.indexOf('=');
+        if (at === -1)
+        {
+            continue;
+        }
+        if (part.slice(0, at).trim() === name)
+        {
+            return decodeURIComponent(part.slice(at + 1).trim());
+        }
+    }
+    return null;
+}

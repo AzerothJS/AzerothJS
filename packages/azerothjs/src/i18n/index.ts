@@ -14,7 +14,8 @@
  * agree with the served markup without being told a second time.
  */
 
-export { parseAcceptLanguage, resolveLocale, localeDirection } from './locale.ts';
+export { parseAcceptLanguage, resolveLocale, localeDirection, negotiateLocale } from './locale.ts';
+export type { LocaleConfig, NegotiatedLocale } from './locale.ts';
 export { useLocale, useDirection, setLocale } from './current-locale.ts';
 export type { SetLocaleOptions } from './current-locale.ts';
 export { createMessages } from './messages.ts';

@@ -455,6 +455,40 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **Message catalogues, with the plural rules the reader's language actually uses.**
+  `createMessages()` takes plain TypeScript objects - no format this framework invented - and
+  the first one is the reference, so its keys become the type and a translation that forgets a
+  key or invents one is a build error rather than an English string surfacing in a Persian page.
+  Placeholders are `{name}`; one left unfilled stays visible instead of blanking.
+
+  Plurals go through `Intl.PluralRules`. `count === 1 ? one : other` is what a hand-rolled
+  catalogue reaches for and it is correct only for the languages whoever wrote it speaks: Arabic
+  distinguishes six forms and Russian four, so those readers get grammatically wrong text from
+  code that looks obviously right. Write only the forms your language uses; the rest fall back
+  to `other`. A key missing from the reader's language falls back to the reference language,
+  because a page in the wrong language is readable and a page of empty strings is not.
+
+- **Locale-bound formatting.** `useNumberFormat()`, `useDateFormat()`,
+  `useRelativeTimeFormat()` and `useListFormat()` are thin over `Intl` and bound to the
+  locale signal, so a switch reformats a date without the component knowing it held a date, and
+  a Persian reader gets the Jalali calendar without anything in the app knowing Persian has one.
+  Applied to nothing automatically, deliberately: a localized digit is right in a sentence and
+  wrong in an identifier, a price in a form field, or anything a machine reads back.
+
+- **Every render mode keeps the reader's language.** `render: 'static'` builds one file per
+  language (`about/index.fa.html` beside `about/index.html`) and the mount serves the
+  reader's own, falling back to the unsuffixed file so a build predating the config still serves.
+  ISR now keys its cache on the language as well as the url - without that the first reader's
+  language was cached and served to everyone after them until it expired, which is the shape of
+  bug a multilingual site notices last. Negotiated responses carry `Vary: accept-language`,
+  and `cookie` as well when the reader's own choice decided it, named per response rather
+  than always so a page is not made uncacheable for the sake of readers who never chose one.
+
+- **`negotiateLocale(request, config)` for everything that is not a page.** The same rule pages
+  are negotiated with, callable from an SSE stream, a JSON endpoint, or anywhere a response
+  carries text but no document - so a site's API cannot answer in a different language from its
+  pages. `docs/i18n.md` covers the whole surface.
+
 - **The language of a page is now decided by the framework.** `mountPages` takes a
   `locales` config; given one, every request is negotiated and the page is served with its
   own `<html lang>` and `<html dir>`.

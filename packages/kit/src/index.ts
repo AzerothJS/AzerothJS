@@ -30,7 +30,8 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import type { Route } from 'azerothjs';
-import { localeDirection, parseAcceptLanguage, resolveLocale } from 'azerothjs';
+import { localeDirection, negotiateLocale } from 'azerothjs';
+import type { NegotiatedLocale } from 'azerothjs';
 import { guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
@@ -299,10 +300,18 @@ export function flattenPages(
     return out;
 }
 
-/** @internal A leading-slash path as the prerender output file inside clientDir. */
-export function prerenderFileFor(path: string): string
+/**
+ * @internal A leading-slash path as the prerender output file inside clientDir.
+ *
+ * A multilingual build writes one file per language beside each other - `about/index.fa.html`
+ * next to `about/index.html` - so a static page has a real artifact for every reader rather than
+ * one language's copy served to all of them. The unsuffixed name stays exactly what it was, so a
+ * single-language build is byte-identical and vite's own `index.html` is never shadowed.
+ */
+export function prerenderFileFor(path: string, locale?: string): string
 {
-    return path === '/' ? 'index.html' : `${ path.slice(1) }/index.html`;
+    const name = locale === undefined ? 'index.html' : `index.${ locale }.html`;
+    return path === '/' ? name : `${ path.slice(1) }/${ name }`;
 }
 
 /**
@@ -439,8 +448,37 @@ export function mountPages(app: App, options: KitOptions): void
         }
         if (mode === 'static')
         {
-            const file = prerenderFileFor(page.path);
-            app.get(page.path, staticFiles(options.clientDir, { index: file, param: '__none' }));
+            const plain = prerenderFileFor(page.path);
+            const localized = localesOf(options);
+            if (localized.length === 0)
+            {
+                app.get(page.path, staticFiles(options.clientDir, { index: plain, param: '__none' }));
+            }
+            else
+            {
+                // One handler that picks this reader's file, falling back to the unsuffixed one
+                // so a build that predates the locale config still serves.
+                const servers = new Map<string, Handler>(localized.map((tag) =>
+                    [tag, staticFiles(options.clientDir, { index: prerenderFileFor(page.path, tag), param: '__none' })]));
+                const fallback = staticFiles(options.clientDir, { index: plain, param: '__none' });
+                app.get(page.path, async (context: RequestContext): Promise<Response> =>
+                {
+                    const tag = localeFor(context.request, options);
+                    const server = tag === undefined ? undefined : servers.get(tag);
+                    try
+                    {
+                        return withVary(await (server ?? fallback)(context), context, options);
+                    }
+                    catch (error)
+                    {
+                        if (!(error instanceof NotFoundError) || server === undefined)
+                        {
+                            throw error;
+                        }
+                        return withVary(await fallback(context), context, options);
+                    }
+                });
+            }
         }
         else
         {
@@ -605,6 +643,14 @@ function localeFor(request: Request, options: KitOptions): string | undefined
 }
 
 /**
+ * @internal The languages this mount publishes, or none.
+ */
+function localesOf(options: KitOptions): readonly string[]
+{
+    return options.locales?.supported ?? [];
+}
+
+/**
  * @internal What a negotiated response varies on.
  *
  * `Accept-Language` always participates once a site publishes more than one language. The COOKIE
@@ -623,28 +669,17 @@ function varyFor(request: Request, options: KitOptions): string | undefined
     return negotiated.fromCookie ? 'accept-language, cookie' : 'accept-language';
 }
 
-function negotiate(request: Request, options: KitOptions): { locale: string; fromCookie: boolean } | undefined
+function negotiate(request: Request, options: KitOptions): NegotiatedLocale | undefined
 {
     const config = options.locales;
     if (config === undefined || config.supported.length === 0)
     {
         return undefined;
     }
-    const fallback = config.default ?? config.supported[0] ?? 'en';
-    const chosen = parseCookies(request)[config.cookie ?? 'locale'];
-    if (chosen !== undefined)
-    {
-        // Still resolved rather than trusted: the cookie is reader-supplied text, and an
-        // unsupported or hostile value must not reach `<html lang>`.
-        return { locale: resolveLocale([chosen], config.supported, fallback), fromCookie: true };
-    }
-    const header = request.headers.get('accept-language');
-    return {
-        locale: header === null
-            ? fallback
-            : resolveLocale(parseAcceptLanguage(header), config.supported, fallback),
-        fromCookie: false
-    };
+    // The SAME rule any handler can call, rather than a copy that would drift from it: a site
+    // whose API answers in a different language from its pages is worse than one that only
+    // speaks English.
+    return negotiateLocale(request, config);
 }
 
 /**
@@ -877,6 +912,21 @@ function registerStaticFirst(
             // prerender pass resolved, so the lookup and the write agree by construction.
             // A fresh object (not a merge) carries the file path, so staticFiles' full
             // machinery (containment, ETag, ranges) serves the prerendered bytes.
+            const tag = localeFor(context.request, options);
+            if (tag !== undefined)
+            {
+                try
+                {
+                    return await assets({ ...context, params: { path: prerenderFileFor(context.path, tag) } });
+                }
+                catch (error)
+                {
+                    if (!(error instanceof NotFoundError))
+                    {
+                        throw error;
+                    }
+                }
+            }
             return await assets({ ...context, params: { path: prerenderFileFor(context.path) } });
         }
         catch (error)

@@ -36,6 +36,15 @@ export interface PrerenderOptions
 
     /** The per-url page renderer from the SSR bundle (`createPageRenderer(App, routes)`). */
     renderer: PageRenderer;
+
+    /**
+     * The languages to build each static page in - the same list `mountPages` publishes.
+     *
+     * Every page is rendered once per language into its own file, so a static site has a real
+     * artifact for each reader instead of one language's copy negotiated at request time (which a
+     * static host cannot do at all). Omit for a single-language build, which is unchanged.
+     */
+    locales?: readonly string[];
 }
 
 /**
@@ -94,7 +103,7 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
     // and runtime pages agree on the deployment they belong to.
     const buildStamp = createHash('sha256').update(shell).digest('hex').slice(0, 16);
 
-    async function renderAndWrite(path: string, revalidate?: number): Promise<void>
+    async function renderAndWrite(path: string, revalidate?: number, locale?: string): Promise<void>
     {
         // A page WITH a revalidation window is ISR: its prerendered seed file is served
         // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
@@ -102,7 +111,8 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         const result = await options.renderer(path, shell, {
             handoffMeta: revalidate !== undefined
                 ? { build: buildStamp, at: Date.now() }
-                : { build: buildStamp, static: true }
+                : { build: buildStamp, static: true },
+            ...(locale !== undefined ? { locale } : {})
         });
         if (result.kind === 'redirect')
         {
@@ -143,7 +153,7 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
             throw new Error(`kit prerender: "${ path }" did not match any route during prerender - `
                 + 'remove it from the static set or fix the route table.');
         }
-        const file = resolve(options.clientDir, prerenderFileFor(path));
+        const file = resolve(options.clientDir, prerenderFileFor(path, locale));
         const root = resolve(options.clientDir);
         if (!file.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`))
         {
@@ -213,10 +223,15 @@ function readPrevious(file: string): string | null
 /** @internal The page walk itself; `prerender` wraps it so a throw can roll back what it wrote. */
 async function generate(
     options: PrerenderOptions,
-    renderAndWrite: (path: string, revalidate?: number) => Promise<void>,
+    renderAndWrite: (path: string, revalidate?: number, locale?: string) => Promise<void>,
     written: string[]
 ): Promise<void>
 {
+    // `undefined` FIRST and always: the unsuffixed file is what a host without negotiation serves,
+    // what an older mount looks for, and what replaces vite own index.html at the root - so it is
+    // written whether or not the site is multilingual. The language-suffixed copies join it.
+    const buildLocales: ReadonlyArray<string | undefined> = [undefined, ...(options.locales ?? [])];
+
     for (const page of flattenPages(options.routes))
     {
         if (page.render !== 'static')
@@ -270,12 +285,18 @@ async function generate(
                     continue;
                 }
                 seen.add(resolved);
-                await renderAndWrite(resolved, page.revalidate);
+                for (const locale of buildLocales)
+                {
+                    await renderAndWrite(resolved, page.revalidate, locale);
+                }
                 written.push(resolved);
             }
             continue;
         }
-        await renderAndWrite(page.path, page.revalidate);
+        for (const locale of buildLocales)
+        {
+            await renderAndWrite(page.path, page.revalidate, locale);
+        }
         written.push(page.path);
     }
 }
