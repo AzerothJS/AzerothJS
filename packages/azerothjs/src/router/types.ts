@@ -547,6 +547,13 @@ export interface LoaderHandoff
      * page would show the errors and the hydrated page would immediately lose them.
      */
     action?: unknown;
+
+    /**
+     * The CSRF token this request carries, so `<Form>` can render it into its hidden field on
+     * the server - where `document.cookie` does not exist - and after a client navigation the
+     * component falls back to reading the cookie directly.
+     */
+    csrf?: string;
 }
 
 /**

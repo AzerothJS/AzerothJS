@@ -32,7 +32,7 @@ import { join, resolve, sep } from 'node:path';
 import type { Route } from 'azerothjs';
 import { guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { html as htmlResponse, readForm, verifyCsrfField, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
+import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
@@ -514,11 +514,22 @@ function registerAction(
             }
             throw error;
         }
+        // One action, two representations, chosen by what the client asked for. A NATIVE form
+        // submit is a navigation and needs the redirect-then-render dance; an enhanced submit is
+        // a fetch that wants the value, and following a 303 to re-download the page it is
+        // already showing would defeat the point of intercepting it.
+        const wantsJson = acceptsJson(context.request);
         if (result === undefined)
         {
             // POST/Redirect/GET: the visitor lands on a GET, so a refresh re-reads instead of
             // re-writing, and the browser's back button does not offer to resubmit.
-            return seeOther(context.url.pathname + context.url.search);
+            return wantsJson
+                ? jsonResponse({ ok: true }, { headers: { 'cache-control': 'private, no-store' } })
+                : seeOther(context.url.pathname + context.url.search);
+        }
+        if (wantsJson)
+        {
+            return jsonResponse({ ok: false, result }, { status: 422, headers: { 'cache-control': 'private, no-store' } });
         }
         // A returned value is a REFUSAL - the classic validation re-render. The page renders
         // again at 422 with the value in hand, which is where field errors reach the form.
@@ -537,6 +548,65 @@ function registerAction(
 function seeOther(location: string): Response
 {
     return new Response(null, { status: 303, headers: { location, 'cache-control': 'private, no-store' } });
+}
+
+/**
+ * @internal This request's CSRF token, and whether it had to be minted.
+ *
+ * A form needs the token WHILE RENDERING, and on a visitor's first page load there is no
+ * cookie yet - so one is minted here and the same value both goes into the markup and comes
+ * back as a Set-Cookie. Waiting for `csrfCookie` to mint on the way out would put a token in
+ * the browser that the form on that very page does not carry, and every first submit would
+ * fail its own check.
+ */
+function tokenFor(request: Request, options: KitOptions): { token: string; minted: boolean }
+{
+    const name = options.csrf?.cookie ?? (options.csrf?.secure === false ? 'azcsrf' : '__Host-azcsrf');
+    const existing = parseCookies(request)[name];
+    return existing === undefined ? { token: csrfToken(), minted: true } : { token: existing, minted: false };
+}
+
+/** @internal Attaches a freshly minted CSRF cookie without disturbing the response's own. */
+function withMintedToken(response: Response, token: string, options: KitOptions): Response
+{
+    const name = options.csrf?.cookie ?? (options.csrf?.secure === false ? 'azcsrf' : '__Host-azcsrf');
+    const cookie = serializeCookie(name, token, {
+        secure: options.csrf?.secure !== false,
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/'
+    });
+    const headers = new Headers();
+    response.headers.forEach((value, key) =>
+    {
+        if (key !== 'set-cookie')
+        {
+            headers.set(key, value);
+        }
+    });
+    for (const existing of response.headers.getSetCookie())
+    {
+        headers.append('set-cookie', existing);
+    }
+    headers.append('set-cookie', cookie);
+    // 204/205/304 forbid a body, and the kernel materializes one even when empty.
+    const body = response.status === 204 || response.status === 205 || response.status === 304
+        ? null
+        : response.body;
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+}
+
+/**
+ * @internal Whether the client EXPLICITLY asked for JSON, which is what selects a page action's
+ * enhanced representation. Asked positively, not as the absence of an HTML accept: a client
+ * that sends no Accept at all is unknown, and the safe answer for a form endpoint is the one a
+ * browser would get - the redirect a native submit needs, rather than a body it cannot follow.
+ */
+function acceptsJson(request: Request): boolean
+{
+    return (request.headers.get('accept') ?? '')
+        .split(',')
+        .some((entry) => entry.trim().toLowerCase().startsWith('application/json'));
 }
 
 /** @internal Whether the client asked for a document rather than an asset or a JSON API. */
@@ -562,6 +632,8 @@ async function renderOrShell(
     refusal?: { result: unknown; report: KitErrorObserver }
 ): Promise<Response>
 {
+    // Resolved before the render, so `<Form>` renders the same value the browser will hold.
+    const csrf = tokenFor(context.request, options);
     if (mode === 'server' && options.renderer !== undefined)
     {
         // The nonce reaches the buffered path too, not just the streamed one: a server-rendered
@@ -585,6 +657,7 @@ async function renderOrShell(
                 // full fan-out to the backing services, with no one left to read the answer.
                 handoffMeta: { build: await buildId, at: Date.now() },
                 ...(nonce !== undefined ? { scriptNonce: nonce } : {}),
+                csrfToken: csrf.token,
                 ...(refusal !== undefined ? { actionResult: refusal.result } : {}),
                 ...(refusal !== undefined
                     ? { onError: (error: unknown): void => refusal.report(error, { path: context.url.pathname, phase: 'render' }) }
@@ -592,11 +665,13 @@ async function renderOrShell(
             });
         // A refused action re-renders at ITS status, not the render's: the page is fine, the
         // write was not, and 422 is what tells a client which of the two happened.
-        return refusal === undefined
+        const answered = refusal === undefined
             ? pageResponse(result, shell)
             : pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell);
+        return csrf.minted ? withMintedToken(answered, csrf.token, options) : answered;
     }
-    return htmlResponse(shell, { status: shellStatus });
+    const bare = htmlResponse(shell, { status: shellStatus });
+    return csrf.minted ? withMintedToken(bare, csrf.token, options) : bare;
 }
 
 /** @internal An SSR-or-shell handler for one path; `'stream'` answers a streaming Response. */

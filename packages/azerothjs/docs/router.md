@@ -225,6 +225,33 @@ the token into the form is still the application's job - note that `csrfCookie` 
 RESPONSE, so a visitor's very first page load has no cookie yet and its form would carry an
 empty token.
 
+### `<Form>`
+
+`<Form>` renders that form and carries the token for you. Without JS it posts natively;
+with JS it intercepts the submit, asks the same action for its JSON representation, and
+revalidates the page in place - same scroll, same focus, no reload.
+
+```azeroth
+// todo-page.azeroth
+import { Form, useActionResult, useLoader } from 'azerothjs';
+
+export default component TodoPage()
+{
+    const todos = useLoader();
+    const refusal = useActionResult();
+
+    <Form>
+        <input name="text" />
+        <p class="error">{ refusal()?.fields?.text }</p>
+        <button type="submit">Add</button>
+    </Form>
+}
+```
+
+The refusal arrives in the same `useActionResult()` either way, so the page is written once and
+behaves the same whether or not the enhancement ran. `onSettled` hears the enhanced outcome;
+it is never called on the native path, where the answer is a navigation rather than a value.
+
 ## The location payload
 
 ```ts

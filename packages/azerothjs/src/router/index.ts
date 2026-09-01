@@ -30,6 +30,7 @@ export { parseQuery, stringifyQuery } from './query.ts';
 
 export { Link } from './link.ts';
 export { Routes } from './routes.ts';
+export { Form } from './form.ts';
 export { Outlet } from './outlet.ts';
 export { RouterProvider } from './provider.ts';
 
@@ -81,5 +82,6 @@ export type { MountNode } from '../component/index.ts';
 export type { PathMatcher } from './path-pattern.ts';
 export type { LinkProps } from './link.ts';
 export type { RoutesProps, RouteTransitionContext } from './routes.ts';
+export type { FormProps } from './form.ts';
 export type { OutletProps } from './outlet.ts';
 export type { NavigateApi } from './use-route.ts';

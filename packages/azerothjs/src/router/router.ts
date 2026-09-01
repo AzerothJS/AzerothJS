@@ -212,6 +212,19 @@ export interface Router
     actionResult: Getter<unknown>;
 
     /**
+     * This request's CSRF token, seeded from the handoff. Empty after a client navigation,
+     * where `<Form>` reads the cookie instead - a render has no cookie to read, and a
+     * first load has no cookie at all until the response that carries this one.
+     */
+    csrfToken: Getter<string>;
+
+    /**
+     * @internal Writes what an ENHANCED submit was refused with, so `useActionResult()`
+     * reads one slot whether the server rendered the refusal or a fetch received it.
+     */
+    setActionResult: (result: unknown) => void;
+
+    /**
      * The settled routing verdict: `match`, `not-found`, or `blocked` with the 401/403 a
      * guard vetoed with. `match()` answers null for both non-match states, which is why
      * an unknown URL and a denied one used to render the same UI; this tells them apart.
@@ -959,6 +972,7 @@ function buildRouter(config: RouterConfig): Router
     // this function: the guard effect's first run is SYNCHRONOUS and reaches `accept` before
     // those bindings exist, so reading one is a temporal-dead-zone ReferenceError - the same
     // hazard the scroll and blocker state is hoisted above the effect to avoid.
+    const csrfSeed = config.initialLoaderData?.csrf ?? '';
     let refusalPath: string | null = config.initialLoaderData?.action !== undefined
         ? config.initialLoaderData.path
         : null;
@@ -1813,6 +1827,11 @@ function buildRouter(config: RouterConfig): Router
         match,
         state: routeState,
         actionResult,
+        csrfToken: () => csrfSeed,
+        setActionResult(result): void
+        {
+            setActionResult(() => result);
+        },
         loaders,
         revalidate(): Promise<void>
         {

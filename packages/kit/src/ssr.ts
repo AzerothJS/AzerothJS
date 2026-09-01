@@ -110,6 +110,17 @@ export interface PageRenderOptions
      * the hydration that adopts it agree, and reaches the page through `useActionResult()`.
      */
     actionResult?: unknown;
+
+    /**
+     * This request's CSRF token, for `<Form>` to render into its hidden field.
+     *
+     * It has to arrive from OUTSIDE the render: the token lives in a cookie the render cannot
+     * see, and on a visitor's first page load there is no cookie yet - the host mints one for
+     * that response, and the form must carry the same value the browser is about to store.
+     * Not a secret from the client: the cookie is deliberately readable by the page's own JS,
+     * and the token is going into the markup either way.
+     */
+    csrfToken?: string;
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -328,9 +339,13 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         const handoffMeta = { ...(options?.handoffMeta ?? {}), path: pageUrl.pathname + pageUrl.search };
         // A refusal is data for THIS render, so it joins the envelope the app already receives
         // rather than travelling by a second channel the client would have to be taught about.
-        const withAction = options?.actionResult === undefined
+        const stamped = options?.actionResult === undefined && options?.csrfToken === undefined
             ? handoff
-            : { ...(handoff ?? { version: LOADER_HANDOFF_VERSION, path: handoffMeta.path, data: [] }), action: options.actionResult };
+            : {
+                ...(handoff ?? { version: LOADER_HANDOFF_VERSION, path: handoffMeta.path, data: [] }),
+                ...(options.actionResult !== undefined ? { action: options.actionResult } : {}),
+                ...(options.csrfToken !== undefined ? { csrf: options.csrfToken } : {})
+            };
 
         if (!shell.includes(ROOT_MARKER))
         {
@@ -367,7 +382,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             try
             {
                 body = renderToStream(
-                    () => app(withAction !== undefined ? { url, handoff: withAction } : { url }),
+                    () => app(stamped !== undefined ? { url, handoff: stamped } : { url }),
                     {
                         frame,
                         ...(options.signal !== undefined ? { signal: options.signal } : {}),
@@ -379,7 +394,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             {
                 frames = drainFrames(options.scriptNonce, frame);
             }
-            const script = loaderHandoffScript(withAction ?? loaded, handoffMeta);
+            const script = loaderHandoffScript(stamped ?? loaded, handoffMeta);
             // Style and handoff ride in as the prelude, so the emitted order is
             // style -> handoff -> head additions in BOTH modes, all at one anchor located
             // before any of them is inserted.
@@ -419,7 +434,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // Constructed BEFORE the render, so the finally holds it on the throw path.
         const frame = createRenderFrame();
         const render = (): string =>
-            renderToString(() => app(withAction !== undefined ? { url, handoff: withAction } : { url }), { frame });
+            renderToString(() => app(stamped !== undefined ? { url, handoff: stamped } : { url }), { frame });
         try
         {
             body = denied === null ? render() : renderAsDenied(denied, render);
@@ -435,7 +450,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // treats the replacement verbatim.
         const rendered = `<div id="root">${ body }</div>`;
         let html = shell.replace(ROOT_MARKER, () => rendered);
-        const script = loaderHandoffScript(withAction ?? loaded, handoffMeta);
+        const script = loaderHandoffScript(stamped ?? loaded, handoffMeta);
         // Title surgery, keyed replacements, additions - order in the document:
         // style -> handoff -> head, all at one anchor located before any of them is inserted.
         html = applyHeadToShell(html, frames.head, frames.styleTag + script);

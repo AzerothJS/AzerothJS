@@ -111,6 +111,14 @@ export function csrfCookie(options: CsrfOptions = {}): EdgeMiddleware
             {
                 return response;
             }
+            // A page that RENDERS a form needs the token while rendering, which is before this
+            // layer ever sees the response - so `mountPages` mints one itself for those. Minting
+            // a second here would append a rival Set-Cookie, the browser would keep the last,
+            // and the form would carry the other: every first submit would fail its own check.
+            if (response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${ name }=`)))
+            {
+                return response;
+            }
             const cookie = serializeCookie(name, csrfToken(), { secure, httpOnly: false, sameSite: 'lax', path: '/' });
             // APPEND, never set: a handler's own Set-Cookie must survive the minting.
             const headers = new Headers();

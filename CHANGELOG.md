@@ -436,6 +436,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Added
 
+- **`<Form>`: the same form, enhanced when there is JS.** It renders an ordinary
+  `<form method="post">` carrying the CSRF token, so a browser with scripting off posts it
+  natively. With JS the submit is intercepted and sent as a fetch that asks the SAME action for
+  its JSON representation, then revalidates the page in place - no reload, no lost scroll. A
+  refusal lands in `useActionResult()` either way, so the page is written once.
+
+  This also closes a gap the browser found in the previous release of page actions:
+  `csrfCookie` mints its token on the RESPONSE, so a visitor's very first page load rendered a
+  form with an EMPTY token and its first submit would have failed its own check. `mountPages`
+  now resolves the token BEFORE rendering - reusing the cookie a returning visitor has, minting
+  one for a first visit - so the markup and the `Set-Cookie` carry the same value.
+  `csrfCookie` skips minting when the response already carries that cookie, so composing both
+  cannot leave the browser holding one token while the form carries another.
+
+  A page action now answers what the client asked for: JSON when the request explicitly
+  accepts it (`{ ok: true }` or `422 { ok: false, result }`), and the redirect-then-render
+  otherwise. Asked positively, so a client sending no `Accept` still gets the browser answer
+  rather than a body it cannot follow.
+
 - **Page actions: a form that works with no client JS.** A route can declare an `action`, and
   `mountPages` registers a POST for that page's own path. Measured before this existed, a plain
   `<form method="post">` posting to its own page answered **405** with `Allow: GET, HEAD` - the
