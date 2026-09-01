@@ -23,6 +23,7 @@
  */
 
 import type { Query, SearchSchemaLike } from './types.ts';
+import { DEV } from '../reactivity/dev.ts';
 
 /**
  * Parses a query string into a {@link Query}, collapsing repeated keys into arrays in
@@ -152,4 +153,26 @@ export function declaredQuery(
     }
     onInvalid?.(parsed.errors ?? {});
     return {};
+}
+
+/** @internal One report per (schema, search string), so a changing URL cannot spam the console. */
+const warnedSearch = new WeakMap<SearchSchemaLike, string>();
+
+/**
+ * Reports a query that failed its schema, for the CLIENT doors only.
+ *
+ * Deliberately not called from the SSR path, for the reason {@link declaredQuery} gives: there the
+ * query is attacker-controlled and a console call per request is log amplification. Shared by
+ * `useSearch` and the loader key so the same bad query cannot be loud through one and mute through
+ * the other, and so both share the one throttle.
+ */
+export function reportInvalidSearch(schema: SearchSchemaLike, search: string, errors: Record<string, string>): void
+{
+    if (!DEV || warnedSearch.get(schema) === search)
+    {
+        return;
+    }
+    warnedSearch.set(schema, search);
+    console.warn(`[azerothjs/router] search params "${ search }" failed their schema; `
+        + `degrading to {}. Fields: ${ Object.keys(errors).join(', ') }`);
 }

@@ -15,17 +15,13 @@
  * warns once per offending query string, so declare search fields optional or defaulted.
  */
 
-import { declaredQuery } from './query.ts';
+import { declaredQuery, reportInvalidSearch } from './query.ts';
 import type { Getter } from '../reactivity/index.ts';
 import { createMemo, untrack } from '../reactivity/index.ts';
-import { DEV } from '../reactivity/dev.ts';
 import type { SearchSchemaLike } from './types.ts';
 import type { Router } from './router.ts';
 import type { RouteHandle } from './define-route.ts';
 import { currentRouteFrame, resolveRouter } from './provider.ts';
-
-/** @internal One warning per (schema, search-string) so a hostile URL cannot spam the console. */
-const warned = new WeakMap<SearchSchemaLike, string>();
 
 /** @internal Validates one location's query through `schema`, degrading to {} with one warning. */
 function parseWith(schema: SearchSchemaLike | undefined, location: { query: unknown; search: string }): unknown
@@ -34,15 +30,8 @@ function parseWith(schema: SearchSchemaLike | undefined, location: { query: unkn
     {
         return location.query;
     }
-    return declaredQuery(schema, location.query as Parameters<typeof declaredQuery>[1], (errors) =>
-    {
-        if (DEV && warned.get(schema) !== location.search)
-        {
-            warned.set(schema, location.search);
-            console.warn(`[azerothjs/router] search params "${ location.search }" failed their schema; `
-                + `degrading to {}. Fields: ${ Object.keys(errors).join(', ') }`);
-        }
-    });
+    return declaredQuery(schema, location.query as Parameters<typeof declaredQuery>[1],
+        (errors) => reportInvalidSearch(schema, location.search, errors));
 }
 
 /** @internal Memoizes {@link parseWith} over the live location for a FIXED schema. */

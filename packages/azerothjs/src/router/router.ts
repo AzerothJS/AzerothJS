@@ -58,7 +58,7 @@ import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cac
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
 import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
-import { declaredQuery, parseQuery, stringifyQuery } from './query.ts';
+import { declaredQuery, parseQuery, reportInvalidSearch, stringifyQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
 import { createBrowserHistory } from './history.ts';
 import { shallowEqualRecord } from './shallow-equal.ts';
@@ -1216,7 +1216,11 @@ function buildRouter(config: RouterConfig): Router
             }
             return query;
         }
-        return declaredQuery(route.search, query);
+        // Reported through the same door useSearch uses, sharing its throttle: the loader key
+        // and the loader argument are both built from the degraded {}, so a schema that cannot match
+        // makes a loader refetch on a query it cannot see. The SSR path stays silent by design.
+        const schema = route.search;
+        return declaredQuery(schema, query, (errors) => reportInvalidSearch(schema, search, errors));
     }
 
     function levelKeyFor(m: RouteMatch | null, search: string, level: number): string | null

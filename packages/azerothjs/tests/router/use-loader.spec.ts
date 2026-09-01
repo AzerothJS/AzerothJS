@@ -3,8 +3,8 @@
 // the previous fetch on a mid-flight navigation, and stays idle for a null match
 // or a loader-less route. Real promises (no mocked async) flushed with a real
 // macrotask, all inside a createRoot driven by memory history.
-import { describe, it, expect } from 'vitest';
-import { createRoot, createRouter, createMemoryHistory, useLoader } from 'azerothjs';
+import { describe, it, expect, vi } from 'vitest';
+import { createRoot, createRouter, createMemoryHistory, useLoader, matchAndLoad } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 
 const leaf = (): HTMLElement => document.createElement('div');
@@ -281,5 +281,96 @@ describe('useLoader - refetch', () =>
             expect(resource.data()).toBe('v');
             expect(resource.refreshing()).toBe(false);
         });
+    });
+});
+
+// A declared search schema that cannot match the query degrades to {}. Degrading is right - a page
+// must not crash on a hostile URL - but on the CLIENT it must not be silent: the loader key and the
+// loader's `query` argument are both built from the degraded {}, so the loader refetches on a query
+// it cannot see and the author is told nothing. useSearch already warned; the loader door did not,
+// so the same bad query was loud through one and mute through the other.
+//
+// The SSR door stays silent DELIBERATELY - there the query is attacker-controlled and a console
+// call per request is log amplification - and that is pinned here too, so it is not "fixed" later
+// by someone who reads only the client half.
+describe('a query that fails its schema is reported once, on the client only', () =>
+{
+    const leaf = (): HTMLElement => document.createElement('div');
+
+    function failingSchema(): NonNullable<Route['search']>
+    {
+        return {
+            safeParse: () => ({ ok: false, errors: { page: 'Expected a number' } })
+        };
+    }
+
+    it('the loader door warns, naming the field', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try
+        {
+            const routes: Route[] = [{
+                path: '/list',
+                component: leaf,
+                search: failingSchema(),
+                loader: async () => 'data'
+            }];
+            await withRouter(routes, '/list?page=x', async () =>
+            {
+                await flush();
+            });
+            expect(warn).toHaveBeenCalled();
+            expect(String(warn.mock.calls[0]?.[0])).toContain('page');
+        }
+        finally
+        {
+            warn.mockRestore();
+        }
+    });
+
+    it('CONTROL: a schema that matches is silent', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try
+        {
+            const passing = {
+                safeParse: (value: unknown) => ({ ok: true, value })
+            } as unknown as NonNullable<Route['search']>;
+            const routes: Route[] = [{
+                path: '/list',
+                component: leaf,
+                search: passing,
+                loader: async () => 'data'
+            }];
+            await withRouter(routes, '/list?page=1', async () =>
+            {
+                await flush();
+            });
+            expect(warn).not.toHaveBeenCalled();
+        }
+        finally
+        {
+            warn.mockRestore();
+        }
+    });
+
+    it('CONTROL: the SSR door stays silent, so an attacker cannot amplify the log', async () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try
+        {
+            const routes: Route[] = [{
+                path: '/list',
+                component: leaf,
+                search: failingSchema(),
+                loader: async () => 'data'
+            }];
+            await matchAndLoad(routes, '/list?page=x');
+            expect(warn).not.toHaveBeenCalled();
+        }
+        finally
+        {
+            warn.mockRestore();
+        }
     });
 });
