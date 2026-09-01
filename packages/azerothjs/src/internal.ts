@@ -131,6 +131,9 @@ export {
 export { ErrorBoundary } from './component/index.ts';
 export { Outlet } from './router/index.ts';
 export { guardedMatch } from './router/handoff.ts';
+// The SSR host pins one string render to the blocked state, so the vetoed route cannot be
+// serialized even when the app entry forwards nothing.
+export { renderAsDenied } from './router/denied.ts';
 
 /** @internal The memoized top-level flatten; exported for the arms that pin its boundary. */
 export { flattenRoutesFor } from './router/router.ts';

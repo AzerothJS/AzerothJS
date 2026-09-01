@@ -12,7 +12,9 @@ import {
     Outlet,
     Link,
     useParams,
-    useLoader
+    useLoader,
+    unauthorized,
+    forbidden
 } from 'azerothjs';
 import type { Route, Router, MountNode } from 'azerothjs';
 
@@ -262,6 +264,84 @@ describe('router integration - nested layout app', () =>
         router.navigate('/');
         expect(container.querySelector('#nf')).toBeNull();
         expect(container.querySelector('#home')).not.toBeNull();
+
+        render(() => h('div', {}), container);
+        container.remove();
+    });
+
+    it('renders the BLOCKED UI for a denied URL, distinctly from the 404, and re-renders on 401 -> 403', async () =>
+    {
+        // The DOM half. `router.state()` reporting 'blocked' is not the deliverable: what the
+        // visitor sees is, and both non-match states leave `match` null, so the driver has to
+        // tell them apart on more than that.
+        let router!: Router;
+        let signedIn = false;
+        const routes: Route[] =
+        [
+            { path: '/', component: () => h('div', { id: 'home' }, 'home') },
+            {
+                path: '/account',
+                component: () => h('div', { id: 'account' }, 'private'),
+                guard: () => (signedIn ? forbidden() : unauthorized())
+            }
+        ];
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        render(() =>
+        {
+            router = createRouter({ routes, history: createMemoryHistory('/account') });
+            return Routes({
+                router,
+                fallback: () => h('div', { id: 'nf' }, 'Not found'),
+                blocked: (state) => h('div', { id: 'blocked' }, `denied ${ state.status }`)
+            });
+        }, container);
+        await flush();
+
+        expect(container.querySelector('#blocked')?.textContent).toBe('denied 401');
+        expect(container.querySelector('#nf')).toBeNull();
+        expect(container.querySelector('#account')).toBeNull();
+
+        // A denial belongs to one location: a status change has to reach the DOM, and both
+        // states leaving `match` null is exactly what could stop it.
+        signedIn = true;
+        router.navigate('/');
+        await flush();
+        router.navigate('/account');
+        await flush();
+        expect(container.querySelector('#blocked')?.textContent).toBe('denied 403');
+
+        // And the two non-match states never share a rendering.
+        router.navigate('/missing');
+        await flush();
+        expect(container.querySelector('#nf')).not.toBeNull();
+        expect(container.querySelector('#blocked')).toBeNull();
+
+        render(() => h('div', {}), container);
+        container.remove();
+    });
+
+    it('a denial with no blocked prop keeps rendering the fallback, as it did before the split', async () =>
+    {
+        let router!: Router;
+        const routes: Route[] =
+        [
+            { path: '/', component: () => h('div', { id: 'home' }, 'home') },
+            { path: '/account', component: () => h('div', { id: 'account' }, 'private'), guard: () => false }
+        ];
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        render(() =>
+        {
+            router = createRouter({ routes, history: createMemoryHistory('/account') });
+            return Routes({ router, fallback: () => h('div', { id: 'nf' }, 'Not found') });
+        }, container);
+        await flush();
+
+        expect(container.querySelector('#nf')).not.toBeNull();
+        expect(container.querySelector('#account')).toBeNull();
 
         render(() => h('div', {}), container);
         container.remove();

@@ -35,16 +35,12 @@ import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
 import { flattenRoutesFor, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { isNotFound } from './not-found.ts';
+import { deniedStatus, isDenied } from './denied.ts';
+import { LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION } from './handoff-wire.ts';
 import { declaredQuery, parseQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
 import { inertJson } from '../reactivity/ssr.ts';
 import { latchServerData } from '../reactivity/data-cache.ts';
-
-/** The DOM id of the handoff script tag. */
-export const LOADER_HANDOFF_ID = '__azeroth-loader-handoff';
-
-/** The handoff wire-format version; bumped when the payload shape changes. */
-export const LOADER_HANDOFF_VERSION = 3;
 
 /**
  * What {@link matchAndLoad} produces - EVERY server-side routing outcome, kept distinct so a
@@ -52,9 +48,10 @@ export const LOADER_HANDOFF_VERSION = 3;
  *
  *   - `LoaderHandoff`                    - matched, loaders ran; render and embed the data.
  *   - `{ redirect, replace }`            - a guard or loader redirected; answer with a 302.
- *   - `{ blocked: true, status }`        - a guard VETOED (returned false); the route MUST NOT
- *                                          render. Answer with `status` (403), never a 200 page
- *                                          - collapsing this into `null` is the SSR auth bypass.
+ *   - `{ blocked: true, status }`        - a guard VETOED (`false`, `unauthorized()` or
+ *                                          `forbidden()`); the route MUST NOT render. Answer
+ *                                          with `status` (401 or 403), never a 200 page -
+ *                                          collapsing this into `null` is the SSR auth bypass.
  *   - `{ refusedRedirect, target }`     - a guard or loader redirected OFF-ORIGIN. An automatic
  *                                          navigation to an app-derived target that leaves the
  *                                          origin is the open-redirect shape, so it is refused
@@ -83,7 +80,7 @@ function redirectOutcome(to: NavigateTarget, replace: boolean): MatchAndLoadResu
 export type MatchAndLoadResult =
     | LoaderHandoff
     | { redirect: NavigateTarget; replace: boolean }
-    | { blocked: true; status: number }
+    | { blocked: true; status: 401 | 403 }
     | { refusedRedirect: true; target: string }
     | { notFound: true }
     | null;
@@ -145,8 +142,9 @@ export function guardedMatch(routes: Route[], url: string | URL): boolean
  * follows finds every component ready.
  *
  * A guard or loader redirect surfaces as `{ redirect, replace }` - answer with a real
- * 302. A guard VETO returns null (like no match: the caller renders its fallback).
- * The AbortSignal (pass the request's) cancels the loaders when the client disconnects.
+ * 302. A guard VETO surfaces as `{ blocked, status }` - answer with that status and render the
+ * app's blocked UI, never the route. The AbortSignal (pass the request's) cancels the loaders
+ * when the client disconnects.
  */
 export async function matchAndLoad(
     routes: Route[],
@@ -187,7 +185,15 @@ export async function matchAndLoad(
                 {
                     return redirectOutcome(error.to, error.replace);
                 }
+                if (isDenied(error))
+                {
+                    return { blocked: true, status: deniedStatus(error) };
+                }
                 throw error;
+            }
+            if (isDenied(verdict))
+            {
+                return { blocked: true, status: deniedStatus(verdict) };
             }
             if (verdict === false)
             {
@@ -308,6 +314,13 @@ export function loaderHandoffScript(handoff: MatchAndLoadResult, meta: HandoffMe
     else if ((handoff === null || 'notFound' in handoff) && meta.path !== undefined)
     {
         payload = { version: LOADER_HANDOFF_VERSION, path: meta.path, data: [] };
+    }
+    else if (handoff !== null && 'blocked' in handoff && meta.path !== undefined)
+    {
+        // The verdict, not data: a hydrating client has to settle into the blocked state on its
+        // FIRST pass, before its own guards run, or it adopts the not-found UI over blocked
+        // markup and tears the whole page down.
+        payload = { version: LOADER_HANDOFF_VERSION, path: meta.path, data: [], denied: handoff.status };
     }
     if (payload === null)
     {

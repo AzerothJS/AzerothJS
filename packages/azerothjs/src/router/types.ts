@@ -16,6 +16,7 @@
 
 import type { MountNode } from '../component/index.ts';
 import type { Redirect } from './redirect.ts';
+import type { Denied } from './denied.ts';
 
 /**
  * What a route `search` schema must look like: the native `@azerothjs/schema` shape,
@@ -258,20 +259,34 @@ export interface Route
      * and NOTHING renders or loads until every guard passes. Return:
      *
      *   - `true` / nothing - pass;
-     *   - `false` - VETO: the navigation is cancelled and the previous location
-     *     restored (auth walls, feature flags);
+     *   - `false` - VETO with 403, the same as `forbidden()`;
+     *   - `unauthorized()` / `forbidden()` - VETO with 401 / 403: the navigation
+     *     settles at the target URL in the BLOCKED state, which `<Routes blocked>`
+     *     renders and SSR answers with that status. The route never renders;
      *   - a {@link NavigateTarget} or `redirect(...)` - go there instead
      *     (`/login` with a comeback query is the classic).
      *
      * May be async; the navigation holds (and `router.pending()` is true) until
-     * it settles. A THROWN `redirect(...)` behaves like returning it; any other
-     * throw fails CLOSED (veto) with a console error.
+     * it settles. A THROWN `redirect(...)` or denial behaves like returning it; any
+     * other throw fails CLOSED (403) with a console error.
      */
     guard?: (context: GuardContext) => GuardVerdict | Promise<GuardVerdict>;
 }
 
 /** What a route {@link Route.guard} may produce. */
-export type GuardVerdict = boolean | NavigateTarget | Redirect | undefined;
+export type GuardVerdict = boolean | NavigateTarget | Redirect | Denied | undefined;
+
+/**
+ * The settled routing verdict, read from `router.state()` and dispatched on by `<Routes>`.
+ *
+ * `match` alone cannot carry this: an unknown URL and a guard veto both leave it null, and the
+ * two states are answered with different status codes and different UI. The union is closed -
+ * these are the states the route lifecycle renders.
+ */
+export type RouteState =
+    | { kind: 'match'; match: RouteMatch }
+    | { kind: 'not-found' }
+    | { kind: 'blocked'; status: 401 | 403 };
 
 /** What a route {@link Route.guard} receives. */
 export interface GuardContext
@@ -498,6 +513,13 @@ export interface LoaderHandoff
      * build-time by contract, so the seed always adopts fresh and hydration fetches nothing.
      */
     static?: boolean;
+
+    /**
+     * The status a guard vetoed this URL with. Carried so a hydrating client settles into the
+     * blocked state on its FIRST pass - re-deriving it from a guard that has not run yet would
+     * adopt the not-found UI over blocked markup and fail the hydration outright.
+     */
+    denied?: 401 | 403;
 }
 
 /**

@@ -13,7 +13,7 @@ import { createRoot, h, renderToDocument, renderToString, RouterProvider, Routes
 import { App, html } from '@azerothjs/http';
 import {
     createRouter, createMemoryHistory,
-    matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID,
+    matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION,
     notFound, isNotFound,
     type Route, type Router
 } from 'azerothjs';
@@ -101,7 +101,39 @@ describe('client side: adoption without a refetch', () =>
         embed(loaderHandoffScript(handoff));
         try
         {
-            expect(readLoaderHandoff()).toEqual({ version: 3, path: '/users/7?tab=posts', data: [{ id: '7' }] });
+            expect(readLoaderHandoff()).toEqual({ version: LOADER_HANDOFF_VERSION, path: '/users/7?tab=posts', data: [{ id: '7' }] });
+        }
+        finally
+        {
+            cleanup();
+        }
+    });
+
+    it('a seeded denial puts the client in the blocked state BEFORE any guard runs', () =>
+    {
+        // The seed is what makes hydration possible at all: the server sent blocked markup,
+        // and a client that re-derived the state from its own guard would adopt the not-found
+        // UI over it - an unrecoverable mismatch. Read synchronously, before any flush, which
+        // is when the hydration pass reads it.
+        // The guard NEVER settles, so it cannot be the source of the state under test.
+        const guard = vi.fn((): Promise<boolean> => new Promise(() => undefined));
+        const routes: Route[] = [{ path: '/admin', component: leaf, guard }];
+        embed(loaderHandoffScript({ version: LOADER_HANDOFF_VERSION, path: '/admin', data: [], denied: 403 }));
+        try
+        {
+            let dispose!: () => void;
+            createRoot((d) =>
+            {
+                dispose = d;
+                const router = createRouter({
+                    routes,
+                    history: createMemoryHistory('/admin'),
+                    initialLoaderData: readLoaderHandoff()
+                });
+                expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+                expect(router.match()).toBeNull();
+            });
+            dispose();
         }
         finally
         {
@@ -113,7 +145,7 @@ describe('client side: adoption without a refetch', () =>
     {
         const clientLoader = vi.fn(async () => ({ fresh: true }));
         const routes = buildRoutes(clientLoader);
-        embed(loaderHandoffScript({ version: 3, path: '/users/42', data: [{ id: '42', name: 'user-42' }] }));
+        embed(loaderHandoffScript({ version: LOADER_HANDOFF_VERSION, path: '/users/42', data: [{ id: '42', name: 'user-42' }] }));
 
         try
         {
@@ -160,7 +192,7 @@ describe('client side: adoption without a refetch', () =>
             router = createRouter({
                 routes,
                 history: createMemoryHistory('/users/9'),
-                initialLoaderData: { version: 3, path: '/users/OLD', data: [{ id: 'OLD' }] }
+                initialLoaderData: { version: LOADER_HANDOFF_VERSION, path: '/users/OLD', data: [{ id: 'OLD' }] }
             });
         });
         await flush();
@@ -190,7 +222,7 @@ describe('multi-level parity: the nested chain hands off level by level', () =>
 
         const handoff = await matchAndLoad(nested, new URL('http://local/shop/items/9'));
         expect(handoff).toEqual({
-            version: 3,
+            version: LOADER_HANDOFF_VERSION,
             path: '/shop/items/9',
             data: [{ nav: ['a', 'b'] }, { id: '9' }]
         });

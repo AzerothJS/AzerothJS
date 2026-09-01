@@ -41,7 +41,12 @@ const fakeRenderer = (url: string, shell: string): Promise<PageResult> =>
     }
     if (url.startsWith('/forbidden'))
     {
-        return Promise.resolve({ kind: 'blocked', status: 403 });
+        // What createPageRenderer answers for a vetoed URL: the app's own blocked UI, rendered
+        // with the router pinned so the protected component is never in it.
+        return Promise.resolve({
+            kind: 'blocked', status: 403,
+            html: shell.replace('<div id="root"></div>', '<div id="root">NO ACCESS</div>')
+        });
     }
     return Promise.resolve({ kind: 'html', status: 200, html: shell.replace('<div id="root"></div>', `<div id="root">SSR:${ url }</div>`) });
 };
@@ -152,14 +157,16 @@ describe('mountPages', () =>
         expect(response.headers.get('location')).toBe('/login');
     });
 
-    it('a guard VETO serves the status with the pristine shell, never the rendered component', async () =>
+    it("a guard VETO serves the status with the app's blocked UI, never the protected page", async () =>
     {
         const { app } = build([{ path: '/forbidden', component }], true);
         const response = await fetch(app, '/forbidden');
         expect(response.status).toBe(403);
+        // Identity-dependent by definition: a shared cache must never hold one visitor's 403.
+        expect(response.headers.get('cache-control')).toBe('private, no-store');
         const body = await response.text();
-        expect(body).toContain('<div id="root"></div>'); // empty root - nothing protected rendered
-        expect(body).not.toContain('SSR:'); // the component was never rendered
+        expect(body).toContain('NO ACCESS');
+        expect(body).not.toContain('SSR:'); // the protected component was never rendered
     });
 
     it("render: 'client' serves the pristine shell; API routes registered before keep priority", async () =>

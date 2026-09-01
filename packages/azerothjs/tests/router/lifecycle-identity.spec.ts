@@ -389,7 +389,7 @@ describe('the param-remount contract (3.3, exact wording)', () =>
 
 describe('a vetoed navigation runs no slot effect', () =>
 {
-    it('build counters stay flat and every element survives; the guard really ran', async () =>
+    it('builds nothing: not the vetoed route, and not a rebuild of the chain it replaced', async () =>
     {
         let guardRuns = 0;
         const routes: Route[] =
@@ -406,18 +406,17 @@ describe('a vetoed navigation runs no slot effect', () =>
             }
         ];
         const { router, container, cleanup } = mountApp(routes, '/a/1/b/1/c/1');
-        const l0 = container.querySelector('#l0');
-        const l1 = container.querySelector('#l1');
-        const leaf = container.querySelector('#leaf');
 
         router.navigate('/secret');
         await flush();
 
         expect(guardRuns).toBeGreaterThan(0);
+        // The vetoed component is never constructed - the half this test exists for.
         expect(container.querySelector('#secret')).toBeNull();
-        expect(container.querySelector('#l0')).toBe(l0);
-        expect(container.querySelector('#l1')).toBe(l1);
-        expect(container.querySelector('#leaf')).toBe(leaf);
+        // The navigation SETTLES at the target, so the chain it left is torn down rather than
+        // retained; what must not happen is a REBUILD, and the counters say it did not.
+        expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+        expect(container.querySelector('#l0')).toBeNull();
         expect(counts).toMatchObject({ l0: 1, l1: 1, leaf: 1 });
         cleanup();
     });

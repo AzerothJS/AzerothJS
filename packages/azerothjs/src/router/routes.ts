@@ -80,6 +80,18 @@ export interface RoutesProps
     fallback?: (() => MountNode) | undefined;
 
     /**
+     * Rendered when a guard DENIED this URL, with the status it denied at: 401 from
+     * `unauthorized()` (a sign-in wall - the visitor may retry) or 403 from `forbidden()` or
+     * a bare `false` (retrying will not help). The route itself never renders either way.
+     *
+     * The server answers that same status and server-renders this UI, and a vetoed in-app
+     * navigation settles at the target URL showing it, so a deep link and a click agree.
+     * Omit it and a denial keeps rendering `fallback`, exactly as it did before the two
+     * states were told apart.
+     */
+    blocked?: ((state: { status: 401 | 403 }) => MountNode) | undefined;
+
+    /**
      * Animate route swaps with `<Transition>`'s 6-class family, at the OUTERMOST segment
      * a navigation actually REBUILDS: the outgoing content of that one slot plays
      * `{name}-leave-*` (removal deferred until it completes) while the incoming plays
@@ -97,11 +109,37 @@ export interface RoutesProps
     transitionDuration?: number | undefined;
 }
 
+/**
+ * @internal The UI for the state the router settled into, or null when the app declares none.
+ * A denial with no `blocked` prop keeps rendering `fallback`: additive, so an app written
+ * before the two states were told apart behaves exactly as it did.
+ */
+function fallbackFor(props: RoutesProps, router: Router): (() => MountNode) | null
+{
+    const state = untrack(() => router.state());
+    const blocked = props.blocked;
+    if (state.kind === 'blocked' && blocked !== undefined)
+    {
+        const status = state.status;
+        return (): MountNode => blocked({ status });
+    }
+    return props.fallback ?? null;
+}
+
 /** The cold-start hold: nothing has ever been accepted and the chain is not ready. */
 const PENDING: unique symbol = Symbol('azeroth.routes.pending');
 
 /** A committed rendering source value. */
 type Committed = RouteMatch | null | typeof PENDING;
+
+/** What the driver effect switches on; a denial carries its status so 401 -> 403 re-mounts. */
+type DriverKind = 'pending' | 'null' | 'chain' | `blocked:${ number }`;
+
+/** @internal Whether a kind renders the settled-state UI (not-found or blocked) instead of a chain. */
+function rendersSettledUi(kind: DriverKind | typeof NEVER): boolean
+{
+    return kind === 'null' || (typeof kind === 'string' && kind.startsWith('blocked:'));
+}
 
 /** The NEVER sentinel a fresh slot's in-body value guard starts from. */
 const NEVER: unique symbol = Symbol('azeroth.routes.never');
@@ -160,9 +198,10 @@ export function Routes(props: RoutesProps): MountNode
     if (isStringMode())
     {
         const matchResult = untrack(() => router.match());
+        const settled = fallbackFor(props, router);
         const inner = matchResult !== null
             ? serializeChild(buildSegmentValue(router, matchResult, 0))
-            : (props.fallback ? serializeChild(props.fallback()) : '');
+            : (settled !== null ? serializeChild(settled()) : '');
         return wrapContentsAnchored('routes', inner) as unknown as MountNode;
     }
 
@@ -218,10 +257,23 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
     });
 
     // The kind DISCRIMINATOR: the driver's only tracked read. chain -> chain navigations
-    // keep the value 'chain', so the driver's effect never re-runs for them.
-    const kindOf = (c: Committed): 'pending' | 'null' | 'chain' =>
-        (c === PENDING ? 'pending' : c === null ? 'null' : 'chain');
-    const kind = createMemo(() => kindOf(committed()));
+    // keep the value 'chain', so the driver's effect never re-runs for them. A denial carries
+    // its STATUS in the value, because both non-match states leave `committed` null: without
+    // it, /nope -> /admin (or 401 -> 403) would keep showing the UI it was already showing.
+    const kind = createMemo<DriverKind>(() =>
+    {
+        const c = committed();
+        if (c === PENDING)
+        {
+            return 'pending';
+        }
+        if (c !== null)
+        {
+            return 'chain';
+        }
+        const state = router.state();
+        return state.kind === 'blocked' ? `blocked:${ state.status }` : 'null';
+    });
 
     const [adopting, setAdopting] = createSignal(false);
 
@@ -255,7 +307,7 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
     // The chain (level 0) placement currently driven by this instance.
     let chainDispose: DisposeFn | null = null;
     let fallbackDispose: DisposeFn | null = null;
-    let lastKind: 'pending' | 'null' | 'chain' | typeof NEVER = NEVER;
+    let lastKind: DriverKind | typeof NEVER = NEVER;
 
     const teardown = (): void =>
     {
@@ -283,18 +335,18 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
         });
     };
 
-    /** Mounts the fallback into the routes range. */
+    /** Mounts the not-found or blocked UI into the routes range. */
     const mountFallback = (present = false): void =>
     {
-        const fallback = props.fallback;
-        if (!fallback)
+        const settled = fallbackFor(props, router);
+        if (settled === null)
         {
             return;
         }
         createRoot((dispose) =>
         {
             fallbackDispose = dispose;
-            const built = resolveMountNode(untrack(fallback)) ?? null;
+            const built = resolveMountNode(untrack(settled)) ?? null;
             appendToCo(target, built);
             // The match -> fallback swap is a real navigation: focus the fallback
             // content - the driver-level swap presents too.
@@ -361,14 +413,17 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
                         setAdopting(false);
                     }
                 }
-                else if (props.fallback)
+                else
                 {
-                    const fallback = props.fallback;
-                    createRoot((dispose) =>
+                    const settled = fallbackFor(props, router);
+                    if (settled !== null)
                     {
-                        fallbackDispose = dispose;
-                        hydrateChild(untrack(fallback), hydrationCursor as HydrationCursorType);
-                    });
+                        createRoot((dispose) =>
+                        {
+                            fallbackDispose = dispose;
+                            hydrateChild(untrack(settled), hydrationCursor as HydrationCursorType);
+                        });
+                    }
                 }
                 hydrationCursor?.assertExhausted('<Routes> content');
             };
@@ -407,9 +462,9 @@ function driveRoutes(props: RoutesProps, router: Router, target: CoTarget, hydra
             // are INSTANT by design - the transition prop animates chain-internal swaps.
             if (k === 'chain')
             {
-                mountChain(shared.mounted && fromKind === 'null');
+                mountChain(shared.mounted && rendersSettledUi(fromKind));
             }
-            else if (k === 'null')
+            else if (rendersSettledUi(k))
             {
                 mountFallback(shared.mounted && fromKind === 'chain');
             }

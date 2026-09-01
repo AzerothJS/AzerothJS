@@ -29,7 +29,7 @@ import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch, targetToFullPath } from 'azerothjs/internal';
+import { collectHead, guardedMatch, renderAsDenied, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -47,8 +47,10 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  * answered without `cache-control: private, no-store` - hosts that persist or share
  * rendered pages key those refusals on this stamp.
  *   - `redirect` - a guard/loader redirected; serve a 302.
- *   - `blocked`  - a guard VETOED; serve `status` (403) with NO rendered component. This is
- *                  the arm that stops the guard-veto authorization bypass.
+ *   - `blocked`  - a guard VETOED; serve `status` (401 or 403) with `html`, the app's own
+ *                  blocked UI. The protected component is never in it: the render is pinned
+ *                  to the blocked state, which is what stops the guard-veto authorization
+ *                  bypass. Never cache or prerender this arm - it is identity-dependent.
  *   - `stream`   - a streaming render: the full document as bytes, shell first, Suspense
  *                  chunks as they settle. Produced only when the caller ASKED to stream;
  *                  redirects/vetoes/404-status detection stay buffered (they resolve before
@@ -57,7 +59,7 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
 export type PageResult =
     | { kind: 'html'; html: string; status: number; guarded?: boolean }
     | { kind: 'redirect'; to: string; replace: boolean }
-    | { kind: 'blocked'; status: number }
+    | { kind: 'blocked'; status: 401 | 403; html: string }
     | { kind: 'refused-redirect'; target: string }
     | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean };
 
@@ -284,14 +286,13 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             return { kind: 'redirect', to, replace: loaded.replace };
         }
 
-        // A guard VETO -> serve the status, render NOTHING. Rendering here is the SSR
-        // authorization bypass: string-mode rendering does not re-run guards (matchAndLoad
-        // owns that server-side), so a rendered vetoed route would ship the protected
-        // component in a 200 document.
-        if (loaded !== null && 'blocked' in loaded)
-        {
-            return { kind: 'blocked', status: loaded.status };
-        }
+        // A guard VETO -> serve the status with the app's OWN blocked UI. The render runs
+        // under `renderAsDenied`, which pins the router to the blocked state for its whole
+        // duration: string-mode rendering does not re-run guards (matchAndLoad owns that
+        // server-side), so an unpinned render would ship the protected component inside the
+        // 403 - the SSR authorization bypass. The pin is what makes rendering safe at all, and
+        // it holds whether or not the app entry forwards anything.
+        const denied = loaded !== null && 'blocked' in loaded ? loaded.status : null;
 
         // No route matched -> render the app's own fallback UI, but with a real 404 status.
         const notFound = loaded !== null && 'notFound' in loaded;
@@ -308,7 +309,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                 + 'the client index.html must keep an empty root element.');
         }
 
-        if (options?.stream === true)
+        // A denial never streams: the status is known before any byte and the blocked body is
+        // small, so the buffered path answers it and the stream machinery stays out of a
+        // security-relevant render.
+        if (options?.stream === true && denied === null)
         {
             // STREAMING: the loader handoff is fully known BEFORE any byte flushes (the
             // loaders ran above), so the script still rides the head; only Suspense
@@ -385,9 +389,11 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         let frames: DrainedFrames;
         // Constructed BEFORE the render, so the finally holds it on the throw path.
         const frame = createRenderFrame();
+        const render = (): string =>
+            renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }), { frame });
         try
         {
-            body = renderToString(() => app(handoff !== undefined ? { url, handoff } : { url }), { frame });
+            body = denied === null ? render() : renderAsDenied(denied, render);
         }
         finally
         {
@@ -404,6 +410,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // Title surgery, keyed replacements, additions - order in the document:
         // style -> handoff -> head, all at one anchor located before any of them is inserted.
         html = applyHeadToShell(html, frames.head, frames.styleTag + script);
+        if (denied !== null)
+        {
+            return { kind: 'blocked', status: denied, html };
+        }
         return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded ? { guarded: true } : {}) };
     };
 }

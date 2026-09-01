@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { LoaderHandoff } from 'azerothjs';
-import { h, renderToString, LOADER_HANDOFF_ID, loaderHandoffScript } from 'azerothjs';
+import { h, renderToString, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION, loaderHandoffScript } from 'azerothjs';
 import { bootClient } from '@azerothjs/kit/client';
 
 const App = (): HTMLElement => h('main', {}, h('h1', {}, 'hello'));
@@ -40,7 +40,7 @@ describe('bootClient', () =>
     it('hands the embedded loader handoff to the app', () =>
     {
         document.head.insertAdjacentHTML('beforeend',
-            loaderHandoffScript({ version: 3, path: '/x', data: [{ n: 1 }] }));
+            loaderHandoffScript({ version: LOADER_HANDOFF_VERSION, path: '/x', data: [{ n: 1 }] }));
         document.body.innerHTML = '<div id="root"></div>';
 
         let received: LoaderHandoff | undefined;
@@ -49,7 +49,7 @@ describe('bootClient', () =>
             received = props.handoff;
             return App();
         });
-        expect(received).toEqual({ version: 3, path: '/x', data: [{ n: 1 }] });
+        expect(received).toEqual({ version: LOADER_HANDOFF_VERSION, path: '/x', data: [{ n: 1 }] });
     });
 
     it('a missing #root is a loud error, not a silent no-op', () =>

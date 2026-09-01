@@ -20,6 +20,7 @@ export { createRouter, targetToFullPath, resolveRouteComponent } from './router.
 export { defineRoute } from './define-route.ts';
 export { redirect } from './redirect.ts';
 export { notFound, isNotFound } from './not-found.ts';
+export { unauthorized, forbidden, isDenied } from './denied.ts';
 export { createBrowserHistory, createMemoryHistory } from './history.ts';
 export { compilePath } from './path-pattern.ts';
 export { parseQuery, stringifyQuery } from './query.ts';
@@ -43,7 +44,8 @@ export {
 } from './use-route.ts';
 export { useLoader } from './use-loader.ts';
 export { useSearch } from './use-search.ts';
-export { matchAndLoad, loaderHandoffScript, readLoaderHandoff, LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION } from './handoff.ts';
+export { matchAndLoad, loaderHandoffScript, readLoaderHandoff } from './handoff.ts';
+export { LOADER_HANDOFF_ID, LOADER_HANDOFF_VERSION } from './handoff-wire.ts';
 
 // Types
 
@@ -58,6 +60,7 @@ export type {
     RouteMatch,
     GuardContext,
     GuardVerdict,
+    RouteState,
     NavigateTarget,
     NavigateOptions,
     RouterMode,
@@ -68,6 +71,7 @@ export type {
 export type { RouteHandle, RoutePathParams, DefineRouteConfig, ToOptions, LoaderDataOf, SearchOf } from './define-route.ts';
 export type { Redirect } from './redirect.ts';
 export type { NotFound } from './not-found.ts';
+export type { Denied } from './denied.ts';
 export type { MatchAndLoadResult } from './handoff.ts';
 export type { RouterProviderProps } from './provider.ts';
 

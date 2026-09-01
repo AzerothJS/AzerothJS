@@ -19,7 +19,7 @@ import {
     createRoot, render, h,
     createRouter, createMemoryHistory, defineRoute,
     RouterProvider, Routes, useRoute, useParams, useLoader, useSearch,
-    matchAndLoad
+    matchAndLoad, LOADER_HANDOFF_VERSION
 } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 
@@ -220,7 +220,7 @@ describe('lazy routes', () =>
             path: '/lazy', lazy: async () => ({ default: leaf }), loader: async () => 'lazy-data'
         }];
         const handoff = await matchAndLoad(routes, new URL('http://local/lazy'));
-        expect(handoff).toEqual({ version: 3, path: '/lazy', data: ['lazy-data'] });
+        expect(handoff).toEqual({ version: LOADER_HANDOFF_VERSION, path: '/lazy', data: ['lazy-data'] });
     });
 });
 

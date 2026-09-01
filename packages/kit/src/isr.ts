@@ -310,11 +310,15 @@ export function pageResponse(result: PageResult, shell: string, headers: Record<
     {
         return new Response(null, { status: 500, headers: { 'cache-control': 'private, no-store', ...headers } });
     }
-    // A vetoed route renders NOTHING: serve the plain shell (so the client can boot
-    // and show its own 403 UI) with the guard's status - never the protected page.
+    // A vetoed route serves the app's own blocked UI at the guard's status - never the
+    // protected page, which the render was pinned against constructing. Identity-dependent by
+    // definition, so it is stamped uncacheable without consulting the `guarded` flag.
     if (result.kind === 'blocked')
     {
-        return htmlResponse(shell, { status: result.status, headers });
+        return htmlResponse(result.html, {
+            status: result.status,
+            headers: { 'cache-control': 'private, no-store', ...headers }
+        });
     }
     if (result.kind === 'html')
     {

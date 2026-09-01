@@ -49,6 +49,7 @@ import type {
     RouteLoaderArgs,
     RouteLocation,
     RouteMatch,
+    RouteState,
     RouterConfig
 } from './types.ts';
 import { isExternalUrl, externalRedirectMessage } from '../semantics.ts';
@@ -58,6 +59,8 @@ import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cac
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
 import { DEV } from '../reactivity/dev.ts';
 import { isRedirect } from './redirect.ts';
+import { currentRenderDenial, deniedStatus, isDenied, seededDenial } from './denied.ts';
+import { LOADER_HANDOFF_VERSION } from './handoff-wire.ts';
 import { declaredQuery, parseQuery, reportInvalidSearch, stringifyQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
 import { createBrowserHistory } from './history.ts';
@@ -197,6 +200,16 @@ export interface Router
      * invalidate it.
      */
     match: Getter<RouteMatch | null>;
+
+    /**
+     * The settled routing verdict: `match`, `not-found`, or `blocked` with the 401/403 a
+     * guard vetoed with. `match()` answers null for both non-match states, which is why
+     * an unknown URL and a denied one used to render the same UI; this tells them apart.
+     *
+     * `<Routes>` dispatches on it, so most applications read it only for a header badge,
+     * an analytics event, or a sign-in prompt outside the routed region.
+     */
+    state: Getter<RouteState>;
 
     /**
      * One resource PER ROUTE LEVEL (index 0 = root of the matched chain), sized
@@ -919,6 +932,32 @@ function buildRouter(config: RouterConfig): Router
     const [match, setMatch] = createSignal<RouteMatch | null>(null, { equals: matchEquals });
     const [guarding, setGuarding] = createSignal(false);
 
+    // The DENIAL a guard settled this location into, cleared by the next accepted navigation.
+    // Held beside `match` rather than folded into it because the two answer different
+    // questions: `match` is what renders (null for both states), `denied` is WHY nothing does.
+    // Seeded before any effect runs so a hydrating client agrees with the server's markup on
+    // its first pass - re-deriving it from a guard that has not run yet would adopt the
+    // not-found UI over a blocked document and fail the whole hydration.
+    const [denied, setDenied] = createSignal<401 | 403 | null>(
+        currentRenderDenial() ?? seededDenial(config.initialLoaderData));
+
+    /**
+     * The settled routing verdict: what the tree resolved to, not merely whether a route
+     * matched. Every terminal non-match used to collapse into `match === null`, so a guard
+     * veto and an unknown URL rendered the same UI while the server answered 403 for one and
+     * 404 for the other.
+     */
+    const routeState = createMemo<RouteState>(() =>
+    {
+        const status = denied();
+        if (status !== null)
+        {
+            return { kind: 'blocked', status };
+        }
+        const current = match();
+        return current === null ? { kind: 'not-found' } : { kind: 'match', match: current };
+    });
+
     // A user-facing snapshot. Re-derives only when state changes. `params` come from the
     // GUARDED match (declared below; the memo body runs lazily, after it exists): params
     // are MATCH OUTPUT - the thing guards gate - not URL truth, so a pending navigation's
@@ -941,11 +980,6 @@ function buildRouter(config: RouterConfig): Router
         };
     });
     let guardRun = 0;
-    // BASE-RELATIVE, like every other path the router holds internally. It is fed straight back
-    // to performNavigate on a veto, and commitNavigate -> resolve() applies the base prefix
-    // itself - storing it pre-prefixed made a veto under base '/app' write '/app/app/other'
-    // into history, and the router then read that back as the base-relative '/app/other'.
-    let lastAcceptedPath: string | null = null;
     let lastAcceptedLocation: RouteLocation | null = null;
 
     createEffect(() =>
@@ -961,10 +995,9 @@ function buildRouter(config: RouterConfig): Router
                 setGuarding(false);
             }
         };
-        const accept = (value: RouteMatch | null): void =>
+        const settle = (value: RouteMatch | null): void =>
         {
             finish();
-            lastAcceptedPath = s.fullPath;
             // Composed from the ACCEPTED match directly rather than read from location():
             // location's params now derive from the guarded match, which at this point
             // still holds the PREVIOUS navigation - reading it here would pair the
@@ -984,27 +1017,34 @@ function buildRouter(config: RouterConfig): Router
             };
             setMatch(value);
         };
-        const veto = (): void =>
+        const accept = (value: RouteMatch | null): void =>
         {
-            finish();
-            if (lastAcceptedPath !== null)
-            {
-                // Restore the previous URL in place: the vetoed entry never renders and
-                // does not survive on the stack. The restored route's guards re-run and
-                // pass again (they passed before) - guards must be side-effect-free.
-                untrack(() => performNavigate(lastAcceptedPath as string, { replace: true }));
-            }
-            else
-            {
-                setMatch(null); // boot veto: nothing to restore; the fallback renders
-            }
+            // Cleared on ACCEPT rather than at the top of the run: on a hydrating boot the
+            // seeded denial has to survive until the guard that re-derives it settles, or the
+            // blocked markup is torn down and remounted as the not-found UI in between.
+            setDenied(null);
+            settle(value);
+        };
+        const veto = (status: 401 | 403): void =>
+        {
+            // The vetoed navigation SETTLES here rather than rewinding to the previous URL:
+            // the URL a deep link answers 401/403 for is the URL an in-app click lands on, so
+            // both reach the same blocked UI. The route itself still never renders - `match`
+            // goes null, and only `denied` says why.
+            settle(null);
+            setDenied(status);
         };
         // True = pass; false = this navigation is settled (veto or redirect performed).
         const applyVerdict = (verdict: unknown): boolean =>
         {
+            if (isDenied(verdict))
+            {
+                veto(deniedStatus(verdict));
+                return false;
+            }
             if (verdict === false)
             {
-                veto();
+                veto(403);
                 return false;
             }
             if (verdict === true || verdict === undefined || verdict === null)
@@ -1020,7 +1060,7 @@ function buildRouter(config: RouterConfig): Router
                 // used to reach history.pushState, which throws SecurityError on a cross-origin
                 // URL from OUTSIDE the guard's try/catch, so the navigation half-settled.
                 console.error(`[azerothjs/router] ${ externalRedirectMessage(accepted.target) }`);
-                veto();
+                veto(403);
                 return false;
             }
             finish();
@@ -1029,16 +1069,16 @@ function buildRouter(config: RouterConfig): Router
         };
         const settleThrow = (error: unknown): void =>
         {
-            if (isRedirect(error))
+            if (isRedirect(error) || isDenied(error))
             {
                 applyVerdict(error);
                 return;
             }
-            // A throwing guard fails CLOSED: the guarded route must not render. Deliberately
-            // NOT dev-gated: the exception is swallowed here, and a production navigation
-            // silently going nowhere needs its one signal.
+            // A throwing guard fails CLOSED at 403: the guarded route must not render, and a
+            // fault is not a reason to serve it. Deliberately NOT dev-gated - the exception is
+            // swallowed here, and a production navigation stopping dead needs its one signal.
             console.error('[azerothjs/router] a route guard threw; navigation vetoed.', error);
-            veto();
+            veto(403);
         };
 
         if (m === null)
@@ -1113,9 +1153,12 @@ function buildRouter(config: RouterConfig): Router
     // The string render is a pure serializer of that decision: accept the raw match
     // synchronously and do not re-run guards (an async guard could never settle
     // inside a synchronous render anyway).
+    // A pinned denial is the ONE case where that decision was "do not render this": accepting
+    // the raw match here would serialize the component the guard declined, at the 403 the
+    // server is about to send. `match` stays null and only `state()` says why.
     if (isStringMode())
     {
-        setMatch(untrack(rawMatch));
+        setMatch(untrack(denied) === null ? untrack(rawMatch) : null);
     }
 
     // Hydration/SSR handoff: server-loaded data is adopted for the INITIAL location only -
@@ -1127,7 +1170,7 @@ function buildRouter(config: RouterConfig): Router
     const seed = config.initialLoaderData;
     const initialState = untrack(state);
     const adopt = seed !== undefined
-        && seed.version === 3
+        && seed.version === LOADER_HANDOFF_VERSION
         && Array.isArray(seed.data)
         && seed.path === initialState.pathname + initialState.search;
 
@@ -1712,6 +1755,7 @@ function buildRouter(config: RouterConfig): Router
     return {
         location,
         match,
+        state: routeState,
         loaders,
         revalidate(): Promise<void>
         {

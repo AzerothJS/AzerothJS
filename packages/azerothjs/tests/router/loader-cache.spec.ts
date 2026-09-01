@@ -8,10 +8,10 @@
 // The router's loader keying over the data cache: the refetch blast radius confined to the
 // levels whose inputs changed, search-schema keys with normalization, parent delivery from
 // the cached entry under partial re-runs, renewal propagation along the awaited edge,
-// route-position identity across same-path siblings, v3 seed adoption (fresh, stale-heal,
+// route-position identity across same-path siblings, seed adoption (fresh, stale-heal,
 // static, rejected v2), and back-navigation serving from the cache.
 import { describe, it, expect, afterEach } from 'vitest';
-import { createRoot, createRouter, createMemoryHistory, matchAndLoad } from 'azerothjs';
+import { createRoot, createRouter, createMemoryHistory, matchAndLoad, LOADER_HANDOFF_VERSION } from 'azerothjs';
 import type { Route, Router } from 'azerothjs';
 import { resetDataCache } from 'azerothjs/internal';
 
@@ -259,7 +259,7 @@ describe('route-position identity', () =>
     });
 });
 
-describe('v3 seed adoption', () =>
+describe('seed adoption', () =>
 {
     const seededRoutes = (onRun: () => void): Route[] =>
         [{
@@ -275,7 +275,7 @@ describe('v3 seed adoption', () =>
     it('a FRESH seed adopts with zero fetches and serves synchronously', async () =>
     {
         let runs = 0;
-        const seed = { version: 3, path: '/users/7', data: [{ id: '7', from: 'server' }], at: Date.now() };
+        const seed = { version: LOADER_HANDOFF_VERSION, path: '/users/7', data: [{ id: '7', from: 'server' }], at: Date.now() };
         await withRouter(seededRoutes(() => runs++), '/users/7', async (router) =>
         {
             expect(router.loaders[0]!.data()).toEqual({ id: '7', from: 'server' });
@@ -288,7 +288,7 @@ describe('v3 seed adoption', () =>
     it('a STATIC seed adopts fresh regardless of age - SSG hydration fetches nothing', async () =>
     {
         let runs = 0;
-        const seed = { version: 3, path: '/users/7', data: [{ id: '7', from: 'build' }], static: true };
+        const seed = { version: LOADER_HANDOFF_VERSION, path: '/users/7', data: [{ id: '7', from: 'build' }], static: true };
         await withRouter(seededRoutes(() => runs++), '/users/7', async (router) =>
         {
             expect(router.loaders[0]!.data()).toEqual({ id: '7', from: 'build' });
@@ -301,7 +301,7 @@ describe('v3 seed adoption', () =>
     it('a seed past the freshness bound serves synchronously, then heals exactly once', async () =>
     {
         let runs = 0;
-        const seed = { version: 3, path: '/users/7', data: [{ id: '7', from: 'stale-page-cache' }], at: Date.now() - 60_000 };
+        const seed = { version: LOADER_HANDOFF_VERSION, path: '/users/7', data: [{ id: '7', from: 'stale-page-cache' }], at: Date.now() - 60_000 };
         await withRouter(seededRoutes(() => runs++), '/users/7', async (router) =>
         {
             // Served synchronously despite its age - SWR, not a loading flash.
@@ -355,7 +355,7 @@ describe('seeded parent edges', () =>
             }]
         }];
         const seed = {
-            version: 3,
+            version: LOADER_HANDOFF_VERSION,
             path: '/org/1',
             data: [{ org: 'net-1' }, 'net-1:1'],
             at: Date.now()
@@ -389,7 +389,7 @@ describe('seeded parent edges', () =>
                 return 'network';
             }
         }];
-        const seed = { version: 3, path: '/n', data: ['seeded'], at: Date.now() + 120_000 };
+        const seed = { version: LOADER_HANDOFF_VERSION, path: '/n', data: ['seeded'], at: Date.now() + 120_000 };
         await withRouter(routes, '/n', async (router) =>
         {
             expect(router.loaders[0]!.data()).toBe('seeded');

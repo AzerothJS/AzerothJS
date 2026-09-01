@@ -37,7 +37,8 @@ export default component App()
 
     <RouterProvider router={ router }>
         <main>
-            <Routes fallback={ () => <h1>Not found</h1> } />
+            <Routes fallback={ () => <h1>Not found</h1> }
+                    blocked={ (state) => <h1>{ state.status === 401 ? 'Sign in' : 'No access' }</h1> } />
         </main>
     </RouterProvider>
 }
@@ -162,9 +163,12 @@ loader: async ({ params, query, signal, parent }) =>
 }
 ```
 
-- `guard` runs root-to-leaf BEFORE loaders and rendering: `false` vetoes (previous
-  location restored), a target or `redirect(...)` goes elsewhere, `true` passes. Async
-  guards hold the navigation; first veto wins.
+- `guard` runs root-to-leaf BEFORE loaders and rendering: `true` passes, a target or
+  `redirect(...)` goes elsewhere, and `false` / `forbidden()` / `unauthorized()` DENY.
+  Async guards hold the navigation; first veto wins.
+- A denied navigation settles AT the target URL in the blocked state - it does not rewind.
+  `<Routes blocked={...}>` renders it, SSR answers 401 or 403 with that same UI, and the
+  route itself never renders in either mode, so a deep link and an in-app click agree.
 - A guard makes every route under it identity-dependent, so the kit refuses
   `render: 'static'` (prerender and ISR) anywhere below one - a cached or prerendered
   page answers without running guards. Keep guarded subtrees server-rendered: put the
@@ -241,6 +245,8 @@ or mismatched payload degrades to a normal client fetch, never to wrong data.
 | `Routes`, `Outlet`, `Link` | The DOM side: dispatch, nesting, navigation anchors. |
 | `defineRoute` | Typed route handles: pattern-typed params, loader-typed data, schema-typed search. |
 | `redirect` | The sentinel loaders throw (and guards return) to re-aim a navigation. |
+| `notFound` | The sentinel a loader throws when the route matched but its content does not exist: 404, not 500. |
+| `unauthorized`, `forbidden` | What a guard returns to deny at 401 or 403; `router.state()` reports which. |
 | `useRoute`, `useMatch`, `useParams`, `useQuery`, `useNavigate` | Reactive slices of the location. |
 | `useLoader`, `useSearch` | This level's loader resource; the validated, typed search params. |
 | `matchAndLoad`, `loaderHandoffScript`, `readLoaderHandoff` | The SSR data handoff, both directions. |

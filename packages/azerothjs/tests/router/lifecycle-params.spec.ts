@@ -153,7 +153,7 @@ describe('bare composables in slot-effect re-run builds', () =>
 
 describe('params guarding', () =>
 {
-    it('(a) a retained layout observes the OLD params for the whole async-guard hold, never the vetoed target params', async () =>
+    it('(a) a retained layout observes the OLD params for the whole async-guard hold; the vetoed target params never surface', async () =>
     {
         let releaseGuard!: (verdict: boolean) => void;
         const paramValuesSeen: string[] = [];
@@ -202,10 +202,14 @@ describe('params guarding', () =>
 
         releaseGuard(false);
         await flush();
-        // Vetoed: the target's params never reached any public spelling.
-        expect(paramValuesSeen).toEqual(['1']);
-        expect(router.location().params).toEqual({ id: '1' });
-        expect(container.querySelector('#layout')).not.toBeNull();
+        // Vetoed: the navigation settles at the target in the blocked state, so the layout is
+        // torn down - but the target's params still never reached any public spelling, which
+        // is what this test is for.
+        expect(paramValuesSeen).not.toContain('2');
+        expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+        expect(router.location().pathname).toBe('/users/2');
+        expect(router.location().params).toEqual({});
+        expect(container.querySelector('#layout')).toBeNull();
         cleanup();
     });
 

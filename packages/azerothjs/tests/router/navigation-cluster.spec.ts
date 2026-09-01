@@ -112,14 +112,15 @@ describe('a query-only navigation re-runs loaders', () =>
     });
 });
 
-describe('a guard veto restores the previous URL exactly', () =>
+describe('a guard veto settles at the target URL', () =>
 {
-    it('does not double-apply the base prefix', async () =>
+    it('leaves ONE base prefix on the vetoed URL', async () =>
     {
-        // The accepted path was stored base-PREFIXED and then fed back through
-        // performNavigate, which applies the prefix itself: a veto under base '/app' wrote
-        // '/app/app/other' into history, which the router read back as '/app/other'. Every
-        // later link then resolved against a path one level too deep.
+        // A veto used to rewind, and the rewind fed a base-PREFIXED path back through
+        // performNavigate, which applies the prefix itself: under base '/app' it wrote
+        // '/app/app/other' into history. Settling in place removes that path entirely, and
+        // the prefixing it stressed is still worth pinning - the blocked URL is a real
+        // location that every later link resolves against.
         let guardRuns = 0;
         const routes: Route[] = [
             { path: '/', component: (): HTMLElement => h('div', {}, 'home') },
@@ -135,7 +136,8 @@ describe('a guard veto restores the previous URL exactly', () =>
             }
         ];
 
-        await withRouter({ routes, base: '/app', history: createMemoryHistory('/app/') }, async (router) =>
+        const history = createMemoryHistory('/app/');
+        await withRouter({ routes, base: '/app', history }, async (router) =>
         {
             await flush();
             router.navigate('/other');
@@ -148,7 +150,9 @@ describe('a guard veto restores the previous URL exactly', () =>
             // The guard really ran; otherwise this asserts nothing.
             expect(guardRuns).toBeGreaterThan(0);
             expect(accepted).toBe('/other');
-            expect(router.location().pathname).toBe('/other');
+            expect(router.location().pathname).toBe('/secret');
+            expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+            expect(history.current()).toBe('/app/secret');
         });
     });
 });

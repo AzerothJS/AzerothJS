@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRoot, createSignal, render } from 'azerothjs';
 import {
-    createRouter, createMemoryHistory, redirect,
+    createRouter, createMemoryHistory, redirect, unauthorized, forbidden,
     Routes, Link, matchAndLoad
 } from 'azerothjs';
 import type { LinkProps, Route, Router } from 'azerothjs';
@@ -81,7 +81,7 @@ describe('route guards: root-to-leaf, before anything renders or loads', () =>
         });
     });
 
-    it('a veto RESTORES the previous location; the guarded route never matches', async () =>
+    it('a veto SETTLES at the target in the blocked state; the guarded route never matches', async () =>
     {
         const guard = vi.fn(() => false);
         const routes: Route[] = [
@@ -93,9 +93,38 @@ describe('route guards: root-to-leaf, before anything renders or loads', () =>
             router.navigate('/locked');
             await flush();
             expect(guard).toHaveBeenCalledTimes(1);
-            expect(router.location().pathname).toBe('/open');       // restored
-            expect(router.match()?.route.path).toBe('/open');       // never matched /locked
+            // The URL a deep link would answer 403 for is the URL the click lands on.
+            expect(router.location().pathname).toBe('/locked');
+            expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+            expect(router.match()).toBeNull();                      // never matched /locked
             expect(router.loaders[0]!.data()).toBeUndefined();      // never loaded
+        });
+    });
+
+    it('unauthorized() and forbidden() carry their own status into the blocked state', async () =>
+    {
+        let signedIn = false;
+        const routes: Route[] = [
+            { path: '/open', component: leaf },
+            { path: '/account', component: leaf, guard: () => (signedIn ? forbidden() : unauthorized()) }
+        ];
+        await withRouter(routes, '/open', async (router) =>
+        {
+            router.navigate('/account');
+            await flush();
+            expect(router.state()).toEqual({ kind: 'blocked', status: 401 });
+
+            signedIn = true;
+            router.navigate('/open');
+            await flush();
+            router.navigate('/account');
+            await flush();
+            expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+
+            // And an accepted navigation clears it - the denial belongs to one location.
+            router.navigate('/open');
+            await flush();
+            expect(router.state().kind).toBe('match');
         });
     });
 
@@ -156,7 +185,9 @@ describe('route guards: root-to-leaf, before anything renders or loads', () =>
             router.navigate('/parent/child');
             await flush();
             expect(childGuard).not.toHaveBeenCalled();
-            expect(router.location().pathname).toBe('/safe');
+            expect(router.location().pathname).toBe('/parent/child');
+            expect(router.state()).toEqual({ kind: 'blocked', status: 403 });
+            expect(router.match()).toBeNull();
         });
     });
 });
