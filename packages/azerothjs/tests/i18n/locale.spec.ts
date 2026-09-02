@@ -4,7 +4,7 @@
 // `navigator.languages`. Both are "what can I serve this reader", so a divergence between them
 // is a page whose language changes at hydration - which is why the rule is one function.
 import { describe, expect, it } from 'vitest';
-import { localeDirection, parseAcceptLanguage, resolveLocale } from 'azerothjs';
+import { localeDirection, negotiateLocale, parseAcceptLanguage, resolveLocale } from 'azerothjs';
 
 describe('parseAcceptLanguage', () =>
 {
@@ -110,5 +110,22 @@ describe('localeDirection', () =>
         expect(localeDirection('not a tag')).toBe('ltr');
         expect(localeDirection('')).toBe('ltr');
         expect(localeDirection('xx-yy-zz-nonsense')).toBe('ltr');
+    });
+});
+
+describe('negotiateLocale reads a hostile cookie without throwing', () =>
+{
+    const config = { supported: ['en', 'fa'] };
+    const request = (cookie: string): Request => new Request('http://x/', { headers: { cookie } });
+
+    it('a percent-escaped choice decodes', () =>
+    {
+        expect(negotiateLocale(request('locale=%66a'), config)).toEqual({ locale: 'fa', fromCookie: true });
+    });
+
+    it('a malformed escape falls back instead of failing the request', () =>
+    {
+        expect(negotiateLocale(request('locale=%'), config)).toEqual({ locale: 'en', fromCookie: true });
+        expect(negotiateLocale(request('locale=%E0%A4%A'), config)).toEqual({ locale: 'en', fromCookie: true });
     });
 });

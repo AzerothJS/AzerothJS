@@ -254,7 +254,17 @@ function readCookie(request: Request, name: string): string | null
         }
         if (part.slice(0, at).trim() === name)
         {
-            return decodeURIComponent(part.slice(at + 1).trim());
+            const raw = part.slice(at + 1).trim();
+            // Inbound is hostile: a malformed escape is delivered verbatim rather than thrown, so a
+            // cookie nobody minted cannot turn every negotiated page into a 500.
+            try
+            {
+                return decodeURIComponent(raw);
+            }
+            catch
+            {
+                return raw;
+            }
         }
     }
     return null;

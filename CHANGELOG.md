@@ -20,6 +20,12 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   and any context key never set as an own property resolved to whatever the body supplied. The key
   now joins `request`, `params` and `url` on the list an addition may never write.
 
+- **A malformed locale cookie failed every negotiated page.** `negotiateLocale` decoded the cookie
+  value with no guard, so a cookie such as `locale=%` threw and every page or API route that reads
+  the reader's language answered 500 for as long as the browser kept sending it. A value that does
+  not decode is now delivered verbatim, where it fails to match a supported tag and falls back like
+  any other unknown choice.
+
 - **A rate-limited request answered in the wrong envelope, so a client read it as a success.**
   `rateLimit` built its own refusal rather than raising one, so the 429 carried the kernel's
   default error body instead of the app's. An application that publishes an envelope with an
