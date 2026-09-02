@@ -191,6 +191,29 @@ describe('middleware additions cannot forge the context', () =>
         expect(response.status).toBe(200);
         expect(seen).toBe('7');
     });
+
+    it('an own __proto__ key cannot swap the context prototype', async () =>
+    {
+        const app = new App({ dev: false });
+        let observed: { path: string | undefined; url: string | undefined; role: unknown } = { path: undefined, url: undefined, role: undefined };
+        // JSON.parse makes __proto__ an OWN key, so a middleware returning a parsed body hands it
+        // to the merge; assigning it would invoke the inherited setter and replace the prototype.
+        const body = (): Record<never, never> => JSON.parse('{"__proto__":{"role":"admin"}}') as Record<never, never>;
+
+        app.use(body).get('/who', (context) =>
+        {
+            observed = {
+                path: typeof context.path === 'string' ? context.path : undefined,
+                url: context.url instanceof URL ? context.url.pathname : undefined,
+                role: (context as unknown as { role?: unknown }).role
+            };
+            return json({ ok: true });
+        });
+
+        const response = await app.handle(new Request('http://x/who'));
+        expect(response.status).toBe(200);
+        expect(observed).toEqual({ path: '/who', url: '/who', role: undefined });
+    });
 });
 
 describe('a bodyless status carries no body length', () =>

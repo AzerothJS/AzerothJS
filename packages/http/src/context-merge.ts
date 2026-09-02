@@ -15,7 +15,7 @@
  */
 
 /** @internal Context keys a middleware/guard return may never overwrite. */
-const PROTECTED = new Set(['request', 'params', 'url']);
+const PROTECTED = new Set(['request', 'params', 'url', '__proto__']);
 
 /**
  * Merges an addition object onto the context. `request`, `params` and `url` are readonly
@@ -23,6 +23,11 @@ const PROTECTED = new Set(['request', 'params', 'url']);
  * as its additions (`app.use((c) => readJson(c.request))`) would otherwise let a body of
  * `{"params":{"id":"admin"}}` replace the path params a handler authorises on. Own keys
  * only: an addition must never arrive from a polluted prototype.
+ *
+ * `__proto__` is refused for the same reason from the other side: `JSON.parse` produces it as an
+ * OWN key, and assigning it invokes the inherited setter, which swaps the context's prototype -
+ * its `url`/`path` accessors vanish and every key never set as an own property resolves to
+ * whatever the body supplied.
  *
  * @param context - The live request context.
  * @param addition - Whatever the middleware/guard returned (non-object values are ignored).

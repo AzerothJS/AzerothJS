@@ -12,6 +12,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A JSON body could replace the request context's prototype.** A middleware or api guard that
+  returns parsed request data as its additions, the shape the kernel documents, merged every own key
+  of the object onto the context. `JSON.parse` produces `__proto__` as an own key, and assigning it
+  invokes the inherited setter: the context's prototype was swapped for the attacker's object, its
+  `url` and `path` accessors vanished (a guard reading either threw, so the request answered 500),
+  and any context key never set as an own property resolved to whatever the body supplied. The key
+  now joins `request`, `params` and `url` on the list an addition may never write.
+
 - **A rate-limited request answered in the wrong envelope, so a client read it as a success.**
   `rateLimit` built its own refusal rather than raising one, so the 429 carried the kernel's
   default error body instead of the app's. An application that publishes an envelope with an
