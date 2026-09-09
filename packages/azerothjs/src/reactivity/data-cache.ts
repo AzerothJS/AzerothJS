@@ -68,6 +68,17 @@ export interface CachedFetcher<A extends unknown[], T>
 }
 
 /**
+ * A `cached` fetcher of ANY arity. `(...args: never)` is the parameter list every function
+ * satisfies under strict variance, so a family taking an id and a family taking nothing are both
+ * admissible where only the brand matters (an invalidation list, a whole-family revalidate).
+ */
+export interface AnyCachedFetcher
+{
+    (...args: never): Promise<unknown>;
+    readonly [CACHED_FAMILY]: FamilyRecord;
+}
+
+/**
  * A fetcher may declare its trailing AbortSignal or ignore it; the family's argument list
  * is the parameters WITHOUT that signal either way.
  */
@@ -1207,7 +1218,25 @@ export function cachedFamilyOf(fetcher: unknown): FamilyRecord | null
  * and count as settled at the mark - the next subscriber serves the retained value and
  * revalidates behind it.
  */
-export function revalidate(target?: CachedFetcher<never[], unknown>, args?: unknown[]): Promise<void>
+export function revalidate<A extends unknown[]>(target?: CachedFetcher<A, unknown>, args?: A): Promise<void>;
+export function revalidate(target?: unknown, args?: readonly unknown[]): Promise<void>
+{
+    return revalidateTarget(target, args);
+}
+
+/**
+ * The any-arity door for a caller that holds the brand but not the family's argument list -
+ * a mutation revalidating what it patched. The public signature keys arguments to the family;
+ * this one trusts the caller's.
+ *
+ * @internal
+ */
+export function revalidateFamily(target: AnyCachedFetcher, args?: readonly unknown[]): Promise<void>
+{
+    return revalidateTarget(target, args);
+}
+
+function revalidateTarget(target: unknown, args: readonly unknown[] | undefined): Promise<void>
 {
     if (DEV && isStringMode())
     {
@@ -1231,7 +1260,7 @@ export function revalidate(target?: CachedFetcher<never[], unknown>, args?: unkn
     }
     else if (args !== undefined)
     {
-        const entry = cache.peek(family, args);
+        const entry = cache.peek(family, [...args]);
         entries = entry !== undefined ? [entry] : [];
     }
     else

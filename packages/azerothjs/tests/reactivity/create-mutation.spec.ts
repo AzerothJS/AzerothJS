@@ -11,7 +11,7 @@
 // Every test below carries a control, because the first version of that measurement was wrong:
 // it wrapped the cached fetcher in an arrow, which loses the brand and drops the resource to
 // the unshared path, so `revalidate` updated nothing and every result was meaningless.
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { cached, createMutation, createResource, createRoot, revalidate } from 'azerothjs';
 import { resetDataCache } from 'azerothjs/internal';
 
@@ -775,6 +775,63 @@ describe('createMutation: concurrency policies', () =>
 
             expect(served).toEqual(['first']);
             expect(state.cart.count).toBe(1);
+            dispose();
+        });
+    });
+});
+
+describe('a parameterised cached fetcher is a valid mutation target', () =>
+{
+    interface User { id: number; name: string }
+    const getUser = cached('typed-user', async (id: number): Promise<User> => ({ id, name: 'u' }));
+    const getAll = cached('typed-all', async (): Promise<User[]> => []);
+
+    it('type-checks with revalidate, patch and invalidates, keyed by its own argument list', () =>
+    {
+        // Real call sites, so the generic infers the family's own argument list: a
+        // callable-with matcher instantiates it at the constraint and proves nothing.
+        const typed = (): void =>
+        {
+            void revalidate(getUser, [1]);
+            void revalidate(getUser);
+            void revalidate(getAll);
+            // @ts-expect-error the arguments must match the fetcher's own list
+            void revalidate(getUser, ['1']);
+        };
+        expect(typeof typed).toBe('function');
+        const mutation = createMutation(async (_input: number) => undefined, {
+            invalidates: [getUser, getAll],
+            optimistic: (input, patch) =>
+            {
+                patch(getUser, [input], (user) =>
+                {
+                    expectTypeOf(user).toEqualTypeOf<User>();
+                    return { ...user, name: 'guess' };
+                });
+                patch(getAll, (all) =>
+                {
+                    expectTypeOf(all).toEqualTypeOf<User[]>();
+                    return all;
+                });
+                // @ts-expect-error a keyed family needs its arguments
+                patch(getUser, (user: User) => user);
+            }
+        });
+        expect(typeof mutation.run).toBe('function');
+    });
+
+    it('revalidates one keyed entry at runtime through the same signature', async () =>
+    {
+        resetDataCache();
+        let fetches = 0;
+        const getItem = cached('typed-item', async (id: number): Promise<{ id: number; n: number }> => ({ id, n: ++fetches }));
+        await createRoot(async (dispose) =>
+        {
+            // The branded fetcher itself subscribes, keyed by its source; an arrow would drop the brand.
+            const item = createResource(() => 7, getItem);
+            await vi.waitFor(() => expect(item.data()?.n).toBe(1));
+            await revalidate(getItem, [7]);
+            await vi.waitFor(() => expect(item.data()?.n).toBe(2));
             dispose();
         });
     });

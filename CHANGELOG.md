@@ -374,6 +374,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   title. The slot binder now splices every root in at the slot position, the same treatment a
   hole already gives a multi-node value, and the three modes agree on the output.
 
+- **A parameterised `cached()` fetcher could not be typed as a revalidate, patch or invalidation
+  target.** `revalidate(getUser, [42])`, `patch(getUser, [42], next)` and `invalidates:
+  [getUser]` were compile errors for any family taking an argument, although the documentation
+  showed all three, because the target type pinned an empty argument list. `revalidate` and
+  `patch` now infer the family's own argument list, so the arguments are checked against it, and
+  `invalidates` accepts a family of any arity through the new `AnyCachedFetcher` type.
+
 - **`<Image>` froze its `alt` and `src` when they came from markup.** Markup passes a component
   prop as a GETTER on the props object, so reading one during setup resolves it once and discards
   the laziness the protocol exists to provide - which is exactly what the component did. On a page

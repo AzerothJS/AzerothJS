@@ -42,11 +42,11 @@ import { untrack } from './untrack.ts';
 import { assertFunction } from './validate.ts';
 import { DEV } from './dev.ts';
 import { isStringMode } from './render-mode.ts';
-import type { CacheEntry, CachedFetcher } from './data-cache.ts';
-import { cachedFamilyOf, getDataCache, revalidate } from './data-cache.ts';
+import type { AnyCachedFetcher, CacheEntry, CachedFetcher } from './data-cache.ts';
+import { cachedFamilyOf, getDataCache, revalidateFamily } from './data-cache.ts';
 
 /** Any `cached` fetcher, whatever its argument list. */
-type AnyCached = CachedFetcher<never[], unknown>;
+type AnyCached = AnyCachedFetcher;
 
 /**
  * Records one optimistic guess against a `cached` family.
@@ -59,8 +59,8 @@ type AnyCached = CachedFetcher<never[], unknown>;
  */
 export interface PatchFn
 {
-    <T>(target: CachedFetcher<never[], T>, next: (value: T) => T): void;
-    <T>(target: CachedFetcher<never[], T>, args: readonly unknown[], next: (value: T) => T): void;
+    <T>(target: CachedFetcher<[], T>, next: (value: T) => T): void;
+    <A extends unknown[], T>(target: CachedFetcher<A, T>, args: Readonly<A>, next: (value: T) => T): void;
 }
 
 /**
@@ -307,7 +307,7 @@ export function createMutation<In, Out>(
                 // Fired, not awaited: `run` answers when the SERVER has, and the correction
                 // lands behind it. A caller that needs the refetch too awaits revalidate itself.
                 // A rejection here is the resource's to report, not this call's.
-                void revalidate(target.fetcher, target.args.length > 0 ? [...target.args] : undefined)
+                void revalidateFamily(target.fetcher, target.args.length > 0 ? [...target.args] : undefined)
                     .catch(() => undefined);
             }
         };
