@@ -141,15 +141,19 @@ on a route with children. The router guide covers the page side and `<Form>`.
 ## ISR - `revalidate`
 
 A static page with `revalidate` serves from a page cache: fresh within the window, past it
-the stale copy answers instantly while exactly ONE background render replaces it. Build
-output seeds the cache through file mtimes; every failure keeps the old copy, and an
-outcome that stopped being static content (a redirect, a veto, a 404) drops the entry so
-a guard is never masked.
+the stale copy answers instantly while exactly ONE background render replaces it, in the
+language the copy is filed under. Build output seeds the cache through file mtimes; a failed
+regeneration keeps the old copy, holds the key for one window so a fast-failing loader renders
+at most once per window, and reports one notice per distinct fault through `onError` with the
+failing levels as its `cause`; an outcome that stopped being static content (a redirect, a
+veto, a 404) drops the entry so a guard is never masked.
 
 A page whose route chain carries a guard never enters the cache at all: mounting it as
-ISR is refused outright, and a URL that reaches an ISR handler but matches a guarded
-chain elsewhere in the table renders live per request with `cache-control: private,
-no-store` and `x-azeroth-cache: live`. A guard makes the page a function of the request's
+ISR is refused outright, and a URL that reaches an ISR or a static-file handler but matches a
+guarded chain elsewhere in the table renders live per request with `cache-control: private,
+no-store` and `x-azeroth-cache: live` (without a renderer, the guard walk itself answers).
+The prerender pass refuses to write a file for such a url, and a bare shell for one is never
+cacheable. A guard makes the page a function of the request's
 identity, and an identity-dependent page in a shared cache serves one visitor's data to
 the next - so the combination does not exist. Note the boundary: a LOADER that reads
 request identity without a guard is invisible to this rule; keep personalized loaders off

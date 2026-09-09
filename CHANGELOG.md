@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A static page whose url a guarded route chain wins was served from its file with no guard
+  run.** `mountPages` refuses a static page whose OWN chain is guarded, but a guarded chain
+  declared earlier can win the same url in the app's route table - and the file mounts served
+  the prerendered file regardless, cacheable. Every static serving path now gates on the app
+  path the router matched: with a renderer the url takes the live render, marked
+  `private, no-store` and `x-azeroth-cache: live`; without one the guard walk itself answers
+  (a denial with its status, a redirect with `Location`, a refused redirect and a miss at 500 and
+  404, a pass with the file marked as this reader's own), and a guard that throws propagates to
+  the kernel. The prerender pass refuses to write a file for such a url, naming it and the page.
+
+- **The bare client shell for a guarded url was heuristically cacheable.** A rendererless
+  mount, an enumerated page whose file is missing, a `render: 'client'` page beside a renderer
+  and the catch-all's 404 shell all answered a guarded url with a shell and no `cache-control`.
+  The shell answer now carries `private, no-store` for any url a guarded chain wins, at the one
+  place every mount reaches it.
+
 - **A percent-encoded language prefix served the wrong language.** Under prefix routing the
   kernel decodes each segment before it matches, so `/%66a/docs/intro` reached the `/fa` mount;
   the prefix was then peeled by comparing the literal `/fa` against the raw pathname, so nothing
@@ -496,6 +512,30 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
     static pages.
 
 ### Fixed
+
+- **A regenerated ISR copy lost its language.** The background regeneration handed the renderer
+  no locale, so a page cached under a Persian key was refreshed as an English render and served
+  from that key until the next refresh - in every routing mode. Every shared render now takes
+  the same inputs, the language included.
+
+- **A failed ISR regeneration dropped the copy and 500d the next reader.** A render that returned
+  `error` deleted the entry, so one upstream hiccup demoted a cached page to a live 500 for the
+  reader who happened to arrive next. A failure (a throw or an `error` result) now keeps the
+  stale copy, holds the key for one revalidation window so a fast-failing loader renders at most
+  once per window instead of once per request, and reports ONE notice per distinct fault with
+  the failing levels as its `cause` - a repeat of the same fault says nothing until the key is
+  written, dropped, or the fault changes. A change of outcome (a redirect, a veto, a 404, a
+  non-200) still drops the copy so the live outcome surfaces. A write that lands while a slow
+  failure is in flight makes that failure arm and report nothing.
+
+- **On a site with `locales`, every ISR page needed a second request to earn a cache slot.** The
+  admission rule compared the cache key with the pathname, and a locale-keyed key never matches
+  its pathname, so a page's own identity was treated as visitor-supplied width. Admission now
+  asks whether the request carries a query, whatever the language.
+
+- **A loader that failed during an ISR production was reported to nobody.** The production and
+  the guarded live paths now forward each failed level to the kit observer as it happens; the
+  regeneration path folds them into its one notice.
 
 - **An enumerated static page never served its file under prefix routing.** The mount named
   the artifact with the language prefix still in the path (`fa/docs/intro/index.fa.html`),

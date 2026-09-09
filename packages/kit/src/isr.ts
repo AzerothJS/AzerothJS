@@ -402,6 +402,9 @@ export interface IsrRegistration
      */
     artifactPath: (pathname: string) => string | null;
 
+    /** How many keys this registration remembers a failed regeneration for. Default 1000. */
+    holdCeiling?: number;
+
     /**
      * Identity of the build being served - the client shell's content hash, computed once at
      * mount. A cached copy stamped with a different one came from a previous deploy and names
@@ -466,6 +469,102 @@ export function registerIsr(registration: IsrRegistration): void
     /** The one stamp every negotiated answer passes through, fed by the rule the mount injected. */
     const varied = (response: Response, request: Request): Response =>
         mergeVary(response, varyOf(request, new URL(request.url).pathname));
+
+    /**
+     * One render's inputs, the same for every shared path. Each failed level lands on
+     * `reasons`; with `forward` it is also reported as it happens.
+     */
+    const renderOptions = (target: Target, buildValue: string, reasons: unknown[], forward: boolean): NonNullable<Parameters<PageRenderer>[2]> => ({
+        handoffMeta: { build: buildValue, at: Date.now() },
+        ...(target.locale !== undefined ? { locale: target.locale } : {}),
+        onError: (error: unknown): void =>
+        {
+            reasons.push(error);
+            if (forward)
+            {
+                onError(error, { path: target.path, phase: 'render' });
+            }
+        }
+    });
+
+    /** Identifies a fault well enough to tell a repeat from a new one. Never throws. */
+    const fingerprintOf = (cause: unknown): string =>
+    {
+        if (cause instanceof AggregateError)
+        {
+            return `AggregateError|${ cause.errors.map(fingerprintOf).join('+') }`;
+        }
+        if (cause instanceof Error)
+        {
+            return `${ cause.name }|${ cause.message }`;
+        }
+        return `${ typeof cause }|${ String(cause) }`;
+    };
+
+    /** Holds the key for one window. At the ceiling, an expired hold goes first, then the soonest to expire. */
+    const arm = (key: string, fingerprint: string): void =>
+    {
+        if (!holds.has(key) && holds.size >= holdCeiling)
+        {
+            const now = Date.now();
+            let victim: string | undefined;
+            let soonest = Infinity;
+            for (const [held, hold] of holds)
+            {
+                if (hold.until <= now)
+                {
+                    victim = held;
+                    break;
+                }
+                if (hold.until < soonest)
+                {
+                    soonest = hold.until;
+                    victim = held;
+                }
+            }
+            if (victim !== undefined)
+            {
+                holds.delete(victim);
+            }
+        }
+        holds.set(key, { until: Date.now() + revalidate * 1000, fingerprint });
+    };
+
+    /** The key was written or dropped: any hold is over, and an attempt in flight owns nothing. */
+    const moved = (key: string): void =>
+    {
+        holds.delete(key);
+        const flight = regenerating.get(key);
+        if (flight !== undefined)
+        {
+            flight.generation++;
+        }
+    };
+
+    /**
+     * A failed regeneration keeps the stale copy, holds the key for a window, and reports once
+     * per fault: a repeat of the same fault says nothing until the key is written or dropped.
+     */
+    const keep = (target: Target, reasons: unknown[], thrown: unknown, flight: { generation: number }): void =>
+    {
+        if (flight.generation !== 0)
+        {
+            return;
+        }
+        const describe = (reason: unknown): string => (reason instanceof Error ? reason.message : String(reason));
+        const cause = reasons.length > 1
+            ? new AggregateError(reasons, reasons.map(describe).join('; '))
+            : reasons.length === 1 ? reasons[0] : thrown;
+        const fingerprint = fingerprintOf(cause);
+        const previous = holds.get(target.key);
+        arm(target.key, fingerprint);
+        if (previous !== undefined && previous.fingerprint === fingerprint)
+        {
+            return;
+        }
+        onError(new Error(`ISR regeneration of "${ target.url }" failed - the stale copy is kept.`, { cause }),
+            { path: target.path, phase: 'revalidate' });
+    };
     // UNCAPPED, unlike `provisional` and `learned` below, and that is a known bound living
     // outside this file rather than an oversight. A production outlives the request that
     // started it, so open connections do NOT bound how many run at once: measured at 8 sockets
@@ -478,7 +577,13 @@ export function registerIsr(registration: IsrRegistration): void
     // 0.8ms, and a socket reset is not observable until around 1.9ms. The bound is arrival
     // rate at the edge (`rateLimit`), which the README states as load-bearing for ISR.
     const inflight = new Map<string, Promise<Produced>>();
-    const regenerating = new Set<string>();
+    // One regeneration per key at a time. A write or drop of the key while it runs bumps the
+    // generation, and the attempt then arms and reports nothing: the key moved on without it.
+    const regenerating = new Map<string, { generation: number }>();
+    // A failed regeneration holds its key for one window, and remembers what it reported so
+    // the same fault stays quiet and a new one does not. Cleared by any write or drop.
+    const holds = new Map<string, { until: number; fingerprint: string }>();
+    const holdCeiling = registration.holdCeiling ?? 1000;
 
     // Pathnames OBSERVED guarded: fed by produce's stamped live result and regenerate's
     // stamp-drop, checked beside the `guarded` predicate before the cache, the seed, and
@@ -511,7 +616,7 @@ export function registerIsr(registration: IsrRegistration): void
     const admitToCache = (target: Target): boolean =>
     {
         // No query component: this is the page's own identity, not visitor-supplied width.
-        if (target.key === target.pathname)
+        if (target.queryless)
         {
             return true;
         }
@@ -580,12 +685,7 @@ export function registerIsr(registration: IsrRegistration): void
         // never coalesced - so this render's only consumer is the client now waiting on it,
         // and its disconnect ends the render's reason to exist. The two SHARED render paths
         // in this file deliberately take no request signal; see `produce` and `regenerate`.
-        const result = await renderer(target.url, await shell,
-            {
-                signal,
-                handoffMeta: { build: await buildId, at: Date.now() },
-                ...(target.locale !== undefined ? { locale: target.locale } : {})
-            });
+        const result = await renderer(target.url, await shell, { signal, ...renderOptions(target, await buildId, [], true) });
         return pageResponse(result, await shell, {
             'cache-control': 'private, no-store',
             'x-azeroth-cache': 'live'
@@ -625,6 +725,7 @@ export function registerIsr(registration: IsrRegistration): void
         try
         {
             await cache.set(key, entry);
+            moved(key);
         }
         catch (error)
         {
@@ -636,6 +737,7 @@ export function registerIsr(registration: IsrRegistration): void
         try
         {
             await cache.delete(key);
+            moved(key);
         }
         catch (error)
         {
@@ -679,6 +781,9 @@ export function registerIsr(registration: IsrRegistration): void
         /** The RAW pathname plus the normalised search: this page's cache identity. */
         key: string;
 
+        /** No query component: the page's own identity, in whatever language. */
+        queryless: boolean;
+
         /** No query at all, so a prerendered file is a legitimate representation of it. */
         seedable: boolean;
     }
@@ -697,12 +802,14 @@ export function registerIsr(registration: IsrRegistration): void
         const locale = localeOf(context.request, context.url.pathname);
         const bare = stripLocale(context.url.pathname);
         const artifact = registration.artifactPath(context.url.pathname);
+        const queryless = search === '' || search === '?';
         return {
             path: artifact ?? bare,
             pathname: bare,
             url: bare + search,
             key: cacheKeyFor(bare, search, locale),
-            seedable: (search === '' || search === '?') && artifact !== null,
+            queryless,
+            seedable: queryless && artifact !== null,
             ...(locale !== undefined ? { locale } : {})
         };
     };
@@ -740,10 +847,7 @@ export function registerIsr(registration: IsrRegistration): void
         const shellText = await shell;
         const buildValue = await buildId;
         const result = await runInWorkUnit(
-            () => renderer(target.url, shellText, {
-                handoffMeta: { build: buildValue, at: Date.now() },
-                ...(target.locale !== undefined ? { locale: target.locale } : {})
-            }));
+            () => renderer(target.url, shellText, renderOptions(target, buildValue, [], true)));
         if (result.kind === 'html' && result.guarded === true)
         {
             // The renderer's own table says this chain is guarded: the body belongs to the
@@ -798,7 +902,9 @@ export function registerIsr(registration: IsrRegistration): void
         {
             return;
         }
-        regenerating.add(target.key);
+        const flight = { generation: 0 };
+        regenerating.set(target.key, flight);
+        const reasons: unknown[] = [];
         void (async (): Promise<void> =>
         {
             try
@@ -810,7 +916,7 @@ export function registerIsr(registration: IsrRegistration): void
                 const shellText = await shell;
                 const buildValue = await buildId;
                 const result = await runInWorkUnit(
-                    () => renderer(target.url, shellText, { handoffMeta: { build: buildValue, at: Date.now() } }));
+                    () => renderer(target.url, shellText, renderOptions(target, buildValue, reasons, false)));
                 if (result.kind === 'html' && result.guarded === true)
                 {
                     // The refresh proved the chain guarded. Learn FIRST, then drop: requests
@@ -830,6 +936,13 @@ export function registerIsr(registration: IsrRegistration): void
                     }
                     return;
                 }
+                if (result.kind === 'error')
+                {
+                    // A failure, not a change of outcome: the stale copy stays until a
+                    // regeneration succeeds, and the next reader is never handed the 500.
+                    keep(target, reasons, undefined, flight);
+                    return;
+                }
                 // The page stopped being static content: keeping the stale copy would mask
                 // a deletion (or a newly-blocking guard) indefinitely. Drop it; the next
                 // request goes live.
@@ -840,7 +953,7 @@ export function registerIsr(registration: IsrRegistration): void
             }
             catch (error)
             {
-                onError(error, { path: target.path, phase: 'revalidate' });
+                keep(target, reasons, error, flight);
             }
             finally
             {
@@ -906,7 +1019,12 @@ export function registerIsr(registration: IsrRegistration): void
         {
             return varied(respond(entry, verdict, age), context.request);
         }
-        regenerate(target);
+        // Inside a hold the last regeneration just failed: serve stale and try again next window.
+        const hold = holds.get(target.key);
+        if (hold === undefined || hold.until <= Date.now())
+        {
+            regenerate(target);
+        }
         return varied(respond(entry, 'stale', age), context.request);
     });
 }

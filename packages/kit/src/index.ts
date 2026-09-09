@@ -34,7 +34,7 @@ import { localeDirection, negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
-import { acceptRedirectTarget, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -495,7 +495,7 @@ export function mountPages(app: App, options: KitOptions): void
             const localized = localesOf(options);
             if (localized.length === 0)
             {
-                app.get(page.path, staticFiles(options.clientDir, { index: plain, param: '__none' }));
+                app.get(page.path, gated(staticFiles(options.clientDir, { index: plain, param: '__none' }), options, shellPromise, buildIdPromise));
             }
             else
             {
@@ -523,7 +523,7 @@ export function mountPages(app: App, options: KitOptions): void
                 };
                 for (const mounted of mountPaths(page.path))
                 {
-                    app.get(mounted, staticHandler);
+                    app.get(mounted, gated(staticHandler, options, shellPromise, buildIdPromise));
                 }
                 registerLocaleRedirect(app, page.path, options);
             }
@@ -1115,12 +1115,65 @@ async function renderOrShell(
     // The client-rendered page has no render to carry the language, and needs it just as much:
     // the shell IS the served document, and its `<html lang>` is what a crawler reads and what
     // lays the page out before a single byte of JavaScript has run.
+    // A url a guarded chain wins is this reader's own, whichever mount reached here: a bare
+    // 200 or 404 with no freshness headers is heuristically cacheable.
     const bare = withVary(
         htmlResponse(
             locale === undefined ? shell : applyLocaleToShell(shell, locale, localeDirection(locale)),
-            { status: shellStatus }),
+            { status: shellStatus, ...(guardedMatch(options.routes, url) ? { headers: { 'cache-control': 'private, no-store' } } : {}) }),
         context, options);
     return csrf.minted ? withMintedToken(bare, csrf.token, options) : bare;
+}
+
+/** @internal Stamps a response as produced for this reader alone. */
+function asLive(response: Response): Response
+{
+    const headers = new Headers(response.headers);
+    headers.set('cache-control', 'private, no-store');
+    headers.set('x-azeroth-cache', 'live');
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+/**
+ * @internal The answer for a static url a guarded chain wins: the guards run for THIS reader.
+ * With a renderer that is the live render; without one the walk itself decides. A guard that
+ * throws propagates on both.
+ */
+async function guardedAnswer(
+    context: RequestContext,
+    options: KitOptions,
+    shell: string,
+    buildId: Promise<string>,
+    serve: () => Promise<Response>
+): Promise<Response>
+{
+    if (options.renderer !== undefined)
+    {
+        return asLive(await renderOrShell(context, 'server', options, shell, buildId));
+    }
+    const walked = await evaluateGuards(options.routes, appPath(context, options));
+    const headers = { 'cache-control': 'private, no-store' };
+    switch (walked.kind)
+    {
+        case 'blocked':
+            return new Response(null, { status: walked.status, headers });
+        case 'redirect':
+            return new Response(null, { status: 302, headers: { ...headers, location: targetToFullPath(walked.to) } });
+        case 'refused-redirect':
+            return new Response(null, { status: 500, headers });
+        case 'not-found':
+            return new Response(null, { status: 404, headers });
+        case 'pass':
+            return asLive(await serve());
+    }
+}
+
+/** @internal Gates a static handler: a url a guarded chain wins never serves a file unguarded. */
+function gated(handler: Handler, options: KitOptions, shellPromise: Promise<string>, buildId: Promise<string>): Handler
+{
+    return async (context) => (guardedMatch(options.routes, appPath(context, options))
+        ? guardedAnswer(context, options, await shellPromise, buildId, async () => handler(context))
+        : await handler(context));
 }
 
 /** @internal An SSR-or-shell handler for one path; `'stream'` answers a streaming Response. */
@@ -1204,7 +1257,7 @@ function registerStaticFirst(
 ): void
 {
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
-    app.get(path, async (context) =>
+    app.get(path, gated(async (context) =>
     {
         // The artifact is named from the raw remainder one segment at a time; no name means the
         // live render. A fresh object (not a merge) carries the file path, so staticFiles' full
@@ -1241,7 +1294,7 @@ function registerStaticFirst(
             }
         }
         return renderOrShell(context, dynamicMode, options, await shellPromise, buildId);
-    });
+    }, options, shellPromise, buildId));
 }
 
 export { FilePageCache, MemoryPageCache } from './isr.ts';

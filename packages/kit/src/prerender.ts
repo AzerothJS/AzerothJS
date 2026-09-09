@@ -22,6 +22,8 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { setBuildContext } from 'azerothjs/internal';
 
+import { guardedMatch } from 'azerothjs/internal';
+
 import { alternatesOf } from './alternates.ts';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import type { PageRenderer } from './ssr.ts';
@@ -242,6 +244,18 @@ async function generate(
     // written whether or not the site is multilingual. The language-suffixed copies join it.
     const buildLocales: ReadonlyArray<string | undefined> = [undefined, ...(options.locales ?? [])];
 
+    // A foreign guarded chain can win the url of an unguarded static page, and a file written
+    // for it would be served without the guard. The declaration check below is the first line;
+    // this is the second, once per resolved path.
+    const refuseGuardedUrl = (path: string, pattern: string): void =>
+    {
+        if (guardedMatch(options.routes, path))
+        {
+            throw new Error(`kit prerender: "${ path }" (from "${ pattern }") matches a guarded route chain - `
+                + 'a prerendered page is served without running guards. Move the guard, or use render: \'server\'.');
+        }
+    };
+
     for (const page of flattenPages(options.routes))
     {
         if (page.render !== 'static')
@@ -303,6 +317,7 @@ async function generate(
                     continue;
                 }
                 seen.add(resolved);
+                refuseGuardedUrl(resolved, page.path);
                 for (const locale of buildLocales)
                 {
                     await renderAndWrite(resolved, page.revalidate, locale);
@@ -311,6 +326,7 @@ async function generate(
             }
             continue;
         }
+        refuseGuardedUrl(page.path, page.path);
         for (const locale of buildLocales)
         {
             await renderAndWrite(page.path, page.revalidate, locale);
