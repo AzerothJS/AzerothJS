@@ -12,6 +12,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A client that stalled mid-download of a STATIC FILE and then disconnected could kill the
+  server.** The same defect that was just closed for compressed responses was still live in
+  `staticFiles`, on both the whole-file and the range branch: the body was Node's own stream
+  adapter, which keeps its `data` listener attached after a cancel and enqueues onto a controller
+  that is already closed, throwing synchronously inside the emitter where no framework catch can
+  reach it. It was the more exposed of the two, because compression has to be composed
+  deliberately while `mountPages` wires static serving automatically for `/assets` and the
+  client dist, so every app carried it with no opt-in. One ordinary reader who began a download,
+  stalled, and navigated away took the whole process down; a real browser navigation does exactly
+  that, and did.
+
+  Both callers now cross ONE latched boundary rather than each owning a copy, which is the actual
+  repair: the first fix was correct and was applied to a single call site, so the rule existed
+  twice and only one of them was right. Backpressure, range arithmetic, validators and every
+  header are unchanged. A file body that stops short now rejects the reader with
+  `ERR_STREAM_PREMATURE_CLOSE` instead of reading as a complete short response, and the
+  compressed path keeps reporting its own truncation as a client fault rather than a server one.
+
 - **A page action's redirect could still leave the origin, through the client.** The server
   judges the target it emits, but `<Form>` handed the value it received straight to
   `router.navigate`, which PERFORMS an off-origin target rather than refusing one. The enhanced

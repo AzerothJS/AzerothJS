@@ -7,7 +7,8 @@
 // spelling must fail to reach it.
 
 import { describe, it, expect } from 'vitest';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -339,4 +340,85 @@ describe('contentTypeFor', () =>
         expect(contentTypeFor('font.WOFF2')).toBe('font/woff2');
         expect(contentTypeFor('archive.xyz')).toBe('application/octet-stream');
     });
+});
+
+describe('a download the client abandons', () =>
+{
+    // The one shape that reaches the race: a real socket, read far enough to fill the pipe, then
+    // STALL until the producer parks on backpressure, then destroy. A boundary that keeps
+    // enqueueing after the cancel throws synchronously inside the emitter, above every framework
+    // catch - an uncaught exception, which only a separate process tells from a passing test.
+    //
+    // The arm OBSERVES the park (bytes stop advancing) rather than assuming it, and reports
+    // NO-PARK when the trigger never arms, so a machine that cannot reproduce the timing fails
+    // loudly here instead of passing green while testing nothing.
+    async function stallThenDisconnect(request: string): Promise<{ stdout: string; status: number | null }>
+    {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const appUrl = pathToFileURL(path.join(here, '..', 'src', 'app.ts')).href;
+        const nodeUrl = pathToFileURL(path.join(here, '..', 'src', 'node.ts')).href;
+        const source = `
+import { connect } from 'node:net';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { App } from ${ JSON.stringify(appUrl) };
+import { serve, staticFiles } from ${ JSON.stringify(nodeUrl) };
+
+const dir = mkdtempSync(join(tmpdir(), 'azeroth-static-cancel-'));
+// Large enough that the socket cannot swallow it, so the producer must park on backpressure.
+writeFileSync(join(dir, 'big.bin'), Buffer.alloc(64 * 1024 * 1024, 7));
+const app = new App({ onError: () => undefined });
+app.get('/*path', staticFiles(dir));
+const served = await serve(app, { port: 0 });
+
+const socket = connect(served.port, '127.0.0.1');
+socket.on('error', () => undefined);
+await new Promise((resolve) => socket.once('connect', resolve));
+socket.write(${ JSON.stringify(request) });
+let received = 0;
+await new Promise((resolve) => socket.on('data', (chunk) =>
+{
+    received += chunk.length;
+    if (received >= 262144) { socket.pause(); resolve(); }
+}));
+let parked = false;
+let previous = -1;
+for (let i = 0; i < 200; i++)
+{
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (received === previous) { parked = true; break; }
+    previous = received;
+}
+if (!parked) { console.log('NO-PARK'); process.exit(0); }
+socket.destroy();
+await new Promise((resolve) => setTimeout(resolve, 500));
+console.log('SURVIVED');
+await served.shutdown({ gracePeriodMs: 200 }).catch(() => undefined);
+`;
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-static-'));
+        const script = path.join(dir, 'stall-then-disconnect.mjs');
+        await writeFile(script, source);
+        const result = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+        return { stdout: result.stdout, status: result.status };
+    }
+
+    it('cannot kill the process when the client stalls and then disconnects', async () =>
+    {
+        const result = await stallThenDisconnect('GET /big.bin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+        expect(result.stdout).not.toContain('NO-PARK');
+        expect(result.stdout.trim().split('\n').pop()).toBe('SURVIVED');
+        expect(result.status).toBe(0);
+    }, 60_000);
+
+    it('cannot kill the process on the RANGE branch either', async () =>
+    {
+        // A second call site builds a second body, and a fix applied to only one of them is
+        // exactly the mistake this boundary exists to make impossible, so it gets its own arm.
+        const result = await stallThenDisconnect(
+            'GET /big.bin HTTP/1.1\r\nHost: x\r\nRange: bytes=0-67108863\r\nConnection: close\r\n\r\n');
+        expect(result.stdout).not.toContain('NO-PARK');
+        expect(result.stdout.trim().split('\n').pop()).toBe('SURVIVED');
+        expect(result.status).toBe(0);
+    }, 60_000);
 });

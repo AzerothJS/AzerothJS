@@ -301,7 +301,7 @@ catch
             '}));',
             'let parked = false;',
             'let previous = -1;',
-            'for (let i = 0; i < 40; i++)',
+            'for (let i = 0; i < 200; i++)',
             '{',
             '    await new Promise((resolve) => setTimeout(resolve, 50));',
             '    if (produced === previous) { parked = true; break; }',

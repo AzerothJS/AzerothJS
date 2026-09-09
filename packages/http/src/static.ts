@@ -44,9 +44,9 @@
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
-import { Readable } from 'node:stream';
 import type { Handler } from './app.ts';
 import { NotFoundError } from './errors.ts';
+import { webStreamOf } from './web-stream.ts';
 
 /** The extension -> Content-Type map for what a web app actually serves. */
 const CONTENT_TYPES: Record<string, string> = {
@@ -260,12 +260,12 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
         {
             headers.set('content-range', `bytes ${ range.start }-${ range.end }/${ info.size }`);
             headers.set('content-length', String(range.end - range.start + 1));
-            const span = Readable.toWeb(createReadStream(target, { start: range.start, end: range.end })) as ReadableStream<Uint8Array>;
+            const span = webStreamOf(createReadStream(target, { start: range.start, end: range.end }));
             return new Response(span, { status: 206, headers });
         }
 
         headers.set('content-length', String(info.size));
-        const body = Readable.toWeb(createReadStream(target)) as ReadableStream<Uint8Array>;
+        const body = webStreamOf(createReadStream(target));
         return new Response(body, { status: 200, headers });
     };
 }
