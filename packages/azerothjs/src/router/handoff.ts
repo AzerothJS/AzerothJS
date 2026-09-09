@@ -31,7 +31,7 @@
  */
 
 import { acceptRedirectTarget } from './redirect-target.ts';
-import type { LoaderHandoff, NavigateTarget, Params, Route } from './types.ts';
+import type { LoaderHandoff, NavigateTarget, Params, Query, Route } from './types.ts';
 import { flattenRoutesFor, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { isNotFound } from './not-found.ts';
@@ -72,12 +72,21 @@ import { latchServerData } from '../reactivity/data-cache.ts';
  * render the page the guard declined to serve, which is the SSR authorization bypass the
  * blocked shape exists to prevent.
  */
-function redirectOutcome(to: NavigateTarget, replace: boolean): MatchAndLoadResult
+/** @internal A redirect verdict judged by the one redirect-target rule, in the walk's own shape. */
+function judgeRedirect(to: NavigateTarget, replace: boolean): Extract<GuardWalkOutcome, { kind: 'redirect' | 'refused-redirect' }>
 {
     const verdict = acceptRedirectTarget(to);
     return verdict.accepted
-        ? { redirect: verdict.to, replace }
-        : { refusedRedirect: true, target: verdict.target };
+        ? { kind: 'redirect', to: verdict.to, replace }
+        : { kind: 'refused-redirect', target: verdict.target };
+}
+
+function redirectOutcome(to: NavigateTarget, replace: boolean): MatchAndLoadResult
+{
+    const judged = judgeRedirect(to, replace);
+    return judged.kind === 'redirect'
+        ? { redirect: judged.to, replace: judged.replace }
+        : { refusedRedirect: true, target: judged.target };
 }
 
 /**
@@ -118,7 +127,7 @@ export type MatchAndLoadResult =
     | null;
 
 /** @internal One selected chain: the URL's split plus the first entry whose matcher matched it. */
-interface SelectedChain
+export interface SelectedChain
 {
     entry: LeafEntry;
     params: Params;
@@ -167,6 +176,82 @@ export function guardedMatch(routes: Route[], url: string | URL): boolean
 }
 
 /**
+ * What the guard walk decided for one URL, before any loader runs. `pass` carries the
+ * selected chain and its parsed query for the loader phase.
+ *
+ * @internal
+ */
+export type GuardWalkOutcome =
+    | { kind: 'pass'; selected: SelectedChain; query: Query }
+    | { kind: 'not-found' }
+    | { kind: 'blocked'; status: 401 | 403 }
+    | { kind: 'redirect'; to: NavigateTarget; replace: boolean }
+    | { kind: 'refused-redirect'; target: string };
+
+/**
+ * SERVER: selects `url`'s chain and runs its GUARDS root-to-leaf - the ONE walk behind
+ * {@link matchAndLoad} (which then loads) and a page action (which then writes). A guard
+ * receives the whole chain's params and the raw query with `from: null`; a thrown
+ * `redirect()` or denial behaves like a returned one; any other throw propagates. Latches
+ * nothing: the entry points that need server-data mode latch it themselves.
+ *
+ * @internal
+ */
+export async function evaluateGuards(routes: Route[], url: string | URL): Promise<GuardWalkOutcome>
+{
+    const selected = selectChain(routes, url);
+    if (selected === null)
+    {
+        return { kind: 'not-found' };
+    }
+    const { entry, params, pathname, search } = selected;
+    const query = parseQuery(search);
+
+    // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
+    // DISTINCT blocked result (a 403), never a rendered page. `from` is null: a server
+    // render has no previous location.
+    for (const route of entry.matched)
+    {
+        if (route.guard === undefined)
+        {
+            continue;
+        }
+        let verdict: unknown;
+        try
+        {
+            verdict = await route.guard({ params, pathname, query, from: null });
+        }
+        catch (error)
+        {
+            if (isRedirect(error))
+            {
+                return judgeRedirect(error.to, error.replace);
+            }
+            if (isDenied(error))
+            {
+                return { kind: 'blocked', status: deniedStatus(error) };
+            }
+            throw error;
+        }
+        if (isDenied(verdict))
+        {
+            return { kind: 'blocked', status: deniedStatus(verdict) };
+        }
+        if (verdict === false)
+        {
+            return { kind: 'blocked', status: 403 };
+        }
+        if (verdict !== true && verdict !== undefined && verdict !== null)
+        {
+            return isRedirect(verdict)
+                ? judgeRedirect(verdict.to, verdict.replace)
+                : judgeRedirect(verdict as NavigateTarget, true);
+        }
+    }
+    return { kind: 'pass', selected, query };
+}
+
+/**
  * SERVER: matches `url` against `routes`, runs the chain's GUARDS root-to-leaf, and
  * runs every matched level's loader in parallel - the same matching, guarding, and
  * parallelism the client router performs, reused so the two sides cannot disagree.
@@ -187,57 +272,26 @@ export async function matchAndLoad(
     // A server entry point: from here on, default-scope reads bypass the data cache so a
     // resolver-less host's loader-phase reads can never be shared across requests.
     latchServerData();
-    const selected = selectChain(routes, url);
-    if (selected === null)
+    const walked = await evaluateGuards(routes, url);
+    if (walked.kind === 'not-found')
     {
-        // No route in the table matched this URL.
         return { notFound: true };
     }
+    if (walked.kind === 'blocked')
     {
-        const { entry, params, pathname, search } = selected;
-        const query = parseQuery(search);
-
-        // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
-        // DISTINCT blocked result (a 403), never a rendered page. `from` is null: a server
-        // render has no previous location.
-        for (const route of entry.matched)
-        {
-            if (route.guard === undefined)
-            {
-                continue;
-            }
-            let verdict: unknown;
-            try
-            {
-                verdict = await route.guard({ params, pathname, query, from: null });
-            }
-            catch (error)
-            {
-                if (isRedirect(error))
-                {
-                    return redirectOutcome(error.to, error.replace);
-                }
-                if (isDenied(error))
-                {
-                    return { blocked: true, status: deniedStatus(error) };
-                }
-                throw error;
-            }
-            if (isDenied(verdict))
-            {
-                return { blocked: true, status: deniedStatus(verdict) };
-            }
-            if (verdict === false)
-            {
-                return { blocked: true, status: 403 };
-            }
-            if (verdict !== true && verdict !== undefined && verdict !== null)
-            {
-                return isRedirect(verdict)
-                    ? redirectOutcome(verdict.to, verdict.replace)
-                    : redirectOutcome(verdict as NavigateTarget, true);
-            }
-        }
+        return { blocked: true, status: walked.status };
+    }
+    if (walked.kind === 'redirect')
+    {
+        return { redirect: walked.to, replace: walked.replace };
+    }
+    if (walked.kind === 'refused-redirect')
+    {
+        return { refusedRedirect: true, target: walked.target };
+    }
+    {
+        const { entry, params, pathname, search } = walked.selected;
+        const query = walked.query;
 
         await Promise.all(entry.matched
             .filter((route) => route.lazy !== undefined)

@@ -29,12 +29,12 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
-import type { Route } from 'azerothjs';
+import type { NavigateTarget, Route } from 'azerothjs';
 import { localeDirection, negotiateLocale } from 'azerothjs';
 import type { NegotiatedLocale } from 'azerothjs';
-import { guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, evaluateGuards, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, NotFoundError } from '@azerothjs/http';
+import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
 import { staticFiles } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
@@ -287,6 +287,14 @@ export function flattenPages(
         const guardedBy = inherited.guardedBy ?? (route.guard !== undefined ? full : undefined);
         if (route.children !== undefined && route.children.length > 0)
         {
+            // An action belongs to the page a form is rendered on, and a layout is not a page: it
+            // has no path of its own to post to. Refused here, where mount and build both walk,
+            // rather than dropped silently.
+            if (route.action !== undefined)
+            {
+                throw new Error(`kit: "${ full }" declares an action but has children - an action belongs to the `
+                    + 'page a form is rendered on, and a layout is not a page. Declare it on the leaf route.');
+            }
             out.push(...flattenPages(route.children, full === '/' ? '' : full, { render: mode, revalidate, guardedBy }));
         }
         else
@@ -394,13 +402,21 @@ export function mountPages(app: App, options: KitOptions): void
     // In prefix mode a page exists once per language and the bare path redirects to the
     // reader's own, so there is exactly ONE canonical url per (page, language) - which is what
     // hreflang annotates and what stops the same content being indexed twice.
-    const prefixes = localePrefixes(options);
-    const mountPaths = (path: string): string[] =>
-        (prefixes.length === 0 ? [path] : prefixes.map((tag) => (path === '/' ? `/${ tag }` : `/${ tag }${ path }`)));
+    const mountPaths = (path: string): string[] => mountedPaths(path, options);
 
     for (const page of flattenPages(options.routes))
     {
         const mode = page.render ?? defaultMode;
+        // A page action is a function of the request - its form carries a token minted for that
+        // response - and a prerendered or cached page has no request. Same exemption as the
+        // guard rule: a wildcard without revalidate downgrades to per-request SSR.
+        if (mode === 'static' && page.action !== undefined
+            && !(page.path.includes('*') && page.revalidate === undefined))
+        {
+            throw new Error(`kit mountPages: "${ page.path }" renders 'static' but declares an action - a `
+                + 'prerendered or cached page carries no per-request token, so its form cannot submit '
+                + 'without JavaScript. Use render: \'server\' for a page that receives a form.');
+        }
         // A guarded chain makes the render identity-dependent, and every 'static' serving
         // shape answers without running guards: a prerendered file involves no renderer at
         // all, and an ISR cache hit answers without any routing. Refused at mount so a server-only
@@ -581,13 +597,29 @@ export function mountPages(app: App, options: KitOptions): void
 }
 
 /**
+ * @internal The paths one page is mounted at: its own, plus one per language prefix when the
+ * site gives each language its own url.
+ */
+function mountedPaths(path: string, options: KitOptions): string[]
+{
+    const prefixes = localePrefixes(options);
+    return prefixes.length === 0 ? [path] : prefixes.map((tag) => (path === '/' ? `/${ tag }` : `/${ tag }${ path }`));
+}
+
+/**
  * @internal Runs one page action for a form submit.
  *
  * The order is load-bearing. The body is read FIRST because the CSRF token arrives in it - a
- * plain form cannot set a header - and the token is checked before the action runs, so a
- * cross-site submit never reaches application code. On success the answer is a 303 rather than
- * rendered markup: that is what stops a refresh from re-posting, and it makes the loader the
- * single source of what the page then shows.
+ * plain form cannot set a header - and the token is checked before anything else runs, so a
+ * cross-site submit never reaches a guard or the action. The route chain's GUARDS run next,
+ * through the same walk the page's GET runs, so a write is gated by exactly what gates the page
+ * it belongs to. On success the answer is a 303 rather than rendered markup: that is what stops
+ * a refresh from re-posting, and it makes the loader the single source of what the page then
+ * shows.
+ *
+ * Registered at the page's bare path AND its language-prefixed ones: the bare path is what a
+ * rendered form targets today, the prefixed ones are what the browser url and the enhanced
+ * submit target.
  */
 function registerAction(
     app: App,
@@ -599,13 +631,55 @@ function registerAction(
     report: KitErrorObserver
 ): void
 {
-    app.post(page.path, async (context) =>
+    const handler = async (context: RequestContext): Promise<Response> =>
     {
         const form = await readForm(context.request);
         verifyCsrfField(context.request, context.url, form.get(CSRF_FIELD), options.csrf ?? {});
         // The token is not the application's business, and leaving it in would put it in front
         // of every schema that validates the submitted fields.
         form.delete(CSRF_FIELD);
+
+        // One action, two representations, chosen by what the client asked for. A NATIVE form
+        // submit is a navigation and needs the redirect-then-render dance; an enhanced submit is
+        // a fetch that wants the value, and following a 303 to re-download the page it is
+        // already showing would defeat the point of intercepting it.
+        const wantsJson = acceptsJson(context.request);
+        const fullPathOf = (to: NavigateTarget): string => (typeof to === 'string' ? to : targetToFullPath(to));
+        const sendTo = (location: string): Response => (wantsJson
+            ? jsonResponse({ ok: true, redirect: location }, { headers: { 'cache-control': 'private, no-store' } })
+            : seeOther(location));
+
+        // The chain's guards, over the app path the page's GET walks, so the verdict is the one
+        // the page itself gets. A guard's redirect target was judged by the walk already.
+        const walked = await evaluateGuards(options.routes, appPath(context, options));
+        if (walked.kind === 'not-found')
+        {
+            throw new NotFoundError();
+        }
+        if (walked.kind === 'blocked')
+        {
+            // A JSON client gets the kernel's refusal, the envelope the CSRF check on this same
+            // path answers with. A native submit gets the page's own blocked UI at the guard's
+            // status: the render runs the same walk and yields the blocked result the page's
+            // GET shows, so the two arrivals agree.
+            if (wantsJson || options.renderer === undefined)
+            {
+                throw walked.status === 401
+                    ? new UnauthorizedError('Sign in to submit this form.')
+                    : new ForbiddenError('This form is not available to you.');
+            }
+            return renderOrShell(context, 'server', options, await shellPromise, buildId);
+        }
+        if (walked.kind === 'refused-redirect')
+        {
+            throw new Error(`kit: a guard on "${ page.path }" redirected off-origin to "${ walked.target }" during a `
+                + 'form submit - a redirect target that leaves the app\'s origin is refused; redirect to a path, '
+                + 'or wrap a deliberate off-origin target in unsafeUrl(...).');
+        }
+        if (walked.kind === 'redirect')
+        {
+            return sendTo(fullPathOf(walked.to));
+        }
 
         let result: unknown;
         try
@@ -616,16 +690,19 @@ function registerAction(
         {
             if (isRedirect(error))
             {
-                const target = error.to;
-                return seeOther(typeof target === 'string' ? target : targetToFullPath(target));
+                // The one redirect boundary the router does not judge itself, so it is judged
+                // here by the same rule as the other three.
+                const judged = acceptRedirectTarget(error.to);
+                if (!judged.accepted)
+                {
+                    throw new Error(`kit: the action on "${ page.path }" redirected off-origin to "${ judged.target }" - `
+                        + 'a redirect target that leaves the app\'s origin is refused; redirect to a path, or wrap '
+                        + 'a deliberate off-origin target in unsafeUrl(...).', { cause: error });
+                }
+                return sendTo(fullPathOf(judged.to));
             }
             throw error;
         }
-        // One action, two representations, chosen by what the client asked for. A NATIVE form
-        // submit is a navigation and needs the redirect-then-render dance; an enhanced submit is
-        // a fetch that wants the value, and following a 303 to re-download the page it is
-        // already showing would defeat the point of intercepting it.
-        const wantsJson = acceptsJson(context.request);
         if (result === undefined)
         {
             // POST/Redirect/GET: the visitor lands on a GET, so a refresh re-reads instead of
@@ -648,7 +725,11 @@ function registerAction(
             buildId,
             422,
             { result, report });
-    });
+    };
+    for (const mounted of new Set([page.path, ...mountedPaths(page.path, options)]))
+    {
+        app.post(mounted, handler);
+    }
 }
 
 /** @internal The POST/Redirect/GET answer. 303 so the follow-up is a GET on every client. */

@@ -206,8 +206,19 @@ bundle and no event handler.
   (POST/Redirect/GET).
 - **Returning a value** means it did not: the page re-renders at **422** with that value readable
   through `useActionResult()`. That is where field errors go.
-- **Throwing `redirect(...)`** sends the visitor somewhere else entirely.
+- **Throwing `redirect(...)`** sends the visitor somewhere else entirely. The target is judged by
+  the same rule as every other redirect: one that leaves the app's origin is refused (a 500, never
+  a `Location`), and `unsafeUrl(...)` opts a deliberate one out.
 - A page with no `action` still answers **405** to a POST, which is the honest response.
+- **The page's guards run first**, through the same walk its GET runs, so a write is gated by
+  exactly what gates the page. A visitor a guard turns away gets the page's own blocked UI at the
+  guard's status (an enhanced submit gets the 401 or 403 envelope), a guard that redirects sends
+  the submit there, and the action never runs. The CSRF check runs before the guards, so a
+  cross-site submit reaches neither.
+- An `action` cannot live on a `render: 'static'` page (a prerendered or cached page has no
+  request to mint a form token for) or on a route with children (a layout is not a page); both
+  are refused at mount and at build. Under `locales.routing: 'prefix'` the page accepts its form
+  at its bare path and at every prefixed one.
 
 ### CSRF
 
@@ -229,7 +240,11 @@ empty token.
 
 `<Form>` renders that form and carries the token for you. Without JS it posts natively;
 with JS it intercepts the submit, asks the same action for its JSON representation, and
-revalidates the page in place - same scroll, same focus, no reload.
+revalidates the page in place - same scroll, same focus, no reload. An action that redirects
+answers the enhanced submit with `{ ok: true, redirect }`, and `<Form>` navigates there. A
+refusal that never reached your action - a guard, the CSRF check, a fault - settles
+`onSettled({ ok: false })` with no result, leaves the previous validation verdict on screen, and
+logs the status once.
 
 ```azeroth
 // todo-page.azeroth

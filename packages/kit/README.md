@@ -125,6 +125,19 @@ The route table ships to the browser, so keep the closure browser-safe: inline d
 dynamic import the client bundle never follows eagerly. Invalid param values (empty, `/`,
 dot segments) fail the BUILD, never become a path.
 
+## Page actions - `action`
+
+A route may declare an `action`: what a plain `<form method="post">` on that page posts to, with
+no client JavaScript. `mountPages` registers the POST for the page's own path (and, under prefix
+routing, for every language-prefixed one). The body is read first because the CSRF token travels
+in a hidden `_csrf` field, the token is verified, then the page's route-chain guards run through
+the same walk its GET runs, and only then does the action - so a write is gated by exactly what
+gates the page, and a guard's veto answers with the page's own blocked UI. Returning nothing is a
+303 back to the page; returning a value re-renders it at 422 with the value in `useActionResult()`;
+throwing `redirect(...)` goes elsewhere, judged by the same off-origin rule as every redirect.
+An action is refused on a `render: 'static'` page, which has no request to mint a token for, and
+on a route with children. The router guide covers the page side and `<Form>`.
+
 ## ISR - `revalidate`
 
 A static page with `revalidate` serves from a page cache: fresh within the window, past it

@@ -12,6 +12,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A page action ran for anyone holding a CSRF cookie, whatever the page's guards said.**
+  `registerAction` read the form, checked the token and called the action; the route chain was
+  never consulted, so a signed-out visitor whose GET of a guarded page answered 401 could POST to
+  it and have the write executed. Every verdict shape bypassed: `false`, `forbidden()`,
+  `unauthorized()`, a redirect, and a guard inherited from a layout. The action now runs the
+  chain's guards through the same walk the page's GET runs, after the CSRF check and before the
+  action: a vetoed native submit gets the page's own blocked UI at the guard's status, an
+  enhanced submit gets the 401 or 403 envelope, a guard that redirects sends the submit there,
+  and the action never runs.
+
+- **An action's redirect target went to `Location` unjudged.** `throw redirect(target)` from an
+  action wrote the target straight into the 303, so the comeback idiom `redirect(form.get('next'))`
+  was an open redirect: `https://evil.example/`, `//evil.example/x` and `javascript:` were all
+  followed, where the same targets from a guard or loader were refused. The action boundary is
+  now judged by the same rule as the other three; an off-origin target is a 500 with no
+  `Location`, and `unsafeUrl(...)` opts a deliberate one out exactly as it does elsewhere.
+
 - **A JSON body could replace the request context's prototype.** A middleware or api guard that
   returns parsed request data as its additions, the shape the kernel documents, merged every own key
   of the object onto the context. `JSON.parse` produces `__proto__` as an own key, and assigning it
@@ -434,6 +451,27 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   fixing only the type would have turned a compile error into a crash.
 
 ### Changed
+
+- **An enhanced submit whose action redirects now navigates.** The server answered a 303 whatever
+  the client asked for, `fetch` followed it, and `<Form>` received the HTML of the target page and
+  reported a transport failure. A client that asks for JSON now receives `{ ok: true, redirect }`
+  and `<Form>` navigates there, for an action's own redirect and for a guard's.
+
+- **`<Form>` treats an answer that is not the action's own as a refusal by the server.** A 401,
+  403 or 500, or any body without an `ok` field, settles `onSettled({ ok: false })`, leaves the
+  previous validation result in place instead of clearing it, and logs the status once; the
+  "could not be sent" report is reserved for a failed fetch. `onSettled` gains an optional
+  `redirect` field.
+
+- **An `action` is refused on a static page and on a layout.** A prerendered or cached page has no
+  request to mint a form token for, so its form could never submit without JavaScript; a route
+  with children has no page of its own to post to, and its action was dropped silently. Both are
+  now mount and build errors naming the fix (`render: 'server'`; declare the action on the leaf).
+  A wildcard static page without `revalidate` keeps its action, since it renders per request.
+
+- **Under prefix routing a page accepts its form at every url it is mounted at.** The POST was
+  registered at the bare path only, so the enhanced submit, which posts to the browser's
+  prefixed url, answered 405. It is registered at the bare and the prefixed paths.
 
 - **A guard veto is now its own state, and it lands on the URL it denied. BREAKING.** A denied
   navigation used to rewind to the previous location, and a cold load of a denied URL rendered

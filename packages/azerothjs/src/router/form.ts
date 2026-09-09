@@ -50,10 +50,13 @@ export interface FormProps
     children?: MountNode;
 
     /**
-     * Runs after an enhanced submit settles, with the action's outcome. Never called on the
-     * native path, where the answer is a navigation rather than a value.
+     * Runs after an enhanced submit settles, with the action's outcome: `{ ok: true }` when the
+     * write landed (with `redirect` when the action sent the visitor elsewhere), `{ ok: false,
+     * result }` when the action refused the values, and a bare `{ ok: false }` when the server
+     * refused the submit before it reached the action - a guard, the CSRF check, a fault. Never
+     * called on the native path, where the answer is a navigation rather than a value.
      */
-    onSettled?: (outcome: { ok: boolean; result?: unknown }) => void;
+    onSettled?: (outcome: { ok: boolean; result?: unknown; redirect?: string }) => void;
 
     /** Anything else lands on the `<form>` element: `class`, `id`, `aria-*`. */
     [key: string]: unknown;
@@ -116,20 +119,40 @@ export function Form(props: FormProps): MountNode
                 body: new URLSearchParams(new FormData(element) as unknown as Record<string, string>),
                 credentials: 'same-origin'
             });
-            const outcome = await response.json() as { ok: boolean; result?: unknown };
-            if (outcome.ok)
+            // Exactly three answers are the action's own; everything else is a refusal by the
+            // server that never reached validation.
+            const outcome = await response.json().catch(() => null) as { ok?: unknown; result?: unknown; redirect?: unknown } | null;
+            if (outcome !== null && outcome.ok === true)
             {
+                if (typeof outcome.redirect === 'string')
+                {
+                    // The action sent the visitor elsewhere; the client boundary judges the target
+                    // again, exactly as it would for a guard's redirect.
+                    onSettled?.({ ok: true, redirect: outcome.redirect });
+                    router.navigate(outcome.redirect);
+                    return;
+                }
                 // The write landed, so what the page reads is stale. Revalidating in place is
                 // the whole gain over the native path: same scroll, same focus, no reload.
                 router.setActionResult(undefined);
                 await router.revalidate();
+                onSettled?.({ ok: true });
+                return;
             }
-            else
+            if (outcome !== null && outcome.ok === false && 'result' in outcome)
             {
                 // The same slot the server render fills, so `useActionResult()` reads one thing.
                 router.setActionResult(outcome.result);
+                onSettled?.({ ok: false, result: outcome.result });
+                return;
             }
-            onSettled?.(outcome);
+            // A guard, the CSRF check or a fault answered before the values were validated, so the
+            // last validation verdict stays on screen; the status is what the caller can act on.
+            if (typeof console !== 'undefined')
+            {
+                console.error(`[azerothjs/Form] the server refused the submit (${ response.status }).`);
+            }
+            onSettled?.({ ok: false });
         }
         catch (error)
         {

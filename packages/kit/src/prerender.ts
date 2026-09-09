@@ -252,6 +252,14 @@ async function generate(
                 + '(live-rendered requests only; it never runs for prerendered bytes), or use '
                 + 'render: \'server\'.');
         }
+        // The same declaration rule, for the same reason: a prerendered file has no request to
+        // mint a form token for, so the form it carries cannot submit without JavaScript.
+        if (page.action !== undefined && !(page.path.includes('*') && page.revalidate === undefined))
+        {
+            throw new Error(`kit prerender: "${ page.path }" is render: 'static' but declares an action - `
+                + 'a prerendered page carries no per-request token, so its form cannot submit without '
+                + 'JavaScript. Use render: \'server\' for a page that receives a form.');
+        }
         const parameterized = page.path.includes(':') || page.path.includes('*');
         if (!parameterized && page.staticParams !== undefined)
         {
