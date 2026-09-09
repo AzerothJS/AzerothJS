@@ -33,6 +33,7 @@ import type { App } from '@azerothjs/http';
 
 import type { PageResult } from './ssr.ts';
 import type { PageRenderer } from './ssr.ts';
+import { mergeVary } from './vary.ts';
 
 /** One cached page: the finished HTML, its status, and when it was produced. */
 export interface PageEntry
@@ -455,19 +456,9 @@ export function registerIsr(registration: IsrRegistration): void
     const varyOf = registration.vary ?? ((): undefined => undefined);
     const stripLocale = registration.strip ?? ((pathname: string): string => pathname);
 
-    /** Stamps the negotiated Vary onto a response without disturbing one it already carries. */
+    /** The one stamp every negotiated answer passes through, fed by the rule the mount injected. */
     const varied = (response: Response, request: Request): Response =>
-    {
-        const vary = varyOf(request, new URL(request.url).pathname);
-        if (vary === undefined)
-        {
-            return response;
-        }
-        const headers = new Headers(response.headers);
-        const existing = headers.get('vary');
-        headers.set('vary', existing === null || existing.trim() === '' ? vary : `${ existing }, ${ vary }`);
-        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-    };
+        mergeVary(response, varyOf(request, new URL(request.url).pathname));
     // UNCAPPED, unlike `provisional` and `learned` below, and that is a known bound living
     // outside this file rather than an oversight. A production outlives the request that
     // started it, so open connections do NOT bound how many run at once: measured at 8 sockets

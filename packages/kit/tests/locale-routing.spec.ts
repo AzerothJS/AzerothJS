@@ -178,3 +178,32 @@ describe('locale-prefixed urls', () =>
         expect(await response.text()).not.toContain('hreflang');
     });
 });
+
+describe('the bare-path redirect varies on exactly what decided it', () =>
+{
+    // The redirect's Vary comes from the one rule every negotiated answer uses, not from a
+    // literal that would drift from it the moment a source is switched off.
+    function redirectVary(locales: NonNullable<Parameters<typeof mountPages>[1]['locales']>): Promise<string | null>
+    {
+        resetHead();
+        const dir = mkdtempSync(join(tmpdir(), 'az-lredir-'));
+        writeFileSync(join(dir, 'index.html'), SHELL);
+        mkdirSync(join(dir, 'assets'));
+        dirs.push(dir);
+        const server = new App();
+        mountPages(server, { routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes), locales });
+        return server.handle(new Request('http://local/about', { headers: { 'accept-language': 'fa' } }))
+            .then((response) => response.headers.get('vary'));
+    }
+
+    it('names the header when only the header can decide, and the cookie when only the cookie can', async () =>
+    {
+        expect(await redirectVary({ supported: ['en', 'fa'], routing: 'prefix', cookie: false })).toBe('accept-language');
+        expect(await redirectVary({ supported: ['en', 'fa'], routing: 'prefix', acceptLanguage: false })).toBe('cookie');
+    });
+
+    it('names nothing when every first visit goes to the same prefix', async () =>
+    {
+        expect(await redirectVary({ supported: ['en', 'fa'], routing: 'prefix', cookie: false, acceptLanguage: false })).toBeNull();
+    });
+});

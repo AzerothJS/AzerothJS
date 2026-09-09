@@ -119,3 +119,48 @@ describe('a cached page whose language is negotiated', () =>
         expect(response.headers.get('vary') ?? '').not.toMatch(/accept-language/i);
     });
 });
+
+describe('what a negotiated page tells a shared cache it varies on', () =>
+{
+    // Every source that CAN decide, not the one that did. A cache matches a stored response on
+    // the fields THAT response named (RFC 9111 4.1), so a page stamped only with the header is
+    // replayed to a reader whose cookie chose another language. The strings are exact, so a
+    // later loosening cannot drop the cookie half this rule exists to add.
+    const routes: PageRoute[] = [{ path: '/doc', component: Page, render: 'server' }];
+    async function varyOf(locales: Parameters<typeof mountPages>[1]['locales']): Promise<string | null>
+    {
+        resetHead();
+        const dir = mkdtempSync(join(tmpdir(), 'az-lvary-'));
+        writeFileSync(join(dir, 'index.html'), SHELL);
+        mkdirSync(join(dir, 'assets'));
+        dirs.push(dir);
+        const server = new App();
+        mountPages(server, {
+            routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes),
+            ...(locales === undefined ? {} : { locales })
+        });
+        const response = await server.handle(new Request('http://local/doc', { headers: { 'accept-language': 'en' } }));
+        await response.text();
+        return response.headers.get('vary');
+    }
+
+    it('names the header AND the cookie for a reader who has not chosen, so their copy is never replayed to one who has', async () =>
+    {
+        expect(await varyOf({ supported: ['en', 'fa'] })).toBe('accept-language, cookie');
+    });
+
+    it('names only the sources that are on', async () =>
+    {
+        expect(await varyOf({ supported: ['en', 'fa'], cookie: false })).toBe('accept-language');
+        expect(await varyOf({ supported: ['en', 'fa'], acceptLanguage: false })).toBe('cookie');
+    });
+
+    it('names nothing when nothing can vary', async () =>
+    {
+        // Both sources off: every reader gets the default.
+        expect(await varyOf({ supported: ['en', 'fa'], cookie: false, acceptLanguage: false })).toBeNull();
+        // One published language: one body for everyone, and a field would only fragment a
+        // shared cache for a distinction that does not exist.
+        expect(await varyOf({ supported: ['fa'] })).toBeNull();
+    });
+});

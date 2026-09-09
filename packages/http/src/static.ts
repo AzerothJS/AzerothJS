@@ -41,6 +41,7 @@
  * Directory requests resolve to `index` (default index.html) when present.
  */
 
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
@@ -219,9 +220,13 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
             throw new NotFoundError();
         }
 
-        // A strong validator from (size, mtime): whole-file responses cannot differ without
-        // one of the two changing on any sane filesystem.
-        const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }"`;
+        // A strong validator from (size, mtime, identity): whole-file responses cannot differ
+        // without one of the first two changing on any sane filesystem, and the third is what
+        // tells two FILES served under one url apart - a page negotiated into two languages is
+        // two files of one length written by one build pass, one millisecond apart at best, and
+        // an entity tag must differentiate representations that arise from negotiation.
+        const identity = createHash('sha256').update(target.slice(root.length).replaceAll('\\', '/')).digest('hex').slice(0, 8);
+        const etag = `"${ info.size.toString(16) }-${ Math.trunc(info.mtimeMs).toString(16) }-${ identity }"`;
         const lastModified = new Date(info.mtimeMs).toUTCString();
         const headers = new Headers({
             'content-type': contentTypeFor(target),

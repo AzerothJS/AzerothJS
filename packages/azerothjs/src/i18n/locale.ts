@@ -168,22 +168,34 @@ export interface LocaleConfig
     /** BCP 47 tags this app publishes, best first. */
     supported: readonly string[];
 
-    /** Served when the reader asks for nothing published here. Defaults to `supported[0]`. */
+    /**
+     * Served when the reader asks for nothing published here. Defaults to `supported[0]`. Resolved
+     * against `supported` like any other tag, so a default the site does not publish falls back
+     * to `supported[0]` rather than being served - or, under prefix routing, redirected to.
+     */
     default?: string;
 
     /** The cookie holding an explicit choice, which outranks the browser's headers. Defaults to `locale`. */
     cookie?: string | false;
+
+    /**
+     * Whether `Accept-Language` is read at all (default `true`). `false` makes every first visit
+     * land in the default: the site's own language first, and the cookie a reader's choice writes
+     * still wins, because a cookie is an answer they gave.
+     */
+    acceptLanguage?: boolean;
 }
 
-/** What a negotiation decided, and whether the reader's own choice decided it. */
+/** What a negotiation decided, and whether a cookie was read to decide it. */
 export interface NegotiatedLocale
 {
     locale: string;
 
     /**
-     * True when a cookie chose it. Callers that cache say so in `Vary`, and only when it is true -
-     * naming `Cookie` unconditionally makes every response uncacheable for the sake of readers who
-     * never chose one.
+     * True when a cookie was read. This is NOT the signal for `Vary`: a cache matches a stored
+     * response on the fields that response named (RFC 9111 4.1), so a cache must be told about
+     * the cookie whenever a cookie CAN decide, not only when it did. It is for a caller that wants
+     * to know whether this reader has chosen - to offer a language switch, or not to.
      */
     fromCookie: boolean;
 }
@@ -209,7 +221,11 @@ export interface NegotiatedLocale
  */
 export function negotiateLocale(request: Request, config: LocaleConfig): NegotiatedLocale
 {
-    const fallback = config.default ?? config.supported[0] ?? 'en';
+    const first = config.supported[0] ?? 'en';
+    // A named default is a tag like any other and is resolved the same way, so a default the
+    // site does not publish cannot become the answer - under prefix routing that answer is a
+    // redirect to a prefix no mount serves, for every first visit.
+    const fallback = config.default === undefined ? first : resolveLocale([config.default], config.supported, first);
     if (config.supported.length === 0)
     {
         return { locale: fallback, fromCookie: false };
@@ -223,7 +239,7 @@ export function negotiateLocale(request: Request, config: LocaleConfig): Negotia
             return { locale: resolveLocale([chosen], config.supported, fallback), fromCookie: true };
         }
     }
-    const header = request.headers.get('accept-language');
+    const header = config.acceptLanguage === false ? null : request.headers.get('accept-language');
     return {
         locale: header === null
             ? fallback

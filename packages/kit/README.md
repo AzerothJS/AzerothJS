@@ -300,6 +300,26 @@ is correct, cache-keyed separately, and keeps the resize win. Replacing an image
 in place keeps its URL, so browsers may cache the old bytes for up to a year; rename the
 file (hashed builds do) or lower `cacheControl` when images mutate.
 
+## Languages - `locales`
+
+Declare the languages the site publishes and every page is served in the reader's own, with its
+`<html lang>` and `<html dir>`, its message catalogue, and what it varies on told to every cache in
+front of it:
+
+```ts
+mountPages(app, {
+    routes, clientDir, renderer,
+    locales: { supported: ['en', 'fa'], default: 'fa', acceptLanguage: false }
+});
+```
+
+`supported` and `default` are the `LocaleConfig` every handler can negotiate with; `cookie: false`
+and `acceptLanguage: false` switch a source off (the latter makes every first visit land in the
+site's own language, with a reader's choice still winning). `routing: 'prefix'` gives every
+language its own url with `hreflang` between them, which is what a site with search-engine
+ambitions and a CDN wants. The full story - negotiation order, catalogues, the two routing modes
+and what each tells a shared cache - is the [i18n guide](../azerothjs/docs/i18n.md).
+
 ## What it deliberately is not
 
 - **Not a router.** The table above is `azerothjs`'s own router table - loaders, `lazy:`, typed `defineRoute` handles all work unchanged. Guards work unchanged on server-rendered pages, and are REFUSED on static ones (see Prerendering and ISR above).

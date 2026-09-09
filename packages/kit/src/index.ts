@@ -31,7 +31,8 @@ import { join, resolve, sep } from 'node:path';
 
 import type { NavigateTarget, Route } from 'azerothjs';
 import { localeDirection, negotiateLocale } from 'azerothjs';
-import type { NegotiatedLocale } from 'azerothjs';
+import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
+import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
@@ -148,24 +149,15 @@ export interface KitOptions
      * a single-language site and wrong the moment there are two - a shell says one language and a
      * request can be for another.
      */
-    locales?: {
-        /** BCP 47 tags, best first. The first is used when nothing else matches. */
-        supported: readonly string[];
-
-        /** Served when the reader asks for nothing this site publishes. Defaults to `supported[0]`. */
-        default?: string;
-
-        /**
-         * The cookie holding a reader's explicit choice, which outranks their browser's headers.
-         * Defaults to `locale`, the name `setLocale()` writes.
-         */
-        cookie?: string;
-
+    locales?: LocaleConfig & {
         /**
          * How a language is expressed in the url.
          *
-         * `'negotiate'` (the default) keeps one url per page and decides per request. Simple, and
-         * it is what a site with a language switcher and no search-engine ambitions wants.
+         * `'negotiate'` (the default) keeps one url per page and decides per request - from the
+         * cookie `setLocale()` writes, then `Accept-Language`, then the default, exactly as
+         * `negotiateLocale` does for any handler. Simple, and it is what a site with a language
+         * switcher and no search-engine ambitions wants. Every negotiated answer tells shared
+         * caches what it varies on, which is every source that CAN decide it.
          *
          * `'prefix'` gives every language its own url - `/fa/about` beside `/en/about` - and
          * redirects the unprefixed path to the reader's own. This is what search engines require:
@@ -465,7 +457,7 @@ export function mountPages(app: App, options: KitOptions): void
                     buildId: buildIdPromise,
                     onError: report,
                     locale: (request: Request, pathname: string) => localeFor(request, options, pathname),
-                    vary: (request: Request, pathname: string) => varyFor(request, options, pathname),
+                    vary: (_request: Request, pathname: string) => varyFor(options, pathname),
                     strip: (pathname: string) => splitLocalePath(pathname, options).path
                 });
             }
@@ -815,16 +807,13 @@ function registerLocaleRedirect(app: App, path: string, options: KitOptions): vo
     {
         const tag = negotiate(context.request, options)?.locale ?? prefixes[0] ?? '';
         const target = (path === '/' ? `/${ tag }` : `/${ tag }${ context.url.pathname }`) + context.url.search;
-        return new Response(null, {
+        // The target depends on the reader, so a shared cache must not replay one reader's
+        // redirect for the next - and what it depends on is the one rule every negotiated
+        // answer uses, rather than a literal that would drift from it.
+        return mergeVary(new Response(null, {
             status: 302,
-            headers: {
-                location: target,
-                // The target depends on the reader, so a shared cache must not replay one
-                // reader's redirect for the next.
-                vary: 'accept-language, cookie',
-                'cache-control': 'private, no-store'
-            }
-        });
+            headers: { location: target, 'cache-control': 'private, no-store' }
+        }), varyFor(options));
     });
 }
 
@@ -907,7 +896,7 @@ function localesOf(options: KitOptions): readonly string[]
  * never chose, while omitting it when it decided the answer lets a CDN serve one reader's chosen
  * language to another.
  */
-function varyFor(request: Request, options: KitOptions, pathname?: string): string | undefined
+function varyFor(options: KitOptions, pathname?: string): string | undefined
 {
     if (pathname !== undefined && splitLocalePath(pathname, options).locale !== undefined)
     {
@@ -915,12 +904,26 @@ function varyFor(request: Request, options: KitOptions, pathname?: string): stri
         // asks for it - which is the whole reason prefix routing exists for a cached site.
         return undefined;
     }
-    const negotiated = negotiate(request, options);
-    if (negotiated === undefined)
+    const config = options.locales;
+    // One published language is one body for every reader: nothing varies, and naming a field
+    // would only fragment a shared cache for a distinction that does not exist.
+    if (config === undefined || config.supported.length < 2)
     {
         return undefined;
     }
-    return negotiated.fromCookie ? 'accept-language, cookie' : 'accept-language';
+    // Every source that CAN decide, not the one that did. A cache matches a stored response on
+    // the fields THAT response named (RFC 9111 4.1), so a page stamped only with the header
+    // would be replayed to a reader whose cookie chose another language.
+    const sources: string[] = [];
+    if (config.acceptLanguage !== false)
+    {
+        sources.push('accept-language');
+    }
+    if (config.cookie !== false)
+    {
+        sources.push('cookie');
+    }
+    return sources.length === 0 ? undefined : sources.join(', ');
 }
 
 function negotiate(request: Request, options: KitOptions, pathname?: string): NegotiatedLocale | undefined
@@ -955,20 +958,7 @@ function negotiate(request: Request, options: KitOptions, pathname?: string): Ne
  */
 function withVary(response: Response, context: RequestContext, options: KitOptions): Response
 {
-    const vary = varyFor(context.request, options, context.url.pathname);
-    if (vary === undefined)
-    {
-        return response;
-    }
-    const existing = response.headers.get('vary');
-    const merged = existing === null || existing.trim() === ''
-        ? vary
-        : `${ existing }, ${ vary }`;
-    // Headers are immutable on some responses (a streamed one built with a literal init is
-    // not), so the header is set on a clone-safe copy only when it must be.
-    const headers = new Headers(response.headers);
-    headers.set('vary', merged);
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    return mergeVary(response, varyFor(options, context.url.pathname));
 }
 
 /** @internal Attaches a freshly minted CSRF cookie without disturbing the response's own. */
@@ -1182,12 +1172,16 @@ function registerStaticFirst(
             // prerender pass resolved, so the lookup and the write agree by construction.
             // A fresh object (not a merge) carries the file path, so staticFiles' full
             // machinery (containment, ETag, ranges) serves the prerendered bytes.
+            // Both file returns are negotiated bodies - the reader's language chose which file -
+            // so both are stamped, the unsuffixed fallback included: it is the live path for every
+            // page whose translation is missing, which is the normal state of a partly translated
+            // site. Every other exit of this handler is already stamped by the live render.
             const tag = localeFor(context.request, options, context.url.pathname);
             if (tag !== undefined)
             {
                 try
                 {
-                    return await assets({ ...context, params: { path: prerenderFileFor(context.path, tag) } });
+                    return withVary(await assets({ ...context, params: { path: prerenderFileFor(context.path, tag) } }), context, options);
                 }
                 catch (error)
                 {
@@ -1197,7 +1191,7 @@ function registerStaticFirst(
                     }
                 }
             }
-            return await assets({ ...context, params: { path: prerenderFileFor(context.path) } });
+            return withVary(await assets({ ...context, params: { path: prerenderFileFor(context.path) } }), context, options);
         }
         catch (error)
         {

@@ -14,7 +14,7 @@ import { App } from '@azerothjs/http';
 import { mountPages, type PageRoute } from '@azerothjs/kit';
 import { prerender } from '@azerothjs/kit/prerender';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -136,4 +136,141 @@ describe('a static site in more than one language', () =>
         // No stray language files, so nothing about the layout changed for a site with one.
         expect(existsSync(join(one, 'about', 'index.en.html'))).toBe(false);
     });
+});
+
+describe('an enumerated static page tells a shared cache what it varies on', () =>
+{
+    // The handler for a parameterised static route has two file returns, and neither was
+    // stamped: a shared cache was told it MAY store the page and told nothing about the
+    // language that chose its bytes, so one reader's language went to everyone after them.
+    // The arm is pinned to the FILE branch - it runs the prerender pass and proves the served
+    // body is the artifact - because the live-render fall-through was always stamped, and an
+    // arm that merely asks twice passes on the unfixed handler whenever the file is absent.
+    const posts: PageRoute[] = [
+        { path: '/post/:slug', component: Page, render: 'static', staticParams: () => Promise.resolve([{ slug: 'hello' }]) }
+    ];
+    // Written INTO the artifacts after the build, so a served body carrying it came from the
+    // file and one without it came from the live render - a discriminator that owes nothing to
+    // the handoff's shape.
+    const marker = '<!--artifact-->';
+    function stampArtifacts(dir: string, files: string[]): void
+    {
+        for (const file of files)
+        {
+            appendFileSync(join(dir, file), marker);
+        }
+    }
+
+    async function served(dir: string, path: string, accept: string): Promise<{ response: Response; html: string }>
+    {
+        const server = new App();
+        mountPages(server, { routes: posts, clientDir: dir, renderer: createPageRenderer(() => Page(), posts), locales: { supported: ['en', 'fa'] } });
+        const response = await server.handle(new Request(`http://local${ path }`, { headers: { 'accept-language': accept } }));
+        return { response, html: await response.text() };
+    }
+
+    it('on the prerendered artifact, in every language, and on the fall-through beside it', async () =>
+    {
+        resetHead();
+        const dir = clientDir();
+        await prerender({ routes: posts, clientDir: dir, renderer: createPageRenderer(() => Page(), posts), locales: ['en', 'fa'] });
+        expect(existsSync(join(dir, 'post', 'hello', 'index.fa.html'))).toBe(true);
+        stampArtifacts(dir, [join('post', 'hello', 'index.en.html'), join('post', 'hello', 'index.fa.html')]);
+
+        const persian = await served(dir, '/post/hello', 'fa');
+        // The artifact, not a live render: the file's own lang, and the marker only a file has.
+        expect(persian.html).toContain('lang="fa"');
+        expect(persian.html).toContain(marker);
+        expect(persian.response.headers.get('vary')).toBe('accept-language, cookie');
+
+        const english = await served(dir, '/post/hello', 'en');
+        expect(english.html).toContain('lang="en"');
+        expect(english.html).toContain(marker);
+        expect(english.response.headers.get('vary')).toBe('accept-language, cookie');
+
+        // A param the enumeration did not list falls through to the live render: the control.
+        const live = await served(dir, '/post/unlisted', 'fa');
+        expect(live.html).not.toContain(marker);
+        expect(live.response.headers.get('vary')).toBe('accept-language, cookie');
+    });
+
+    it('on the unsuffixed fallback too, which is the live path for every missing translation', async () =>
+    {
+        resetHead();
+        const dir = clientDir();
+        // A build that predates the locale config: only the unsuffixed artifact exists.
+        await prerender({ routes: posts, clientDir: dir, renderer: createPageRenderer(() => Page(), posts) });
+        expect(existsSync(join(dir, 'post', 'hello', 'index.fa.html'))).toBe(false);
+        stampArtifacts(dir, [join('post', 'hello', 'index.html')]);
+
+        const { response, html } = await served(dir, '/post/hello', 'fa');
+        expect(response.status).toBe(200);
+        expect(html).toContain(marker);
+        expect(response.headers.get('vary')).toBe('accept-language, cookie');
+    });
+});
+
+describe('two languages of one page never share a validator', () =>
+{
+    // One prerender pass writes both language files at one length, a millisecond apart, and a
+    // reproducible build makes their mtimes identical - so a validator from size and mtime
+    // alone collided, and a reader who chose Persian revalidating with the English tag got a
+    // 304 that kept the English document. The fix under test lives in static file serving, so
+    // BOTH negotiated static shapes are asserted: an arm over one of them passes a fix scoped
+    // to the other.
+    const plain: PageRoute[] = [{ path: '/about', component: Page, render: 'static' }];
+    const enumerated: PageRoute[] = [
+        { path: '/post/:slug', component: Page, render: 'static', staticParams: () => Promise.resolve([{ slug: 'hello' }]) }
+    ];
+
+    async function collide(routes: PageRoute[], files: [string, string]): Promise<App>
+    {
+        resetHead();
+        const dir = clientDir();
+        await prerender({ routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes), locales: ['en', 'fa'] });
+        // Force the collision the build only makes likely: one mtime, and one size by
+        // construction (the page prints the two-letter tag).
+        const when = new Date('2026-01-01T00:00:00Z');
+        for (const file of files)
+        {
+            utimesSync(join(dir, file), when, when);
+        }
+        const [a, b] = files.map((file) => readFileSync(join(dir, file)).length);
+        expect(a).toBe(b);
+        const server = new App();
+        mountPages(server, { routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes), locales: { supported: ['en', 'fa'] } });
+        return server;
+    }
+
+    for (const [label, routes, path, files] of [
+        ['a plain static page', plain, '/about', [join('about', 'index.en.html'), join('about', 'index.fa.html')]],
+        ['an enumerated static page', enumerated, '/post/hello', [join('post', 'hello', 'index.en.html'), join('post', 'hello', 'index.fa.html')]]
+    ] as const)
+    {
+        it(`${ label }: distinct tags, a foreign tag is a 200, the own tag is a 304 that names it`, async () =>
+        {
+            const server = await collide(routes, [...files]);
+            const get = (accept: string, headers: Record<string, string> = {}): Promise<Response> =>
+                server.handle(new Request(`http://local${ path }`, { headers: { 'accept-language': accept, ...headers } }));
+
+            const english = await get('en');
+            const persian = await get('fa');
+            const englishTag = english.headers.get('etag');
+            const persianTag = persian.headers.get('etag');
+            expect(englishTag).not.toBeNull();
+            expect(englishTag).not.toBe(persianTag);
+
+            // A Persian reader revalidating with the English validator must get Persian bytes.
+            const crossed = await get('fa', { 'if-none-match': englishTag as string });
+            expect(crossed.status).toBe(200);
+            expect(await crossed.text()).toContain('lang="fa"');
+
+            // And revalidation still WORKS: the same representation's own tag is a 304 that
+            // carries the tag it matched - and the same Vary its 200 carried.
+            const own = await get('fa', { 'if-none-match': persianTag as string });
+            expect(own.status).toBe(304);
+            expect(own.headers.get('etag')).toBe(persianTag);
+            expect(own.headers.get('vary')).toBe(persian.headers.get('vary'));
+        });
+    }
 });

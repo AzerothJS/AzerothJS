@@ -129,3 +129,43 @@ describe('negotiateLocale reads a hostile cookie without throwing', () =>
         expect(negotiateLocale(request('locale=%E0%A4%A'), config)).toEqual({ locale: 'en', fromCookie: true });
     });
 });
+
+describe('negotiateLocale: the site\'s own language first', () =>
+{
+    const english = (headers: Record<string, string> = {}): Request =>
+        new Request('http://x/', { headers: { 'accept-language': 'en-US,en;q=0.9', ...headers } });
+
+    it('with the header source off, a first visit lands in the default', () =>
+    {
+        // A Persian-first site: the browser says English, the site answers Persian.
+        const config = { supported: ['en', 'fa'], default: 'fa', acceptLanguage: false };
+        expect(negotiateLocale(english(), config)).toEqual({ locale: 'fa', fromCookie: false });
+        // And without a named default, the first supported language.
+        expect(negotiateLocale(english(), { supported: ['fa', 'en'], acceptLanguage: false }))
+            .toEqual({ locale: 'fa', fromCookie: false });
+    });
+
+    it('a cookie still wins, because it is an answer the reader gave', () =>
+    {
+        const config = { supported: ['en', 'fa'], default: 'fa', acceptLanguage: false };
+        expect(negotiateLocale(english({ cookie: 'locale=en' }), config)).toEqual({ locale: 'en', fromCookie: true });
+    });
+
+    it('with the switch unset the header still decides (control)', () =>
+    {
+        expect(negotiateLocale(english(), { supported: ['en', 'fa'], default: 'fa' })).toEqual({ locale: 'en', fromCookie: false });
+    });
+
+    it('a named default the site does not publish resolves to the first supported language', () =>
+    {
+        // Under prefix routing an unresolved default would redirect every first visit to a
+        // prefix no mount serves: the whole site 404s on a typo. Resolved, it cannot.
+        const config = { supported: ['en', 'fa'], default: 'de' };
+        expect(negotiateLocale(new Request('http://x/'), config)).toEqual({ locale: 'en', fromCookie: false });
+        expect(negotiateLocale(new Request('http://x/', { headers: { 'accept-language': 'it' } }), config))
+            .toEqual({ locale: 'en', fromCookie: false });
+        // A regional spelling of a published language resolves to it, like a reader's tag would.
+        expect(negotiateLocale(new Request('http://x/'), { supported: ['en', 'fa'], default: 'fa-IR' }))
+            .toEqual({ locale: 'fa', fromCookie: false });
+    });
+});

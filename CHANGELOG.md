@@ -468,6 +468,33 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **An enumerated static page told shared caches nothing about its language.** The handler for a
+  parameterised `render: 'static'` route picked the reader's language, served that language's
+  prerendered file, and declared no `Vary` at all - on its 200, its 304, its range answers and
+  its unsuffixed fallback alike - so a shared cache was told it MAY store the page and told
+  nothing about what chose its bytes: one reader's language went to everyone after them. Both
+  file returns now pass through the same stamp every other negotiated answer does.
+
+- **A shared cache could replay one reader's language to a reader who had chosen another.** A
+  negotiated response named the cookie in `Vary` only when the cookie had decided it. A cache
+  matches a stored response on the fields THAT response named (RFC 9111 section 4.1), so a page
+  stamped only with the header was handed to a later reader whose cookie chose otherwise. A
+  negotiated response now names every source that can decide it, as one exact string, and nothing
+  when nothing can: a site publishing one language no longer carries a `Vary` it did not need.
+  The bare-path redirect under prefix routing derives its `Vary` from the same rule instead of a
+  literal.
+
+- **Two languages of one page could share a strong ETag.** Static file serving derived the
+  validator from size and mtime, and one prerender pass writes both language files at one length
+  a millisecond apart - identical on a reproducible build - so a revalidation carrying the other
+  language's tag was answered 304 and the cache kept the wrong document. The validator now folds
+  in the served file's identity, which is the general rule an entity tag was always meant to
+  keep: two files under one url never share one.
+
+- **A `default` the site did not publish could redirect the whole site into a 404.** The
+  named default was trusted rather than resolved; under prefix routing every first visit was sent
+  to a prefix no mount served. It is now resolved against `supported` like any reader's tag.
+
 - **A component with a fragment root rendered on the server and blanked the page in the browser.**
   A fragment root lowers to the array of its roots. The h()-tree path that serves SSR and
   hydration accepted the array, but the template-clone path that a browser build runs handed it
@@ -536,6 +563,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   fixing only the type would have turned a compile error into a crash.
 
 ### Changed
+
+- **Every static file's ETag changes once on upgrade.** The validator now carries a third group
+  naming the served file, so a client holding an old tag revalidates once and is then cached as
+  before. Conditional requests, ranges and `If-Range` are unchanged.
 
 - **A page action's guards are selected by the page, not by the request url.** The kernel
   dispatches a POST on one spelling of a path and a url walk would select a route chain on
@@ -616,6 +647,11 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   have made every client silently reject every handoff.
 
 ### Added
+
+- **`acceptLanguage: false` on `LocaleConfig`**, the switch beside `cookie: false`: the
+  browser's header is never read, so every first visit lands in the site's own language, and a
+  reader's cookie still wins because it is an answer they gave. The kit's `locales` option is
+  now that same `LocaleConfig` plus `routing`, so `cookie: false` reaches it too.
 
 - **One url per language, and the `hreflang` that needs it.** `locales.routing: 'prefix'`
   gives every language its own address - `/fa/about` beside `/en/about` - and redirects the

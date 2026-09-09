@@ -41,7 +41,9 @@ describe('serving files', () =>
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toBe('text/css; charset=utf-8');
         expect(response.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
-        expect(response.headers.get('etag')).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+        // size, mtime, and the served file's identity: the third group is what tells two files
+        // served under one url apart, which size and mtime alone cannot.
+        expect(response.headers.get('etag')).toMatch(/^"[0-9a-f]+-[0-9a-f]+-[0-9a-f]{8}"$/);
         expect(await response.text()).toBe('body { color: teal }');
     });
 
