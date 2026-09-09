@@ -12,6 +12,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A handler that cancelled a streamed render and then lost its client could kill the
+  server.** The streaming renderer kept a latch that only its own settle path set: a transport
+  cancel closed the controller without setting it and left the request signal's abort listener
+  attached. So when the client left afterwards and the signal fired, the listener ran the finish
+  path against a controller that was already closed, which throws inside the signal's own
+  dispatch, above every catch. Reachable through the shipped server by a handler that builds a
+  streamed render, decides not to send it, and awaits anything before answering while the
+  client disconnects - a render deadline choosing its fallback is that shape. It is the same
+  class as the two entries above, one package over: fixed in the server's stream boundary, and
+  still present in the runtime's.
+
+  A cancel now sets the latch and detaches the abort listener, and the settle path detaches it
+  too, so nothing that outlives the stream can reach its controller.
+
 - **A plain form could never submit without JavaScript, and a `null` origin could be
   allowlisted into a bypass.** `securityHeaders()` sets `Referrer-Policy: no-referrer` by
   default, and under that policy a browser blanks the `Origin` on a same-origin navigation POST.

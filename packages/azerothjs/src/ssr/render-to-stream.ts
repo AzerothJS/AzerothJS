@@ -197,10 +197,15 @@ export function renderToStream(
     const initial = session.takeBoundaries();
     const nonce = options.scriptNonce;
 
+    // The latch is shared by `start` and `cancel`: a transport cancel closes the controller
+    // too, and every path that could touch it afterwards - the settle timer, a boundary
+    // settling, the caller's abort signal - must find the latch set. Held outside `start`
+    // because `cancel` is a sibling algorithm, not a closure inside it.
+    let closed = false;
+    let detachAbort: (() => void) | null = null;
     return new ReadableStream<Uint8Array>({
         start(controller): void
         {
-            let closed = false;
             let runtimeSent = false;
             let pending = initial.length;
 
@@ -218,6 +223,7 @@ export function renderToStream(
                     return;
                 }
                 closed = true;
+                detachAbort?.();
                 session.finalize();
                 controller.close();
             };
@@ -238,7 +244,11 @@ export function renderToStream(
                     finish();
                     return;
                 }
-                options.signal.addEventListener('abort', finish, { once: true });
+                const signal = options.signal;
+                signal.addEventListener('abort', finish, { once: true });
+                // Detached at settle, not merely gated: a listener that outlives the stream
+                // fires on a signal that outlives it, into a controller a cancel already closed.
+                detachAbort = (): void => signal.removeEventListener('abort', finish);
             }
 
             const settleOne = (): void =>
@@ -344,6 +354,11 @@ export function renderToStream(
         },
         cancel(): void
         {
+            // The consumer closed the controller. Set the latch and drop the abort listener,
+            // or the caller's signal firing later runs `finish` against a controller that is
+            // already closed - a throw inside the signal's dispatch, above every catch.
+            closed = true;
+            detachAbort?.();
             session.finalize();
         }
     });

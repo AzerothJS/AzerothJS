@@ -5,6 +5,11 @@
 // the render root stays alive until the stream completes. Runs in the node environment on
 // purpose: streaming must need no DOM shim, exactly like renderToString.
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Suspense, createResource, h, onRootDispose, renderToStream, renderToString } from 'azerothjs';
 import type { Resource } from 'azerothjs';
 
@@ -306,6 +311,48 @@ describe('renderToStream - pending boundaries', () =>
         }
         expect(signals[0]?.aborted).toBe(true);
     });
+
+    it('a transport cancel followed by the caller\'s abort touches nothing', async () =>
+    {
+        // The two end paths arrive in the order a host produces when a handler builds a
+        // streamed render, decides not to send it, and only then loses its client: the
+        // consumer cancels (closing the controller), and the request signal aborts after.
+        // A latch set only by the settle path let that abort run `finish` against the closed
+        // controller - a throw inside the signal's own dispatch, above every catch, which is
+        // a process exit rather than a failed request. Only a separate process can tell that
+        // outcome from a passing test, so the arm spawns one over the SOURCE.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const entry = pathToFileURL(path.join(here, '..', '..', 'src', 'index.ts')).href;
+        const source = `
+import { Suspense, createResource, h, renderToStream } from ${ JSON.stringify(entry) };
+const controller = new AbortController();
+const page = () =>
+{
+    const resource = createResource(() => new Promise((resolve) => setTimeout(() => resolve('late'), 5000)));
+    return h('main', {}, Suspense({ fallback: () => h('p', {}, 'loading'), on: [resource], children: () => h('b', {}, () => resource.data() ?? '') }));
+};
+const reader = renderToStream(page, { signal: controller.signal }).getReader();
+await reader.read();
+await reader.cancel();
+await new Promise((resolve) => setTimeout(resolve, 20));
+controller.abort();
+await new Promise((resolve) => setTimeout(resolve, 50));
+console.log('SURVIVED');
+`;
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-stream-cancel-'));
+        try
+        {
+            const script = path.join(dir, 'cancel-then-abort.mjs');
+            await writeFile(script, source);
+            const run = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+            expect(run.stdout.trim().split('\n').pop()).toBe('SURVIVED');
+            expect(run.status).toBe(0);
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
 });
 
 describe('renderToStream - lifecycle and isolation', () =>
