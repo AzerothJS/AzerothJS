@@ -333,6 +333,80 @@ describe('under prefix routing the page accepts its form at every url it is moun
     });
 });
 
+describe('the url spelling cannot separate a write from its guards', () =>
+{
+    // Every arm here is one way the path the kernel DISPATCHED on and the path a url walk would
+    // SELECT on disagree. The write is gated by the chain of the pattern it was registered for,
+    // so no spelling can put it under another page's guards, or none.
+    const written: string[] = [];
+    const guarded = (path: string, extra: Partial<PageRoute> = {}): PageRoute => ({
+        path,
+        component: page('p'),
+        guard: () => forbidden(),
+        action: async () =>
+        {
+            written.push(path);
+            return undefined;
+        },
+        ...extra
+    });
+
+    function rig(table: PageRoute[], extra: Partial<KitOptions> = {}): App
+    {
+        written.length = 0;
+        const app = new App();
+        mountPages(app, { routes: table, clientDir: clientDir(), csrf: CSRF, renderer: createPageRenderer(view, routes), ...extra });
+        return app;
+    }
+
+    it('a dot-segment target cannot slip a param page\'s action past its guard', async () =>
+    {
+        const app = rig([guarded('/posts/:id')]);
+        expect((await post(app, '/posts/42')).status).toBe(403);
+        // Refused, whether the guard answers or the kernel declines the target first: what this
+        // pins is that no spelling reaches the action, which is what the bypass did.
+        for (const spelling of ['/posts/%2e%2e', '/posts/..', '/posts/%2e%2e/'])
+        {
+            expect((await post(app, spelling)).status, spelling).toBeGreaterThanOrEqual(400);
+        }
+        expect(written).toEqual([]);
+    });
+
+    it('a static sibling declared first cannot change which chain guards the param page', async () =>
+    {
+        const app = rig([{ path: '/posts/new', component: page('new') }, guarded('/posts/:id')]);
+        expect((await post(app, '/posts/42')).status).toBe(403);
+        expect(written).toEqual([]);
+    });
+
+    it('a percent-encoded locale prefix cannot skip the chain', async () =>
+    {
+        const app = rig([guarded('/admin')], { locales: { supported: ['en', 'fa'], routing: 'prefix' } });
+        expect((await post(app, '/fa/admin')).status).toBe(403);
+        expect((await post(app, '/%66a/admin')).status).toBe(403);
+        expect(written).toEqual([]);
+    });
+
+    it('a doubled trailing slash in the declaration cannot mount an unguarded write', async () =>
+    {
+        const app = rig([guarded('/admin//')]);
+        expect((await post(app, '/admin')).status).toBe(403);
+        expect(written).toEqual([]);
+    });
+
+    it('a renderer built over a DIFFERENT table can never answer the write with the protected page', async () =>
+    {
+        // The mount table guards the page; the renderer's table does not. The refusal is the
+        // mount's own verdict, and the body it would have rendered is not served.
+        const open: PageRoute[] = [{ path: '/admin', component: () => h('div', { id: 'secret' }, 'SECRET-PAGE') }];
+        const app = rig([guarded('/admin')], { renderer: createPageRenderer(() => h('div', { id: 'secret' }, 'SECRET-PAGE'), open) });
+        const response = await post(app, '/admin');
+        expect(response.status).toBe(403);
+        expect(await response.text()).not.toContain('SECRET-PAGE');
+        expect(written).toEqual([]);
+    });
+});
+
 describe('a page that cannot mint a token cannot receive a form', () =>
 {
     const component = page('static');

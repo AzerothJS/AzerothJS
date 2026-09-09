@@ -131,7 +131,7 @@ export {
 } from './renderer/index.ts';
 export { ErrorBoundary } from './component/index.ts';
 export { Outlet } from './router/index.ts';
-export { evaluateGuards, guardedMatch, loaderFailures } from './router/handoff.ts';
+export { evaluateGuards, evaluateGuardsForPattern, guardedMatch, loaderFailures } from './router/handoff.ts';
 export type { GuardWalkOutcome, SelectedChain } from './router/handoff.ts';
 export { acceptRedirectTarget } from './router/redirect-target.ts';
 export { isRedirect } from './router/redirect.ts';

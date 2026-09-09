@@ -204,8 +204,52 @@ export async function evaluateGuards(routes: Route[], url: string | URL): Promis
     {
         return { kind: 'not-found' };
     }
-    const { entry, params, pathname, search } = selected;
-    const query = parseQuery(search);
+    return runGuards(selected, parseQuery(selected.search));
+}
+
+/** @internal Trailing slashes are not part of a pattern's identity: `/admin//` names `/admin`. */
+function samePattern(left: string, right: string): boolean
+{
+    const trim = (value: string): string => value.replace(/\/+$/, '') || '/';
+    return trim(left) === trim(right);
+}
+
+/**
+ * SERVER: runs the guards of the chain a DECLARED PATTERN names, with params the caller already
+ * bound - the walk for a host that knows WHICH PAGE it is serving rather than only which url was
+ * asked for.
+ *
+ * A host that re-derives the chain from the request url is trusting two different path strings to
+ * agree: its own dispatcher chose a handler from one spelling, and the walk would choose a chain
+ * from another. They do not agree - `%2e%2e`, a percent-encoded locale prefix, a static sibling
+ * declared after a param one, and a doubled trailing slash each make the two disagree, and every
+ * disagreement runs the page's write under some other page's guards, or none. Selecting by the
+ * pattern the handler was registered for removes the second string entirely.
+ *
+ * Answers `not-found` when no leaf declares that pattern, which fails closed: a host asking about
+ * a page this table does not contain gets a refusal, never a pass.
+ *
+ * @internal
+ */
+export async function evaluateGuardsForPattern(
+    routes: Route[],
+    pattern: string,
+    request: { params: Params; pathname: string; search: string }
+): Promise<GuardWalkOutcome>
+{
+    const entry = flattenRoutesFor(routes).find((leaf) => samePattern(leaf.matcher.pattern, pattern));
+    if (entry === undefined)
+    {
+        return { kind: 'not-found' };
+    }
+    const selected: SelectedChain = { entry, params: request.params, pathname: request.pathname, search: request.search };
+    return runGuards(selected, parseQuery(request.search));
+}
+
+/** @internal The guard loop itself, over an already-selected chain. */
+async function runGuards(selected: SelectedChain, query: Query): Promise<GuardWalkOutcome>
+{
+    const { entry, params, pathname } = selected;
 
     // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
     // DISTINCT blocked result (a 403), never a rendered page. `from` is null: a server

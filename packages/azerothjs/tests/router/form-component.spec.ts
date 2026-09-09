@@ -103,3 +103,39 @@ describe('<Form> on the action\'s own answers', () =>
         expect(out.log).toEqual([]);
     });
 });
+
+describe('<Form> judges the redirect it is told to follow', () =>
+{
+    // `router.navigate` PERFORMS an off-origin target rather than refusing one, so this is a
+    // redirect boundary like the guard and loader ones and it answers to the same rule. The
+    // server judges what it emits; a page that followed whatever came back would be the one
+    // consumer of the sentinel that does not.
+    for (const target of ['https://evil.example/', '//evil.example/x', '/\\evil.example/x', 'javascript:alert(1)'])
+    {
+        it(`refuses "${ target }" instead of leaving the origin`, async () =>
+        {
+            const out = await submitWith(new Response(JSON.stringify({ ok: true, redirect: target }), { status: 200, headers: { 'content-type': 'application/json' } }));
+            expect(out.settled).toEqual([{ ok: false }]);
+            expect(out.router.location().pathname).toBe('/todos');
+            expect(out.router.actionResult()).toEqual({ fields: { text: 'PRIOR' } });
+            expect(out.log).toHaveLength(1);
+            expect(out.log[0]).toContain(target);
+        });
+    }
+
+    it('refuses a redirect that is not a string rather than reading it as a plain success', async () =>
+    {
+        const out = await submitWith(new Response(JSON.stringify({ ok: true, redirect: 42 }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        expect(out.settled).toEqual([{ ok: false }]);
+        expect(out.router.location().pathname).toBe('/todos');
+        expect(out.log).toHaveLength(1);
+    });
+
+    it('CONTROL: a same-origin target with a query and a hash still navigates', async () =>
+    {
+        const out = await submitWith(new Response(JSON.stringify({ ok: true, redirect: '/signed-in?from=form#top' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        expect(out.settled).toEqual([{ ok: true, redirect: '/signed-in?from=form#top' }]);
+        await vi.waitFor(() => expect(out.router.location().pathname).toBe('/signed-in'));
+        expect(out.log).toEqual([]);
+    });
+});

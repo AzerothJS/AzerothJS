@@ -32,7 +32,7 @@ import { join, resolve, sep } from 'node:path';
 import type { NavigateTarget, Route } from 'azerothjs';
 import { localeDirection, negotiateLocale } from 'azerothjs';
 import type { NegotiatedLocale } from 'azerothjs';
-import { acceptRedirectTarget, evaluateGuards, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -596,6 +596,13 @@ export function mountPages(app: App, options: KitOptions): void
     });
 }
 
+/** @internal Splits an app path into its pathname and search, the two the guard walk needs. */
+function splitPath(full: string): { pathname: string; search: string }
+{
+    const at = full.indexOf('?');
+    return at < 0 ? { pathname: full, search: '' } : { pathname: full.slice(0, at), search: full.slice(at) };
+}
+
 /**
  * @internal The paths one page is mounted at: its own, plus one per language prefix when the
  * site gives each language its own url.
@@ -649,9 +656,15 @@ function registerAction(
             ? jsonResponse({ ok: true, redirect: location }, { headers: { 'cache-control': 'private, no-store' } })
             : seeOther(location));
 
-        // The chain's guards, over the app path the page's GET walks, so the verdict is the one
-        // the page itself gets. A guard's redirect target was judged by the walk already.
-        const walked = await evaluateGuards(options.routes, appPath(context, options));
+        // The chain's guards, selected by the pattern this POST was REGISTERED for rather than by
+        // re-deriving a chain from the request url. The two are not the same string: the kernel
+        // dispatches on one spelling and a url walk would select on another, and every spelling
+        // they disagree about (`%2e%2e`, a percent-encoded locale prefix, a static sibling
+        // declared after a param one, a doubled trailing slash) would run this page's write under
+        // some other page's guards, or none at all. The params are the ones the kernel bound for
+        // this request, so the guard sees what the handler sees.
+        const { pathname, search } = splitPath(appPath(context, options));
+        const walked = await evaluateGuardsForPattern(options.routes, page.path, { params: context.params, pathname, search });
         if (walked.kind === 'not-found')
         {
             throw new NotFoundError();
@@ -662,13 +675,30 @@ function registerAction(
             // path answers with. A native submit gets the page's own blocked UI at the guard's
             // status: the render runs the same walk and yields the blocked result the page's
             // GET shows, so the two arrivals agree.
-            if (wantsJson || options.renderer === undefined)
+            const refusal = walked.status === 401
+                ? new UnauthorizedError('Sign in to submit this form.')
+                : new ForbiddenError('This form is not available to you.');
+            const renderer = options.renderer;
+            if (wantsJson || renderer === undefined)
             {
-                throw walked.status === 401
-                    ? new UnauthorizedError('Sign in to submit this form.')
-                    : new ForbiddenError('This form is not available to you.');
+                throw refusal;
             }
-            return renderOrShell(context, 'server', options, await shellPromise, buildId);
+            // The page's own blocked UI, rendered through the renderer - which reaches the verdict
+            // itself and pins the render to it. If it reaches a DIFFERENT verdict (a renderer
+            // built over another table), its answer is not this refusal and must not be served:
+            // that is the shape where a blocked POST would come back 200 carrying the protected
+            // page. The kernel refusal is the fallback, so the write is refused either way.
+            const locale = localeFor(context.request, options, context.url.pathname);
+            const rendered = await renderer(appPath(context, options), await shellPromise, {
+                signal: context.request.signal,
+                handoffMeta: { build: await buildId, at: Date.now() },
+                ...(locale !== undefined ? { locale } : {})
+            });
+            if (rendered.kind !== 'blocked')
+            {
+                throw refusal;
+            }
+            return withVary(pageResponse(rendered, await shellPromise), context, options);
         }
         if (walked.kind === 'refused-redirect')
         {

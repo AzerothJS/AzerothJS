@@ -12,6 +12,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A page action's redirect could still leave the origin, through the client.** The server
+  judges the target it emits, but `<Form>` handed the value it received straight to
+  `router.navigate`, which PERFORMS an off-origin target rather than refusing one. The enhanced
+  submit is a redirect boundary like the guard and loader ones, so it now answers to the same
+  rule: an off-origin or malformed target is a refusal, reported once, with the page's last
+  validation verdict left on screen.
+
 - **A client that stalled mid-download and then disconnected could kill the server.** A
   compressed streaming response handed Node's own stream adapter out as its body, and that
   adapter keeps its `data` listener attached after a cancel: when the socket layer cancelled a
@@ -467,6 +474,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   fixing only the type would have turned a compile error into a crash.
 
 ### Changed
+
+- **A page action's guards are selected by the page, not by the request url.** The kernel
+  dispatches a POST on one spelling of a path and a url walk would select a route chain on
+  another, and the two disagree: a dot-segment target, a percent-encoded language prefix, a
+  static route declared after a parameterised sibling, and a path declared with a doubled
+  trailing slash each ran a page's write under some other page's guards, or none. The action now
+  runs the guards of the pattern its POST was registered for, with the params the kernel bound,
+  so no spelling can separate a write from what gates it. A page whose renderer was built over a
+  different route table can no longer answer a blocked submit with the protected page either:
+  that answer must be the refusal, or it is not served.
 
 - **An enhanced submit whose action redirects now navigates.** The server answered a 303 whatever
   the client asked for, `fetch` followed it, and `<Form>` received the HTML of the target page and

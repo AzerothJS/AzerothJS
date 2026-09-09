@@ -30,6 +30,7 @@ import { createSignal, untrack } from '../reactivity/index.ts';
 import { h } from '../renderer/h.ts';
 import type { Router } from './router.ts';
 import { resolveRouter } from './provider.ts';
+import { acceptRedirectTarget } from './redirect-target.ts';
 
 /** The hidden field a page action reads its CSRF token from; mirrors the server's `CSRF_FIELD`. */
 const CSRF_FIELD = '_csrf';
@@ -104,6 +105,20 @@ export function Form(props: FormProps): MountNode
     // after a client navigation. The seeded value is the only one that exists on a first load.
     const token = (): string => router.csrfToken() || cookieToken();
 
+    /**
+     * The submit did not reach the action's own answer - a guard, the CSRF check, a fault, or a
+     * reply this page will not act on. The last validation verdict stays on screen, because it is
+     * still the truth about the values the visitor is looking at, and the reason is reported once.
+     */
+    function refuse(reason: string): void
+    {
+        if (typeof console !== 'undefined')
+        {
+            console.error(`[azerothjs/Form] the submit was refused: ${ reason }.`);
+        }
+        onSettled?.({ ok: false });
+    }
+
     async function submit(event: Event): Promise<void>
     {
         event.preventDefault();
@@ -124,12 +139,23 @@ export function Form(props: FormProps): MountNode
             const outcome = await response.json().catch(() => null) as { ok?: unknown; result?: unknown; redirect?: unknown } | null;
             if (outcome !== null && outcome.ok === true)
             {
-                if (typeof outcome.redirect === 'string')
+                if ('redirect' in outcome)
                 {
-                    // The action sent the visitor elsewhere; the client boundary judges the target
-                    // again, exactly as it would for a guard's redirect.
-                    onSettled?.({ ok: true, redirect: outcome.redirect });
-                    router.navigate(outcome.redirect);
+                    // The action sent the visitor elsewhere. `router.navigate` performs an
+                    // off-origin target rather than refusing one, so this is a redirect boundary
+                    // like any other and it is judged here, by the same rule the guard and loader
+                    // boundaries use. A malformed or off-origin value is a refusal, not a
+                    // navigation: the server that sent it is not one this page should follow.
+                    const judged = typeof outcome.redirect === 'string'
+                        ? acceptRedirectTarget(outcome.redirect)
+                        : { accepted: false as const, target: String(outcome.redirect) };
+                    if (!judged.accepted)
+                    {
+                        refuse(`the redirect target "${ judged.target }" leaves this origin`);
+                        return;
+                    }
+                    onSettled?.({ ok: true, redirect: outcome.redirect as string });
+                    router.navigate(judged.to);
                     return;
                 }
                 // The write landed, so what the page reads is stale. Revalidating in place is
@@ -146,13 +172,7 @@ export function Form(props: FormProps): MountNode
                 onSettled?.({ ok: false, result: outcome.result });
                 return;
             }
-            // A guard, the CSRF check or a fault answered before the values were validated, so the
-            // last validation verdict stays on screen; the status is what the caller can act on.
-            if (typeof console !== 'undefined')
-            {
-                console.error(`[azerothjs/Form] the server refused the submit (${ response.status }).`);
-            }
-            onSettled?.({ ok: false });
+            refuse(`the server answered ${ response.status }`);
         }
         catch (error)
         {
