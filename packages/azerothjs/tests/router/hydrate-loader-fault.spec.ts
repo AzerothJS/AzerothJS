@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRouter, createMemoryHistory, h, hydrate, isNotFound, matchAndLoad, notFound, renderToString, Routes, Outlet, useLoader } from 'azerothjs';
 import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
+import { getDataCache, resetDataCache } from 'azerothjs/internal';
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -150,6 +151,57 @@ describe('hydrating a server-side loader failure', () =>
 
         expect(container.querySelector('#failed')).toBeNull();
         expect(clientRouter.loaders[1]?.error()).toBeNull();
+        expect(leafLoads).not.toHaveBeenCalled();
+    });
+});
+
+// The same three outcomes with the data cache LIVE, which is how a browser boots. The arms
+// above render the server markup in-process, which latches the server and disables the cache.
+describe('hydrating a server-side loader failure with the data cache live', () =>
+{
+    async function bootLive(url: string): Promise<{ container: HTMLElement; router: ReturnType<typeof createRouter> }>
+    {
+        const handoff = await matchAndLoad(routes, url) as LoaderHandoff;
+        const serverRouter = createRouter({ routes, history: createMemoryHistory(url), initialLoaderData: overTheWire(handoff) });
+        const container = document.createElement('div');
+        container.innerHTML = renderToString(() => h('div', { id: 'app' }, Routes({ router: serverRouter })));
+        document.body.appendChild(container);
+        leafLoads.mockClear();
+        resetDataCache();
+        expect(getDataCache()).not.toBeNull();
+        const router = createRouter({ routes, history: createMemoryHistory(url), initialLoaderData: overTheWire(handoff) });
+        hydrate(() => h('div', { id: 'app' }, Routes({ router })), container);
+        await flush();
+        return { container, router };
+    }
+
+    it('adopts the failed level: same node, an error, no refetch', async () =>
+    {
+        const { container, router } = await bootLive('/shop/item/broken');
+        const serverFailed = container.querySelector('#failed');
+        expect(serverFailed).not.toBeNull();
+        expect(container.querySelector('#failed')).toBe(serverFailed);
+        expect(container.querySelector('#loaded')).toBeNull();
+        expect(router.loaders[1]?.error()).toBeInstanceOf(Error);
+        expect(leafLoads).not.toHaveBeenCalled();
+    });
+
+    it('adopts a declared not-found as the sentinel', async () =>
+    {
+        const { container, router } = await bootLive('/shop/item/gone');
+        expect(container.querySelector('#missing')).not.toBeNull();
+        expect(isNotFound(router.loaders[1]?.error())).toBe(true);
+        expect(container.querySelector('#failed')).toBeNull();
+        expect(leafLoads).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: a healthy sibling adopts its data, and the entry holds it - a prefetch fetches nothing', async () =>
+    {
+        const { container, router } = await bootLive('/shop/item/7');
+        expect(container.querySelector('#loaded')?.textContent).toBe('ITEM 7');
+        expect(router.loaders[1]?.error()).toBeNull();
+        expect(leafLoads).not.toHaveBeenCalled();
+        await router.prefetch('/shop/item/7');
         expect(leafLoads).not.toHaveBeenCalled();
     });
 });

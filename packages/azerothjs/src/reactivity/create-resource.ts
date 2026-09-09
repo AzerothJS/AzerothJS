@@ -243,6 +243,11 @@ export function createResource<T, S>(
     // A FAILURE seed settles the resource exactly as a value seed does - the point of both is
     // that the first run starts no fetch and `loading` never flips.
     let pendingInitial = options !== undefined && ('initialValue' in options || 'initialError' in options);
+    // The seed itself, from the options or the streamed seed below. Both present is a failure.
+    let seedFailure = options !== undefined && 'initialError' in options;
+    let seedValue: T | undefined = options?.initialValue;
+    // A seeded failure the shared entry never learned; released once the entry settles.
+    let seededFailureHeld = false;
 
     // Captured at construction, as an effect captures its catchError scope: a subscriber that
     // throws while this resource settles has nowhere else to send the error, because the settle
@@ -281,6 +286,13 @@ export function createResource<T, S>(
     function mirrorEntry(entry: CacheEntry): void
     {
         const fetching = entry.inflight !== null;
+        if (seededFailureHeld && !entry.hasValue && !entry.hasError)
+        {
+            // Keep the seeded failure until the entry settles; only report the fetch in flight.
+            setLoading(fetching);
+            return;
+        }
+        seededFailureHeld = false;
         batch(() =>
         {
             setData(() => (entry.hasValue || entry.layers.length > 0 ? projectedValue(entry) as T : undefined));
@@ -495,10 +507,13 @@ export function createResource<T, S>(
             {
                 if ('d' in seed)
                 {
+                    seedValue = seed.d as T;
+                    seedFailure = false;
                     setData(() => seed.d as T);
                 }
                 else if (seed.e !== undefined)
                 {
+                    seedFailure = true;
                     setError(() => new Error(seed.e));
                 }
                 pendingInitial = true;
@@ -536,6 +551,7 @@ export function createResource<T, S>(
                     setError(null);
                 });
                 pendingInitial = false; // the reset cleared the seeded data; the seed is gone
+                seededFailureHeld = false;
                 return;
             }
             sourceValue = v as S;
@@ -559,12 +575,20 @@ export function createResource<T, S>(
                     currentEntry = entry;
                     if (pendingInitial)
                     {
-                        // The seed IS this key's result: it becomes the entry's settled value
-                        // (subscription-fresh, no fetch), and every later reader shares it.
                         pendingInitial = false;
+                        if (seedFailure)
+                        {
+                            // The entry holds values, never a failure: stay subscribed, write
+                            // nothing, and keep the seeded error until the entry settles.
+                            seededFailureHeld = true;
+                            entry.version();
+                            return;
+                        }
+                        // A value seed is the key's result: the entry takes it and every later
+                        // reader shares it.
                         if (!entry.hasValue)
                         {
-                            cache.writeEntry(entry, options?.initialValue);
+                            cache.writeEntry(entry, seedValue);
                         }
                         entry.version();
                         mirrorEntry(entry);

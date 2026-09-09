@@ -481,6 +481,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A server-side loader failure was lost at hydration, and published to the shared cache as a
+  value.** A page whose loader failed or declared `notFound()` on the server seeds the client
+  with that failure so the first paint matches the server's markup. With the data cache live -
+  which it is in every browser - the seed went through the shared cache entry: the entry was
+  written `undefined` as a settled value, then mirrored back over the page, so the error was
+  gone (`isNotFound(error())` false, the missing UI replaced), the server's markup was thrown
+  away as a mismatch, and every other reader of that key adopted `undefined` as loaded data. A
+  streamed page's failed resource seed went the same way, and its VALUE seed was published as
+  `undefined` too. A failure seed now stays the reader's own - the entry is never written and
+  the seeded error stands until the entry settles with a real value or error - and a value
+  seed is published from the seed itself. Every hydration spec in the suite had rendered its
+  server markup in-process, which disables the cache for the rest of the test; the specs that
+  cover this now reset it before the client boot.
+
 - **A loader that threw synchronously was answered as a bare, cacheable 500.** A loader has two
   ways to fail - return a rejected promise, or throw before returning - and only the first was
   judged as a loader failure. The second escaped the settle that runs a route's loaders and left
