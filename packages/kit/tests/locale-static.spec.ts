@@ -274,3 +274,120 @@ describe('two languages of one page never share a validator', () =>
         });
     }
 });
+
+// An ENUMERATED static page under prefix routing names its file per request. The name comes
+// from the raw remainder decoded one segment at a time, never from the re-joined matched path,
+// so a param carrying an encoded separator can never name a sibling page's file.
+describe('an enumerated static page under prefix routing serves its own file', () =>
+{
+    const enumerated: PageRoute[] = [
+        { path: '/', component: Page, render: 'static' },
+        { path: '/docs/:slug', component: Page, render: 'static', staticParams: () => Promise.resolve([{ slug: 'intro' }]) },
+        { path: '/post/:slug', component: Page, render: 'static', staticParams: () => Promise.resolve([{ slug: 'hello' }]) }
+    ];
+
+    async function build(): Promise<{ dir: string; server: App }>
+    {
+        resetHead();
+        const dir = clientDir();
+        await prerender({
+            routes: enumerated,
+            clientDir: dir,
+            renderer: createPageRenderer(() => Page(), enumerated),
+            locales: ['en', 'fa'],
+            routing: 'prefix'
+        });
+        // Markers pin which FILE answered; a live render carries none.
+        appendFileSync(join(dir, 'docs', 'intro', 'index.fa.html'), '<!--file:docs/intro/fa-->');
+        appendFileSync(join(dir, 'docs', 'intro', 'index.html'), '<!--file:docs/intro/plain-->');
+        // A sibling page's file the enumeration never listed, and a nested one a re-joined
+        // `%2F` would land on.
+        mkdirSync(join(dir, 'docs', 'private'), { recursive: true });
+        writeFileSync(join(dir, 'docs', 'private', 'index.fa.html'), '<html><body><!--file:docs/private/fa--></body></html>');
+        mkdirSync(join(dir, 'post', 'a', 'b'), { recursive: true });
+        writeFileSync(join(dir, 'post', 'a', 'b', 'index.fa.html'), '<html><body><!--file:post/a/b/fa--></body></html>');
+        const server = new App();
+        mountPages(server, {
+            routes: enumerated,
+            clientDir: dir,
+            renderer: createPageRenderer(() => Page(), enumerated),
+            locales: { supported: ['en', 'fa'], routing: 'prefix' }
+        });
+        return { dir, server };
+    }
+
+    const get = (server: App, path: string, headers: Record<string, string> = {}): Promise<Response> =>
+        server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html', ...headers } }));
+
+    it('serves the language file with an etag, a 304, and with a trailing slash too', async () =>
+    {
+        const { server } = await build();
+        const first = await get(server, '/fa/docs/intro');
+        const html = await first.text();
+        expect(first.status).toBe(200);
+        expect(html).toContain('<!--file:docs/intro/fa-->');
+        expect(html).toContain('lang="fa"');
+        const etag = first.headers.get('etag');
+        expect(etag).toMatch(/^"[0-9a-f]+-[0-9a-f]+-[0-9a-f]{8}"$/);
+        expect((await get(server, '/fa/docs/intro', { 'if-none-match': etag as string })).status).toBe(304);
+        expect(await (await get(server, '/fa/docs/intro/')).text()).toContain('<!--file:docs/intro/fa-->');
+        expect(await (await get(server, '/%66a/docs/intro')).text()).toContain('<!--file:docs/intro/fa-->');
+    });
+
+    it('the artifact carries the hreflang set as root-relative hrefs', async () =>
+    {
+        const { dir, server } = await build();
+        const file = readFileSync(join(dir, 'docs', 'intro', 'index.fa.html'), 'utf8');
+        const hrefs = [...file.matchAll(/hreflang="([^"]+)" href="([^"]+)"/g)].map((m) => `${ m[1] }=${ m[2] }`);
+        expect(hrefs).toEqual(['en=/en/docs/intro', 'fa=/fa/docs/intro', 'x-default=/docs/intro']);
+        expect(await (await get(server, '/fa/docs/intro')).text()).toContain('hreflang="fa" href="/fa/docs/intro"');
+    });
+
+    it('falls back to the unsuffixed file when the language file is absent', async () =>
+    {
+        const { dir, server } = await build();
+        rmSync(join(dir, 'docs', 'intro', 'index.fa.html'));
+        expect(await (await get(server, '/fa/docs/intro')).text()).toContain('<!--file:docs/intro/plain-->');
+    });
+
+    it('an encoded separator in a param never names a sibling page: the page live-renders', async () =>
+    {
+        const { server } = await build();
+        const control = await (await get(server, '/fa/docs/private')).text();
+        expect(control).toContain('<!--file:docs/private/fa-->');
+        const smuggled = await (await get(server, '/fa/docs/%2Fprivate')).text();
+        expect(smuggled).not.toContain('<!--file:');
+        expect(smuggled).toContain('lang="fa"');
+        const nested = await (await get(server, '/fa/post/a%2Fb')).text();
+        expect(nested).not.toContain('<!--file:');
+    });
+});
+
+describe('the prerender pass writes hreflang only under prefix routing', () =>
+{
+    it('a negotiate build and a single-language build carry no hreflang link', async () =>
+    {
+        resetHead();
+        const dir = clientDir();
+        await prerender({ routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes), locales: ['en', 'fa'] });
+        expect(readFileSync(join(dir, 'about', 'index.fa.html'), 'utf8')).not.toContain('hreflang');
+        const single = clientDir();
+        await prerender({ routes, clientDir: single, renderer: createPageRenderer(() => Page(), routes), routing: 'prefix' });
+        expect(readFileSync(join(single, 'about', 'index.html'), 'utf8')).not.toContain('hreflang');
+    });
+
+    it('a prefix build writes the set into every file, the unsuffixed one included', async () =>
+    {
+        resetHead();
+        const dir = clientDir();
+        await prerender({ routes, clientDir: dir, renderer: createPageRenderer(() => Page(), routes), locales: ['en', 'fa'], routing: 'prefix' });
+        for (const name of ['index.html', 'index.en.html', 'index.fa.html'])
+        {
+            const file = readFileSync(join(dir, 'about', name), 'utf8');
+            expect(file).toContain('hreflang="en" href="/en/about"');
+            expect(file).toContain('hreflang="fa" href="/fa/about"');
+            expect(file).toContain('hreflang="x-default" href="/about"');
+        }
+        expect(readFileSync(join(dir, 'index.fa.html'), 'utf8')).toContain('hreflang="fa" href="/fa"');
+    });
+});

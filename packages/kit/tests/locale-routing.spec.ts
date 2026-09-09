@@ -13,6 +13,7 @@ import { resetHead } from 'azerothjs/internal';
 import { App } from '@azerothjs/http';
 import { mountPages, type PageRoute } from '@azerothjs/kit';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
+import type { PageRenderOptions, PageResult } from '@azerothjs/kit/ssr';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -205,5 +206,80 @@ describe('the bare-path redirect varies on exactly what decided it', () =>
     it('names nothing when every first visit goes to the same prefix', async () =>
     {
         expect(await redirectVary({ supported: ['en', 'fa'], routing: 'prefix', cookie: false, acceptLanguage: false })).toBeNull();
+    });
+});
+
+// The kernel decodes segments before matching, so `/%66a/about` reaches the `/fa` mount and
+// must be peeled like `/fa/about`; the rest of the path keeps its spelling.
+describe('a language prefix is decided on the decoded first segment, and the rest keeps its spelling', () =>
+{
+    const echo = (url: string, shell: string, options?: PageRenderOptions): Promise<PageResult> =>
+        Promise.resolve({
+            kind: 'html', status: 200,
+            html: shell.replace('<div id="root"></div>', `<div id="root">URL=${ url } LOCALE=${ options?.locale ?? '-' } ALT=${ (options?.alternates ?? []).map((a) => a.href).join(',') } END</div>`)
+        });
+
+    function mount(): App
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-lroute-'));
+        writeFileSync(join(dir, 'index.html'), SHELL);
+        mkdirSync(join(dir, 'assets'));
+        dirs.push(dir);
+        const server = new App();
+        mountPages(server, {
+            routes: [...routes, { path: '/post/:slug', component: Page, render: 'server' }],
+            clientDir: dir,
+            renderer: echo,
+            locales: { supported: ['en', 'fa'], default: 'en', routing: 'prefix' }
+        });
+        return server;
+    }
+
+    async function read(server: App, path: string): Promise<{ status: number; vary: string | null; url: string; locale: string; alt: string }>
+    {
+        const response = await server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html' } }));
+        const html = await response.text();
+        return {
+            status: response.status,
+            vary: response.headers.get('vary'),
+            url: /URL=(\S+) LOCALE/.exec(html)?.[1] ?? '',
+            locale: /LOCALE=(\S+) ALT/.exec(html)?.[1] ?? '',
+            alt: /ALT=(\S*) END/.exec(html)?.[1] ?? ''
+        };
+    }
+
+    it('an encoded prefix is the language it names: same app path, same language, no Vary, canonical hrefs', async () =>
+    {
+        const server = mount();
+        const plain = await read(server, '/fa/about');
+        expect(plain).toEqual({ status: 200, vary: null, url: '/about', locale: 'fa', alt: 'http://local/en/about,http://local/fa/about,http://local/about' });
+        for (const spelling of ['/%66a/about', '/%66%61/about', '/f%61/about'])
+        {
+            expect(await read(server, spelling), spelling).toEqual(plain);
+        }
+    });
+
+    it('the prefix alone is the root page, with the query kept', async () =>
+    {
+        const server = mount();
+        expect(await read(server, '/fa')).toMatchObject({ url: '/', locale: 'fa', vary: null });
+        expect(await read(server, '/%66a')).toMatchObject({ url: '/', locale: 'fa', vary: null });
+        expect(await read(server, '/%66a?p=2')).toMatchObject({ url: '/?p=2', locale: 'fa', vary: null });
+    });
+
+    it('the remainder is not decoded: an encoded separator in a param stays one segment', async () =>
+    {
+        const server = mount();
+        expect(await read(server, '/fa/post/a%2Fb')).toMatchObject({ url: '/post/a%2Fb', locale: 'fa' });
+        expect(await read(server, '/%66a/post/a%2Fb')).toMatchObject({ url: '/post/a%2Fb', locale: 'fa' });
+    });
+
+    it('a double-encoded prefix is not a prefix: it negotiates like any unprefixed url', async () =>
+    {
+        const server = mount();
+        const seen = await read(server, '/%2566a/about');
+        expect(seen.locale).toBe('en');
+        expect(seen.url).toBe('/%2566a/about');
+        expect(seen.vary).toContain('accept-language');
     });
 });

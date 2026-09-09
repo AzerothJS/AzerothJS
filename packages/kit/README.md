@@ -321,6 +321,10 @@ language its own url with `hreflang` between them, which is what a site with sea
 ambitions and a CDN wants. The full story - negotiation order, catalogues, the two routing modes
 and what each tells a shared cache - is the [i18n guide](../azerothjs/docs/i18n.md).
 
+Under `routing: 'prefix'` a prerendered page is served from its file for every spelling of its
+url, and the prerender pass writes the page's hreflang set into each artifact when it is told the
+mode (`prerender({ ..., locales, routing: 'prefix' })`).
+
 ## What it deliberately is not
 
 - **Not a router.** The table above is `azerothjs`'s own router table - loaders, `lazy:`, typed `defineRoute` handles all work unchanged. Guards work unchanged on server-rendered pages, and are REFUSED on static ones (see Prerendering and ISR above).

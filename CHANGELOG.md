@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A percent-encoded language prefix served the wrong language.** Under prefix routing the
+  kernel decodes each segment before it matches, so `/%66a/docs/intro` reached the `/fa` mount;
+  the prefix was then peeled by comparing the literal `/fa` against the raw pathname, so nothing
+  was peeled: the reader got the site's default language under a Persian url, the renderer was
+  handed a path no route matches, every hreflang href carried the prefix twice, the response was
+  stamped `Vary` as though negotiation had decided it, and the ISR cache held three entries for
+  one page. The prefix is now decided on the decoded first segment and the rest of the path
+  keeps its spelling, so every spelling that reaches a language mount is served as that language.
+
+- **An encoded separator in a param could name a sibling page's prerendered file.** The
+  enumerated static mount and the ISR seed lookup named their file from the router's matched
+  path, which re-joins decoded segments, so `/docs/%2Fprivate` looked up `docs//private/` and
+  served the artifact of `/docs/private`, a page the enumeration never listed - and the ISR
+  mount cached it. Both now name the file from the url one segment at a time; a segment that
+  decodes to a separator names no file and the page live-renders.
+
 - **A prerendered page could be seeded from a file outside the client dir.** The seed lookup
   that turns a static page's path into the file the build wrote checked a string prefix and
   nothing else, so a junction (or symlink) planted inside the dist and pointing outside it
@@ -481,6 +497,23 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **An enumerated static page never served its file under prefix routing.** The mount named
+  the artifact with the language prefix still in the path (`fa/docs/intro/index.fa.html`),
+  which the build never writes, so every request live-rendered. It now serves the file, with an
+  ETag and 304s, a trailing slash included; the unsuffixed file still answers when the
+  language file is absent.
+
+- **A localized ISR page never seeded from its prerendered artifact.** The seed lookup required
+  no language to be resolved, a condition left over from before it could name a language file,
+  so under any `locales` configuration the first request of every ISR page rendered instead of
+  reading the file the build wrote. It now seeds from `index.<locale>.html`; the unsuffixed file
+  is never a localized seed.
+
+- **Prerendered pages carried no hreflang links.** The prerender pass handed the renderer no
+  alternates, so under prefix routing a file served for `/fa/about` named no other language.
+  With `routing: 'prefix'` the pass now writes the set into every artifact as root-relative
+  hrefs, which resolve to the live render's absolute set at whatever host serves the file.
+
 - **A server-side loader failure was lost at hydration, and published to the shared cache as a
   value.** A page whose loader failed or declared `notFound()` on the server seeds the client
   with that failure so the first paint matches the server's markup. With the data cache live -
@@ -688,6 +721,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   have made every client silently reject every handoff.
 
 ### Added
+
+- **`PrerenderOptions.routing`** - `'prefix'` makes the prerender pass write each page's
+  hreflang set into its artifacts; the default (`'negotiate'`) writes none, because outside
+  prefix mode there are no per-language urls to name.
 
 - **`containedFile(root, relative, options)` in `@azerothjs/http/node`.** The one rule for
   serving a file from under a directory: NUL refusal, the dotfile rule on the spelled path,

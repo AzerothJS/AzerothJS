@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { setBuildContext } from 'azerothjs/internal';
 
+import { alternatesOf } from './alternates.ts';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import type { PageRenderer } from './ssr.ts';
 
@@ -45,6 +46,13 @@ export interface PrerenderOptions
      * static host cannot do at all). Omit for a single-language build, which is unchanged.
      */
     locales?: readonly string[];
+
+    /**
+     * The url mode the site is mounted in. Under `'prefix'` every artifact carries the hreflang
+     * set for its languages, as root-relative hrefs; the default carries none, because outside
+     * prefix mode there are no per-language urls to name.
+     */
+    routing?: 'negotiate' | 'prefix';
 }
 
 /**
@@ -108,11 +116,13 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         // A page WITH a revalidation window is ISR: its prerendered seed file is served
         // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
         // WITHOUT one is build-static by contract and adopts fresh forever.
+        const alternates = options.routing === 'prefix' ? alternatesOf(options.locales ?? [], path, '') : [];
         const result = await options.renderer(path, shell, {
             handoffMeta: revalidate !== undefined
                 ? { build: buildStamp, at: Date.now() }
                 : { build: buildStamp, static: true },
-            ...(locale !== undefined ? { locale } : {})
+            ...(locale !== undefined ? { locale } : {}),
+            ...(alternates.length > 0 ? { alternates } : {})
         });
         if (result.kind === 'redirect')
         {

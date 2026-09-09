@@ -397,6 +397,12 @@ export interface IsrRegistration
     strip?: (pathname: string) => string;
 
     /**
+     * The decoded seed name for a raw pathname, decoded one segment at a time; null when a
+     * segment decodes to a separator or to nothing, which names no file.
+     */
+    artifactPath: (pathname: string) => string | null;
+
+    /**
      * Identity of the build being served - the client shell's content hash, computed once at
      * mount. A cached copy stamped with a different one came from a previous deploy and names
      * assets that no longer exist, so it is discarded on read.
@@ -656,7 +662,8 @@ export function registerIsr(registration: IsrRegistration): void
          * The DECODED pathname, used ONLY to find a prerendered file and to name the page in an
          * error report. The build writes decoded filenames (`prerenderFileFor` over the static
          * path list), so a `staticParams` value of `café` lands at `a/café/index.html` while the
-         * request arrives as `/a/caf%C3%A9`. Seeding needs the decoded spelling; nothing else does.
+         * request arrives as `/a/caf%C3%A9`. Decoded one segment at a time, never re-joined: when
+         * no file can be named this is the raw pathname and `seedable` is false.
          */
         path: string;
 
@@ -689,12 +696,13 @@ export function registerIsr(registration: IsrRegistration): void
         const search = context.url.search;
         const locale = localeOf(context.request, context.url.pathname);
         const bare = stripLocale(context.url.pathname);
+        const artifact = registration.artifactPath(context.url.pathname);
         return {
-            path: stripLocale(context.path),
+            path: artifact ?? bare,
             pathname: bare,
             url: bare + search,
             key: cacheKeyFor(bare, search, locale),
-            seedable: (search === '' || search === '?') && locale === undefined,
+            seedable: (search === '' || search === '?') && artifact !== null,
             ...(locale !== undefined ? { locale } : {})
         };
     };

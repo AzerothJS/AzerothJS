@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import type { NavigateTarget, Route } from 'azerothjs';
 import { localeDirection, negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
+import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
@@ -457,7 +458,8 @@ export function mountPages(app: App, options: KitOptions): void
                     onError: report,
                     locale: (request: Request, pathname: string) => localeFor(request, options, pathname),
                     vary: (_request: Request, pathname: string) => varyFor(options, pathname),
-                    strip: (pathname: string) => splitLocalePath(pathname, options).path
+                    strip: (pathname: string) => splitLocalePath(pathname, options).path,
+                    artifactPath: (pathname: string) => artifactPathOf(splitLocalePath(pathname, options).path)
                 });
             }
             registerLocaleRedirect(app, page.path, options);
@@ -827,21 +829,71 @@ function localePrefixes(options: KitOptions): readonly string[]
  *
  * The route table, the prerendered file names and the client router all speak unprefixed paths,
  * so the prefix is peeled off once, here, and everything downstream is unchanged by the mode.
+ *
+ * The kernel decodes segments before matching, so the first segment is compared decoded
+ * (`/%66a/about` is the `/fa` mount); the remainder keeps its spelling, since an encoded
+ * separator inside a param is one segment to the router.
  */
 function splitLocalePath(pathname: string, options: KitOptions): { locale?: string; path: string }
 {
-    for (const tag of localePrefixes(options))
+    const prefixes = localePrefixes(options);
+    if (prefixes.length === 0 || !pathname.startsWith('/'))
     {
-        if (pathname === `/${ tag }`)
-        {
-            return { locale: tag, path: '/' };
-        }
-        if (pathname.startsWith(`/${ tag }/`))
-        {
-            return { locale: tag, path: pathname.slice(tag.length + 1) };
-        }
+        return { path: pathname };
     }
-    return { path: pathname };
+    const cut = pathname.indexOf('/', 1);
+    const first = cut === -1 ? pathname.slice(1) : pathname.slice(1, cut);
+    let decoded: string;
+    try
+    {
+        decoded = decodeURIComponent(first);
+    }
+    catch
+    {
+        return { path: pathname };
+    }
+    if (!prefixes.includes(decoded))
+    {
+        return { path: pathname };
+    }
+    return { locale: decoded, path: cut === -1 ? '/' : pathname.slice(cut) };
+}
+
+/**
+ * @internal The decoded app path a prerendered artifact is named after, or null when no file
+ * can be named. Decoded one segment at a time: a segment that decodes to a separator or to
+ * nothing would name a different page, and `context.path` re-joins such segments.
+ */
+function artifactPathOf(remainder: string): string | null
+{
+    if (remainder === '/')
+    {
+        return '/';
+    }
+    const raw = remainder.split('/');
+    if (raw.length > 2 && raw[raw.length - 1] === '')
+    {
+        raw.pop(); // one trailing slash names the same page, as the router reads it
+    }
+    const segments: string[] = [];
+    for (const [index, segment] of raw.entries())
+    {
+        let decoded: string;
+        try
+        {
+            decoded = decodeURIComponent(segment);
+        }
+        catch
+        {
+            return null;
+        }
+        if (index > 0 && (decoded === '' || decoded.includes('/') || decoded.includes('\\')))
+        {
+            return null;
+        }
+        segments.push(decoded);
+    }
+    return segments.join('/');
 }
 
 /**
@@ -856,20 +908,9 @@ function splitLocalePath(pathname: string, options: KitOptions): { locale?: stri
  */
 function alternatesFor(context: RequestContext, options: KitOptions): Array<{ hreflang: string; href: string }>
 {
-    const prefixes = localePrefixes(options);
-    if (prefixes.length === 0)
-    {
-        return [];
-    }
     const { path } = splitLocalePath(context.url.pathname, options);
-    const origin = context.url.origin;
-    const search = context.url.search;
-    const alternates = prefixes.map((tag) => ({
-        hreflang: tag,
-        href: `${ origin }${ path === '/' ? `/${ tag }` : `/${ tag }${ path }` }${ search }`
-    }));
-    alternates.push({ hreflang: 'x-default', href: `${ origin }${ path }${ search }` });
-    return alternates;
+    return alternatesOf(localePrefixes(options), path, context.url.search)
+        .map((alternate) => ({ ...alternate, href: `${ context.url.origin }${ alternate.href }` }));
 }
 
 /** @internal The app path this request renders, with any language prefix removed. */
@@ -1165,38 +1206,38 @@ function registerStaticFirst(
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
     app.get(path, async (context) =>
     {
-        try
+        // The artifact is named from the raw remainder one segment at a time; no name means the
+        // live render. A fresh object (not a merge) carries the file path, so staticFiles' full
+        // machinery (containment, ETag, ranges) serves the bytes. Both file returns are
+        // negotiated bodies, so both are stamped.
+        const artifact = artifactPathOf(splitLocalePath(context.url.pathname, options).path);
+        if (artifact !== null)
         {
-            // context.path is the router's decoded matched path - the exact string the
-            // prerender pass resolved, so the lookup and the write agree by construction.
-            // A fresh object (not a merge) carries the file path, so staticFiles' full
-            // machinery (containment, ETag, ranges) serves the prerendered bytes.
-            // Both file returns are negotiated bodies - the reader's language chose which file -
-            // so both are stamped, the unsuffixed fallback included: it is the live path for every
-            // page whose translation is missing, which is the normal state of a partly translated
-            // site. Every other exit of this handler is already stamped by the live render.
-            const tag = localeFor(context.request, options, context.url.pathname);
-            if (tag !== undefined)
+            try
             {
-                try
+                const tag = localeFor(context.request, options, context.url.pathname);
+                if (tag !== undefined)
                 {
-                    return withVary(await assets({ ...context, params: { path: prerenderFileFor(context.path, tag) } }), context, options);
-                }
-                catch (error)
-                {
-                    if (!(error instanceof NotFoundError))
+                    try
                     {
-                        throw error;
+                        return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact, tag) } }), context, options);
+                    }
+                    catch (error)
+                    {
+                        if (!(error instanceof NotFoundError))
+                        {
+                            throw error;
+                        }
                     }
                 }
+                return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact) } }), context, options);
             }
-            return withVary(await assets({ ...context, params: { path: prerenderFileFor(context.path) } }), context, options);
-        }
-        catch (error)
-        {
-            if (!(error instanceof NotFoundError))
+            catch (error)
             {
-                throw error;
+                if (!(error instanceof NotFoundError))
+                {
+                    throw error;
+                }
             }
         }
         return renderOrShell(context, dynamicMode, options, await shellPromise, buildId);
