@@ -248,4 +248,107 @@ catch
         await reader.cancel();
         await vi.waitFor(() => expect(fileStream.destroyed).toBe(true));
     });
+
+    it('a client that stalls mid-download and then disconnects cannot kill the process', async () =>
+    {
+        // The one shape that reaches the race: a real socket, read far enough to fill the pipe,
+        // then STALL until the producer parks on backpressure, then destroy. A zlib stream
+        // flushing per chunk has output in flight at that moment, and a boundary that keeps
+        // enqueueing after the cancel throws synchronously inside the emitter, above every
+        // framework catch - an uncaught exception, which only a separate process tells from a
+        // handled error.
+        //
+        // The park is OBSERVED rather than assumed: the child polls until the producer stops
+        // advancing and reports NO-PARK if it never does, so a machine that cannot arm the
+        // trigger fails loudly here instead of passing green while testing nothing. An
+        // in-process cancel does NOT reproduce it (measured): the socket is what leaves the
+        // producer parked with a chunk still to come.
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-compress-'));
+        const script = path.join(dir, 'stall-then-disconnect.mjs');
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const nodeUrl = pathToFileURL(path.join(here, '..', 'src', 'node.ts')).href;
+        const appUrl = pathToFileURL(path.join(here, '..', 'src', 'app.ts')).href;
+        const child = [
+            "import { connect } from 'node:net';",
+            `import { App } from ${ JSON.stringify(appUrl) };`,
+            `import { compressResponse, serve } from ${ JSON.stringify(nodeUrl) };`,
+            '',
+            'const CHUNK = new Uint8Array(65536).fill(120);',
+            'let produced = 0;',
+            'const app = new App({ onError: () => undefined, onStreamError: () => undefined });',
+            "app.get('/download', (context) =>",
+            '{',
+            '    const body = new ReadableStream({',
+            '        pull(controller)',
+            '        {',
+            '            produced++;',
+            '            if (produced >= 20000) { controller.close(); return; }',
+            '            controller.enqueue(CHUNK);',
+            '        },',
+            '        cancel() {}',
+            '    });',
+            "    return compressResponse(context.request, new Response(body, { headers: { 'content-type': 'text/plain' } }));",
+            '});',
+            'const served = await serve(app, { port: 0 });',
+            "const socket = connect(served.port, '127.0.0.1');",
+            "await new Promise((resolve) => socket.once('connect', resolve));",
+            'socket.write(\'GET /download HTTP/1.1\\r\\nHost: x\\r\\nAccept-Encoding: gzip\\r\\n\\r\\n\');',
+            'let received = 0;',
+            "await new Promise((resolve) => socket.on('data', (chunk) =>",
+            '{',
+            '    received += chunk.length;',
+            '    if (received >= 65536) { socket.pause(); resolve(); }',
+            '}));',
+            'let parked = false;',
+            'let previous = -1;',
+            'for (let i = 0; i < 40; i++)',
+            '{',
+            '    await new Promise((resolve) => setTimeout(resolve, 50));',
+            '    if (produced === previous) { parked = true; break; }',
+            '    previous = produced;',
+            '}',
+            "if (!parked) { console.log('NO-PARK'); process.exit(0); }",
+            'socket.destroy();',
+            'await new Promise((resolve) => setTimeout(resolve, 500));',
+            "console.log('SURVIVED');",
+            'await served.shutdown({ gracePeriodMs: 200 }).catch(() => undefined);'
+        ].join('\n');
+        await writeFile(script, child);
+
+        const run = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+        expect(run.stdout).not.toContain('NO-PARK');
+        expect(run.stdout.trim().split('\n').pop()).toBe('SURVIVED');
+        expect(run.status).toBe(0);
+    }, 30_000);
+
+    it('cancelling forwards the reason, so the source can still tell an abort from a broken pipe', async () =>
+    {
+        // The reason is how a source distinguishes "the client left" from "the pipe broke", and
+        // this boundary is the only thing between the two. A cancel that dropped it would answer
+        // every abandoned download with the same anonymous teardown.
+        let reason: unknown;
+        const source = new ReadableStream<Uint8Array>({
+            pull(controller)
+            {
+                controller.enqueue(new TextEncoder().encode(LONG));
+            },
+            cancel(given)
+            {
+                reason = given;
+            }
+        });
+        const response = compressResponse(
+            requestAccepting('gzip'),
+            new Response(source, { headers: { 'content-type': 'text/plain' } })
+        );
+
+        const reader = response.body!.getReader();
+        await reader.read();
+        const abort = new Error('the reader went away');
+        abort.name = 'AbortError';
+        await reader.cancel(abort);
+        await vi.waitFor(() => expect(reason).toBeDefined());
+        expect((reason as Error).name).toBe('AbortError');
+    });
+
 });

@@ -12,6 +12,22 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A client that stalled mid-download and then disconnected could kill the server.** A
+  compressed streaming response handed Node's own stream adapter out as its body, and that
+  adapter keeps its `data` listener attached after a cancel: when the socket layer cancelled a
+  download, a chunk the compressor had already produced was enqueued onto a controller that was
+  already closed, which throws synchronously inside the emitter, above every framework catch.
+  One ordinary client - read a little, stall until the producer parks, disconnect - took the
+  whole process down with it, and so did a graceful shutdown that closed such a connection. Both
+  compressed branches were affected, not only the streamed one.
+
+  `compressResponse` now owns that boundary instead of delegating it: one latch closed by
+  cancel, end or error, the listener detached rather than merely gated, and nothing touching the
+  controller afterwards. Backpressure, negotiation, headers and per-chunk flushing are unchanged.
+  Two shapes change deliberately: a cancel forwards its reason to the source, so an abort is
+  still distinguishable from a broken pipe, and a body that stops short rejects the reader with
+  `ERR_STREAM_PREMATURE_CLOSE` rather than reading as a clean end.
+
 - **A page action ran for anyone holding a CSRF cookie, whatever the page's guards said.**
   `registerAction` read the form, checked the token and called the action; the route chain was
   never consulted, so a signed-out visitor whose GET of a guarded page answered 401 could POST to

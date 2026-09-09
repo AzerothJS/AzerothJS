@@ -33,6 +33,8 @@
 import { constants, createBrotliCompress, createDeflate, createGzip } from 'node:zlib';
 import { Readable, pipeline, type Transform } from 'node:stream';
 
+import { markClientFault } from './errors.ts';
+
 /** Media types worth compressing: text in any costume, plus the text-like applications. */
 function isCompressible(contentType: string): boolean
 {
@@ -215,7 +217,7 @@ export function compressResponse(request: Request, response: Response, options: 
     // aborted download). The callback is what keeps pipeline from throwing on error - both
     // ends already carry the failure, and the web reader is where it surfaces.
     pipeline(source, transform, () => undefined);
-    const compressed = Readable.toWeb(transform) as ReadableStream<Uint8Array>;
+    const compressed = webStreamOf(transform);
 
     const headers = new Headers(response.headers);
     headers.set('content-encoding', encoding);
@@ -230,4 +232,98 @@ export function compressResponse(request: Request, response: Response, options: 
     }
 
     return new Response(compressed, { status: response.status, statusText: response.statusText, headers });
+}
+
+/**
+ * @internal The compressor's output as a web stream, owned HERE rather than by
+ * `Readable.toWeb`.
+ *
+ * Node's adapter keeps its `'data'` listener attached after a cancel and enqueues whatever the
+ * transform emits next onto a controller it has already closed. A cancelled download reaches that
+ * state routinely: the adapter destroys the socket, cancels this reader, and a zlib transform
+ * whose flow was resumed a tick earlier still delivers one more chunk. The enqueue throws
+ * synchronously inside the emitter, above every framework catch, so a client that stalls and
+ * disconnects mid-download takes the process down with it - and a `Z_SYNC_FLUSH` stream, which is
+ * what streaming compression uses, is precisely the one with a chunk reliably in flight.
+ *
+ * So the boundary is written out: one latch closed by cancel, end or error, and nothing touches
+ * the controller after it. Backpressure is the adapter's own rule (enqueue, pause when the queue
+ * is full, resume on pull), and cancel destroys the transform so `pipeline` propagates the
+ * teardown to the source and its file descriptor is released.
+ */
+function webStreamOf(transform: Transform): ReadableStream<Uint8Array>
+{
+    let controller: ReadableStreamDefaultController<Uint8Array>;
+    let closed = false;
+
+    const settle = (fn: () => void): void =>
+    {
+        if (closed)
+        {
+            return;
+        }
+        closed = true;
+        transform.off('data', onData);
+        fn();
+    };
+    // Named, so the settle path can detach it: a listener still attached after the controller
+    // closes is the entire defect.
+    function onData(chunk: Buffer): void
+    {
+        if (closed)
+        {
+            return;
+        }
+        // Copied out of the pool, as Node's own adapter does. Not for correctness - zlib never
+        // rewrites a region it already emitted - but for retention: an un-copied 28-byte chunk
+        // pins the whole 16 KiB pool buffer it was cut from, for as long as it sits in this
+        // queue or the socket's.
+        controller.enqueue(new Uint8Array(chunk));
+        if ((controller.desiredSize ?? 0) <= 0)
+        {
+            transform.pause();
+        }
+    }
+
+    transform.pause();
+    transform.on('data', onData);
+    transform.once('end', () => settle(() => controller.close()));
+    transform.once('error', (error: Error) => settle(() => controller.error(error)));
+    // A destroy without `end` truncated the body; a consumer must hear that rather than read a
+    // short response as a complete one. It carries the code Node's own end-of-stream raises for
+    // this, because the kernel's error path classifies on the code rather than on the message,
+    // and an unclassifiable Error here would read as a server fault instead of a lost peer.
+    transform.once('close', () => settle(() =>
+    {
+        const premature = new Error('compressResponse: the compressed stream closed before it ended.');
+        (premature as { code?: string }).code = 'ERR_STREAM_PREMATURE_CLOSE';
+        controller.error(markClientFault(premature));
+    }));
+    // A stream that emits a SECOND error after settling would otherwise reach an emitter with no
+    // listener, which is an immediate process exit - the same class this whole function exists to
+    // close. Node's adapter keeps a bare listener for it; so does this.
+    transform.on('error', () => undefined);
+
+    return new ReadableStream<Uint8Array>({
+        start(active): void
+        {
+            controller = active;
+        },
+        pull(): void
+        {
+            if (!closed)
+            {
+                transform.resume();
+            }
+        },
+        cancel(reason: unknown): void
+        {
+            closed = true;
+            transform.off('data', onData);
+            // The reason travels: `pipeline` carries it to the source, so a source that
+            // distinguishes an abort from a broken pipe still can. Dropping it would answer every
+            // cancelled download with the same anonymous teardown.
+            transform.destroy(reason instanceof Error ? reason : undefined);
+        }
+    }, new ByteLengthQueuingStrategy({ highWaterMark: transform.readableHighWaterMark }));
 }
