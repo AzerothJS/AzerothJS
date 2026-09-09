@@ -468,6 +468,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A loader that threw synchronously was answered as a bare, cacheable 500.** A loader has two
+  ways to fail - return a rejected promise, or throw before returning - and only the first was
+  judged as a loader failure. The second escaped the settle that runs a route's loaders and left
+  the renderer as an ordinary throw, so the kernel answered its JSON envelope with no
+  `cache-control` at all (a shared cache may store and replay a 500 that declares nothing), the
+  page's own error UI never rendered, a thrown `notFound()` answered 500 instead of 404, a thrown
+  `redirect()` answered 500 instead of redirecting, and every level below the throwing one was
+  never invoked. The call now settles: a synchronous throw is judged by exactly the rules a
+  rejection is judged by, and the levels below it run as they do for a rejection.
+
 - **An enumerated static page told shared caches nothing about its language.** The handler for a
   parameterised `render: 'static'` route picked the reader's language, served that language's
   prerendered file, and declared no `Vary` at all - on its 200, its 304, its range answers and

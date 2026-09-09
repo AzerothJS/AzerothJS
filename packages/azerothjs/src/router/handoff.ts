@@ -353,7 +353,8 @@ export async function matchAndLoad(
         const slots: Array<Promise<unknown> | undefined> = [];
         const settlements = await Promise.allSettled(entry.matched.map((route, level) =>
         {
-            if (!route.loader)
+            const { loader } = route;
+            if (!loader)
             {
                 return Promise.resolve(undefined);
             }
@@ -377,11 +378,19 @@ export async function matchAndLoad(
             // nothing on the path that actually renders. Guards keep the whole chain and
             // the raw query: they key nothing, so narrowing them would only remove
             // information an authorization decision may legitimately use.
-            const promise = route.loader({
-                params: prefixParams(entry.matched, level, params),
-                query: declaredQuery(route.search, query),
-                signal,
-                parent
+            // The call sits INSIDE the promise, so a loader that throws before returning is
+            // settled as a rejection like one that returns a rejected promise: same level
+            // marked, same reason recorded, same descendants run. Bare, the throw escaped the
+            // settle below and left the renderer as an ordinary throw - a kernel 500 with no
+            // freshness headers and no error UI, and every level below it never invoked.
+            const promise = new Promise<unknown>((resolve) =>
+            {
+                resolve(loader({
+                    params: prefixParams(entry.matched, level, params),
+                    query: declaredQuery(route.search, query),
+                    signal,
+                    parent
+                }));
             });
             slots[level] = promise;
             return promise;

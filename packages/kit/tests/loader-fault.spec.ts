@@ -53,6 +53,23 @@ const routes: Route[] = [{
             }
             return `ITEM ${ params.id }`;
         }
+    }, {
+        // The same failures thrown BEFORE the loader returns a promise: one contract, not two.
+        path: 'sync/:id',
+        component: Leaf,
+        loader: ({ params }) =>
+        {
+            if (params.id === 'broken')
+            {
+                throw new Error(INTERNALS);
+            }
+            if (params.id === 'gone')
+            {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- a not-found sentinel is a branded value, not an Error: throwing it IS the documented API
+                throw notFound();
+            }
+            return Promise.resolve(`ITEM ${ params.id }`);
+        }
     }]
 }];
 
@@ -135,6 +152,47 @@ describe('a rejected loader through createPageRenderer', () =>
         {
             expect(result.status).toBe(200);
             expect(result.html).toContain('ITEM 7');
+        }
+        expect(onError).not.toHaveBeenCalled();
+    });
+});
+
+// The throwing spelling used to escape the settle and leave the renderer as an ordinary throw:
+// no error UI, no report, a bare kernel 500 - and the sentinel half of it answered 500 too.
+describe('a loader that throws synchronously, through createPageRenderer', () =>
+{
+    const render = createPageRenderer(App, routes);
+
+    it('a plain throw is the rejected outcome: 500, level scoped, ancestors intact, reported once', async () =>
+    {
+        const onError = vi.fn();
+        const result = await render('/shop/sync/broken', SHELL, { onError });
+        expect(result.kind).toBe('error');
+        if (result.kind !== 'error')
+        {
+            return;
+        }
+        expect(result.status).toBe(500);
+        expect(result.html).toContain('id="layout"');
+        expect(result.html).toContain('THIS ITEM COULD NOT BE LOADED');
+        expect(JSON.stringify(result)).not.toContain(INTERNALS);
+        const payload = /id="__azeroth-loader-handoff">([^<]*)</.exec(result.html)?.[1];
+        expect(JSON.parse(payload as string)).toMatchObject({ failed: [1] });
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect((onError.mock.calls[0]?.[0] as Error).message).toBe(INTERNALS);
+    });
+
+    it('a thrown notFound() is the 404 with the missing UI, and nothing is reported', async () =>
+    {
+        const onError = vi.fn();
+        const result = await render('/shop/sync/gone', SHELL, { onError });
+        expect(result.kind).toBe('html');
+        if (result.kind === 'html')
+        {
+            expect(result.status).toBe(404);
+            expect(result.html).toContain('id="layout"');
+            expect(result.html).toContain('NO SUCH ITEM');
+            expect(result.html).not.toContain('THIS ITEM COULD NOT BE LOADED');
         }
         expect(onError).not.toHaveBeenCalled();
     });
