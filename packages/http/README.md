@@ -354,12 +354,29 @@ The decision rules, spelled out because "checks the Origin" leaves the interesti
 | `Sec-Fetch-Site: same-origin` or `none`, token matches | allowed |
 | `Sec-Fetch-Site: cross-site` or `same-site` | refused - `same-site` is a SIBLING subdomain, not this origin |
 | `Origin` present and not this origin | refused, however the token looks |
+| `Origin: null` with `Sec-Fetch-Site: same-origin`, token matches | allowed - see below |
+| `Origin: null` with anything else, or with no `Sec-Fetch-Site` | refused |
 | `Origin` absent, `Sec-Fetch-Site` absent, token matches | allowed - the non-browser lane |
 | token missing, empty, short, or off by one character | refused |
 | cookie present, header absent (or the reverse) | refused |
 
 Safe methods (GET/HEAD/OPTIONS) skip the guard entirely, so a mutation must never live behind
-one. `allowedOrigins` re-admits a named cross-origin caller; nothing else does.
+one. `allowedOrigins` re-admits a named cross-origin caller; nothing else does, and the literal
+`null` can never be one of those names - any page can blank its own `Origin`, so an entry for it
+would admit every cross-site caller at once (`cors()` refuses the same string).
+
+**Why `Origin: null` is judged by the other header.** A browser blanks the `Origin` on a
+same-origin navigation POST when the page was served with `Referrer-Policy: no-referrer` - which
+`securityHeaders()` sets by default - so a plain `<form method="post">` arrives carrying a value
+that says nothing. `Sec-Fetch-Site` is what tells that apart from a genuinely opaque origin, and a
+page cannot forge it: Fetch reserves every `sec-` header name, so `fetch`, `XMLHttpRequest` and a
+service worker all fail to set it, and a sandboxed frame, a `data:` document or a cross-site
+redirect chain all arrive as `cross-site`.
+
+One limit worth knowing: browsers send `Sec-Fetch-*` only to a potentially trustworthy origin. On
+plain `http` to a non-loopback host (a LAN name, a container) there is no such header, so a
+no-referrer form submit is refused there. Serve over https, or set a referrer policy that keeps
+the origin.
 
 ## Streaming and response-wrapping middleware
 

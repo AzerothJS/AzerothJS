@@ -176,14 +176,30 @@ export function csrfProtect(options: CsrfOptions = {}): (context: GuardContext) 
 function assertSameOrigin(request: Request, url: URL, allowed: ReadonlySet<string>): void
 {
     const origin = request.headers.get('origin');
-    const originAllowed = origin !== null && (origin === url.origin || allowed.has(origin));
+    // A browser sends the literal `null` for an opaque origin AND for a same-origin navigation
+    // POST from a page served with `Referrer-Policy: no-referrer` - which `securityHeaders()`
+    // sets by default. The value therefore distinguishes nothing, and it is never allowlistable:
+    // an entry for it would admit every cross-site caller that blanks its own Origin, which is
+    // why `cors()` refuses the same string at wiring time.
+    const blanked = origin === 'null';
+    const originAllowed = origin !== null && !blanked && (origin === url.origin || allowed.has(origin));
     const site = request.headers.get('sec-fetch-site');
     // `same-site` is a SIBLING subdomain - not this origin; only an allowlist re-admits it.
     if (site !== null && site !== 'same-origin' && site !== 'none' && !originAllowed)
     {
         throw new ForbiddenError('Cross-site request rejected.', { code: 'csrf' });
     }
-    if (origin !== null && origin !== url.origin && !allowed.has(origin))
+    // What the blanked Origin cannot say, the browser says here. `Sec-Fetch-Site` is a forbidden
+    // request-header name - Fetch reserves every `sec-` name, so fetch init, setRequestHeader and
+    // a ServiceWorker-built Request all drop it - and `same-origin` is the browser's own
+    // statement that this request did not come from another site. Exactly that value, and only
+    // for a blanked Origin: `none` means there was no initiator at all, which no legitimate
+    // same-origin form submit produces, and an absent header leaves nothing to trust.
+    if (blanked && site === 'same-origin')
+    {
+        return;
+    }
+    if (origin !== null && !originAllowed)
     {
         // An https Origin against the same host's http URL, with a forwarded proto nothing
         // honored, is a TLS terminator in front of a serve() that never declared trustProxy.

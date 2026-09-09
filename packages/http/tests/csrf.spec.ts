@@ -153,6 +153,57 @@ describe('csrfProtect', () =>
         expect((await post(allowing, { ...pair, origin: 'http://evil.example' })).status).toBe(403);
     });
 
+    // A browser blanks the Origin on a same-origin navigation POST from a page served with
+    // `Referrer-Policy: no-referrer`, which securityHeaders() sets by default - so a plain
+    // <form method="post"> on a scaffolded app arrived as (null, same-origin) and was refused.
+    // The value says nothing on its own; Sec-Fetch-Site is what tells the two cases apart, and
+    // it is a forbidden header name, so no page can forge it.
+    describe('a blanked Origin is judged by the header a page cannot set', () =>
+    {
+        it('is accepted when the browser vouches for it, and only then', async () =>
+        {
+            const app = protectedApp();
+            expect((await post(app, { ...pair, origin: 'null', 'sec-fetch-site': 'same-origin' })).status).toBe(200);
+            // `none` means there was NO initiator, which no same-origin form submit produces.
+            expect((await post(app, { ...pair, origin: 'null', 'sec-fetch-site': 'none' })).status).toBe(403);
+            // Nothing vouching: fail closed, exactly as before this rule existed.
+            expect((await post(app, { ...pair, origin: 'null' })).status).toBe(403);
+            expect((await post(app, { ...pair, origin: 'null', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+            expect((await post(app, { ...pair, origin: 'null', 'sec-fetch-site': 'same-site' })).status).toBe(403);
+        });
+
+        it('excuses only the exact literal, never a real foreign origin', async () =>
+        {
+            // THE ARM THAT CARRIES THE WEIGHT. An implementation that treats any non-matching
+            // Origin as blanked once the browser says same-origin passes every other arm here
+            // while admitting an attacker's own origin outright.
+            const app = protectedApp();
+            expect((await post(app, { ...pair, origin: 'http://evil.example', 'sec-fetch-site': 'same-origin' })).status).toBe(403);
+            expect((await post(app, { ...pair, origin: '', 'sec-fetch-site': 'same-origin' })).status).toBe(403);
+            expect((await post(app, { ...pair, origin: 'NULL', 'sec-fetch-site': 'same-origin' })).status).toBe(403);
+        });
+
+        it('is never re-admitted by an allowlist entry, however the site is configured', async () =>
+        {
+            // Allowlisting the literal would hand every cross-site caller a bypass, since any
+            // page can blank its own Origin with one meta tag. `cors()` refuses the same string.
+            const allowing = protectedApp({ secure: false, allowedOrigins: ['null'] });
+            expect((await post(allowing, { ...pair, origin: 'null', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+            expect((await post(allowing, { ...pair, origin: 'null' })).status).toBe(403);
+        });
+
+        it('still requires the mirrored token', async () =>
+        {
+            const app = protectedApp();
+            const response = await post(app, {
+                cookie: `azcsrf=${ TOKEN }`, 'x-azeroth-csrf': 'a-different-token-entirely',
+                origin: 'null', 'sec-fetch-site': 'same-origin'
+            });
+            expect(response.status).toBe(403);
+            expect(((await response.json()) as { error: { code: string } }).error.code).toBe('csrf');
+        });
+    });
+
     it('a scheme-only mismatch with a forwarded proto names trustProxy; other rejections stay terse', async () =>
     {
         const app = protectedApp();

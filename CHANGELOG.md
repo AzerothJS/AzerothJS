@@ -12,6 +12,33 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A plain form could never submit without JavaScript, and a `null` origin could be
+  allowlisted into a bypass.** `securityHeaders()` sets `Referrer-Policy: no-referrer` by
+  default, and under that policy a browser blanks the `Origin` on a same-origin navigation POST.
+  The CSRF origin check compared that literal to the request's own origin, found a mismatch and
+  refused - so the documented no-JS path, a `<form method="post">` with no script at all, was
+  refused on every scaffolded app. Only the enhanced fetch path worked, which is why the failure
+  was invisible to anyone testing with JavaScript enabled; a page action received natively hit the
+  same wall.
+
+  A blanked `Origin` is now treated as ABSENT rather than as foreign, and `Sec-Fetch-Site`
+  decides. That header is one a page cannot set - Fetch reserves every `sec-` name, so fetch
+  init, `setRequestHeader` and a service worker all drop it - and only its exact
+  `same-origin` value admits the request. Measured across Chromium, Firefox and WebKit: a
+  sandboxed frame, a `data:` document, a `file://` page and a cross-site redirect chain all
+  arrive as `cross-site` and stay refused, and a request carrying no `Sec-Fetch-Site` at all
+  still fails closed exactly as before. The mirrored token is still required either way.
+
+  Related, and a hole in its own right: a literal `'null'` listed in `allowedOrigins` used to
+  short-circuit the cross-site check, so that configuration admitted **every** cross-site caller
+  willing to blank its own origin. It can no longer match anything, which is the rule `cors()`
+  in this same package already enforced.
+
+  One limit is documented rather than worked around: browsers withhold `Sec-Fetch-*` from
+  origins that are not potentially trustworthy, so on plain `http` to a non-loopback host there
+  is no discriminator and a no-referrer form submit is still refused. Serve over https, or set a
+  referrer policy that keeps the origin.
+
 - **A client that stalled mid-download of a STATIC FILE and then disconnected could kill the
   server.** The same defect that was just closed for compressed responses was still live in
   `staticFiles`, on both the whole-file and the range branch: the body was Node's own stream
