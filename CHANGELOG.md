@@ -50,12 +50,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   stalled, and navigated away took the whole process down; a real browser navigation does exactly
   that, and did.
 
-  Both callers now cross ONE latched boundary rather than each owning a copy, which is the actual
-  repair: the first fix was correct and was applied to a single call site, so the rule existed
-  twice and only one of them was right. Backpressure, range arithmetic, validators and every
-  header are unchanged. A file body that stops short now rejects the reader with
-  `ERR_STREAM_PREMATURE_CLOSE` instead of reading as a complete short response, and the
-  compressed path keeps reporting its own truncation as a client fault rather than a server one.
+  Every caller now crosses ONE latched boundary rather than each owning a copy, which is the
+  actual repair: the first fix was correct and was applied to a single call site, so the rule
+  existed twice and only one of them was right. It turned out to exist three times - a request
+  body crosses the same boundary, and that crossing is fixed here too: a handler that starts
+  reading an upload and then abandons it (a size guard, a content sniff, a deadline) cancels a
+  read it issued in the same turn, and that killed the process just as surely as an abandoned
+  download. Backpressure, range arithmetic, validators and every header are unchanged, and
+  the compressed path keeps reporting its own truncation as a client fault rather than a
+  server one.
 
 - **A page action's redirect could still leave the origin, through the client.** The server
   judges the target it emits, but `<Form>` handed the value it received straight to

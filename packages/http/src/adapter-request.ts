@@ -33,10 +33,10 @@
 
 import type { IncomingMessage } from 'node:http';
 import type { Http2ServerRequest } from 'node:http2';
-import { Readable } from 'node:stream';
-import { BadRequestError, PayloadTooLargeError } from './errors.ts';
+import { BadRequestError, markClientFault, PayloadTooLargeError } from './errors.ts';
 import { fastHeaderLookup, fastRawBody, releaseSignal, socketAddress, type FastCapabilities } from './body.ts';
 import { replacedForwardedValue } from './client-ip.ts';
+import { webStreamOf } from './web-stream.ts';
 
 /** The structural surface shared by http1's IncomingMessage and http2's compat request. */
 export type AnyIncoming = (IncomingMessage | Http2ServerRequest) & { headers: Record<string, string | string[] | undefined> };
@@ -287,9 +287,22 @@ class AdapterRequest implements Request
     {
         if (this.#body === undefined)
         {
+            // The SAME latched boundary the response bodies cross, for the same reason: Node's
+            // adapter keeps its `data` listener attached after a cancel and enqueues onto a
+            // closed controller, which throws inside the emitter where no catch can reach it.
+            // A handler that abandons an upload it started reading - a size guard, a content
+            // sniff, a deadline - reaches that state with ordinary code.
             this.#body = NO_BODY_METHODS.has(this.method.toUpperCase())
                 ? null
-                : Readable.toWeb(this.#incoming as IncomingMessage) as ReadableStream<Uint8Array<ArrayBuffer>>;
+                : webStreamOf(this.#incoming as IncomingMessage, {
+                    // A request body that stops short is the PEER's doing, not this server's.
+                    prematureClose: () =>
+                    {
+                        const premature = new Error('The request body ended before its declared length.');
+                        (premature as { code?: string }).code = 'ERR_STREAM_PREMATURE_CLOSE';
+                        return markClientFault(premature);
+                    }
+                }) as ReadableStream<Uint8Array<ArrayBuffer>>;
         }
         return this.#body;
     }

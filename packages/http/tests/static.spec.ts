@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { App } from '../src/app.ts';
@@ -359,7 +359,7 @@ describe('a download the client abandons', () =>
         const nodeUrl = pathToFileURL(path.join(here, '..', 'src', 'node.ts')).href;
         const source = `
 import { connect } from 'node:net';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { App } from ${ JSON.stringify(appUrl) };
@@ -376,31 +376,57 @@ const socket = connect(served.port, '127.0.0.1');
 socket.on('error', () => undefined);
 await new Promise((resolve) => socket.once('connect', resolve));
 socket.write(${ JSON.stringify(request) });
-let received = 0;
+// Head and body are counted apart, so the guard below can compare like with like.
+let head = Buffer.alloc(0);
+let declared = -1;
+let body = 0;
 await new Promise((resolve) => socket.on('data', (chunk) =>
 {
-    received += chunk.length;
-    if (received >= 262144) { socket.pause(); resolve(); }
+    if (declared === -1)
+    {
+        head = Buffer.concat([head, chunk]);
+        const end = head.indexOf('\\r\\n\\r\\n');
+        if (end === -1) { return; }
+        const length = /content-length: *(\\d+)/i.exec(head.subarray(0, end).toString());
+        declared = length === null ? 0 : Number(length[1]);
+        body = head.length - (end + 4);
+    }
+    else
+    {
+        body += chunk.length;
+    }
+    if (body >= 262144) { socket.pause(); resolve(); }
 }));
-let parked = false;
-let previous = -1;
-for (let i = 0; i < 200; i++)
-{
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    if (received === previous) { parked = true; break; }
-    previous = received;
-}
-if (!parked) { console.log('NO-PARK'); process.exit(0); }
+// The client has stopped reading, so the server fills the socket buffer and parks. Comparing
+// the received count against itself would prove nothing - it stops the instant the client
+// pauses - so the guard checks the property that actually arms the trigger: the response must
+// still be MID-FLIGHT against its own declared length. If the whole body had already arrived
+// there would be nothing left to enqueue after the cancel, and the arm would pass while
+// testing nothing.
+await new Promise((resolve) => setTimeout(resolve, 300));
+// The trigger needs the producer PARKED with a chunk still to come. A paused client stops
+// observing, so the check is a property of the response rather than of the byte counter: far
+// more body must remain outstanding than any socket buffer could have swallowed. Shrink the
+// fixture and this fires, which is what makes it a guard rather than a comment.
+if (declared <= 0 || declared - body < 8 * 1024 * 1024) { console.log('NO-PARK'); process.exit(0); }
 socket.destroy();
 await new Promise((resolve) => setTimeout(resolve, 500));
 console.log('SURVIVED');
 await served.shutdown({ gracePeriodMs: 200 }).catch(() => undefined);
+rmSync(dir, { recursive: true, force: true });
 `;
         const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-static-'));
-        const script = path.join(dir, 'stall-then-disconnect.mjs');
-        await writeFile(script, source);
-        const result = spawnSync(process.execPath, [script], { encoding: 'utf8' });
-        return { stdout: result.stdout, status: result.status };
+        try
+        {
+            const script = path.join(dir, 'stall-then-disconnect.mjs');
+            await writeFile(script, source);
+            const result = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+            return { stdout: result.stdout, status: result.status };
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true });
+        }
     }
 
     it('cannot kill the process when the client stalls and then disconnects', async () =>

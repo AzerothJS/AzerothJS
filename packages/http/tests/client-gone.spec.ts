@@ -13,6 +13,11 @@
 // call handed `request.signal`, and a graceful-shutdown drain all raise AbortError on an
 // aborted request while being real faults worth seeing. So the report still fires.
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { App } from '../src/app.ts';
 import { HttpError, type ErrorContext } from '../src/errors.ts';
@@ -82,4 +87,76 @@ describe('the error seam reports whether the client was already gone', () =>
         });
         expect((await app.handle(abortedRequest())).status).toBe(503);
     });
+});
+
+describe('a handler that abandons an upload it started reading', () =>
+{
+    // The mirror of a cancelled download, and the crossing that was missed when the download
+    // side was fixed: a request body is a Node stream turned into a web stream too. Node's own
+    // adapter keeps its `data` listener attached after a cancel and enqueues onto a controller
+    // it has already closed, which throws inside the emitter where no framework catch can reach
+    // it - so the process dies rather than the request failing.
+    //
+    // The trigger is ordinary handler code: issue a read, decide the upload is unwanted, and
+    // cancel in the SAME turn while the client is still sending. A size guard, a content sniff
+    // and a deadline all have this shape. Awaiting the read first does NOT reproduce it, which
+    // is why a weaker probe reports a false all-clear.
+    it('cannot kill the process', async () =>
+    {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const appUrl = pathToFileURL(path.join(here, '..', 'src', 'app.ts')).href;
+        const nodeUrl = pathToFileURL(path.join(here, '..', 'src', 'node.ts')).href;
+        const source = `
+import { connect } from 'node:net';
+import { App } from ${ JSON.stringify(appUrl) };
+import { serve } from ${ JSON.stringify(nodeUrl) };
+
+const app = new App({ onError: () => undefined });
+app.post('/sniff', async (context) =>
+{
+    const reader = context.request.body.getReader();
+    await reader.read();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const pending = reader.read();
+    await reader.cancel(new Error('rejected by sniff'));
+    void pending.catch(() => undefined);
+    return new Response('rejected', { status: 413 });
+});
+const served = await serve(app, { port: 0, banner: false });
+
+const socket = connect(served.port, '127.0.0.1', () =>
+{
+    socket.write('POST /sniff HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 33554432\\r\\nConnection: close\\r\\n\\r\\n');
+    const chunk = Buffer.alloc(65536, 3);
+    let sent = 0;
+    const pump = () =>
+    {
+        while (sent < 33554432)
+        {
+            sent += chunk.length;
+            if (!socket.write(chunk)) { socket.once('drain', pump); return; }
+        }
+    };
+    pump();
+});
+socket.on('error', () => undefined);
+socket.on('data', () => undefined);
+await new Promise((resolve) => setTimeout(resolve, 900));
+console.log('SURVIVED');
+await served.shutdown({ gracePeriodMs: 200 }).catch(() => undefined);
+`;
+        const dir = await mkdtemp(path.join(tmpdir(), 'azeroth-upload-cancel-'));
+        try
+        {
+            const script = path.join(dir, 'abandon-upload.mjs');
+            await writeFile(script, source);
+            const run = spawnSync(process.execPath, [script], { encoding: 'utf8' });
+            expect(run.stdout.trim().split('\n').pop()).toBe('SURVIVED');
+            expect(run.status).toBe(0);
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true });
+        }
+    }, 60_000);
 });
