@@ -24,6 +24,8 @@ export type { ForwardedTrust } from './adapter-request.ts';
 
 export { staticFiles, contentTypeFor } from './static.ts';
 export type { StaticOptions } from './static.ts';
+export { containedFile } from './contained-file.ts';
+export type { ContainedFile, ContainedFileOptions } from './contained-file.ts';
 
 export { compressResponse } from './compress.ts';
 export type { CompressOptions } from './compress.ts';

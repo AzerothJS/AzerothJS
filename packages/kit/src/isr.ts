@@ -30,6 +30,7 @@ import { join } from 'node:path';
 
 import { html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
 import type { App } from '@azerothjs/http';
+import type { ContainedFile } from '@azerothjs/http/node';
 
 import type { PageResult } from './ssr.ts';
 import type { PageRenderer } from './ssr.ts';
@@ -361,7 +362,7 @@ export interface IsrRegistration
     shell: Promise<string>;
 
     /** Resolves a cache key to its prerendered seed file, null when outside the dist. */
-    seedFile: (key: string) => string | null;
+    seedFile: (path: string, locale?: string) => Promise<ContainedFile | null>;
 
     /**
      * Whether this URL's matched route chain carries a guard - `mountPages` builds it on
@@ -704,13 +705,13 @@ export function registerIsr(registration: IsrRegistration): void
         // is only ever the no-query representation of the page. A learned pathname never seeds:
         // the file was written by a build whose refusal did not yet exist (or whose table
         // differed), and a seed involves no render, so no stamp could ever refuse it here.
-        const seed = target.seedable && !learned.has(target.pathname) ? seedFile(target.path) : null;
+        const seed = target.seedable && !learned.has(target.pathname) ? await seedFile(target.path, target.locale) : null;
         if (seed !== null)
         {
             try
             {
-                const [html, info] = await Promise.all([readFile(seed, 'utf8'), stat(seed)]);
-                const entry: PageEntry = { html, status: 200, createdAt: info.mtimeMs, build: await buildId };
+                const html = await readFile(seed.path, 'utf8');
+                const entry: PageEntry = { html, status: 200, createdAt: seed.stats.mtimeMs, build: await buildId };
                 // Re-checked at the write: a stamped discovery can land while the file reads.
                 if (!learned.has(target.pathname))
                 {

@@ -12,6 +12,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **A prerendered page could be seeded from a file outside the client dir.** The seed lookup
+  that turns a static page's path into the file the build wrote checked a string prefix and
+  nothing else, so a junction (or symlink) planted inside the dist and pointing outside it
+  seeded the page cache with whatever it pointed at, served from the cache at 200 to every
+  reader. The lookup now takes the same containment decision the asset handler takes - the
+  real path must lie under the real root - and a dist that is itself reached through a
+  junction still seeds.
+
+- **The image endpoint served a hidden file through its Windows 8.3 alias.** `/_image` refused
+  a dot-leading segment on the path the client spelled and never on the path the filesystem
+  resolved, so `?src=/ENV~1` read `.env` on a volume with short names enabled. The endpoint now
+  takes the static server's containment decision, alias and all.
+
 - **A handler that cancelled a streamed render and then lost its client could kill the
   server.** The streaming renderer kept a latch that only its own settle path set: a transport
   cancel closed the controller without setting it and left the request signal's abort listener
@@ -574,6 +587,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- **`.well-known` is servable through `/_image`.** The endpoint had its own dotfile rule without
+  the RFC 8615 exemption every other server in the framework applies; with one shared rule it
+  serves `/.well-known/...` like the asset handler does. Every other hidden name stays hidden.
+
 - **Every static file's ETag changes once on upgrade.** The validator now carries a third group
   naming the served file, so a client holding an old tag revalidates once and is then cached as
   before. Conditional requests, ranges and `If-Range` are unchanged.
@@ -657,6 +674,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   have made every client silently reject every handoff.
 
 ### Added
+
+- **`containedFile(root, relative, options)` in `@azerothjs/http/node`.** The one rule for
+  serving a file from under a directory: NUL refusal, the dotfile rule on the spelled path,
+  logical containment, an `index` joined and re-checked below the root, a regular-file check,
+  real-path containment (real against real), and the dotfile rule on the real path below the
+  real root. `staticFiles`, the kit's prerendered-page seed and its image endpoint all read
+  this one decision; before, each carried a copy and the copies had drifted.
 
 - **`acceptLanguage: false` on `LocaleConfig`**, the switch beside `cookie: false`: the
   browser's header is never read, so every first visit lands in the site's own language, and a

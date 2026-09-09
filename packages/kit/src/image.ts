@@ -24,11 +24,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { open, realpath } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { open } from 'node:fs/promises';
 
 import { BadRequestError, ForbiddenError, HttpError, NotFoundError, matchesEtag } from '@azerothjs/http';
 import type { Handler } from '@azerothjs/http';
+import { containedFile } from '@azerothjs/http/node';
 
 import type { KitErrorObserver } from './isr.ts';
 
@@ -145,19 +145,6 @@ const CONTENT_TYPES: Record<string, string> = {
 /** @internal Content types the endpoint serves. Remote bytes declaring anything else are refused. */
 const IMAGE_TYPES: ReadonlySet<string> = new Set(Object.values(CONTENT_TYPES));
 
-/** @internal A dot-leading segment anywhere in the path (the static-serving policy). */
-function hasDotSegment(path: string): boolean
-{
-    for (const segment of path.split(/[/\\]/))
-    {
-        if (segment.startsWith('.'))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 /** @internal The smallest ladder width >= value; null when the request is out of range. */
 function snapWidth(raw: string | null): number | null | undefined
 {
@@ -200,26 +187,16 @@ export function imageHandler(options: ImageHandlerOptions): Handler
 
     async function readLocal(source: string): Promise<{ bytes: Uint8Array; hash: string; contentType: string }>
     {
-        if (source.includes('\0') || hasDotSegment(source))
+        // The same containment decision the static server takes, and only the decision: the
+        // stat it took is deliberately NOT reused below. This stays BEFORE the open: a handle
+        // proves the bytes match the size that was checked, not that the path was ever
+        // allowed to be served.
+        const found = await containedFile(options.root, source.slice(1));
+        if (found === null)
         {
             throw new NotFoundError();
         }
-        const root = resolve(options.root);
-        const target = resolve(root, source.slice(1));
-        if (target !== root && !target.startsWith(root + sep))
-        {
-            throw new NotFoundError();
-        }
-        // The logical check above cannot see symlinks; the real path can. Real compares
-        // against real - Windows hands out 8.3 aliases the logical root never matches. This
-        // stays BEFORE the open: a handle proves the bytes match the size that was checked, not
-        // that the path was ever allowed to be served.
-        const realRoot = await realpath(root).catch(() => null);
-        const real = await realpath(target).catch(() => null);
-        if (realRoot === null || real === null || (real !== realRoot && !real.startsWith(realRoot + sep)))
-        {
-            throw new NotFoundError();
-        }
+        const target = found.path;
         // ONE handle for the size check and the read. Stat-then-read describes one file and
         // returns another when the path is repointed in between, so the size limit bound a file
         // that was never the one served. Everything below reads through `handle`, never `target`.

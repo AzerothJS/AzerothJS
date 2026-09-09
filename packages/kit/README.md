@@ -287,7 +287,8 @@ not govern.
 
 `KitOptions.images: true` serves `<Image optimize>`'s URLs over the client dist:
 content-hash cache keys, a year of immutable caching, ETag revalidation, and the same
-path containment static serving uses. The framework ships NO codec: without an adapter
+path containment static serving uses (one shared rule: a hidden name is refused under every
+spelling the filesystem answers to, an 8.3 alias included, and `.well-known` is public). The framework ships NO codec: without an adapter
 the endpoint is a caching passthrough of original bytes; implement `ImageAdapter` (one
 `transform` method) with whatever you trust to add resizing and AVIF/WebP negotiation.
 A throwing adapter degrades to original bytes - never a blank image. One consequence

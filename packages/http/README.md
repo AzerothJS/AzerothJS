@@ -172,7 +172,8 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
   (`createStream({ parse: 'sse' })`) consumes: framed events, comment heartbeats, `[DONE]`.
 - **The rest of a real server** - cookies (loud `__Host-`/SameSite validation), static
   files (traversal-safe, etags, 304s, single-range `Range`/`If-Range` 206s for media
-  seeking and download resume), negotiated compression (br/gzip/deflate, event streams
+  seeking and download resume; the containment decision is exported as `containedFile` for
+  any server that maps a path to a file under a directory), negotiated compression (br/gzip/deflate, event streams
   and partial responses exempt), typed env config that reports every problem in ONE boot error,
   structured logging as an interface, graceful shutdown, HTTP/1.1 + h2c adapters.
 

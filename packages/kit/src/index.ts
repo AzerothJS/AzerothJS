@@ -27,7 +27,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 
 import type { NavigateTarget, Route } from 'azerothjs';
 import { localeDirection, negotiateLocale } from 'azerothjs';
@@ -37,7 +37,8 @@ import { acceptRedirectTarget, evaluateGuardsForPattern, guardedMatch, isRedirec
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
-import { staticFiles } from '@azerothjs/http/node';
+import { containedFile, staticFiles } from '@azerothjs/http/node';
+import type { ContainedFile } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
 import type { PageRenderer } from './ssr.ts';
@@ -383,12 +384,10 @@ export function mountPages(app: App, options: KitOptions): void
     const report = observerFor(options);
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
-    const seedFile = (key: string): string | null =>
-    {
-        const file = resolve(options.clientDir, prerenderFileFor(key));
-        const root = resolve(options.clientDir);
-        return file.startsWith(root.endsWith(sep) ? root : `${ root }${ sep }`) ? file : null;
-    };
+    // The prerendered artifact for a page in one language, under the same containment rule
+    // the asset handler applies: a dist whose junction points outside itself seeds nothing.
+    const seedFile = (path: string, locale?: string): Promise<ContainedFile | null> =>
+        containedFile(options.clientDir, prerenderFileFor(path, locale));
     let isrCache: PageCache | undefined;
 
     // In prefix mode a page exists once per language and the bare path redirects to the

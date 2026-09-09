@@ -43,9 +43,10 @@
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
-import { extname, join, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { extname, resolve } from 'node:path';
 import type { Handler } from './app.ts';
+import { containedFile } from './contained-file.ts';
 import { NotFoundError } from './errors.ts';
 import { webStreamOf } from './web-stream.ts';
 
@@ -82,32 +83,6 @@ const CONTENT_TYPES: Record<string, string> = {
 export function contentTypeFor(path: string): string
 {
     return CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
-}
-
-/**
- * @internal Does the relative path contain a hidden segment (one starting with `.`)?
- * `.well-known` is exempt - RFC 8615 reserves it as a public, servable path. `.` and `..`
- * are moot here (the traversal check already handles them) but count as dotfiles too.
- */
-function hasDotSegment(relative: string): boolean
-{
-    for (const segment of relative.split(/[/\\]/))
-    {
-        if (segment.startsWith('.') && segment !== '.well-known')
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * @internal The directory as a containment prefix. A volume root (`/`, `C:\`) already ends
- * in the separator; appending another would double it and no resolved path could ever match.
- */
-function asPrefix(dir: string): string
-{
-    return dir.endsWith(sep) ? dir : dir + sep;
 }
 
 /**
@@ -163,62 +138,17 @@ export function staticFiles(rootDir: string, options: StaticOptions = {}): Handl
     const cacheControl = options.cacheControl ?? 'public, max-age=0, must-revalidate';
     const index = options.index ?? 'index.html';
     const param = options.param ?? 'path';
-    const allowDotfiles = options.dotfiles === true;
+    const dotfiles = options.dotfiles === true;
 
     return async (context) =>
     {
         const relative = context.params[param] ?? '';
-        if (relative.includes('\0'))
+        const found = await containedFile(root, relative, { index, dotfiles, realRoot: await getRealRoot() });
+        if (found === null)
         {
             throw new NotFoundError();
         }
-
-        // Dotfiles (a segment starting with `.`) are hidden by default - serving `/.env` or
-        // `/.git/config` is a real exposure. `.well-known` is the one public exception.
-        if (!allowDotfiles && hasDotSegment(relative))
-        {
-            throw new NotFoundError();
-        }
-
-        // Resolve, then verify containment on the resolved string. Everything the router
-        // decoded (including smuggled separators) is already literal here, so the one
-        // prefix check covers every traversal spelling.
-        let target = resolve(root, relative);
-        if (target !== root && !target.startsWith(asPrefix(root)))
-        {
-            throw new NotFoundError();
-        }
-
-        let info = await stat(target).catch(() => null);
-        if (info?.isDirectory() === true)
-        {
-            target = join(target, index);
-            info = await stat(target).catch(() => null);
-        }
-        if (info === null || !info.isFile())
-        {
-            throw new NotFoundError();
-        }
-
-        // The string check above only proves the LOGICAL path is under root; a symlink
-        // component can still point outside. Verify the REAL path stays contained - this is
-        // what stops an in-root symlink from serving `/etc/passwd`.
-        const realRoot = await getRealRoot();
-        const realTarget = await realpath(target).catch(() => null);
-        if (realTarget === null || (realTarget !== realRoot && !realTarget.startsWith(asPrefix(realRoot))))
-        {
-            throw new NotFoundError();
-        }
-
-        // The dotfile rule belongs to the path the filesystem RESOLVED, not the one the client
-        // spelled: Windows hands out 8.3 aliases (`.env` is also `ENV~1`, case-insensitively
-        // and through any encoding) that stat and createReadStream honor, and a symlink is
-        // another spelling of the same file. Re-deriving the segments here is what makes
-        // "hidden" mean hidden.
-        if (!allowDotfiles && hasDotSegment(realTarget.slice(realRoot.length)))
-        {
-            throw new NotFoundError();
-        }
+        const { path: target, stats: info } = found;
 
         // A strong validator from (size, mtime, identity): whole-file responses cannot differ
         // without one of the first two changing on any sane filesystem, and the third is what

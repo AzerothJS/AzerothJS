@@ -7,6 +7,7 @@
 // need an exact-origin allowlist. A broken adapter degrades to original bytes, never a
 // blank image.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -478,5 +479,41 @@ describe('the etag names the variant, not just the source', () =>
         });
         expect(revalidated.status).toBe(200);
         expect(revalidated.headers.get('x-azeroth-image')).toBe('miss');
+    });
+});
+
+// The endpoint's containment is the static server's rule, and only that rule: a hidden name
+// stays hidden under the aliases the filesystem answers to, and `.well-known` is public.
+describe('imageHandler local sources under the shared containment rule', () =>
+{
+    it('a Windows 8.3 short name is not a way to read a hidden file', async (context) =>
+    {
+        const { app, root } = serve();
+        if (await realpath(join(root, 'ENV~1')).catch(() => null) === null)
+        {
+            context.skip();
+        }
+        for (const spelling of ['/ENV~1', '/env~1'])
+        {
+            const response = await get(app, `src=${ encodeURIComponent(spelling) }`);
+            expect(response.status, spelling).toBe(404);
+        }
+        // Control: the alias of a PUBLIC name resolves and serves through the same lookup.
+        const hero = await get(app, 'src=%2Fhero.png');
+        expect(hero.status).toBe(200);
+    });
+
+    it('serves `.well-known`, the one public hidden name', async () =>
+    {
+        const { app, root } = serve();
+        mkdirSync(join(root, '.well-known'));
+        writeFileSync(join(root, '.well-known', 'logo.png'), PNG);
+        const response = await get(app, `src=${ encodeURIComponent('/.well-known/logo.png') }`);
+        expect(response.status).toBe(200);
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG);
+        // While a sibling hidden directory is still refused.
+        mkdirSync(join(root, '.secrets'));
+        writeFileSync(join(root, '.secrets', 'logo.png'), PNG);
+        expect((await get(app, `src=${ encodeURIComponent('/.secrets/logo.png') }`)).status).toBe(404);
     });
 });
