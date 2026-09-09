@@ -149,7 +149,7 @@ describe('bindSlot', () =>
             const marker = ul.firstChild!;
             const [on] = createSignal(true);
             const result = Show({ when: on, children: () => h('li', {}, 'item') });
-            bindSlot(marker, result as Node);
+            bindSlot(marker, result);
             return ul;
         }, container);
 

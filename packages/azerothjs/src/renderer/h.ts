@@ -971,8 +971,9 @@ export function bindEvent(el: HTMLElement, type: string, handler: unknown): void
 /**
  * Drives a control-flow / component SLOT in a template clone: inserts the
  * component's already-built output (`result` - a co-range fragment for built-ins,
- * an element/fragment for user components, or `null` when it renders nothing) at
- * the slot's marker position, then removes the marker. The component manages its
+ * an element/fragment for user components, an ARRAY of roots for a fragment-root
+ * component, or `null` when it renders nothing) at the slot's marker position, then
+ * removes the marker. The component manages its
  * own reactivity and co-range internally, so the slot is a one-time placement -
  * the analog of {@link bindHole} for a `slot` node rather than a `hole`.
  * A fragment is moved in directly (no display:contents
@@ -983,7 +984,7 @@ export function bindEvent(el: HTMLElement, type: string, handler: unknown): void
  *
  * @internal Compiler-emitted runtime; not part of the application API.
  */
-export function bindSlot(marker: ChildNode, result: Node | null | undefined): void
+export function bindSlot(marker: ChildNode, result: Node | unknown[] | DocumentFragment | null | undefined): void
 {
     const parent = marker.parentNode as Node;
     // A compiled <Outlet/> returns the route slot handle; it places its own markers and
@@ -991,6 +992,13 @@ export function bindSlot(marker: ChildNode, result: Node | null | undefined): vo
     if (isSlotHandle(result))
     {
         slotDriverOf(result).place(parent, marker);
+    }
+    else if (Array.isArray(result) || result instanceof DocumentFragment)
+    {
+        // A fragment-root component lowers to the array of its roots. The h()-tree path that
+        // serves SSR and hydration already accepts one, so the clone path must too, or the same
+        // component renders on the server and throws in the browser, blanking the page.
+        spliceMultiNode(parent, result, marker);
     }
     else if (result !== null && result !== undefined)
     {

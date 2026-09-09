@@ -366,6 +366,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **A component with a fragment root rendered on the server and blanked the page in the browser.**
+  A fragment root lowers to the array of its roots. The h()-tree path that serves SSR and
+  hydration accepted the array, but the template-clone path that a browser build runs handed it
+  straight to `insertBefore`, which throws on a non-node, so a parent slotting such a component
+  (an account shell with a signed-in and a signed-out branch, say) rendered nothing after the
+  title. The slot binder now splices every root in at the slot position, the same treatment a
+  hole already gives a multi-node value, and the three modes agree on the output.
+
 - **`<Image>` froze its `alt` and `src` when they came from markup.** Markup passes a component
   prop as a GETTER on the props object, so reading one during setup resolves it once and discards
   the laziness the protocol exists to provide - which is exactly what the component did. On a page
