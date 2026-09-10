@@ -301,20 +301,24 @@ describe('an enumerated static page under prefix routing serves its own file', (
         appendFileSync(join(dir, 'docs', 'intro', 'index.fa.html'), '<!--file:docs/intro/fa-->');
         appendFileSync(join(dir, 'docs', 'intro', 'index.html'), '<!--file:docs/intro/plain-->');
         // A sibling page's file the enumeration never listed, and a nested one a re-joined
-        // `%2F` would land on.
+        // `%2F` would land on. Hand-written per-language files carry the base stamp, as a
+        // prefixed mount requires of every one it serves.
         mkdirSync(join(dir, 'docs', 'private'), { recursive: true });
-        writeFileSync(join(dir, 'docs', 'private', 'index.fa.html'), '<html><body><!--file:docs/private/fa--></body></html>');
+        writeFileSync(join(dir, 'docs', 'private', 'index.fa.html'), '<html data-azeroth-base="/fa"><body><!--file:docs/private/fa--></body></html>');
         mkdirSync(join(dir, 'post', 'a', 'b'), { recursive: true });
-        writeFileSync(join(dir, 'post', 'a', 'b', 'index.fa.html'), '<html><body><!--file:post/a/b/fa--></body></html>');
+        writeFileSync(join(dir, 'post', 'a', 'b', 'index.fa.html'), '<html data-azeroth-base="/fa"><body><!--file:post/a/b/fa--></body></html>');
         const server = new App();
         mountPages(server, {
             routes: enumerated,
             clientDir: dir,
             renderer: createPageRenderer(() => Page(), enumerated),
-            locales: { supported: ['en', 'fa'], routing: 'prefix' }
+            locales: { supported: ['en', 'fa'], routing: 'prefix' },
+            onError: (error) => errors.push(error)
         });
         return { dir, server };
     }
+
+    const errors: unknown[] = [];
 
     const get = (server: App, path: string, headers: Record<string, string> = {}): Promise<Response> =>
         server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html', ...headers } }));
@@ -343,11 +347,52 @@ describe('an enumerated static page under prefix routing serves its own file', (
         expect(await (await get(server, '/fa/docs/intro')).text()).toContain('hreflang="fa" href="/fa/docs/intro"');
     });
 
-    it('falls back to the unsuffixed file when the language file is absent', async () =>
+    it('a prefixed url whose language file is absent live-renders, never the unsuffixed file', async () =>
     {
+        // The unsuffixed file carries no base stamp and unprefixed anchors, so serving it at
+        // /fa/... would boot the client base-less into the fallback.
         const { dir, server } = await build();
         rmSync(join(dir, 'docs', 'intro', 'index.fa.html'));
-        expect(await (await get(server, '/fa/docs/intro')).text()).toContain('<!--file:docs/intro/plain-->');
+        const html = await (await get(server, '/fa/docs/intro')).text();
+        expect(html).not.toContain('<!--file:');
+        expect(html).toContain('lang="fa"');
+        expect(html).toContain('data-azeroth-base="/fa"');
+    });
+
+    it('a language file written without the stamp answers 500, once per file version', async () =>
+    {
+        const { dir, server } = await build();
+        errors.length = 0;
+        const file = join(dir, 'docs', 'intro', 'index.fa.html');
+        writeFileSync(file, '<html lang="fa"><body><!--file:docs/intro/unstamped--></body></html>');
+        const refused = await get(server, '/fa/docs/intro');
+        expect(refused.status).toBe(500);
+        expect(await refused.text()).not.toContain('<!--file:');
+        expect((errors[0] as Error).message).toContain('docs/intro/index.fa.html');
+        expect((errors[0] as Error).message).toContain("routing: 'prefix'");
+        // A conditional request cannot launder it into a 304: the artifact is what is checked.
+        const conditional = await get(server, '/fa/docs/intro', { 'if-modified-since': new Date(Date.now() + 60_000).toUTCString() });
+        expect(conditional.status).toBe(500);
+        // Replaced under the running process, the file is checked again and serves.
+        writeFileSync(file, '<html lang="fa" data-azeroth-base="/fa"><body><!--file:docs/intro/restamped--></body></html>');
+        const restored = await get(server, '/fa/docs/intro');
+        expect(restored.status).toBe(200);
+        expect(await restored.text()).toContain('<!--file:docs/intro/restamped-->');
+    });
+
+    it('an artifact the check cannot read as a file is refused with an observed error', async () =>
+    {
+        // The file server would serve a directory's index; the check reads the artifact itself.
+        const { dir, server } = await build();
+        errors.length = 0;
+        const file = join(dir, 'docs', 'intro', 'index.fa.html');
+        rmSync(file);
+        mkdirSync(file);
+        writeFileSync(join(file, 'index.html'), '<html data-azeroth-base="/fa"><body><!--file:docs/intro/dir--></body></html>');
+        const refused = await get(server, '/fa/docs/intro');
+        expect(refused.status).toBe(500);
+        expect(await refused.text()).not.toContain('<!--file:');
+        expect(errors).toHaveLength(1);
     });
 
     it('an encoded separator in a param never names a sibling page: the page live-renders', async () =>
@@ -389,5 +434,65 @@ describe('the prerender pass writes hreflang only under prefix routing', () =>
             expect(file).toContain('hreflang="x-default" href="/about"');
         }
         expect(readFileSync(join(dir, 'index.fa.html'), 'utf8')).toContain('hreflang="fa" href="/fa"');
+    });
+});
+
+// The plain (non-parameterized) static mount under prefix routing: the same two rules the
+// enumerated mount follows, on the handler that serves a page with no params.
+describe('a plain static page under prefix routing', () =>
+{
+    const plain: PageRoute[] = [
+        { path: '/', component: Page, render: 'static' },
+        { path: '/plain', component: Page, render: 'static' }
+    ];
+    const errors: unknown[] = [];
+
+    async function build(): Promise<{ dir: string; server: App }>
+    {
+        resetHead();
+        errors.length = 0;
+        const dir = clientDir();
+        await prerender({ routes: plain, clientDir: dir, renderer: createPageRenderer(() => Page(), plain), locales: ['en', 'fa'], routing: 'prefix' });
+        appendFileSync(join(dir, 'plain', 'index.fa.html'), '<!--file:plain/fa-->');
+        appendFileSync(join(dir, 'plain', 'index.html'), '<!--file:plain/plain-->');
+        const server = new App();
+        mountPages(server, {
+            routes: plain,
+            clientDir: dir,
+            renderer: createPageRenderer(() => Page(), plain),
+            locales: { supported: ['en', 'fa'], routing: 'prefix' },
+            onError: (error) => errors.push(error)
+        });
+        return { dir, server };
+    }
+
+    const get = (server: App, path: string, headers: Record<string, string> = {}): Promise<Response> =>
+        server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html', ...headers } }));
+
+    it('serves the language file, stamped by the build', async () =>
+    {
+        const { server } = await build();
+        const html = await (await get(server, '/fa/plain')).text();
+        expect(html).toContain('<!--file:plain/fa-->');
+        expect(html).toContain('data-azeroth-base="/fa"');
+    });
+
+    it('a prefixed url whose language file is absent live-renders, never the unsuffixed file', async () =>
+    {
+        const { dir, server } = await build();
+        rmSync(join(dir, 'plain', 'index.fa.html'));
+        const html = await (await get(server, '/fa/plain')).text();
+        expect(html).not.toContain('<!--file:');
+        expect(html).toContain('data-azeroth-base="/fa"');
+    });
+
+    it('a language file written without the stamp answers 500 and names the file', async () =>
+    {
+        const { dir, server } = await build();
+        writeFileSync(join(dir, 'plain', 'index.fa.html'), '<html lang="fa"><body>UNSTAMPED</body></html>');
+        const refused = await get(server, '/fa/plain');
+        expect(refused.status).toBe(500);
+        expect(await refused.text()).not.toContain('UNSTAMPED');
+        expect((errors[0] as Error).message).toContain('plain/index.fa.html');
     });
 });

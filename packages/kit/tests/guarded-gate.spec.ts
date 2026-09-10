@@ -73,7 +73,7 @@ function clientDir(withArtifacts = true): string
     return dir;
 }
 
-function mount(verdict: Verdict, options: { renderer?: boolean; artifacts?: boolean; prefix?: boolean } = {}): App
+function mount(verdict: Verdict, options: { renderer?: boolean; artifacts?: boolean; prefix?: boolean; negotiate?: boolean } = {}): App
 {
     const table = routes(verdict);
     const app = new App();
@@ -81,7 +81,8 @@ function mount(verdict: Verdict, options: { renderer?: boolean; artifacts?: bool
         routes: table,
         clientDir: clientDir(options.artifacts ?? true),
         ...(options.renderer === true ? { renderer: createPageRenderer(() => Page(), table) } : {}),
-        ...(options.prefix === true ? { locales: { supported: ['en', 'fa'], routing: 'prefix' } } : {})
+        ...(options.prefix === true ? { locales: { supported: ['en', 'fa'], routing: 'prefix' } } : {}),
+        ...(options.negotiate === true ? { locales: { supported: ['en', 'fa'] } } : {})
     });
     return app;
 }
@@ -231,5 +232,23 @@ describe('the build refuses a file for a url a guarded chain wins', () =>
         const table = routes(true);
         await expect(prerender({ routes: table, clientDir: clientDir(false), renderer: createPageRenderer(() => Page(), table) }))
             .rejects.toThrow(/"\/docs\/intro" \(from "\/docs\/:slug"\) matches a guarded route chain/);
+    });
+});
+
+describe('the rendererless gate under prefix routing', () =>
+{
+    it('answers a guard redirect in the request\'s url space, and the bare url is the locale redirect', async () =>
+    {
+        const app = mount('/login', { prefix: true });
+        const prefixed = await get(app, '/fa/docs/intro');
+        expect(prefixed.status).toBe(302);
+        expect(prefixed.headers.get('location')).toBe('/fa/login');
+        expect(prefixed.headers.get('cache-control')).toBe('private, no-store');
+        const bare = await get(app, '/docs/intro');
+        expect(bare.status).toBe(302);
+        expect(bare.headers.get('location')).toBe('/en/docs/intro');
+        expect(bare.headers.get('cache-control')).toBe('private, no-store');
+        // The same table on a negotiate mount redirects bare.
+        expect((await get(mount('/login', { negotiate: true }), '/docs/intro')).headers.get('location')).toBe('/login');
     });
 });

@@ -26,15 +26,15 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { NavigateTarget, Route } from 'azerothjs';
-import { localeDirection, negotiateLocale } from 'azerothjs';
+import { negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
-import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, guardedMatch, isRedirect, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -42,9 +42,9 @@ import { containedFile, staticFiles } from '@azerothjs/http/node';
 import type { ContainedFile } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
-import type { PageRenderer } from './ssr.ts';
-import { applyLocaleToShell } from './ssr.ts';
-import { MemoryPageCache, pageResponse, registerIsr } from './isr.ts';
+import type { DocumentContext, PageRenderer } from './ssr.ts';
+import { applyDocumentContext } from './ssr.ts';
+import { MemoryPageCache, carriesBaseStamp, inRequestSpace, pageResponse, registerIsr } from './isr.ts';
 import type { KitErrorObserver, PageCache } from './isr.ts';
 import { imageHandler } from './image.ts';
 import type { ImageHandlerOptions } from './image.ts';
@@ -382,9 +382,52 @@ export function mountPages(app: App, options: KitOptions): void
         .then((shell) => createHash('sha256').update(shell).digest('hex').slice(0, 16))
         .catch(() => randomUUID());
 
+    for (const tag of [...localesOf(options), ...(options.locales?.default !== undefined ? [options.locales.default] : [])])
+    {
+        if (!isLanguageTag(tag))
+        {
+            throw new Error(`kit mountPages: "${ tag }" is not a language tag - alphanumeric segments joined by hyphens, `
+                + 'such as "en" or "zh-Hant".');
+        }
+    }
+
     const report = observerFor(options);
     const assets = staticFiles(options.clientDir);
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
+    // Under prefix routing a served per-language artifact must carry the base stamp, or the
+    // client boots base-less into the fallback. Checked once per file version (the strong ETag
+    // the file server returns), by reading the head of the file the response came from.
+    const verified = new Map<string, boolean>();
+    const stamped = async (response: Response, file: string, context: RequestContext): Promise<Response> =>
+    {
+        const key = `${ file }|${ response.headers.get('etag') ?? '' }`;
+        const refuse = async (error: Error): Promise<never> =>
+        {
+            await response.body?.cancel();
+            report(error, { path: context.url.pathname, phase: 'render' });
+            throw error;
+        };
+        let ok = verified.get(key);
+        if (ok === undefined)
+        {
+            try
+            {
+                const found = await containedFile(options.clientDir, file);
+                ok = found !== null && await headCarriesStamp(found.path);
+            }
+            catch (error)
+            {
+                return refuse(error instanceof Error ? error : new Error(String(error)));
+            }
+            verified.set(key, ok);
+        }
+        if (!ok)
+        {
+            return refuse(new Error(`kit: the prerendered file "${ file }" carries no data-azeroth-base stamp, so it was built `
+                + 'without routing: \'prefix\' - rebuild with prerender({ ..., locales, routing: \'prefix\' }).'));
+        }
+        return response;
+    };
     // The prerendered artifact for a page in one language, under the same containment rule
     // the asset handler applies: a dist whose junction points outside itself seeds nothing.
     const seedFile = (path: string, locale?: string): Promise<ContainedFile | null> =>
@@ -456,7 +499,7 @@ export function mountPages(app: App, options: KitOptions): void
                     seedFile,
                     buildId: buildIdPromise,
                     onError: report,
-                    locale: (request: Request, pathname: string) => localeFor(request, options, pathname),
+                    document: (request: Request, pathname: string) => documentContextFor(request, pathname, options),
                     vary: (_request: Request, pathname: string) => varyFor(options, pathname),
                     strip: (pathname: string) => splitLocalePath(pathname, options).path,
                     artifactPath: (pathname: string) => artifactPathOf(splitLocalePath(pathname, options).path)
@@ -473,7 +516,7 @@ export function mountPages(app: App, options: KitOptions): void
                 // params first, live-render anything the enumeration did not list.
                 for (const mounted of mountPaths(page.path))
                 {
-                    registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise);
+                    registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise, stamped);
                 }
                 registerLocaleRedirect(app, page.path, options);
             }
@@ -506,17 +549,25 @@ export function mountPages(app: App, options: KitOptions): void
                 const fallback = staticFiles(options.clientDir, { index: plain, param: '__none' });
                 const staticHandler = async (context: RequestContext): Promise<Response> =>
                 {
+                    const prefixed = splitLocalePath(context.url.pathname, options).locale !== undefined;
                     const tag = localeFor(context.request, options, context.url.pathname);
                     const server = tag === undefined ? undefined : servers.get(tag);
                     try
                     {
-                        return withVary(await (server ?? fallback)(context), context, options);
+                        const served = withVary(await (server ?? fallback)(context), context, options);
+                        return prefixed && tag !== undefined ? await stamped(served, prerenderFileFor(page.path, tag), context) : served;
                     }
                     catch (error)
                     {
                         if (!(error instanceof NotFoundError) || server === undefined)
                         {
                             throw error;
+                        }
+                        // A prefixed url never takes the unsuffixed file: it carries no stamp and
+                        // unprefixed anchors. The live render (or the shell) answers instead.
+                        if (prefixed)
+                        {
+                            return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise);
                         }
                         return withVary(await fallback(context), context, options);
                     }
@@ -644,10 +695,17 @@ function registerAction(
         // a fetch that wants the value, and following a 303 to re-download the page it is
         // already showing would defeat the point of intercepting it.
         const wantsJson = acceptsJson(context.request);
+        const document = documentContextFor(context.request, context.url.pathname, options);
         const fullPathOf = (to: NavigateTarget): string => (typeof to === 'string' ? to : targetToFullPath(to));
-        const sendTo = (location: string): Response => (wantsJson
-            ? jsonResponse({ ok: true, redirect: location }, { headers: { 'cache-control': 'private, no-store' } })
-            : seeOther(location));
+        // One target, two representations: a Location for the browser and an app-space path for
+        // the client router, which joins the base itself.
+        const sendTo = (location: string): Response =>
+        {
+            const target = redirectTargets(location, document.base, appPath(context, options), page.path);
+            return wantsJson
+                ? jsonResponse({ ok: true, redirect: target.enhanced }, { headers: { 'cache-control': 'private, no-store' } })
+                : seeOther(target.native);
+        };
 
         // The chain's guards, selected by the pattern this POST was REGISTERED for rather than by
         // re-deriving a chain from the request url. The two are not the same string: the kernel
@@ -681,11 +739,10 @@ function registerAction(
             // built over another table), its answer is not this refusal and must not be served:
             // that is the shape where a blocked POST would come back 200 carrying the protected
             // page. The kernel refusal is the fallback, so the write is refused either way.
-            const locale = localeFor(context.request, options, context.url.pathname);
             const rendered = await renderer(appPath(context, options), await shellPromise, {
                 signal: context.request.signal,
                 handoffMeta: { build: await buildId, at: Date.now() },
-                ...(locale !== undefined ? { locale } : {})
+                ...documentOptions(document)
             });
             if (rendered.kind !== 'blocked')
             {
@@ -920,6 +977,72 @@ function appPath(context: RequestContext, options: KitOptions): string
 }
 
 /**
+ * @internal What the host decided about this document: the reader's language, and the url
+ * prefix the document lives under when the url itself names its language. A bare url under
+ * prefix routing carries the negotiated language and no base, because it lives at a bare url.
+ */
+function documentContextFor(request: Request, pathname: string, options: KitOptions): DocumentContext
+{
+    const prefix = splitLocalePath(pathname, options).locale;
+    return {
+        locale: localeFor(request, options, pathname),
+        base: prefix === undefined ? undefined : `/${ prefix }`
+    };
+}
+
+/** @internal The renderer options a document context becomes, with no undefined keys. */
+function documentOptions(document: DocumentContext): { locale?: string; base?: string }
+{
+    return {
+        ...(document.locale !== undefined ? { locale: document.locale } : {}),
+        ...(document.base !== undefined ? { base: document.base } : {})
+    };
+}
+
+/**
+ * @internal One action redirect target in both representations. Without a base both are the
+ * target as it came. With one, an absolute app path is joined for the browser and kept for the
+ * client router, which joins it itself; a relative spelling is resolved once against the
+ * request url, so the two arrivals cannot differ, and one that climbs out of the prefix is
+ * refused, since no app path can name it.
+ */
+function redirectTargets(target: string, base: string | undefined, appUrl: string, pattern: string): { native: string; enhanced: string }
+{
+    if (base === undefined || isExternalUrl(target))
+    {
+        return { native: target, enhanced: target };
+    }
+    if (isAbsoluteAppPath(target))
+    {
+        return { native: joinBase(base, target), enhanced: target };
+    }
+    const resolved = new URL(target, `http://azeroth.local${ joinBase(base, appUrl) }`);
+    const inApp = stripBasePrefix(resolved.pathname, base);
+    if (inApp === null)
+    {
+        throw new Error(`kit: the action on "${ pattern }" redirected to "${ target }", which resolves outside the url prefix `
+            + `"${ base }" - redirect to an app path, or to a relative target that stays under the page.`);
+    }
+    return { native: resolved.pathname + resolved.search + resolved.hash, enhanced: inApp + resolved.search + resolved.hash };
+}
+
+/** @internal Whether the head of a prerendered file carries the base stamp on its html tag. */
+async function headCarriesStamp(file: string): Promise<boolean>
+{
+    const handle = await open(file, 'r');
+    try
+    {
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return carriesBaseStamp(buffer.toString('utf8', 0, bytesRead));
+    }
+    finally
+    {
+        await handle.close();
+    }
+}
+
+/**
  * @internal The languages this mount publishes, or none.
  */
 function localesOf(options: KitOptions): readonly string[]
@@ -1069,7 +1192,7 @@ async function renderOrShell(
 {
     // Resolved before the render, so `<Form>` renders the same value the browser will hold.
     const csrf = tokenFor(context.request, options);
-    const locale = localeFor(context.request, options, context.url.pathname);
+    const document = documentContextFor(context.request, context.url.pathname, options);
     const url = appPath(context, options);
     const alternates = alternatesFor(context, options);
     if (mode === 'server' && options.renderer !== undefined)
@@ -1088,7 +1211,7 @@ async function renderOrShell(
                 // is reported. Without it a 500 arrives with no cause anywhere.
                 onError: (error: unknown): void =>
                     observerFor(options)(error, { path: context.url.pathname, phase: 'render' }),
-                ...(locale !== undefined ? { locale } : {}),
+                ...documentOptions(document),
                 ...(alternates.length > 0 ? { alternates } : {}),
                 // A `server` page is uncached and uncoalesced: this render exists for THIS
                 // request and nobody else can adopt it. So the client's disconnect signal is
@@ -1106,9 +1229,9 @@ async function renderOrShell(
         // A refused action re-renders at ITS status, not the render's: the page is fine, the
         // write was not, and 422 is what tells a client which of the two happened.
         const answered = refusal === undefined
-            ? withVary(pageResponse(result, shell), context, options)
+            ? withVary(pageResponse(result, shell, {}, document.base), context, options)
             : withVary(
-                pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell),
+                pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell, {}, document.base),
                 context, options);
         return csrf.minted ? withMintedToken(answered, csrf.token, options) : answered;
     }
@@ -1119,7 +1242,7 @@ async function renderOrShell(
     // 200 or 404 with no freshness headers is heuristically cacheable.
     const bare = withVary(
         htmlResponse(
-            locale === undefined ? shell : applyLocaleToShell(shell, locale, localeDirection(locale)),
+            applyDocumentContext(shell, document),
             { status: shellStatus, ...(guardedMatch(options.routes, url) ? { headers: { 'cache-control': 'private, no-store' } } : {}) }),
         context, options);
     return csrf.minted ? withMintedToken(bare, csrf.token, options) : bare;
@@ -1158,7 +1281,10 @@ async function guardedAnswer(
         case 'blocked':
             return new Response(null, { status: walked.status, headers });
         case 'redirect':
-            return new Response(null, { status: 302, headers: { ...headers, location: targetToFullPath(walked.to) } });
+            return new Response(null, {
+                status: 302,
+                headers: { ...headers, location: inRequestSpace(targetToFullPath(walked.to), documentContextFor(context.request, context.url.pathname, options).base) }
+            });
         case 'refused-redirect':
             return new Response(null, { status: 500, headers });
         case 'not-found':
@@ -1210,9 +1336,7 @@ function registerDynamic(
                     onError: (error: unknown): void => observerFor(options)(error, { path: context.url.pathname, phase: 'stream' }),
                     handoffMeta: { build: await buildId, at: Date.now() },
                     ...(nonce !== undefined ? { scriptNonce: nonce } : {}),
-                    ...(localeFor(context.request, options, context.url.pathname) !== undefined
-                        ? { locale: localeFor(context.request, options, context.url.pathname) as string }
-                        : {}),
+                    ...documentOptions(documentContextFor(context.request, context.url.pathname, options)),
                     ...(alternatesFor(context, options).length > 0
                         ? { alternates: alternatesFor(context, options) }
                         : {})
@@ -1240,7 +1364,7 @@ function registerDynamic(
             }
             // A renderer unaware of the streaming option (or a redirect/veto, which stay
             // buffered by design) answered with an ordinary result: serve it as such.
-            return withVary(pageResponse(result, shell), context, options);
+            return withVary(pageResponse(result, shell, {}, documentContextFor(context.request, context.url.pathname, options).base), context, options);
         }
         return renderOrShell(context, mode, options, shell, buildId);
     });
@@ -1253,7 +1377,8 @@ function registerStaticFirst(
     options: KitOptions,
     shellPromise: Promise<string>,
     assets: Handler,
-    buildId: Promise<string>
+    buildId: Promise<string>,
+    stamped: (response: Response, file: string, context: RequestContext) => Promise<Response>
 ): void
 {
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
@@ -1262,34 +1387,41 @@ function registerStaticFirst(
         // The artifact is named from the raw remainder one segment at a time; no name means the
         // live render. A fresh object (not a merge) carries the file path, so staticFiles' full
         // machinery (containment, ETag, ranges) serves the bytes. Both file returns are
-        // negotiated bodies, so both are stamped.
-        const artifact = artifactPathOf(splitLocalePath(context.url.pathname, options).path);
+        // negotiated bodies, so both are stamped. A prefixed url never takes the unsuffixed
+        // file: it carries no base stamp and unprefixed anchors.
+        const { locale: prefix, path: bare } = splitLocalePath(context.url.pathname, options);
+        const artifact = artifactPathOf(bare);
         if (artifact !== null)
         {
-            try
+            const tag = localeFor(context.request, options, context.url.pathname);
+            if (tag !== undefined)
             {
-                const tag = localeFor(context.request, options, context.url.pathname);
-                if (tag !== undefined)
+                const file = prerenderFileFor(artifact, tag);
+                try
                 {
-                    try
+                    const served = withVary(await assets({ ...context, params: { path: file } }), context, options);
+                    return prefix === undefined ? served : await stamped(served, file, context);
+                }
+                catch (error)
+                {
+                    if (!(error instanceof NotFoundError))
                     {
-                        return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact, tag) } }), context, options);
-                    }
-                    catch (error)
-                    {
-                        if (!(error instanceof NotFoundError))
-                        {
-                            throw error;
-                        }
+                        throw error;
                     }
                 }
-                return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact) } }), context, options);
             }
-            catch (error)
+            if (prefix === undefined)
             {
-                if (!(error instanceof NotFoundError))
+                try
                 {
-                    throw error;
+                    return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact) } }), context, options);
+                }
+                catch (error)
+                {
+                    if (!(error instanceof NotFoundError))
+                    {
+                        throw error;
+                    }
                 }
             }
         }

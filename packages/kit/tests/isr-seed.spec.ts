@@ -104,10 +104,10 @@ describe('a localized ISR page seeds from its own artifact', () =>
         writeFileSync(join(dist, 'n', 'a', 'index.html'), '<html><body>SEED-PLAIN</body></html>');
         if (withFa)
         {
-            writeFileSync(join(dist, 'n', 'a', 'index.fa.html'), '<html lang="fa"><body>SEED-FA</body></html>');
+            writeFileSync(join(dist, 'n', 'a', 'index.fa.html'), '<html lang="fa" data-azeroth-base="/fa"><body>SEED-FA</body></html>');
         }
         mkdirSync(join(dist, 'n', 'private'), { recursive: true });
-        writeFileSync(join(dist, 'n', 'private', 'index.fa.html'), '<html><body>SEED-PRIVATE</body></html>');
+        writeFileSync(join(dist, 'n', 'private', 'index.fa.html'), '<html data-azeroth-base="/fa"><body>SEED-PRIVATE</body></html>');
         return { dist, routes: [{ path: '/n/:slug', component, render: 'static', revalidate: 60 }] };
     }
 

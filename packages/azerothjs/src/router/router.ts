@@ -54,6 +54,8 @@ import type {
 } from './types.ts';
 import { isExternalUrl, externalRedirectMessage } from '../semantics.ts';
 import { acceptRedirectTarget } from './redirect-target.ts';
+import { joinBase, normalizeBase, stripBasePrefix } from './base.ts';
+import { currentBase } from '../i18n/current-base.ts';
 import { compilePath, type PathMatcher } from './path-pattern.ts';
 import type { CacheEntry, DataCache, FamilyRecord } from '../reactivity/data-cache.ts';
 import { CACHED_FAMILY, entryKeyFor, getDataCache, readValue, stableSerialize } from '../reactivity/data-cache.ts';
@@ -564,35 +566,6 @@ export function targetToFullPath(target: NavigateTarget): string
 }
 
 /**
- * Normalizes a configured base path into a canonical prefix:
- *   - `undefined` / `''` / `'/'`     -> `''` (no base)
- *   - `'app'` / `'/app'` / `'/app/'` -> `'/app'`
- *
- * The result is either empty or starts with `/` and has no trailing slash, so
- * it can be concatenated directly in front of an absolute app path.
- *
- * @internal
- */
-function normalizeBase(base: string | undefined): string
-{
-    if (!base || base === '/')
-    {
-        return '';
-    }
-
-    let b = base;
-    if (!b.startsWith('/'))
-    {
-        b = '/' + b;
-    }
-    if (b.endsWith('/'))
-    {
-        b = b.slice(0, -1);
-    }
-    return b;
-}
-
-/**
  * Internal state that the location and match memos derive from.
  *
  * Bundling these into one signal means we match the URL exactly once per change
@@ -713,34 +686,10 @@ function buildRouter(config: RouterConfig): Router
     // base-relative space internally: route patterns, location.pathname,
     // params, and <Link to> are all base-relative. The prefix is added only
     // when writing to history and stripped only when reading from it.
-    const base = normalizeBase(config.base);
-
-    // Strips the base prefix off a raw browser pathname, returning the
-    // base-relative path, or null when the pathname is outside the configured
-    // base (so nothing should match). The `base + '/'` boundary check stops
-    // `/app` from swallowing `/application`.
-    function stripBase(rawPathname: string): string | null
-    {
-        if (base === '')
-        {
-            return rawPathname;
-        }
-        if (rawPathname === base)
-        {
-            return '/';
-        }
-        if (rawPathname.startsWith(base + '/'))
-        {
-            return rawPathname.slice(base.length);
-        }
-        return null;
-    }
-
-    /** Prefixes the base onto a base-relative, absolute app path. */
-    function applyBase(relPath: string): string
-    {
-        return base === '' ? relPath : base + relPath;
-    }
+    // With no base configured the router adopts the prefix the document lives under (the
+    // server's render pin, the client's <html data-azeroth-base>), so a prefixed url matches
+    // the same route on both sides. '' or '/' opts out.
+    const base = normalizeBase(config.base ?? currentBase());
 
     // Resolves a NavigateTarget to the final URL string used for history writes
     // and <Link> hrefs: base-prefixed for internal paths, untouched for
@@ -748,7 +697,7 @@ function buildRouter(config: RouterConfig): Router
     function resolve(target: NavigateTarget): string
     {
         const full = targetToFullPath(target);
-        return isExternalUrl(full) ? full : applyBase(full);
+        return isExternalUrl(full) ? full : joinBase(base, full);
     }
 
     function matchPathname(pathname: string): RouteMatch | null
@@ -784,7 +733,7 @@ function buildRouter(config: RouterConfig): Router
         // Match (and expose) in base-relative space. When the URL is outside
         // the base, `inner` is null so nothing matches, and we fall back to the
         // raw pathname for the location snapshot.
-        const inner = stripBase(rawPathname);
+        const inner = stripBasePrefix(rawPathname, base);
         const pathname = inner ?? rawPathname;
 
         return {
@@ -1890,7 +1839,7 @@ function buildRouter(config: RouterConfig): Router
                 return Promise.resolve();
             }
             const { pathname: rawPathname, search: query } = splitFullPath(full);
-            const inner = stripBase(rawPathname);
+            const inner = stripBasePrefix(rawPathname, base);
             const m = inner === null ? null : matchPathname(inner);
             if (m === null)
             {

@@ -22,10 +22,11 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { setBuildContext } from 'azerothjs/internal';
 
-import { guardedMatch } from 'azerothjs/internal';
+import { guardedMatch, isLanguageTag } from 'azerothjs/internal';
 
 import { alternatesOf } from './alternates.ts';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
+import { carriesBaseStamp } from './isr.ts';
 import type { PageRenderer } from './ssr.ts';
 
 /** The routes, client dist, and renderer the static {@link prerender} pass needs. */
@@ -85,6 +86,14 @@ export function resolveStaticPath(pattern: string, params: Record<string, string
 /** Runs the pass; returns the written page paths (for the build log). */
 export async function prerender(options: PrerenderOptions): Promise<string[]>
 {
+    for (const tag of options.locales ?? [])
+    {
+        if (!isLanguageTag(tag))
+        {
+            throw new Error(`kit prerender: "${ tag }" is not a language tag - alphanumeric segments joined by hyphens, `
+                + 'such as "en" or "zh-Hant".');
+        }
+    }
     const indexPath = join(options.clientDir, 'index.html');
     const shellPath = join(options.clientDir, 'shell.html');
     if (!existsSync(indexPath))
@@ -119,11 +128,15 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
         // WITHOUT one is build-static by contract and adopts fresh forever.
         const alternates = options.routing === 'prefix' ? alternatesOf(options.locales ?? [], path, '') : [];
+        // Under prefix routing each language's file lives at its own prefixed url, so it is
+        // rendered under that base: stamped for the client router, anchors already prefixed.
+        const base = options.routing === 'prefix' && locale !== undefined ? `/${ locale }` : undefined;
         const result = await options.renderer(path, shell, {
             handoffMeta: revalidate !== undefined
                 ? { build: buildStamp, at: Date.now() }
                 : { build: buildStamp, static: true },
             ...(locale !== undefined ? { locale } : {}),
+            ...(base !== undefined ? { base } : {}),
             ...(alternates.length > 0 ? { alternates } : {})
         });
         if (result.kind === 'redirect')
@@ -164,6 +177,12 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         {
             throw new Error(`kit prerender: "${ path }" did not match any route during prerender - `
                 + 'remove it from the static set or fix the route table.');
+        }
+        // A renderer that ignored the base would write a file the prefixed mount refuses to serve.
+        if (base !== undefined && !carriesBaseStamp(result.html))
+        {
+            throw new Error(`kit prerender: "${ path }" rendered for "${ base }" carries no data-azeroth-base stamp - `
+                + 'the renderer must apply the base it is given (createPageRenderer does).');
         }
         const file = resolve(options.clientDir, prerenderFileFor(path, locale));
         const root = resolve(options.clientDir);

@@ -678,6 +678,18 @@ export function isExternalUrl(candidate: string): boolean
 }
 
 /**
+ * Whether a target is an absolute path INSIDE the app: not external, and its control-stripped
+ * spelling starts with a slash or a backslash (a browser resolves a leading backslash
+ * root-relative). This is the one test that decides whether a url prefix is joined onto a
+ * `<Form action>` or a server redirect; a relative spelling is left for the browser to resolve.
+ */
+export function isAbsoluteAppPath(candidate: string): boolean
+{
+    const spelled = candidate.replace(URL_CONTROL_CHARS, '');
+    return !EXTERNAL_URL.test(spelled) && /^[/\\]/.test(spelled);
+}
+
+/**
  * The one rule text for a redirect whose target leaves the app's origin. A guard or loader
  * redirect is an AUTOMATIC navigation whose target is app-derived, so an off-origin one is
  * either a mistake or an attacker-supplied `?next=` reaching the wire - the open-redirect

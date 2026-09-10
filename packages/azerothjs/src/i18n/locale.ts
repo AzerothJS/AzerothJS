@@ -285,3 +285,15 @@ function readCookie(request: Request, name: string): string | null
     }
     return null;
 }
+
+const LANGUAGE_TAG = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
+
+/**
+ * Whether text has the shape of a language tag: alphanumeric segments joined by single
+ * hyphens (`en`, `zh-Hant`, `pt-BR`). The one shape a tag must have wherever it enters - a
+ * site's supported list, `setLocale()`, the url prefix a document carries.
+ */
+export function isLanguageTag(text: string): boolean
+{
+    return LANGUAGE_TAG.test(text);
+}

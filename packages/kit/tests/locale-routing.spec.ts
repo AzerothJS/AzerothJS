@@ -8,9 +8,10 @@
 // response entirely - the url names the document, so `Vary` is not needed and a shared cache can
 // hold every language at once.
 import { describe, it, expect, afterAll } from 'vitest';
-import { h, useLocale } from 'azerothjs';
+import { Link, RouterProvider, Routes, createMemoryHistory, createRouter, forbidden, h, redirect, unsafeUrl, useLocale } from 'azerothjs';
+import type { LoaderHandoff } from 'azerothjs';
 import { resetHead } from 'azerothjs/internal';
-import { App } from '@azerothjs/http';
+import { App, csrfToken } from '@azerothjs/http';
 import { mountPages, type PageRoute } from '@azerothjs/kit';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
 import type { PageRenderOptions, PageResult } from '@azerothjs/kit/ssr';
@@ -216,7 +217,7 @@ describe('a language prefix is decided on the decoded first segment, and the res
     const echo = (url: string, shell: string, options?: PageRenderOptions): Promise<PageResult> =>
         Promise.resolve({
             kind: 'html', status: 200,
-            html: shell.replace('<div id="root"></div>', `<div id="root">URL=${ url } LOCALE=${ options?.locale ?? '-' } ALT=${ (options?.alternates ?? []).map((a) => a.href).join(',') } END</div>`)
+            html: shell.replace('<div id="root"></div>', `<div id="root">URL=${ url } LOCALE=${ options?.locale ?? '-' } BASE=${ options?.base ?? '-' } ALT=${ (options?.alternates ?? []).map((a) => a.href).join(',') } END</div>`)
         });
 
     function mount(): App
@@ -235,7 +236,7 @@ describe('a language prefix is decided on the decoded first segment, and the res
         return server;
     }
 
-    async function read(server: App, path: string): Promise<{ status: number; vary: string | null; url: string; locale: string; alt: string }>
+    async function read(server: App, path: string): Promise<{ status: number; vary: string | null; url: string; locale: string; base: string; alt: string }>
     {
         const response = await server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html' } }));
         const html = await response.text();
@@ -243,7 +244,8 @@ describe('a language prefix is decided on the decoded first segment, and the res
             status: response.status,
             vary: response.headers.get('vary'),
             url: /URL=(\S+) LOCALE/.exec(html)?.[1] ?? '',
-            locale: /LOCALE=(\S+) ALT/.exec(html)?.[1] ?? '',
+            locale: /LOCALE=(\S+) BASE/.exec(html)?.[1] ?? '',
+            base: /BASE=(\S+) ALT/.exec(html)?.[1] ?? '',
             alt: /ALT=(\S*) END/.exec(html)?.[1] ?? ''
         };
     }
@@ -252,7 +254,7 @@ describe('a language prefix is decided on the decoded first segment, and the res
     {
         const server = mount();
         const plain = await read(server, '/fa/about');
-        expect(plain).toEqual({ status: 200, vary: null, url: '/about', locale: 'fa', alt: 'http://local/en/about,http://local/fa/about,http://local/about' });
+        expect(plain).toEqual({ status: 200, vary: null, url: '/about', locale: 'fa', base: '/fa', alt: 'http://local/en/about,http://local/fa/about,http://local/about' });
         for (const spelling of ['/%66a/about', '/%66%61/about', '/f%61/about'])
         {
             expect(await read(server, spelling), spelling).toEqual(plain);
@@ -279,7 +281,238 @@ describe('a language prefix is decided on the decoded first segment, and the res
         const server = mount();
         const seen = await read(server, '/%2566a/about');
         expect(seen.locale).toBe('en');
+        expect(seen.base).toBe('-');
         expect(seen.url).toBe('/%2566a/about');
         expect(seen.vary).toContain('accept-language');
+    });
+});
+
+// The url prefix reaches the client the way the language does: pinned for the render, stamped
+// on the document, and applied to every anchor, form and redirect the server writes.
+describe('the url prefix reaches the client', () =>
+{
+    const COOKIE = 'azcsrf';
+    const sendTo = (to: string) => async (): Promise<undefined> =>
+    {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the documented redirect sentinel
+        throw redirect(to);
+    };
+    const marker = (text: string): HTMLElement => h('p', { id: 'marker' }, text);
+    const withLinks = (text: string) => (): HTMLElement =>
+        h('main', {}, marker(text), Link({ to: '/', children: 'home' }), Link({ to: '/users/1', children: 'user' }));
+    const table: PageRoute[] = [
+        { path: '/', component: withLinks('HOME'), render: 'server' },
+        { path: '/about', component: withLinks('ABOUT'), render: 'server' },
+        { path: '/users/:id', component: withLinks('USER'), render: 'server' },
+        { path: '/client', component: withLinks('CLIENT'), render: 'client' },
+        { path: '/members', component: withLinks('MEMBERS'), render: 'server', guard: () => true },
+        { path: '/guarded', component: withLinks('GUARDED'), render: 'server', guard: () => forbidden(), action: () => Promise.resolve(undefined) },
+        { path: '/redirecting', component: withLinks('R'), render: 'server', guard: () => '/login' },
+        { path: '/relative', component: withLinks('R'), render: 'server', guard: () => 'login' },
+        { path: '/query', component: withLinks('R'), render: 'server', guard: () => '?page=2' },
+        { path: '/vetted', component: withLinks('R'), render: 'server', guard: () => unsafeUrl('/\\evil') },
+        { path: '/bare', component: withLinks('R'), render: 'server', guard: () => '\\evil' },
+        { path: '/hand', component: withLinks('R'), render: 'server', guard: () => '/fa/login' },
+        { path: '/todos', component: withLinks('TODOS'), render: 'server', action: () => Promise.resolve(undefined) },
+        { path: '/refuse', component: withLinks('REFUSE'), render: 'server', action: () => Promise.resolve({ fields: { text: 'Required' } }) },
+        { path: '/thanks-action', component: withLinks('T'), render: 'server', action: sendTo('/thanks') },
+        { path: '/rel-login', component: withLinks('T'), render: 'server', action: sendTo('login') },
+        { path: '/rel-query', component: withLinks('T'), render: 'server', action: sendTo('?page=2') },
+        { path: '/dotty', component: withLinks('T'), render: 'server', action: sendTo('../up') },
+        { path: '/gated-post', component: withLinks('T'), render: 'server', guard: () => 'login', action: () => Promise.resolve(undefined) },
+        {
+            path: '/refuse-loader', component: withLinks('T'), render: 'server',
+            loader: (): never =>
+            {
+                // eslint-disable-next-line @typescript-eslint/only-throw-error -- the documented redirect sentinel
+                throw redirect('/login');
+            },
+            action: () => Promise.resolve({ fields: { text: 'Required' } })
+        }
+    ];
+
+    const app = (props: { url?: string; handoff?: LoaderHandoff }): HTMLElement => RouterProvider({
+        router: createRouter({ routes: table, history: createMemoryHistory(props.url ?? '/'), initialLoaderData: props.handoff }),
+        children: () => h('div', {}, h('nav', {}, Link({ to: '/', children: 'nav-home' })), Routes({ fallback: () => marker('NOT-FOUND') }))
+    }) as HTMLElement;
+
+    function mount(locales?: { supported: string[]; routing?: 'prefix'; default?: string }, shell = SHELL, renderer = createPageRenderer(app, table)): App
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'az-prefix-'));
+        writeFileSync(join(dir, 'index.html'), shell);
+        mkdirSync(join(dir, 'assets'));
+        dirs.push(dir);
+        const server = new App();
+        mountPages(server, { routes: table, clientDir: dir, renderer, csrf: { cookie: COOKIE }, ...(locales !== undefined ? { locales } : {}) });
+        return server;
+    }
+    const PREFIX = { supported: ['en', 'fa'], routing: 'prefix' as const };
+    const NEGOTIATE = { supported: ['en', 'fa'] };
+
+    const get = (server: App, path: string, headers: Record<string, string> = {}): Promise<Response> =>
+        server.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html', ...headers } }));
+    const post = (server: App, path: string, headers: Record<string, string> = {}): Promise<Response> =>
+    {
+        const token = csrfToken();
+        return server.handle(new Request(`http://local${ path }`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `${ COOKIE }=${ token }`, origin: 'http://local', ...headers },
+            body: new URLSearchParams({ _csrf: token, text: 'x' }).toString()
+        }));
+    };
+    const main = (html: string): string => html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+    const openTag = (html: string): string => /<html[^>]*>/i.exec(html)?.[0] ?? '';
+    const handoffPath = (html: string): string | undefined =>
+        (JSON.parse(/id="__azeroth-loader-handoff">([^<]*)</.exec(html)?.[1] ?? 'null') as { path?: string } | null)?.path;
+
+    it('serves a prefixed page stamped, pinned and with every anchor under the prefix', async () =>
+    {
+        resetHead();
+        const html = await (await get(mount(PREFIX), '/fa/about')).text();
+        expect(openTag(html)).toContain('data-azeroth-base="/fa"');
+        expect(openTag(html)).toContain('lang="fa"');
+        expect(html).toContain('id="marker">ABOUT');
+        expect(html).not.toContain('NOT-FOUND');
+        expect(main(html)).toContain('href="/fa"');
+        expect(main(html)).toContain('href="/fa/users/1"');
+        expect(handoffPath(html)).toBe('/about');
+        // The encoded spelling of the prefix is the same document.
+        expect(main(await (await get(mount(PREFIX), '/%66a/about')).text())).toBe(main(html));
+    });
+
+    it('a negotiate-mode page and a single-language page carry no stamp and unprefixed anchors', async () =>
+    {
+        resetHead();
+        for (const server of [mount(NEGOTIATE), mount()])
+        {
+            const html = await (await get(server, '/about', { 'accept-language': 'fa' })).text();
+            expect(openTag(html)).not.toContain('data-azeroth-base');
+            expect(main(html)).toContain('href="/users/1"');
+            expect(main(html)).not.toContain('href="/fa');
+        }
+    });
+
+    it('a client-rendered page carries the stamp with no handoff', async () =>
+    {
+        resetHead();
+        const html = await (await get(mount(PREFIX), '/fa/client')).text();
+        expect(openTag(html)).toContain('data-azeroth-base="/fa"');
+        expect(html).not.toContain('__azeroth-loader-handoff');
+    });
+
+    it('the catch-all 404 is stamped under a prefix and bare at a bare url', async () =>
+    {
+        resetHead();
+        const server = mount(PREFIX);
+        const prefixed = await get(server, '/fa/nope');
+        const prefixedHtml = await prefixed.text();
+        expect(prefixed.status).toBe(404);
+        expect(openTag(prefixedHtml)).toContain('data-azeroth-base="/fa"');
+        expect(prefixedHtml).toContain('href="/fa"');
+        expect(prefixedHtml).toContain('NOT-FOUND');
+        const bare = await get(server, '/nope');
+        const bareHtml = await bare.text();
+        expect(bare.status).toBe(404);
+        expect(openTag(bareHtml)).not.toContain('data-azeroth-base');
+        expect(bareHtml).toContain('href="/"');
+    });
+
+    it('a guarded chain under a prefix keeps the guarded stamp', async () =>
+    {
+        resetHead();
+        const response = await get(mount(PREFIX), '/fa/members');
+        expect(response.status).toBe(200);
+        expect(response.headers.get('cache-control')).toBe('private, no-store');
+        expect(openTag(await response.text())).toContain('data-azeroth-base="/fa"');
+    });
+
+    it('the guard-veto re-render of a prefixed POST carries the stamp and prefixed anchors', async () =>
+    {
+        resetHead();
+        const response = await post(mount(PREFIX), '/fa/guarded');
+        const html = await response.text();
+        expect(response.status).toBe(403);
+        expect(openTag(html)).toContain('data-azeroth-base="/fa"');
+        expect(html).toContain('href="/fa"');
+    });
+
+    it('a server redirect is answered in the request\'s url space, and relative targets are the browser\'s', async () =>
+    {
+        resetHead();
+        const server = mount(PREFIX);
+        const location = async (path: string): Promise<string | null> => (await get(server, path)).headers.get('location');
+        expect(await location('/fa/redirecting')).toBe('/fa/login');
+        expect(await location('/fa/relative')).toBe('login');
+        expect(await location('/fa/query')).toBe('?page=2');
+        expect(await location('/fa/vetted')).toBe('/\\evil');
+        expect(await location('/fa/bare')).toBe('/fa\\evil');
+        expect(await location('/fa/hand')).toBe('/fa/fa/login');
+        expect((await get(mount(NEGOTIATE), '/redirecting')).headers.get('location')).toBe('/login');
+    });
+
+    it('a host renderer\'s redirect is answered in the request\'s url space too', async () =>
+    {
+        const host = (): Promise<PageResult> => Promise.resolve({ kind: 'redirect', to: '/login', replace: false });
+        expect((await get(mount(PREFIX, SHELL, host), '/fa/about')).headers.get('location')).toBe('/fa/login');
+    });
+
+    it('a form action refusal re-renders stamped, a write returns to the prefixed page, a redirect is joined', async () =>
+    {
+        resetHead();
+        const server = mount(PREFIX);
+        const refused = await post(server, '/fa/refuse');
+        expect(refused.status).toBe(422);
+        expect(openTag(await refused.text())).toContain('data-azeroth-base="/fa"');
+        const written = await post(server, '/fa/todos');
+        expect(written.status).toBe(303);
+        expect(written.headers.get('location')).toBe('/fa/todos');
+        const sent = await post(server, '/fa/thanks-action');
+        expect(sent.headers.get('location')).toBe('/fa/thanks');
+        expect(await (await post(server, '/fa/thanks-action', { accept: 'application/json' })).json()).toEqual({ ok: true, redirect: '/thanks' });
+    });
+
+    it('a relative redirect target reaches the native and the enhanced submit at one url', async () =>
+    {
+        resetHead();
+        const server = mount(PREFIX);
+        const json = { accept: 'application/json' };
+        // Resolved once against the prefixed request url: the browser and the client router agree.
+        expect((await post(server, '/fa/rel-login?page=1')).headers.get('location')).toBe('/fa/login');
+        expect(await (await post(server, '/fa/rel-login?page=1', json)).json()).toEqual({ ok: true, redirect: '/login' });
+        expect((await post(server, '/fa/rel-query?page=1')).headers.get('location')).toBe('/fa/rel-query?page=2');
+        expect(await (await post(server, '/fa/rel-query?page=1', json)).json()).toEqual({ ok: true, redirect: '/rel-query?page=2' });
+        expect((await post(server, '/fa/gated-post')).headers.get('location')).toBe('/fa/login');
+        expect(await (await post(server, '/fa/gated-post', json)).json()).toEqual({ ok: true, redirect: '/login' });
+        // A target that climbs out of the prefix has no app path: refused, in both representations.
+        expect((await post(server, '/fa/dotty?page=1')).status).toBe(500);
+        expect((await post(server, '/fa/dotty?page=1', json)).status).toBe(500);
+        // Without a base both representations are what the action said.
+        const negotiate = mount(NEGOTIATE);
+        expect((await post(negotiate, '/rel-login?page=1')).headers.get('location')).toBe('login');
+        expect(await (await post(negotiate, '/rel-login?page=1', json)).json()).toEqual({ ok: true, redirect: 'login' });
+        expect((await post(negotiate, '/dotty?page=1')).headers.get('location')).toBe('../up');
+    });
+
+    it('the refusal re-render that redirects answers in the request\'s url space', async () =>
+    {
+        resetHead();
+        expect((await post(mount(PREFIX), '/fa/refuse-loader')).headers.get('location')).toBe('/fa/login');
+        expect((await post(mount(NEGOTIATE), '/refuse-loader')).headers.get('location')).toBe('/login');
+    });
+
+    it('a shell that already carries the attribute yields one in prefix mode and none otherwise', async () =>
+    {
+        resetHead();
+        const stale = '<!doctype html><html lang="en" data-azeroth-base="/de"><head><title>Shell</title></head><body><div id="root"></div></body></html>';
+        const prefixed = openTag(await (await get(mount(PREFIX, stale), '/fa/about')).text());
+        expect(prefixed.match(/data-azeroth-base/g)).toHaveLength(1);
+        expect(prefixed).toContain('data-azeroth-base="/fa"');
+        expect(openTag(await (await get(mount(NEGOTIATE, stale), '/about')).text())).not.toContain('data-azeroth-base');
+    });
+
+    it('refuses a malformed language tag at mount', () =>
+    {
+        expect(() => mount({ supported: ['en', 'pt_BR'] })).toThrow(/"pt_BR" is not a language tag/);
+        expect(() => mount({ supported: ['en'], routing: 'prefix', default: 'sr@latin' })).toThrow(/"sr@latin" is not a language tag/);
     });
 });

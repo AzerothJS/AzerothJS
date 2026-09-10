@@ -407,3 +407,31 @@ describe('a routed chain streams with Suspense inside a segment', () =>
         expect(rest.trimEnd().endsWith('</html>')).toBe(true);
     });
 });
+
+describe('a streamed page under prefix routing', () =>
+{
+    const PREFIX = { locales: { supported: ['en', 'fa'], routing: 'prefix' as const } };
+
+    it('carries the base stamp in the first chunk', async () =>
+    {
+        const pending = gate();
+        const server = streamingRig(pending, { kit: PREFIX });
+        const response = await server.handle(new Request('http://local/fa/live'));
+        expect(response.status).toBe(200);
+        const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+        const early = await readUntil(reader, 'stream-loading');
+        expect(early).toContain('data-azeroth-base="/fa"');
+        expect(early).toContain('lang="fa"');
+        pending.resolve('late-data');
+        await drain(reader);
+    });
+
+    it('a guard redirect on a prefixed stream route answers in the request\'s url space', async () =>
+    {
+        const pending = gate();
+        const server = streamingRig(pending, { kit: PREFIX, guard: () => ({ pathname: '/login', search: '', hash: '' }) });
+        const response = await server.handle(new Request('http://local/fa/live'));
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toBe('/fa/login');
+    });
+});

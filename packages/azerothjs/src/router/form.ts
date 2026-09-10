@@ -31,6 +31,7 @@ import { h } from '../renderer/h.ts';
 import type { Router } from './router.ts';
 import { resolveRouter } from './provider.ts';
 import { acceptRedirectTarget } from './redirect-target.ts';
+import { isAbsoluteAppPath } from '../semantics.ts';
 
 /** The hidden field a page action reads its CSRF token from; mirrors the server's `CSRF_FIELD`. */
 const CSRF_FIELD = '_csrf';
@@ -42,8 +43,10 @@ export interface FormProps
     router?: Router;
 
     /**
-     * Where to post. Defaults to the current pathname, which is the page's own action - the
-     * ordinary case, since the action is declared on the route being rendered.
+     * Where to post. Defaults to the page's own url, which is the page's own action - the
+     * ordinary case, since the action is declared on the route being rendered. An absolute app
+     * path gets the router's base like a `<Link>` does; a relative spelling or an external url
+     * is used verbatim, so the browser resolves it against the document.
      */
     action?: string;
 
@@ -100,7 +103,14 @@ export function Form(props: FormProps): MountNode
     const { router: _router, action, children, onSettled, ...rest } = props;
     const [submitting, setSubmitting] = createSignal(false);
 
-    const target = (): string => action ?? untrack(() => router.location().pathname);
+    const target = (): string =>
+    {
+        if (action === undefined)
+        {
+            return router.href(untrack(() => router.location().pathname));
+        }
+        return isAbsoluteAppPath(action) ? router.href(action) : action;
+    };
     // The server's token while it is the one that rendered this page, the browser's cookie
     // after a client navigation. The seeded value is the only one that exists on a first load.
     const token = (): string => router.csrfToken() || cookieToken();

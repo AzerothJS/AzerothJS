@@ -22,7 +22,9 @@
 
 import { createSignal, isStringMode } from '../reactivity/index.ts';
 import type { Getter } from '../reactivity/index.ts';
-import { localeDirection } from './locale.ts';
+import { isLanguageTag, localeDirection } from './locale.ts';
+import { documentBase } from './current-base.ts';
+import { joinBase, stripBasePrefix } from '../router/base.ts';
 
 /** SERVER: the locale this synchronous render is pinned to. */
 let renderLocale: string | null = null;
@@ -160,9 +162,30 @@ export function setLocale(tag: string, options: SetLocaleOptions = {}): void
             + 'decided by the host before the render begins, so switching it mid-render would '
             + 'contradict the document already being written.');
     }
+    // A tag can be reader-supplied text, and under a url prefix it becomes part of a url.
+    if (!isLanguageTag(tag))
+    {
+        throw new Error(`azeroth: setLocale() expects a language tag such as "en" or "zh-Hant", got ${ JSON.stringify(tag) }.`);
+    }
+    const cookie = options.cookie ?? 'locale';
+    const base = documentBase();
+    if (base !== undefined)
+    {
+        // The url names the language here, so a switch is a different document. The cookie
+        // goes first, so a later bare-path visit negotiates to the language chosen now.
+        rememberChoice(cookie, tag);
+        const stripped = stripBasePrefix(location.pathname, base) ?? '/';
+        location.assign(joinBase(`/${ tag }`, stripped) + location.search + location.hash);
+        return;
+    }
     applyToDocument(tag);
     setSignal(tag);
-    const cookie = options.cookie ?? 'locale';
+    rememberChoice(cookie, tag);
+}
+
+/** Writes the reader's choice where the server reads it on the next request. */
+function rememberChoice(cookie: string | false, tag: string): void
+{
     if (cookie !== false && typeof document !== 'undefined')
     {
         // Lax rather than Strict: a reader arriving from a link should still see the language

@@ -329,6 +329,17 @@ Under `routing: 'prefix'` a prerendered page is served from its file for every s
 url, and the prerender pass writes the page's hreflang set into each artifact when it is told the
 mode (`prerender({ ..., locales, routing: 'prefix' })`).
 
+The prefix reaches the client the way the language does. Every response that lives under one
+carries `<html data-azeroth-base="/fa">`, the render is pinned to it, and a router created with no
+`base` adopts it, so `/fa/about` matches your `/about` route on both sides, the served anchors
+already read `/fa/...`, `<Link to="/about">` and `<Form>` stay in the language, and a server
+redirect to `/login` answers `/fa/login`. Your route table stays written as `/about`; nothing in
+the app names the prefix. A per-language artifact served under a prefix must carry that stamp,
+which the prerender writes when it is told the mode; a build that ran without `routing:
+'prefix'` answers 500 for that file and names the option through `onError`, rather than serving
+a page that hydrates into the fallback. `setLocale()` in a prefixed document navigates to the
+sibling url, since the url is the language there.
+
 ## What it deliberately is not
 
 - **Not a router.** The table above is `azerothjs`'s own router table - loaders, `lazy:`, typed `defineRoute` handles all work unchanged. Guards work unchanged on server-rendered pages, and are REFUSED on static ones (see Prerendering and ISR above).

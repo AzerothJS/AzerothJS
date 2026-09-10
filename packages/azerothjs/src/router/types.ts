@@ -429,10 +429,12 @@ export interface RouterConfig
     routes: Route[];
 
     /**
-     * Optional base path. All route paths are matched relative to
-     * this base, and all generated URLs are prefixed with it.
-     * Useful when the app is served under a sub-path (`/app`).
-     * Must start with `/`. Default: `'/'`.
+     * Optional base path. Route paths are matched relative to it and generated urls are
+     * prefixed with it: an app served under a sub-path (`/app`), or a language prefix under
+     * prefix locale routing. Left unset, a router adopts the prefix the served document
+     * declares (`<html data-azeroth-base>`, written by the kit under prefix routing) and
+     * otherwise has none; `''` or `'/'` opts out, for a secondary router that must stay
+     * unprefixed. A base also matches its percent-encoded spelling.
      */
     base?: string | undefined;
 

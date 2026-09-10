@@ -95,7 +95,7 @@ interface Rig
  * mountPages over ONE table (`pages`), rendered by the REAL createPageRenderer - by
  * default over the same table, or over `rendererRoutes` for the mismatch arms.
  */
-function build(pages: PageRoute[], options: { rendererRoutes?: Route[]; onError?: false; holdFirstRender?: boolean } = {}): Rig
+function build(pages: PageRoute[], options: { rendererRoutes?: Route[]; onError?: false; holdFirstRender?: boolean; locales?: { supported: string[]; routing?: 'prefix' } } = {}): Rig
 {
     const dir = makeClientDir();
     const cache = recordingCache();
@@ -123,6 +123,7 @@ function build(pages: PageRoute[], options: { rendererRoutes?: Route[]; onError?
         clientDir: dir,
         renderer,
         cache,
+        ...(options.locales !== undefined ? { locales: options.locales } : {}),
         ...(options.onError === false
             ? {}
             : { onError: (error, context): void => void errors.push({ error, path: context.path, phase: context.phase }) })
@@ -458,5 +459,38 @@ describe('the default observer and the header closure beyond ISR', () =>
             const response = await app.handle(new Request('http://local/st'));
             expect(response.headers.get('cache-control')).toBe(expected);
         }
+    });
+});
+
+describe('the guarded gate under prefix routing', () =>
+{
+    const PREFIX = { supported: ['en', 'fa'], routing: 'prefix' as const };
+
+    it('answers live on the FIRST prefixed request and never caches', async () =>
+    {
+        const rig = build(foreignChain(), { locales: PREFIX });
+        const alice = await as('alice', rig.app, '/fa/docs/current');
+        expect(alice.status).toBe(200);
+        expect(alice.headers.get('x-azeroth-cache')).toBe('live');
+        expect(alice.headers.get('cache-control')).toBe('private, no-store');
+        expect(await alice.text()).toContain('PRIVATE-BALANCE-alice');
+        const mallory = await as('mallory', rig.app, '/fa/docs/current');
+        expect(mallory.status).toBe(403);
+        expect(rig.cache.sets).toEqual([]);
+    });
+
+    it('a guard that redirects answers in the request\'s url space, live', async () =>
+    {
+        const pages: PageRoute[] = [
+            { path: '/docs/:slug', render: 'client', component, guard: () => '/login' },
+            { path: '/docs/current', render: 'static', revalidate: 60, component }
+        ];
+        const rig = build(pages, { locales: PREFIX });
+        const response = await as('alice', rig.app, '/fa/docs/current');
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toBe('/fa/login');
+        expect(response.headers.get('cache-control')).toBe('private, no-store');
+        expect(response.headers.get('x-azeroth-cache')).toBe('live');
+        expect(rig.cache.sets).toEqual([]);
     });
 });

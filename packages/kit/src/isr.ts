@@ -32,7 +32,8 @@ import { html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
 import type { App } from '@azerothjs/http';
 import type { ContainedFile } from '@azerothjs/http/node';
 
-import type { PageResult } from './ssr.ts';
+import { isAbsoluteAppPath, joinBase } from 'azerothjs/internal';
+import type { DocumentContext, PageResult } from './ssr.ts';
 import type { PageRenderer } from './ssr.ts';
 import { mergeVary } from './vary.ts';
 
@@ -286,6 +287,23 @@ export class FilePageCache implements PageCache
  */
 export type KitErrorObserver = (error: unknown, context: { path: string; phase: 'revalidate' | 'image' | 'stream' | 'render' }) => void;
 
+/** Whether a document's html open tag carries the base stamp, judged on the head of its bytes. */
+export function carriesBaseStamp(html: string): boolean
+{
+    const tag = /<html\b[^>]*>/i.exec(html);
+    return tag !== null && /\sdata-azeroth-base\s*=/i.test(tag[0]);
+}
+
+/**
+ * A redirect target in the request's url space: an absolute app path is joined onto the base
+ * the request lives under, an external url and a relative spelling go out as they came (the
+ * browser resolves the latter against the prefixed request url), no base means no change.
+ */
+export function inRequestSpace(target: string, base: string | undefined): string
+{
+    return base === undefined || !isAbsoluteAppPath(target) ? target : joinBase(base, target);
+}
+
 /**
  * A finished BUFFERED {@link PageResult} as the response `mountPages` serves - the ONE
  * place the union maps to the wire, shared by per-request SSR and ISR's live outcomes.
@@ -299,16 +317,17 @@ export type KitErrorObserver = (error: unknown, context: { path: string; phase: 
  * ISR handler's guarded path, whose predicate can fire when the renderer's table differs)
  * add or override headers regardless.
  */
-export function pageResponse(result: PageResult, shell: string, headers: Record<string, string> = {}): Response
+export function pageResponse(result: PageResult, shell: string, headers: Record<string, string> = {}, base?: string): Response
 {
     if (result.kind === 'redirect')
     {
         // An app-derived redirect is a function of this request's identity as much as any
         // guarded page is, and a bare 302 is HEURISTICALLY CACHEABLE - a shared cache may
-        // store one user's redirect and replay it for the next.
+        // store one user's redirect and replay it for the next. Answered in the request's url
+        // space whichever renderer built it, so a prefixed page stays in its language.
         return new Response(null, {
             status: 302,
-            headers: { location: result.to, 'cache-control': 'private, no-store', ...headers }
+            headers: { location: inRequestSpace(result.to, base), 'cache-control': 'private, no-store', ...headers }
         });
     }
     // An OFF-ORIGIN redirect target was refused at the router boundary. It is a server-side
@@ -377,12 +396,13 @@ export interface IsrRegistration
     onError: KitErrorObserver;
 
     /**
-     * The language this request is served in, when the site publishes more than one. It joins
-     * the cache key, because a negotiated page is a different document per language at the same
-     * url, and it is handed to the renderer so a regenerated copy is produced in the language it
-     * is filed under.
+     * What the host decided about this document: the language it is served in, when the site
+     * publishes more than one, and the url prefix it lives under, when the url names its
+     * language. The language joins the cache key, because a negotiated page is a different
+     * document per language at the same url; both are handed to the renderer so a regenerated
+     * copy is produced in the language, and under the prefix, it is filed under.
      */
-    locale?: (request: Request, pathname: string) => string | undefined;
+    document?: (request: Request, pathname: string) => DocumentContext;
 
     /**
      * What a negotiated response varies on, for the caches this one does not key itself.
@@ -462,7 +482,7 @@ function cacheKeyBody(pathname: string, search: string): string
 export function registerIsr(registration: IsrRegistration): void
 {
     const { app, path, revalidate, cache, renderer, shell, seedFile, guarded, onError, buildId } = registration;
-    const localeOf = registration.locale ?? ((): undefined => undefined);
+    const documentOf = registration.document ?? ((): DocumentContext => ({}));
     const varyOf = registration.vary ?? ((): undefined => undefined);
     const stripLocale = registration.strip ?? ((pathname: string): string => pathname);
 
@@ -477,6 +497,7 @@ export function registerIsr(registration: IsrRegistration): void
     const renderOptions = (target: Target, buildValue: string, reasons: unknown[], forward: boolean): NonNullable<Parameters<PageRenderer>[2]> => ({
         handoffMeta: { build: buildValue, at: Date.now() },
         ...(target.locale !== undefined ? { locale: target.locale } : {}),
+        ...(target.base !== undefined ? { base: target.base } : {}),
         onError: (error: unknown): void =>
         {
             reasons.push(error);
@@ -689,7 +710,7 @@ export function registerIsr(registration: IsrRegistration): void
         return pageResponse(result, await shell, {
             'cache-control': 'private, no-store',
             'x-azeroth-cache': 'live'
-        });
+        }, target.base);
     };
 
     /**
@@ -775,6 +796,9 @@ export function registerIsr(registration: IsrRegistration): void
         /** The language this copy is produced in, when the site publishes more than one. */
         locale?: string;
 
+        /** The url prefix this copy lives under, when the url names its language. */
+        base?: string;
+
         /** The RAW pathname plus the raw search - the request exactly as sent. */
         url: string;
 
@@ -799,7 +823,8 @@ export function registerIsr(registration: IsrRegistration): void
     const targetOf = (context: { path: string; url: URL; request: Request }): Target =>
     {
         const search = context.url.search;
-        const locale = localeOf(context.request, context.url.pathname);
+        const document = documentOf(context.request, context.url.pathname);
+        const locale = document.locale;
         const bare = stripLocale(context.url.pathname);
         const artifact = registration.artifactPath(context.url.pathname);
         const queryless = search === '' || search === '?';
@@ -810,7 +835,8 @@ export function registerIsr(registration: IsrRegistration): void
             key: cacheKeyFor(bare, search, locale),
             queryless,
             seedable: queryless && artifact !== null,
-            ...(locale !== undefined ? { locale } : {})
+            ...(locale !== undefined ? { locale } : {}),
+            ...(document.base !== undefined ? { base: document.base } : {})
         };
     };
 
@@ -823,9 +849,26 @@ export function registerIsr(registration: IsrRegistration): void
         const seed = target.seedable && !learned.has(target.pathname) ? await seedFile(target.path, target.locale) : null;
         if (seed !== null)
         {
+            let html: string | undefined;
             try
             {
-                const html = await readFile(seed.path, 'utf8');
+                html = await readFile(seed.path, 'utf8');
+            }
+            catch
+            {
+                // No seed on disk - render live.
+            }
+            if (html !== undefined)
+            {
+                // A prefixed document must carry the base stamp, or the client boots base-less
+                // into the fallback: refused here, before the bytes can enter the cache.
+                if (target.base !== undefined && !carriesBaseStamp(html))
+                {
+                    const error = new Error(`kit: the prerendered file "${ seed.path }" carries no data-azeroth-base stamp, so it was `
+                        + 'built without routing: \'prefix\' - rebuild with prerender({ ..., locales, routing: \'prefix\' }).');
+                    onError(error, { path: target.path, phase: 'render' });
+                    throw error;
+                }
                 const entry: PageEntry = { html, status: 200, createdAt: seed.stats.mtimeMs, build: await buildId };
                 // Re-checked at the write: a stamped discovery can land while the file reads.
                 if (!learned.has(target.pathname))
@@ -833,10 +876,6 @@ export function registerIsr(registration: IsrRegistration): void
                     await writeCache(target.key, entry);
                     return { entry, seeded: true };
                 }
-            }
-            catch
-            {
-                // No seed on disk - render live.
             }
         }
         // This render is SHARED - its html goes into the process-wide page cache - so it must not
@@ -1008,7 +1047,7 @@ export function registerIsr(registration: IsrRegistration): void
                     // pathname is learned by now, so later requests skip flights entirely.
                     return varied(await guardedLive(target, context.request.signal), context.request);
                 }
-                return varied(pageResponse(live, await shell), context.request);
+                return varied(pageResponse(live, await shell, {}, target.base), context.request);
             }
             entry = produced.entry;
             // A prerendered seed IS cache content already on disk; only a live render is a miss.

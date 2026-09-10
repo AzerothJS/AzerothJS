@@ -12,6 +12,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **`setLocale()` took any string and, once a url prefix is in play, would have built a
+  navigation from it.** The tag is now checked before anything is written, in every client
+  mode: alphanumeric segments joined by single hyphens (`en`, `zh-Hant`, `pt-BR`). A malformed
+  one (`''`, `pt_BR`, `/evil.example`, a control character) throws, writes no cookie, touches
+  no attribute and performs no navigation. The same shape is enforced on `locales.supported`
+  and `locales.default` at mount and on the prerender's `locales` at build, and on the render
+  pin itself, so neither `PageRenderOptions.base` nor `RenderToStreamOptions.base` can pin an
+  authority or a scheme onto a page's anchors.
+
 - **A static page whose url a guarded route chain wins was served from its file with no guard
   run.** `mountPages` refuses a static page whose OWN chain is guarded, but a guarded chain
   declared earlier can win the same url in the app's route table - and the file mounts served
@@ -513,6 +522,45 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **Under `locales.routing: 'prefix'` every page hydrated into the app's 404 fallback.** The
+  server stripped the prefix and rendered the right page, but nothing told the client: the
+  browser at `/fa/about` matched no route, refused the loader handoff and rendered "Not found"
+  over the correct markup, every `<Link to="/about">` left the language, and `<Form>` posted
+  to the bare path. The prefix now travels the way the language does: the kit derives it from
+  the url's own first segment, pins the render to it (`PageRenderOptions.base`, held for a
+  streamed response's continuations through `RenderToStreamOptions.base`), stamps
+  `<html data-azeroth-base="/fa">` on every response that lives under a prefix, and a router
+  built with no explicit `base` adopts the stamp on the client and the pin on the server. So
+  `/fa/about` matches `/about` on both sides, the handoff adopts, the SERVED anchors already
+  read `/fa/...`, `<Form>` posts to the page it is on, and `router.href` is the prefixing
+  helper an application had to hand-roll. A router's base also matches its percent-encoded
+  spelling, so `/%66a/about` hydrates like `/fa/about`.
+
+- **A server redirect under a prefix left the language.** A guard or loader redirect, a
+  page action's `redirect('/login')` and the rendererless gate's verdict all wrote the bare
+  target, so the reader was renegotiated into whichever language the headers picked. Every
+  render-derived `Location` (whichever renderer built it, `pageResponse` applies it), the
+  gate's verdict and the action's native 303 are now answered in the request's url space:
+  `/login` becomes `/fa/login`, an external url is untouched, and a relative spelling
+  (`login`, `?page=2`) is left for the browser to resolve against the prefixed request url.
+  A page action's relative target is resolved once against the prefixed request url and sent as
+  a `Location` to a native submit and as the app-space path to the enhanced one, so both land on
+  one url; a relative target that climbs out of the prefix is refused.
+
+- **A prefixed url could be served the unsuffixed prerendered file.** When a page's
+  per-language artifact was missing, both static mounts fell back to `index.html`, which
+  carries no stamp and unprefixed anchors. Under prefix routing a prefixed url now takes the
+  per-language artifact or the live render (or the bare shell), never the unsuffixed file; the
+  fallback stays for a negotiated url, which is what it exists for. A per-language artifact
+  served for a prefixed url must carry the stamp: one that does not (a build that ran without
+  `routing: 'prefix'`) answers 500 and names the file and the option through `onError`, from
+  both static mounts (checked once per file version) and from the ISR seed, before its bytes
+  can enter the cache.
+
+- **`<Link to="/">` under a base rendered `/fa/` while the mount, the locale redirect and the
+  hreflang set named `/fa`.** The root now collapses onto the base itself for every spelling,
+  query and hash included (`/fa`, `/fa?a=1`, `/fa#top`); with no base nothing changes.
+
 - **A regenerated ISR copy lost its language.** The background regeneration handed the renderer
   no locale, so a page cached under a Persian key was refreshed as an English render and served
   from that key until the next refresh - in every routing mode. Every shared render now takes
@@ -674,6 +722,24 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- **`setLocale()` in a document that carries a url prefix is a navigation.** The url names
+  the language there, so the switch writes the cookie and leaves for the sibling document
+  (`/fa/about?q=1` to `/en/about?q=1`, the root to `/en`) instead of relabelling a document
+  whose url still says the other language. Without a prefix it behaves as before.
+
+- **`<Form action>` is joined onto the router's base only when it is an absolute app path.** A
+  relative spelling (`''`, `?page=2`, `subscribe`) and an external url are used verbatim, as
+  the browser resolves them against the document; `/x` becomes `/fa/x` under a prefix and
+  `/app/x` under a configured base, where it was posted unprefixed.
+
+- **`createRouter`'s `base` has a documented default.** Left unset, a router adopts the prefix
+  the served document declares and otherwise has none; `''` or `'/'` opts a secondary router
+  out. A stamp that is not `/` plus one language tag is ignored.
+
+- **The document stamp pass runs on every response.** A shell that already carries
+  `data-azeroth-base` loses it wherever the response derives no base, `lang` and `dir` are
+  rewritten only when a locale exists, and a shell with nothing to strip goes out byte for byte.
+
 - **`.well-known` is servable through `/_image`.** The endpoint had its own dotfile rule without
   the RFC 8615 exemption every other server in the framework applies; with one shared rule it
   serves `/.well-known/...` like the asset handler does. Every other hidden name stays hidden.
@@ -761,6 +827,10 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   have made every client silently reject every handoff.
 
 ### Added
+
+- **`PageRenderOptions.base` and `RenderToStreamOptions.base`.** The url prefix a document
+  lives under, beside `locale`; the kit passes it at every render and the prerender pass under
+  `routing: 'prefix'`, and `createPageRenderer` joins it onto the app path for the app it drives.
 
 - **`PrerenderOptions.routing`** - `'prefix'` makes the prerender pass write each page's
   hreflang set into its artifacts; the default (`'negotiate'`) writes none, because outside

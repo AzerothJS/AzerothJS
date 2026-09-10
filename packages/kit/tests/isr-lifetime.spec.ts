@@ -35,6 +35,7 @@ interface Report
 interface Rig
 {
     app: App;
+    dir: string;
     errors: Report[];
     peek: (key: string) => Promise<PageEntry | undefined>;
     /** Resolves when the next cache write or drop lands. */
@@ -100,6 +101,7 @@ function build(routes: PageRoute[], renderer: Renderer, locales?: { supported: s
     });
     return {
         app,
+        dir,
         errors,
         peek: (key) => inner.get(key),
         drop: (key) => inner.delete(key),
@@ -517,5 +519,66 @@ describe('the hold map at its ceiling', () =>
         await get(app, '/p/a');
         await sleep(15);
         expect(attempts.get('/p/a')).toBe((beforeA as number) + 1);
+    });
+});
+
+describe('an ISR page under prefix routing', () =>
+{
+    const PREFIX = { supported: ['en', 'fa'], routing: 'prefix' as const };
+    const echo = (attempt: number, options?: PageRenderOptions): PageResult =>
+        page(`R${ attempt } LOCALE=${ options?.locale ?? '-' } BASE=${ options?.base ?? '-' }`);
+
+    it('produces and regenerates the copy under its base', async () =>
+    {
+        let renders = 0;
+        const rig = build(
+            [{ path: '/about', component, render: 'static', revalidate: 0.01 }],
+            (_url, _shell, options) => Promise.resolve(echo(++renders, options)),
+            PREFIX
+        );
+        expect(await (await get(rig.app, '/fa/about')).text()).toContain('R1 LOCALE=fa BASE=/fa');
+        await sleep(30);
+        const written = rig.nextWrite();
+        await get(rig.app, '/fa/about');
+        expect(await written).toBe('set');
+        expect(await (await get(rig.app, '/fa/about')).text()).toContain('R2 LOCALE=fa BASE=/fa');
+    });
+
+    it('refuses an unstamped seed before it can enter the cache', async () =>
+    {
+        let renders = 0;
+        const rig = build(
+            [{ path: '/about', component, render: 'static', revalidate: 60 }],
+            (_url, _shell, options) => Promise.resolve(echo(++renders, options)),
+            PREFIX
+        );
+        mkdirSync(join(rig.dir, 'about'), { recursive: true });
+        writeFileSync(join(rig.dir, 'about', 'index.fa.html'), '<html lang="fa"><body>UNSTAMPED SEED</body></html>');
+        const response = await get(rig.app, '/fa/about');
+        expect(response.status).toBe(500);
+        expect(await response.text()).not.toContain('UNSTAMPED');
+        expect(renders).toBe(0);
+        expect(await rig.peek('fa\u0000/about')).toBeUndefined();
+        expect((rig.errors[0]?.error as Error).message).toContain('index.fa.html');
+        expect((rig.errors[0]?.error as Error).message).toContain("routing: 'prefix'");
+        // A stamped seed serves and seeds.
+        writeFileSync(join(rig.dir, 'about', 'index.fa.html'), '<html lang="fa" data-azeroth-base="/fa"><body>STAMPED SEED</body></html>');
+        const seeded = await get(rig.app, '/fa/about');
+        expect(seeded.status).toBe(200);
+        expect(await seeded.text()).toContain('STAMPED SEED');
+        expect(renders).toBe(0);
+    });
+
+    it('a cold page whose loader redirects answers in the request\'s url space and caches nothing', async () =>
+    {
+        const rig = build(
+            [{ path: '/news', component, render: 'static', revalidate: 60 }],
+            () => Promise.resolve({ kind: 'redirect', to: '/login', replace: false }),
+            PREFIX
+        );
+        const response = await get(rig.app, '/fa/news');
+        expect(response.status).toBe(302);
+        expect(response.headers.get('location')).toBe('/fa/login');
+        expect(await rig.peek('fa\u0000/news')).toBeUndefined();
     });
 });

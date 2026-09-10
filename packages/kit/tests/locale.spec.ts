@@ -193,3 +193,40 @@ describe('the language of a served page', () =>
         expect(out).not.toContain('en:late');
     });
 });
+
+describe('the base stamp on a site with no locales', () =>
+{
+    function serveShell(shell: string): App
+    {
+        resetHead();
+        const dir = mkdtempSync(join(tmpdir(), 'az-locale-'));
+        writeFileSync(join(dir, 'index.html'), shell);
+        mkdirSync(join(dir, 'assets'));
+        dirs.push(dir);
+        const routes: PageRoute[] = [
+            { path: '/', component: Page, render: 'server' },
+            { path: '/client', component: Page, render: 'client' }
+        ];
+        const server = new App();
+        mountPages(server, { routes, clientDir: dir, renderer: createPageRenderer((props) => app(routes, props), routes) });
+        return server;
+    }
+    const app = (routes: PageRoute[], props: { url?: string; handoff?: LoaderHandoff }): HTMLElement => RouterProvider({
+        router: createRouter({ routes, history: createMemoryHistory(props.url ?? '/'), initialLoaderData: props.handoff }),
+        children: () => Routes({ fallback: () => h('h1', {}, 'not found') })
+    }) as HTMLElement;
+
+    it('strips a stale stamp and leaves the shell\'s own lang alone, on the render and on the bare shell', async () =>
+    {
+        const server = serveShell('<!doctype html><html lang="en" data-azeroth-base="/de"><head><title>t</title></head><body><div id="root"></div></body></html>');
+        expect(openTag(await get(server, '/'))).toBe('<html lang="en">');
+        expect(openTag(await get(server, '/client'))).toBe('<html lang="en">');
+    });
+
+    it('serves a shell with nothing to strip byte for byte', async () =>
+    {
+        const server = serveShell('<!doctype html><html lang="en" ><head><title>t</title></head><body><div id="root"></div></body></html>');
+        expect(openTag(await get(server, '/'))).toBe('<html lang="en" >');
+        expect(openTag(await get(server, '/client'))).toBe('<html lang="en" >');
+    });
+});
