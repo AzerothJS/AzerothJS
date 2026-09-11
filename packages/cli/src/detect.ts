@@ -63,6 +63,14 @@ export interface FullstackProject
     dir: string;
     app: FrontendProject;
     server: BackendProject;
+
+    /**
+     * What the root manifest's `"azeroth": { "dev": "server" }` field says: 'server' when the
+     * server half serves the pages itself in dev, 'absent' when the manifest does not declare
+     * it, 'no-manifest' when there is no root manifest to read (an --app/--server root, or a
+     * probed root with no package.json).
+     */
+    azeroth: 'server' | 'absent' | 'no-manifest';
 }
 
 /** Not an azeroth project; `reason` says exactly what was looked for and found instead. */
@@ -101,6 +109,9 @@ interface PackageJson
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     scripts?: Record<string, string>;
+
+    /** The framework's own capability block; `dev: 'server'` means the server half serves the pages. */
+    azeroth?: { dev?: 'server' };
 }
 
 /**
@@ -243,6 +254,17 @@ function scanChildren(root: string): string[]
     }
 }
 
+/** The root manifest's declared dev capability; a root without a manifest cannot declare one. */
+function devCapability(root: string): FullstackProject['azeroth']
+{
+    const pkg = readPackage(root);
+    if (pkg === null)
+    {
+        return 'no-manifest';
+    }
+    return pkg.azeroth?.dev === 'server' ? 'server' : 'absent';
+}
+
 function fullstackFrom(root: string, candidates: string[]): FullstackProject | null
 {
     const fronts: FrontendProject[] = [];
@@ -263,7 +285,7 @@ function fullstackFrom(root: string, candidates: string[]): FullstackProject | n
     const server = backs.length === 1 ? backs[0] : undefined;
     if (app !== undefined && server !== undefined)
     {
-        return { kind: 'fullstack', dir: root, app, server };
+        return { kind: 'fullstack', dir: root, app, server, azeroth: devCapability(root) };
     }
     return null;
 }
@@ -294,7 +316,9 @@ export function detectProject(dir: string, overrides: DetectOverrides = { app: n
         {
             return { kind: 'none', dir: root, reason: `--server ${ overrides.server } is not an azeroth backend (${ server.kind === 'none' ? server.reason : `classified as ${ server.kind }` })` };
         }
-        return { kind: 'fullstack', dir: root, app, server };
+        // Halves named on the command line, not read out of a root manifest: there is no
+        // manifest in play here, so the dev capability cannot be declared this way.
+        return { kind: 'fullstack', dir: root, app, server, azeroth: 'no-manifest' };
     }
 
     // A package.json that EXISTS but does not parse is a broken project, not a fullstack

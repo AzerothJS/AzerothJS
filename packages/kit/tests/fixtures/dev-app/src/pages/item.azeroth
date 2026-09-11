@@ -1,0 +1,8 @@
+import { useLoader } from 'azerothjs';
+
+export default component Item()
+{
+    const item = useLoader<string>();
+
+    <main id="item">{ item.data() ?? '' }</main>
+}

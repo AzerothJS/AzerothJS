@@ -1,0 +1,4 @@
+export default component Missing()
+{
+    <main id="missing-page">THE MISSING PAGE</main>
+}

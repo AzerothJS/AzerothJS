@@ -21,10 +21,11 @@ npm install
 npm run dev
 ```
 
-Both halves come up under one banner: the server on **:3000**, vite on **:5173**
-with `/api` proxied to it. Open :5173, sign the guest book, and watch one schema
-validate the same input in the form AND at the server boundary - and the server's
-422 land back in the form's own error shape.
+One process, one origin: **http://127.0.0.1:3000** serves the pages, the API and the
+HMR socket. No :5173 and no proxy - `azeroth dev` starts the server half, and the
+server half runs vite inside itself, behind the same page mount production uses. Open
+it, sign the guest book, and watch one schema validate the same input in the form AND
+at the server boundary - and the server's 422 land back in the form's own error shape.
 
 ---
 
@@ -49,7 +50,7 @@ Everything this template teaches, and the file that teaches it.
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | BOTH halves under one banner: server on :3000, vite on :5173 with `/api` proxied. |
+| `npm run dev` | ONE process on :3000: the API, the pages rendered from source through vite, and HMR. |
 | `npm test` | Both suites: `app.handle()` API tests, then component tests over real DOM. |
 | `npm run check` | Every gate: server `tsc --noEmit` + eslint, client `azeroth-tsc` + eslint. |
 | `npm run build` | Client bundle, the SSR bundle, then the static prerender pass. The server has no build step, by design. |
@@ -79,11 +80,37 @@ server/               the API half - @azerothjs/http, no build step
 
 ## How the halves talk
 
-- **In dev**, vite serves the client and proxies `/api` to the server. The whole
-  wiring is one visible line in `application/vite.config.ts`.
+- **In dev**, one process and one origin. The server half starts vite inside itself
+  (`@azerothjs/kit/dev`) and serves the client from source through the SAME `mountPages`
+  production uses - so a guarded page answers 401 with your blocked UI, a page action
+  answers 303, and streaming, locale negotiation and the CSP nonce behave here the way
+  they will in production.
+- **HMR rides that same server.** Vite is given no socket of its own, so the browser dials
+  the page's own origin. A COMPONENT edit applies in place; a SERVER-half edit restarts the
+  process (`node --watch`), and every open tab reconnects by itself and reloads once it is
+  back.
 - **In production**, the server serves `application/dist` itself and renders
   `render: 'server'` pages from the SSR bundle (`CLIENT_DIR` and `SSR_ENTRY` in
   `server/.env.example`). One origin, one container.
+
+`HOST` in `server/.env` chooses what dev binds: `127.0.0.1` by default, `0.0.0.0` to reach
+the dev server from another device. A dev origin opened under a hostname that is not an IP
+literal or `*.localhost` needs that hostname in `server.allowedHosts` in
+`application/vite.config.ts`: without it the page itself loads while vite answers 403 for
+its own urls - the client script, your modules, the stylesheet - and the 403 body names the
+setting.
+
+One limit, stated because it is invisible otherwise: a plugin in
+`application/vite.config.ts` that mounts its own middleware is not reached in dev. The
+session hands vite its own urls and the files under the application root and its `public/`
+directory; every other request is the app's.
+
+One divergence: a `render: 'static'` page - `/` included, which is ISR in production -
+renders live on every dev request. There is no build output to seed or cache from, so
+`revalidate` and `cache` do nothing here, and the response carries neither the
+`x-azeroth-cache` nor the `age` header production adds. An API route registered at a page's
+own path wins over the page in dev, where a production mount refuses the conflict at
+startup; `@azerothjs/kit`'s README lists the rest.
 
 The API's TYPES cross by relative import (`typeof api` - erased at build, so no
 server code can reach the browser); its runtime half is the served manifest.
@@ -120,7 +147,8 @@ The **Server** tab is the one worth opening here. The server half attaches a bri
 `server/src/main.ts`, and the tab mirrors its reactive graph live: one root per in-flight
 request, the state and effects inside it, and the long-lived stores beside them. That is what
 "every request is a reactive root" looks like from the outside - request isolation across
-`await`, visible rather than asserted.
+`await`, visible rather than asserted. The bridge is same-origin: dev is one server, so the
+panel is pointed at `location.origin` and there is no address to configure.
 
 Both sides are dev-only by construction. The client is behind `import.meta.env.DEV`, which a
 build replaces with `false`, so the branch and its import are eliminated. The server bridge

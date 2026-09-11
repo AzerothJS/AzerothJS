@@ -131,7 +131,39 @@ is piped (CI), output is plain and escape-free end to end. Ctrl+C tears the whol
 down with a one-line farewell.
 
 `--raw` turns the discipline off - verbatim child output, no environment additions - for
-when you are debugging the tools themselves.
+when you are debugging the tools themselves. It adds no `NODE_ENV` either, so an app that
+reads it boots in production mode under `--raw`: declare it yourself in the environment
+(`$env:NODE_ENV='development'` on PowerShell, `NODE_ENV=development azeroth dev --raw` on a
+POSIX shell). On a root that declares the dev capability below, the server half is the only
+step, so without that variable the scaffold prints its `no SSR bundle on disk` line and
+node's watcher sits waiting for a file change.
+
+### One process, one origin
+
+A fullstack root whose `package.json` declares the capability:
+
+```json
+"azeroth": { "dev": "server" }
+```
+
+runs the server half **alone**. That half serves the pages, the api and vite's HMR socket on one
+origin, with vite living inside the process - the same `mountPages` route table and renderer
+production uses, fed by vite instead of by a build. The conductor drops the web step and says so
+above the frame, which then carries one url:
+
+```
+  ! the web step is dropped: the server half serves the pages and vite runs inside it, one origin
+  api │ 12:27:06 ● listening · http://127.0.0.1:3000 · env=development
+
+  ✓ Ready in 1.9 s
+    api  http://127.0.0.1:3000
+```
+
+No second port, no proxy, nothing to keep in sync. The plan still checks that vite is installed -
+the session loads the copy `@azerothjs/kit` resolves - so a missing vite is a plan error rather
+than a page that fails at the first request. Without the field the conductor keeps both halves,
+and halves named with `--app <dir> --server <dir>` cannot opt in: there is no root manifest to
+read, and the plan's notes say that too.
 
 ---
 
@@ -143,6 +175,17 @@ missing `@types/node` (the TS2591 flood), a stale editor extension against the i
 compiler, a stale `.azeroth/types` mirror, `@azerothjs/*` version skew across a fullstack
 app's halves, and `shell: true` spawns in project scripts (the Windows argument-splitting
 trap). Diagnosis only - doctor never mutates anything.
+
+Two more cover the one-process dev session above:
+
+- **dev capability** - the root declares `"azeroth": { "dev": "server" }`, so the server half has
+  to create the session. An entry that never imports `@azerothjs/kit/dev` warns (a session
+  factored out into a module the entry imports is fine, which is why it warns rather than fails).
+- **dev vite** - the copy of vite the session will actually load, resolved the way node resolves
+  it for `@azerothjs/kit` rather than by walking up from a half, reported by path and version
+  beside both halves' declared ranges. It warns on a major other than 8, on ranges that disagree
+  between the halves, and on a server half that declares no vite while the root declares the
+  capability.
 
 ---
 

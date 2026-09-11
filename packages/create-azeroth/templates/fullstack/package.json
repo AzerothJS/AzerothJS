@@ -10,6 +10,9 @@
         "application",
         "server"
     ],
+    "azeroth": {
+        "dev": "server"
+    },
     "scripts": {
         "dev": "azeroth dev",
         "check": "azeroth check",

@@ -7,7 +7,6 @@
         "node": ">=24"
     },
     "scripts": {
-        "dev": "azeroth dev",
         "check": "azeroth check",
         "test": "vitest run",
         "start": "node --import ./src/deploy-env.ts src/main.ts"
@@ -31,6 +30,7 @@
         "jiti": "^2.7.0",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.64.0",
+        "vite": "^8.1.5",
         "vitest": "^4.1.9"
     }
 }

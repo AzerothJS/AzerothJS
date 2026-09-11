@@ -46,6 +46,16 @@
             "import": "./dist/prerender.js",
             "default": "./dist/prerender.js"
         },
+        "./dev": {
+            "types": "./dist/dev/index.d.ts",
+            "import": "./dist/dev/index.js",
+            "default": "./dist/dev/index.js"
+        },
+        "./dev/entry": {
+            "types": "./dist/dev/entry.d.ts",
+            "import": "./dist/dev/entry.js",
+            "default": "./dist/dev/entry.js"
+        },
         "./package.json": "./package.json"
     },
     "bin": {

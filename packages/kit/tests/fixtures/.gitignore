@@ -1,0 +1,3 @@
+# Per-arm copies of dev-app the dev spec writes and removes; inside the repo so a temp root
+# still resolves `azerothjs` and `@azerothjs/compiler` the way the fixture does.
+dev-tmp/

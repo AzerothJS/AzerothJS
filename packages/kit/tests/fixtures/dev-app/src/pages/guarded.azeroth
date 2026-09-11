@@ -1,0 +1,4 @@
+export default component Guarded()
+{
+    <main id="guarded">THE PROTECTED PAGE</main>
+}

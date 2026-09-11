@@ -14,18 +14,9 @@ export default defineConfig({
         noExternal: true,
         external: ['azerothjs']
     },
-    server:
-    {
-        // Declared, not inherited: the README and the devtools bridge URL name these ports.
-        port: 5173,
-        proxy:
-        {
-            // The whole dev wiring to the server half; in production the server itself
-            // serves the built client (one origin) - see server/src/app.ts.
-            '/api': 'http://localhost:3000',
-            '/_image': 'http://localhost:3000'
-        }
-    },
+    // Nothing declares a dev server here: `azeroth dev` runs vite inside the API process
+    // through @azerothjs/kit, which owns the port and the HMR socket. Plugins, `resolve`,
+    // `css`, `define` and the rest of this file are read by that session as they are.
     test:
     {
         environment: 'happy-dom'

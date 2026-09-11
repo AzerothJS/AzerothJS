@@ -69,7 +69,7 @@ export default component Home()
             </div>
             <Switch>
                 <Match when={ status === 'idle' }>
-                    <p class="text-faint text-[0.9rem] mt-3">The server half answers under /api - proxied in dev, same origin in production.</p>
+                    <p class="text-faint text-[0.9rem] mt-3">The server half answers under /api - one origin, in dev and in production.</p>
                 </Match>
                 <Match when={ status === 'checking' }>
                     <p class="text-faint text-[0.9rem] mt-3">Asking the server...</p>
@@ -78,7 +78,7 @@ export default component Home()
                     <p class="font-mono text-ice text-[0.9rem] mt-3">200 ok - { latency } ms round trip</p>
                 </Match>
                 <Match when={ status === 'down' }>
-                    <p class="text-danger text-[0.9rem] mt-3">No answer. <code class="font-mono">npm run dev</code> from the project root starts both halves.</p>
+                    <p class="text-danger text-[0.9rem] mt-3">No answer. <code class="font-mono">npm run dev</code> from the project root starts the app.</p>
                 </Match>
             </Switch>
         </div>

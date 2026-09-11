@@ -1,0 +1,4 @@
+export default component Forbidden()
+{
+    <main id="forbidden">THE FORBIDDEN PAGE</main>
+}

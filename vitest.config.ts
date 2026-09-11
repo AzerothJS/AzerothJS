@@ -22,6 +22,8 @@ const alias = readdirSync(packagesDir)
         // must resolve before the bare package name grabs it.
         for (const [sub, file] of [
             ['api/shared', 'api/shared-entry.ts'],
+            ['dev/entry', 'dev/entry.ts'],
+            ['dev', 'dev/index.ts'],
             ['language-service', 'language-service/index.ts'],
             ['ssr', 'ssr.ts'],
             ['client', 'client.ts'],
@@ -71,6 +73,46 @@ export default defineConfig({
         testTimeout: 15000,
         hookTimeout: 15000,
         clearMocks: true,
-        restoreMocks: true
+        restoreMocks: true,
+        // Two projects, because ONE spec needs the opposite of the alias table above. The dev
+        // session hands its fixture to a real vite, and vite loads `azerothjs` from
+        // node_modules - so the spec must bind that same installed (BUILT) package, or the
+        // session and the render hold two instances of the runtime. Every `@azerothjs/*` alias
+        // stays on `src` in both projects.
+        projects: [
+            {
+                extends: true,
+                test:
+                {
+                    name: 'unit',
+                    // An `exclude` entry replaces vitest's defaults, deliberately: the root
+                    // `include` already scopes discovery to `packages/*/tests/**/*.spec.ts`.
+                    exclude: ['**/node_modules/**', 'packages/kit/tests/dev.spec.ts']
+                }
+            },
+            {
+                // A BARE entry: `extends: true` inherits everything and cannot SUBTRACT an
+                // inherited alias, which is the one thing this project exists to do.
+                resolve:
+                {
+                    alias: alias.filter((entry) => entry.find !== 'azerothjs' && !entry.find.startsWith('azerothjs/'))
+                },
+                test:
+                {
+                    name: 'dev',
+                    globals: true,
+                    environment: 'node',
+                    include: ['packages/kit/tests/dev.spec.ts'],
+                    testTimeout: 15000,
+                    hookTimeout: 15000,
+                    clearMocks: true,
+                    restoreMocks: true,
+                    // A REGEX, not a bare string: the id vitest sees for a symlinked workspace
+                    // package carries no `node_modules` segment, so a bare name never matches
+                    // and `azerothjs` would be inlined into this project instead.
+                    server: { deps: { external: [/[\\/]packages[\\/]azerothjs[\\/]/] } }
+                }
+            }
+        ]
     }
 });

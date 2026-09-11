@@ -47,6 +47,16 @@ export interface Step
     waitForFile: string | null;
 }
 
+/**
+ * One human note about the plan. `warn` is for a note the developer has to see in the live
+ * dev frame (a step the plan deliberately dropped); `info` is the rest.
+ */
+export interface PlanNote
+{
+    level: 'info' | 'warn';
+    text: string;
+}
+
 /** What one command will run: the ordered steps plus the human notes explaining any gaps. */
 export interface Plan
 {
@@ -54,7 +64,7 @@ export interface Plan
     steps: Step[];
 
     /** Human notes printed before execution - skipped gates, "no build step needed", etc. */
-    notes: string[];
+    notes: PlanNote[];
 }
 
 /** A plan could not be assembled (a required tool is not installed). Exit code 1 territory. */
@@ -73,7 +83,10 @@ const ESLINT = 'eslint/bin/eslint.js';
 const AZEROTH_TSC = '@azerothjs/language-server/dist/tsc-cli.js';
 const VITEST = 'vitest/vitest.mjs';
 const KIT_PRERENDER = '@azerothjs/kit/dist/prerender-cli.js';
-const KIT_SSR_ENTRY = 'src/entry.server.ts';
+
+/** The application's server entry, relative to its root - the same name `@azerothjs/kit/dev/entry` owns. */
+export const KIT_SSR_ENTRY = 'src/entry.server.ts';
+
 const ESLINT_CONFIGS = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts', 'eslint.config.mts'];
 
 /**
@@ -150,6 +163,10 @@ function devWebStep(app: FrontendProject, label: string): Step
  * The dev conductor's plan: watchers for every half the shape has, in start order
  * (a built backend's tsc first, its node --watch gated on the first emit, vite last).
  *
+ * A fullstack root whose manifest declares `"azeroth": { "dev": "server" }` runs the server
+ * half ALONE: that half serves the pages, the api and HMR on one origin, with vite inside it.
+ * The dropped web step is a warn note, never a silent subtraction.
+ *
  * @throws PlanError when a required tool (vite, tsc) is not installed in the project.
  */
 export function planDev(project: FrontendProject | BackendProject | FullstackProject): Plan
@@ -157,25 +174,46 @@ export function planDev(project: FrontendProject | BackendProject | FullstackPro
     switch (project.kind)
     {
         case 'frontend':
-            return { command: 'dev', steps: [devWebStep(project, 'web')], notes: ['frontend project: this is vite, verbatim'] };
+            return { command: 'dev', steps: [devWebStep(project, 'web')], notes: [{ level: 'info', text: 'frontend project: this is vite, verbatim' }] };
         case 'backend':
             return {
                 command: 'dev',
                 steps: devServerSteps(project, 'api'),
-                notes: project.build === 'native'
-                    ? ['native backend: node runs the TypeScript source directly']
-                    : ['built backend (decorators): tsc watches, node --watch follows the emitted output']
+                notes: [{
+                    level: 'info',
+                    text: project.build === 'native'
+                        ? 'native backend: node runs the TypeScript source directly'
+                        : 'built backend (decorators): tsc watches, node --watch follows the emitted output'
+                }]
             };
         case 'fullstack':
+        {
+            if (project.azeroth === 'server')
+            {
+                // A presence check, not a resolution the plan uses: the session loads the copy
+                // @azerothjs/kit resolves, which in a workspace is the hoisted one this finds.
+                need(project.server.dir, VITE, 'vite (the dev session loads the copy @azerothjs/kit resolves)');
+                return {
+                    command: 'dev',
+                    steps: devServerSteps(project.server, 'api'),
+                    notes: [{ level: 'warn', text: 'the web step is dropped: the server half serves the pages and vite runs inside it, one origin' }]
+                };
+            }
+            const notes: PlanNote[] = [];
+            if (project.azeroth === 'no-manifest')
+            {
+                notes.push({ level: 'info', text: 'no root manifest declares "azeroth": { "dev": "server" }, so the web step stays (halves resolved through --app/--server cannot declare it)' });
+            }
             return {
                 command: 'dev',
                 steps: [...devServerSteps(project.server, 'api'), devWebStep(project.app, 'web')],
-                notes: []
+                notes
             };
+        }
     }
 }
 
-function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', notes: string[]): Step[]
+function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', notes: PlanNote[]): Step[]
 {
     const steps: Step[] = [];
     if (shape === 'frontend')
@@ -187,7 +225,7 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
         }
         else
         {
-            notes.push(`${ label }: azeroth-tsc not installed (add @azerothjs/language-server as a devDependency) - typecheck skipped`);
+            notes.push({ level: 'info', text: `${ label }: azeroth-tsc not installed (add @azerothjs/language-server as a devDependency) - typecheck skipped` });
         }
     }
     else
@@ -199,7 +237,7 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
         }
         else
         {
-            notes.push(`${ label }: typescript not installed - typecheck skipped`);
+            notes.push({ level: 'info', text: `${ label }: typescript not installed - typecheck skipped` });
         }
     }
 
@@ -211,7 +249,7 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
     }
     else if (hasEslintConfig)
     {
-        notes.push(`${ label }: eslint.config.* exists but eslint is not installed - lint skipped`);
+        notes.push({ level: 'info', text: `${ label }: eslint.config.* exists but eslint is not installed - lint skipped` });
     }
     return steps;
 }
@@ -219,13 +257,13 @@ function checkSteps(dir: string, label: string, shape: 'frontend' | 'backend', n
 /** One `vitest run` per half that has vitest installed; a half without it is a note, not a failure. */
 export function planTest(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
-    const notes: string[] = [];
+    const notes: PlanNote[] = [];
     const testStep = (dir: string, label: string): Step[] =>
     {
         const vitest = resolveTool(dir, VITEST);
         if (vitest === null)
         {
-            notes.push(`${ label }: vitest not installed - tests skipped`);
+            notes.push({ level: 'info', text: `${ label }: vitest not installed - tests skipped` });
             return [];
         }
         return [step({ label: `${ label } test`, cwd: dir, script: vitest, args: ['run'], longRunning: false })];
@@ -253,7 +291,7 @@ export function planTest(project: FrontendProject | BackendProject | FullstackPr
  */
 export function planCheck(project: FrontendProject | BackendProject | FullstackProject): Plan
 {
-    const notes: string[] = [];
+    const notes: PlanNote[] = [];
     switch (project.kind)
     {
         case 'frontend':
@@ -285,7 +323,7 @@ export function planBuild(project: FrontendProject | BackendProject | FullstackP
     {
         case 'frontend':
         {
-            const notes: string[] = [];
+            const notes: PlanNote[] = [];
             return { command: 'build', steps: webBuildSteps(project.dir, 'web', notes), notes };
         }
         case 'backend':
@@ -311,7 +349,7 @@ export function planBuild(project: FrontendProject | BackendProject | FullstackP
  * build is followed by the SSR bundle and the static prerender pass - the kit's
  * three-step production build under the one `azeroth build` the templates wire.
  */
-function webBuildSteps(dir: string, label: string, notes: string[]): Step[]
+function webBuildSteps(dir: string, label: string, notes: PlanNote[]): Step[]
 {
     const vite = need(dir, VITE, 'vite');
     const client = step({ label, cwd: dir, script: vite, args: ['build'], longRunning: false });
@@ -322,7 +360,7 @@ function webBuildSteps(dir: string, label: string, notes: string[]): Step[]
     const prerender = resolveTool(dir, KIT_PRERENDER);
     if (prerender === null)
     {
-        notes.push(`${ label }: ${ KIT_SSR_ENTRY } found but @azerothjs/kit is not installed - skipping the SSR build and prerender pass`);
+        notes.push({ level: 'info', text: `${ label }: ${ KIT_SSR_ENTRY } found but @azerothjs/kit is not installed - skipping the SSR build and prerender pass` });
         return [client];
     }
     return [
@@ -339,7 +377,7 @@ function buildServerPlan(server: BackendProject): Plan
         return {
             command: 'build',
             steps: [],
-            notes: ['api: no build step - Node >= 24 runs the TypeScript source natively; deploy src/ as-is']
+            notes: [{ level: 'info', text: 'api: no build step - Node >= 24 runs the TypeScript source natively; deploy src/ as-is' }]
         };
     }
     const tsc = need(server.dir, TSC, 'typescript');

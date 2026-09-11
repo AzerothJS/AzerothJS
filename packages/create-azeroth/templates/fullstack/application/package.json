@@ -7,7 +7,6 @@
         "node": ">=22"
     },
     "scripts": {
-        "dev": "azeroth dev",
         "check": "azeroth check",
         "build": "azeroth build",
         "test": "vitest run"

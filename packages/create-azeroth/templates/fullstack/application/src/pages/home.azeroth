@@ -63,7 +63,7 @@ export default component Home()
             </div>
             <Switch>
                 <Match when={ status === 'idle' }>
-                    <p class="muted">The server half answers under /api - proxied in dev, same origin in production.</p>
+                    <p class="muted">The server half answers under /api - one origin, in dev and in production.</p>
                 </Match>
                 <Match when={ status === 'checking' }>
                     <p class="muted">Asking the server...</p>
@@ -72,7 +72,7 @@ export default component Home()
                     <p class="ok">200 ok - { latency } ms round trip</p>
                 </Match>
                 <Match when={ status === 'down' }>
-                    <p class="error">No answer. <code>npm run dev</code> from the project root starts both halves.</p>
+                    <p class="error">No answer. <code>npm run dev</code> from the project root starts the app.</p>
                 </Match>
             </Switch>
         </div>

@@ -1,6 +1,6 @@
 import { App, csrfProtect, json, type CsrfOptions, type ErrorObserver, type RequestObserver } from '@azerothjs/http';
 import { feature, manifestOf, register } from '@azerothjs/http/api';
-import { imageHandler, mountPages, type KitOptions } from '@azerothjs/kit';
+import { mountPages, type KitOptions } from '@azerothjs/kit';
 import { array } from '@azerothjs/schema';
 import { entry, entryInput, type Entry } from './schemas.ts';
 
@@ -58,31 +58,31 @@ export interface AppOptions
     observe?: RequestObserver;
     onError?: ErrorObserver;
 
-    /** The built client + SSR renderer (production); omit in dev - vite serves the client. */
+    /** The built client + SSR renderer. Without it the app is API-only, which the tests use. */
     pages?: KitOptions;
 }
 
-export function buildApp(options: AppOptions): App
+/** Every API route of this app, registered once. The dev session and `buildApp` share it. */
+export function registerApi(app: App): void
 {
-    const app = new App({ dev: options.dev, observe: options.observe, onError: options.onError });
-
     app.get('/api/healthz', () => json({ ok: true, at: new Date().toISOString() }));
 
     register(app, api);
 
     // The typed client's runtime half, projected from the SAME declaration register installed.
     app.get('/api/_manifest', () => json(manifestOf(api)));
+}
+
+export function buildApp(options: AppOptions): App
+{
+    const app = new App({ dev: options.dev, observe: options.observe, onError: options.onError });
+
+    registerApi(app);
 
     // Mounted LAST so nothing shadows /api; the kit serves each page by its `render` mode.
     if (options.pages !== undefined)
     {
         mountPages(app, options.pages);
-    }
-    else
-    {
-        // Dev: vite serves the client and proxies /_image here, so <Image optimize> works
-        // in both modes. Production gets the endpoint through mountPages' `images` option.
-        app.get('/_image', imageHandler({ root: '../application/public' }));
     }
 
     return app;

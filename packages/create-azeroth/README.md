@@ -68,7 +68,7 @@ npm create azeroth@latest my-app -- --template fullstack --tailwind
 | --- | --- |
 | `frontend` | A vite app in `.azeroth` components: the compiler plugin wired, eslint with the azeroth rules, `azeroth-tsc` as the typecheck gate. |
 | `backend` | An `@azerothjs/http` server with **no build step** - Node >= 24 runs the TypeScript source directly, and `azeroth dev` is `node --watch`. |
-| `fullstack` | `application/` + `server/` as npm workspaces under one root; one `npm run dev` runs both halves under one banner, with the vite proxy line in plain sight in `vite.config.ts`. |
+| `fullstack` | `application/` + `server/` as npm workspaces under one root; `npm run dev` is ONE process on ONE origin - the server half runs vite inside itself, so dev serves every page through the same mount production does. |
 
 Every template ships the [`azeroth`](https://www.npmjs.com/package/@azerothjs/cli) verbs
 as its scripts - `dev`, `check`, `build`, `test` - and nothing else to configure. The

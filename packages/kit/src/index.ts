@@ -116,14 +116,11 @@ export interface PageActionContext
     url: URL;
 }
 
-/** The routes, client dist, and optional renderer {@link mountPages} needs. */
-export interface KitOptions
+/** Everything {@link mountPages} needs except the client it serves. */
+export interface KitOptionsBase
 {
     /** The route table - the same one the client router mounts. */
     routes: PageRoute[];
-
-    /** The built client directory (vite's dist: assets, index.html shell, prerendered pages). */
-    clientDir: string;
 
     /**
      * The per-url page renderer from the SSR bundle -
@@ -140,7 +137,10 @@ export interface KitOptions
      */
     manifest?: Manifest;
 
-    /** Where ISR pages live (default: one in-process {@link MemoryPageCache} per mount). */
+    /**
+     * Where ISR pages live (default: one in-process {@link MemoryPageCache} per mount). Ignored
+     * under `shell`, where a revalidating page renders live for every request.
+     */
     cache?: PageCache;
 
     /**
@@ -209,6 +209,40 @@ export interface KitOptions
      * installs.
      */
     csrf?: CsrfOptions;
+}
+
+/**
+ * The options {@link mountPages} takes: the base plus EXACTLY ONE client - the built directory
+ * a production mount serves, or the shell text a dev session hands over instead. Neither and
+ * both are compile errors for a typed caller and a mount-time throw for an untyped one.
+ */
+export type KitOptions = KitOptionsBase & (
+    {
+        /** The built client directory (vite's dist: assets, index.html shell, prerendered pages). */
+        clientDir: string;
+        shell?: never;
+    }
+    | {
+        /**
+         * The shell html TEXT to serve instead of a built client. Nothing is read from disk, so
+         * there are no assets, no prerendered files, no images and no page cache: every page
+         * renders live through the renderer, or answers this text when there is none.
+         */
+        shell: string;
+        clientDir?: never;
+    });
+
+/**
+ * @internal The built client directory. `clientDir` is optional in the type, so every read goes
+ * through here and the compiler enumerates them; under `shell` each of those paths is skipped.
+ */
+function clientDirOf(options: KitOptions): string
+{
+    if (options.clientDir === undefined)
+    {
+        throw new Error('clientDir is not set under shell');
+    }
+    return options.clientDir;
 }
 
 /**
@@ -361,12 +395,22 @@ function loadShell(clientDir: string): Promise<string>
  */
 export function mountPages(app: App, options: KitOptions): void
 {
+    // The type says exactly one client; an untyped caller hears it here, rather than through a
+    // missing-file error naming a directory that is `undefined`.
+    if ((options.clientDir === undefined) === (options.shell === undefined))
+    {
+        throw new Error('kit mountPages: pass exactly one of clientDir (the built client directory) and shell '
+            + `(the shell html text) - got ${ options.clientDir === undefined ? 'neither' : 'both' }.`);
+    }
+
     // ONE splice point: the manifest rides the shell text, so every serving path -
     // the plain shell, and SSR output (the renderer builds from this same shell) -
     // carries it without any per-request work. Prerendered files were written at
     // build time without a server and keep the fetch fallback.
     const manifest = options.manifest;
-    const rawShellPromise = loadShell(options.clientDir);
+    // Under `shell` the client is the given text and nothing is read from disk.
+    const shellText = options.shell;
+    const rawShellPromise = shellText === undefined ? loadShell(clientDirOf(options)) : Promise.resolve(shellText);
     const shellPromise = manifest === undefined
         ? rawShellPromise
         : rawShellPromise.then((shell) => shell.replace('</head>', () => `${ manifestScript(manifest) }</head>`));
@@ -392,7 +436,9 @@ export function mountPages(app: App, options: KitOptions): void
     }
 
     const report = observerFor(options);
-    const assets = staticFiles(options.clientDir);
+    // `staticFiles` resolves its root when it is built, so under `shell` it is not built at all:
+    // its two consumers (the catch-all and the enumerated-static branch) each take the other arm.
+    const assets: Handler | undefined = shellText === undefined ? staticFiles(clientDirOf(options)) : undefined;
     const defaultMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
     // Under prefix routing a served per-language artifact must carry the base stamp, or the
     // client boots base-less into the fallback. Checked once per file version (the strong ETag
@@ -412,7 +458,7 @@ export function mountPages(app: App, options: KitOptions): void
         {
             try
             {
-                const found = await containedFile(options.clientDir, file);
+                const found = await containedFile(clientDirOf(options), file);
                 ok = found !== null && await headCarriesStamp(found.path);
             }
             catch (error)
@@ -431,7 +477,7 @@ export function mountPages(app: App, options: KitOptions): void
     // The prerendered artifact for a page in one language, under the same containment rule
     // the asset handler applies: a dist whose junction points outside itself seeds nothing.
     const seedFile = (path: string, locale?: string): Promise<ContainedFile | null> =>
-        containedFile(options.clientDir, prerenderFileFor(path, locale));
+        containedFile(clientDirOf(options), prerenderFileFor(path, locale));
     let isrCache: PageCache | undefined;
 
     // In prefix mode a page exists once per language and the bare path redirects to the
@@ -485,6 +531,17 @@ export function mountPages(app: App, options: KitOptions): void
                 throw new Error(`kit mountPages: "${ page.path }" sets revalidate but no renderer was provided - `
                     + 'ISR regenerates through the SSR bundle\'s renderer.');
             }
+            if (shellText !== undefined)
+            {
+                // Nothing to cache against and no seed file to serve: the page renders live,
+                // through the renderer the checks above proved is there. `cache` is ignored.
+                for (const mounted of mountPaths(page.path))
+                {
+                    registerDynamic(app, mounted, defaultMode, options, shellPromise, buildIdPromise);
+                }
+                registerLocaleRedirect(app, page.path, options);
+                continue;
+            }
             isrCache ??= options.cache ?? new MemoryPageCache();
             for (const mounted of mountPaths(page.path))
             {
@@ -512,11 +569,22 @@ export function mountPages(app: App, options: KitOptions): void
         {
             if (mode === 'static' && !page.path.includes('*'))
             {
-                // An enumerated static page: try the prerendered file for the matched
-                // params first, live-render anything the enumeration did not list.
-                for (const mounted of mountPaths(page.path))
+                if (assets === undefined)
                 {
-                    registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise, stamped);
+                    // No enumerated files exist under `shell`, so every param set renders live.
+                    for (const mounted of mountPaths(page.path))
+                    {
+                        registerDynamic(app, mounted, defaultMode, options, shellPromise, buildIdPromise);
+                    }
+                }
+                else
+                {
+                    // An enumerated static page: try the prerendered file for the matched
+                    // params first, live-render anything the enumeration did not list.
+                    for (const mounted of mountPaths(page.path))
+                    {
+                        registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise, stamped);
+                    }
                 }
                 registerLocaleRedirect(app, page.path, options);
             }
@@ -534,19 +602,30 @@ export function mountPages(app: App, options: KitOptions): void
         }
         if (mode === 'static')
         {
+            if (shellText !== undefined)
+            {
+                // No prerendered file and no directory to look in: the page renders live, or the
+                // shell answers. The localized handlers are skipped whole, construction included.
+                for (const mounted of mountPaths(page.path))
+                {
+                    registerDynamic(app, mounted, defaultMode, options, shellPromise, buildIdPromise);
+                }
+                registerLocaleRedirect(app, page.path, options);
+                continue;
+            }
             const plain = prerenderFileFor(page.path);
             const localized = localesOf(options);
             if (localized.length === 0)
             {
-                app.get(page.path, gated(staticFiles(options.clientDir, { index: plain, param: '__none' }), options, shellPromise, buildIdPromise));
+                app.get(page.path, gated(staticFiles(clientDirOf(options), { index: plain, param: '__none' }), options, shellPromise, buildIdPromise));
             }
             else
             {
                 // One handler that picks this reader's file, falling back to the unsuffixed one
                 // so a build that predates the locale config still serves.
                 const servers = new Map<string, Handler>(localized.map((tag) =>
-                    [tag, staticFiles(options.clientDir, { index: prerenderFileFor(page.path, tag), param: '__none' })]));
-                const fallback = staticFiles(options.clientDir, { index: plain, param: '__none' });
+                    [tag, staticFiles(clientDirOf(options), { index: prerenderFileFor(page.path, tag), param: '__none' })]));
+                const fallback = staticFiles(clientDirOf(options), { index: plain, param: '__none' });
                 const staticHandler = async (context: RequestContext): Promise<Response> =>
                 {
                     const prefixed = splitLocalePath(context.url.pathname, options).locale !== undefined;
@@ -601,8 +680,13 @@ export function mountPages(app: App, options: KitOptions): void
 
     if (options.images !== undefined)
     {
+        if (shellText !== undefined)
+        {
+            throw new Error('kit mountPages: images needs a built client - omit it under shell and register '
+                + '/_image on the server');
+        }
         app.get('/_image', imageHandler({
-            root: options.clientDir,
+            root: clientDirOf(options),
             onError: report,
             ...(options.images === true ? {} : options.images)
         }));
@@ -610,10 +694,13 @@ export function mountPages(app: App, options: KitOptions): void
 
     // Vite's hashed build output is immutable by construction - the second mount
     // StaticOptions documents, with the headers the hashes earn.
-    const assetsDir = join(options.clientDir, 'assets');
-    if (existsSync(assetsDir))
+    if (shellText === undefined)
     {
-        app.get('/assets/*path', staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' }));
+        const assetsDir = join(clientDirOf(options), 'assets');
+        if (existsSync(assetsDir))
+        {
+            app.get('/assets/*path', staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' }));
+        }
     }
 
     // Everything else is an asset (favicons, prerendered files, public/ copies) - or, when no
@@ -625,15 +712,26 @@ export function mountPages(app: App, options: KitOptions): void
     // fetch() still gets the JSON its caller can read.
     app.get('/*path', async (context) =>
     {
-        try
+        if (assets === undefined)
         {
-            return await assets(context);
-        }
-        catch (error)
-        {
-            if (!(error instanceof NotFoundError) || !acceptsHtml(context.request))
+            // Under `shell` there is no file to try, so only a navigation has an answer here.
+            if (!acceptsHtml(context.request))
             {
-                throw error;
+                throw new NotFoundError();
+            }
+        }
+        else
+        {
+            try
+            {
+                return await assets(context);
+            }
+            catch (error)
+            {
+                if (!(error instanceof NotFoundError) || !acceptsHtml(context.request))
+                {
+                    throw error;
+                }
             }
         }
         return renderOrShell(context, defaultMode, options, await shellPromise, buildIdPromise, 404);

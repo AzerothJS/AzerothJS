@@ -1,0 +1,4 @@
+export default component Read()
+{
+    <main id="read">READ ONLY PAGE</main>
+}

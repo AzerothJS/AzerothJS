@@ -1,0 +1,8 @@
+import { useLoader } from 'azerothjs';
+
+export default component Fresh()
+{
+    const reading = useLoader<string>();
+
+    <main id="fresh">{ reading.data() ?? '' }</main>
+}

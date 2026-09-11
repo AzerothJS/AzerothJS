@@ -194,3 +194,51 @@ describe('the fullstack root probe', () =>
         expect(project.kind === 'none' ? project.reason : '').toContain('together');
     });
 });
+
+describe('the declared dev capability', () =>
+{
+    function halves(dir: string): void
+    {
+        write(dir, 'application/package.json', packageJson({ azerothjs: '^2.1.0' }));
+        write(dir, 'application/vite.config.ts', 'export default {}');
+        write(dir, 'server/package.json', packageJson({ '@azerothjs/http': '^2.1.0' }));
+        write(dir, 'server/src/main.ts', '');
+    }
+
+    function capabilityOf(dir: string, overrides?: { app: string; server: string }): string
+    {
+        const project = overrides === undefined ? detectProject(dir) : detectProject(dir, overrides);
+        return project.kind === 'fullstack' ? project.azeroth : `not fullstack: ${ project.kind }`;
+    }
+
+    it('a root manifest declaring "azeroth": { "dev": "server" } reaches the project as server', () =>
+    {
+        const dir = root();
+        halves(dir);
+        write(dir, 'package.json', packageJson({}, { azeroth: { dev: 'server' } }));
+        expect(capabilityOf(dir)).toBe('server');
+    });
+
+    it('a root manifest without the field is absent - the conductor keeps both halves', () =>
+    {
+        const dir = root();
+        halves(dir);
+        write(dir, 'package.json', packageJson({}, { workspaces: ['application', 'server'] }));
+        expect(capabilityOf(dir)).toBe('absent');
+    });
+
+    it('a root with no manifest at all has none to read', () =>
+    {
+        const dir = root();
+        halves(dir);
+        expect(capabilityOf(dir)).toBe('no-manifest');
+    });
+
+    it('halves given with --app/--server cannot opt in, whatever a manifest beside them says', () =>
+    {
+        const dir = root();
+        halves(dir);
+        write(dir, 'package.json', packageJson({}, { azeroth: { dev: 'server' } }));
+        expect(capabilityOf(dir, { app: 'application', server: 'server' })).toBe('no-manifest');
+    });
+});

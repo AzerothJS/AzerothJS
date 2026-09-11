@@ -1,0 +1,24 @@
+// The fixture's shell: one Routes carrying the fallback an unrouted navigation renders and the
+// blocked UI a guarded page renders.
+import { RouterProvider, Routes, createMemoryHistory, createRouter } from 'azerothjs';
+import type { LoaderHandoff } from 'azerothjs';
+import { routes } from './routes.ts';
+
+export default component App(props: { url?: string; handoff?: LoaderHandoff })
+{
+    const router = createRouter
+    ({
+        routes,
+        history: props.url !== undefined ? createMemoryHistory(props.url) : undefined,
+        initialLoaderData: props.handoff
+    });
+
+    <RouterProvider router={ router }>
+        <div id="app">
+            <Routes
+                fallback={ () => <h1 id="missing">NOT FOUND</h1> }
+                blocked={ (state: { status: number }) => <h1 id="blocked">NO ACCESS { state.status }</h1> }
+            />
+        </div>
+    </RouterProvider>
+}

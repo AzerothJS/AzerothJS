@@ -161,7 +161,12 @@ describe('options: overlays compose over the base', () =>
         scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'full-styled', '^1.0.0', ['tailwind']);
         expect(readFileSync(join(dir, 'application/src/styles.css'), 'utf8')).toContain("@import 'tailwindcss'");
         expect(readFileSync(join(dir, 'application/src/App.azeroth'), 'utf8')).toContain('handoff');
-        expect(readFileSync(join(dir, 'application/vite.config.ts'), 'utf8')).toContain("'/api': 'http://localhost:3000'");
+        // The overlay replaces vite.config.ts wholesale, so the SSR seam has to be restated
+        // there: `noExternal: true` would inline azerothjs into the server bundle, and the
+        // process must hold ONE instance of it.
+        const config = readFileSync(join(dir, 'application/vite.config.ts'), 'utf8');
+        expect(config).toContain('noExternal: true');
+        expect(config).toContain("external: ['azerothjs']");
         const pkg = JSON.parse(readFileSync(join(dir, 'application/package.json'), 'utf8')) as { devDependencies: Record<string, string> };
         expect(pkg.devDependencies['@tailwindcss/vite']).toBe('^4.0.0');
         expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain('Tailwind CSS (applied)');
@@ -231,10 +236,12 @@ describe('options: overlays compose over the base', () =>
 
     it('an overlay vite config keeps what the base one declared', () =>
     {
-        // A tailwind overlay REPLACES vite.config.ts wholesale rather than merging, so
-        // anything the base config declares has to be restated there. The dev port is the
-        // canary: the README names it and the fullstack devtools bridge is written against
-        // it, so an overlay that dropped it would move the app out from under both.
+        // A tailwind overlay REPLACES vite.config.ts wholesale rather than merging, so each
+        // shape's canary has to be restated there. A frontend app is served by vite itself,
+        // so the dev port the README names must survive. A fullstack app is served by its
+        // server half, which runs vite inside its own process: that config must declare no
+        // dev server at all - a leftover proxy, port or hmr setting is either dead or a
+        // startup refusal.
         const combos: Array<[template: 'frontend' | 'fullstack', options: Array<'router' | 'tailwind'>, config: string]> = [
             ['frontend', [], 'vite.config.ts'],
             ['frontend', ['tailwind'], 'vite.config.ts'],
@@ -247,10 +254,15 @@ describe('options: overlays compose over the base', () =>
             const dir = target();
             scaffold(TEMPLATES_ROOT, template, dir, 'ports', '^1.0.0', options);
             const text = readFileSync(join(dir, config), 'utf8');
-            expect(text, `${ template } ${ options.join('+') || '(base)' }`).toContain('port: 5173');
+            const where = `${ template } ${ options.join('+') || '(base)' }`;
             if (template === 'fullstack')
             {
-                expect(text, `${ template } ${ options.join('+') || '(base)' }`).toContain("'/api': 'http://localhost:3000'");
+                expect(text, where).not.toMatch(/^\s*server\s*:/m);
+                expect(text, where).not.toContain('proxy');
+            }
+            else
+            {
+                expect(text, where).toContain('port: 5173');
             }
         }
     });
@@ -295,6 +307,22 @@ describe('closed loop: each template detects as the shape it claims', () =>
             scaffold(TEMPLATES_ROOT, template, dir, 'scripts-check', '^1.0.0');
             const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
             expect(pkg.scripts['dev'], template).toBe('azeroth dev');
+        }
+    });
+
+    it('the fullstack root declares that its server half serves the client in dev', () =>
+    {
+        // `azeroth dev` drops its separate vite step only for a root that DECLARES the
+        // capability. Without the field the plan keeps two steps and starts a vite whose
+        // proxy to the api this template no longer carries, so every /api call answers
+        // vite's html fallback instead.
+        const flavours: Array<Array<'tailwind'>> = [[], ['tailwind']];
+        for (const options of flavours)
+        {
+            const dir = target();
+            scaffold(TEMPLATES_ROOT, 'fullstack', dir, 'capable', '^1.0.0', options);
+            const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { azeroth?: { dev?: string } };
+            expect(pkg.azeroth?.dev, options.join('+') || '(base)').toBe('server');
         }
     });
 });

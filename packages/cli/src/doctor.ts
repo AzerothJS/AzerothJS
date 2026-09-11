@@ -16,9 +16,10 @@
  * only 'fail' results make the exit code non-zero.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { allDeps, readPackage, type BackendProject, type FrontendProject, type Project } from './detect.ts';
 import { resolveTool } from './plan.ts';
@@ -36,6 +37,10 @@ export interface DoctorResult
 
 const DECORATOR_PACKAGES = ['typeorm', '@mikro-orm/core'];
 const SUPPORTED_VITE_MAJORS = [7, 8];
+// The one-process dev session is written and measured against vite 8, and refuses any other
+// major at startup - so here the mismatch is a warning, not a surprise at the first request.
+const DEV_SESSION_VITE_MAJOR = 8;
+const KIT_DEV_MODULE = '@azerothjs/kit/dev';
 // The zero-build backend runs TypeScript source directly (`node src/main.ts`), which needs
 // unflagged native type-stripping: Node 22.18+ (backported), 23.6+, or 24+. The published
 // packages themselves run on Node 22+ as compiled JS; this floor is the DEV-run requirement.
@@ -61,22 +66,24 @@ function tsconfigText(dir: string): string
     }
 }
 
-function installedVersion(fromDir: string, packageName: string): string | null
+/** The `version` field of one package.json, by path. */
+function versionAt(manifestPath: string): string | null
 {
-    const packageJson = resolveTool(fromDir, `${ packageName }/package.json`);
-    if (packageJson === null)
-    {
-        return null;
-    }
     try
     {
-        const parsed = JSON.parse(readFileSync(packageJson, 'utf8')) as { version?: string };
+        const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: string };
         return parsed.version ?? null;
     }
     catch
     {
         return null;
     }
+}
+
+function installedVersion(fromDir: string, packageName: string): string | null
+{
+    const packageJson = resolveTool(fromDir, `${ packageName }/package.json`);
+    return packageJson === null ? null : versionAt(packageJson);
 }
 
 function checkNodeVersion(needsBackendNode: boolean): DoctorResult
@@ -291,6 +298,103 @@ function checkViteRange(app: FrontendProject): DoctorResult
 }
 
 /**
+ * The root declares `"azeroth": { "dev": "server" }`, so `azeroth dev` runs the server half
+ * alone and that half has to create the dev session. A session factored out of the entry into
+ * a module it imports is legitimate, which is why an entry without the import warns.
+ */
+function checkDevCapability(project: Project): DoctorResult
+{
+    if (project.kind !== 'fullstack')
+    {
+        return { name: 'dev capability', status: 'skip', detail: 'root only - the capability is declared by the fullstack root manifest' };
+    }
+    if (project.azeroth !== 'server')
+    {
+        return { name: 'dev capability', status: 'skip', detail: 'the root manifest does not declare "azeroth": { "dev": "server" }' };
+    }
+    let source: string;
+    try
+    {
+        source = readFileSync(join(project.server.dir, project.server.entry), 'utf8');
+    }
+    catch
+    {
+        source = '';
+    }
+    if (source.includes(KIT_DEV_MODULE))
+    {
+        return { name: 'dev capability', status: 'ok', detail: `${ project.server.entry } imports ${ KIT_DEV_MODULE }` };
+    }
+    return {
+        name: 'dev capability',
+        status: 'warn',
+        detail: `the root declares "azeroth": { "dev": "server" } but ${ project.server.entry } never imports ${ KIT_DEV_MODULE } - the conductor drops the web step, so nothing would serve the pages (fine if a module the entry imports creates the session)`
+    };
+}
+
+/** The vite range a half declares, either side of its manifest; null when it declares none. */
+function declaredVite(dir: string): string | null
+{
+    const pkg = readPackage(dir);
+    return pkg === null ? null : allDeps(pkg).vite ?? null;
+}
+
+/**
+ * The copy of vite the dev session will actually load: node resolves it from the REAL
+ * directory of the `@azerothjs/kit` the server half sees, which is a different answer from a
+ * lexical node_modules walk whenever an ancestor holds its own vite.
+ */
+function checkDevVite(project: Project): DoctorResult
+{
+    if (project.kind !== 'fullstack')
+    {
+        return { name: 'dev vite', status: 'skip', detail: 'root only - the dev session loads vite through the server half' };
+    }
+    let kitManifest: string;
+    try
+    {
+        kitManifest = createRequire(join(project.server.dir, 'package.json')).resolve('@azerothjs/kit/package.json');
+    }
+    catch
+    {
+        return { name: 'dev vite', status: 'skip', detail: '@azerothjs/kit does not resolve from the server half - nothing would load vite' };
+    }
+    let viteManifest: string;
+    try
+    {
+        viteManifest = createRequire(realpathSync.native(kitManifest)).resolve('vite/package.json');
+    }
+    catch
+    {
+        return { name: 'dev vite', status: 'skip', detail: `vite does not resolve from ${ dirname(kitManifest) } - the dev session has none to load` };
+    }
+    const version = versionAt(viteManifest);
+    const appRange = declaredVite(project.app.dir);
+    const serverRange = declaredVite(project.server.dir);
+    const report = `${ version === null ? 'unreadable version' : `v${ version }` } at ${ dirname(viteManifest) }`
+        + ` (declared: app ${ appRange ?? 'none' }, server ${ serverRange ?? 'none' })`;
+
+    const problems: string[] = [];
+    if (Number(version?.split('.')[0] ?? '0') !== DEV_SESSION_VITE_MAJOR)
+    {
+        problems.push(`the dev session is written against vite ${ DEV_SESSION_VITE_MAJOR } and refuses any other major at startup`);
+    }
+    if (appRange !== null && serverRange !== null && appRange !== serverRange)
+    {
+        problems.push('the halves declare different vite ranges - one install hoists one copy, and the session loads whichever it is');
+    }
+    if (serverRange === null && project.azeroth === 'server')
+    {
+        problems.push('the server half declares no vite, yet it runs the dev session - add vite to its devDependencies at the range the app declares');
+    }
+    if (problems.length === 0)
+    {
+        return { name: 'dev vite', status: 'ok', detail: report };
+    }
+    return { name: 'dev vite', status: 'warn', detail: `${ report } - ${ problems.join('; ') }` };
+}
+
+/**
  * `shell: true` inside ONE spawn call's options - the two facts have to meet at the same
  * call site. Testing them separately flagged any file that so much as named the hazard in a
  * prose comment while spawning safely, and missed a real one in a file whose spawn call this
@@ -379,6 +483,11 @@ export function runDoctor(project: Project): DoctorResult[]
     if (project.kind === 'fullstack')
     {
         results.push(checkVersionSkew(project.app, project.server));
+    }
+    if (project.kind !== 'library' && project.kind !== 'none')
+    {
+        results.push(checkDevCapability(project));
+        results.push(checkDevVite(project));
     }
     if (project.kind === 'library' || project.kind === 'none')
     {

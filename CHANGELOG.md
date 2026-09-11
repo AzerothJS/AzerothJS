@@ -10,6 +10,107 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Added
+
+- **`@azerothjs/kit/dev` - development runs the same page mount production does.**
+  `devPages({ root, entry, pages, routes, app })` creates a vite server in middleware mode over
+  the application half, loads the SSR entry from SOURCE, and mounts the pages with `mountPages`:
+  the same call, the same route table, the same renderer. It returns a `DevSession` - `app` (the
+  `App` a pipeline wraps), `before` (the connect middleware `serve` takes), `attach(server)` and
+  `close()` - and the entry module keeps the two exports everything else already reads, `routes`
+  and `renderPage`. The session reloads that entry, re-reads `index.html` and re-mounts the pages
+  on the first request after a change; a first build that fails answers an html navigation with a
+  readable error page naming the file, the line and the frame, and every other request with the
+  app's own error envelope, while a LATER failure keeps the previous build serving and prints one
+  line saying so. The process never exits for an application error.
+
+  `attach(served.server)` is the part with no second socket in it. Vite is handed a relay it never
+  listens on, so the HMR client dials the page's own origin and the app's own server forwards the
+  upgrade: no port to bind, none to collide with, and a tab survives the server process restarting
+  under `node --watch` - it reconnects and reloads itself, which an HMR port that moves per restart
+  cannot do. A misconfiguration that vite itself reports nothing about is refused at startup naming
+  the setting and the config file: `server.proxy`, a `base` other than `/`, `server.watch: null`,
+  and `port`, `clientPort` or `host` under `server.ws` or its deprecated `server.hmr` spelling.
+  The kit declares NOTHING about vite - no dependency, and no peer, optional or otherwise - so the
+  copy the app itself installs is the one loaded, and a production image built with
+  `npm ci --omit=dev` carries none.
+
+- **`@azerothjs/kit/dev/entry`, a vite-free module exporting `SSR_SOURCE_ENTRY`.** One name for
+  the SSR entry as it exists in source (`src/entry.server.ts`), importable by anything that must
+  not pull vite in. The CLI's plan exports the constant it had kept private and the plan suite
+  pins the two equal, so the build step and the dev session can no longer drift apart.
+
+- **`KitOptions.shell`** - the document html as TEXT, in place of `clientDir`, for a mount with no
+  built client on disk. Every page mounts and renders as it does in production, minus what only a
+  build can provide: static pages render live, the asset and `/assets` handlers are not registered,
+  `/index.html` is the app's own 404, `cache` is ignored, and `images` is a mount error naming the
+  fix (register `/_image` on the server). Mount-time validation is unchanged and runs against the
+  mode the route DECLARES, so a static page with an `action` and a static page under a guarded
+  chain are the same refusals they are in production.
+
+- **A declared dev capability, `"azeroth": { "dev": "server" }` in a fullstack root.** With it
+  `azeroth dev` plans ONE step - the server half, which now serves the client itself - instead of
+  a server step plus a vite step; a root resolved through `--app`/`--server` overrides cannot opt
+  in, and the plan says so. `azeroth doctor` gains two checks: whether the declared capability is
+  actually backed by an `@azerothjs/kit/dev` import in the server entry (a warning, since a session
+  factored into another module is legitimate), and which copy of vite the session will really load,
+  reported with its version beside both halves' declared ranges.
+
+### Changed
+
+- **`KitOptions` is a union: exactly one of `clientDir` and `shell`.** Neither and both are now a
+  compile error for a typed caller and a mount-time throw for an untyped one, which two plain
+  optionals could not do - both bad cases compiled silently. A literal mount is unchanged, in
+  behaviour and in types. It IS a breaking type change for a helper shaped as
+  `Partial<KitOptions>` or spread into a mount: such a helper takes
+  `Partial<Omit<KitOptions, 'clientDir' | 'shell'>>` instead (three in-repo test helpers did).
+
+- **`Plan.notes` carries a level beside each note.** The element type is no longer a bare string,
+  which a reader of the exported `Plan` sees. The conductor renders a warning note inside the live
+  frame where it will be read, and `--print` and `--raw` keep today's dim single-line form.
+
+- **`plan.ts` exports `KIT_SSR_ENTRY`.** It was module-private while the kit published the same
+  path under its own name; exporting it is what lets the suite assert the two are one string.
+
+- **A scaffolded fullstack app develops in ONE process, on ONE origin.** `npm run dev` starts the
+  server half on `:3000`; the server half runs vite inside itself and serves every page through
+  the same mount it uses in production. There is no `:5173`, no proxy block in
+  `application/vite.config.ts`, and no second HMR port - HMR rides the app's own server, a
+  component edit applies in place, and a server-half edit restarts the process and the open tab
+  reconnects and reloads itself. `HOST` joins `server/.env.example` (`127.0.0.1` by default,
+  `0.0.0.0` to reach dev from another device), the halves' own `dev` scripts are gone (the root is
+  the one entry point), and the server half declares `vite` as a devDependency at the
+  application's exact range, so the production image still installs none.
+
+  An existing app adopts it by hand, and the list is short: extract `registerApi(app)` out of
+  `buildApp` and drop the `/_image` route and the `pages`-undefined arm from `app.ts`; in
+  `main.ts` build the session in the dev branch (with `/_image` in its `routes` callback), wrap
+  `session.app` in the pipeline, pass `before: session.before` and the dev-only `hostname` to the
+  one `serve` call, call `session.attach(served.server)` after it and `session.close()` from the
+  shutdown handler; delete the `server` block from `application/vite.config.ts`; add the capability
+  field to the root manifest - without it dev silently keeps two steps - and `vite` to the server
+  half; add `HOST` to `.env.example`; point `installDevtools` at `location.origin`; and `Omit` the
+  two keys in any helper that spreads a `Partial<KitOptions>` into a mount.
+
+### Fixed
+
+- **`azeroth dev` served a different application from the one you deploy.** On a fullstack scaffold
+  vite owned the browser's origin and proxied only `/api` to the server, so every page came back as
+  the bare client shell: a guarded page answered 200 where production answers 401, a url no route
+  matches answered 200 where production answers 404, and a page action posted to vite - which knows
+  nothing about it - and got an empty 404 back, which the form then parsed as the action's own
+  answer. Found in a user's dev log, on the template this repository ships. Nothing the page mount
+  owns existed in development: guards as status, page actions, locale negotiation, ISR, prerendered
+  pages, hreflang, streaming SSR, the CSP nonce and the api manifest splice were all things you
+  could only see after a build and a deploy.
+
+  Dev now runs that same mount, over the same route table and the same renderer, fed by vite inside
+  the server's own process. The divergences that remain are listed rather than discovered: static
+  pages render live, the per-request data cache is per request ROOT, a routed page with no `action`
+  answers `Allow: GET, HEAD, POST` where production answers `GET, HEAD`, `/index.html` is the
+  app's 404, and an api route registered at a page's own path wins over the page where a
+  production mount refuses the conflict at startup.
+
 ### Security
 
 - **`setLocale()` took any string and, once a url prefix is in play, would have built a

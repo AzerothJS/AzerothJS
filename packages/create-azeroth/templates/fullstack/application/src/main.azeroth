@@ -16,7 +16,8 @@ if (import.meta.env.DEV)
     try
     {
         const { installDevtools } = await import('@azerothjs/devtools');
-        installDevtools({ server: 'http://localhost:3000' });
+        // The bridge is same-origin: in dev one server carries the pages, the api and this socket.
+        installDevtools({ server: location.origin });
     }
     catch (error)
     {

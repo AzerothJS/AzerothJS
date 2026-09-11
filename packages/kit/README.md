@@ -98,6 +98,84 @@ That is the entire integration. `mountPages` registers each page in its mode plu
 
 ---
 
+## Development - `@azerothjs/kit/dev`
+
+`devPages` is that same mount, over the same route table and the same renderer, fed by vite
+instead of by a build. One process and one origin: your API, your pages and the HMR socket all
+answer on the server you already run, so dev serves the page contract production serves -
+guards as status, page actions, locale negotiation, ISR, streaming, the CSP nonce and the
+manifest splice included.
+
+```ts
+import { devPages } from '@azerothjs/kit/dev';
+import { SSR_SOURCE_ENTRY } from '@azerothjs/kit/dev/entry';
+
+const session = await devPages({
+    root: appRoot,                      // the application half - vite's root and its config
+    entry: SSR_SOURCE_ENTRY,            // 'src/entry.server.ts', loaded from source
+    pages: { manifest, csrf },          // KitOptions without routes, renderer, shell, clientDir
+    routes: (app) => registerApi(app),  // your api routes, registered once
+    app: { dev: true, observe, onError }
+});
+
+const served = await serve(pipeline(session.app, requestId()), { before: session.before });
+session.attach(served.server);          // the HMR socket rides this server
+// session.close() from your shutdown handler
+```
+
+The entry module exports `routes` and `renderPage` - the two names the prerender bin and a
+production mount already read - and the session reloads it, re-reads `index.html`, re-runs
+`transformIndexHtml` over it and re-mounts the pages on the first request after a change. The
+mount runs with `shell` (that transformed html) in place of `clientDir`, which is the one thing
+`mountPages` needs different without a built client. A first build that fails answers an html
+navigation with a readable dev error page naming the file, the line and the frame, and every
+other request with the app's own error envelope; a LATER failure keeps the previous build
+serving and prints one line saying so. `serverAnchor` names the module the single-instance check
+resolves `azerothjs` from (it defaults to the kit's own). `npm create azeroth@latest` wires all
+of this into the fullstack template's `server/src/main.ts`.
+
+**HMR rides your server.** Vite is given no socket of its own, so the client dials the page's
+own origin: no second port to bind, nothing to collide with, and a tab survives the server's own
+restart - it reconnects and reloads itself. `attach(server)` subscribes one `'upgrade'` listener
+and an upgrade nobody claims still answers 404, so a WebSocket endpoint and the devtools bridge
+coexist on the same server (give `attachWebSockets` its own `path`).
+
+**Refused at startup, loudly, rather than failing silently later**: a `server.proxy` (the session
+IS that seam), a `base` other than `/`, `server.watch: null` (no watcher exists at all, so nothing
+would ever rebuild - `false` is a real watcher and is fine), and `port`, `clientPort` or `host`
+under `server.ws` or its deprecated `server.hmr` spelling - each pins a socket target into the
+page that nothing listens on, or that only one machine can reach, and vite warns about none of
+them. A `server.ws.path` is honoured, and every other vite setting is yours.
+One reach is missing by construction: a plugin that mounts its OWN middleware is not seen, since
+only vite's own urls and the files under the root and `publicDir` are handed to it.
+
+Vite's host check still guards vite's own urls. Under a hostname that is not an IP literal or
+`*.localhost`, put it in `server.allowedHosts` or the page loads from your server while vite
+answers 403 for the client script, your modules and the stylesheet.
+
+**Divergences from production, all of them:**
+
+- `render: 'static'` pages render live - there is no build to serve a file from - and a
+  `revalidate` page re-renders per request rather than serving a cached copy. `cache` is ignored.
+- `images` is a mount error: it needs a built client. Register `/_image` yourself, in the
+  `routes` callback, with `imageHandler({ root: 'application/public' })`.
+- The per-request data cache is per request ROOT, so one `cached()` key read by an api route and
+  again by a page render fetches twice.
+- The seam registers GET and POST catch-alls, so a routed page with no `action` answers
+  `Allow: GET, HEAD, POST` where production answers `GET, HEAD`.
+- `/index.html` answers your app's 404; production serves the built shell.
+- An api route registered at a page's own path (in the `routes` callback) wins over the page,
+  silently: the api routes live on the outer App and the pages behind its catch-all, where a
+  production mount registers both on one App and refuses the conflict at startup.
+
+The kit declares nothing about vite - no dependency, and no peer, optional or otherwise - so
+`import('vite')` loads the copy your own app installs and a production image built with
+`npm ci --omit=dev` carries none. Declare vite in the half that runs the session, as a
+devDependency, at the same range the application declares; the session refuses a loaded vite
+whose major is not 8, naming the path and the version it found.
+
+---
+
 ## Prerendering
 
 ```sh

@@ -61,7 +61,7 @@ function streamingRig(
         fetcher?: () => void;
         signals?: AbortSignal[];
         guard?: Route['guard'];
-        kit?: Partial<Parameters<typeof mountPages>[1]>;
+        kit?: Partial<Omit<Parameters<typeof mountPages>[1], 'clientDir' | 'shell'>>;
     } = {}
 ): App
 {

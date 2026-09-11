@@ -22,6 +22,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig([
         '**/.azeroth/**',
         '.claude/worktrees/**',
         'packages/typescript-plugin/tests/fixtures/**',
+        'packages/kit/tests/fixtures/**',
         'packages/create-azeroth/templates/**',
         'packages/create-azeroth/overlays/**'
     ]),

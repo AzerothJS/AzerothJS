@@ -1,0 +1,4 @@
+export default component About()
+{
+    <main id="about">ABOUT PAGE</main>
+}

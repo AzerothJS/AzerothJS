@@ -1,14 +1,18 @@
-import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { csrfCookie, pipeline, requestId, securityHeaders, rateLimit, logRequests, loadConfig, num, oneOf, str } from '@azerothjs/http';
+import type { ErrorObserver } from '@azerothjs/http';
 import { serve, handleShutdownSignals } from '@azerothjs/http/node';
+import { imageHandler } from '@azerothjs/kit';
 import type { PageRenderer, PageRoute } from '@azerothjs/kit';
+import { SSR_SOURCE_ENTRY } from '@azerothjs/kit/dev/entry';
 import { createLogger, teeSink, terminalSink } from '@azerothjs/logger';
 import { fileSink } from '@azerothjs/logger/node';
 
 import { manifestOf } from '@azerothjs/http/api';
 
-import { api, buildApp, csrf } from './app.ts';
+import { api, buildApp, csrf, registerApi } from './app.ts';
 
 try
 {
@@ -36,23 +40,51 @@ const log = createLogger({
     fields: { service: '{{name}}-server' }
 });
 
-// Dev: vite serves the client and proxies /api here. Production: this server serves the
-// whole app from one origin; the self-contained SSR bundle carries routes + renderer.
+// Production mode with nothing built is the one way the import below dies as a bare missing
+// module; say what it means while there is still a logger to say it with.
+if (isProduction && !existsSync(config.ssrEntry))
+{
+    log.error('no SSR bundle on disk - run `azeroth build` first, or start the dev session with `azeroth dev`', { ssrEntry: config.ssrEntry, env: config.env });
+}
+
+// Production: the self-contained SSR bundle carries routes + renderer. Dev builds nothing -
+// the session below loads the same two exports from source, through vite.
 const ssr = isProduction
     ? await import(pathToFileURL(config.ssrEntry).href) as { routes: PageRoute[]; renderPage: PageRenderer }
     : undefined;
 
-const app = buildApp({
-    dev: !isProduction,
-    observe: logRequests(log),
-    onError: (error, mapped) =>
+const dev = !isProduction;
+const observe = logRequests(log);
+const onError: ErrorObserver = (error, mapped) =>
+{
+    if (mapped.status >= 500)
     {
-        if (mapped.status >= 500)
-        {
-            log.error('unhandled error', { status: mapped.status, error });
-        }
+        log.error('unhandled error', { status: mapped.status, error });
+    }
+};
+
+// Dev: the kit owns a vite session inside THIS process, so one origin serves the pages, the
+// api and the HMR socket - no second port, no proxy. The import is dynamic because vite is a
+// dev dependency the production image never installs.
+const kitDev = dev ? await import('@azerothjs/kit/dev') : undefined;
+const session = await kitDev?.devPages({
+    root: fileURLToPath(new URL('../../application/', import.meta.url)),
+    entry: SSR_SOURCE_ENTRY,
+    pages: { manifest: manifestOf(api), csrf },
+    routes: (app) =>
+    {
+        // The dev-only image endpoint beside the api; production gets it from `images: true`.
+        app.get('/_image', imageHandler({ root: '../application/public' }));
+        registerApi(app);
     },
-    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api), images: true }
+    app: { dev, observe, onError }
+});
+
+const app = session?.app ?? buildApp({
+    dev,
+    observe,
+    onError,
+    pages: ssr === undefined ? undefined : { routes: ssr.routes, clientDir: config.clientDir, renderer: ssr.renderPage, manifest: manifestOf(api), images: true, csrf }
 });
 
 const handler = pipeline(
@@ -64,8 +96,16 @@ const handler = pipeline(
     rateLimit({ limit: 200, windowMs: 60_000 })
 );
 
-const served = await serve(handler, { port: config.port });
-handleShutdownSignals(served);
+const served = await serve(handler, {
+    port: config.port,
+    before: session?.before,
+    // Dev binds IPv4 loopback, because `localhost` resolves to ::1 first on some platforms;
+    // HOST=0.0.0.0 opens it to the LAN. Production keeps the adapter's own bind.
+    hostname: isProduction ? undefined : (process.env.HOST ?? '127.0.0.1')
+});
+// The HMR socket rides this server: vite was never given one of its own.
+session?.attach(served.server);
+handleShutdownSignals(served, { beforeExit: () => session?.close() });
 
 // The devtools bridge exposes live server state, so it attaches only under a LITERAL
 // NODE_ENV=development (the raw variable - config.env is defaulted and would enable it

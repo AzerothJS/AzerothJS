@@ -75,6 +75,8 @@
             "@azerothjs/kit/ssr": ["./packages/kit/src/ssr.ts"],
             "@azerothjs/kit/prerender": ["./packages/kit/src/prerender.ts"],
             "@azerothjs/kit/client": ["./packages/kit/src/client.ts"],
+            "@azerothjs/kit/dev": ["./packages/kit/src/dev/index.ts"],
+            "@azerothjs/kit/dev/entry": ["./packages/kit/src/dev/entry.ts"],
             "@azerothjs/http/api": ["./packages/http/src/api/index.ts"],
             "@azerothjs/http/api/shared": ["./packages/http/src/api/shared-entry.ts"],
             "@azerothjs/compiler":
@@ -117,6 +119,9 @@
         "node_modules",
         "dist",
         "packages/*/dist",
+        // A whole application the dev session drives through vite: .azeroth sources, a broken
+        // entry on purpose, and a vite config resolved from the fixture's own root.
+        "packages/kit/tests/fixtures/**",
         // CommonJS tsserver plugin (`export = init`), bundled by its own esbuild
         // step, not tsc - it cannot be type-checked under `module: ESNext`.
         "packages/typescript-plugin"

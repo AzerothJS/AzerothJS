@@ -121,7 +121,7 @@ const view = (props: { url?: string; handoff?: LoaderHandoff }): HTMLElement =>
         })
     }) as HTMLElement;
 
-function serve(extra: Partial<KitOptions> = {}): App
+function serve(extra: Partial<Omit<KitOptions, 'clientDir' | 'shell'>> = {}): App
 {
     const app = new App();
     app.use((context) =>
@@ -351,7 +351,7 @@ describe('the url spelling cannot separate a write from its guards', () =>
         ...extra
     });
 
-    function rig(table: PageRoute[], extra: Partial<KitOptions> = {}): App
+    function rig(table: PageRoute[], extra: Partial<Omit<KitOptions, 'clientDir' | 'shell'>> = {}): App
     {
         written.length = 0;
         const app = new App();

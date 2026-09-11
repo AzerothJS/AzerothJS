@@ -215,7 +215,8 @@ describe('planTest', () =>
             writeFileSync(join(bare, 'package.json'), '{}');
             const plan = planTest({ kind: 'backend', dir: bare, build: 'native' } as Parameters<typeof planTest>[0]);
             expect(plan.steps).toEqual([]);
-            expect(plan.notes[0]).toContain('vitest not installed');
+            expect(plan.notes[0]?.level).toBe('info');
+            expect(plan.notes[0]?.text).toContain('vitest not installed');
         }
         finally
         {

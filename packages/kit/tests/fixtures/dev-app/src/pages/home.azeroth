@@ -1,0 +1,4 @@
+export default component Home()
+{
+    <main id="home">HOME PAGE</main>
+}

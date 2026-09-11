@@ -32,7 +32,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { formatStep, type Plan, type Step } from './plan.ts';
 import { classifyStep, serverUrl, transformLine, tscReport, viteUrl } from './lines.ts';
-import { badge, cross, dim, mark, print, printError, readyFrame, stdoutPaint, stepHeading, success, childPresentationEnv, write } from './terminal.ts';
+import { badge, cross, dim, mark, print, printError, readyFrame, statusMark, stdoutPaint, stepHeading, success, childPresentationEnv, write } from './terminal.ts';
 
 function argvOf(step: Step): string[]
 {
@@ -55,7 +55,7 @@ export function printNotes(plan: Plan): void
 {
     for (const note of plan.notes)
     {
-        print(dim(`  ${ note }`));
+        print(dim(`  ${ note.text }`));
     }
 }
 
@@ -292,6 +292,16 @@ export async function runDev(plan: Plan, options: DevOptions = {}): Promise<numb
         families.push(family);
         return families.length - 1;
     };
+
+    // A warn note is a step the plan dropped, so it belongs in the live frame rather than in
+    // --print alone; the two-space gutter is badge()'s, so it lines up with the streams below.
+    if (!raw)
+    {
+        for (const note of plan.notes.filter((entry) => entry.level === 'warn'))
+        {
+            print(`  ${ statusMark('warn') } ${ note.text }`);
+        }
+    }
 
     print();
     for (const step of plan.steps)

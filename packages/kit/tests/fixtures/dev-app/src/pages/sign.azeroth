@@ -1,0 +1,14 @@
+import { Form, useLoader } from 'azerothjs';
+
+export default component Sign()
+{
+    const entries = useLoader<string[]>();
+
+    <main id="sign">
+        <Form>
+            <input name="text" value=""/>
+            <button type="submit">Sign</button>
+        </Form>
+        <p id="signed">{ (entries.data() ?? []).join(',') }</p>
+    </main>
+}
