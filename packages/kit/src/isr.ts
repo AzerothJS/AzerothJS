@@ -15,6 +15,11 @@
  * entry instead, so a guard is never masked by a year-old page. Prerendered files seed
  * the cache through their mtime, so a deploy's build output counts as a warm cache.
  *
+ * A write marks the page it lands on: a page action that redirects to a cached page, and
+ * {@link revalidate} for a write that changes what another page shows, stamp a process-wide
+ * ledger, and the next reader of any copy of that page renders fresh instead of adopting one
+ * made before the write.
+ *
  * A GUARDED chain never touches any of it. A guard makes the render a function of (URL,
  * request identity), so a guarded URL is gated ahead of the cache read, the seed, and the
  * in-flight map: it renders per request and answers `private, no-store`. Own-chain guards
@@ -478,6 +483,84 @@ function cacheKeyBody(pathname: string, search: string): string
     return canonical === '' ? pathname : `${ pathname }?${ canonical }`;
 }
 
+/**
+ * Pages marked for a fresh render, by app-space pathname, stamped with the moment of the mark.
+ *
+ * PROCESS-WIDE, which is what lets a write reach it with no handle: a page action marks the page
+ * it sends the visitor to, an api route calls {@link revalidate}, and every mount in the process
+ * sees it. One stamp covers every key of the page - both slash spellings, every query variant,
+ * every language - because the unit of invalidation is the page, never the cache key. Bounded
+ * oldest-out, and a re-mark is deleted first so the page it names is the newest entry rather
+ * than the oldest.
+ */
+const pageMarks = new Map<string, number>();
+const MARK_CEILING = 4096;
+
+/** An escape of one of these decodes to the character; every other escape keeps its hex, uppercased. */
+const UNRESERVED = /^[A-Za-z0-9._~-]$/;
+
+/**
+ * The one spelling a page is marked and looked up under: `target` resolved against `from`, in
+ * the wire spelling the URL parser writes (percent-encoded), every escape folded to one case
+ * and an escaped unreserved character decoded, with trailing slashes dropped except at the
+ * root. A relative target is resolved, so `../book` posted at `/shop/checkout` names `/book`;
+ * a language prefix is never part of it.
+ */
+export function pagePathOf(target: string, from: string): string
+{
+    const pathname = new URL(target, `http://x${ from }`).pathname.replace(/%[0-9a-fA-F]{2}/g, (escape) =>
+    {
+        const character = String.fromCharCode(parseInt(escape.slice(1), 16));
+        return UNRESERVED.test(character) ? character : escape.toUpperCase();
+    });
+    // Trimmed one character at a time: a regex on a path made of slashes backtracks quadratically.
+    let end = pathname.length;
+    while (end > 1 && pathname[end - 1] === '/')
+    {
+        end--;
+    }
+    return pathname.slice(0, end);
+}
+
+/** Stamps a page: every copy of it produced before this moment is old. */
+export function mark(pathname: string): void
+{
+    const page = pagePathOf(pathname, '/');
+    pageMarks.delete(page);
+    if (pageMarks.size >= MARK_CEILING)
+    {
+        const oldest = pageMarks.keys().next();
+        if (oldest.done === false)
+        {
+            pageMarks.delete(oldest.value);
+        }
+    }
+    pageMarks.set(page, Date.now());
+}
+
+/** When this page was last marked, or undefined when it never was. */
+export function markedAt(pathname: string): number | undefined
+{
+    return pageMarks.get(pagePathOf(pathname, '/'));
+}
+
+/**
+ * Marks a page so the next reader of any copy of it renders fresh - for a write that changes
+ * what ANOTHER page shows, such as an api route that edits what `/book` renders.
+ *
+ * The path is the app's own in any spelling: decoded or encoded, with or without a trailing
+ * slash, params filled in, no language prefix, a query ignored. A page action that redirects to
+ * an ISR page, or lands on one through a wildcard, marks it already - this is the explicit call
+ * for every other write that changes what an ISR page shows. The ledger is process-local, so
+ * behind several instances every instance is called, and it keeps the newest 4096 marked pages:
+ * while a page's mark stands it never seeds from its prerendered file, since that file predates
+ * the write by construction.
+ */
+export function revalidate(pathname: string): void
+{
+    mark(pathname);
+}
+
 /** Registers one ISR page (parameterized or not) on the app. */
 export function registerIsr(registration: IsrRegistration): void
 {
@@ -597,7 +680,9 @@ export function registerIsr(registration: IsrRegistration): void
     // production is also useless - matchAndLoad issues the whole fan-out synchronously, around
     // 0.8ms, and a socket reset is not observable until around 1.9ms. The bound is arrival
     // rate at the edge (`rateLimit`), which the README states as load-bearing for ISR.
-    const inflight = new Map<string, Promise<Produced>>();
+    // Each flight remembers when it STARTED, because a mark landing mid-flight makes the render
+    // already old: a request arriving after the mark refuses to adopt it and starts its own.
+    const inflight = new Map<string, { task: Promise<Produced>; startedAt: number }>();
     // One regeneration per key at a time. A write or drop of the key while it runs bumps the
     // generation, and the attempt then arms and reports nothing: the key moved on without it.
     const regenerating = new Map<string, { generation: number }>();
@@ -840,13 +925,23 @@ export function registerIsr(registration: IsrRegistration): void
         };
     };
 
-    async function produce(target: Target): Promise<Produced>
+    /** Whether a write landed on this page after a render began, so its html is already old. */
+    const superseded = (target: Target, startedAt: number): boolean =>
+    {
+        const at = markedAt(target.pathname);
+        return at !== undefined && startedAt <= at;
+    };
+
+    async function produce(target: Target, startedAt: number): Promise<Produced>
     {
         // Seeding is keyed on the PATHNAME: a prerendered file has no query component, so a seed
         // is only ever the no-query representation of the page. A learned pathname never seeds:
         // the file was written by a build whose refusal did not yet exist (or whose table
-        // differed), and a seed involves no render, so no stamp could ever refuse it here.
-        const seed = target.seedable && !learned.has(target.pathname) ? await seedFile(target.path, target.locale) : null;
+        // differed), and a seed involves no render, so no stamp could ever refuse it here. A
+        // MARKED pathname never seeds either: the build predates the write by construction.
+        const seed = target.seedable && !learned.has(target.pathname) && markedAt(target.pathname) === undefined
+            ? await seedFile(target.path, target.locale)
+            : null;
         if (seed !== null)
         {
             let html: string | undefined;
@@ -870,8 +965,9 @@ export function registerIsr(registration: IsrRegistration): void
                     throw error;
                 }
                 const entry: PageEntry = { html, status: 200, createdAt: seed.stats.mtimeMs, build: await buildId };
-                // Re-checked at the write: a stamped discovery can land while the file reads.
-                if (!learned.has(target.pathname))
+                // Re-checked at the write: a stamped discovery, or a write's mark, can land
+                // while the file reads.
+                if (!learned.has(target.pathname) && markedAt(target.pathname) === undefined)
                 {
                     await writeCache(target.key, entry);
                     return { entry, seeded: true };
@@ -898,7 +994,9 @@ export function registerIsr(registration: IsrRegistration): void
         if (result.kind === 'html' && result.status === 200)
         {
             const entry: PageEntry = { html: result.html, status: 200, createdAt: Date.now(), build: await buildId };
-            if (!learned.has(target.pathname) && admitToCache(target))
+            // A render that read the data before the write is served to the waiters who asked
+            // for it and cached for nobody.
+            if (!learned.has(target.pathname) && !superseded(target, startedAt) && admitToCache(target))
             {
                 await writeCache(target.key, entry);
             }
@@ -919,12 +1017,21 @@ export function registerIsr(registration: IsrRegistration): void
     function produceOnce(target: Target): { task: Promise<Produced>; created: boolean }
     {
         const existing = inflight.get(target.key);
-        if (existing !== undefined)
+        if (existing !== undefined && !superseded(target, existing.startedAt))
         {
-            return { task: existing, created: false };
+            return { task: existing.task, created: false };
         }
-        const task = produce(target).finally(() => inflight.delete(target.key));
-        inflight.set(target.key, task);
+        const startedAt = Date.now();
+        const task = produce(target, startedAt).finally(() =>
+        {
+            // Only its OWN record: a flight this one replaced must not delete the replacement.
+            if (inflight.get(target.key) === record)
+            {
+                inflight.delete(target.key);
+            }
+        });
+        const record = { task, startedAt };
+        inflight.set(target.key, record);
         return { task, created: true };
     }
 
@@ -954,6 +1061,7 @@ export function registerIsr(registration: IsrRegistration): void
                 // undefined rather than rejecting, caching a data-less page with nothing reported.
                 const shellText = await shell;
                 const buildValue = await buildId;
+                const startedAt = Date.now();
                 const result = await runInWorkUnit(
                     () => renderer(target.url, shellText, renderOptions(target, buildValue, reasons, false)));
                 if (result.kind === 'html' && result.guarded === true)
@@ -969,7 +1077,9 @@ export function registerIsr(registration: IsrRegistration): void
                 }
                 if (result.kind === 'html' && result.status === 200)
                 {
-                    if (!learned.has(target.pathname))
+                    // A refresh that raced a write loses: writing it would undo the mark, which
+                    // is the shape a purge issued mid-flight has always had.
+                    if (!learned.has(target.pathname) && !superseded(target, startedAt))
                     {
                         await writeCache(target.key, { html: result.html, status: 200, createdAt: Date.now(), build: await buildId });
                     }
@@ -1028,6 +1138,13 @@ export function registerIsr(registration: IsrRegistration): void
             // Produced by an earlier deploy, so its asset URLs are dead. Drop it and produce
             // fresh - the prerendered file this build wrote is right there to seed from.
             await dropCache(target.key);
+            entry = undefined;
+        }
+        const marked = markedAt(target.pathname);
+        if (entry !== undefined && marked !== undefined && entry.createdAt <= marked)
+        {
+            // A write landed on this page after this copy was made, so it answers nobody: the
+            // visitor takes the miss path and the fresh render re-earns the slot through admission.
             entry = undefined;
         }
         let verdict: 'hit' | 'miss' = 'hit';

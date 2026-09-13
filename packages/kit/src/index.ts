@@ -34,7 +34,7 @@ import { negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
-import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -44,7 +44,7 @@ import { manifestScript, type Manifest } from '@azerothjs/http/api';
 
 import type { DocumentContext, PageRenderer } from './ssr.ts';
 import { applyDocumentContext } from './ssr.ts';
-import { MemoryPageCache, carriesBaseStamp, inRequestSpace, pageResponse, registerIsr } from './isr.ts';
+import { MemoryPageCache, carriesBaseStamp, inRequestSpace, mark, pagePathOf, pageResponse, registerIsr } from './isr.ts';
 import type { KitErrorObserver, PageCache } from './isr.ts';
 import { imageHandler } from './image.ts';
 import type { ImageHandlerOptions } from './image.ts';
@@ -485,6 +485,27 @@ export function mountPages(app: App, options: KitOptions): void
     // hreflang annotates and what stops the same content being indexed twice.
     const mountPaths = (path: string): string[] => mountedPaths(path, options);
 
+    // The app-space patterns this mount serves from the page cache, collected as they register.
+    const isrPatterns = new Set<string>();
+    /**
+     * Whether a pathname lands on one of this mount's ISR pages, decided by the router's OWN
+     * matchers rather than by comparing strings: a wildcard action covers its ISR siblings' urls,
+     * and a parameterised ISR page owns every url its pattern matches. Any of them counts, not
+     * the first one the table selects - the wildcard may well be declared first.
+     */
+    const marksIsrPage = (pathname: string): boolean =>
+    {
+        for (const entry of flattenRoutesFor(options.routes))
+        {
+            // The router keeps a trailing slash a page path drops, so the two are folded here.
+            if (isrPatterns.has(withoutTrailingSlashes(entry.matcher.pattern) || '/') && entry.matcher.match(pathname) !== null)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
     for (const page of flattenPages(options.routes))
     {
         const mode = page.render ?? defaultMode;
@@ -543,6 +564,9 @@ export function mountPages(app: App, options: KitOptions): void
                 continue;
             }
             isrCache ??= options.cache ?? new MemoryPageCache();
+            // The APP-SPACE pattern, never the prefixed path handed to registerIsr: a write
+            // arrives with its language prefix already stripped.
+            isrPatterns.add(page.path);
             for (const mounted of mountPaths(page.path))
             {
                 registerIsr({
@@ -674,7 +698,7 @@ export function mountPages(app: App, options: KitOptions): void
     {
         if (page.action !== undefined)
         {
-            registerAction(app, page, page.action, options, shellPromise, buildIdPromise, report);
+            registerAction(app, page, page.action, options, shellPromise, buildIdPromise, report, marksIsrPage);
         }
     }
 
@@ -777,9 +801,24 @@ function registerAction(
     options: KitOptions,
     shellPromise: Promise<string>,
     buildId: Promise<string>,
-    report: KitErrorObserver
+    report: KitErrorObserver,
+    marksIsrPage: (pathname: string) => boolean
 ): void
 {
+    /**
+     * Stamps the page this answer lands the visitor on, so a cached copy of it never answers
+     * the write. Only this mount's ISR pages are recorded: an ordinary landing page has no
+     * copy to invalidate, and the ledger's bound belongs to the pages it protects.
+     */
+    const markLanding = (target: string, from: string): void =>
+    {
+        const landing = pagePathOf(target, from);
+        if (marksIsrPage(landing))
+        {
+            mark(landing);
+        }
+    };
+
     const handler = async (context: RequestContext): Promise<Response> =>
     {
         const form = await readForm(context.request);
@@ -877,7 +916,15 @@ function registerAction(
                         + 'a redirect target that leaves the app\'s origin is refused; redirect to a path, or wrap '
                         + 'a deliberate off-origin target in unsafeUrl(...).', { cause: error });
                 }
-                return sendTo(fullPathOf(judged.to));
+                const landing = fullPathOf(judged.to);
+                const response = sendTo(landing);
+                // The write succeeded and the visitor is being sent to read it. An off-origin
+                // target names no page of this app, so it marks nothing.
+                if (!isExternalUrl(landing))
+                {
+                    markLanding(landing, appPath(context, options));
+                }
+                return response;
             }
             throw error;
         }
@@ -885,6 +932,7 @@ function registerAction(
         {
             // POST/Redirect/GET: the visitor lands on a GET, so a refresh re-reads instead of
             // re-writing, and the browser's back button does not offer to resubmit.
+            markLanding(appPath(context, options), '/');
             return wantsJson
                 ? jsonResponse({ ok: true }, { headers: { 'cache-control': 'private, no-store' } })
                 : seeOther(context.url.pathname + context.url.search);
@@ -1527,7 +1575,7 @@ function registerStaticFirst(
     }, options, shellPromise, buildId));
 }
 
-export { FilePageCache, MemoryPageCache } from './isr.ts';
+export { FilePageCache, MemoryPageCache, revalidate } from './isr.ts';
 export type { KitErrorObserver, PageCache, PageEntry } from './isr.ts';
 export { MemoryImageCache, imageHandler } from './image.ts';
 export type { ImageAdapter, ImageCache, ImageCacheEntry, ImageHandlerOptions } from './image.ts';

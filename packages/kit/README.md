@@ -251,6 +251,53 @@ be fresh on one and stale on another, and `revalidate` regenerates once per inst
 than once per deployment. `FilePageCache` fixes that only for instances sharing a filesystem.
 Across machines, supply a `PageCache` backed by whatever store they already share.
 
+### A write invalidates the page it lands on
+
+A page action that sends the visitor to an ISR page marks that page before the response leaves:
+the redirect it throws, the `{ ok, redirect }` an enhanced submit reads, and a wildcard action
+answering at a cached sibling's url all count, so the visitor's next GET renders instead of being
+handed the copy made before the write. Nothing else marks - a guard redirect that fires BEFORE
+the action ran, a 422 re-render, a thrown fault and an `unsafeUrl()` target off this origin leave
+the ledger alone.
+
+For a write that changes what ANOTHER ISR page shows - an api route that edits what `/book`
+renders - mark it yourself:
+
+```ts
+import { revalidate } from '@azerothjs/kit';
+
+revalidate('/book');
+```
+
+Import it explicitly: `azerothjs` exports a `revalidate` of its own, which refreshes a `cached()`
+fetcher and throws on a string. The path is the app's own in any spelling - decoded or encoded,
+with or without a trailing slash, params filled in, no language prefix, a query ignored - because
+the unit of invalidation is the PAGE: one mark covers every key of it, both slash spellings, every
+query variant, and every language in both routing modes.
+
+A mark costs one render per key on that key's next read, two for a query-bearing key (which
+re-earns its cache slot exactly as a cold one does), and nothing at all for a key nobody reads
+again; a mark landing inside a render already in flight costs one more, because that render read
+the data before the write and is answered only to the readers already waiting on it. Two standing
+effects are worth knowing. From the mark until the first successful render the page has no
+stale-on-error: a failing loader answers 500 `private, no-store`, because serving the kept copy
+would show the writer their pre-write page. And a marked page never seeds from its prerendered
+file while its mark stands - that file was written before the write by construction - so
+`revalidate()` at boot turns the seed off for that path. The ledger keeps the newest 4096 marked
+PAGES (marking a page again counts once, and moves it to the newest end): a page marked before
+4096 other distinct pages drops out of it, which means it seeds again if nobody has read it since
+the write, and a copy of it made before the write and never re-read answers `hit` again until
+its window expires. Below that many written pages the bound is never reached.
+
+The ledger is process-local in exactly the same way as `MemoryPageCache`: a write marks the
+instance it landed on. With per-instance caches the others keep serving their own copies until
+the window expires. With a SHARED cache there is one entry and the last writer wins, which makes
+the common case better than that - the marked instance's fresh render is what everyone gets - and
+the race case worse: a sibling instance whose render started before the write can land pre-write
+bytes stamped after the mark, which the dirty test cannot tell from a fresh copy, so that page
+answers `hit` with them for up to one window. That is a property of sharing a cache, not of the
+ledger. For a write that must be seen everywhere at once, fan `revalidate()` out to every instance.
+
 ### The query string is part of the key
 
 `/search?q=shoes` and `/search?q=hats` are different pages and get different entries. Parameter

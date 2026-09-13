@@ -56,6 +56,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   factored into another module is legitimate), and which copy of vite the session will really load,
   reported with its version beside both halves' declared ranges.
 
+- **`revalidate(path)`, exported from `@azerothjs/kit`.** One function, no handle and no key
+  format: it marks a page so the next reader of any copy of it renders fresh, for a write that
+  changes what ANOTHER ISR page shows - an api route that edits what `/book` renders. The path is
+  the app's own in any spelling (decoded or encoded, with or without a trailing slash, params
+  filled in, no language prefix, a query ignored), and one mark covers every key of that page. The
+  ledger is process-WIDE, so an api route registered before the mount reaches it and so does the
+  dev session, and process-LOCAL, so an operator behind several instances calls it on each. It
+  keeps the newest 4096 marked pages (a re-mark counts once): a page marked before 4096 other
+  distinct pages drops out, so a copy of it never re-read since the write can serve again until
+  its window expires. `mountPages` still returns `void`. Import it explicitly: `azerothjs` exports
+  a `revalidate` of its own, which refreshes a `cached()` fetcher and throws on a string.
+
 ### Changed
 
 - **`KitOptions` is a union: exactly one of `clientDir` and `shell`.** Neither and both are now a
@@ -110,6 +122,30 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   answers `Allow: GET, HEAD, POST` where production answers `GET, HEAD`, `/index.html` is the
   app's 404, and an api route registered at a page's own path wins over the page where a
   production mount refuses the conflict at startup.
+
+- **A write that redirects to an ISR page, or lands on one through a wildcard action, showed the
+  stale copy.** A `render: 'server'` page whose action wrote and redirected to a cached page
+  answered the landing GET `hit` with the pre-write body, and the document load after an enhanced
+  submit's `{ ok, redirect }` did the same; a wildcard action beside a cached sibling had the same
+  shape, because the kernel dead-ends the sibling's GET-only route on a POST and the wildcard's
+  own `undefined` answer sends the visitor back to the arriving url. There was nothing to reach
+  for either: `mountPages` returns `void`, the key format is internal, and a key DELETE is
+  measurably WORSE than doing nothing where a prerendered file exists - the visitor gets
+  build-time bytes at `stale, age 86400` instead of a one-write-old `hit`.
+
+  A successful action now marks the page it lands the visitor on, before the response leaves, so
+  the next reader of ANY copy of that page renders fresh: every query variant, both slash
+  spellings, and every language in both routing modes. Nothing rendered before the write survives
+  it either - a background regeneration that raced the write no longer writes, and a reader
+  arriving after it no longer joins a flight that started before it. Two consequences to plan for:
+  a marked page has no stale-on-error until its first successful render (a failing loader answers
+  500 rather than showing the writer their pre-write page), and it never re-seeds from its
+  prerendered file, which was written before the write by construction. A guard redirect that
+  fires BEFORE the action ran, a 422 re-render, a thrown fault and an `unsafeUrl()` target off
+  this origin all mark nothing. Found by measuring the page-action surface against the ISR one:
+  no route that declares an action can itself be ISR - six mount arms refuse it - so the shapes
+  that can land a writer on a cached page are the redirect and the wildcard, and both were
+  reproduced against the built package.
 
 ### Security
 
