@@ -88,9 +88,13 @@ export type AdditionsOf<G> = G extends ReadonlyArray<unknown>
         : Record<never, never>)
     : Record<never, never>;
 
-/** @internal What a JSON/form handler may produce for a route's declared shapes. */
+/**
+ * @internal What a JSON/form handler may produce for a route's declared shapes. `Responses` is
+ * inferred from the spec's `responses` map only: inferred from the return as well, a
+ * `reply(202, body)` would declare its own status and the compile error would never come.
+ */
 type HandlerResult<Out, Responses> =
-    Out | ReplyOf<Out, Responses> | Response | Promise<Out | ReplyOf<Out, Responses> | Response>;
+    Out | ReplyOf<Out, NoInfer<Responses>> | Response | Promise<Out | ReplyOf<Out, NoInfer<Responses>> | Response>;
 
 /** The spec half of a bodyless JSON verb (`GET`/`DELETE` carry no request body). */
 export interface BodylessSpec<Out, Query, Responses extends Record<number, unknown>>

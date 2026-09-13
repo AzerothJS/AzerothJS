@@ -113,6 +113,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Security
 
+- **`reply(status, body)` at a status the route never declared shipped the body unvalidated.**
+  On a route declaring `output` and no `responses` map, `reply(202, user)` compiled and reached
+  the wire with every field the handler put in it - a `passwordHash` included - because the
+  handler's return was inferring the `responses` map the route had not written, and `register`
+  validated only where it found a schema. `Responses` is now inferred from the spec alone, so an
+  undeclared status with a body is the compile error the docs always promised, and the reply
+  branch refuses exactly what the compiler refuses: a bodied reply at a status other than 200
+  with no schema is the hidden 500 (`contract-violation`), its message naming the status and
+  the fix in the log and nothing of the body on the wire. A `reply(200, body, headers)` on a
+  route that declares no 200 schema keeps passing through, as a plain return does. Migration:
+  declare the status, `responses: { 202: schema }` - which also starts validating and stripping
+  that body. The handler type now uses `NoInfer`, so type-checking an app against
+  `@azerothjs/http` needs TypeScript 5.4 or newer. Found by the DX lens against `docs/api.md`'s own sentence.
+
 - **`setLocale()` took any string and, once a url prefix is in play, would have built a
   navigation from it.** The tag is now checked before anything is written, in every client
   mode: alphanumeric segments joined by single hyphens (`en`, `zh-Hant`, `pt-BR`). A malformed

@@ -9,7 +9,7 @@ import { App } from '../../src/app.ts';
 import { feature, manifestOf } from '../../src/api/feature.ts';
 import { register } from '../../src/api/register.ts';
 import { createClient } from '../../src/api/client.ts';
-import { reply, type StatusReply } from '../../src/api/declare.ts';
+import { reply, type Feature, type StatusReply } from '../../src/api/declare.ts';
 
 const user = object({ id: number({ int: true }), name: string(), email: string() });
 const problem = object({ code: string(), message: string() });
@@ -130,8 +130,90 @@ describe('the typed reply channel', () =>
             // @ts-expect-error - 403 is not in the responses map, and it carries a body.
             create: routes.post('/', { output: user, responses: { 409: problem } }, () => reply(403, { code: 'nope', message: 'forbidden' })),
             // @ts-expect-error - 409 is declared, but the body must match the problem schema.
-            find: routes.get('/:id', { output: user, responses: { 409: problem } }, () => reply(409, { wrong: true }))
+            find: routes.get('/:id', { output: user, responses: { 409: problem } }, () => reply(409, { wrong: true })),
+            // @ts-expect-error - no responses map at all: the return must not declare 202 for the route.
+            accepted: routes.post('/accepted', { output: user }, () => reply(202, { id: 1, name: 'x', email: 'x@y.z' })),
+            // @ts-expect-error - the same on a form route.
+            upload: routes.form('/upload', { output: user }, () => reply(202, { id: 1, name: 'x', email: 'x@y.z' })),
+            ok: routes.post('/ok', { output: user }, () => reply(200, { id: 1, name: 'x', email: 'x@y.z' })),
+            gone: routes.post('/gone', { output: user }, () => reply(204)),
+            bare: routes.get('/bare', {}, () => reply(200, { id: 1, secret: 's' }, { 'cache-control': 'no-store' })),
+            declared: routes.post('/declared', { output: user, responses: { 202: user } }, () => reply(202, { id: 1, name: 'x', email: 'x@y.z' }))
         }));
         expect(true).toBe(true);
+    });
+});
+
+describe('a reply at a status the route never declared', () =>
+{
+    const leak = { id: 1, name: 'x', email: 'x@y.z', passwordHash: 'hunter2' };
+
+    function build(things: Feature): { app: App; errors: string[] }
+    {
+        const errors: string[] = [];
+        const app = new App({ onError: (error) =>
+        {
+            errors.push(error instanceof Error ? error.message : String(error));
+        } });
+        register(app, { things });
+        return { app, errors };
+    }
+
+    it('Regression: reply(202, body) on a route with only output ships the body unvalidated', async () =>
+    {
+        const { app, errors } = build(feature('/things', (routes) => ({
+            accepted: routes.get('/accepted', { output: user }, () => reply(202, leak) as never)
+        })));
+        const response = await app.handle(new Request('http://local/api/things/accepted'));
+        const wire = await response.text();
+
+        expect(response.status).toBe(500);
+        expect((JSON.parse(wire) as { error: { code: string } }).error.code).toBe('contract-violation');
+        expect(wire).not.toContain('hunter2');
+        expect(wire).not.toContain('passwordHash');
+        expect(errors.join(' ')).toContain('202');
+        expect(errors.join(' ')).toContain('responses');
+    });
+
+    it('any undeclared status is refused the same way, a body of null included', async () =>
+    {
+        const { app } = build(feature('/things', (routes) => ({
+            missing: routes.get('/missing', { output: user }, () => reply(404, leak) as never),
+            nothing: routes.get('/nothing', { output: user }, () => reply(202, null) as never)
+        })));
+
+        expect((await app.handle(new Request('http://local/api/things/missing'))).status).toBe(500);
+        expect((await app.handle(new Request('http://local/api/things/nothing'))).status).toBe(500);
+    });
+
+    it('reply(200, body, headers) on a route that declares nothing passes through, as a plain return does', async () =>
+    {
+        const { app, errors } = build(feature('/things', (routes) => ({
+            bare: routes.get('/bare', {}, () => reply(200, leak, { 'cache-control': 'no-store' })),
+            other: routes.get('/other', { responses: { 201: user } }, () => reply(200, leak, { 'cache-control': 'no-store' }))
+        })));
+        for (const path of ['/api/things/bare', '/api/things/other'])
+        {
+            const response = await app.handle(new Request(`http://local${ path }`));
+            expect(response.status).toBe(200);
+            expect(response.headers.get('cache-control')).toBe('no-store');
+            expect(await response.json()).toEqual(leak);
+        }
+        expect(errors).toEqual([]);
+    });
+
+    it('a bodyless reply is empty at any status, and a declared status still strips', async () =>
+    {
+        const { app } = build(feature('/things', (routes) => ({
+            teapot: routes.get('/teapot', { output: user }, () => reply(418)),
+            declared: routes.get('/declared', { output: user, responses: { 202: user } }, () => reply(202, leak as never))
+        })));
+        const teapot = await app.handle(new Request('http://local/api/things/teapot'));
+        expect(teapot.status).toBe(418);
+        expect(await teapot.text()).toBe('');
+
+        const declared = await app.handle(new Request('http://local/api/things/declared'));
+        expect(declared.status).toBe(202);
+        expect(await declared.text()).not.toContain('hunter2');
     });
 });

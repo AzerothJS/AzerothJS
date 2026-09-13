@@ -192,7 +192,10 @@ create: routes.post('/', { input: thingInput, output: thing, responses: { 201: t
 
 `responses` declares each status's body schema; `output` is the shorthand for its 200 entry.
 `reply(status, body, headers?)` speaks a declared status with the body still validated;
-`reply(204)` sends an empty response. An undeclared status with a body is a compile error.
+`reply(204)` sends an empty response. An undeclared status with a body is a compile error, and at
+runtime a server bug: `register` answers it with the hidden 500 (`contract-violation`) rather than
+an unvalidated body. A `reply(200, body, headers)` on a route that declares no 200 schema (no
+`output` and no `responses[200]`) passes through unvalidated, as a plain return does.
 
 ## Bring your own validator
 

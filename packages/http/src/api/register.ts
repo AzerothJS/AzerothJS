@@ -237,6 +237,13 @@ function installRoute(app: App, declaration: AnyDecl, fullPath: string, guards: 
                 }
                 return json(parsed.value, { status: result.status, headers: result.headers ?? {} });
             }
+            // A status with no schema is one the compiler refused; 200 stays the passthrough a
+            // plain return already is on a route that declares nothing.
+            if (result.status !== 200)
+            {
+                throw new HttpError(500, `Endpoint ${ declaration.method } ${ fullPath } replied ${ result.status } with a body `
+                    + 'the route never declared - declare the status in responses.', { code: 'contract-violation' });
+            }
             return json(result.body, { status: result.status, headers: result.headers ?? {} });
         }
 
