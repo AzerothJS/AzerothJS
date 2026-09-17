@@ -185,6 +185,26 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Fixed
 
+- **`azeroth dev` kept a component's previous prop signature for its importers.** The checker held
+  the text it last compiled for a `.azeroth` file and never let go of it, so a component edited on
+  disk carried its previous prop signature for everything that imported it until the server was
+  restarted or the component itself was re-transformed. A child that gained a prop and a consumer
+  that passed it in one save was refused against the old signature, re-saving either file did not
+  clear it, and the other direction was silent: a child whose prop TYPE changed on disk was
+  accepted against the copy in memory, while `azeroth check` reported the mismatch on the same
+  tree. The `@azerothjs/compiler` checker follows the file on disk on every change - a changed
+  path drops its live copy on both type-check engines and for both import spellings,
+  `./child.azeroth` and `./child`, and is projected from disk until it is compiled again. One
+  consequence to plan for: a child that gains a REQUIRED prop refuses its consumers at once, until
+  they pass it too.
+
+- **A `.azeroth` file with a UTF-8 byte-order mark pinned itself in the checker for its importers.** Vite
+  hands the mark to the plugin and a disk read strips it, so every transform of a marked file
+  looked like a rewritten one and left a copy in memory behind - the deterministic way into the
+  pin above. The `@azerothjs/compiler` transform strips one leading mark at its entry, so the lint
+  pass, the diagnostics, the compile and the type check all read the same text and a marked file
+  is checked against its own. The emitted module is unchanged: it never carried the mark.
+
 - **`azeroth dev` served a different application from the one you deploy.** On a fullstack scaffold
   vite owned the browser's origin and proxied only `/api` to the server, so every page came back as
   the bare client shell: a guarded page answered 200 where production answers 401, a url no route

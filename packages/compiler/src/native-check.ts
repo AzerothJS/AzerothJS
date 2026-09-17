@@ -402,10 +402,21 @@ export function createNativeIncrementalBackend(readAzeroth: ReadAzeroth): Native
         invalidate(tsPath: string): void
         {
             const name = normalizeSlashes(tsPath);
-            // Drop any projection cached from the old disk content, and queue the change
-            // notice; it rides along on the next check's snapshot update.
+            // Drop the stored text and any projection cached from the old disk content, and queue
+            // the change notice; it rides along on the next check's snapshot update.
+            session.store.delete(name);
             session.projections.delete(name);
             pendingChanged.add(name);
+            // An extensionless import of the same module is served as the `<x>.ts` virtual file, which
+            // caches under its own key; when the stem itself ends in .azeroth that key belongs to a sibling.
+            const stem = name.endsWith('.azeroth.ts') ? name.slice(0, -'.azeroth.ts'.length) : null;
+            if (stem !== null && !stem.endsWith('.azeroth'))
+            {
+                const twin = `${ stem }.ts`;
+                session.store.delete(twin);
+                session.projections.delete(twin);
+                pendingChanged.add(twin);
+            }
         }
     };
 }

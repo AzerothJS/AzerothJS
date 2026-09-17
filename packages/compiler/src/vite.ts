@@ -684,6 +684,12 @@ export function azeroth(options: AzerothPluginOptions = {}): Plugin
                 return null;
             }
 
+            // A byte-order mark is not part of the source.
+            if (code.charCodeAt(0) === 0xFEFF)
+            {
+                code = code.slice(1);
+            }
+
             // Keep the projection mirror fresh on every edit (HMR), from the live source so it reflects
             // the in-flight change. Only writes when the projection text actually changes. A module
             // outside the root has no mirror path, so it serves fine but its importers see no types;

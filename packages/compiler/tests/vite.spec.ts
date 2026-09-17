@@ -550,3 +550,52 @@ describe('azerothDepScanPlugin', () =>
         }
     });
 });
+
+describe('azeroth() plugin - a byte-order mark is not part of the source', () =>
+{
+    // A finding on line 1 carries the position the transform computed, so a mark left in the text
+    // moves it one column. The emitted code is a CONTROL either way: oxc drops the mark from the
+    // module it emits.
+    const SOURCE = 'component C { derived d = 1 + 2; <p>{ d }</p> }';
+
+    interface Run
+    {
+        emitted: string;
+        at: { line: number; column: number } | undefined;
+    }
+
+    const run = async (command: string, code: string): Promise<Run> =>
+    {
+        const plugin = azeroth({ typeCheck: false });
+        (plugin.configResolved as (r: { command?: string }) => void)({ command });
+        let at: { line: number; column: number } | undefined;
+        const ctx =
+        {
+            warn: (message: string, position?: { line: number; column: number }): void =>
+            {
+                if (message.startsWith('azeroth/constant-derived'))
+                {
+                    at = position;
+                }
+            },
+            error: (message: unknown): never =>
+            {
+                throw new Error(String(message));
+            }
+        };
+        const result = await (plugin.transform as unknown as TransformFn).call(ctx, code, '/X.azeroth') as { code: string };
+        return { emitted: result.code, at };
+    };
+
+    it('emits the same module and locates a line 1 finding at the same column, in dev and in build', async () =>
+    {
+        for (const command of ['serve', 'build'])
+        {
+            const plain = await run(command, SOURCE);
+            const marked = await run(command, `\uFEFF${ SOURCE }`);
+            expect(plain.at?.line).toBe(1);
+            expect(marked.at).toEqual(plain.at);
+            expect(marked.emitted).toBe(plain.emitted);
+        }
+    });
+});

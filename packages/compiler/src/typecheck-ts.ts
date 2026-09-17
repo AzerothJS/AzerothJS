@@ -493,9 +493,10 @@ export interface AzerothTypeChecker
 
     /**
      * Marks one file as changed on disk, so the next {@link check} re-reads it instead of reusing
-     * the Program's cached snapshot. Wire this to the dev server's file watcher: without it, a
-     * plain `.ts` dependency edited mid-session stays PINNED at its first snapshot for the
-     * checker's lifetime, and every later check resolves imports against the stale copy.
+     * the Program's cached snapshot: the path's live copy is dropped and the file is projected from
+     * disk until it is checked again. Wire this to the dev server's file watcher: without it, a
+     * dependency edited mid-session stays PINNED at its first snapshot for the checker's lifetime,
+     * and every later check resolves imports against the stale copy.
      */
     invalidate(fileName: string): void;
 }
@@ -517,8 +518,11 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
     // below is only built if the native backend is absent or fails mid-run.
     const nativeBackend = createNativeIncrementalBackend(readAzeroth);
 
-    // The live source's projection (the file under check / HMR) overrides any on-disk copy of the same
-    // path; on-disk dep projections are cached. Versions drive the LanguageService's incremental recheck.
+    // An override is the projection of the text the transform handed over for a path, preferred over
+    // the disk copy for the file under check and for every consumer resolving it. A path invalidate()
+    // names drops its override and is projected from disk until the next check hands text over again.
+    // One stamp for every override, so a path's reported version never repeats.
+    let stamp = 0;
     const overrides = new Map<string, { code: string; version: number }>();
     const diskCache = new Map<string, string | undefined>();
     const roots = new Set<string>();
@@ -643,8 +647,7 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
             const current = overrides.get(tsPath)?.code ?? projectDisk(tsPath);
             if (current !== code)
             {
-                const previous = overrides.get(tsPath);
-                overrides.set(tsPath, { code, version: (previous?.version ?? 0) + 1 });
+                overrides.set(tsPath, { code, version: ++stamp });
                 diskCache.delete(tsPath);
             }
             // Classic bookkeeping above runs unconditionally so a native failure mid-run can
@@ -674,6 +677,7 @@ export function createIncrementalChecker(options: TypeCheckOptions = {}): Azerot
             const tsPath = normal.endsWith('.azeroth') ? `${ normal }.ts` : normal;
             diskVersions.set(tsPath, (diskVersions.get(tsPath) ?? 0) + 1);
             diskCache.delete(tsPath);
+            overrides.delete(tsPath);
             nativeBackend?.invalidate(tsPath);
         }
     };
