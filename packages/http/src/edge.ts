@@ -246,12 +246,21 @@ export function withResponseHeaders(response: Response, extra: Record<string, st
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-const REQUEST_ID = Symbol.for('azerothjs.http.requestId');
+const REQUEST_ID: unique symbol = Symbol.for('azerothjs.http.requestId');
 
 /** The correlation id assigned to this request by {@link requestId}, if that middleware ran. */
 export function requestIdOf(request: Request): string | undefined
 {
     return (request as { [REQUEST_ID]?: string })[REQUEST_ID];
+}
+
+/**
+ * @internal The one place the correlation id is written, so the middleware and the in-process
+ * forwarder cannot end up stamping two different slots.
+ */
+export function stampRequestId(request: Request, id: string): void
+{
+    (request as { [REQUEST_ID]?: string })[REQUEST_ID] = id;
 }
 
 /**
@@ -306,7 +315,7 @@ export function requestId(options: RequestIdOptions = {}): EdgeMiddleware
                 }
             }
             id ??= generate();
-            (request as { [REQUEST_ID]?: string })[REQUEST_ID] = id;
+            stampRequestId(request, id);
 
             const response = await next.handle(request);
             return withResponseHeaders(response, { [header]: id });

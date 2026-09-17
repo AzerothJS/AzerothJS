@@ -29,6 +29,7 @@ import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeContinuationWindow, closeRenderWindow, openContinuationWindow, openRenderWindow } from '../renderer/frame.ts';
 import { renderWithLocale } from '../i18n/current-locale.ts';
 import { renderWithBase } from '../i18n/current-base.ts';
+import { installRequestContext } from './request-context.ts';
 import type { RenderFrame, RenderWindow } from '../renderer/frame.ts';
 import type { MountNode } from '../component/index.ts';
 
@@ -77,6 +78,16 @@ export interface RenderToStreamOptions
 
     /** Hears a continuation failure (a boundary whose children threw while streaming). */
     onError?: (error: unknown) => void;
+
+    /**
+     * The live request this response is answering, which a component reads back with
+     * `useRequest()`. Installed into the main pass's store scope, which every continuation
+     * re-enters, so the deferred half of the page reads the same request as the shell.
+     *
+     * Pass it ONLY for a render whose bytes belong to one visitor - never for one that is
+     * cached, shared or written to disk.
+     */
+    request?: Request;
 }
 
 /** @internal The default settle ceiling: far past any sane data fetch, far short of forever. */
@@ -117,7 +128,7 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 10_000;
  * @param component - A thunk building the root element, as renderToString takes. Suspense
  *                    boundaries with pending resources become streamed chunks; everything
  *                    else serializes exactly as a buffered render would.
- * @param options - Streaming behaviour, including `signal` and `onError`.
+ * @param options - Streaming behaviour, including `signal`, `request` and `onError`.
  * @returns A stream of UTF-8 HTML: the shell first, then template, seed and swap triplets.
  * @example
  * const stream = renderToStream(() => App({ url }), { signal: request.signal });
@@ -160,6 +171,12 @@ export function renderToStream(
     {
         runInMode('string', () => runInStoreScope(() => withDocument(() =>
         {
+            // Into the main pass's scope, which every continuation re-enters through
+            // runInExistingStoreScope - so the shell and the deferred chunks read one request.
+            if (options.request !== undefined)
+            {
+                installRequestContext(options.request);
+            }
             // The main-pass render window, opened inside the store scope (see
             // renderer/frame.ts). The host that passed a frame owns it; kit's drain
             // rides a finally on this call and holds it on the throw path too.

@@ -24,6 +24,11 @@ export type { Verbs, AdditionsOf, ActionSpec, BodySpec, BodylessSpec, FormSpec, 
 
 export { register } from './register.ts';
 export type { RegisterOptions } from './register.ts';
+export type { ApiRegistration } from './registry.ts';
+
+export { attachApiBridge } from './attach-bridge.ts';
+export { apiBridgeOf } from './bridge.ts';
+export type { ApiBridge } from './bridge.ts';
 
 export { reply, pathOf } from './declare.ts';
 export type {

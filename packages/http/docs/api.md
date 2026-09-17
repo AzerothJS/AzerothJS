@@ -242,6 +242,12 @@ const client = createClient<typeof api>(manifestOf(api), {
 });
 ```
 
+`fetch` is an override, not the only in-process route. A client with a relative `baseUrl` also
+dispatches in process while it is answering a page request that carries the api, with the
+visitor's identity forwarded - see "Calling your own api in process" in the package README. An
+explicit `fetch` is chosen ahead of that and resolves against `http://localhost` as it always
+has, so a test written this way behaves the same inside a render as outside one.
+
 ## License
 
 MIT (c) AzerothJS contributors.

@@ -35,6 +35,7 @@ import { reportIsolated, BadRequestError, HttpError, MethodNotAllowedError, NotF
 import { mergeAdditions } from './context-merge.ts';
 import { markServerRuntime } from 'azerothjs/internal';
 import { runInRequestRoot, type WorkUnitOptions } from './request-root.ts';
+import { apiRegistrationOf, type ApiRegistration } from './api/registry.ts';
 import { attachErrorPolicy, guardLayer, isEdge, type EdgeMiddleware, type HandlerWrapper, type WebHandler } from './edge.ts';
 
 /**
@@ -722,6 +723,9 @@ export class App<Ctx extends object = object>
         // One stable options object for the app's lifetime - a per-request allocation here
         // was pure garbage.
         this.#rootOptions ??= {
+            // The lookup, not the value: `register` may run either side of the first dispatch,
+            // and a root built before it would otherwise cache "no api" for the app's lifetime.
+            api: (): ApiRegistration | undefined => apiRegistrationOf(this),
             onCleanupError: ((): ((error: unknown) => void) | undefined =>
             {
                 const onError = this.#options.onError;

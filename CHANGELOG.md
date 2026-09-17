@@ -68,6 +68,52 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   its window expires. `mountPages` still returns `void`. Import it explicitly: `azerothjs` exports
   a `revalidate` of its own, which refreshes a `cached()` fetcher and throws on a string.
 
+- **`request` on loader and guard arguments.** A server render answers a real `Request`, and every
+  loader and every server-side guard now receives it, beside `params`, `query` and `signal`, so a
+  page can read the visitor's cookie where it decides what to render. It is null in the browser,
+  where the client router passes null rather than a synthesised request - `parseCookies` on one of
+  those answers `{}` where the visitor's jar was meant - so a guard that reads identity must fail
+  CLOSED on null: null means the browser, which authorizes nothing, and the server has already
+  decided the same question. Every server guard walk carries it, the page GET and a page action's
+  authorizing walk alike, so the two walks of one POST cannot disagree about the same visitor.
+  The other null case is a render whose output is shared:
+  ISR regeneration and the build-time prerender have no visitor to read.
+
+- **`useRequest()`, exported from `azerothjs`.** The same request from inside a component, which
+  takes no arguments to carry it. Non-null in a server guard walk, a loader, a per-request
+  render and its `<Suspense>` continuations, and a page action body, which its POST's authorizing
+  walk installed the request for; null in the browser, in a shared render and in a background work
+  unit. One hazard governs whether to call it at all: it
+  is null in the browser, so markup rendered FROM it cannot hydrate, because the client rebuilds
+  the same component with no request and produces different output. The supported way to SHOW
+  identity is to read it in the loader and let the value ride the handoff; this read is for
+  server-only decisions that hydrate to identical markup.
+
+- **The typed api client reaches your own api in process.** A client with a relative `baseUrl`,
+  called while a page request carrying the api is being answered, dispatches through that `App`
+  with `app.handle` instead of opening a socket, with the visitor's `cookie`, `authorization` and
+  `accept-language` forwarded and the page's `AbortSignal` attached. It is decided per call and
+  switched on by nothing: an explicit `ClientOptions.fetch` still wins and still resolves against
+  its own inert base, an absolute `baseUrl` still goes over the wire - absolute meaning a scheme in
+  any case or a leading `//` - and GET and HEAD are the only methods served, at the page's own
+  origin only. Both rules are refused by name at the call site and again in the dispatcher, because
+  a write dispatched in process would carry a forwarded cookie through the App's own guards while
+  the edge pipeline around it never ran, and another authority's url is not this App's to answer.
+  The sub-call is a real nested request root with its own stores,
+  cleanups and cache, and where it declares a `responseTimeoutMs` the deadline it keeps is the
+  tighter of that and the enclosing root's REMAINING time, so a page half way through its budget
+  cannot open a sub-call with a fresh full one. Which api it reaches is decided by registration -
+  the dispatching App's, else the enclosing root's - so a gateway delegating to a sub-app and a
+  dev session nesting two Apps both resolve with no mount option to set.
+
+- **`forwardIdentity(from, to)`, exported from `@azerothjs/http`.** The allowlist that transport
+  uses, public for a host building a dispatcher of its own: `cookie`, `authorization` and
+  `accept-language` are copied onto the outgoing request where the call has not set them itself, so
+  a header the call supplied wins; the correlation id is stamped from the trusted request id rather
+  than the inbound header, which a client can forge; and everything else is refused by
+  construction: `host`, `content-length`, the hop-by-hop set, `origin`, `referer`, `sec-fetch-*`,
+  `x-forwarded-*`, conditional and range headers, the csrf header and `accept-encoding`.
+
 ### Changed
 
 - **`KitOptions` is a union: exactly one of `clientDir` and `shell`.** Neither and both are now a
@@ -103,6 +149,25 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   field to the root manifest - without it dev silently keeps two steps - and `vite` to the server
   half; add `HOST` to `.env.example`; point `installDevtools` at `location.origin`; and `Omit` the
   two keys in any helper that spreads a `Partial<KitOptions>` into a mount.
+
+- **A relative-`baseUrl` api call with no origin to resolve against throws a named error.** On a
+  server such a call used to resolve against `http://localhost` and fail as `TypeError: fetch
+  failed`, which names nothing you can act on. It now throws before either self-selected transport
+  is chosen, listing every cause: no api registered on this App or any enclosing request root; no
+  request root around the call, and a work unit such as ISR regeneration, a cron job or a ws
+  handler is not one; a call from outside a guard walk, a loader or a per-request render; a
+  build-time prerender, which answers no request; or an SSR bundle that
+  resolved its own second copy of `azerothjs`, so the host installed the ambient request on the
+  other copy - check `ssr.external`. The only shape this moves is one that already failed.
+
+- **A page that consults the visitor is answered `private, no-store`.** Reading `request` in a
+  loader or a guard, a non-null `useRequest()`, or a call to your own api in process now marks that
+  render a function of (URL, identity), and `@azerothjs/kit` refuses to cache, persist or share
+  it - the treatment a guarded page already received. Destructuring the loader arguments counts as
+  a read; the over-approximation costs a page shared cacheability it might have kept, never its
+  correctness. One residual on a streamed page: its headers leave with the shell, so a read inside
+  a `<Suspense>` continuation cannot raise the mark, while loader-phase and main-pass reads are
+  complete before the first byte and do.
 
 ### Fixed
 
@@ -146,6 +211,29 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   no route that declares an action can itself be ISR - six mount arms refuse it - so the shapes
   that can land a writer on a cached page are the redirect and the wildcard, and both were
   reproduced against the built package.
+
+- **A server-rendered page whose loader called the app's own api answered 500.** On a scaffolded
+  fullstack app the typed client is built with an empty manifest on the server, so a loader calling
+  `client.guestbook.list()` threw "the api group is not in the manifest" before any transport was
+  consulted; with a manifest present it resolved `/api` against `http://localhost` and failed to
+  dial. The only way to put api data on screen was to fetch it from the browser after hydration,
+  which is why the shipped template's guest book served a loading paragraph as its SSR output and
+  its list arrived one round trip later. A loader now reaches the api in process, and the generated
+  template loads on the server: the first bytes carry the entries, the browser refetches nothing to
+  draw them, and a client-side navigation to the page makes exactly one api call. An app generated
+  before this keeps working as it did - a browser-side load is still a browser-side load - and
+  adopts the new shape by moving the call into the route's `loader`.
+
+- **Identity written by server middleware never reached the component.** A request-scoped
+  `createStore` written by an http middleware was visible to guards and loaders, which run under
+  the request's own scope, but NOT to the render, which opens a fresh scope of its own - so a
+  component asking who the visitor was read null on every request, while the loader on the same
+  page read the right answer. The request itself now crosses that boundary, through `useRequest()`
+  in the component and `request` in the loader and guard arguments. An app-defined store still does
+  not cross it, and in a bundled SSR build it cannot: the bundle inlines the application's own
+  store module, so the middleware's `createStore` and the loader's are two closures over two maps.
+  Derive from the request instead, or add that module to `ssr.external` and own the deploy layout
+  that implies.
 
 ### Security
 

@@ -170,6 +170,11 @@ export type { HydrationNode } from './reactivity/hydration.ts';
 // Adapter seam: async-context-backed store scoping (@azerothjs/http's request root).
 export { setStoreScopeResolver } from './reactivity/store-scope.ts';
 
+// The request seam: a custom host installs the ambient request for its own entry point, and
+// asks afterwards whether the pass consulted identity (the page is then private, never cached).
+// The symbol is exported because a dispatcher in another package stamps the same slot.
+export { installRequestContext, requestWasRead, REQUEST_READ } from './ssr/request-context.ts';
+
 // Test probe: live subscriber count for leak assertions (@azerothjs/testing's leakGuard).
 export { subscriberCount } from './reactivity/create-signal.ts';
 

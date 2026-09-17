@@ -1013,6 +1013,18 @@ export function setBuildContext(active: boolean): void
     buildContext = active;
 }
 
+/**
+ * Whether a build (prerender) context is active. Every default-scope refusal this runtime makes
+ * is expected during a build, so each of them reads this to stay silent there.
+ *
+ * @internal
+ * @returns True while {@link setBuildContext} is on.
+ */
+export function isBuildContext(): boolean
+{
+    return buildContext;
+}
+
 /** Test-only: clears the active scope's entries, timers, the server latch and runtime mark. @internal */
 export function resetDataCache(): void
 {

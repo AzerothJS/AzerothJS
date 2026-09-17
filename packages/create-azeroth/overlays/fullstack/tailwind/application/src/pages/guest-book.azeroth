@@ -1,28 +1,9 @@
+import { useLoader } from 'azerothjs';
 import { applyFieldErrors, client, entryInput, type Entry } from '../api.ts';
 
 export default component GuestBook()
 {
-    state entries: Entry[] = [];
-    state phase: 'loading' | 'ready' | 'failed' = 'loading';
-
-    const load = async (): Promise<void> =>
-    {
-        phase = 'loading';
-        try
-        {
-            entries = await client.guestbook.list();
-            phase = 'ready';
-        }
-        catch
-        {
-            phase = 'failed';
-        }
-    };
-
-    mount
-    {
-        void load();
-    }
+    const entries = useLoader<Entry[]>();
 
     form sign = { name: '', message: '' } with
     {
@@ -31,9 +12,10 @@ export default component GuestBook()
         {
             try
             {
-                const created = await client.guestbook.sign(values);
-                entries = [created, ...entries];
+                await client.guestbook.sign(values);
                 sign.reset();
+                // The server owns the list, so re-read it rather than guessing what it now holds.
+                void entries.refetch();
             }
             catch (error)
             {
@@ -73,21 +55,21 @@ export default component GuestBook()
             </button>
         </form>
         <Switch>
-            <Match when={ phase === 'loading' }>
+            <Match when={ entries.loading() }>
                 <p class="text-faint">Loading entries...</p>
             </Match>
-            <Match when={ phase === 'failed' }>
+            <Match when={ entries.error() }>
                 <p class="text-danger">
                     Could not load entries.
-                    <button class="ml-2 text-[0.9rem] px-3 py-1 rounded-md border border-ice bg-ice/12 cursor-pointer hover:bg-ice/22" onClick={ () => void load() }>Retry</button>
+                    <button class="ml-2 text-[0.9rem] px-3 py-1 rounded-md border border-ice bg-ice/12 cursor-pointer hover:bg-ice/22" onClick={ () => void entries.refetch() }>Retry</button>
                 </p>
             </Match>
-            <Match when={ entries.length === 0 }>
+            <Match when={ entries.data()?.length === 0 }>
                 <p class="text-faint">No entries yet - be the first.</p>
             </Match>
         </Switch>
         <ul class="entries mt-4">
-            <For each={ entries } key={ (item) => item.id } let={ item }>
+            <For each={ entries.data() ?? [] } key={ (item) => item.id } let={ item }>
                 <li class="flex items-baseline gap-3 py-2.5 border-b border-line">
                     <strong class="font-mono text-[0.9rem] font-semibold">{ item.name }</strong>
                     <span class="text-faint">{ item.message }</span>

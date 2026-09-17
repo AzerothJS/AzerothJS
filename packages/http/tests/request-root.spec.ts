@@ -7,10 +7,13 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal, getStoreScope, runInStoreScope, createStore } from 'azerothjs';
+import { object, boolean } from '@azerothjs/schema';
 import { App } from '../src/app.ts';
 import { BadRequestError } from '../src/errors.ts';
 import { json } from '../src/respond.ts';
-import { onWorkUnitCleanup } from '../src/request-root.ts';
+import { currentApiRegistration, onWorkUnitCleanup } from '../src/request-root.ts';
+import { feature, manifestOf } from '../src/api/feature.ts';
+import { register } from '../src/api/register.ts';
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -494,5 +497,139 @@ describe('teardown registered after the request already settled', () =>
         await pause(60);
 
         expect(released).toBe(true);
+    });
+});
+
+describe('the api a request root can reach in process', () =>
+{
+    const ping = (label: string): ReturnType<typeof feature> => feature(`/${ label }`, (routes) => ({
+        check: routes.get('/', { output: object({ ok: boolean() }) }, () => ({ ok: true }))
+    }));
+    const outerApi = { outer: ping('outer') };
+    const innerApi = { inner: ping('inner') };
+
+    /** The App an arm dispatches into, reporting what its own root resolved. */
+    function reporter(): { app: App; seen: () => string[] }
+    {
+        const app = new App();
+        let groups: string[] = [];
+        app.get('/what', () =>
+        {
+            groups = Object.keys(currentApiRegistration()?.manifest ?? {});
+            return json({ ok: true });
+        });
+        return { app, seen: (): string[] => groups };
+    }
+
+    it('a nested root inherits the enclosing api when its own App registered none', async () =>
+    {
+        const { app: inner, seen } = reporter();
+        const outer = new App();
+        register(outer, outerApi);
+        outer.get('/page', (context) => inner.handle(new Request('http://host/what', context.request)));
+
+        await outer.handle(new Request('http://host/page'));
+
+        expect(seen()).toEqual(['outer']);
+    });
+
+    it('a nested root that registered its OWN api is not shadowed by the enclosing one', async () =>
+    {
+        const { app: inner, seen } = reporter();
+        register(inner, innerApi);
+        const outer = new App();
+        register(outer, outerApi);
+        outer.get('/page', (context) => inner.handle(new Request('http://host/what', context.request)));
+
+        await outer.handle(new Request('http://host/page'));
+
+        expect(seen()).toEqual(['inner']);
+    });
+
+    it('two Apps in one process each keep their own, and an unregistered App alone has none', async () =>
+    {
+        const first = reporter();
+        register(first.app, outerApi);
+        const second = reporter();
+        register(second.app, innerApi);
+        const bare = reporter();
+
+        await first.app.handle(new Request('http://host/what'));
+        await second.app.handle(new Request('http://host/what'));
+        await bare.app.handle(new Request('http://host/what'));
+
+        expect([first.seen(), second.seen(), bare.seen()]).toEqual([['outer'], ['inner'], []]);
+        expect(manifestOf(outerApi)['outer']?.['check']).toEqual({ method: 'GET', path: '/outer' });
+    });
+});
+
+describe('a nested root never gets a fresh budget', () =>
+{
+    it('answers at the remaining time of the root that encloses it, not at its own larger one', async () =>
+    {
+        let status = 0;
+        let elapsed = 0;
+        const inner = new App({ responseTimeoutMs: 5000 });
+        inner.get('/slow', async () =>
+        {
+            await pause(1500);
+            return json({ ok: true });
+        });
+        const outer = new App({ responseTimeoutMs: 200 });
+        outer.get('/page', async () =>
+        {
+            const started = Date.now();
+            const answer = await inner.handle(new Request('http://host/slow'));
+            elapsed = Date.now() - started;
+            status = answer.status;
+            return json({ ok: true });
+        });
+
+        await outer.handle(new Request('http://host/page'));
+        // The page's own deadline and the one the sub-call inherited are the same instant, so
+        // which of the two answers first is a race; the sub-call's outcome is not.
+        await pause(500);
+
+        // Bounded by what the page had left (200ms), not by its own 5000ms.
+        expect(status).toBe(503);
+        expect(elapsed).toBeLessThan(500);
+    });
+
+    it('CONTROL: a nested root with the TIGHTER deadline keeps its own', async () =>
+    {
+        let status = 0;
+        const inner = new App({ responseTimeoutMs: 40 });
+        inner.get('/slow', async () =>
+        {
+            await pause(400);
+            return json({ ok: true });
+        });
+        const outer = new App({ responseTimeoutMs: 5000 });
+        outer.get('/page', async () =>
+        {
+            status = (await inner.handle(new Request('http://host/slow'))).status;
+            return json({ ok: true });
+        });
+
+        const page = await outer.handle(new Request('http://host/page'));
+
+        expect(page.status).toBe(200);
+        expect(status).toBe(503);
+    });
+
+    it('a top-level root keeps the whole deadline it declares, with nothing above it to tighten against', async () =>
+    {
+        const app = new App({ responseTimeoutMs: 5000 });
+        app.get('/slow', async () =>
+        {
+            await pause(400);
+            return json({ ok: true });
+        });
+
+        // Well inside 5000ms: an absent enclosing bound must leave the timer alone rather than
+        // arithmetic its way to a shorter one.
+        const answer = await app.handle(new Request('http://host/slow'));
+
+        expect(answer.status).toBe(200);
     });
 });

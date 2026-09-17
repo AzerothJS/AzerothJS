@@ -31,7 +31,7 @@
  */
 
 import { acceptRedirectTarget } from './redirect-target.ts';
-import type { LoaderHandoff, NavigateTarget, Params, Query, Route } from './types.ts';
+import type { GuardContext, LoaderHandoff, NavigateTarget, Params, Query, Route, RouteLoaderArgs } from './types.ts';
 import { flattenRoutesFor, splitFullPath, resolveRouteComponent, type LeafEntry } from './router.ts';
 import { isRedirect } from './redirect.ts';
 import { isNotFound } from './not-found.ts';
@@ -41,6 +41,7 @@ import { declaredQuery, parseQuery } from './query.ts';
 import { prefixParams } from './loader-inputs.ts';
 import { inertJson } from '../reactivity/ssr.ts';
 import { latchServerData } from '../reactivity/data-cache.ts';
+import { installRequestContext, markRequestRead } from '../ssr/request-context.ts';
 
 /**
  * What {@link matchAndLoad} produces - EVERY server-side routing outcome, kept distinct so a
@@ -195,16 +196,28 @@ export type GuardWalkOutcome =
  * `redirect()` or denial behaves like a returned one; any other throw propagates. Latches
  * nothing: the entry points that need server-data mode latch it themselves.
  *
+ * `options.request` is the live request: it reaches the guards and becomes the ambient request
+ * `useRequest()` reads, installed into the scope active HERE - on a request-root host the
+ * request's own scope, which is why it survives every await a guard or a loader makes.
+ *
  * @internal
  */
-export async function evaluateGuards(routes: Route[], url: string | URL): Promise<GuardWalkOutcome>
+export async function evaluateGuards(
+    routes: Route[],
+    url: string | URL,
+    options: { request?: Request } = {}
+): Promise<GuardWalkOutcome>
 {
+    if (options.request !== undefined)
+    {
+        installRequestContext(options.request);
+    }
     const selected = selectChain(routes, url);
     if (selected === null)
     {
         return { kind: 'not-found' };
     }
-    return runGuards(selected, parseQuery(selected.search));
+    return runGuards(selected, parseQuery(selected.search), options.request);
 }
 
 /** @internal Trailing slashes are not part of a pattern's identity: `/admin//` names `/admin`. */
@@ -229,31 +242,57 @@ function samePattern(left: string, right: string): boolean
  * Answers `not-found` when no leaf declares that pattern, which fails closed: a host asking about
  * a page this table does not contain gets a refusal, never a pass.
  *
+ * `target.request` is the live request, threaded and installed exactly as {@link evaluateGuards}
+ * does it - so a page action's authorizing walk decides on the same identity the page's own GET
+ * did, and an identity-reading guard cannot fail open on the write.
+ *
  * @internal
  */
 export async function evaluateGuardsForPattern(
     routes: Route[],
     pattern: string,
-    request: { params: Params; pathname: string; search: string }
+    target: { params: Params; pathname: string; search: string; request?: Request }
 ): Promise<GuardWalkOutcome>
 {
+    if (target.request !== undefined)
+    {
+        installRequestContext(target.request);
+    }
     const entry = flattenRoutesFor(routes).find((leaf) => samePattern(leaf.matcher.pattern, pattern));
     if (entry === undefined)
     {
         return { kind: 'not-found' };
     }
-    const selected: SelectedChain = { entry, params: request.params, pathname: request.pathname, search: request.search };
-    return runGuards(selected, parseQuery(request.search));
+    const selected: SelectedChain = { entry, params: target.params, pathname: target.pathname, search: target.search };
+    return runGuards(selected, parseQuery(target.search), target.request);
 }
 
 /** @internal The guard loop itself, over an already-selected chain. */
-async function runGuards(selected: SelectedChain, query: Query): Promise<GuardWalkOutcome>
+async function runGuards(selected: SelectedChain, query: Query, request?: Request): Promise<GuardWalkOutcome>
 {
     const { entry, params, pathname } = selected;
 
+    // One context for the whole chain, and `request` is a GETTER on it: reading identity in
+    // any way, destructuring the argument included, is what marks the page private.
+    const context: GuardContext = {
+        params,
+        pathname,
+        query,
+        // `from` is null: a server render has no previous location.
+        from: null,
+        get request(): Request | null
+        {
+            if (request === undefined)
+            {
+                return null;
+            }
+            markRequestRead(request);
+            return request;
+        }
+    };
+
     // Guards first, root-to-leaf - a redirect becomes the server's 302; a veto is a
-    // DISTINCT blocked result (a 403), never a rendered page. `from` is null: a server
-    // render has no previous location.
+    // DISTINCT blocked result (a 403), never a rendered page.
     for (const route of entry.matched)
     {
         if (route.guard === undefined)
@@ -263,7 +302,7 @@ async function runGuards(selected: SelectedChain, query: Query): Promise<GuardWa
         let verdict: unknown;
         try
         {
-            verdict = await route.guard({ params, pathname, query, from: null });
+            verdict = await route.guard(context);
         }
         catch (error)
         {
@@ -306,17 +345,21 @@ async function runGuards(selected: SelectedChain, query: Query): Promise<GuardWa
  * 302. A guard VETO surfaces as `{ blocked, status }` - answer with that status and render the
  * app's blocked UI, never the route. The AbortSignal (pass the request's) cancels the loaders
  * when the client disconnects.
+ *
+ * Pass `options.request` on the server and the live request reaches every guard and every
+ * level's loader, and is the ambient one `useRequest()` reads for the whole walk.
  */
 export async function matchAndLoad(
     routes: Route[],
     url: string | URL,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; request?: Request } = {}
 ): Promise<MatchAndLoadResult>
 {
     // A server entry point: from here on, default-scope reads bypass the data cache so a
     // resolver-less host's loader-phase reads can never be shared across requests.
     latchServerData();
-    const walked = await evaluateGuards(routes, url);
+    const walked = await evaluateGuards(routes, url,
+        options.request === undefined ? {} : { request: options.request });
     if (walked.kind === 'not-found')
     {
         return { notFound: true };
@@ -378,6 +421,23 @@ export async function matchAndLoad(
             // nothing on the path that actually renders. Guards keep the whole chain and
             // the raw query: they key nothing, so narrowing them would only remove
             // information an authorization decision may legitimately use.
+            // `request` is a GETTER, on the same rule the guard context uses: reading it in
+            // any way, including destructuring these arguments, is what marks the page private.
+            const args: RouteLoaderArgs = {
+                params: prefixParams(entry.matched, level, params),
+                query: declaredQuery(route.search, query),
+                signal,
+                parent,
+                get request(): Request | null
+                {
+                    if (options.request === undefined)
+                    {
+                        return null;
+                    }
+                    markRequestRead(options.request);
+                    return options.request;
+                }
+            };
             // The call sits INSIDE the promise, so a loader that throws before returning is
             // settled as a rejection like one that returns a rejected promise: same level
             // marked, same reason recorded, same descendants run. Bare, the throw escaped the
@@ -385,12 +445,7 @@ export async function matchAndLoad(
             // freshness headers and no error UI, and every level below it never invoked.
             const promise = new Promise<unknown>((resolve) =>
             {
-                resolve(loader({
-                    params: prefixParams(entry.matched, level, params),
-                    query: declaredQuery(route.search, query),
-                    signal,
-                    parent
-                }));
+                resolve(loader(args));
             });
             slots[level] = promise;
             return promise;

@@ -98,6 +98,60 @@ That is the entire integration. `mountPages` registers each page in its mode plu
 
 ---
 
+## What a `render: 'server'` loader can do
+
+A per-request render answers a real `Request`, and the kit hands it to everything that runs for
+that one visitor: every server guard walk, every level's loader, and the render itself, where
+`useRequest()` reads the same object. A loader can therefore read the visitor's cookie or
+`authorization` header and derive from it, instead of shipping a page that fetches its own data
+after hydration.
+
+It can also call the app's own api without a socket. When the pages are mounted on an
+`@azerothjs/http` `App` that has `register`ed an api, a typed client with a relative `baseUrl`
+dispatches through that App in process, carrying the visitor's identity:
+
+```ts
+{ path: '/guestbook', component: GuestBook, render: 'server', loader: () => client.guestbook.list() }
+```
+
+The rules that govern it - GET and HEAD only, which headers are forwarded, the nested request
+root, the signal and the deadline - belong to `@azerothjs/http` and are written up in its README
+under "Calling your own api in process". One of them decides how you compose your server: an
+in-process call enters at `app.handle`, so an outer `pipeline(app, requestId(), securityHeaders(),
+csrfCookie(), rateLimit())` does not run for it. Keep `rateLimit` in that pipeline rather than in
+`app.use` - installed with `app.use` it runs on the in-process leg too, where its default key
+throws 500 `rate-limit-key-unavailable` because the request has no peer.
+
+### Reading identity makes a page private
+
+A render that consulted the request is a function of (URL, visitor), not of the URL alone, so the
+kit answers it `private, no-store` and never caches, persists or shares it - the same treatment a
+guarded page gets, for the same reason. Reading `args.request` at all counts, destructuring the
+loader arguments included, as does a non-null `useRequest()` and an in-process api call. The
+over-approximation is deliberate: a page can lose shared cacheability it might have kept, never
+its correctness.
+
+One residual worth knowing on a streamed page: its headers leave with the shell, so a read inside
+a `<Suspense>` continuation comes too late to mark it. Loader-phase and main-pass reads are
+complete before the first byte and do mark it.
+
+### Shared renders never see a request
+
+A render whose output is written to disk or can be handed to more than one visitor is given no
+request at all: the build-time prerender, ISR's background regeneration, and ISR's first render
+of a page it has not cached yet, the one whose output seeds the cache. In those `args.request`
+and `useRequest()` are both null and no in-process api exists, which is what keeps one visitor's
+identity out of a cached entry or a build artifact.
+
+That has a consequence to plan for. A `static` page whose loader needs identity or the api fails
+the build loudly, with the path named and nothing written. An ISR page the build never
+enumerated, a parameterised or wildcard path with `revalidate` and no `staticParams`, fails at
+its first live render and at every one after it, answering 500 `private, no-store` and caching
+nothing, exactly as it does today with a loader that rejects. A page that needs the visitor is
+`render: 'server'`.
+
+---
+
 ## Development - `@azerothjs/kit/dev`
 
 `devPages` is that same mount, over the same route table and the same renderer, fed by vite

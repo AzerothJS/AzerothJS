@@ -76,7 +76,7 @@ the complete API surface:
 | State | `createStore` (lazy singleton; per-request isolation under SSR) |
 | Forms | `createForm` `createFieldArray` + validators (`required` `email` `minLength` `pattern` `combine` `phone` ...) |
 | Routing | `createRouter` `Link` `Routes` `Outlet` `useParams` `useQuery` `useNavigate` `useLoader` ... |
-| SSR | `renderToString` `renderToDocument` |
+| SSR | `renderToString` `renderToDocument` `useRequest` |
 
 ---
 
@@ -247,6 +247,43 @@ const router = createRouter({
     <Routes />
 </RouterProvider>
 ```
+
+### The request, on the server
+
+A server render answers a real `Request`, and the read side can see it. Loader and guard
+arguments carry it as a value:
+
+```ts
+{
+    path: '/account',
+    component: Account,
+    guard: ({ request }) => request !== null && sessionOf(request) !== null,
+    loader: ({ request, signal }) => loadAccount(request, signal)
+}
+```
+
+`request` is null in the browser, and a guard that reads identity MUST fail closed on it: null
+means the client router, which authorizes nothing, and the server has already decided. It is
+never a synthesised `Request` - `parseCookies` on one would answer `{}` where the visitor's jar
+was meant, which is the wrong answer exactly where it matters. The other null case is a shared
+render (ISR regeneration, a build-time prerender), which has no visitor to decide about either.
+
+A component takes no arguments, so it reads the same request through `useRequest()`:
+
+```azeroth
+const scheme = useRequest()?.headers.get('sec-ch-prefers-color-scheme') ?? 'light';
+```
+
+The hydration hazard decides whether you may call it at all: `useRequest()` is null in the
+browser, so markup rendered from it CANNOT hydrate - the client rebuilds the same component with
+no request and produces different output. The supported way to SHOW identity is to read it in the
+loader and let the value ride the handoff to the client; this read is for server-only decisions
+that hydrate to identical markup.
+
+Reading either one marks the page a function of the visitor's identity, so a host that serves
+pages (`@azerothjs/kit`) answers it `private, no-store` and never caches or shares it.
+Destructuring the loader arguments counts as a read: the over-approximation costs a page its
+shared cacheability, never its correctness.
 
 ---
 

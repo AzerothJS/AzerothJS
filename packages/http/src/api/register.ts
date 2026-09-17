@@ -32,6 +32,8 @@ import type { App, MultipartOptions } from '../index.ts';
 import { ValidationError, HttpError, json, readJson, readMultipart, sse } from '../index.ts';
 import type { AnyDecl, AnyGuard, Feature } from './declare.ts';
 import { isStatusReply, pathOf, responseSchemaFor } from './declare.ts';
+import { manifestOf } from './feature.ts';
+import { recordApiRegistration } from './registry.ts';
 import { parseAny } from '../body.ts';
 import { mergeAdditions } from '../context-merge.ts';
 import type { StreamConnection } from './feature.ts';
@@ -66,6 +68,10 @@ export function register<Features extends Record<string, Feature>>(
             installRoute(app as App, declaration, pathOf(built.prefix, declaration.path as string, prefix), declaration.guards);
         }
     }
+    // What was installed, recorded against the App: a request root answering on this App - or
+    // on an App enclosing it - can then offer the same api in process, with no mount option
+    // and no knowledge of who is rendering.
+    recordApiRegistration({ app: app as App, manifest: manifestOf(features), prefix });
     return features;
 }
 

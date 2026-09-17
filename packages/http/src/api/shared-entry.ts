@@ -10,9 +10,11 @@
  *
  * A browser needs exactly two things from the API layer: the erased TYPE of the server's
  * features (`import type { api } from ...`) and the projected manifest value. This entry is
- * that safe half: the typed client, the error type, and the declaration types - and nothing
- * else. `feature`/`register` live only in the root entry, so importing this path can never
- * drag @azerothjs/http, or anything Node, into a browser bundle.
+ * that safe half: the typed client, the error type, the declaration types, and the READER of
+ * the in-process api bridge (a plain symbol lookup, which an SSR bundle needs and a browser
+ * never finds) - and nothing else. `feature`/`register` and the bridge's writer live only in
+ * the root entry, so importing this path can never drag @azerothjs/http, or anything Node,
+ * into a browser bundle.
  *
  * The name is the point: `shared`, not `client`. The declaration types are read by BOTH
  * sides; only the client VALUE here is browser-specific.
@@ -20,6 +22,8 @@
 
 export { createClient, ApiError, applyFieldErrors } from './client.ts';
 export { manifestScript, readManifest } from './manifest-handoff.ts';
+export { apiBridgeOf } from './bridge.ts';
+export type { ApiBridge } from './bridge.ts';
 export type { ClientOf, FeatureClient, ClientOptions, ActionCall, Call, CallArgs, Wire } from './client.ts';
 
 export type {

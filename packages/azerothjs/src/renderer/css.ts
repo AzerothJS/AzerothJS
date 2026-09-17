@@ -167,11 +167,10 @@ export function registerStyle(cssText: string): void
  * Hashes, rewrites and records one block of CSS, returning its base-to-scoped class map.
  *
  * `perRender` is what separates the two callers. Inside a string render an interpolated
- * `css``` is RENDER-SCOPED, going into the current frame keyed by the render's store scope -
- * the same per-request identity runInStoreScope gives createStore - so one request's rules,
- * and anything interpolated into them, never reach another request's document. Everything else
- * is app-static and lands in the global registry. In the browser either is injected into
- * `<head>` once per scope.
+ * `css``` is RENDER-SCOPED, going into the render window's current FRAME - a value the
+ * window's host owns and drains itself - so one request's rules, and anything interpolated
+ * into them, never reach another request's document. Everything else is app-static and lands
+ * in the global registry. In the browser either is injected into `<head>` once per scope.
  */
 function register(raw: string, perRender: boolean): Record<string, string>
 {

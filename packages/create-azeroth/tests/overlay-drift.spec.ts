@@ -32,7 +32,8 @@ const OVERLAY_BASES: ReadonlyArray<{ overlay: string; base: string }> = [
 const SIGNATURES: ReadonlyArray<{ pattern: RegExp; what: string }> = [
     { pattern: /\bclient\.\w+\.\w+\([^)]*\binput:/, what: 'legacy { input: ... } client call (server actions take the input directly)' },
     { pattern: /\bapplyFieldErrors\(/, what: 'applyFieldErrors error mapping' },
-    { pattern: /<Image\b/, what: '<Image> usage' }
+    { pattern: /<Image\b/, what: '<Image> usage' },
+    { pattern: /\buseLoader</, what: 'useLoader, the route loader\'s data' }
 ];
 
 function filesIn(root: string): string[]

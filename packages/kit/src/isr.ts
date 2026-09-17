@@ -33,7 +33,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
+import { attachApiBridge, html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
 import type { App } from '@azerothjs/http';
 import type { ContainedFile } from '@azerothjs/http/node';
 
@@ -784,14 +784,17 @@ export function registerIsr(registration: IsrRegistration): void
      * `private, no-store`, a 200 with no freshness headers is heuristically cacheable and
      * a CDN one hop out re-creates the very bypass this path exists to prevent.
      */
-    const guardedLive = async (target: Target, signal: AbortSignal): Promise<Response> =>
+    const guardedLive = async (target: Target, request: Request): Promise<Response> =>
     {
         reportGuarded(target.pathname);
         // Guarded output is per-request and `private, no-store` - never cached, never shared,
         // never coalesced - so this render's only consumer is the client now waiting on it,
-        // and its disconnect ends the render's reason to exist. The two SHARED render paths
-        // in this file deliberately take no request signal; see `produce` and `regenerate`.
-        const result = await renderer(target.url, await shell, { signal, ...renderOptions(target, await buildId, [], true) });
+        // and its disconnect ends the render's reason to exist. The request itself rides along
+        // for the same reason: nobody else will ever be served these bytes. The two SHARED
+        // render paths in this file take neither; see `produce` and `regenerate`.
+        attachApiBridge(request);
+        const result = await renderer(target.url, await shell,
+            { signal: request.signal, request, ...renderOptions(target, await buildId, [], true) });
         return pageResponse(result, await shell, {
             'cache-control': 'private, no-store',
             'x-azeroth-cache': 'live'
@@ -1130,7 +1133,7 @@ export function registerIsr(registration: IsrRegistration): void
         // traffic must never populate, read, or coalesce on shared state.
         if (guarded(target.url) || learned.has(target.pathname))
         {
-            return varied(await guardedLive(target, context.request.signal), context.request);
+            return varied(await guardedLive(target, context.request), context.request);
         }
         let entry = await readCache(target.key);
         if (entry !== undefined && await supersededByDeploy(entry))
@@ -1162,7 +1165,7 @@ export function registerIsr(registration: IsrRegistration): void
                     // request re-renders under its own. Direct - never produceOnce, which
                     // would coalesce resuming joiners into a second shared flight. The
                     // pathname is learned by now, so later requests skip flights entirely.
-                    return varied(await guardedLive(target, context.request.signal), context.request);
+                    return varied(await guardedLive(target, context.request), context.request);
                 }
                 return varied(pageResponse(live, await shell, {}, target.base), context.request);
             }

@@ -1,33 +1,15 @@
 // One schema, three enforcement points: it validates this form in the browser, the typed
-// client call before the wire, and the server boundary. `mount { }` loads the list once the
-// page is connected; `form` owns the fields, the errors, and the submit lifecycle. The
-// submit is a SERVER ACTION: a directly-callable typed function, CSRF-guarded server-side,
-// whose validation failures land back on these fields through applyFieldErrors.
+// client call before the wire, and the server boundary. The route's loader calls that same
+// client on the server, so the list is already in the served bytes and `useLoader` reads it
+// here; `form` owns the fields, the errors, and the submit lifecycle. The submit is a SERVER
+// ACTION: a directly-callable typed function, CSRF-guarded server-side, whose validation
+// failures land back on these fields through applyFieldErrors.
+import { useLoader } from 'azerothjs';
 import { applyFieldErrors, client, entryInput, type Entry } from '../api.ts';
 
 export default component GuestBook()
 {
-    state entries: Entry[] = [];
-    state phase: 'loading' | 'ready' | 'failed' = 'loading';
-
-    const load = async (): Promise<void> =>
-    {
-        phase = 'loading';
-        try
-        {
-            entries = await client.guestbook.list();
-            phase = 'ready';
-        }
-        catch
-        {
-            phase = 'failed';
-        }
-    };
-
-    mount
-    {
-        void load();
-    }
+    const entries = useLoader<Entry[]>();
 
     form sign = { name: '', message: '' } with
     {
@@ -36,9 +18,10 @@ export default component GuestBook()
         {
             try
             {
-                const created = await client.guestbook.sign(values);
-                entries = [created, ...entries];
+                await client.guestbook.sign(values);
                 sign.reset();
+                // The server owns the list, so re-read it rather than guessing what it now holds.
+                void entries.refetch();
             }
             catch (error)
             {
@@ -78,21 +61,21 @@ export default component GuestBook()
             </button>
         </form>
         <Switch>
-            <Match when={ phase === 'loading' }>
+            <Match when={ entries.loading() }>
                 <p class="muted">Loading entries...</p>
             </Match>
-            <Match when={ phase === 'failed' }>
+            <Match when={ entries.error() }>
                 <p class="error">
                     Could not load entries.
-                    <button class="retry" onClick={ () => void load() }>Retry</button>
+                    <button class="retry" onClick={ () => void entries.refetch() }>Retry</button>
                 </p>
             </Match>
-            <Match when={ entries.length === 0 }>
+            <Match when={ entries.data()?.length === 0 }>
                 <p class="muted">No entries yet - be the first.</p>
             </Match>
         </Switch>
         <ul class="entries">
-            <For each={ entries } key={ (item) => item.id } let={ item }>
+            <For each={ entries.data() ?? [] } key={ (item) => item.id } let={ item }>
                 <li>
                     <strong>{ item.name }</strong>
                     <span>{ item.message }</span>

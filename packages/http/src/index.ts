@@ -36,6 +36,9 @@ export type { AppOptions, Handler, Middleware, RequestContext, RequestObserver, 
 
 export { onWorkUnitCleanup, runInRequestRoot, runInWorkUnit, createWorkUnitInterceptor, type WorkUnitInterceptor, type WorkUnitOptions } from './request-root.ts';
 
+export { forwardIdentity } from './forward-identity.ts';
+export { attachApiBridge } from './api/attach-bridge.ts';
+
 export { loadConfig, str, num, flag, oneOf } from './config.ts';
 export type { ConfigVar, ConfigOf } from './config.ts';
 

@@ -39,6 +39,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { abortDataCacheFetches, markServerRuntime, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 import { isClientFault, reportIsolated } from './errors.ts';
+import type { ApiRegistration } from './api/registry.ts';
 
 /** What the async context carries for one request. @internal */
 interface RequestScope
@@ -58,6 +59,20 @@ interface RequestScope
      * rounds still run, handing their reads a dead cache mid-teardown.
      */
     teardown: Promise<void> | null;
+
+    /**
+     * The api reachable in process from this unit: the dispatching App's own registration if
+     * it has one, else the enclosing root's. A work unit carries none, which is what keeps a
+     * shared render (ISR regeneration, a cron run) from reaching an identity-bearing api.
+     */
+    api: ApiRegistration | undefined;
+
+    /**
+     * When this unit's answer is due, as a `Date.now()` stamp, or undefined when nothing bounds
+     * it. A nested root inherits it so a page half way through its budget cannot open a
+     * sub-root with a fresh full one.
+     */
+    expiresAt: number | undefined;
 }
 
 const storage = new AsyncLocalStorage<RequestScope>();
@@ -171,6 +186,23 @@ export interface WorkUnitOptions
      * a reporter must narrow rather than assume.
      */
     onStreamError?: ((error: unknown, arg: unknown) => void) | undefined;
+
+    /**
+     * @internal How the unit finds the api registered on the App that is dispatching it. A
+     * lookup rather than a value: the App builds its root options once and `register` may run
+     * either side of that.
+     */
+    api?: (() => ApiRegistration | undefined) | undefined;
+}
+
+/**
+ * @internal The api reachable in process from the CURRENT unit - the dispatching App's own
+ * registration, or the enclosing root's when it registered none. Undefined outside a request
+ * root and inside every work unit.
+ */
+export function currentApiRegistration(): ApiRegistration | undefined
+{
+    return storage.getStore()?.api;
 }
 
 /**
@@ -385,6 +417,16 @@ function deferCleanupsToBody(response: Response & { body: ReadableStream<Uint8Ar
 /** @internal Brands the deadline branch, so no value a handler can return is mistaken for it. */
 const TIMED_OUT = Symbol('azeroth.responseDeadline');
 
+/** @internal The earlier of two expiry stamps, either of which may be absent. */
+function tighter(own: number | undefined, inherited: number | undefined): number | undefined
+{
+    if (own === undefined)
+    {
+        return inherited;
+    }
+    return inherited === undefined ? own : Math.min(own, inherited);
+}
+
 /**
  * @internal Races a unit against its response deadline.
  *
@@ -410,6 +452,7 @@ async function raceDeadline<T>(
     fn: (arg: never) => unknown,
     arg: unknown,
     deadline: { ms: number; answer: (arg: unknown) => unknown },
+    remainingMs: number,
     options: WorkUnitOptions
 ): Promise<{ value: T } | { [TIMED_OUT]: true; answer: T }>
 {
@@ -418,7 +461,7 @@ async function raceDeadline<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const fired = new Promise<typeof TIMED_OUT>((resolve) =>
     {
-        timer = setTimeout(() => resolve(TIMED_OUT), deadline.ms);
+        timer = setTimeout(() => resolve(TIMED_OUT), remainingMs);
         // An armed timer must not be what keeps a finished process alive.
         (timer as unknown as { unref?: () => void }).unref?.();
     });
@@ -475,6 +518,11 @@ async function raceDeadline<T>(
  * buffered response runs them immediately; a STREAMING response (SSE, static file, multipart,
  * any `new Response(stream)`) defers them to the body's end, so teardown that releases a pooled
  * connection/transaction/lock cannot fire while the stream is still pulling through it.
+ *
+ * A root opened INSIDE another root (an in-process api call made while a page renders) is a
+ * real root with its own scope, cleanups and cache, but it does not get a fresh budget: its
+ * deadline is the tighter of its own and what the enclosing root has left. It also inherits
+ * that root's api when the App dispatching it registered none of its own.
  */
 export async function runInRequestRoot<T, A>(
     fn: (arg: A) => T | Promise<T>,
@@ -484,14 +532,25 @@ export async function runInRequestRoot<T, A>(
 {
     markServerRuntime();
     installResolver();
+    const enclosing = storage.getStore();
+    const deadline = options.responseDeadline;
+    const ownExpiry = deadline !== undefined ? Date.now() + deadline.ms : undefined;
     // `arg` rides through storage.run instead of a per-request closure over `fn`;
     // the caller passes ONE stable function for the app's lifetime.
-    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null };
+    const scope: RequestScope = {
+        storeScope: {},
+        cleanups: null,
+        settled: false,
+        options,
+        teardown: null,
+        api: options.api?.() ?? enclosing?.api,
+        expiresAt: tighter(ownExpiry, enclosing?.expiresAt)
+    };
     let result: T;
-    const deadline = options.responseDeadline;
     if (deadline !== undefined)
     {
-        const raced = await raceDeadline<T>(scope, fn, arg, deadline, options);
+        const remaining = scope.expiresAt !== undefined ? Math.max(0, scope.expiresAt - Date.now()) : deadline.ms;
+        const raced = await raceDeadline<T>(scope, fn, arg, deadline, remaining, options);
         if (TIMED_OUT in raced)
         {
             // EARLY RETURN, and the early part is the point: falling through would reach the
@@ -575,7 +634,9 @@ export async function runInWorkUnit<T>(fn: () => T | Promise<T>, options: WorkUn
 {
     markServerRuntime();
     installResolver();
-    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null };
+    // A work unit is neutral by construction: no request, and no api to reach in process,
+    // so a shared render inside one cannot read identity through a bridge.
+    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null, api: undefined, expiresAt: undefined };
     try
     {
         return await storage.run(scope, fn);
@@ -629,7 +690,7 @@ export function createWorkUnitInterceptor(options: { deadlineMs?: number } = {})
         // door the silent-collapse defect could otherwise survive through.
         installResolver();
         const unitOptions: WorkUnitOptions = { onCleanupError: report };
-        const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options: unitOptions, teardown: null };
+        const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options: unitOptions, teardown: null, api: undefined, expiresAt: undefined };
         let deadline: ReturnType<typeof setTimeout> | undefined;
         if (deadlineMs !== undefined)
         {

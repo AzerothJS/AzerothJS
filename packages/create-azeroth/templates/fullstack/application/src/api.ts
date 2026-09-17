@@ -12,8 +12,10 @@ export { applyFieldErrors };
 // The wire projection: the server stores `at` as a Date; the browser receives its ISO string.
 export type Entry = Wire<ServerEntry>;
 
-// SSR loads with an empty manifest (pages fetch in browser-only `mount { }`), and an
-// unreachable one degrades to {} so each call fails at its own site, not module load.
+// The server half needs no manifest of its own: the page request carries the registered one
+// together with an in-process transport that keeps the visitor's identity, so a loader calls
+// the same `client.*` the browser does. In the browser an unreachable manifest degrades to {}
+// so each call fails at its own site, not at module load.
 const manifest: Manifest = typeof document === 'undefined'
     ? {}
     : readManifest() ?? await fetch('/api/_manifest')

@@ -16,6 +16,7 @@ import { detectProject } from '../../cli/src/detect.ts';
 import { npmCli } from '../../cli/src/upgrade.ts';
 
 const TEMPLATES_ROOT = fileURLToPath(new URL('../templates', import.meta.url));
+const OVERLAYS_ROOT = fileURLToPath(new URL('../overlays', import.meta.url));
 
 const roots: string[] = [];
 function target(): string
@@ -379,6 +380,25 @@ describe('production shape: the hour-three files are already waiting', () =>
         for (const path of fetched)
         {
             expect(server, `server must define ${ path }`).toContain(`'${ path }'`);
+        }
+    });
+
+    it('the guest book is loaded by its route, and every flavour of the page reads that loader', () =>
+    {
+        // Two halves of one pairing: the route's loader puts the entries in the first bytes, and
+        // the page reads them from there. A page that loads in `mount { }` instead serves an
+        // empty list and fetches after hydration, which is what the row exists to avoid.
+        const routes = readFileSync(join(TEMPLATES_ROOT, 'fullstack/application/src/routes.ts'), 'utf8');
+        const row = /\{[^{}]*'\/guestbook'[^{}]*\}/.exec(routes)?.[0] ?? '';
+        expect(row, 'the /guestbook row').toContain('loader:');
+        for (const page of [
+            join(TEMPLATES_ROOT, 'fullstack/application/src/pages/guest-book.azeroth'),
+            join(OVERLAYS_ROOT, 'fullstack/tailwind/application/src/pages/guest-book.azeroth')
+        ])
+        {
+            const source = readFileSync(page, 'utf8');
+            expect(source, page).toMatch(/\buseLoader</);
+            expect(source, page).not.toMatch(/\bmount\s*\{/);
         }
     });
 

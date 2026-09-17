@@ -302,6 +302,20 @@ export interface GuardContext
 
     /** The location being LEFT, or null on the initial navigation. */
     from: RouteLocation | null;
+
+    /**
+     * The live request on the server, null in the browser.
+     *
+     * Every server-side guard walk carries it - the page GET, a page action's authorizing
+     * walk, a gated static answer - so a guard that reads identity MUST fail CLOSED on null:
+     * null means the browser, which authorizes nothing, and the server has already decided.
+     * The other request-less walk is a shared render's discovery pass, which has no visitor
+     * to decide about either.
+     *
+     * Never a synthesised Request: `parseCookies` on one would answer `{}` where the
+     * visitor's jar was meant, which is the wrong answer exactly where it matters.
+     */
+    request: Request | null;
 }
 
 /** What a route {@link Route.loader} receives. */
@@ -336,6 +350,17 @@ export interface RouteLoaderArgs
      * parent's result - sequencing is opt-in per level, parallel is the default.
      */
     parent: Promise<unknown>;
+
+    /**
+     * The live request on the server, null in the browser and in a shared render (ISR
+     * regeneration, a build-time prerender), which have no visitor to read.
+     *
+     * Reading it AT ALL - destructuring the arguments counts - marks the page a function of
+     * the visitor's identity, so the host answers it `private, no-store` and never caches or
+     * shares it. That over-approximates deliberately: a page can lose shared cacheability it
+     * would have kept, never correctness.
+     */
+    request: Request | null;
 }
 
 /**

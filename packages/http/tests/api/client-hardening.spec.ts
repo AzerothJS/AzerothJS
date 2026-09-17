@@ -238,6 +238,10 @@ describe('the shared entry stays browser-pure', () =>
         }
         expect(nodeImports).toEqual([]);
         expect([...seen].sort()).toEqual([
+            // bridge.ts is the READER half of the in-process api: the symbol, the shape and the
+            // one refusal text. The writer (attach-bridge.ts) needs the request root and the App
+            // and stays out of this graph, which is why the set grows by one pure module.
+            'api/bridge.ts',
             'api/client.ts',
             'api/declare.ts',
             'api/manifest-handoff.ts',

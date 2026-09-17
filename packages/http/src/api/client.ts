@@ -12,8 +12,16 @@
  * registered record: `client.keys.create({ input })` - argument and return types inferred from
  * the SAME declarations the server runs (`typeof` the features), while the runtime half is the
  * projected {@link Manifest}: method + path per route, no schemas, no handlers, no functions.
- * This module imports types only and speaks plain fetch, so it runs in browsers, workers, Node,
- * and tests unchanged - and a browser bundle importing it can never drag server code along.
+ * Beyond those types it imports one runtime function, `useRequest`, so it runs in browsers,
+ * workers, Node, and tests unchanged - and a browser bundle importing it can never drag server
+ * code along.
+ *
+ * WHERE A CALL GOES is decided at call time, because one module-scope client is imported by the
+ * browser bundle and by the server render of the same page. An explicit `fetch` wins. An
+ * absolute baseUrl goes over the wire. A relative one means "this origin": in a browser that is
+ * `location`, and on a server it is the request being answered - if that request carries the
+ * app's own api in process, the call is dispatched there with the visitor's identity and never
+ * opens a socket. A relative baseUrl with neither is a named error rather than a guess.
  *
  * A non-2xx answer throws {@link ApiError} carrying the wire shape's stable `code` and - for
  * validation failures - the field-error map, which is EXACTLY what the form's setError
@@ -25,8 +33,10 @@
  * client/server round trip IN PROCESS - integration tests with zero sockets, full types.
  */
 
+import { useRequest } from 'azerothjs';
 import type { Issue } from '@azerothjs/schema';
-import type { Decl, Feature, Manifest, PathParams } from './declare.ts';
+import type { Decl, Feature, Manifest, ManifestEntry, PathParams } from './declare.ts';
+import { apiBridgeOf, bridgeMethodRefusal } from './bridge.ts';
 
 /** The error a failed call throws: the wire shape, typed. */
 export class ApiError extends Error
@@ -130,10 +140,18 @@ export type ClientOf<Features extends Record<string, Feature>> =
 /** How {@link createClient} reaches the server: the base URL, an optional transport, headers. */
 export interface ClientOptions
 {
-    /** Where the API is registered, e.g. '/api' or 'https://host/api'. */
+    /**
+     * Where the API is registered, e.g. '/api' or 'https://host/api'. Absolute means a scheme
+     * (`https:`, in any case) or a leading `//`, and an absolute one always goes over the wire;
+     * anything else is relative and means "this origin".
+     */
     baseUrl: string;
 
-    /** The transport (default: global fetch). Pass an App's `handle` for in-process tests. */
+    /**
+     * The transport, and the first case of the selection above: it wins over everything,
+     * including the in-process bridge, and keeps the inert base a relative baseUrl has always
+     * resolved against. Pass an App's `handle` for in-process tests.
+     */
     fetch?: (request: Request) => Promise<Response>;
 
     /** Headers added to every call (auth tokens live here). */
@@ -155,6 +173,19 @@ export interface ClientOptions
 
 /** @internal The client's default response cap, matching the server's own body limit. */
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+
+/**
+ * @internal Why a relative baseUrl can fail to find an origin on a server. Written once because
+ * the two places that hit it - no transport at all, and a group the manifest never had - are the
+ * same misconfiguration seen from two sides, and an author chasing one should read the other's
+ * list too.
+ */
+const TRANSPORT_CAUSES = 'Causes: no api is registered on this App or any enclosing request root; '
+    + 'no @azerothjs/http request root around this call, and a work unit (ISR produce or regenerate, cron, ws) '
+    + 'is not one; a call outside a guard walk, a loader or a per-request render; '
+    + 'a build-time prerender, which answers no request; or an SSR bundle that resolved its own copy of '
+    + 'azerothjs, so the host installed the ambient request on the other copy - check ssr.external. '
+    + 'Pass an absolute baseUrl or an explicit `fetch` transport where none of these can be true.';
 
 /**
  * @internal Reads a JSON body with a byte ceiling. `response.json()` is unbounded, so a hostile
@@ -266,9 +297,58 @@ interface RawArgs
  */
 export function createClient<Features extends Record<string, Feature>>(manifest: Manifest, options: ClientOptions): ClientOf<Features>
 {
-    const transport = options.fetch ?? ((request: Request): Promise<Response> => fetch(request));
     const baseUrl = options.baseUrl.endsWith('/') ? options.baseUrl.slice(0, -1) : options.baseUrl;
+    // By URL shape, not by an "http" prefix: a scheme in any case and a leading "//" are both
+    // absolute and name somebody else's origin, while a relative path that happens to start with
+    // those letters is not.
+    const absoluteBase = /^[a-z][a-z0-9+.-]*:/i.test(baseUrl) || baseUrl.startsWith('//');
     const maxBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+    const wire = (request: Request): Promise<Response> => fetch(request);
+
+    /**
+     * Which transport serves ONE call, and what URL it is handed. Decided per call, because the
+     * answer depends on where the call is made from: the same module-scope client is imported by
+     * a browser bundle and by a server render, and only the second can be inside a request.
+     *
+     * An explicit `fetch` is the first case and keeps the inert base, so an app-supplied
+     * transport is never handed an authority derived from the request being answered. An
+     * absolute baseUrl says "go over the wire" and is never bridged. A relative one means "this
+     * origin", which in a browser is `location` and on a server is the request being answered -
+     * and if there is no such request, there is no origin to invent.
+     */
+    const select = (method: string, relative: string): { transport: (request: Request) => Promise<Response>; url: string } =>
+    {
+        const here = (globalThis as { location?: Location }).location?.href;
+        if (options.fetch !== undefined)
+        {
+            return { transport: options.fetch, url: new URL(relative, here ?? 'http://localhost').toString() };
+        }
+        if (absoluteBase)
+        {
+            // Resolved rather than handed over raw: a scheme-relative base carries no scheme of
+            // its own, so it takes the page's where there is one and the inert base otherwise.
+            return { transport: wire, url: new URL(relative, here ?? 'http://localhost').toString() };
+        }
+        const ambient = useRequest();
+        const bridge = ambient !== null ? apiBridgeOf(ambient) : undefined;
+        if (ambient !== null && bridge !== undefined)
+        {
+            if (method !== 'GET' && method !== 'HEAD')
+            {
+                throw new Error(bridgeMethodRefusal(method, relative));
+            }
+            // Against the page's OWN url, so the handler reads the authority it would have read
+            // over the wire; the dispatch never opens a socket, so a forged Host dials nothing.
+            return { transport: (request: Request): Promise<Response> => bridge.dispatch(request), url: new URL(relative, ambient.url).toString() };
+        }
+        if (here !== undefined)
+        {
+            return { transport: wire, url: new URL(relative, here).toString() };
+        }
+        throw new Error(`The relative baseUrl "${ options.baseUrl }" means "this origin", and there is no origin here: `
+            + `${ method } ${ relative } found no ambient request carrying an in-process api bridge, and no browser `
+            + `location to resolve against. ${ TRANSPORT_CAUSES }`);
+    };
 
     // The double-submit mirror for action calls: read the token cookie the page's own JS is
     // meant to read (that readability IS the defense) and echo it in the header. Outside a
@@ -346,11 +426,9 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             }
         }
 
-        // A relative baseUrl ('/api') resolves against an inert origin - the transport only
-        // ever sees the absolute form, exactly as a server would.
-        const absolute = baseUrl.startsWith('http') ? `${ baseUrl }${ path }${ queryString }`
-            : new URL(`${ baseUrl }${ path }${ queryString }`, (globalThis as { location?: Location }).location?.href ?? 'http://localhost').toString();
-        const response = await transport(new Request(absolute, init));
+        // The transport only ever sees the absolute form, exactly as a server would.
+        const selected = select(method, `${ baseUrl }${ path }${ queryString }`);
+        const response = await selected.transport(new Request(selected.url, init));
 
         if (!response.ok)
         {
@@ -370,29 +448,36 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
         return readJsonBounded(response, maxBytes);
     };
 
+    /** One manifest row as a callable, whichever manifest it came from - this client's, or a bridge's. */
+    const callableFor = (group: string, name: string, entry: ManifestEntry): unknown =>
+    {
+        if (entry.kind === 'action')
+        {
+            // Directly callable: the input object is the whole argument.
+            return (input?: unknown): Promise<unknown> =>
+                call(entry.method, entry.path, input === undefined ? {} : { input }, true);
+        }
+        if (entry.kind !== undefined)
+        {
+            return (): never =>
+            {
+                // A form route's input is FormData and a raw/stream route owns its exchange -
+                // the JSON client would silently mis-encode all three. The types already
+                // filter these out; the marker keeps the refusal loud for untyped callers.
+                throw new Error(`The route ${ group }.${ name } (${ entry.method } ${ entry.path }) is a "${ entry.kind }" route; `
+                    + 'the typed client only speaks JSON. Use fetch (FormData / EventSource) directly.');
+            };
+        }
+        return (args: RawArgs = {}): Promise<unknown> => call(entry.method, entry.path, args);
+    };
+
     const surface: Record<string, Record<string, unknown>> = {};
     for (const [group, entries] of Object.entries(manifest))
     {
         const namespace: Record<string, unknown> = {};
         for (const [name, entry] of Object.entries(entries))
         {
-            if (entry.kind === 'action')
-            {
-                // Directly callable: the input object is the whole argument.
-                namespace[name] = (input?: unknown): Promise<unknown> =>
-                    call(entry.method, entry.path, input === undefined ? {} : { input }, true);
-                continue;
-            }
-            namespace[name] = entry.kind !== undefined
-                ? (): never =>
-                {
-                    // A form route's input is FormData and a raw/stream route owns its exchange -
-                    // the JSON client would silently mis-encode all three. The types already
-                    // filter these out; the marker keeps the refusal loud for untyped callers.
-                    throw new Error(`The route ${ group }.${ name } (${ entry.method } ${ entry.path }) is a "${ entry.kind }" route; `
-                        + 'the typed client only speaks JSON. Use fetch (FormData / EventSource) directly.');
-                }
-                : (args: RawArgs = {}): Promise<unknown> => call(entry.method, entry.path, args);
+            namespace[name] = callableFor(group, name, entry);
         }
         surface[group] = namespace;
     }
@@ -417,11 +502,22 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
                     {
                         return undefined;
                     }
-                    return (): never =>
+                    return (...args: unknown[]): unknown =>
                     {
-                        throw new Error(`The api group "${ group }" is not in the manifest this client was built with - `
-                            + 'the manifest was empty (server unreachable when the page booted?) or stale. '
-                            + `${ group }.${ name }() cannot be called.`);
+                        // The hole can be filled from the request itself: a server-side client is
+                        // built with `{}` before `register` has run, and the bridge stamped on the
+                        // request carries the manifest that was actually installed. Consulted per
+                        // call, so import order stops mattering.
+                        const ambient = useRequest();
+                        const entry = ambient !== null ? apiBridgeOf(ambient)?.manifest[group]?.[name] : undefined;
+                        if (entry !== undefined)
+                        {
+                            return (callableFor(group, name, entry) as (...rest: unknown[]) => unknown)(...args);
+                        }
+                        throw new Error(`The api group "${ group }" is not in the manifest this client was built with, and `
+                            + 'no ambient request carries an in-process api bridge that has it - the manifest was empty '
+                            + `(server unreachable when the page booted?) or stale. ${ group }.${ name }() cannot be `
+                            + `called. ${ TRANSPORT_CAUSES }`);
                     };
                 }
             });

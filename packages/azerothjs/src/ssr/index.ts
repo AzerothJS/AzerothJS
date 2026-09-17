@@ -25,6 +25,9 @@ export type { RenderToStreamOptions } from './render-to-stream.ts';
 export { renderToDocument } from './render-to-document.ts';
 export type { RenderToDocumentOptions } from './render-to-document.ts';
 export { island } from './island.ts';
+// The request is a SERVER fact, so its reader lives with the server entry points that install
+// it; in a browser it reads null.
+export { useRequest } from './request-context.ts';
 
 export { collectStyleSheet, resetStyleSheet } from '../renderer/index.ts';
 

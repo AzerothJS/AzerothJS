@@ -24,6 +24,7 @@ import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity
 import { getStoreScope } from '../reactivity/store-scope.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeRenderWindow, openRenderWindow } from '../renderer/frame.ts';
+import { installRequestContext } from './request-context.ts';
 import type { RenderFrame } from '../renderer/frame.ts';
 import type { MountNode } from '../component/index.ts';
 
@@ -37,7 +38,7 @@ import type { MountNode } from '../component/index.ts';
  * @param markers - Whether to emit hydration markers.
  * @returns The serialized HTML.
  */
-function renderBody(component: () => MountNode, markers: boolean, hostFrame?: RenderFrame): string
+function renderBody(component: () => MountNode, markers: boolean, hostFrame?: RenderFrame, request?: Request): string
 {
     if (typeof component !== 'function')
     {
@@ -56,6 +57,13 @@ function renderBody(component: () => MountNode, markers: boolean, hostFrame?: Re
         // another can start (see store-scope in azerothjs).
         runInStoreScope((): string =>
         {
+            // Into THIS frame's scope, so a component's useRequest() finds the request the
+            // host is answering. A fresh scope is never the default one, so this install is
+            // the one that always succeeds.
+            if (request !== undefined)
+            {
+                installRequestContext(request);
+            }
             // The render WINDOW opens INSIDE the store scope, never at the entry point:
             // the entry scope and the body scope are different objects, and an
             // entry-installed identity is the mistake the frame module retires. The host
@@ -133,6 +141,16 @@ export interface RenderToStringOptions
      * source. The markup is then clean HTML with no framework bookkeeping in it.
      */
     markers?: boolean;
+
+    /**
+     * The live request this render is answering, which a component reads back with
+     * `useRequest()`.
+     *
+     * Pass it ONLY for a render whose output belongs to one visitor. A render whose bytes are
+     * cached, shared or written to disk (ISR regeneration, a build-time prerender) must not
+     * receive one, or a visitor's identity ends up in another visitor's page.
+     */
+    request?: Request;
 }
 
 /**
@@ -157,6 +175,7 @@ export interface RenderToStringOptions
  * @param component - A thunk building the root element.
  * @param options - Output shaping.
  * @param options.markers - Emit hydration anchors. Defaults to true.
+ * @param options.request - The live request, for a per-visitor render only.
  * @returns The body HTML. No `<html>` or `<head>` shell.
  * @throws {Error} If `component` is not a thunk.
  * @example
@@ -170,5 +189,5 @@ export interface RenderToStringOptions
  */
 export function renderToString(component: () => MountNode, options: RenderToStringOptions = {}): string
 {
-    return renderBody(component, options.markers ?? true, options.frame);
+    return renderBody(component, options.markers ?? true, options.frame, options.request);
 }

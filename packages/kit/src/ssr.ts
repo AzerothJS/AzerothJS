@@ -29,7 +29,7 @@ import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, LOADER_HANDOFF_VERSION, localeDirection, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch, joinBase, loaderFailures, renderAsDenied, renderWithBase, renderWithLocale, targetToFullPath } from 'azerothjs/internal';
+import { collectHead, guardedMatch, joinBase, loaderFailures, renderAsDenied, renderWithBase, renderWithLocale, requestWasRead, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -42,10 +42,12 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *                  page renders the app's fallback UI at 404).
  *
  * The `html` and `stream` arms carry `guarded: true` when the matched chain has any route
- * guard. A guard makes the render a function of (URL, request identity), so a guarded
- * result must never enter a shared page cache, be written as a prerender file, or be
- * answered without `cache-control: private, no-store` - hosts that persist or share
- * rendered pages key those refusals on this stamp.
+ * guard, and when this render CONSULTED the request it was given - a guard or loader that
+ * read `args.request`, a component that called `useRequest()`, or an in-process api call
+ * made with the visitor's identity. Either way the render is a function of (URL, request
+ * identity), so the result must never enter a shared page cache, be written as a prerender
+ * file, or be answered without `cache-control: private, no-store` - hosts that persist or
+ * share rendered pages key those refusals on this stamp.
  *   - `redirect` - a guard/loader redirected; serve a 302.
  *   - `blocked`  - a guard VETOED; serve `status` (401 or 403) with `html`, the app's own
  *                  blocked UI. The protected component is never in it: the render is pinned
@@ -151,6 +153,20 @@ export interface PageRenderOptions
      * them only when each language has its own address.
      */
     alternates?: ReadonlyArray<{ hreflang: string; href: string }>;
+
+    /**
+     * The live request this render is answering: the visitor's own cookies, headers and url.
+     *
+     * Passed by the host at a PER-REQUEST render only - never at a render whose output is
+     * shared or written to disk (ISR production and regeneration, the build-time prerender),
+     * where one visitor's identity would be baked into everybody's copy. The guards and the
+     * loaders receive it as `args.request`, and the render itself makes it the ambient one a
+     * component reads back with `useRequest()`.
+     *
+     * Reading it marks the page a function of the visitor: the result comes back
+     * `guarded: true` and every consumer answers it `private, no-store`.
+     */
+    request?: Request;
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
@@ -389,13 +405,22 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // handoff stay in app space, where the pinned base puts the client too.
         const documentUrl = base === undefined ? url : joinBase(base, url);
 
-        const loaded = await matchAndLoad(routes, url, options?.signal !== undefined ? { signal: options.signal } : undefined);
+        const loaded = await matchAndLoad(routes, url, {
+            ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+            ...(options?.request !== undefined ? { request: options.request } : {})
+        });
 
         // The same selection walk matchAndLoad just performed, asked one static question:
         // does the chain carry a guard? A guarded render is a function of (URL, request
         // identity), and the stamp is how every host that persists or shares pages -
         // the ISR cache, the prerender pass, a CDN via response headers - hears it.
         const guarded = guardedMatch(routes, url);
+
+        // The other half of the same question, asked of what actually happened rather than of
+        // the table: a guard, a loader or a component that consulted the visitor makes this
+        // render identity-dependent too, whether or not the chain declares a guard. Read after
+        // the loaders and after the main pass, which is where every such read has landed.
+        const identityRead = (): boolean => options?.request !== undefined && requestWasRead(options.request);
 
         // An OFF-ORIGIN guard/loader redirect is refused at the router boundary and arrives
         // here as its own terminal outcome. It is never rendered and never written to a
@@ -498,7 +523,8 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                         ...(options.onError !== undefined ? { onError: options.onError } : {}),
                         ...(options.scriptNonce !== undefined ? { scriptNonce: options.scriptNonce } : {}),
                         ...(options.locale !== undefined ? { locale: options.locale } : {}),
-                        ...(base !== undefined ? { base } : {})
+                        ...(base !== undefined ? { base } : {}),
+                        ...(options.request !== undefined ? { request: options.request } : {})
                     });
             }
             finally
@@ -534,7 +560,10 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
                     return reader.cancel(reason);
                 }
             });
-            return { kind: 'stream', status: notFound ? 404 : 200, stream, ...(guarded ? { guarded: true } : {}) };
+            // Read after the main pass, which renderToStream ran synchronously inside the call
+            // above, and before the first byte leaves in `start()`. A read inside a Suspense
+            // continuation arrives after the headers and cannot reach this.
+            return { kind: 'stream', status: notFound ? 404 : 200, stream, ...(guarded || identityRead() ? { guarded: true } : {}) };
         }
 
         // The drain rides a `finally` on the render, so nothing can execute between the two
@@ -546,7 +575,9 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // Constructed BEFORE the render, so the finally holds it on the throw path.
         const frame = createRenderFrame();
         const renderTree = (): string =>
-            renderToString(() => app(stamped !== undefined ? { url: documentUrl, handoff: stamped } : { url: documentUrl }), { frame });
+            renderToString(
+                () => app(stamped !== undefined ? { url: documentUrl, handoff: stamped } : { url: documentUrl }),
+                { frame, ...(options?.request !== undefined ? { request: options.request } : {}) });
         const pinned = (): string => (base === undefined ? renderTree() : renderWithBase(base, renderTree));
         const render = (): string =>
             (options?.locale === undefined ? pinned() : renderWithLocale(options.locale, pinned));
@@ -578,6 +609,6 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         {
             return { kind: 'error', status: 500, html };
         }
-        return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded ? { guarded: true } : {}) };
+        return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded || identityRead() ? { guarded: true } : {}) };
     };
 }

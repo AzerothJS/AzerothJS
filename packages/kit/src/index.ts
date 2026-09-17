@@ -36,7 +36,7 @@ import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
+import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
 import { containedFile, staticFiles } from '@azerothjs/http/node';
 import type { ContainedFile } from '@azerothjs/http/node';
@@ -821,6 +821,10 @@ function registerAction(
 
     const handler = async (context: RequestContext): Promise<Response> =>
     {
+        // Before this POST's authorizing walk and its blocked-UI re-render, both of which are
+        // handed this same request: a guard that calls the app's own api must reach it here
+        // exactly as it does on the page's GET, or one POST's two walks disagree.
+        attachApiBridge(context.request);
         const form = await readForm(context.request);
         verifyCsrfField(context.request, context.url, form.get(CSRF_FIELD), options.csrf ?? {});
         // The token is not the application's business, and leaving it in would put it in front
@@ -852,7 +856,8 @@ function registerAction(
         // some other page's guards, or none at all. The params are the ones the kernel bound for
         // this request, so the guard sees what the handler sees.
         const { pathname, search } = splitPath(appPath(context, options));
-        const walked = await evaluateGuardsForPattern(options.routes, page.path, { params: context.params, pathname, search });
+        const walked = await evaluateGuardsForPattern(options.routes, page.path,
+            { params: context.params, pathname, search, request: context.request });
         if (walked.kind === 'not-found')
         {
             throw new NotFoundError();
@@ -878,6 +883,7 @@ function registerAction(
             // page. The kernel refusal is the fallback, so the write is refused either way.
             const rendered = await renderer(appPath(context, options), await shellPromise, {
                 signal: context.request.signal,
+                request: context.request,
                 handoffMeta: { build: await buildId, at: Date.now() },
                 ...documentOptions(document)
             });
@@ -1347,11 +1353,18 @@ async function renderOrShell(
         // page carries the scoped-CSS <style>, and without the nonce a strict `style-src`
         // refuses it and the page paints unstyled until hydration.
         const nonce = options.scriptNonce?.(context);
+        // The api this App (or one enclosing it) registered, stamped on the request before the
+        // guards, the loaders and the render read it: a `render: 'server'` page calls its own
+        // api in process, with this visitor's identity and no socket.
+        attachApiBridge(context.request);
         const result = await options.renderer(
             url,
             shell,
             {
                 signal: context.request.signal,
+                // This render exists for THIS visitor, so it may read them: the guards and the
+                // loaders take it as `args.request` and a component reads it with useRequest().
+                request: context.request,
                 // A rejected loader no longer throws out of the render - the page is served at
                 // 500 with that level's own failure UI - so this is the ONLY place the fault
                 // is reported. Without it a 500 arrives with no cause anywhere.
@@ -1420,7 +1433,10 @@ async function guardedAnswer(
     {
         return asLive(await renderOrShell(context, 'server', options, shell, buildId));
     }
-    const walked = await evaluateGuards(options.routes, appPath(context, options));
+    // A server guard walk with no render around it still runs for THIS reader, so it gets the
+    // same request and the same in-process api the rendered path gets.
+    attachApiBridge(context.request);
+    const walked = await evaluateGuards(options.routes, appPath(context, options), { request: context.request });
     const headers = { 'cache-control': 'private, no-store' };
     switch (walked.kind)
     {
@@ -1470,12 +1486,14 @@ function registerDynamic(
                 return renderOrShell(context, 'server', options, shell, buildId);
             }
             const nonce = options.scriptNonce?.(context);
+            attachApiBridge(context.request);
             const result = await options.renderer(
                 appPath(context, options),
                 shell,
                 {
                     stream: true,
                     signal: context.request.signal,
+                    request: context.request,
                     // A boundary that rejects AFTER the shell flushed cannot change the status,
                     // so without this the failure reaches nobody: the client gets a page missing
                     // a boundary and the server records a clean 200.

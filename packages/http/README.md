@@ -145,6 +145,91 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
 
 ---
 
+## Calling your own api in process
+
+A page rendered on the server often needs what its own api already serves. That call does not
+have to go out to a socket and back: when the render is answering a request that carries the
+api, the same typed client dispatches through `app.handle` in process, with the visitor's
+identity and none of the round trip.
+
+```ts
+// the same module the browser imports
+export const client = createClient<typeof api>(manifest, { baseUrl: '/api' });
+
+// a page loader - in the browser this is a fetch, on the server it is an in-process dispatch
+{ path: '/guestbook', component: GuestBook, render: 'server', loader: () => client.guestbook.list() }
+```
+
+Nothing is switched on: the client decides per call, and the rules are the same on every host.
+
+- **It needs an ambient page request.** The in-process route exists inside a guard walk, a
+  loader, or a per-request render on the GET path, and inside a page action BODY, which its
+  POST's authorizing walk already gave the request and the bridge. A background work unit (ISR
+  regeneration, cron, a ws handler) and a build-time prerender answer no request of their own,
+  and a call from one of those takes the named throw below.
+- **A relative `baseUrl` only.** `/api` means "this origin", which in a browser is `location`
+  and on a server is the request being answered. An absolute one - a scheme in any case, or a
+  leading `//` - says "go over the wire" and is never dispatched in process, and the dispatcher
+  refuses a url on another authority by name whoever hands it one.
+- **One `register` per App.** The record a request root reads is per App and the last call wins,
+  so mount every group in one `register` call rather than in two.
+- **An explicit `ClientOptions.fetch` wins.** It is chosen before either self-selected transport
+  and keeps its own inert base (`http://localhost`), so an app-supplied transport is never handed
+  an authority derived from the request being answered.
+- **GET and HEAD only.** A write dispatched in process would carry a forwarded cookie through
+  the App's own guards while the edge pipeline around it never ran, so any other method is
+  refused by name - at the call site, and again in the dispatcher, so the rule holds for anyone
+  holding the request. Call a write from the browser, or over the wire with an absolute baseUrl.
+- **An allowlist carries identity, and nothing else.** `forwardIdentity` copies `cookie`,
+  `authorization` and `accept-language`, and only where the call has not set them itself, so
+  `ClientOptions.headers: { authorization }` is never overwritten by the visitor's. `host`,
+  `content-length`, the hop-by-hop set, `origin`, `referer`, `sec-fetch-*`, `x-forwarded-*`,
+  conditional and range headers, the csrf header and `accept-encoding` are all refused by
+  construction. The correlation id is stamped from the trusted request id rather than the
+  inbound header, so sub-call log lines correlate without trusting a client-forged value.
+- **A sub-call enters at `app.handle`.** It runs the App's own middleware, guards and validation
+  but NOT an outer `pipeline(app, requestId(), securityHeaders(), csrfCookie(), rateLimit())`,
+  which composes outside. Authorization that lives in a pipeline layer rather than in a guard is
+  not applied to it. `csrfProtect` is not one of those layers - it is a guard by type, so every
+  csrf spelling this package offers runs inside `app.handle` and therefore on the in-process leg
+  too.
+- **Keep `rateLimit` in the pipeline.** Installed with `app.use` it DOES run in process, and its
+  default key throws 500 `rate-limit-key-unavailable` there, because an in-process request has
+  no peer. That is also why `clientIp` is not forwarded: copying it would count one visitor twice
+  against an ip-keyed limit.
+- **Compress on the way out.** The client's response reader does not decode a content-encoding
+  and no `accept-encoding` is forwarded, so a host that composes `compressResponse` INSIDE its
+  App rather than around it breaks the in-process leg.
+- **A real nested root.** The sub-call gets its own scope, its own `createStore` state, its own
+  cleanups and its own data cache from the handler's first await on, so an api middleware cannot
+  write the page's request-scoped stores. It inherits the page request's `AbortSignal`, so a
+  disconnect reaches the handler and its `onWorkUnitCleanup` runs. Where it declares a
+  `responseTimeoutMs` of its own, the deadline it keeps is the tighter of that and the enclosing
+  root's REMAINING time, so a page half way through its budget cannot open a sub-call with a
+  fresh full one; an App that declares none is unbounded here as it always was, and the page's
+  own deadline is what answers the client.
+- **Redirects are never followed, and the caps still hold.** A 3xx surfaces as an `ApiError`, so
+  a forwarded cookie is never replayed to a `Location`, and `maxResponseBytes` bounds the body
+  exactly as it does over the wire.
+
+When a relative baseUrl finds neither an ambient request carrying the api nor a browser
+`location`, the call throws an error naming every cause - no api registered on this App or any
+enclosing root; no request root around the call; a call from outside a guard walk, a loader or a
+per-request render; a build-time prerender; or an SSR bundle that resolved its own second copy of
+`azerothjs` (check `ssr.external`). That replaces the `TypeError: fetch failed` against
+`http://localhost` such a call used to produce.
+
+`forwardIdentity(from, to)` is exported for a host building a dispatcher of its own: it applies
+the allowlist above and returns the request to hand to `app.handle`.
+
+```ts
+import { forwardIdentity } from '@azerothjs/http';
+
+const answer = await app.handle(forwardIdentity(pageRequest, new Request('https://app.example/api/me')));
+```
+
+---
+
 ## What is in the box
 
 - **Radix router** - no regex, O(segments), route conflicts FAIL BOOT with a printable

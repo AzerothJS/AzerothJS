@@ -1098,7 +1098,11 @@ function buildRouter(config: RouterConfig): Router
             params: m.params,
             pathname: m.pathname,
             query: parseQuery(s.search),
-            from: lastAcceptedLocation
+            from: lastAcceptedLocation,
+            // Null, explicitly, and never a synthesised Request: a fabricated one would answer
+            // `{}` for the visitor's cookies, and a guard reading identity must fail closed
+            // here rather than believe an empty jar.
+            request: null
         };
         const proceed = (index: number): void =>
         {
@@ -1374,7 +1378,9 @@ function buildRouter(config: RouterConfig): Router
                 selfEntry.usedParent = false; // last-run truth; awaiting parent re-records it
             }
             const parent = parentPromiseFor(cache ?? null, trigger.parentKey, selfEntry);
-            return trigger.loader({ params: trigger.params, query: trigger.query, signal, parent });
+            // `request` is null in the browser, for the reason the guard context states: a
+            // synthesised Request would carry an empty cookie jar and read as the visitor's.
+            return trigger.loader({ params: trigger.params, query: trigger.query, signal, parent, request: null });
         }) as FamilyRecord['fetcher'],
         fresh: 0,
         retain: 5 * 60 * 1000
