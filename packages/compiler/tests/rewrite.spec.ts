@@ -52,12 +52,22 @@ describe('rewriteReactive - writes', () =>
 {
     it('rewrites a plain assignment to a setter call', () =>
     {
-        expect(rewriteReactive('count = 5', sources(['count']))).toBe('setCount(5)');
+        expect(rewriteReactive('count = 5', sources(['count']))).toBe('setCount.set(5)');
+    });
+
+    it('stores the right-hand side of a direct write as given', () =>
+    {
+        // A function on the right is the value, not an updater: the setter's raw-store form is
+        // what keeps `Dialog = LazyDialog` from invoking the component with the previous value.
+        expect(rewriteReactive('cb = handler', sources(['cb']))).toBe('setCb.set(handler)');
+        expect(rewriteReactive('cb = () => "x"', sources(['cb']))).toBe('setCb.set(() => "x")');
+        expect(rewriteReactive("data = await fetch('/x')", sources(['data']))).toBe("setData.set(await fetch('/x'))");
     });
 
     it('rewrites a compound assignment to a functional-updater setter call', () =>
     {
         expect(rewriteReactive('count += 2', sources(['count']))).toBe('setCount(__p => __p + (2))');
+        expect(rewriteReactive('fn ??= handler', sources(['fn']))).toBe('setFn(__p => __p ?? (handler))');
     });
 
     it('rewrites ++/-- to a functional-updater setter call', () =>
@@ -101,7 +111,7 @@ describe('rewriteStatements', () =>
 
     it('rewrites a write statement to a setter call', () =>
     {
-        expect(rewriteStatements('count = count + 1;', sources(['count']))).toBe('setCount(count() + 1);');
+        expect(rewriteStatements('count = count + 1;', sources(['count']))).toBe('setCount.set(count() + 1);');
     });
 
     it('rewrites across multiple statements with a shadowing local', () =>

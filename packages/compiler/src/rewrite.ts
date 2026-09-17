@@ -11,7 +11,7 @@
  *   - a read of a `state`/`derived` `x` becomes `x()`;
  *   - a `props.f` read is left as-is (props is a getter OBJECT - reading the property runs its getter,
  *     so reactivity flows without a call);
- *   - `x = e` becomes `setX(e)`;
+ *   - `x = e` becomes `setX.set(e)`, storing the value as given;
  *   - compound and ++/-- writes become functional-updater setter calls.
  * A local that shadows a reactive name is left alone - the rewriter uses the SAME scope-aware walk
  * (walk.ts) the dependency collector uses, so the two cannot disagree about what is reactive.
@@ -128,7 +128,7 @@ function memberAccess(key: string): string
  * // 'count() + 1'
  *
  * rewriteReactive('count = 5', { names: new Set(['count']), hasProps: false });
- * // 'setCount(5)'
+ * // 'setCount.set(5)'
  *
  * @see {@link rewriteStatements} for an effect body or opaque setup.
  * @internal
@@ -233,9 +233,11 @@ function collectEdits(sourceFile: ts.SourceFile, sources: ReactiveSources, offse
             {
                 const rightStart = expression.right.getStart(sourceFile);
                 const rightEnd = expression.right.getEnd();
+                // A direct write stores the right-hand side as given, a function included, through
+                // the setter's raw-store form; a compound or update write derives it from `__p`.
                 if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken)
                 {
-                    edits.push({ start: lhsStart, end: rightStart, text: `${ set }(` });
+                    edits.push({ start: lhsStart, end: rightStart, text: `${ set }.set(` });
                     insert(rightEnd, ')');
                 }
                 else

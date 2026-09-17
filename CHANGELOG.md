@@ -169,6 +169,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   a `<Suspense>` continuation cannot raise the mark, while loader-phase and main-pass reads are
   complete before the first byte and do.
 
+- **The runtime contract moves to v4 - compiled output and the runtime must come from one
+  version.** A direct write to a `state` emits a call an older runtime does not have, so
+  `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 3 -> 4 and the workspace
+  moves to 2.1.0-beta.3. Lockstep releases cover the normal case; what this affects is PREBUILT
+  compiled output - a published `.azeroth` library's `dist`, or a stale application bundle -
+  which fails at load with a message naming both versions instead of misbehaving components
+  deep. Rebuild against a matched set: `azerothjs` and `@azerothjs/compiler` from one version.
+
+- **`Setter<T>` is an interface with a required `set` member.** The pair `createSignal` returns
+  carries it and the call form is unchanged at every call site, so every hand-written
+  `setCount(n => n + 1)` keeps working. What moves is the supplier direction: a hand-written
+  function supplied where a `Setter<T>` is expected - a parameter slot, a hand-built
+  `Signal<T>` tuple, a test double - must carry `set` too, or come from `createSignal`.
+
 ### Fixed
 
 - **`azeroth dev` served a different application from the one you deploy.** On a fullstack scaffold
@@ -234,6 +248,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   store module, so the middleware's `createStore` and the loader's are two closures over two maps.
   Derive from the request instead, or add that module to `ssr.external` and own the deploy layout
   that implies.
+
+- **Assigning a function to a `state` with `=` called it and stored what it returned.** In a
+  component body `Dialog = LazyDialog;` compiled to a bare setter call, and a signal setter
+  reads any function argument as an updater: the component was invoked with the previous value
+  as its props and the render threw on the first prop it read. Every function-valued write went
+  the same way, an explicitly annotated `state` included - `onConfirm = () => 'CONFIRMED';` ran
+  the body at the assignment and stored the string it returned. A direct write stores the
+  right-hand side exactly as it was given, a function included. A compound or update write
+  (`count += 2`, `count++`, `fn ??= handler`) still derives the next value from the previous
+  one, and `bind:value` stores the value the element handed back.
+
+  One migration: an app that wrapped a function in an arrow inside a component body to survive
+  the old rule (`Dialog = () => About`) stores the arrow itself. Drop the wrapper.
 
 ### Security
 

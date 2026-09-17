@@ -170,6 +170,11 @@ Normative rules:
   contain markup (which is consumed as a unit). The initializer is syntactically
   optional (an omitted `= Value` lowers to the primitive's no-argument form, e.g.
   `state x;` -> `createSignal(undefined)`); always provide one in practice.
+- **Writes to a `state`.** A single plain `=` write stores the value as given, a
+  function included: `Dialog = LazyDialog;` stores the component itself, and
+  `onConfirm = () => 'yes';` stores the arrow without calling it. A single compound
+  write (`+=`, `-=`, `??=`, and the rest) or update write (`++`, `--`) derives the
+  next value from the previous one.
 - **The two `effect` forms.** Without parentheses: auto-tracked
   (`createEffect`). With an immediate `(` after the keyword: the
   explicit-dependency form - `effect (a, b) (values, prev) with { ... } { body }` -

@@ -141,6 +141,14 @@ const dispose = createRoot((dispose) =>
 dispose(); // tears down every effect created in the root
 ```
 
+A setter's call form reads a function argument as the updater. `setCount.set(value)` is the raw
+store: it writes the value exactly as given, a function included.
+
+```ts
+const [view, setView] = createSignal(Home);
+setView.set(About); // stores the component itself, no arrow wrapper
+```
+
 ### Rendering
 
 The same compiled component renders on the client, serializes on the server, and hydrates over

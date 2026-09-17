@@ -162,8 +162,9 @@ function resolveProps(dynamicProps: DynamicProps): Record<string, unknown>
  * churn cannot rebuild the tree, and the component is responsible for tracking its own
  * props, which it gets for free when they arrive through a thunk.
  *
- * Storing a component in a signal needs the wrap-in-arrow idiom, since a setter treats a
- * bare function argument as an updater.
+ * In a component body a plain assignment to a `state` stores the component. The wrap-in-arrow
+ * idiom belongs to a hand-written createSignal call, whose setter treats a bare function
+ * argument as an updater; `setView.set(About)` stores it there without a wrapper.
  *
  * @param dynamicProps - See {@link DynamicProps}.
  * @returns A control-flow handle, typed as a node.
@@ -174,7 +175,7 @@ function resolveProps(dynamicProps: DynamicProps): Record<string, unknown>
  *
  * Dynamic({ component: view, props: () => ({ title: tab() }) });
  *
- * setView(() => About); // wrapped: a setter treats a bare function as an updater
+ * setView.set(About);   // stored as given; setView(() => About) wraps it instead
  *
  * @see {@link Show} for a fixed two-way condition and {@link Switch} for a fixed set of cases.
  */

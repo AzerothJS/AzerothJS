@@ -154,3 +154,95 @@ describe('markers never survive to emitted code', () =>
         expect(code).toContain('row().name');
     });
 });
+
+describe('a direct write to a state stores the value it was given', () =>
+{
+    // Only compiled output driven through the real renderer separates a stored function from an
+    // invoked one; the emitted text reads the same either way.
+    const LOG = '__directWriteLog';
+
+    const SHELL = 'export default component Shell()\n'
+        + '{\n'
+        + '    state Dialog = null;\n'
+        + '    state onConfirm = null;\n'
+        + '    state fallback = null;\n'
+        + '\n'
+        + '    Dialog = LazyDialog;\n'
+        + '    onConfirm = () => { globalThis.' + LOG + '.push("ran"); return "CONFIRMED"; };\n'
+        + '    fallback ??= handler;\n'
+        + '\n'
+        + '    <div>\n'
+        + '        <Show when={ Dialog !== null }><Dynamic component={ Dialog } props={ { title: "hello" } } /></Show>\n'
+        + '        <span id="confirm">{ typeof onConfirm }</span>\n'
+        + '        <span id="fallback">{ fallback === handler ? "same" : "other" }</span>\n'
+        + '    </div>\n'
+        + '}\n'
+        + '\n'
+        + 'component LazyDialog(props)\n'
+        + '{\n'
+        + '    <p id="dialog-box">dialog: { props.title }</p>\n'
+        + '}\n'
+        + '\n'
+        + 'const handler = () => "H";\n';
+
+    /** Mounts SHELL with an empty body-execution log and hands back the root and the log. */
+    function mountShell(): { root: HTMLElement; log: string[] }
+    {
+        const slot = globalThis as unknown as Record<string, string[]>;
+        slot[LOG] = [];
+        const root = mount(SHELL);
+        return { root, log: slot[LOG] };
+    }
+
+    it('stores a component parked in state, so Show + Dynamic renders it', () =>
+    {
+        const { root } = mountShell();
+        expect(root.querySelector('#dialog-box')?.textContent).toBe('dialog: hello');
+    });
+
+    it('stores an assigned arrow without running its body', () =>
+    {
+        const { root, log } = mountShell();
+        expect(root.querySelector('#confirm')?.textContent).toBe('function');
+        expect(log).toEqual([]);
+    });
+
+    it('leaves the ??= write storing its right-hand side', () =>
+    {
+        const { root } = mountShell();
+        expect(root.querySelector('#fallback')?.textContent).toBe('same');
+    });
+
+    it('emits the same raw store for an ANNOTATED state', () =>
+    {
+        // The annotated form carries a generic type argument into the emit, which this deliberately
+        // crude `new Function` harness does not strip, so it is pinned on the emitted text.
+        const generated = generateModule('export default component C() { state onConfirm: (() => string) | null = null;'
+            + ' onConfirm = () => "CONFIRMED"; <p>{ typeof onConfirm }</p> }', 'T.azeroth', {});
+        const code = typeof generated === 'string' ? generated : generated.code;
+        expect(code).toContain('setOnConfirm.set(() => "CONFIRMED")');
+    });
+
+    it('stores the arrow itself when the author wrapped the value in one', () =>
+    {
+        const root = mount('export default component Shell()\n'
+            + '{\n'
+            + '    state Dialog = null;\n'
+            + '\n'
+            + '    Dialog = () => LazyDialog;\n'
+            + '\n'
+            + '    <div>\n'
+            + '        <span id="kind">{ typeof Dialog }</span>\n'
+            + '        <span id="call">{ Dialog() === LazyDialog ? "returns-LazyDialog" : "other" }</span>\n'
+            + '    </div>\n'
+            + '}\n'
+            + '\n'
+            + 'component LazyDialog(props)\n'
+            + '{\n'
+            + '    <p>dialog: { props.title }</p>\n'
+            + '}\n');
+
+        expect(root.querySelector('#kind')?.textContent).toBe('function');
+        expect(root.querySelector('#call')?.textContent).toBe('returns-LazyDialog');
+    });
+});

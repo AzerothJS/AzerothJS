@@ -143,7 +143,7 @@ describe('generateModule - reactive desugaring', () =>
         // Write-back: `name = $event.target.value` rewritten to the setter.
         // value reads through a multiple-aware conditional: a multiple select write-back is the
         // selected SET, while inputs and single selects read .value exactly as before.
-        expect(code).toContain('setName(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
+        expect(code).toContain('setName.set(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
         // The value side reads the state reactively.
         expect(code).toContain('name()');
     });
@@ -193,7 +193,7 @@ describe('generateModule - reactive desugaring', () =>
     it('bind:checked writes back on `change`, reading `$event.target.checked`', () =>
     {
         const code = gen('component C { state on = false; <input type="checkbox" bind:checked={on} /> }');
-        expect(code).toContain('setOn($event.target.checked)');
+        expect(code).toContain('setOn.set($event.target.checked)');
         expect(code).toContain('change');
     });
 
@@ -203,14 +203,28 @@ describe('generateModule - reactive desugaring', () =>
         // Value side: a reactive getter for the bound state.
         expect(code).toContain('get value() { return (name()); }');
         // Write-back: the component calls onInput with the new VALUE (not a DOM event), rewritten to setter.
-        expect(code).toContain('get onInput() { return (($event) => setName($event)); }');
+        expect(code).toContain('get onInput() { return (($event) => setName.set($event)); }');
     });
 
     it('bind:checked on a component writes back through onChange', () =>
     {
         const code = gen('import Toggle from "./Toggle.azeroth"; component C { state on = false; <Toggle bind:checked={on} /> }');
         expect(code).toContain('get checked() { return (on()); }');
-        expect(code).toContain('get onChange() { return (($event) => setOn($event)); }');
+        expect(code).toContain('get onChange() { return (($event) => setOn.set($event)); }');
+    });
+
+    it('both bind: write-back forms store the new value as given', () =>
+    {
+        // The element and the component write-back are built from the same `name = $event` rewrite,
+        // so one regression in the direct-write branch takes both; they are watched together.
+        const element = gen('component C { state name = ""; <input bind:value={name} /> }');
+        const component = gen('import Field from "./Field.azeroth"; component C { state name = ""; <Field bind:value={name} /> }');
+
+        expect(element).toContain('setName.set(($event.target.selectedOptions');
+        expect(component).toContain('($event) => setName.set($event)');
+        // Neither reaches the setter's call form, where a function argument is an updater.
+        expect(element).not.toMatch(/setName\(/);
+        expect(component).not.toMatch(/setName\(/);
     });
 
     it('a component on* callback prop keeps its authored casing (it is a prop, not a DOM event)', () =>
@@ -226,8 +240,8 @@ describe('generateModule - reactive desugaring', () =>
         const accessors = [...code.matchAll(/get onInput\(\)/g)];
         expect(accessors.length).toBe(1);
         // The state the user just produced must be visible to the authored handler.
-        expect(code.indexOf('setName($event)')).toBeGreaterThan(-1);
-        expect(code.indexOf('setName($event)')).toBeLessThan(code.indexOf('console.log(v)'));
+        expect(code.indexOf('setName.set($event)')).toBeGreaterThan(-1);
+        expect(code.indexOf('setName.set($event)')).toBeLessThan(code.indexOf('console.log(v)'));
     });
 
     it('discriminates the multiple write-back on selectedOptions, not on multiple', () =>
@@ -252,7 +266,7 @@ describe('generateModule - reactive desugaring', () =>
     {
         const out = gen('component C { state name = "a"; <input bind:value={name} /> }');
         expect(out).toContain("setProp(_n0, 'value', name())");
-        expect(out).toContain('setName(');
+        expect(out).toContain('setName.set(');
     });
 
     it('rejects bind: to a read-only derived on a component (same write-back guard as DOM)', () =>
@@ -437,7 +451,7 @@ describe('generateModule - reactive desugaring', () =>
     it('desugars the block-wrapper keywords (batch/untrack/cleanup/dispose/mount) to their runtime calls', () =>
     {
         expect(gen('component C { state a = 0; state b = 0; effect { batch { a = 1; b = 2; } } <p>{a}</p> }'))
-            .toContain('batch(() => { setA(1); setB(2); });');
+            .toContain('batch(() => { setA.set(1); setB.set(2); });');
         expect(gen('component C { state n = 0; effect { cleanup { stop(n); } } <p>{n}</p> }'))
             .toContain('onCleanup(() => { stop(n()); });');
         expect(gen('component C { dispose { teardown(); } <p>x</p> }'))
@@ -531,7 +545,7 @@ describe('generateModule - nested-scope keywords (composables)', () =>
     {
         const code = gen('function useToggle() { state open = false; const toggle = () => open = !open; effect { log(open); } return { open, toggle }; }\ncomponent C { <p>x</p> }');
         expect(code).toContain('const [open, setOpen] = createSignal(false)');
-        expect(code).toContain('setOpen(!open())');
+        expect(code).toContain('setOpen.set(!open())');
         expect(code).toContain('createEffect(() => { log(open()); })');
         expect(code).not.toMatch(/\bstate\s+open|\beffect\s*\{/);
     });
@@ -968,7 +982,7 @@ describe('codegen - bind: alongside an explicit handler for the same event', () 
         const registrations = [...code.matchAll(/bindEvent\(_n0, 'input'/g)];
         expect(registrations).toHaveLength(1);
         // Both behaviors survive in the single listener.
-        expect(code).toContain('setDraft(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
+        expect(code).toContain('setDraft.set(($event.target.selectedOptions && $event.target.multiple ? [].map.call($event.target.selectedOptions, function (o) { return o.value; }) : $event.target.value))');
         expect(code).toContain('announce()');
     });
 
@@ -983,7 +997,7 @@ describe('codegen - bind: alongside an explicit handler for the same event', () 
     {
         const code = gen('component C { state on = false; <input type="checkbox" bind:checked={on} onChange={() => track()} /> }');
         expect([...code.matchAll(/bindEvent\(_n0, 'change'/g)]).toHaveLength(1);
-        expect(code).toContain('setOn($event.target.checked)');
+        expect(code).toContain('setOn.set($event.target.checked)');
         expect(code).toContain('track()');
     });
 });

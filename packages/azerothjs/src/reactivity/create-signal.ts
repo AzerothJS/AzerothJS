@@ -75,9 +75,10 @@ export function attachSubscriberProbe(getter: Getter<unknown>, count: () => numb
  * count();                  // 6
  *
  * @example
- * // A function argument is always the updater, so a function VALUE must be wrapped.
+ * // A function argument is always the updater, so a function VALUE is wrapped, or set.
  * const [view, setView] = createSignal<() => Element>(Home);
  * setView(() => About);
+ * setView.set(About);       // the same store, without the wrapper
  *
  * @example
  * // Coarser change semantics without touching any call site.
@@ -105,10 +106,10 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
 
     attachSubscriberProbe(getter, (): number => producer.subs.length);
 
-    const setter: Setter<T> = (newValue: T | ((prev: T) => T)): void =>
+    // The one write body both setter forms end in: the equality gate, the version bump, the
+    // devtools event and the notification.
+    const commit = (resolved: T): void =>
     {
-        const resolved = typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue;
-
         if (equals(value, resolved))
         {
             return;
@@ -127,6 +128,16 @@ export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): Si
             notifyWrite(producer);
         }
     };
+
+    const setter: Setter<T> = Object.assign(
+        (newValue: T | ((prev: T) => T)): void =>
+        {
+            commit(typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue);
+        },
+        {
+            set: (raw: T): void => commit(raw)
+        }
+    );
 
     devtoolsId = dtEnabled()
         ? dtRegister('signal', {

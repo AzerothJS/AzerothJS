@@ -139,18 +139,26 @@ export interface Subscriber
 export type Getter<T> = () => T;
 
 /**
- * Writes a signal: either the next value, or a function computing it from the previous
- * one. A function argument is ALWAYS taken as that updater, so storing a function as the
- * value means wrapping it.
+ * Writes a signal, in two forms. The call form takes either the next value or a function
+ * computing it from the previous one, and a function argument is ALWAYS taken as that
+ * updater, so storing a function through it means wrapping it. `set` stores the value
+ * exactly as given, a function included.
  *
  * @typeParam T - The value type.
- * @param newValue - The next value, or `(prev) => next`.
  * @example
  * setCount(5);                     // direct
  * setCount(prev => prev + 1);      // updater
  * setView(() => MyComponent);      // stores the function itself
+ * setView.set(MyComponent);        // stores the function itself
  */
-export type Setter<T> = (newValue: T | ((prev: T) => T)) => void;
+export interface Setter<T>
+{
+    /** The next value, or `(prev) => next`; a function argument is the updater. */
+    (newValue: T | ((prev: T) => T)): void;
+
+    /** Stores `value` as given, a function included, through the same equality gate and notification. */
+    set(value: T): void;
+}
 
 /**
  * The `[getter, setter]` pair returned by createSignal.

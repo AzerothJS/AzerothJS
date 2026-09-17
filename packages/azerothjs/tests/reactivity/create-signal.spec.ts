@@ -4,7 +4,7 @@
 // Real graph, no mocks; DOM-less so any hidden DOM dependency would surface.
 import { describe, it, expect } from 'vitest';
 import { createSignal, createEffect, createMemo, createRoot } from 'azerothjs';
-import { subscriberCount } from 'azerothjs/internal';
+import { setDevtoolsHook, subscriberCount } from 'azerothjs/internal';
 
 describe('createSignal - value semantics', () =>
 {
@@ -49,6 +49,87 @@ describe('createSignal - value semantics', () =>
         const [value, setValue] = createSignal(0, { name: 'counter' });
         setValue(9);
         expect(value()).toBe(9);
+    });
+});
+
+describe('createSignal - set stores the value as given', () =>
+{
+    it('stores a function reference without invoking it', () =>
+    {
+        let calls = 0;
+        const handler = (): string =>
+        {
+            calls++;
+            return 'CONFIRMED';
+        };
+        const [onConfirm, setOnConfirm] = createSignal<(() => string) | null>(null);
+        setOnConfirm.set(handler);
+        expect(typeof onConfirm()).toBe('function');
+        expect(onConfirm()).toBe(handler);
+        expect(calls).toBe(0);
+    });
+
+    it('runs the equality gate: the same reference notifies nobody, a new one notifies', () =>
+    {
+        createRoot((dispose) =>
+        {
+            const first = (): number => 1;
+            const second = (): number => 2;
+            const [fn, setFn] = createSignal<() => number>(first);
+            let runs = 0;
+            createEffect(() =>
+            {
+                fn();
+                runs++;
+            });
+            expect(runs).toBe(1);
+            setFn.set(first);
+            expect(runs).toBe(1);
+            setFn.set(second);
+            expect(runs).toBe(2);
+            expect(fn()).toBe(second);
+            dispose();
+        });
+    });
+
+    it('emits a devtools write event for a changed value only', () =>
+    {
+        const writes: number[] = [];
+        const uninstall = setDevtoolsHook({
+            created: () =>
+            {},
+            disposed: () =>
+            {},
+            run: () =>
+            {},
+            write: (id) => writes.push(id)
+        });
+        try
+        {
+            const [value, setValue] = createSignal<string>('a');
+            setValue.set('a');
+            expect(writes).toHaveLength(0);
+            setValue.set('b');
+            expect(writes).toHaveLength(1);
+            expect(value()).toBe('b');
+        }
+        finally
+        {
+            uninstall();
+        }
+    });
+
+    it('leaves the call form reading a function argument as the updater, with the previous value', () =>
+    {
+        const seen: number[] = [];
+        const [count, setCount] = createSignal(3);
+        setCount((prev) =>
+        {
+            seen.push(prev);
+            return prev + 1;
+        });
+        expect(seen).toEqual([3]);
+        expect(count()).toBe(4);
     });
 });
 

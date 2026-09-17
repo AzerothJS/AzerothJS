@@ -79,8 +79,9 @@ go through one implementation.
 | `ssr.ts`, `hydration.ts` | SSR node markers and the hydration cursor. |
 | `types.ts` | `Signal`, `Getter`, `Setter`, and related types. |
 
-A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is
-`() => T` and `Setter<T>` is `(next: T | ((prev: T) => T)) => void`.
+A `Signal<T>` is the tuple `[Getter<T>, Setter<T>]`, where `Getter<T>` is `() => T` and
+`Setter<T>` is called with the next value or with `(prev) => next` - a function argument is
+always read as the updater - and also carries `set(value)`, which stores the value as given.
 
 
 ## Mutations

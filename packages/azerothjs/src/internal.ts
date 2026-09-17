@@ -32,7 +32,7 @@
  * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
  * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
  */
-export const RUNTIME_CONTRACT_VERSION = 3;
+export const RUNTIME_CONTRACT_VERSION = 4;
 
 /**
  * The load-time handshake every compiled module runs. A mismatch is a clear, actionable

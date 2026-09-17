@@ -64,7 +64,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 3;
+export const EMITTED_CONTRACT_VERSION = 4;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };

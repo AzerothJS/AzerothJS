@@ -69,7 +69,8 @@ export default defineConfig({ plugins: [azeroth()] });
    static template skeleton plus a list of surgical bindings.
 4. **optimize** - IR -> IR passes (constant folding).
 5. **codegen** - emits one artifact from the IR through a single emitter. Reactive reads become getter
-   calls and writes become setter calls.
+   calls and writes become setter calls. A direct write stores the value as given, a function included;
+   a compound or update write derives the next value from the previous one.
 
 There is **one IR and one emitter**. An element-rooted output emits a mode-dispatched body: a hoisted
 `<template>` cloned on the client, the same tree serialized to HTML for SSR, and adopted on hydration.
@@ -165,7 +166,7 @@ effect {
     const id = setInterval(tick, 1000);
     cleanup { clearInterval(id); }
 }
-batch { firstName = 'Ada'; lastName = 'Lovelace'; }   // -> batch(() => { setFirstName(...); setLastName(...); })
+batch { firstName = 'Ada'; lastName = 'Lovelace'; }   // -> batch(() => { setFirstName.set(...); setLastName.set(...); })
 ```
 
 All of these work at the component top level **and** in nested scopes (render callbacks, IIFEs, and
