@@ -783,3 +783,155 @@ describe('diagnoseModule - outlet-bare user-override exemption', () =>
             .toContain('azeroth/outlet-bare');
     });
 });
+
+describe('diagnoseModule - the embedded-markup walks cover every span that compiles markup', () =>
+{
+    // Markup held in a declaration value, in a `with { ... }` clause or in an effect's options
+    // compiles like markup in a hole, so every rule that walks embedded markup reports there
+    // with the same code it reports in markup position.
+    const src = (body: string, render = '<p>{ d }</p>'): string =>
+        'component C(props: { hot: boolean; items: number[]; v: string }) '
+        + `{ state n = 0; derived d = n * 2; const frozen = 1; ${ body } ${ render } }`;
+
+    const spans = (markup: string): Array<[string, string]> => [
+        ['a declaration value', src(`derived box = (${ markup });`)],
+        ['a with-clause', src(`store s = {} with { name: (${ markup }) };`)],
+        ['effect options', src(`effect with { name: (${ markup }) } { n; }`)],
+        ['effect (deps) options', src(`effect (n) with { name: (${ markup }) } { n; }`)],
+        ['markup position', src('', markup)]
+    ];
+
+    const rules: Array<[string, string]> = [
+        ['azeroth/for-missing-key', '<For each={ props.items } let={ it }><li>{ it }</li></For>'],
+        ['azeroth/reserved-event-name', '<button onclick="go()">x</button>'],
+        ['azeroth/duplicate-attr', '<b id="a" id="b">x</b>'],
+        ['azeroth/handler-not-function', '<button onClick={ save() }>x</button>'],
+        ['azeroth/bind-target-not-reactive', '<input bind:value={ frozen } />'],
+        ['azeroth/assign-to-derived', '<button onClick={ () => { d = 3; } }>x</button>']
+    ];
+
+    for (const [code, markup] of rules)
+    {
+        it(`reports ${ code } in every span that holds the markup`, () =>
+        {
+            for (const [where, source] of spans(markup))
+            {
+                expect(codes(source), where).toContain(code);
+            }
+        });
+    }
+
+    it('reports a setup handler in a statement, an effect body and a module-scope helper', () =>
+    {
+        expect(codes(src('const box = <button onClick={ save() }>x</button>;')))
+            .toContain('azeroth/handler-not-function');
+        expect(codes(src('effect { const box = <button onClick={ save() }>x</button>; }')))
+            .toContain('azeroth/handler-not-function');
+        expect(codes('const row = () => (<button onClick={ save() }>x</button>);\ncomponent C { state n = 0; <p>{ n }</p> }'))
+            .toContain('azeroth/handler-not-function');
+    });
+
+    it('reports a derived write in an `effect (deps)` body', () =>
+    {
+        expect(codes(src('effect (n) { d = 7; }'))).toContain('azeroth/assign-to-derived');
+    });
+
+    it('reports a derived write nested inside markup at the write\'s own identifier', () =>
+    {
+        const nested = [
+            src('const box = <div>{ props.hot ? <b onClick={ () => { d = 3; } }/> : null }</div>;'),
+            src('effect { const box = <div>{ props.hot ? <b onClick={ () => { d = 3; } }/> : null }</div>; }'),
+            src('const box = <ul>{ props.items.map((it) => <li onClick={ () => { d = it; } }/>) }</ul>;'),
+            src('', '<div>{ props.hot ? <b onClick={ () => { d = 3; } }/> : null }</div>')
+        ];
+        for (const source of nested)
+        {
+            const found = find(source, 'azeroth/assign-to-derived');
+            expect(found).toBeDefined();
+            expect(source.slice(found!.start, found!.end)).toBe('d');
+            // The write, not the hole around it and not the declaration of `d` above it.
+            expect(found!.start).toBeGreaterThan(source.indexOf('onClick'));
+        }
+    });
+
+    it('leaves the reused-markup rule on markup position', () =>
+    {
+        // Its placement counter has no binding model, so widening it would warn on a value
+        // placed in two statements, in one declaration value, or under a shadowing parameter.
+        const frag = 'const frag = <b/>;';
+        for (const source of [
+            `component C { ${ frag } const a = (<li>{ frag }</li>); const b = (<li>{ frag }</li>); <p>{ a }{ b }</p> }`,
+            `component C { ${ frag } derived two = (<li>{ frag }{ frag }</li>); <p>{ two }</p> }`,
+            `component C { ${ frag } derived two = ((frag) => (<li>{ frag }{ frag }</li>)); <p>{ two }</p> }`
+        ])
+        {
+            expect(codes(source)).not.toContain('azeroth/markup-value-reused');
+        }
+    });
+
+    it('does not read an attribute named like a derived as a write to it', () =>
+    {
+        for (const source of [
+            'component C(props: { rows: number[] }) { derived Row = props.rows[0]; derived first: Row = props.rows[0]; <p>{ first }</p> }',
+            'component C { state n = 0; derived disabled = n > 1; derived box = (<button type="button" disabled={ disabled }>x</button>); <p>{ box }</p> }',
+            'component C(props: { v: string }) { state n = 0; derived value = n * 2; derived box = (<input type="text" value={ props.v } />); <p>{ box }</p> }'
+        ])
+        {
+            expect(codes(source)).not.toContain('azeroth/assign-to-derived');
+            expect(() => generateModule(source, 'probe.azeroth')).not.toThrow();
+        }
+    });
+
+    it('counts a derived write once per span, and once per markup expression in markup position', () =>
+    {
+        const writes = (source: string): AzerothDiagnostic[] =>
+            diagnoseModule(source).filter((d) => d.code === 'azeroth/assign-to-derived');
+        // One statement writing `d` outside markup and inside a hole is one finding.
+        expect(writes('component C { state n = 0; derived d = n * 2; const x = (d = 1, <div>{ (d = 2) }</div>); <p>{ x }</p> }'))
+            .toHaveLength(1);
+        // Two holes of one markup root are two expressions, so two findings.
+        expect(writes('component C { state n = 0; derived d = n * 2; <div>{ <b onClick={ () => { d = 1; } }/> }{ <i onClick={ () => { d = 2; } }/> }</div> }'))
+            .toHaveLength(2);
+    });
+});
+
+describe('diagnoseModule - the absorbed-markup message names both fixes', () =>
+{
+    const sentence = 'Markup at the top level of a value is not part of the value. If this markup is the '
+        + 'component\'s render, end the declaration with `;` before it; if it is the declaration\'s value, '
+        + 'wrap it in parentheses.';
+
+    it('carries the two-case sentence at the absorbed tag', () =>
+    {
+        const shapes: Array<[string, string]> = [
+            ['component App { derived x = <div/>;\n  <p>ok</p> }', '<div'],
+            ['component App { state f = () => <li/>;\n  <p>ok</p> }', '<li'],
+            ['component App { state count = 0\n  <section id="x"><p>hi</p></section> }', '<p'],
+            ['component App { state count = 0\n  <div>{ count() }<p>x</p></div> }', '<p'],
+            ['component App { state count = 0\n  <div>Ends: <b>now</b></div> }', '<b']
+        ];
+        for (const [source, tag] of shapes)
+        {
+            const diag = find(source, 'azeroth/unterminated-declaration');
+            expect(diag?.message).toContain(sentence);
+            expect(diag && source.slice(diag.start, diag.end)).toBe(tag);
+        }
+    });
+
+    it('leaves the general missing-semicolon message alone', () =>
+    {
+        // The character before the `<` is a letter, a digit or `%`, which the scanner reads as
+        // an operator position, so these shapes never reach the absorbed-markup branch.
+        for (const source of [
+            'component App { state count = 0\n  <div>hi</div> }',
+            'component App { state count = 0\n  <section id="x">t<p>hi</p></section> }',
+            'component App { state count = 0\n  <div>{ count() }t<p>x</p></div> }'
+        ])
+        {
+            const diag = find(source, 'azeroth/unterminated-declaration');
+            expect(diag?.message).toContain('is missing its terminating `;`');
+            expect(diag?.message).not.toContain('wrap it in parentheses');
+            expect(diag && source.slice(diag.start, diag.end)).toBe('state count');
+        }
+    });
+});

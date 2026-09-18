@@ -138,3 +138,12 @@ describe('the rules gate every surface', () =>
             .rejects.toThrow(/azeroth\/array-suffix/);
     });
 });
+
+describe('markup at the top level of a value is not the value', () =>
+{
+    it('refuses the bare arrow body and accepts the parenthesised one, side by side', () =>
+    {
+        expect(codes(component('state f = () => <li/>;', 'f()'))).toContain('azeroth/unterminated-declaration');
+        expect(codes(component('state f = () => (<li/>);', 'f()'))).toEqual([]);
+    });
+});

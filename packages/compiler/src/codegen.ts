@@ -44,7 +44,7 @@ import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { styleScopeOf } from './style-section.ts';
 import { optimize } from './optimize.ts';
-import { parseDeclarationSlice, factoryPlan } from './ts-slice.ts';
+import { parseDeclarationSlice, factoryPlan, parseValueEnd } from './ts-slice.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } from './keyword-spec.ts';
 import { rewriteReactive, setterName } from './rewrite.ts';
 import { MARKER_ROW } from './markers.ts';
@@ -432,17 +432,17 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
         if (item.kind === 'state')
         {
             const parsed = parseDeclarationSlice(source, item);
-            const init = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : 'undefined';
+            const init = parsed?.initializer ? projectedSpan(source, parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile)), item.valueEnd, sources, emit, true) : 'undefined';
             const typeArg = parsed?.type ? `<${ parsed.type.getText(parsed.sourceFile) }>` : '';
-            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
+            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? projectedSpan(source, item.optionsStart, item.optionsEnd, sources, emit, false) : null;
             emit.used.add(RUNTIME_FN.state);
             line(`const [${ item.name }, ${ setterName(item.name) }] = ${ RUNTIME_FN.state }${ typeArg }(${ init }${ namedOptions(rawOpts, item.name, emit) });`, item.nameStart);
         }
         else if (item.kind === 'derived' || item.kind === 'deferred')
         {
             const parsed = parseDeclarationSlice(source, item);
-            const init = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : 'undefined';
-            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) : null;
+            const init = parsed?.initializer ? projectedSpan(source, parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile)), item.valueEnd, sources, emit, true) : 'undefined';
+            const rawOpts = item.optionsStart !== null && item.optionsEnd !== null ? projectedSpan(source, item.optionsStart, item.optionsEnd, sources, emit, false) : null;
             const fn = RUNTIME_FN[item.kind];
             emit.used.add(fn);
             line(`const ${ item.name } = ${ fn }(() => (${ init })${ namedOptions(rawOpts, item.name, emit) });`, item.nameStart);
@@ -455,9 +455,9 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             // them becomes a getter call. Read explicitly for now (NAME.values()/NAME.setValue); the
             // field-access sugar that makes `bind:value={NAME.field}` work is layered on in the rewrite.
             const parsed = parseDeclarationSlice(source, item);
-            const initial = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : '{}';
+            const initial = parsed?.initializer ? projectedSpan(source, parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile)), item.valueEnd, sources, emit, true) : '{}';
             const withObj = item.optionsStart !== null && item.optionsEnd !== null
-                ? rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources)
+                ? projectedSpan(source, item.optionsStart, item.optionsEnd, sources, emit, false)
                 : null;
             const nameKey = emit.dev ? `name: ${ JSON.stringify(item.name) }, ` : '';
             if (item.isArray)
@@ -486,14 +486,18 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             // shared argument-shape decision (source split / value wrap / trailing options); here we render
             // it as runtime JS, applying the reactive rewrite to the value and the with-clause pieces.
             const parsed = parseDeclarationSlice(source, item);
-            const value = parsed?.initializer ? rewriteReactive(parsed.initializer.getText(parsed.sourceFile), sources) : 'undefined';
-            const optsText = item.optionsStart !== null && item.optionsEnd !== null ? source.slice(item.optionsStart, item.optionsEnd) : null;
+            const value = parsed?.initializer ? projectedSpan(source, parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile)), item.valueEnd, sources, emit, true) : 'undefined';
+            // The clause is projected BEFORE the split, so factoryPlan divides TypeScript with no markup
+            // in it and each piece is rewritten once.
+            const optsText = item.optionsStart !== null && item.optionsEnd !== null
+                ? projectMarkup(source.slice(item.optionsStart, item.optionsEnd), emit, sources, item.optionsStart)
+                : null;
             const plan = factoryPlan(item.kind, optsText, parsed?.initializer);
 
-            const sourceArg = plan.source !== null ? `() => (${ rewriteReactive(plan.source, sources) }), ` : '';
+            const sourceArg = plan.source !== null ? `() => (${ maybeRewrite(emit, plan.source, sources) }), ` : '';
             const valueArg = plan.wrapValue ? `() => (${ value })` : value;
-            const rawTrailing = plan.rest !== null ? rewriteReactive(plan.rest, sources)
-                : plan.opts !== null ? rewriteReactive(plan.opts, sources) : null;
+            const rawTrailing = plan.rest !== null ? maybeRewrite(emit, plan.rest, sources)
+                : plan.opts !== null ? maybeRewrite(emit, plan.opts, sources) : null;
             emit.used.add(plan.fn);
             line(`const ${ item.name } = ${ plan.fn }(${ sourceArg }${ valueArg }${ namedOptions(rawTrailing, item.name, emit) });`, item.nameStart);
         }
@@ -502,7 +506,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             const bodyCode = rewriteBody(source, item.bodyStart, item.bodyEnd, sources, emit);
             emit.used.add(RUNTIME_FN.effect);
             // `with { ... }` passes options (e.g. `name`) to createEffect; effect is always auto-tracked.
-            const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
+            const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ projectedSpan(source, item.optionsStart, item.optionsEnd, sources, emit, false) }` : '';
             line(`${ RUNTIME_FN.effect }(() => {${ bodyCode }}${ optionsArg });`, item.start);
         }
         else if (item.kind === 'watch')
@@ -511,7 +515,7 @@ function generateComponent(source: string, component: ComponentDecl, emit: Emit)
             emit.used.add(RUNTIME_FN.watch);
             const deps = watchDepGetters(source.slice(item.depsStart, item.depsEnd), sources, true).join(', ');
             const params = item.paramsStart !== null && item.paramsEnd !== null ? source.slice(item.paramsStart, item.paramsEnd) : '';
-            const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ rewriteReactive(source.slice(item.optionsStart, item.optionsEnd), sources) }` : '';
+            const optionsArg = item.optionsStart !== null && item.optionsEnd !== null ? `, ${ projectedSpan(source, item.optionsStart, item.optionsEnd, sources, emit, false) }` : '';
             line(`${ RUNTIME_FN.watch }([${ deps }], (${ params }) => {${ bodyCode }}${ optionsArg });`, item.start);
         }
         else if (item.kind === 'wrapper')
@@ -1102,6 +1106,26 @@ function modeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset 
     return emit.raw ? code : rewriteReactive(code, sources, offset);
 }
 
+/**
+ * The emitted text of a span that may hold markup - a declaration value, a `with { ... }` clause, an
+ * effect's options: the markup is compiled where it stands and the whole span is rewritten once.
+ * A declaration value (`valueOnly`) is cut where the TypeScript parser ends the first declarator's
+ * initializer, so a terminator, trailing trivia and any second declarator stay out; markup-bearing
+ * text the parser cannot read as one expression is kept whole, so it stays loud downstream.
+ */
+function projectedSpan(source: string, start: number, end: number, sources: ReactiveSources, emit: Emit, valueOnly: boolean): string
+{
+    const raw = source.slice(start, end);
+    const projected = projectMarkup(raw, emit, sources, start);
+    if (!valueOnly)
+    {
+        return maybeRewrite(emit, projected, sources, start);
+    }
+    const { end: valueEnd, dirty } = parseValueEnd(projected);
+    const value = dirty && projected !== raw ? projected.trimEnd() : projected.slice(0, valueEnd);
+    return maybeRewrite(emit, value, sources, start);
+}
+
 /** The rewritten source of a binding expression (nested markup projected, R2-rewritten). */
 function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
@@ -1509,20 +1533,35 @@ function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base 
         {
             throw markupDepthError(emit.regionStart);
         }
+        let region: { node: MarkupElement | MarkupFragment; end: number };
         try
         {
-            const { node, end } = parseMarkup(code, start);
-            out += emitMarkupExpr(code, node, sources, emit);
-            j = end;
+            region = parseMarkup(code, start);
         }
         catch (err)
         {
+            // A start that does not parse as markup is not markup: leave the rest of the region raw.
             if (err instanceof CompileError && err.depthExceeded)
             {
                 throw err;
             }
             return out + code.slice(start);
         }
+        try
+        {
+            out += emitMarkupExpr(code, region.node, sources, emit);
+        }
+        catch (err)
+        {
+            // The emitter refused this markup. Its offset is relative to the region handed in, so it
+            // is mapped to module coordinates; the depth failure is already absolute.
+            if (err instanceof CompileError && !err.depthExceeded)
+            {
+                throw new CompileError(err.message, base + err.offset);
+            }
+            throw err;
+        }
+        j = region.end;
     }
 }
 

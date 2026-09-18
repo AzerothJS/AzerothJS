@@ -246,3 +246,52 @@ describe('a direct write to a state stores the value it was given', () =>
         expect(root.querySelector('#call')?.textContent).toBe('returns-LazyDialog');
     });
 });
+
+describe('compiled markup held in a declaration value, executed', () =>
+{
+    // A declaration value is an ordinary expression: the markup it holds is compiled where it
+    // stands, and a read inside that markup tracks like any other read.
+    const marker = (tone: string): string => 'export default component Mark()\n'
+        + '{\n'
+        + `    const tone = '${ tone }';\n`
+        + '    derived mark = tone === \'hot\' ? (<Icon name="flame" />) : null;\n'
+        + '\n'
+        + '    <div id="root">{ mark }</div>\n'
+        + '}\n'
+        + '\n'
+        + 'component Icon(props)\n'
+        + '{\n'
+        + '    <em id="icon">{ props.name }</em>\n'
+        + '}\n';
+
+    it('renders the icon the value picked for the hot tone', () =>
+    {
+        const root = mount(marker('hot'));
+        expect(root.querySelector('#icon')?.textContent).toBe('flame');
+    });
+
+    it('renders nothing for the other tone', () =>
+    {
+        const root = mount(marker('cold'));
+        expect(root.querySelector('#icon')).toBe(null);
+        expect(root.textContent).toBe('');
+    });
+
+    it('re-renders a read held inside the markup of a state value', () =>
+    {
+        const root = mount('export default component Mark()\n'
+            + '{\n'
+            + '    state label = "a";\n'
+            + '    state mark = (<em id="icon">{ label }</em>);\n'
+            + '\n'
+            + '    <div id="root">\n'
+            + '        <button id="go" onClick={ () => label = "b" }>go</button>\n'
+            + '        { mark }\n'
+            + '    </div>\n'
+            + '}\n');
+
+        expect(root.querySelector('#icon')?.textContent).toBe('a');
+        (root.querySelector('#go') as HTMLButtonElement).click();
+        expect(root.querySelector('#icon')?.textContent).toBe('b');
+    });
+});

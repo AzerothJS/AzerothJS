@@ -116,6 +116,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ### Changed
 
+- **The missing-semicolon diagnostic names the shape it detects.**
+  `azeroth/unterminated-declaration` reported markup at the top level of a declaration value as a
+  missing terminator, which is the right advice for one of the two shapes that reach it and the
+  wrong advice for the other. It says what it found - markup at the top level of a value is not
+  part of the value - and gives each case its fix: end the declaration with `;` before markup that
+  is the component's render, wrap markup that is the declaration's own value in parentheses. The
+  general missing-`;` message, for a declaration with no markup after its value, is unchanged.
+
 - **`KitOptions` is a union: exactly one of `clientDir` and `shell`.** Neither and both are now a
   compile error for a typed caller and a mount-time throw for an untyped one, which two plain
   optionals could not do - both bad cases compiled silently. A literal mount is unchanged, in
@@ -184,6 +192,38 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `Signal<T>` tuple, a test double - must carry `set` too, or come from `createSignal`.
 
 ### Fixed
+
+- **A declaration value holding markup inside brackets passed `azeroth check` and died in the
+  bundler.** A `state`, `derived`, `deferred`, `form`, `resource`, `stream`, `store` or `selector`
+  value, a declaration's `with { ... }` clause, or an effect's `with { ... }` options carrying
+  markup at bracket depth 1 or deeper - a parenthesised or block arrow body, a parenthesised
+  ternary branch, an IIFE, an array or object literal, a call argument - reached the emitted module
+  verbatim, so `azeroth build` and the dev transform stopped on generated code the author never
+  wrote, with a parse error about `>`; under `azeroth dev` every route answered 500 on a cold
+  session, because the route table imports every page. The markup is compiled where it stands, as
+  it is in a hole or a helper body, and the markup rules - a keyless `<For>`, a reserved event
+  name, a duplicate attribute, a `bind:` on a non-reactive target, a write to a `derived` - report
+  inside those spans as they do in markup position. Also fixed on the way: a nested reactive
+  keyword inside a declaration value or a `with` clause lowers with it.
+
+- **A setup-time event handler inside markup held in a statement or a body was not reported.**
+  `onClick={ save() }` runs `save` while the component is being set up rather than on the event,
+  and markup in markup position refuses it by name; the same markup held in a `const` statement, an
+  effect body, a declaration value, a `with` clause or a module-scope helper was silent under
+  `azeroth check` while the build died on a raw tag. Both lanes answer the same way: `azeroth
+  check` reports it, and the build refuses it with its named message at the attribute's own
+  position.
+
+- **A write to a `derived` inside markup held in a statement or a body was reported only by
+  accident.**
+  Those spans were read as plain TypeScript, so a write inside a handler inside embedded markup was
+  reported only where the raw parse happened to recover an assignment, and missed everywhere else -
+  a hole that itself holds markup included. Each span's markup is walked as markup: a statement, an
+  effect body (its dependency-list form and a wrapper body included) and a declaration value report
+  the write at the identifier it writes, nested markup included, and markup position reports it at
+  the identifier too, where the finding spanned the whole attribute before. The same walk ends the
+  opposite mistake - an attribute named like a `derived`, `<input type="text" value={ props.v } />`
+  beside a `derived value`, read as a write to it.
 
 - **`azeroth dev` kept a component's previous prop signature for its importers.** The checker held
   the text it last compiled for a `.azeroth` file and never let go of it, so a component edited on

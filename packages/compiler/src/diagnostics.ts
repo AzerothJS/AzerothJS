@@ -159,7 +159,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
             diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
-            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(diagnostics, userOutlet));
+            walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(diagnostics, userOutlet));
             // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
             // per-component pass and compiled to the same silent half-dead binding. A synthetic
             // one-item body reuses the whole resolver with module scope only.
@@ -616,6 +616,47 @@ const DECLARATION_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Every span of a component body that holds TypeScript the compiler may find markup in: opaque
+ * statement runs, effect/watch/wrapper bodies, a declaration's value together with its
+ * `with { ... }` clause, and an effect's or watch's options. One enumerator, so the rule family,
+ * the bind-target rule and the derived-write rule cover the same ground and no rule is
+ * position-dependent.
+ */
+function* embeddedSpans(source: string, component: ComponentDecl): Generator<[number, number]>
+{
+    for (const item of component.body)
+    {
+        if (item.kind === 'opaque-statements')
+        {
+            yield [item.start, item.end];
+        }
+        else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
+        {
+            yield [item.bodyStart, item.bodyEnd];
+            if (item.kind !== 'wrapper' && item.optionsStart !== null && item.optionsEnd !== null)
+            {
+                yield [item.optionsStart, item.optionsEnd];
+            }
+        }
+        else if (DECLARATION_KINDS.has(item.kind))
+        {
+            // A type annotation holds no markup and no write, so the span opens at the initializer;
+            // a declaration without one still carries its `with { ... }` clause.
+            const decl = item as Parameters<typeof parseDeclarationSlice>[1];
+            const parsed = parseDeclarationSlice(source, decl);
+            if (parsed?.initializer)
+            {
+                yield [parsed.mapPos(parsed.initializer.getStart(parsed.sourceFile)), decl.end];
+            }
+            else if (decl.optionsStart !== null && decl.optionsEnd !== null)
+            {
+                yield [decl.optionsStart, decl.optionsEnd];
+            }
+        }
+    }
+}
+
+/**
  * @internal Two silent-corruption traps in declaration scanning, surfaced loudly:
  *
  *   - `azeroth/non-ascii-name` - the identifier scanner is ASCII-only, so `state café = 1`
@@ -682,7 +723,7 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
             out.push({
                 code: 'azeroth/unterminated-declaration',
                 severity: 'error',
-                message: `Missing \`;\`: markup here was absorbed into the \`${ decl.kind } ${ decl.name }\` declaration's value, so the binding is malformed and this markup is dropped from the render. A declaration value cannot contain markup - end the declaration with a semicolon before it.`,
+                message: `Missing \`;\`: markup here was absorbed into the \`${ decl.kind } ${ decl.name }\` declaration's value, so the binding is malformed and this markup is dropped from the render. Markup at the top level of a value is not part of the value. If this markup is the component's render, end the declaration with \`;\` before it; if it is the declaration's value, wrap it in parentheses.`,
                 start: absorbedMarkup,
                 end: absorbedMarkup + tag
             });
@@ -983,10 +1024,11 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
     // duplicate-prop, reserved-event-name, content-property-children) - both walk the SAME
     // deep markup traversal, embedded expression markup included.
     //
-    // Statement and effect/watch/wrapper bodies are walked too: markup held in a statement
-    // (`const frag = <For .../>`) compiles through the same emitter, so leaving it out made
-    // EVERY rule in this family position-dependent - a duplicate attribute, a reserved event
-    // name, or a keyless <For> was an error in markup position and silent one line above.
+    // Every embedded span is walked too: markup held in a statement, an effect body, a
+    // declaration value, a with-clause or an effect's options compiles through the same
+    // emitter, so leaving one out makes EVERY rule in this family position-dependent - a
+    // duplicate attribute, a reserved event name, or a keyless <For> an error in markup
+    // position and silent one line above.
     for (const item of component.body)
     {
         if (item.kind === 'markup')
@@ -994,14 +1036,11 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
             diagnoseEventHandlers(source, item.node, out);
             walkMarkupDeep(source, item.node, markupRuleVisitor(out, userOutlet));
         }
-        else if (item.kind === 'opaque-statements')
-        {
-            walkEmbeddedMarkup(source, item.start, item.end, markupRuleVisitor(out, userOutlet));
-        }
-        else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
-        {
-            walkEmbeddedMarkup(source, item.bodyStart, item.bodyEnd, markupRuleVisitor(out, userOutlet));
-        }
+    }
+    const embeddedRules = embeddedRuleVisitor(out, userOutlet);
+    for (const [start, end] of embeddedSpans(source, component))
+    {
+        walkEmbeddedMarkup(source, start, end, embeddedRules);
     }
 
     // azeroth/multiple-roots. The generator returns the LAST top-level markup region,
@@ -1953,14 +1992,10 @@ function diagnoseBindTargets(
         {
             visitNode(item.node, emptyScope);
         }
-        else if (item.kind === 'opaque-statements')
-        {
-            scanEmbedded(item.start, item.end, emptyScope);
-        }
-        else if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
-        {
-            scanEmbedded(item.bodyStart, item.bodyEnd, emptyScope);
-        }
+    }
+    for (const [start, end] of embeddedSpans(source, component))
+    {
+        scanEmbedded(start, end, emptyScope);
     }
 }
 
@@ -2453,10 +2488,9 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
     }
     const reactive: ReactiveSources = { names: new Set(analysis.sources.map(s => s.name)), hasProps: analysis.hasProps };
 
-    // Reports the first derived write found in a parsed slice, located via `locate`.
-    const flag = (sourceFile: ts.SourceFile, locate: (node: ts.Identifier) => { start: number; end: number }): void =>
+    // Reports each read-only source written in a parsed slice, at the write's own identifier.
+    const flag = (sourceFile: ts.SourceFile, mapPos: (p: number) => number, seen: Set<string>): void =>
     {
-        const seen = new Set<string>();
         traverseReactive(sourceFile, reactive, {
             write: (target) =>
             {
@@ -2466,59 +2500,75 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
                     return;
                 }
                 seen.add(target.text);
-                const span = locate(target);
                 out.push({
                     code: 'azeroth/assign-to-derived',
                     severity: 'error',
                     message: assignToDerivedMessage(target.text, kind),
-                    start: span.start,
-                    end: span.end
+                    start: mapPos(target.getStart(sourceFile)),
+                    end: mapPos(target.getEnd())
                 });
             }
         });
     };
 
+    // One treatment for a span and for a markup expression, applied recursively. The markup
+    // regions of `code` are blanked before the parse, so an `attr={ x }` inside them is never
+    // read as the assignment `attr = { x }`; the writes that really are inside that markup come
+    // back through its own expressions, each parsed at its module offset.
+    const flagCode = (code: string, base: number, seen: Set<string>, asStatements = false): void =>
+    {
+        const blanked = blankMarkupRegions(code, 0, code.length);
+        const { sourceFile, mapPos } = asStatements
+            ? parseStatementsSlice(blanked, base)
+            : parseExpressionSlice(blanked, base);
+        flag(sourceFile, mapPos, seen);
+
+        let pos = 0;
+        while (pos < code.length)
+        {
+            const at = findMarkupStart(code, pos);
+            if (at === -1 || at >= code.length)
+            {
+                return;
+            }
+            let parsed: { node: MarkupElement | MarkupFragment; end: number };
+            try
+            {
+                parsed = parseMarkup(code, at);
+            }
+            catch
+            {
+                return;
+            }
+            for (const expr of collectMarkupExpressions(code, parsed.node))
+            {
+                flagCode(expr.code, base + expr.codeStart, seen);
+            }
+            pos = parsed.end;
+        }
+    };
+
+    for (const [start, end] of embeddedSpans(source, component))
+    {
+        flagCode(source.slice(start, end), start, new Set<string>(), true);
+    }
     for (const item of component.body)
     {
-        if (item.kind === 'effect')
+        if (item.kind === 'markup')
         {
-            const { sourceFile, mapPos } = parseStatementsSlice(source.slice(item.bodyStart, item.bodyEnd), item.bodyStart);
-            flag(sourceFile, (t) => ({ start: mapPos(t.getStart(sourceFile)), end: mapPos(t.getEnd()) }));
-        }
-        else if (item.kind === 'opaque-statements')
-        {
-            const { sourceFile, mapPos } = parseStatementsSlice(source.slice(item.start, item.end), item.start);
-            flag(sourceFile, (t) => ({ start: mapPos(t.getStart(sourceFile)), end: mapPos(t.getEnd()) }));
-        }
-        else if (item.kind === 'markup')
-        {
-            for (const expr of collectMarkupExpressions(item.node))
+            for (const expr of collectMarkupExpressions(source, item.node))
             {
-                // A render-function value (e.g. `fallback={() => (<markup/>)}`) carries embedded markup
-                // in its code. Parsed as a flat TS expression, that markup's `attr={name}` reads as the
-                // assignment `attr = {name}` - a false derived-write. Skip it; the codegen rewrite guard
-                // still rejects a genuine derived write inside such markup when it compiles the children.
-                if (containsMarkup(expr.code))
-                {
-                    continue;
-                }
-                const { sourceFile } = parseExpressionSlice(expr.code, 0);
-                // Markup expression offsets are approximate; locate the error at the construct.
-                flag(sourceFile, () => ({ start: expr.start, end: expr.end }));
+                flagCode(expr.code, expr.codeStart, new Set<string>());
             }
         }
     }
 }
 
-/** True when an expression's code embeds markup (e.g. a `() => (<el/>)` render function). */
-function containsMarkup(code: string): boolean
-{
-    const at = findMarkupStart(code, 0);
-    return at >= 0 && at < code.length;
-}
-
-/** Yields every embedded expression ({code, span}) in a markup tree: attributes and holes. */
-function* collectMarkupExpressions(node: MarkupElement | MarkupFragment): Generator<{ code: string; start: number; end: number }>
+/**
+ * Yields every embedded expression of a markup tree - attribute values and holes - with the
+ * offset of its `code` inside `source`, the string the tree was parsed from.
+ */
+function* collectMarkupExpressions(source: string, node: MarkupElement | MarkupFragment): Generator<{ code: string; codeStart: number }>
 {
     if (node.kind === 'element')
     {
@@ -2526,7 +2576,10 @@ function* collectMarkupExpressions(node: MarkupElement | MarkupFragment): Genera
         {
             if (attr.value.kind === 'expression')
             {
-                yield { code: attr.value.code, start: attr.start, end: attr.end };
+                // The value is trimmed (a spread has its `...` cut too), so its offset is where
+                // that text sits inside the braces.
+                const brace = source.indexOf('{', attr.start) + 1;
+                yield { code: attr.value.code, codeStart: source.indexOf(attr.value.code, brace) };
             }
         }
     }
@@ -2534,11 +2587,11 @@ function* collectMarkupExpressions(node: MarkupElement | MarkupFragment): Genera
     {
         if (child.kind === 'expression')
         {
-            yield { code: child.code, start: child.start, end: child.end };
+            yield { code: child.code, codeStart: child.start + 1 };
         }
         else if (child.kind === 'element' || child.kind === 'fragment')
         {
-            yield* collectMarkupExpressions(child);
+            yield* collectMarkupExpressions(source, child);
         }
     }
 }
@@ -3220,10 +3273,10 @@ function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: M
     };
 }
 
-/** Walks markup for on* handlers whose value would run at setup, not on the event. */
-function diagnoseEventHandlers(source: string, node: MarkupElement | MarkupFragment, out: AzerothDiagnostic[]): void
+/** Flags one element's on* handlers whose value would run at setup, not on the event. */
+function setupHandlerRule(out: AzerothDiagnostic[]): (el: MarkupElement) => void
 {
-    walkMarkupDeep(source, node, (el) =>
+    return (el) =>
     {
         for (const attr of el.attributes)
         {
@@ -3240,5 +3293,27 @@ function diagnoseEventHandlers(source: string, node: MarkupElement | MarkupFragm
                 });
             }
         }
-    });
+    };
+}
+
+/** Walks markup for on* handlers whose value would run at setup, not on the event. */
+function diagnoseEventHandlers(source: string, node: MarkupElement | MarkupFragment, out: AzerothDiagnostic[]): void
+{
+    walkMarkupDeep(source, node, setupHandlerRule(out));
+}
+
+/**
+ * The rule set for markup embedded in a TypeScript span: the markup rules plus the setup-handler
+ * check. In markup position those two run as separate walks, so only the embedded spans compose
+ * them here.
+ */
+function embeddedRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: MarkupElement) => void
+{
+    const rules = markupRuleVisitor(out, userOutlet);
+    const handlers = setupHandlerRule(out);
+    return (el) =>
+    {
+        rules(el);
+        handlers(el);
+    };
 }

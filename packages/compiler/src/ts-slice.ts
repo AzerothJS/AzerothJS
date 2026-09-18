@@ -65,6 +65,39 @@ function parse(text: string): ts.SourceFile
     return ts.createSourceFile('azeroth-slice.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 }
 
+/** The constant prefix that makes a value expression a parseable statement. */
+const VALUE_PREFIX = 'let __v = ';
+
+/**
+ * Where a value expression ends, read by the TypeScript parser from `let __v = <code>;`. `end` is an
+ * index into `code` - the end of the FIRST declarator's initializer, which excludes a terminator,
+ * trailing trivia and any further declarator, and falls back to the whole text when the parse
+ * recovered no initializer at all. `dirty` is true when the parse recorded a diagnostic.
+ *
+ * @param code - A value expression, with no markup left in it
+ * @returns The initializer's end within `code` and whether the parse recorded a diagnostic
+ * @internal
+ *
+ * @example
+ * ```ts
+ * parseValueEnd('(1) // note'); // { end: 3, dirty: false }
+ * ```
+ */
+export function parseValueEnd(code: string): { end: number; dirty: boolean }
+{
+    const sourceFile = parse(`${ VALUE_PREFIX }${ code };`);
+    const statement = sourceFile.statements[0];
+    const declaration = statement !== undefined && ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations[0]
+        : undefined;
+    const initializer = declaration?.initializer;
+    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+    return {
+        end: initializer !== undefined ? initializer.getEnd() - VALUE_PREFIX.length : code.length,
+        dirty: parseDiagnostics !== undefined && parseDiagnostics.length > 0
+    };
+}
+
 /**
  * Parses a `.azeroth` expression slice (a markup hole or attribute value). The
  * code is wrapped in parentheses so a leading `{` is read as an object literal,

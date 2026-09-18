@@ -45,6 +45,14 @@ function syntaxErrorOf(code: string): string | null
     }
 }
 
+/** The emitted line that declares `name` - a `const NAME =` or a `const [NAME, setNAME]` pair. */
+function declLine(code: string, name: string): string
+{
+    const found = code.split('\n').find(l => new RegExp(`^\\s*const \\[?${ name }\\b`).test(l));
+    expect(found).toBeDefined();
+    return found as string;
+}
+
 describe('generateModule - module shape and imports', () =>
 {
     it('emits a factory function and imports the runtime helpers it uses', () =>
@@ -999,5 +1007,281 @@ describe('codegen - bind: alongside an explicit handler for the same event', () 
         expect([...code.matchAll(/bindEvent\(_n0, 'change'/g)]).toHaveLength(1);
         expect(code).toContain('setOn.set($event.target.checked)');
         expect(code).toContain('track()');
+    });
+});
+
+describe('generateModule - markup held in a declaration value', () =>
+{
+    // A declaration value is an expression like any other: markup it holds inside brackets is
+    // compiled where it stands, exactly as the same markup compiles from a hole, and the span is
+    // rewritten once. The value ends where the TypeScript parser ends the first declarator's
+    // initializer, so a terminator, trailing trivia and a second declarator stay out of the emit.
+    const holeCall = 'h(\'li\', {  }, () => ( count() ))';
+
+    it('emits from a hole the call the declaration values are pinned against', () =>
+    {
+        expect(gen('component C { state count = 0; <p>{ (<li>{ count }</li>) }</p> }')).toContain(holeCall);
+    });
+
+    for (const keyword of ['state', 'derived', 'deferred', 'form', 'resource', 'stream', 'store', 'selector'])
+    {
+        it(`compiles markup held in a ${ keyword } value and rewrites the read once`, () =>
+        {
+            const code = gen(`component C { state count = 0; ${ keyword } v = (() => (<li>{ count }</li>)); <p>{count}</p> }`);
+            const line = declLine(code, 'v');
+            expect(code).not.toContain('<li');
+            expect(line).toContain(holeCall);
+            expect(line.match(/count\(\)/g)).toHaveLength(1);
+            expect(line).not.toContain('count()()');
+        });
+    }
+
+    it('compiles the markup a parenthesised IIFE returns, return annotation and all', () =>
+    {
+        const code = gen('component C { derived mark = ((): unknown => props.tone === \'hot\' ? <Icon name="flame" /> : null)(); <p>{mark}</p> }');
+        expect(code).not.toContain('<Icon');
+        expect(code).toContain('Icon({');
+    });
+
+    for (const decl of [
+        'derived mark = (() => props.tone === \'hot\' ? <Icon name="flame" /> : null)();',
+        'state f = () => (<li/>);',
+        'state pick = 1 > 2 ? (<b>y</b>) : (<i>n</i>);'
+    ])
+    {
+        it(`emits parseable JS with no raw tag for \`${ decl }\``, () =>
+        {
+            const code = gen(`component C { ${ decl } <p>x</p> }`);
+            expect(code).not.toMatch(/<(li|b|i|Icon)\b/);
+            expect(syntaxErrorOf(code)).toBe(null);
+        });
+    }
+
+    it('keeps the value tail the slice parse truncates', () =>
+    {
+        for (const decl of [
+            'derived mark = (() => <Icon a={1} b=\'2\'>text</Icon>);',
+            'state mark = (<Icon name="x" />);',
+            'derived mark = (<Icon name={ props.tone } />);'
+        ])
+        {
+            const code = gen(`component C { ${ decl } <p>x</p> }`);
+            expect(code).not.toContain('<Icon');
+            expect(syntaxErrorOf(code)).toBe(null);
+        }
+        expect(gen('component C { state mark = (<Icon name="x" />); <p>x</p> }'))
+            .toContain('(Icon({ name: \'x\' }))');
+        expect(declLine(gen('component C { derived mark = ((): unknown => props.tone === \'hot\' ? <Icon name="flame" /> : null)(); <p>x</p> }'), 'mark'))
+            .toContain(': null)()');
+    });
+
+    it('leaves trailing trivia out of the value, with and without a with-clause', () =>
+    {
+        const lineComment = gen('component C { derived mark = (<Icon name="x" />) // note\n; <p>x</p> }');
+        expect(lineComment).not.toContain('note');
+        expect(syntaxErrorOf(lineComment)).toBe(null);
+
+        const withClause = gen('component C { state mark = (<Icon name="x" />) // seed\nwith { equals: false }; <p>x</p> }');
+        expect(withClause).not.toContain('seed');
+        expect(withClause).toContain('{ equals: false }');
+        expect(syntaxErrorOf(withClause)).toBe(null);
+
+        const blockComment = gen('component C { derived mark = (<Icon name="x" />) /* note */; <p>x</p> }');
+        expect(blockComment).not.toContain('note');
+        expect(syntaxErrorOf(blockComment)).toBe(null);
+    });
+
+    it('treats an apostrophe, a URL and a `//` inside markup as text', () =>
+    {
+        const label = gen('component C { derived label = (<span>Don\'t panic</span>) // TODO\n; <p>x</p> }');
+        expect(label).toContain('h(\'span\', {  }, \'Don\\\'t panic\')');
+        expect(label).not.toContain('TODO');
+        expect(syntaxErrorOf(label)).toBe(null);
+
+        const link = gen('component C { derived link = (<span>see https://azerothjs.dev now</span>); <p>x</p> }');
+        expect(link).toContain('h(\'span\', {  }, \'see https://azerothjs.dev now\')');
+        expect(syntaxErrorOf(link)).toBe(null);
+
+        const slashes = gen('component C { derived d = (<li>a // b</li>); <p>x</p> }');
+        expect(slashes).toContain('h(\'li\', {  }, \'a // b\')');
+        expect(syntaxErrorOf(slashes)).toBe(null);
+    });
+
+    it('emits the same value for a non-truncating array-index shape', () =>
+    {
+        const code = gen('component C { derived ctrl = [1, <Icon name="x" />][0]; <p>x</p> }');
+        expect(declLine(code, 'ctrl')).toContain('[1, Icon({ name: \'x\' })][0]');
+    });
+
+    it('emits a markup-free value exactly as it does without the projection', () =>
+    {
+        const code = gen('component C { state count = 0; derived twice = count * 2; form f = { a: 1 }; store st = { a: 1 }; resource r = fetchIt() with { source: 1 }; derived m = (1) /* note */; state x = 1 2; state y = 1, z = 2; <p>{count}</p> }');
+        expect(code).toContain('const [count, setCount] = createSignal(0);');
+        expect(code).toContain('const twice = createMemo(() => (count() * 2));');
+        expect(code).toContain('const f = createForm({ initial: ({ a: 1 }) });');
+        expect(code).toContain('const st = createStore(() => ({ a: 1 }));');
+        expect(code).toContain('const r = createResource(() => (1), fetchIt());');
+        expect(code).toContain('const m = createMemo(() => ((1)));');
+        expect(code).toContain('const [x, setX] = createSignal(1);');
+        expect(code).toContain('const [y, setY] = createSignal(1);');
+        expect(code).not.toContain('note');
+        expect(code).not.toContain('z = 2');
+    });
+
+    it('passes markup in a string, a comment or a template literal through unchanged', () =>
+    {
+        const code = gen('component C { derived s1 = "a <li> b"; derived s2 = (1 /* <li>x</li> */); derived s3 = `a <li>x</li> b`; <p>{s1}</p> }');
+        expect(code).toContain('createMemo(() => ("a <li> b"))');
+        expect(code).toContain('createMemo(() => ((1 /* <li>x</li> */)))');
+        expect(code).toContain('createMemo(() => (`a <li>x</li> b`))');
+        expect(code).not.toContain('h(\'li\'');
+        expect(syntaxErrorOf(code)).toBe(null);
+    });
+
+    it('emits the first declarator only, whether or not it holds the markup', () =>
+    {
+        const first = gen('component C { state y = (<li/>), z = (<b/>); <p>x</p> }');
+        expect(declLine(first, 'y')).toContain('createSignal((h(\'li\', {  })))');
+        expect(first).not.toContain('h(\'b\'');
+        expect(first).not.toContain('z =');
+        expect(syntaxErrorOf(first)).toBe(null);
+
+        const second = gen('component C { state y = 1, z = (<li/>); <p>x</p> }');
+        expect(declLine(second, 'y')).toContain('createSignal(1)');
+        expect(second).not.toContain('h(\'li\'');
+        expect(syntaxErrorOf(second)).toBe(null);
+    });
+
+    const wholeValue: ReadonlyArray<readonly [string, string]> = [
+        ['derived d = pick<string, number>((<li/>));', 'pick<string, number>((h(\'li\', {  })))'],
+        ['derived icons = new Map<string, unknown>([[\'hot\', (<Icon name="flame" />)]]);', 'new Map<string, unknown>([[\'hot\', (Icon({ name: \'flame\' }))]])'],
+        ['derived d = (<Icon a={ f(1, 2) } b=\'x\'>t</Icon>);', 'return (f(1, 2));'],
+        ['derived d = (<Icon items={ [1, 2] } />);', 'return ([1, 2]);'],
+        ['derived d = join((<li/>), 2);', 'join((h(\'li\', {  })), 2)'],
+        ['derived d = (<li title="a, b">it\'s</li>);', 'h(\'li\', { title: \'a, b\' }, \'it\\\'s\')'],
+        ['derived d = (/,/.test(x) ? (<b/>) : null);', '(/,/.test(x) ? (h(\'b\', {  })) : null)'],
+        ['derived d = (() => /a\\/b,c/.test(s) ? (<b/>) : null)();', '/a\\/b,c/.test(s)'],
+        ['derived d = (`a${ `x${ i },y` }b`.length ? (<b/>) : null);', '`a${ `x${ i },y` }b`.length'],
+        ['derived d = `a,b`.length ? (<b/>) : null;', '`a,b`.length ? (h(\'b\', {  })) : null)'],
+        ['derived d = \'a,b\'.length ? (<b/>) : null;', '\'a,b\'.length ? (h(\'b\', {  })) : null)']
+    ];
+
+    for (const [decl, expected] of wholeValue)
+    {
+        it(`emits the whole value of \`${ decl }\``, () =>
+        {
+            expect(gen(`component C { ${ decl } <p>x</p> }`)).toContain(expected);
+        });
+    }
+
+    const divisions: ReadonlyArray<readonly [string, string]> = [
+        ['state y = map.delete / 2,\nz = (<li/>);', 'createSignal(map.delete / 2)'],
+        ['let i = 4; state y = i++ / 2,\nz = (<li/>);', 'createSignal(i++ / 2)'],
+        ['state y = props.n! / 2,\nz = (<li/>);', 'createSignal(props.n! / 2)']
+    ];
+
+    for (const [decl, expected] of divisions)
+    {
+        it(`reads the division in \`${ expected }\` as the first declarator's value`, () =>
+        {
+            const code = gen(`component C { ${ decl } <p>x</p> }`);
+            expect(declLine(code, 'y')).toContain(expected);
+            expect(code).not.toContain('h(\'li\'');
+        });
+    }
+
+    it('keeps markup-bearing junk loud instead of silently dropping the tail', () =>
+    {
+        const trailing = gen('component C { derived d = (<li/>) 2; <p>x</p> }');
+        expect(declLine(trailing, 'd')).toContain('(h(\'li\', {  })) 2');
+        expect(syntaxErrorOf(trailing)).not.toBe(null);
+
+        const twoRoots = gen('component C { derived d = (<div/><span/>); <p>x</p> }');
+        expect(declLine(twoRoots, 'd')).toContain('h(\'div\', {  })h(\'span\', {  })');
+        expect(syntaxErrorOf(twoRoots)).not.toBe(null);
+    });
+
+    for (const value of ['() => (<li/>)', '(() => { state inner = 0; return inner; })()'])
+    {
+        it(`emits the same value expression for a derived and a const: ${ value }`, () =>
+        {
+            const memo = declLine(gen(`component C { derived d = ${ value }; <p>{d}</p> }`), 'd');
+            const plain = declLine(gen(`component C { const d = ${ value }; <p>{d}</p> }`), 'd').trim();
+            const expr = plain.slice('const d = '.length, -1);
+            expect(memo).toContain(`createMemo(() => (${ expr }))`);
+        });
+    }
+});
+
+describe('generateModule - markup held in a with-clause or effect options', () =>
+{
+    for (const decl of [
+        'form f = { a: 1 } with { onSubmit: (v) => notify((<b>ok</b>)) };',
+        'store s = {} with { name: (<b>x</b>) };',
+        'state k = 0 with { equals: (a, b) => !!(<b/>) };',
+        'effect with { name: (<b>x</b>) } { }',
+        'effect (count) with { name: (<b>x</b>) } { }',
+        'resource r = fetchIt() with { source: (<b>x</b>) };'
+    ])
+    {
+        it(`compiles markup held in \`${ decl }\``, () =>
+        {
+            const code = gen(`component C { state count = 0; ${ decl } <p>{count}</p> }`);
+            expect(code).not.toContain('<b');
+            expect(code).toContain('h(\'b\', {  }');
+        });
+    }
+
+    for (const [decl, name] of [['store s = {} with { name: (<b>{ count }</b>) };', 's'], ['state k = 0 with { name: (<b>{ count }</b>) };', 'k']] as const)
+    {
+        it(`rewrites a read inside \`${ decl }\` exactly once`, () =>
+        {
+            const line = declLine(gen(`component C { state count = 0; ${ decl } <p>{count}</p> }`), name);
+            expect(line.match(/count\(\)/g)).toHaveLength(1);
+            expect(line).not.toContain('count()()');
+        });
+    }
+
+    it('lowers a reactive keyword nested inside a with-clause', () =>
+    {
+        const code = gen('component C { store s = {} with { name: (() => { state q = 0; return q; })() }; <p>x</p> }');
+        expect(declLine(code, 's')).toContain('const [q, setQ] = createSignal(0); return q();');
+        expect(code).not.toContain('state q = 0');
+    });
+});
+
+describe('generateModule - a refused emit inside a projected span', () =>
+{
+    // The diagnostics gate refuses every shape the emitter refuses, so this pins the pair: the
+    // named message, and a position in the module rather than one inside the projected slice.
+    function refusalOf(source: string): CompileError
+    {
+        try
+        {
+            gen(source);
+        }
+        catch (err)
+        {
+            return err as CompileError;
+        }
+        throw new Error('expected a refusal');
+    }
+
+    it('refuses a setup handler inside a declaration value, at the attribute', () =>
+    {
+        const source = 'component C { derived btn = (<button onClick={ props.save() }>Save</button>); <p>x</p> }';
+        const error = refusalOf(source);
+        expect(error).toBeInstanceOf(CompileError);
+        expect(error.message).toMatch(/^azeroth\/handler-not-function: Event handler "onClick" must be a function/);
+        expect(source.slice(error.offset, error.offset + 'onClick'.length)).toBe('onClick');
+    });
+
+    it('refuses a setup handler inside a module-scope helper, at the attribute', () =>
+    {
+        const source = 'component C { <p>x</p> }\nconst row = () => (<button onClick={ save() }>x</button>);';
+        const error = refusalOf(source);
+        expect(error).toBeInstanceOf(CompileError);
+        expect(error.message).toMatch(/^azeroth\/handler-not-function: Event handler "onClick" must be a function/);
+        expect(source.slice(error.offset, error.offset + 'onClick'.length)).toBe('onClick');
     });
 });

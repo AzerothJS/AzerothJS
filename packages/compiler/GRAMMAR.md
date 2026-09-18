@@ -167,9 +167,14 @@ Normative rules:
   value span feeds the reactive rewrite; a guessed boundary would silently change
   which reads get rewritten.
 - **`Value` is a verbatim TypeScript expression span** - never parsed here, may
-  contain markup (which is consumed as a unit). The initializer is syntactically
-  optional (an omitted `= Value` lowers to the primitive's no-argument form, e.g.
-  `state x;` -> `createSignal(undefined)`); always provide one in practice.
+  contain markup, which is consumed as a unit and compiled where it stands -
+  inside a parenthesised or block arrow body, a parenthesised ternary branch, an
+  array or object literal, or a call argument; at bracket depth 0, `=> <li/>`
+  included, markup is not part of the value and is reported: a value meant to
+  hold markup wraps it in parentheses, and render markup needs the `;` before it.
+  The initializer is syntactically optional (an omitted `= Value` lowers to the
+  primitive's no-argument form, e.g. `state x;` -> `createSignal(undefined)`);
+  always provide one in practice.
 - **Writes to a `state`.** A single plain `=` write stores the value as given, a
   function included: `Dialog = LazyDialog;` stores the component itself, and
   `onConfirm = () => 'yes';` stores the arrow without calling it. A single compound

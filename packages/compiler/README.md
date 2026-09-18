@@ -308,6 +308,11 @@ iff it is an assignment expression, a prefix/postfix `++`/`--`, or a zero-argume
 function literal, a call with arguments, or a call whose callee is itself a call or an index access - 
 is left to the type system.
 
+A declaration value or a `with { }` clause may hold markup inside brackets - a parenthesised or block
+arrow body, a parenthesised ternary branch, an array or object literal, a call argument - where it is
+compiled like markup in a hole, and the markup rules that walk embedded markup apply there as they do
+in markup position.
+
 ---
 
 ## Syntax highlighting anywhere
