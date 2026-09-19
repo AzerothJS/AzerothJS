@@ -1,6 +1,6 @@
 {
     "name": "@azerothjs/compiler",
-    "version": "2.1.0-beta.3",
+    "version": "2.1.0",
     "engines": {
         "node": ">=22"
     },
@@ -35,10 +35,10 @@
     ],
     "sideEffects": false,
     "dependencies": {
-        "@azerothjs/logger": "^2.1.0-beta.3"
+        "@azerothjs/logger": "^2.1.0"
     },
     "peerDependencies": {
-        "azerothjs": "^2.1.0-beta.3",
+        "azerothjs": "^2.1.0",
         "vite": ">=8",
         "typescript": ">=5 <7"
     },
