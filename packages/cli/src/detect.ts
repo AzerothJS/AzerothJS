@@ -23,7 +23,7 @@
  * (node --watch src/main.ts) - preserving the framework's no-build-step doctrine.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /** A vite app in `.azeroth` components: a vite config plus the compiler or umbrella package. */
@@ -288,6 +288,33 @@ function fullstackFrom(root: string, candidates: string[]): FullstackProject | n
         return { kind: 'fullstack', dir: root, app, server, azeroth: devCapability(root) };
     }
     return null;
+}
+
+/**
+ * The working directory in the spelling the dev session resolves the application root to, so one
+ * install is never loaded under two paths (an 8.3 short name, a lower-case drive letter). A mapped
+ * drive keeps its letter, because its UNC target is a path vite and node's resolver cannot load
+ * from, and a directory that cannot be resolved is kept as given.
+ *
+ * @param cwd - The working directory as the process reports it
+ * @param realpath - Resolves a path to its canonical spelling
+ * @returns The canonical spelling of `cwd`
+ */
+export function canonicalCwd(cwd: string, realpath: (path: string) => string = realpathSync.native): string
+{
+    try
+    {
+        const real = realpath(cwd);
+        if (real.startsWith('\\\\') && !cwd.startsWith('\\\\'))
+        {
+            return cwd.charAt(0).toUpperCase() + cwd.slice(1);
+        }
+        return real;
+    }
+    catch
+    {
+        return cwd;
+    }
 }
 
 /**

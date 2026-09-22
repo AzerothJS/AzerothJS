@@ -22,7 +22,7 @@ import { parseArgs } from 'node:util';
 
 import { printBanner } from '@azerothjs/logger';
 
-import { detectProject, type Project } from './detect.ts';
+import { canonicalCwd, detectProject, type Project } from './detect.ts';
 import { PlanError, formatStep, isRunnable, planBuild, planCheck, planDev, planTest, type Plan } from './plan.ts';
 import { printNotes, runDev, runToCompletion } from './run.ts';
 import { runDoctor } from './doctor.ts';
@@ -178,7 +178,7 @@ async function main(): Promise<number>
         return command === undefined && !values.help ? 2 : 0;
     }
 
-    const cwd = process.cwd();
+    const cwd = canonicalCwd(process.cwd());
     const app = values.app ?? null;
     const server = values.server ?? null;
 

@@ -10,6 +10,32 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Security
+
+- **A server process running two copies of `azerothjs` refuses to serve instead of sharing state
+  between visitors.** When the SSR bundle inlined its own `azerothjs` (every fullstack scaffold
+  from 1.0.0 through 2.1.0-beta.2 shipped `ssr: { noExternal: true }` with no `external`),
+  `@azerothjs/http` scoped each request on the installed copy while loaders, guards and renders ran
+  on the inlined one, at its process-wide default scope. A loader that called your api in process
+  answered 500, and an app-level `store` touched in a loader was one instance for the whole
+  process: every visitor got the first visitor's state, with 200 and `private, no-store`, from a
+  green build. `createPageRenderer` marks its renderer with the runtime it renders on.
+  `mountPages`, the dev session (on its first entry load) and the prerender pass refuse a renderer
+  from another copy, and `createPageRenderer` refuses when the entry's compiled code is bound to
+  another copy. A store-scope read that lands on the default scope while another copy has a
+  request or work unit open throws, which covers servers that mount a renderer by hand. The
+  message names the three causes: an inlined runtime, one install loaded through two spellings of
+  its path (an 8.3 short name or a lower-case drive letter; under the current scaffold config a dev
+  server launched that way leaked), and two installed copies. The runtime-contract handshake
+  compares versions only, so it could not see two copies at one version. `azeroth` commands also
+  run from the canonical spelling of the working directory, so `azeroth dev` launched from a
+  lower-case drive letter or an 8.3 short name loads the runtime once. **If your app was
+  generated before 2.1.0 and never added `external: ['azerothjs']`, its build fails at the
+  prerender step and its server refuses to start; this holds for a kit app that only prerenders,
+  too.** Add `external: ['azerothjs']` beside `noExternal: true` under `ssr` in
+  `application/vite.config.ts`. Vite checks `external` before `noExternal`, so this works with the
+  boolean and the array form.
+
 ## [2.1.0] - 2026-09-19
 
 ### Added

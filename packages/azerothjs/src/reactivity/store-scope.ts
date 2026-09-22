@@ -30,6 +30,30 @@ let currentScope: object = DEFAULT_SCOPE;
 
 let scopeResolver: (() => object | undefined) | null = null;
 
+/** Every installed resolver in the process, across every copy of this module, held weakly. */
+const RESOLVERS = Symbol.for('azerothjs.store-scope.resolvers');
+
+interface ResolverRegistry
+{
+    [RESOLVERS]?: Set<WeakRef<() => object | undefined>> | undefined;
+}
+
+/** This copy's entry in the registry; a discarded copy's resolver can then be collected. */
+let registered: WeakRef<() => object | undefined> | null = null;
+
+/**
+ * Why a server process with two copies of the runtime is refused.
+ *
+ * @internal
+ */
+export const SPLIT_RUNTIME: string = 'a second copy of azerothjs is running in this server process, so the request scope '
+    + 'the host opens never reaches code on the other copy and its stores would be shared by every visitor. Either '
+    + 'the SSR bundle inlined azerothjs (keep it external: `ssr: { external: [\'azerothjs\'] }` in the application\'s '
+    + 'vite.config.ts, which vite applies before noExternal), or one install was loaded through two spellings of its '
+    + 'path (an 8.3 short name or a lower-case drive letter: start the server from the canonical path), or two copies '
+    + 'are installed (dedupe azerothjs). A test that imports the runtime again after vi.resetModules() makes a second '
+    + 'copy the same way.';
+
 /**
  * Installs the resolver {@link getStoreScope} consults before the synchronous scope, which
  * is the seam that makes store isolation survive `await`.
@@ -47,6 +71,8 @@ let scopeResolver: (() => object | undefined) | null = null;
  * so a host may install on every entry; `null` uninstalls and clears the slot, so
  * register/uninstall cycles (test harnesses) keep working.
  *
+ * Installs are also listed in a process-wide registry every copy of this module can read.
+ *
  * @param resolver - Returns the active scope, or `undefined` to fall through to the
  *                   synchronous scope, so an SSR render nested inside a request still
  *                   isolates correctly. Pass `null` to uninstall.
@@ -60,6 +86,16 @@ export function setStoreScopeResolver(resolver: (() => object | undefined) | nul
             + 'carriers cannot coexist: the second would silently collapse the first host\'s '
             + 'isolation. Uninstall with setStoreScopeResolver(null) first if the handoff is intentional.');
     }
+    const registry = ((globalThis as ResolverRegistry)[RESOLVERS] ??= new Set());
+    if (registered !== null)
+    {
+        registry.delete(registered);
+    }
+    registered = resolver === null ? null : new WeakRef(resolver);
+    if (registered !== null)
+    {
+        registry.add(registered);
+    }
     scopeResolver = resolver;
 }
 
@@ -72,6 +108,8 @@ export function setStoreScopeResolver(resolver: (() => object | undefined) | nul
  * boundaries, and the default client scope outside every such call. Do not retain the
  * returned object past the current synchronous scope - on the server a stale reference
  * keys into request state that should have been collected.
+ *
+ * Throws inside a live server unit owned by another copy of the runtime.
  *
  * @returns The active scope object.
  * @see {@link runInStoreScope}
@@ -91,6 +129,20 @@ export function getStoreScope(): object
         if (resolved !== undefined)
         {
             return resolved;
+        }
+    }
+    // Another copy's resolver answering means a unit is open on that copy.
+    const registry = (globalThis as ResolverRegistry)[RESOLVERS];
+    for (const entry of registry ?? [])
+    {
+        const resolver = entry.deref();
+        if (resolver === undefined)
+        {
+            registry?.delete(entry);
+        }
+        else if (resolver() !== undefined)
+        {
+            throw new Error(`[azeroth] getStoreScope: ${ SPLIT_RUNTIME }`);
         }
     }
     return currentScope;

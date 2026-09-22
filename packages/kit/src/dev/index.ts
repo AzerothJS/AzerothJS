@@ -35,6 +35,7 @@ import { resolve as resolvePath } from 'node:path';
 import { App, HttpError, html as htmlResponse } from '@azerothjs/http';
 import type { AppOptions, RequestContext } from '@azerothjs/http';
 import type { ConnectMiddleware } from '@azerothjs/http/node';
+import { assertOneRuntime } from 'azerothjs/internal';
 
 import { mountPages } from '../index.ts';
 import type { KitOptions, PageRoute } from '../index.ts';
@@ -177,9 +178,9 @@ function copyFrom(anchor: string, what: string): string
 
 /**
  * @internal One process holds ONE `azerothjs`: the request scope, the per-request data cache and
- * the store registry all live on the copy each half resolved, and a second copy splits them
- * silently. Blind to a bundler alias and to vite inlining - which is why the application's vite
- * config keeps `azerothjs` external.
+ * the store registry all live on the copy each half resolved, and a second copy splits them.
+ * build() refuses an inlined runtime or a path-spelling split on the first entry load, by the mark
+ * on the entry's renderer.
  */
 function assertOneCopy(root: string, anchor: string): void
 {
@@ -467,6 +468,7 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
                     + '"renderPage" (createPageRenderer(App, routes)) - the two names a production mount and the '
                     + 'prerender bin read. One of them is missing.');
             }
+            assertOneRuntime('kit devPages', entry.renderPage);
             const inner = new App(innerOptions);
             mountPages(inner, { ...options.pages, routes: entry.routes, renderer: readable(entry.renderPage), shell });
             current = inner;
@@ -482,6 +484,7 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
             }
             if (current === undefined)
             {
+                server.config.logger.error(`[azeroth] ${ entryPath() } failed to build: ${ describeFailure(error).message }`);
                 throw error;
             }
             // The frame is vite's own log, printed once as it failed; this says what is being

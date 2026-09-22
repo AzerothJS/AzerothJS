@@ -29,7 +29,7 @@ import type { LoaderHandoff, MountNode, Route } from 'azerothjs';
 import { collectStyleSheet, createRenderFrame, escapeAttr, loaderHandoffScript, LOADER_HANDOFF_VERSION, localeDirection, matchAndLoad, renderToStream, renderToString } from 'azerothjs';
 import type { RenderFrame } from 'azerothjs';
 import type { CollectedHead } from 'azerothjs/internal';
-import { collectHead, guardedMatch, joinBase, loaderFailures, renderAsDenied, renderWithBase, renderWithLocale, requestWasRead, targetToFullPath } from 'azerothjs/internal';
+import { assertOneRuntime, collectHead, guardedMatch, joinBase, loaderFailures, renderAsDenied, renderWithBase, renderWithLocale, requestWasRead, stampRuntime, targetToFullPath } from 'azerothjs/internal';
 
 /** The app-component signature the renderer drives (the template's `App` shape). */
 export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => MountNode;
@@ -388,7 +388,8 @@ function drainFrames(scriptNonce: string | undefined, frame: RenderFrame): Drain
  */
 export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
 {
-    return async (url, rawShell, options) =>
+    assertOneRuntime('kit createPageRenderer');
+    return stampRuntime<PageRenderer>(async (url, rawShell, options) =>
     {
         if (options?.scriptNonce !== undefined && !CSP_NONCE.test(options.scriptNonce))
         {
@@ -610,5 +611,5 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             return { kind: 'error', status: 500, html };
         }
         return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded || identityRead() ? { guarded: true } : {}) };
-    };
+    });
 }

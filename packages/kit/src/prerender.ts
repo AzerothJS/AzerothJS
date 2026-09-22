@@ -20,9 +20,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
-import { setBuildContext } from 'azerothjs/internal';
-
-import { guardedMatch, isLanguageTag } from 'azerothjs/internal';
+import { assertOneRuntime, guardedMatch, isLanguageTag, setBuildContext } from 'azerothjs/internal';
 
 import { alternatesOf } from './alternates.ts';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
@@ -86,6 +84,7 @@ export function resolveStaticPath(pattern: string, params: Record<string, string
 /** Runs the pass; returns the written page paths (for the build log). */
 export async function prerender(options: PrerenderOptions): Promise<string[]>
 {
+    assertOneRuntime('kit prerender', options.renderer);
     for (const tag of options.locales ?? [])
     {
         if (!isLanguageTag(tag))

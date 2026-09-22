@@ -2,7 +2,7 @@
 //
 // Full behavioral coverage for store-scope (store-scope.ts): the per-render scope key
 // that makes a store a client singleton but per-request-isolated under SSR.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { getStoreScope, runInStoreScope } from 'azerothjs';
 import { setStoreScopeResolver } from 'azerothjs/internal';
 
@@ -80,5 +80,64 @@ describe('setStoreScopeResolver: the async-context seam for server hosts', () =>
         setStoreScopeResolver(() => ({}));
         setStoreScopeResolver(null);
         expect(getStoreScope()).toBe(getStoreScope()); // stable default again
+    });
+});
+
+describe('a second copy', () =>
+{
+    // A separate evaluation of the module, standing in for an inlined or twice-loaded runtime.
+    let second: typeof import('../../src/reactivity/store-scope.ts');
+
+    beforeAll(async () =>
+    {
+        const copy = '../../src/reactivity/store-scope.ts?second';
+        second = await import(copy) as typeof second;
+    });
+
+    afterEach(() => setStoreScopeResolver(null));
+
+    it('is a separate evaluation', () =>
+    {
+        expect(second.getStoreScope).not.toBe(getStoreScope);
+        expect(second.getStoreScope()).not.toBe(getStoreScope());
+    });
+
+    it('throws while a unit is open on the other copy', () =>
+    {
+        const unit = {};
+        setStoreScopeResolver(() => unit);
+        expect(getStoreScope()).toBe(unit);
+        expect(() => second.getStoreScope()).toThrow(
+            /getStoreScope: a second copy[\s\S]*external: \['azerothjs'\][\s\S]*two spellings of its path/
+        );
+    });
+
+    it('keeps each copy on its own default outside every unit', () =>
+    {
+        const first = getStoreScope();
+        const other = second.getStoreScope();
+        setStoreScopeResolver(() => undefined);
+        expect(getStoreScope()).toBe(first);
+        expect(second.getStoreScope()).toBe(other);
+        expect(other).not.toBe(first);
+    });
+
+    it('forgets a resolver once it is uninstalled', () =>
+    {
+        const other = second.getStoreScope();
+        const resolver = (): object => ({});
+        setStoreScopeResolver(resolver);
+        setStoreScopeResolver(null);
+        expect(second.getStoreScope()).toBe(other);
+    });
+
+    it('drops the entry of a resolver that has been collected', () =>
+    {
+        // A copy that was discarded leaves an entry whose resolver is gone.
+        const registry = (globalThis as Record<symbol, Set<unknown> | undefined>)[Symbol.for('azerothjs.store-scope.resolvers')];
+        const collected = { deref: (): undefined => undefined };
+        registry?.add(collected);
+        expect(() => second.getStoreScope()).not.toThrow();
+        expect(registry?.has(collected)).toBe(false);
     });
 });

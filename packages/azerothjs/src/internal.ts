@@ -23,6 +23,8 @@
  * name this module does not export fails the suite.
  */
 
+import { SPLIT_RUNTIME } from './reactivity/store-scope.ts';
+
 /**
  * The runtime-contract version this runtime speaks. The compiler stamps every compiled
  * module with the version it emitted against (`assertRuntimeContract(N)` right after the
@@ -34,9 +36,20 @@
  */
 export const RUNTIME_CONTRACT_VERSION = 4;
 
+/** The global slot naming the copy the latest compiled module bound to; unbound on evaluation. */
+const RUNTIME = Symbol.for('azerothjs.runtime');
+
+interface RuntimeHolder
+{
+    [RUNTIME]?: unknown;
+}
+
+(globalThis as RuntimeHolder)[RUNTIME] = undefined;
+
 /**
  * The load-time handshake every compiled module runs. A mismatch is a clear, actionable
- * error at startup - not undefined behavior three components deep.
+ * error at startup - not undefined behavior three components deep. A passing check marks
+ * the global slot with this copy of the runtime.
  */
 export function assertRuntimeContract(compiledWith: number, moduleUrl?: string): void
 {
@@ -58,6 +71,34 @@ export function assertRuntimeContract(compiledWith: number, moduleUrl?: string):
             + `the same release train. ${ remedy }`
             + (moduleUrl === undefined ? '' : ` (module: ${ moduleUrl })`)
         );
+    }
+    stampRuntime(globalThis);
+}
+
+/**
+ * Marks `target` with this copy of the runtime, so a check on another copy can tell them apart.
+ *
+ * @internal
+ */
+export function stampRuntime<T extends object>(target: T): T
+{
+    (target as RuntimeHolder)[RUNTIME] = assertRuntimeContract;
+    return target;
+}
+
+/**
+ * Throws when `holder` is marked with a different copy of the runtime than this one.
+ *
+ * @internal
+ * @param where - Names the call site at the head of the message.
+ * @param holder - A stamped object; the global slot by default.
+ */
+export function assertOneRuntime(where: string, holder: object = globalThis): void
+{
+    const bound = (holder as RuntimeHolder)[RUNTIME];
+    if (bound !== undefined && bound !== assertRuntimeContract)
+    {
+        throw new Error(`${ where }: ${ SPLIT_RUNTIME }`);
     }
 }
 

@@ -50,7 +50,7 @@ interface ViteProbe
     config: {
         root: string;
         plugins: Array<{ name: string; watchChange?: unknown }>;
-        logger: { warn: (message: string) => void };
+        logger: { warn: (message: string) => void; error: (message: string) => void };
         server: { ws: { server: { listenerCount: (event: string) => number } } };
     };
     restart: () => Promise<void>;
@@ -1497,5 +1497,55 @@ describe('under the conductor, and over a root spelled another way', () =>
         });
 
         expect(boots).toBe(1);
+    });
+});
+
+describe('a split runtime is refused on the first entry load', () =>
+{
+    // The fixture beside dev-app, at the same depth so its relative kit source path still holds,
+    // with azerothjs left to vite's noExternal: the entry renders on an inlined second copy.
+    const SPLIT = join(here, 'fixtures', 'dev-split');
+    const KEPT_EXTERNAL = /,\s*external: \['azerothjs'\]/;
+
+    beforeAll(() =>
+    {
+        rmSync(SPLIT, { recursive: true, force: true });
+        cpSync(FIXTURE, SPLIT, { recursive: true, filter: (source) => !source.includes('node_modules') });
+        const config = readFileSync(join(SPLIT, 'vite.config.ts'), 'utf8');
+        if (!KEPT_EXTERNAL.test(config))
+        {
+            throw new Error('the fixture config does not keep azerothjs external in the shape this arm removes');
+        }
+        writeFileSync(join(SPLIT, 'vite.config.ts'), config.replace(KEPT_EXTERNAL, ''));
+    });
+
+    afterAll(() =>
+    {
+        rmSync(SPLIT, { recursive: true, force: true });
+    });
+
+    it('an entry that inlined azerothjs answers the refusal and logs one line', async () =>
+    {
+        const { session, vite } = await openWithVite({ root: SPLIT });
+        const error = vi.spyOn(vite.config.logger, 'error');
+
+        const response = await get(session, '/');
+
+        expect(response.status).toBe(500);
+        expect(await response.text()).toMatch(/kit devPages: .*second copy/);
+        const lines = error.mock.calls.map((call) => call[0]).filter((line) => line.includes('failed to build: kit devPages'));
+        expect(lines).toHaveLength(1);
+        await closeSession(session);
+    });
+
+    it('the fixture that keeps azerothjs external still serves its page', async () =>
+    {
+        const session = await open();
+
+        const response = await get(session, '/');
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain('HOME PAGE');
+        await closeSession(session);
     });
 });

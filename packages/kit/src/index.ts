@@ -34,7 +34,7 @@ import { negotiateLocale } from 'azerothjs';
 import type { LocaleConfig, NegotiatedLocale } from 'azerothjs';
 import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
-import { acceptRedirectTarget, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
+import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
 import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
@@ -395,6 +395,11 @@ function loadShell(clientDir: string): Promise<string>
  */
 export function mountPages(app: App, options: KitOptions): void
 {
+    if (options.renderer !== undefined)
+    {
+        assertOneRuntime('kit mountPages', options.renderer);
+    }
+
     // The type says exactly one client; an untyped caller hears it here, rather than through a
     // missing-file error naming a directory that is `undefined`.
     if ((options.clientDir === undefined) === (options.shell === undefined))
