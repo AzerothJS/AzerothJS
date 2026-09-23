@@ -21,7 +21,9 @@
  * absolute baseUrl goes over the wire. A relative one means "this origin": in a browser that is
  * `location`, and on a server it is the request being answered - if that request carries the
  * app's own api in process, the call is dispatched there with the visitor's identity and never
- * opens a socket. A relative baseUrl with neither is a named error rather than a guess.
+ * opens a socket. A render shared by every visitor (ISR) has no request and reaches the api in
+ * process anonymously instead. A relative baseUrl with none of these is a named error rather than
+ * a guess.
  *
  * A non-2xx answer throws {@link ApiError} carrying the wire shape's stable `code` and - for
  * validation failures - the field-error map, which is EXACTLY what the form's setError
@@ -36,7 +38,7 @@
 import { useRequest } from 'azerothjs';
 import type { Issue } from '@azerothjs/schema';
 import type { Decl, Feature, Manifest, ManifestEntry, PathParams } from './declare.ts';
-import { apiBridgeOf, bridgeMethodRefusal } from './bridge.ts';
+import { apiBridgeOf, bridgeMethodRefusal, sharedApiBridge, SHARED_ORIGIN } from './bridge.ts';
 
 /** The error a failed call throws: the wire shape, typed. */
 export class ApiError extends Error
@@ -181,9 +183,14 @@ const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
  * list too.
  */
 const TRANSPORT_CAUSES = 'Causes: no api is registered on this App or any enclosing request root; '
-    + 'no @azerothjs/http request root around this call, and a work unit (ISR produce or regenerate, cron, ws) '
+    + 'an ISR render of pages mounted on an App with no api registered on it (an ISR page reaches only the '
+    + 'api registered on the App mountPages is given, never one on an enclosing App; under devPages, the api '
+    + 'its routes callback registers); '
+    + 'no @azerothjs/http request root around this call, and a work unit other than an ISR render (cron, ws) '
     + 'is not one; a call outside a guard walk, a loader or a per-request render; '
-    + 'a build-time prerender, which answers no request; or an SSR bundle that resolved its own copy of '
+    + 'a build-time prerender, which answers no request (leave the page\'s params out of staticParams so a '
+    + 'request renders it, read its data without the client, or render it with render: \'server\'); '
+    + 'or an SSR bundle that resolved its own copy of '
     + 'azerothjs, so the host installed the ambient request on the other copy - check ssr.external. '
     + 'Pass an absolute baseUrl or an explicit `fetch` transport where none of these can be true.';
 
@@ -340,6 +347,16 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             // Against the page's OWN url, so the handler reads the authority it would have read
             // over the wire; the dispatch never opens a socket, so a forged Host dials nothing.
             return { transport: (request: Request): Promise<Response> => bridge.dispatch(request), url: new URL(relative, ambient.url).toString() };
+        }
+        // A shared render carries no request, so nothing about a visitor can reach this call.
+        const shared = ambient === null ? sharedApiBridge() : undefined;
+        if (shared !== undefined)
+        {
+            if (method !== 'GET' && method !== 'HEAD')
+            {
+                throw new Error(bridgeMethodRefusal(method, relative));
+            }
+            return { transport: (request: Request): Promise<Response> => shared.dispatch(request), url: new URL(relative, SHARED_ORIGIN).toString() };
         }
         if (here !== undefined)
         {
@@ -509,7 +526,7 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
                         // request carries the manifest that was actually installed. Consulted per
                         // call, so import order stops mattering.
                         const ambient = useRequest();
-                        const entry = ambient !== null ? apiBridgeOf(ambient)?.manifest[group]?.[name] : undefined;
+                        const entry = (ambient !== null ? apiBridgeOf(ambient) : sharedApiBridge())?.manifest[group]?.[name];
                         if (entry !== undefined)
                         {
                             return (callableFor(group, name, entry) as (...rest: unknown[]) => unknown)(...args);

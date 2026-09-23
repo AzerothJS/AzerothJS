@@ -7,6 +7,7 @@ import { defineConfig } from 'vite';
 // files through vitest, so one edit is one behaviour. `azerothjs` deliberately stays the
 // installed (built) package on both sides - see the ssr pin below.
 const kitSrc = fileURLToPath(new URL('../../../src/', import.meta.url));
+const httpSrc = fileURLToPath(new URL('../../../../http/src/', import.meta.url));
 
 // The spec has no other way in: the session keeps its vite server private, and the change-set
 // arms must drive the recorder hook and watch the ssr module graph directly. `post` so this
@@ -38,6 +39,8 @@ export default defineConfig({
     {
         alias: [
             { find: '@azerothjs/kit/ssr', replacement: `${ kitSrc }ssr.ts` },
+            // The typed client from source too: a second http copy, as a scaffold's SSR bundle holds.
+            { find: '@azerothjs/http/api/shared', replacement: `${ httpSrc }api/shared-entry.ts` },
             { find: '@azerothjs/kit', replacement: `${ kitSrc }index.ts` }
         ]
     },

@@ -5,8 +5,8 @@
 // visitor's loader data verbatim; these arms pin the four refusals that close that hole:
 // the mount-time throw for a guarded static chain, the per-URL guarded gate ahead of the
 // cache/seed/inflight, the result stamp the cache layers refuse, and the
-// `private, no-store` headers on every guarded answer. Request identity rides
-// AsyncLocalStorage exactly as the http request root carries it in production.
+// `private, no-store` headers on every guarded answer. Request identity rides an app
+// AsyncLocalStorage, which a per-request render sees and a shared ISR render does not.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -315,7 +315,7 @@ describe('mismatch rig: the renderer was built over a DIFFERENT table (docs forb
         loader: () => Promise.resolve(`PRIVATE-BALANCE-${ who() }`)
     }];
 
-    it('a poisoned stale entry serves ONCE, the refresh stamp-drops AND learns, and the seed file never resurrects it', async () =>
+    it('a poisoned stale entry serves ONCE and the refresh drops it; the guardless seed then serves stale', async () =>
     {
         const rig = build(mountTable(), { rendererRoutes: rendererTable() });
         // The pre-fix world: a guarded entry already in the persistent cache under the
@@ -330,20 +330,19 @@ describe('mismatch rig: the renderer was built over a DIFFERENT table (docs forb
         expect(await stale.text()).toContain('OLD-PRIVATE');
         await settle();
 
-        // regenerate rendered a STAMPED result: entry dropped, pathname learned.
+        // The shared refresh sees no identity, so the renderer's guard blocks it: the entry is
+        // dropped, nothing is learned, and the seed file refills the cache. A known gap: a
+        // blocked shared render is neither learned nor refused.
         expect(rig.cache.entries.has('/m')).toBe(false);
         const next = await as('mallory', rig.app, '/m');
-        expect(next.status).toBe(403);
-        expect(await next.text()).not.toContain('OLD-PRIVATE');
-        expect(next.headers.get('x-azeroth-cache')).toBe('live');
-        // The still-on-disk seed file must not have refilled the cache (the v1 loop).
-        expect(rig.cache.entries.has('/m')).toBe(false);
-        const third = await as('alice', rig.app, '/m');
-        expect(await third.text()).not.toContain('SEEDED-GUARDLESS');
-        expect(rig.cache.entries.has('/m')).toBe(false);
+        expect(next.status).toBe(200);
+        expect(next.headers.get('x-azeroth-cache')).toBe('stale');
+        const body = await next.text();
+        expect(body).not.toContain('OLD-PRIVATE');
+        expect(body).toContain('SEEDED-GUARDLESS');
     });
 
-    it('coalesced discovery: the creator keeps its own render, the joiner re-renders under its own identity', async () =>
+    it('coalesced discovery: the shared render sees no identity, so the guard refuses the creator and the joiner alike', async () =>
     {
         const rig = build(mountTable(), { rendererRoutes: rendererTable(), holdFirstRender: true });
         // Alice's cold request enters produce and BLOCKS inside the renderer - the flight
@@ -356,18 +355,29 @@ describe('mismatch rig: the renderer was built over a DIFFERENT table (docs forb
         rig.release();
         const [alice, mallory] = await Promise.all([alicePromise, malloryPromise]);
 
-        // The creator keeps her own render; the vetoed joiner re-renders under her own
-        // identity - pre-fix she received alice's body off the shared promise.
-        expect(alice.status).toBe(200);
-        expect(await alice.text()).toContain('PRIVATE-BALANCE-alice');
+        // One blocked shared render answers both: nothing stamped, nothing cached.
+        expect(alice.status).toBe(403);
         expect(mallory.status).toBe(403);
         expect(await mallory.text()).not.toContain('alice');
-        // Discovery costs N+1 renders: the creator's plus one per joiner.
-        expect(rig.renders()).toBe(2);
+        expect(rig.renders()).toBe(1);
         expect(rig.cache.sets).toEqual([]);
-        // From here on the pathname is learned: no more flights, still nothing cached.
-        const after = await as('alice', rig.app, '/m');
-        expect(after.headers.get('x-azeroth-cache')).toBe('live');
+    });
+
+    it('coalesced discovery with a guard that passes anonymously: the stamp keeps it out of the cache and the joiner renders live', async () =>
+    {
+        // The produce-site stamp check is the only thing between this render and the cache.
+        const open: Route[] = [{ path: '/m', component, guard: () => true, loader: () => Promise.resolve(`PRIVATE-BALANCE-${ who() }`) }];
+        const rig = build(mountTable(), { rendererRoutes: open, holdFirstRender: true });
+        const alicePromise = as('alice', rig.app, '/m');
+        await settle();
+        const malloryPromise = as('mallory', rig.app, '/m');
+        await settle();
+        rig.release();
+        const [alice, mallory] = await Promise.all([alicePromise, malloryPromise]);
+        expect(alice.status).toBe(200);
+        expect(mallory.headers.get('x-azeroth-cache')).toBe('live');
+        expect(mallory.headers.get('cache-control')).toBe('private, no-store');
+        expect(rig.renders()).toBe(2);
         expect(rig.cache.sets).toEqual([]);
     });
 

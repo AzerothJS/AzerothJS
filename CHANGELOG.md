@@ -21,6 +21,21 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   compiler fails the same way on an older runtime. Rebuild against a matched set: `azerothjs` and
   `@azerothjs/compiler` from one version.
 
+- **An ISR page renders in the async context its pages were mounted in.** ISR's first render and
+  every regeneration run in the context `mountPages` was called in (under `azeroth dev`, the one
+  `devPages` was called in), not in the context of the request that triggered them. A store
+  entered before the pages were mounted reaches the loader and the api handler although no request
+  carries it. A store entered only around `serve()`, a store set with `enterWith` after the
+  mount, and a store a middleware or a wrapper enters per request (a session, a tenant, a request
+  id for logs or a tracing context) no longer reach an ISR loader: a loader that needs one answers
+  500 `private, no-store` with its own error and caches nothing, and a loader that falls back to a
+  default caches the default. Wrap the code that mounts the pages in the store, not only
+  `serve()`. Pages mounted while a request is being answered (a lazy mount inside a handler)
+  render in the context `@azerothjs/kit` was first imported in instead, so a store entered after
+  that import is not visible there, and a kit first imported inside a request (a lazy `import()`
+  in a handler) carries that request's stores into every shared page. Import the kit at the top
+  of the server entry and mount the pages at startup.
+
 ### Fixed
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
@@ -114,7 +129,59 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   its focus, apart from an element the component built while the page was hydrating. Server markup
   is unchanged and the runtime contract stays at v5.
 
+- **An ISR page whose loader calls the app's own api answered 500 on every production request.** A
+  loader that called the typed client with a relative baseUrl threw in ISR's first render and in
+  every regeneration, because a shared render carries no request: "there is no origin here", or
+  "is not in the manifest this client was built with" from a client built with `{}` (the
+  scaffold's server-side shape) or with a stale manifest. A parameterised page with `revalidate`
+  and no `staticParams` passed the build and the dev session, then answered 500
+  `private, no-store` in production. A shared render reaches the api registered on the App the
+  pages are mounted on, in process and anonymously: at `http://localhost`, with no cookie, header
+  or Host of the visitor forwarded; GET and HEAD only; with `accept-language` set to the page's
+  language. A store entered before the pages were mounted reaches the api handler as it reaches
+  the loader (see Changed). `useRequest()` and `args.request` stay null. An api registered only
+  on an App that encloses the pages App is not reached, and the loader's error says to register it
+  on the App `mountPages` is given. A call that lands on a page instead of an api route (a stale
+  manifest, a baseUrl that differs from `register`'s prefix, or a page whose path shadows the
+  route) is refused by name, so the render cannot wait on or call itself, unless an edge layer
+  before the page rebuilds the Request. A guarded endpoint answers its own 401 or 403, so the page
+  is 500 and never cached. An api answer that sets a cookie is refused with the cookie's name,
+  because a cookie minted for one anonymous caller must not be served to every visitor;
+  `csrfCookie` installed with `app.use` mints no token for that in-process call unless an edge
+  layer before it rebuilds the Request, and a browser GET still gets its cookie.
+
+- **The dev session renders an ISR page as a production cache miss does.** Under `azeroth dev` a
+  page with `revalidate` rendered per request with the developer's cookie, so a loader that
+  depended on identity worked in dev and failed in production. It renders shared and anonymous on
+  every request, buffered, `public, max-age=0, must-revalidate`, `x-azeroth-cache: miss`, with
+  root-relative hreflang under prefix routing, and keeps nothing. A store entered before
+  `devPages` is called reaches the loader, as a store entered before `mountPages` does in
+  production, and no store a visitor's request entered does. One reach differs: the session lends
+  its own App's api to the pages App it builds, while production reaches only the api registered
+  on the App `mountPages` is given.
+
+- **A prerender whose loader rejected said the reason was reported, and reported it nowhere.** The
+  build error says what the loader rejected with (an Error's message, or its name, Error when it
+  has none, followed by "with no message" when the message is blank or not a string; a string as
+  written, or "it rejected with an empty string" when it is blank; other values as JSON, or as
+  Node prints them when they have no JSON form; "it rejected without a reason" for undefined or
+  null) and carries that value as `cause`. A prerendered page that calls the in-process api names
+  the fixes: leave the page's params out of `staticParams` so a request renders it, read its data
+  without the client, or use `render: 'server'`.
+
 ### Security
+
+- **An ISR page could cache a value the triggering visitor's request put in an async-context
+  store.** ISR's first render and every regeneration ran in the async context of the request that
+  triggered them, so a loader that read an `AsyncLocalStorage` store the app entered per request
+  (a session, user or tenant store entered by middleware on the App or by a wrapper around it)
+  wrote that visitor's value into the public entry every later visitor was served. This completes
+  the 2.1.0 fix "A cached page could carry the identity of whichever visitor happened to render
+  it", which made the framework's own request state neutral but left a store the app owns
+  reachable. Shared renders of pages mounted at startup run in the async context they were
+  mounted in, never in a visitor's (see Changed).
+  Entries a persistent page cache wrote before this release may hold a visitor's value until they
+  regenerate; clear the cache directory when upgrading without a client rebuild.
 
 - **A server process running two copies of `azerothjs` refuses to serve instead of sharing state
   between visitors.** When the SSR bundle inlined its own `azerothjs` (every fullstack scaffold

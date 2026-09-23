@@ -14,9 +14,11 @@
  */
 
 import { REQUEST_READ } from 'azerothjs/internal';
-import { API_BRIDGE, apiBridgeOf, bridgeMethodRefusal, bridgeOriginRefusal, type ApiBridge } from './bridge.ts';
+import { API_BRIDGE, apiBridgeOf, bridgeMethodRefusal, bridgeOriginRefusal, isSharedDispatch, SHARED_DISPATCH, SHARED_ORIGIN, type ApiBridge } from './bridge.ts';
+import { sharedApiRegistrationOf } from './registry.ts';
 import { currentApiRegistration } from '../request-root.ts';
 import { forwardIdentity } from '../forward-identity.ts';
+import { NotFoundError } from '../errors.ts';
 
 /**
  * Gives this request the api registered on the App answering it - or on an App enclosing that
@@ -29,9 +31,17 @@ import { forwardIdentity } from '../forward-identity.ts';
  *
  * @internal
  * @param request - The request about to be walked, loaded or rendered.
+ * @throws NotFoundError when the request is a shared render's api call that reached a page.
  */
 export function attachApiBridge(request: Request): void
 {
+    // Rendering the page would run a loader that can wait on or call this same shared render.
+    if (isSharedDispatch(request))
+    {
+        throw new NotFoundError(`${ request.method } ${ new URL(request.url).pathname } reached a page instead of an api `
+            + 'route, from a shared render. No api route answers that path (the client\'s manifest or baseUrl '
+            + 'disagrees with register()), or a page\'s path shadows the route.');
+    }
     if (apiBridgeOf(request) !== undefined)
     {
         return;
@@ -71,4 +81,59 @@ export function attachApiBridge(request: Request): void
         }
     };
     Object.defineProperty(request, API_BRIDGE, { value: bridge, configurable: true });
+}
+
+/**
+ * The api a shared render of pages mounted on `app` reaches: the one registered on `app`, else
+ * the one lent to it, anonymous, at {@link SHARED_ORIGIN}, in the page's language, GET and HEAD
+ * only. Never the request chain's. A call that reaches a page instead is refused by that page.
+ *
+ * @internal
+ * @param app - The App the pages are mounted on.
+ * @param locale - The page's language, sent as accept-language.
+ */
+export function createSharedApiBridge(app: object, locale?: string): ApiBridge | undefined
+{
+    const registration = sharedApiRegistrationOf(app);
+    if (registration === undefined)
+    {
+        return undefined;
+    }
+    return {
+        manifest: registration.manifest,
+        prefix: registration.prefix,
+        dispatch: async (inner: Request): Promise<Response> =>
+        {
+            const target = new URL(inner.url);
+            if (inner.method !== 'GET' && inner.method !== 'HEAD')
+            {
+                throw new Error(bridgeMethodRefusal(inner.method, target.pathname));
+            }
+            if (target.origin !== SHARED_ORIGIN)
+            {
+                throw new Error(bridgeOriginRefusal(target.href, SHARED_ORIGIN));
+            }
+            const headers = new Headers(inner.headers);
+            if (locale !== undefined && !headers.has('accept-language'))
+            {
+                headers.set('accept-language', locale);
+            }
+            const dispatched = new Request(inner, { headers });
+            // No browser receives this answer: csrfCookie mints nothing for it, and a page refuses it.
+            Object.defineProperty(dispatched, SHARED_DISPATCH, { value: true });
+            const response = await registration.app.handle(dispatched);
+            // A cookie minted for this one anonymous caller would be served to every visitor.
+            if (response.headers.has('set-cookie'))
+            {
+                await response.body?.cancel();
+                const names = response.headers.getSetCookie().map((line) => line.split(/[=;]/, 1)[0]?.trim()).join(', ');
+                throw new Error(`${ inner.method } ${ target.pathname } answered a shared render with a Set-Cookie `
+                    + `(${ names }), so its answer belongs to one caller and cannot be cached for every visitor. Stop `
+                    + 'setting a cookie on that anonymous GET, in the endpoint or in a middleware or edge layer under '
+                    + 'app.use (csrfCookie mints none there unless an edge layer before it rebuilds the Request), or '
+                    + 'render the page with render: \'server\'.');
+            }
+            return response;
+        }
+    };
 }

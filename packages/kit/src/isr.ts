@@ -33,7 +33,8 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { attachApiBridge, html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
+import { attachApiBridge, captureRequestContext, createSharedApiBridge, html as htmlResponse, runInWorkUnit } from '@azerothjs/http';
+import { insideRequestRoot } from '@azerothjs/http/internal';
 import type { App } from '@azerothjs/http';
 import type { ContainedFile } from '@azerothjs/http/node';
 
@@ -42,6 +43,9 @@ import { alternatesOf, hrefPathOf } from './alternates.ts';
 import type { DocumentContext, PageResult } from './ssr.ts';
 import type { PageRenderer } from './ssr.ts';
 import { mergeVary } from './vary.ts';
+
+/** The frame this module loaded in: the fallback for a mount that runs inside a request. */
+const outsideRequests = captureRequestContext();
 
 /** One cached page: the finished HTML, its status, and when it was produced. */
 export interface PageEntry
@@ -573,6 +577,9 @@ export function revalidate(pathname: string): void
 export function registerIsr(registration: IsrRegistration): void
 {
     const { app, path, revalidate, cache, renderer, shell, seedFile, guarded, onError, buildId } = registration;
+    // Shared renders run in the frame the pages were mounted in, so a store entered before the mount
+    // reaches them and a store entered later, around serve() or per request, does not.
+    const outside = insideRequestRoot() ? outsideRequests : captureRequestContext();
     const documentOf = registration.document ?? ((): DocumentContext => ({}));
     const varyOf = registration.vary ?? ((): undefined => undefined);
     const stripLocale = registration.strip ?? ((pathname: string): string => pathname);
@@ -807,7 +814,6 @@ export function registerIsr(registration: IsrRegistration): void
         // and its disconnect ends the render's reason to exist. The request itself rides along
         // for the same reason: nobody else will ever be served these bytes. The two SHARED
         // render paths in this file take neither; see `produce` and `regenerate`.
-        attachApiBridge(request);
         const result = await renderer(target.url, await shell,
             { signal: request.signal, request, ...renderOptions(target, await buildId, [], true) });
         return pageResponse(result, await shell, {
@@ -1004,10 +1010,12 @@ export function registerIsr(registration: IsrRegistration): void
         // reads are baked into the entry everyone else is served. The guarded branch below states
         // the same rule for its own case and answers it by refusing to cache; an unguarded page
         // reading request state is not caught by that, so the scope is made neutral instead.
+        // The app's own api stays reachable, anonymously and in the page's language.
         const shellText = await shell;
         const buildValue = await buildId;
-        const result = await runInWorkUnit(
-            () => renderer(target.url, shellText, renderOptions(target, buildValue, [], true)));
+        const result = await outside(() => runInWorkUnit(
+            () => renderer(target.url, shellText, renderOptions(target, buildValue, [], true)),
+            { sharedApi: createSharedApiBridge(app, target.locale) }));
         if (result.kind === 'html' && result.guarded === true)
         {
             // The renderer's own table says this chain is guarded: the body belongs to the
@@ -1087,8 +1095,9 @@ export function registerIsr(registration: IsrRegistration): void
                 const shellText = await shell;
                 const buildValue = await buildId;
                 const startedAt = Date.now();
-                const result = await runInWorkUnit(
-                    () => renderer(target.url, shellText, renderOptions(target, buildValue, reasons, false)));
+                const result = await outside(() => runInWorkUnit(
+                    () => renderer(target.url, shellText, renderOptions(target, buildValue, reasons, false)),
+                    { sharedApi: createSharedApiBridge(app, target.locale) }));
                 if (result.kind === 'html' && result.guarded === true)
                 {
                     // The refresh proved the chain guarded. Learn FIRST, then drop: requests
@@ -1150,6 +1159,9 @@ export function registerIsr(registration: IsrRegistration): void
 
     app.get(path, async (context) =>
     {
+        // A guarded render reaches the api as this visitor, and a shared render's own call that
+        // lands here is refused before it can wait on itself.
+        attachApiBridge(context.request);
         const target = targetOf(context);
         // The guarded gate, BEFORE the cache, the seed, and the in-flight map: guarded
         // traffic must never populate, read, or coalesce on shared state.

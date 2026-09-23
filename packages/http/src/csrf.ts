@@ -30,6 +30,7 @@ import { ForbiddenError } from './errors.ts';
 import { edge } from './edge.ts';
 import type { EdgeMiddleware } from './edge.ts';
 import type { GuardContext } from './api/declare.ts';
+import { isSharedDispatch } from './api/bridge.ts';
 
 /** Shared knobs for {@link csrfCookie} and {@link csrfProtect} - pass the SAME object to both. */
 export interface CsrfOptions
@@ -107,7 +108,8 @@ export function csrfCookie(options: CsrfOptions = {}): EdgeMiddleware
         handle: async (request: Request): Promise<Response> =>
         {
             const response = await next.handle(request);
-            if (request.method !== 'GET' || parseCookies(request)[name] !== undefined)
+            // A shared render's in-process call reaches no browser, so a token would have no reader.
+            if (request.method !== 'GET' || isSharedDispatch(request) || parseCookies(request)[name] !== undefined)
             {
                 return response;
             }

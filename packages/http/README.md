@@ -150,7 +150,8 @@ bundle). The full guide: [docs/api.md](./docs/api.md).
 A page rendered on the server often needs what its own api already serves. That call does not
 have to go out to a socket and back: when the render is answering a request that carries the
 api, the same typed client dispatches through `app.handle` in process, with the visitor's
-identity and none of the round trip.
+identity and none of the round trip. An ISR page's shared render, which answers no one visitor,
+reaches the api too, anonymously: see the first rule below.
 
 ```ts
 // the same module the browser imports
@@ -162,11 +163,20 @@ export const client = createClient<typeof api>(manifest, { baseUrl: '/api' });
 
 Nothing is switched on: the client decides per call, and the rules are the same on every host.
 
-- **It needs an ambient page request.** The in-process route exists inside a guard walk, a
-  loader, or a per-request render on the GET path, and inside a page action BODY, which its
-  POST's authorizing walk already gave the request and the bridge. A background work unit (ISR
-  regeneration, cron, a ws handler) and a build-time prerender answer no request of their own,
-  and a call from one of those takes the named throw below.
+- **It needs an ambient page request, or an ISR render.** The in-process route exists inside a
+  guard walk, a loader, or a per-request render on the GET path, and inside a page action BODY,
+  which its POST's authorizing walk already gave the request and the bridge. An ISR page's shared
+  render (its first render and every regeneration) reaches the api anonymously instead: only the
+  api registered on the App `mountPages` is given (`devPages` lends the api its `routes` callback
+  registers to the pages App it builds; see `@azerothjs/kit`'s dev divergences), at
+  `http://localhost`, GET and HEAD only, with no cookie, header or Host of the visitor and
+  `accept-language` set to the page's language, in the async context the pages were mounted in (a
+  store entered before the mount is visible; see `@azerothjs/kit` for a mount made while a request
+  is being answered). A call that lands on a page instead of an api route (a path no api route
+  answers, or one a page's path shadows) is refused by name, unless an edge layer before the page
+  rebuilds the Request, and an answer that sets a cookie is refused by name, because the page it
+  fills is served to every visitor. Cron, a ws handler and a build-time prerender answer no
+  request of their own, and a call from one of those takes the named throw below.
 - **A relative `baseUrl` only.** `/api` means "this origin", which in a browser is `location`
   and on a server is the request being answered. An absolute one - a scheme in any case, or a
   leading `//` - says "go over the wire" and is never dispatched in process, and the dispatcher
@@ -196,14 +206,16 @@ Nothing is switched on: the client decides per call, and the rules are the same 
 - **Keep `rateLimit` in the pipeline.** Installed with `app.use` it DOES run in process, and its
   default key throws 500 `rate-limit-key-unavailable` there, because an in-process request has
   no peer. That is also why `clientIp` is not forwarded: copying it would count one visitor twice
-  against an ip-keyed limit.
+  against an ip-keyed limit. The same holds on an ISR page's shared call, so a `rateLimit` under
+  `app.use` turns every ISR page whose loader calls the api into a 500.
 - **Compress on the way out.** The client's response reader does not decode a content-encoding
   and no `accept-encoding` is forwarded, so a host that composes `compressResponse` INSIDE its
   App rather than around it breaks the in-process leg.
 - **A real nested root.** The sub-call gets its own scope, its own `createStore` state, its own
   cleanups and its own data cache from the handler's first await on, so an api middleware cannot
-  write the page's request-scoped stores. It inherits the page request's `AbortSignal`, so a
-  disconnect reaches the handler and its `onWorkUnitCleanup` runs. Where it declares a
+  write the page's request-scoped stores. It inherits the page request's `AbortSignal` (a shared
+  ISR call has no page request and carries none), so a disconnect reaches the handler and its
+  `onWorkUnitCleanup` runs. Where it declares a
   `responseTimeoutMs` of its own, the deadline it keeps is the tighter of that and the enclosing
   root's REMAINING time, so a page half way through its budget cannot open a sub-call with a
   fresh full one; an App that declares none is unbounded here as it always was, and the page's
@@ -212,12 +224,17 @@ Nothing is switched on: the client decides per call, and the rules are the same 
   a forwarded cookie is never replayed to a `Location`, and `maxResponseBytes` bounds the body
   exactly as it does over the wire.
 
-When a relative baseUrl finds neither an ambient request carrying the api nor a browser
-`location`, the call throws an error naming every cause - no api registered on this App or any
-enclosing root; no request root around the call; a call from outside a guard walk, a loader or a
-per-request render; a build-time prerender; or an SSR bundle that resolved its own second copy of
-`azerothjs` (check `ssr.external`). That replaces the `TypeError: fetch failed` against
-`http://localhost` such a call used to produce.
+When a relative baseUrl finds no ambient request carrying the api, no ISR render whose pages App
+has an api registered, and no browser `location`, the call throws an error naming every cause -
+no api registered on this App or any enclosing root; an ISR render of pages mounted on an App
+with no api registered on it (an ISR page reaches only the api registered on the App
+`mountPages` is given, never one on an enclosing App; under `devPages`, the api its `routes`
+callback registers); no request root around the call, and a work unit other than an ISR render
+(cron, ws) is not one; a call from outside a guard walk, a loader or a per-request render; a
+build-time prerender, which answers no request (leave the page's params out of `staticParams` so
+a request renders it, read its data without the client, or render it with `render: 'server'`);
+or an SSR bundle that resolved its own second copy of `azerothjs` (check `ssr.external`). That
+replaces the `TypeError: fetch failed` against `http://localhost` such a call used to produce.
 
 `forwardIdentity(from, to)` is exported for a host building a dispatcher of its own: it applies
 the allowlist above and returns the request to hand to `app.handle`.

@@ -108,7 +108,8 @@ after hydration.
 
 It can also call the app's own api without a socket. When the pages are mounted on an
 `@azerothjs/http` `App` that has `register`ed an api, a typed client with a relative `baseUrl`
-dispatches through that App in process, carrying the visitor's identity:
+dispatches through that App in process, carrying the visitor's identity in a per-request render,
+and nobody's in an ISR page's shared render (below):
 
 ```ts
 { path: '/guestbook', component: GuestBook, render: 'server', loader: () => client.guestbook.list() }
@@ -119,15 +120,17 @@ root, the signal and the deadline - belong to `@azerothjs/http` and are written 
 under "Calling your own api in process". One of them decides how you compose your server: an
 in-process call enters at `app.handle`, so an outer `pipeline(app, requestId(), securityHeaders(),
 csrfCookie(), rateLimit())` does not run for it. Keep `rateLimit` in that pipeline rather than in
-`app.use` - installed with `app.use` it runs on the in-process leg too, where its default key
-throws 500 `rate-limit-key-unavailable` because the request has no peer.
+`app.use` - installed with `app.use` it runs on the in-process leg too, an ISR page's shared call
+included, where its default key throws 500 `rate-limit-key-unavailable` because the request has
+no peer.
 
 ### Reading identity makes a page private
 
 A render that consulted the request is a function of (URL, visitor), not of the URL alone, so the
 kit answers it `private, no-store` and never caches, persists or shares it - the same treatment a
 guarded page gets, for the same reason. Reading `args.request` at all counts, destructuring the
-loader arguments included, as does a non-null `useRequest()` and an in-process api call. The
+loader arguments included, as does a non-null `useRequest()` and an in-process api call made in a
+per-request render (a shared render's anonymous call reads no request and marks nothing). The
 over-approximation is deliberate: a page can lose shared cacheability it might have kept, never
 its correctness.
 
@@ -140,15 +143,43 @@ complete before the first byte and do mark it.
 A render whose output is written to disk or can be handed to more than one visitor is given no
 request at all: the build-time prerender, ISR's background regeneration, and ISR's first render
 of a page it has not cached yet, the one whose output seeds the cache. In those `args.request`
-and `useRequest()` are both null and no in-process api exists, which is what keeps one visitor's
-identity out of a cached entry or a build artifact.
+and `useRequest()` are both null, which is what keeps one visitor's identity out of a cached entry
+or a build artifact.
 
-That has a consequence to plan for. A `static` page whose loader needs identity or the api fails
-the build loudly, with the path named and nothing written. An ISR page the build never
-enumerated, a parameterised or wildcard path with `revalidate` and no `staticParams`, fails at
-its first live render and at every one after it, answering 500 `private, no-store` and caching
-nothing, exactly as it does today with a loader that rejects. A page that needs the visitor is
-`render: 'server'`.
+An ISR render still reaches the app's own api, anonymously: only the api registered on the App
+`mountPages` is given (never one on an enclosing App, outside the dev session below), at
+`http://localhost`, GET and HEAD only, with the page's language as `accept-language` and nothing
+of the visitor forwarded. A call that lands on a page instead of an api route (a path no api route
+answers, or one a page's path shadows) is refused by name, unless an edge layer before the page
+rebuilds the Request. A guarded endpoint answers its own 401 or 403, so the page is 500 and never
+cached, and an answer that sets a cookie is refused by name. Absolute links a handler builds from
+`context.url` there say localhost.
+
+An ISR render of pages mounted at startup, outside any request, runs in the async context they
+were mounted in, never in a visitor's. The scaffold's server mounts them that way, and `devPages`
+mounts on its first request inside the context `devPages()` was called in. A store entered before
+the pages are mounted is visible to its loader and to the api handler, so wrap the code that
+mounts them in it, not only `serve()`. A store entered only around `serve()`, one set with
+`enterWith` after the mount, and one a middleware or a wrapper enters per request are not
+visible, and a loader that needs one answers 500. Pages mounted while an `@azerothjs/http` App is
+answering a request (a lazy mount inside a handler) render in the context `@azerothjs/kit` was
+first imported in instead: a store entered after that import is not visible there, and a kit
+first imported inside a request carries that request's stores into every shared page. A mount
+made inside a store another layer entered per visitor, outside any App, renders in that visitor's
+store. Import the kit at the top of the server entry and mount at startup.
+
+That has a consequence to plan for. A `static` page whose loader needs identity or calls the
+in-process api fails the build loudly, with the path named, the loader's own error quoted and
+nothing written; an ISR page the build prerenders (paramless, or listed by `staticParams`)
+included. The fixes: leave a parameterised page's params out of `staticParams` so a request
+renders it, read its data without the client, or use `render: 'server'`. A paramless ISR page
+can also catch the build's failure in its loader and return a placeholder, which is served until
+the first regeneration replaces it. Rethrow an `ApiError` there, or an api outage at runtime
+caches the placeholder over good data, and know that the catch also hides a pages App with no api
+registered. An ISR page the build never enumerated, a parameterised or wildcard path with
+`revalidate` and no `staticParams`, fails at its first live render and at every one after it when
+its loader needs identity, answering 500 `private, no-store` and caching nothing. A page that
+needs the visitor is `render: 'server'`.
 
 ---
 
@@ -209,11 +240,17 @@ answers 403 for the client script, your modules and the stylesheet.
 
 **Divergences from production, all of them:**
 
-- `render: 'static'` pages render live - there is no build to serve a file from - and a
-  `revalidate` page re-renders per request rather than serving a cached copy. `cache` is ignored.
-- Under `routing: 'prefix'` a `render: 'static'` page renders per request, so its hreflang hrefs
-  are absolute, built from the request; production serves root-relative ones from the file and
-  from ISR renders.
+- `render: 'static'` pages without `revalidate` render live - there is no build to serve a file
+  from. A `revalidate` page renders as a production cache miss on every request: shared and
+  anonymous, buffered, `public, max-age=0, must-revalidate`, `x-azeroth-cache: miss`, nothing
+  kept. `cache` is ignored.
+- Under `routing: 'prefix'` a `render: 'static'` page without `revalidate` renders per request, so
+  its hreflang hrefs are absolute, built from the request; production serves root-relative ones
+  from the file, and an ISR page is root-relative in both modes.
+- An ISR page's shared render reaches the api registered on the session's App, which the session
+  lends to the pages App it builds. In production an ISR page reaches only the api registered on
+  the App `mountPages` is given, so a server that registers the api on an App enclosing the pages
+  App answers 500 on those pages in production, naming that rule, while dev answers 200.
 - `images` is a mount error: it needs a built client. Register `/_image` yourself, in the
   `routes` callback, with `imageHandler({ root: 'application/public' })`.
 - The per-request data cache is per request ROOT, so one `cached()` key read by an api route and

@@ -35,11 +35,12 @@
  * every mainstream server runtime. When TC39 AsyncContext lands, only this file changes.
  */
 
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
 import { abortDataCacheFetches, markServerRuntime, releaseDataCache, setStoreScopeResolver } from 'azerothjs/internal';
 import { PayloadResponse } from './payload.ts';
 import { isClientFault, reportIsolated } from './errors.ts';
 import type { ApiRegistration } from './api/registry.ts';
+import { addSharedApiReader, type ApiBridge } from './api/bridge.ts';
 
 /** What the async context carries for one request. @internal */
 interface RequestScope
@@ -73,6 +74,9 @@ interface RequestScope
      * sub-root with a fresh full one.
      */
     expiresAt: number | undefined;
+
+    /** A shared render's anonymous api. Only {@link runInWorkUnit} sets it. */
+    shared?: ApiBridge | undefined;
 }
 
 const storage = new AsyncLocalStorage<RequestScope>();
@@ -84,14 +88,22 @@ const MAX_CLEANUP_ROUNDS = 8;
  * Captures the ambient async context; the returned function re-enters it around a call.
  * Re-entry restores the ENTIRE capture-time frame - an ambient context present at call
  * time but not at capture is replaced for the call's duration - which outside a request
- * root means restoring the empty frame. Lives here so this file stays the kernel's ONE
- * `node:async_hooks` seam.
+ * root means restoring the empty frame. Each re-entry runs in a fresh async resource, so a
+ * store entered with `enterWith` during one call does not reach the next. Lives here so this
+ * file stays the kernel's ONE `node:async_hooks` seam.
  *
  * @internal
  */
 export function captureRequestContext(): <R>(fn: () => R) => R
 {
-    return AsyncLocalStorage.snapshot();
+    const frame = AsyncLocalStorage.snapshot();
+    return <R>(fn: () => R): R => frame(() => new AsyncResource('azeroth.frame').runInAsyncScope(fn));
+}
+
+/** @internal Whether a request root or a work unit is running in the current async context. */
+export function insideRequestRoot(): boolean
+{
+    return storage.getStore() !== undefined;
 }
 
 /**
@@ -101,6 +113,9 @@ export function captureRequestContext(): <R>(fn: () => R) => R
  * exact function - a per-call arrow would trip the foreign-registrant refusal.
  */
 const resolveUnitScope = (): object | undefined => storage.getStore()?.storeScope;
+
+/** The innermost unit's shared api; a request root or an interceptor unit carries none. */
+const readSharedApi = (): ApiBridge | undefined => storage.getStore()?.shared;
 
 /** @internal Idempotent: reactivity consults the async context once a server exists. */
 function installResolver(): void
@@ -193,6 +208,12 @@ export interface WorkUnitOptions
      * either side of that.
      */
     api?: (() => ApiRegistration | undefined) | undefined;
+
+    /**
+     * @internal The api a render in this work unit reaches with no request, anonymously. Only
+     * {@link runInWorkUnit} reads it; a request root ignores it.
+     */
+    sharedApi?: ApiBridge | undefined;
 }
 
 /**
@@ -634,9 +655,10 @@ export async function runInWorkUnit<T>(fn: () => T | Promise<T>, options: WorkUn
 {
     markServerRuntime();
     installResolver();
-    // A work unit is neutral by construction: no request, and no api to reach in process,
-    // so a shared render inside one cannot read identity through a bridge.
-    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null, api: undefined, expiresAt: undefined };
+    addSharedApiReader(readSharedApi);
+    // A work unit is neutral by construction: no request and no identity-forwarding api. A
+    // shared render reaches the api only through `sharedApi`, which forwards nothing.
+    const scope: RequestScope = { storeScope: {}, cleanups: null, settled: false, options, teardown: null, api: undefined, expiresAt: undefined, shared: options.sharedApi };
     try
     {
         return await storage.run(scope, fn);

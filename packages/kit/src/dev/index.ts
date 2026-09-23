@@ -32,7 +32,8 @@ import { createRequire } from 'node:module';
 import type { Socket } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
-import { App, HttpError, html as htmlResponse } from '@azerothjs/http';
+import { App, HttpError, captureRequestContext, html as htmlResponse } from '@azerothjs/http';
+import { lendApiRegistration } from '@azerothjs/http/internal';
 import type { AppOptions, RequestContext } from '@azerothjs/http';
 import type { ConnectMiddleware } from '@azerothjs/http/node';
 import { assertOneRuntime } from 'azerothjs/internal';
@@ -447,6 +448,9 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
         }
     };
 
+    // The pages mount inside the first request, so they mount in this frame instead, as production does.
+    const bootFrame = captureRequestContext();
+
     let current: App | undefined;
     let building: Promise<App> | undefined;
 
@@ -470,7 +474,10 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
             }
             assertOneRuntime('kit devPages', entry.renderPage);
             const inner = new App(innerOptions);
-            mountPages(inner, { ...options.pages, routes: entry.routes, renderer: readable(entry.renderPage), shell });
+            // The api is registered on the session's own App, so an ISR page's shared render reaches it there.
+            lendApiRegistration(inner, app);
+            const mount = { ...options.pages, routes: entry.routes, renderer: readable(entry.renderPage), shell };
+            bootFrame(() => mountPages(inner, mount));
             current = inner;
             return inner;
         }

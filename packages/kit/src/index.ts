@@ -139,7 +139,8 @@ export interface KitOptionsBase
 
     /**
      * Where ISR pages live (default: one in-process {@link MemoryPageCache} per mount). Ignored
-     * under `shell`, where a revalidating page renders live for every request.
+     * under `shell`, where a revalidating page renders as a cache miss on every request and
+     * nothing is kept.
      */
     cache?: PageCache;
 
@@ -226,7 +227,8 @@ export type KitOptions = KitOptionsBase & (
         /**
          * The shell html TEXT to serve instead of a built client. Nothing is read from disk, so
          * there are no assets, no prerendered files, no images and no page cache: every page
-         * renders live through the renderer, or answers this text when there is none.
+         * renders on every request through the renderer (an ISR page as a production cache miss,
+         * shared and anonymous), or answers this text when there is none.
          */
         shell: string;
         clientDir?: never;
@@ -482,7 +484,7 @@ export function mountPages(app: App, options: KitOptions): void
     // The prerendered artifact for a page in one language, under the same containment rule
     // the asset handler applies: a dist whose junction points outside itself seeds nothing.
     const seedFile = (path: string, locale?: string): Promise<ContainedFile | null> =>
-        containedFile(clientDirOf(options), prerenderFileFor(path, locale));
+        (shellText !== undefined ? Promise.resolve(null) : containedFile(clientDirOf(options), prerenderFileFor(path, locale)));
     let isrCache: PageCache | undefined;
 
     // In prefix mode a page exists once per language and the bare path redirects to the
@@ -557,18 +559,9 @@ export function mountPages(app: App, options: KitOptions): void
                 throw new Error(`kit mountPages: "${ page.path }" sets revalidate but no renderer was provided - `
                     + 'ISR regenerates through the SSR bundle\'s renderer.');
             }
-            if (shellText !== undefined)
-            {
-                // Nothing to cache against and no seed file to serve: the page renders live,
-                // through the renderer the checks above proved is there. `cache` is ignored.
-                for (const mounted of mountPaths(page.path))
-                {
-                    registerDynamic(app, mounted, defaultMode, options, shellPromise, buildIdPromise);
-                }
-                registerLocaleRedirect(app, page.path, options);
-                continue;
-            }
-            isrCache ??= options.cache ?? new MemoryPageCache();
+            // Under `shell` every request renders as a production miss does, shared and anonymous,
+            // and nothing is kept: `cache` is ignored and no seed file exists.
+            const pages = shellText !== undefined ? KEEP_NOTHING : (isrCache ??= options.cache ?? new MemoryPageCache());
             // The APP-SPACE pattern, never the prefixed path handed to registerIsr: a write
             // arrives with its language prefix already stripped.
             isrPatterns.add(page.path);
@@ -579,7 +572,7 @@ export function mountPages(app: App, options: KitOptions): void
                     path: mounted,
                     revalidate: page.revalidate,
                     guarded: (url) => guardedMatch(options.routes, url),
-                    cache: isrCache,
+                    cache: pages,
                     renderer: options.renderer,
                     shell: shellPromise,
                     seedFile,
@@ -1469,6 +1462,13 @@ function gated(handler: Handler, options: KitOptions, shellPromise: Promise<stri
         ? guardedAnswer(context, options, await shellPromise, buildId, async () => handler(context))
         : await handler(context));
 }
+
+/** @internal The dev session's page cache: it keeps nothing, so every request renders. */
+const KEEP_NOTHING: PageCache = {
+    get: () => Promise.resolve(undefined),
+    set: () => Promise.resolve(),
+    delete: () => Promise.resolve()
+};
 
 /** @internal An SSR-or-shell handler for one path; `'stream'` answers a streaming Response. */
 function registerDynamic(

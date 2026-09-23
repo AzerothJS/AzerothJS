@@ -1,7 +1,9 @@
 // The one route table the session mounts and the renderer renders.
 import { forbidden, notFound, unauthorized } from 'azerothjs';
+import { createClient } from '@azerothjs/http/api/shared';
 import type { PageRoute } from '@azerothjs/kit';
 
+import type { bootApi } from './boot-api.ts';
 import About from './pages/about.azeroth';
 import Forbidden from './pages/forbidden.azeroth';
 import Fresh from './pages/fresh.azeroth';
@@ -12,6 +14,9 @@ import Missing from './pages/missing.azeroth';
 import Read from './pages/read.azeroth';
 import Sign from './pages/sign.azeroth';
 import { readings, signed } from './state.ts';
+import { storesSeen } from './stores.ts';
+
+const client = createClient<typeof bootApi>({}, { baseUrl: '/api' });
 
 export const routes: PageRoute[] = [
     { path: '/', component: Home },
@@ -43,6 +48,13 @@ export const routes: PageRoute[] = [
             readings.fresh += 1;
             return Promise.resolve(`FRESH ${ readings.fresh }`);
         }
+    },
+    {
+        path: '/boot/:id',
+        component: Fresh,
+        render: 'static',
+        revalidate: 60,
+        loader: async () => `${ storesSeen() }|api:${ (await client.boot.read()).n }`
     },
     {
         path: '/sign',

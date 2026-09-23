@@ -34,10 +34,10 @@ export type { PathParams, RouteResult, RouteMatch, RouteMethodMismatch, RouteMis
 export { App } from './app.ts';
 export type { AppOptions, Handler, Middleware, RequestContext, RequestObserver, AzerothPlugin } from './app.ts';
 
-export { onWorkUnitCleanup, runInRequestRoot, runInWorkUnit, createWorkUnitInterceptor, type WorkUnitInterceptor, type WorkUnitOptions } from './request-root.ts';
+export { captureRequestContext, onWorkUnitCleanup, runInRequestRoot, runInWorkUnit, createWorkUnitInterceptor, type WorkUnitInterceptor, type WorkUnitOptions } from './request-root.ts';
 
 export { forwardIdentity } from './forward-identity.ts';
-export { attachApiBridge } from './api/attach-bridge.ts';
+export { attachApiBridge, createSharedApiBridge } from './api/attach-bridge.ts';
 
 export { loadConfig, str, num, flag, oneOf } from './config.ts';
 export type { ConfigVar, ConfigOf } from './config.ts';

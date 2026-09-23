@@ -105,12 +105,12 @@ One limit, stated because it is invisible otherwise: a plugin in
 session hands vite its own urls and the files under the application root and its `public/`
 directory; every other request is the app's.
 
-One divergence: a `render: 'static'` page - `/` included, which is ISR in production -
-renders live on every dev request. There is no build output to seed or cache from, so
-`revalidate` and `cache` do nothing here, and the response carries neither the
-`x-azeroth-cache` nor the `age` header production adds. An API route registered at a page's
-own path wins over the page in dev, where a production mount refuses the conflict at
-startup; `@azerothjs/kit`'s README lists the rest.
+One divergence: an ISR page - `/` here - renders on every dev request as a production cache
+miss does: shared and anonymous, `public, max-age=0, must-revalidate`, `x-azeroth-cache: miss`,
+nothing kept. There is no build output to seed or cache from, so `revalidate` and `cache`
+decide nothing here. An API route registered at a page's own path wins over the page in dev,
+where a production mount refuses the conflict at startup; `@azerothjs/kit`'s README lists the
+rest.
 
 The API's TYPES cross by relative import (`typeof api` - erased at build, so no
 server code can reach the browser); its runtime half is the served manifest.

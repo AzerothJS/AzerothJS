@@ -79,7 +79,8 @@ export function buildApp(options: AppOptions): App
 
     registerApi(app);
 
-    // Mounted LAST so nothing shadows /api; the kit serves each page by its `render` mode.
+    // Mounted LAST so nothing shadows /api, and on the App registerApi used: an ISR page's
+    // shared render reaches only the api registered on the App mountPages is given.
     if (options.pages !== undefined)
     {
         mountPages(app, options.pages);

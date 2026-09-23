@@ -79,6 +79,7 @@
             "@azerothjs/kit/dev/entry": ["./packages/kit/src/dev/entry.ts"],
             "@azerothjs/http/api": ["./packages/http/src/api/index.ts"],
             "@azerothjs/http/api/shared": ["./packages/http/src/api/shared-entry.ts"],
+            "@azerothjs/http/internal": ["./packages/http/src/internal.ts"],
             "@azerothjs/compiler":
             [
                 "./packages/compiler/src/index.ts"

@@ -44,6 +44,37 @@ export function recordApiRegistration(registration: ApiRegistration): void
     registrations.set(registration.app, registration);
 }
 
+/** Pages Apps whose shared renders reach another App's api, keyed on the pages App. */
+const lenders = new WeakMap<object, object>();
+
+/**
+ * @internal A shared render of pages mounted on `pages` reaches the api `owner` registers. One
+ * owner per pages App, so no request can pick which api fills an entry every visitor is served.
+ */
+export function lendApiRegistration(pages: object, owner: object): void
+{
+    const lent = lenders.get(pages);
+    if (lent !== undefined && lent !== owner)
+    {
+        throw new Error('@azerothjs/http: lendApiRegistration refused - this pages App already reaches the api of '
+            + 'another App. A pages App borrows from one owner, so no request can choose which api fills the '
+            + 'entries every visitor is served.');
+    }
+    if (registrations.has(pages))
+    {
+        throw new Error('@azerothjs/http: lendApiRegistration refused - this pages App registers its own api, '
+            + 'which its shared renders already reach. Lend only to a pages App that serves no api.');
+    }
+    lenders.set(pages, owner);
+}
+
+/** @internal The api a shared render of pages mounted on this App reaches: its own, else its lender's. */
+export function sharedApiRegistrationOf(app: object): ApiRegistration | undefined
+{
+    const owner = lenders.get(app);
+    return registrations.get(app) ?? (owner === undefined ? undefined : registrations.get(owner));
+}
+
 /** @internal The api registered on this App, or undefined when it serves none. */
 export function apiRegistrationOf(app: object): ApiRegistration | undefined
 {

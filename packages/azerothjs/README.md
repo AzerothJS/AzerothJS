@@ -387,11 +387,12 @@ The canon is one rule per side of the wire:
 | The browser half of a typed API contract | `@azerothjs/http/api/shared` (client-safe; never drags server code into a bundle) |
 | Tests / dev tooling | `@azerothjs/testing`, `@azerothjs/devtools`; dev-deps: `@azerothjs/compiler`, `@azerothjs/cli`, the editor tooling |
 
-Two things are deliberately NOT application API: `azerothjs/internal` (the compiled-output
-runtime contract - generated `.azeroth` code imports it, you never do), and anything a
-package documents as internal. Tree-shaking drops unused exports, so importing from the
-one `azerothjs` package costs a bundle nothing over the old per-layer packages - which is
-why the frontend layers are no longer published separately.
+Three things are deliberately NOT application API: `azerothjs/internal` (the compiled-output
+runtime contract - generated `.azeroth` code imports it, you never do), `@azerothjs/http/internal`
+(plumbing `@azerothjs/kit` consumes), and anything a package documents as internal.
+Tree-shaking drops unused exports, so importing from the one `azerothjs` package costs a bundle
+nothing over the old per-layer packages - which is why the frontend layers are no longer
+published separately.
 
 ---
 

@@ -20,6 +20,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
+import { inspect } from 'node:util';
 import { assertOneRuntime, guardedMatch, isLanguageTag, setBuildContext } from 'azerothjs/internal';
 
 import { alternatesOf, hrefPathOf } from './alternates.ts';
@@ -130,7 +131,9 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         // Under prefix routing each language's file lives at its own prefixed url, so it is
         // rendered under that base: stamped for the client router, anchors already prefixed.
         const base = options.routing === 'prefix' && locale !== undefined ? `/${ locale }` : undefined;
+        const reasons: unknown[] = [];
         const result = await options.renderer(path, shell, {
+            onError: (error: unknown): void => void reasons.push(error),
             handoffMeta: revalidate !== undefined
                 ? { build: buildStamp, at: Date.now() }
                 : { build: buildStamp, static: true },
@@ -161,9 +164,10 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         // the file would outlive the outage and be served as content forever.
         if (result.kind === 'error')
         {
+            const said = reasons.length === 0 ? 'the renderer reported no reason' : reasonText(reasons[0]);
             throw new Error(`kit prerender: "${ path }" could not load its data - a loader rejected during `
-                + 'the prerender pass, and a page built from a failed load must not be written. The reason '
-                + 'was reported through the render\'s error observer.');
+                + `the prerender pass, and a page built from a failed load must not be written. The loader said: ${ said }`,
+            { cause: reasons[0] });
         }
         // Prerender never asks for streaming; anything but finished markup here is a
         // renderer bug worth a loud build failure, not a written file of garbage.
@@ -351,4 +355,39 @@ async function generate(
         }
         written.push(page.path);
     }
+}
+
+/** @internal A loader's rejection as text: never empty, "undefined" or "[object Object]". */
+function reasonText(reason: unknown): string
+{
+    if (reason instanceof Error)
+    {
+        // A subclass or an assignment can leave either one undefined or not a string.
+        const message: unknown = reason.message;
+        const name: unknown = reason.name;
+        if (typeof message === 'string' && message.trim() !== '')
+        {
+            return message;
+        }
+        return `${ typeof name === 'string' && name.trim() !== '' ? name : 'Error' } with no message`;
+    }
+    if (reason === undefined || reason === null)
+    {
+        return 'it rejected without a reason';
+    }
+    if (typeof reason === 'string')
+    {
+        return reason.trim() !== '' ? reason : 'it rejected with an empty string';
+    }
+    let json: string | undefined;
+    try
+    {
+        json = JSON.stringify(reason);
+    }
+    catch
+    {
+        // A bigint or a cycle.
+    }
+    // Undefined too for a function, a symbol, or a toJSON that returns undefined.
+    return json ?? inspect(reason, { breakLength: Infinity });
 }

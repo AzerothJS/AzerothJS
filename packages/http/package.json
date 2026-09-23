@@ -33,6 +33,11 @@
             "import": "./dist/api/index.js",
             "default": "./dist/api/index.js"
         },
+        "./internal": {
+            "types": "./dist/internal.d.ts",
+            "import": "./dist/internal.js",
+            "default": "./dist/internal.js"
+        },
         "./api/shared": {
             "types": "./dist/api/shared-entry.d.ts",
             "import": "./dist/api/shared-entry.js",

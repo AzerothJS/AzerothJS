@@ -8,6 +8,7 @@
 // runtime from node_modules (the BUILT package), and the spec must bind that same copy or the
 // session and the render hold two instances of it. The gate arms below refuse to trust anything
 // else first.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execSync, spawn } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -20,6 +21,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { cached, createSignal, createStore } from 'azerothjs';
 import { App, CSRF_FIELD, json, onWorkUnitCleanup, pipeline } from '@azerothjs/http';
 import type { HandlerWrapper, RequestObserver, WebHandler } from '@azerothjs/http';
+import { register } from '@azerothjs/http/api';
 import { serve } from '@azerothjs/http/node';
 import { imageHandler, mountPages } from '@azerothjs/kit';
 import type { KitOptions, PageRoute } from '@azerothjs/kit';
@@ -431,15 +433,18 @@ describe('the page contract, through the session', () =>
         expect(body).toContain('HOME PAGE');
     });
 
-    it('a revalidating static page renders live on every request', async () =>
+    it('a revalidating static page renders as a production cache miss on every request', async () =>
     {
-        const first = await (await get(session, '/fresh')).text();
+        const firstResponse = await get(session, '/fresh');
+        const first = await firstResponse.text();
         const second = await (await get(session, '/fresh')).text();
         const one = Number(/FRESH (\d+)/.exec(first)?.[1]);
         const two = Number(/FRESH (\d+)/.exec(second)?.[1]);
 
         expect(one).toBeGreaterThan(0);
         expect(two).toBe(one + 1);
+        expect(firstResponse.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
+        expect(firstResponse.headers.get('x-azeroth-cache')).toBe('miss');
     });
 
     it('/_image answers from the routes callback', async () =>
@@ -464,6 +469,36 @@ async function productionMount(vite: ViteProbe): Promise<App>
     });
     return app;
 }
+
+describe('an ISR page through the session', () =>
+{
+    it('renders as a production miss in the frame the session was opened in, never the visitor\'s, and reaches the session\'s api', async () =>
+    {
+        const boot = new AsyncLocalStorage<string>();
+        const visitor = new AsyncLocalStorage<string>();
+        (globalThis as { __azerothDevStores?: unknown }).__azerothDevStores = { boot, visitor };
+        // The fixture's own api declaration, loaded by path so the type-check leaves the fixture alone.
+        const { bootApi } = await import(pathToFileURL(join(FIXTURE, 'src', 'boot-api.ts')).href) as { bootApi: Parameters<typeof register>[1] };
+        const errors: unknown[] = [];
+        // Opened inside a store entered before devPages is called, as a server's main does.
+        const session = await boot.run('pool-D', () => open({
+            pages: { csrf: CSRF, onError: (error) => void errors.push(error) },
+            routes: (app) => register(app, bootApi)
+        }));
+        const read = async (who: string): Promise<string> =>
+        {
+            const response = await visitor.run(who, () => get(session, '/boot/1'));
+            const reading = /id="fresh">(?:<!--\[-->)?([^<]*)/.exec(await response.text())?.[1];
+            return `${ response.status } ${ response.headers.get('cache-control') } ${ response.headers.get('x-azeroth-cache') } ${ reading }`;
+        };
+
+        const seen = '200 public, max-age=0, must-revalidate miss db=pool-D|me=none|api:db=pool-D|me=none';
+        expect(await read('alice')).toBe(seen);
+        expect(await read('bob')).toBe(seen);
+        expect(errors).toEqual([]);
+        await closeSession(session);
+    });
+});
 
 describe('locale prefixes', () =>
 {

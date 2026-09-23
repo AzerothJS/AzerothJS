@@ -825,7 +825,7 @@ describe('what a marked page costs', () =>
         expect(verdict(await get(rig.app, '/fail1'))).toBe('hit');
     });
 
-    it('CONTROL: under shell an ISR page renders live and the ledger decides nothing', async () =>
+    it('CONTROL: under shell an ISR page answers a miss on every request and the ledger decides nothing', async () =>
     {
         const source: Source = { value: 'first' };
         let count = 0;
@@ -843,7 +843,8 @@ describe('what a marked page costs', () =>
 
         expect(typeof revalidate).toBe('function');
         const first = await get(app, '/shell-isr');
-        expect(verdict(first)).toBeNull();
+        // Rendered as a production miss is, and kept nowhere.
+        expect(verdict(first)).toBe('miss');
         expect(await first.text()).toContain('DATA:first');
 
         source.value = 'second';
