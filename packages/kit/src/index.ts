@@ -588,7 +588,8 @@ export function mountPages(app: App, options: KitOptions): void
                     document: (request: Request, pathname: string) => documentContextFor(request, pathname, options),
                     vary: (_request: Request, pathname: string) => varyFor(options, pathname),
                     strip: (pathname: string) => splitLocalePath(pathname, options).path,
-                    artifactPath: (pathname: string) => artifactPathOf(splitLocalePath(pathname, options).path)
+                    artifactPath: (pathname: string) => artifactPathOf(splitLocalePath(pathname, options).path),
+                    prefixes: localePrefixes(options)
                 });
             }
             registerLocaleRedirect(app, page.path, options);

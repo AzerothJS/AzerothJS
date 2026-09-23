@@ -66,6 +66,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `azeroth/unsafe-narrow-in-show` warning on a `<Show>` with a lone `{ () => ... }` child tells the
   author to unwrap it before declaring the name.
 
+- **An ISR page under `routing: 'prefix'` lost its hreflang links at runtime.** A `render: 'static'`
+  page with `revalidate` rendered at runtime, on a miss or a regeneration, carried no
+  `<link rel="alternate" hreflang>` links, so a prerendered page lost its set at its first
+  regeneration and got it back on the next restart, and kept losing it under a persistent
+  `PageCache`. Every runtime render carries the same root-relative set its prerendered file does,
+  built from the page's canonical url (one spelling per page: no trailing slash, and the query
+  sorted by name), so every spelling of the url that shares one cached copy carries one set and no
+  entry holds the host of the request that filled it. A `render: 'server'` page keeps absolute
+  hrefs built from the request. Cached entries written without the links are replaced on their
+  next regeneration. A prerendered page whose parameter holds `%`, `?` or `#` carries hreflang
+  hrefs with those characters escaped, so each link names the page itself.
+
 ### Security
 
 - **A server process running two copies of `azerothjs` refuses to serve instead of sharing state

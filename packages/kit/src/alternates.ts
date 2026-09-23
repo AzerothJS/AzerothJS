@@ -3,6 +3,15 @@
  */
 
 /**
+ * @internal A decoded path as an href: re-escapes only `%`, `?` and `#`, which would change
+ * the url it names, and leaves every other character as it is.
+ */
+export function hrefPathOf(path: string): string
+{
+    return path.replace(/[%?#]/g, encodeURIComponent);
+}
+
+/**
  * @internal One `<link rel="alternate" hreflang>` per language plus `x-default` at the
  * unprefixed path, as root-relative hrefs. Empty outside prefix mode. Root-relative so a
  * prerendered file carries the same set whatever host serves it.

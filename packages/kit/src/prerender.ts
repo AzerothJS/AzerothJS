@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { assertOneRuntime, guardedMatch, isLanguageTag, setBuildContext } from 'azerothjs/internal';
 
-import { alternatesOf } from './alternates.ts';
+import { alternatesOf, hrefPathOf } from './alternates.ts';
 import { flattenPages, prerenderFileFor, type PageRoute } from './index.ts';
 import { carriesBaseStamp } from './isr.ts';
 import type { PageRenderer } from './ssr.ts';
@@ -126,7 +126,7 @@ export async function prerender(options: PrerenderOptions): Promise<string[]>
         // A page WITH a revalidation window is ISR: its prerendered seed file is served
         // verbatim later, so it carries `at` and heals by age like any ISR copy. A page
         // WITHOUT one is build-static by contract and adopts fresh forever.
-        const alternates = options.routing === 'prefix' ? alternatesOf(options.locales ?? [], path, '') : [];
+        const alternates = options.routing === 'prefix' ? alternatesOf(options.locales ?? [], hrefPathOf(path), '') : [];
         // Under prefix routing each language's file lives at its own prefixed url, so it is
         // rendered under that base: stamped for the client router, anchors already prefixed.
         const base = options.routing === 'prefix' && locale !== undefined ? `/${ locale }` : undefined;

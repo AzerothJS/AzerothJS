@@ -211,6 +211,9 @@ answers 403 for the client script, your modules and the stylesheet.
 
 - `render: 'static'` pages render live - there is no build to serve a file from - and a
   `revalidate` page re-renders per request rather than serving a cached copy. `cache` is ignored.
+- Under `routing: 'prefix'` a `render: 'static'` page renders per request, so its hreflang hrefs
+  are absolute, built from the request; production serves root-relative ones from the file and
+  from ISR renders.
 - `images` is a mount error: it needs a built client. Register `/_image` yourself, in the
   `routes` callback, with `imageHandler({ root: 'application/public' })`.
 - The per-request data cache is per request ROOT, so one `cached()` key read by an api route and
@@ -506,7 +509,12 @@ and what each tells a shared cache - is the [i18n guide](../azerothjs/docs/i18n.
 
 Under `routing: 'prefix'` a prerendered page is served from its file for every spelling of its
 url, and the prerender pass writes the page's hreflang set into each artifact when it is told the
-mode (`prerender({ ..., locales, routing: 'prefix' })`).
+mode (`prerender({ ..., locales, routing: 'prefix' })`). An ISR page (`render: 'static'` with
+`revalidate`) carries the same root-relative set on every runtime render, a miss or a
+regeneration, spelled from the page's canonical url (one spelling per page: no trailing slash,
+and the query sorted by name), so every spelling that shares its cached copy carries the set its
+file does. A page rendered per request (`render: 'server'`) carries absolute hrefs built from the
+request.
 
 The prefix reaches the client the way the language does. Every response that lives under one
 carries `<html data-azeroth-base="/fa">`, the render is pinned to it, and a router created with no

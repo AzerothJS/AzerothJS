@@ -38,6 +38,7 @@ import type { App } from '@azerothjs/http';
 import type { ContainedFile } from '@azerothjs/http/node';
 
 import { isAbsoluteAppPath, joinBase } from 'azerothjs/internal';
+import { alternatesOf, hrefPathOf } from './alternates.ts';
 import type { DocumentContext, PageResult } from './ssr.ts';
 import type { PageRenderer } from './ssr.ts';
 import { mergeVary } from './vary.ts';
@@ -427,6 +428,12 @@ export interface IsrRegistration
      */
     artifactPath: (pathname: string) => string | null;
 
+    /**
+     * The language prefixes of a prefix-routed site. Each render builds its root-relative
+     * hreflang set from them, the same set the prerendered file carries.
+     */
+    prefixes?: readonly string[];
+
     /** How many keys this registration remembers a failed regeneration for. Default 1000. */
     holdCeiling?: number;
 
@@ -465,14 +472,15 @@ export function cacheKeyFor(pathname: string, search: string, locale?: string): 
     // and served to everyone after them until it expires. Prefixed with a NUL, which no
     // pathname, query or language tag can contain, so no two inputs can collide.
     const prefix = locale === undefined ? '' : `${ locale }\u0000`;
-    return prefix + cacheKeyBody(pathname, search);
+    return prefix + pathname + canonicalSearch(search);
 }
 
-function cacheKeyBody(pathname: string, search: string): string
+/** The query with its names sorted, as `?...`, or '' when there is none. */
+function canonicalSearch(search: string): string
 {
     if (search === '' || search === '?')
     {
-        return pathname;
+        return '';
     }
     const params = new URLSearchParams(search);
     const sorted = [...params.keys()]
@@ -480,7 +488,7 @@ function cacheKeyBody(pathname: string, search: string): string
         .sort()
         .flatMap((name) => params.getAll(name).map((value) => [name, value] as const));
     const canonical = new URLSearchParams(sorted.map(([name, value]) => [name, value])).toString();
-    return canonical === '' ? pathname : `${ pathname }?${ canonical }`;
+    return canonical === '' ? '' : `?${ canonical }`;
 }
 
 /**
@@ -577,19 +585,26 @@ export function registerIsr(registration: IsrRegistration): void
      * One render's inputs, the same for every shared path. Each failed level lands on
      * `reasons`; with `forward` it is also reported as it happens.
      */
-    const renderOptions = (target: Target, buildValue: string, reasons: unknown[], forward: boolean): NonNullable<Parameters<PageRenderer>[2]> => ({
-        handoffMeta: { build: buildValue, at: Date.now() },
-        ...(target.locale !== undefined ? { locale: target.locale } : {}),
-        ...(target.base !== undefined ? { base: target.base } : {}),
-        onError: (error: unknown): void =>
-        {
-            reasons.push(error);
-            if (forward)
+    const renderOptions = (target: Target, buildValue: string, reasons: unknown[], forward: boolean): NonNullable<Parameters<PageRenderer>[2]> =>
+    {
+        // Built from the canonical path and the sorted query, so every spelling of a page and its
+        // seed file carry one set.
+        const alternates = alternatesOf(registration.prefixes ?? [], target.canonical, canonicalSearch(target.url.slice(target.pathname.length)));
+        return {
+            handoffMeta: { build: buildValue, at: Date.now() },
+            ...(target.locale !== undefined ? { locale: target.locale } : {}),
+            ...(target.base !== undefined ? { base: target.base } : {}),
+            ...(alternates.length > 0 ? { alternates } : {}),
+            onError: (error: unknown): void =>
             {
-                onError(error, { path: target.path, phase: 'render' });
+                reasons.push(error);
+                if (forward)
+                {
+                    onError(error, { path: target.path, phase: 'render' });
+                }
             }
-        }
-    });
+        };
+    };
 
     /** Identifies a fault well enough to tell a repeat from a new one. Never throws. */
     const fingerprintOf = (cause: unknown): string =>
@@ -878,6 +893,12 @@ export function registerIsr(registration: IsrRegistration): void
          */
         path: string;
 
+        /**
+         * One href spelling per page: the artifact path re-escaped when a file can be named, else
+         * the raw pathname with one trailing slash dropped.
+         */
+        canonical: string;
+
         /** The RAW pathname alone - the unit the learned-guarded set stores. */
         pathname: string;
 
@@ -918,6 +939,7 @@ export function registerIsr(registration: IsrRegistration): void
         const queryless = search === '' || search === '?';
         return {
             path: artifact ?? bare,
+            canonical: artifact !== null ? hrefPathOf(artifact) : bare.length > 1 && bare.endsWith('/') ? bare.slice(0, -1) : bare,
             pathname: bare,
             url: bare + search,
             key: cacheKeyFor(bare, search, locale),
