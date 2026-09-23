@@ -14,8 +14,9 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 - **The runtime contract moves to v5.** Compiled output changes shape for a sole `{ expr }` in a
   `<Show>` or `<Match>` branch and for a `fallback` on `<Show>` or `<Switch>` that is not an arrow
-  or a bare markup literal, and the new output needs the new runtime, so `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 4 -> 5. What this
-  affects is PREBUILT compiled output: a library shipped as `.js` compiled by an earlier compiler
+  or a bare markup literal, and the new output needs the new runtime, so
+  `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 4 -> 5. What this affects is
+  PREBUILT compiled output: a library shipped as `.js` compiled by an earlier compiler
   fails at load against this runtime with a message naming both versions, and output from this
   compiler fails the same way on an older runtime. Rebuild against a matched set: `azerothjs` and
   `@azerothjs/compiler` from one version.
@@ -50,6 +51,20 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   whose sole hole or `fallback` is anything but a bare name in markup position or an arrow gains
   one `<!--[-->` and `<!--]-->` pair, so re-prerender cached pages: a page rendered by 2.1.0 still
   hydrates, through a client render with a development warning.
+
+- **A function child beside `let=` or `index=` compiled clean and threw on first render.** A
+  `<Show>`, `<Match>` or `<For>` that declared `let=` or `index=` beside a lone function child
+  (`{ () => ... }`) whose body read the declared name threw `ReferenceError: <name> is not defined`
+  the first time the branch or row rendered, because the function never receives the name. The
+  compiler, the language server, eslint and azeroth-tsc refuse a lone function child beside a
+  declared name as `azeroth/callback-children-removed`, and the message names the declared name and
+  says to write the content directly inside the tag and read the name bare. A lone function child
+  that never reads the name rendered before and is refused too: unwrap it, or drop the unused
+  `let=` or `index=`. A `<For>` whose only child is a
+  `{ () => ... }` written with spaces around it on the same line compiled clean and threw when the
+  list rendered; it is refused as `azeroth/for-row-shape`, a row that is not an element. The
+  `azeroth/unsafe-narrow-in-show` warning on a `<Show>` with a lone `{ () => ... }` child tells the
+  author to unwrap it before declaring the name.
 
 ### Security
 

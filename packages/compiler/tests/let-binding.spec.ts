@@ -274,6 +274,88 @@ export default component P()
     });
 });
 
+describe('a function child beside a declared name', () =>
+{
+    // The lone function child is passed through as the branch or row, so it never sees the name.
+    const module = (markup: string): string => `
+component Card(props: { page: number })
+{
+    <b>{ props.page }</b>
+}
+
+export default component P()
+{
+    state data = { page: 7 } as { page: number } | null;
+    state list = [{ id: 1, n: 'a' }];
+
+    <div>${ markup }</div>
+}
+`;
+    const K = 'key={ (r) => r.id }';
+
+    function removals(markup: string): Array<{ severity: string; message: string; text: string }>
+    {
+        const src = module(markup);
+        return diagnoseModule(src)
+            .filter((d) => d.code === 'azeroth/callback-children-removed')
+            .map((d) => ({ severity: d.severity, message: d.message, text: src.slice(d.start, d.end) }));
+    }
+
+    const refused: Array<[string, string, string, string]> = [
+        ['Show () =>', '<Show when={ data } let={ shown }>{ () => <span>{ shown.page }</span> }</Show>', 'shown', 'let'],
+        ['Show with a component child', '<Show when={ data } let={ shown }>{ () => <Card page={ shown.page } /> }</Show>', 'shown', 'let'],
+        ['Show ( ) =>', '<Show when={ data } let={ shown }>{ ( ) => <span>{ shown.page }</span> }</Show>', 'shown', 'let'],
+        ['Match () =>', '<Switch><Match when={ data } let={ got }>{ () => got.page }</Match></Switch>', 'got', 'let'],
+        ['For let= () =>', `<ul><For each={ list } ${ K } let={ row }>{ () => <li>{ row.n }</li> }</For></ul>`, 'row', 'let'],
+        ['For index= () =>', `<ul><For each={ list } ${ K } index={ i }>{ () => <li>{ i }</li> }</For></ul>`, 'i', 'index'],
+        ['Show (v) =>', '<Show when={ data } let={ shown }>{ (v) => <span>{ v.page }</span> }</Show>', 'shown', 'let'],
+        ['Show function ()', '<Show when={ data } let={ shown }>{ function () { return shown.page; } }</Show>', 'shown', 'let'],
+        ['Show padded (v) =>', '<Show when={ data } let={ shown }> { (v) => <span>{ v.page }</span> } </Show>', 'shown', 'let'],
+        ['Match padded (v) =>', '<Switch><Match when={ data } let={ got }> { (v) => <span>{ v.page }</span> } </Match></Switch>', 'got', 'let'],
+        ['Show &nbsp; padded (v) =>', '<Show when={ data } let={ shown }>&nbsp;{ (v) => <span>{ v.page }</span> }</Show>', 'shown', 'let']
+    ];
+
+    for (const [label, markup, name, attr] of refused)
+    {
+        it(`refuses ${ label }, naming \`${ name }\``, () =>
+        {
+            const found = removals(markup);
+            expect(found).toHaveLength(1);
+            expect(found[0]?.severity).toBe('error');
+            expect(found[0]?.text).toMatch(/^\{ .* \}$/s);
+            expect(found[0]?.message).toContain(`does not receive \`${ name }\`, the name its \`${ attr }=\` declares`);
+            expect(found[0]?.message).toContain(`read \`${ name }\` bare`);
+        });
+    }
+
+    it('names both names on a For that declares let= and index=', () =>
+    {
+        const found = removals(`<ul><For each={ list } ${ K } let={ row } index={ i }>{ () => <li>{ row.n }{ i }</li> }</For></ul>`);
+        expect(found).toHaveLength(1);
+        expect(found[0]?.message).toContain('does not receive `row` (let=) and `i` (index=)');
+        expect(found[0]?.message).toContain('read `row` and `i` bare');
+    });
+
+    it('leaves a same-line padded thunk under let= legal', () =>
+    {
+        expect(removals('<Show when={ data } let={ shown }> { () => shown.page } </Show>')).toEqual([]);
+        expect(removals('<Switch><Match when={ data } let={ got }> { () => got.page } </Match></Switch>')).toEqual([]);
+    });
+
+    it('leaves a thunk after an element under let= legal', () =>
+    {
+        expect(removals('<Show when={ data } let={ shown }><b>x</b>{ () => shown.page }</Show>')).toEqual([]);
+    });
+
+    it('gives an empty or destructured let= only its binding-value error', () =>
+    {
+        for (const markup of ['<Show when={ data } let>{ () => 1 }</Show>', '<Show when={ data } let={ { page } }>{ () => page }</Show>'])
+        {
+            expect(diagnoseModule(module(markup)).map((d) => d.code)).toEqual(['azeroth/binding-value']);
+        }
+    });
+});
+
 describe('let binding row optimization', () =>
 {
     it('a For let= row with a host-element body rides the clone path', () =>

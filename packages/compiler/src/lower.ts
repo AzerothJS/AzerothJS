@@ -39,7 +39,7 @@
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
-import { isFunctionLiteral } from './markup-util.ts';
+import { loneFunctionChild } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
 // Type-only (erased at runtime), so the runtime module graph stays acyclic even though analyze imports
@@ -498,8 +498,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
             const child = soloChild;
             const span: Span = { start: child.start + 1, end: child.end - 1 };
             const expr = exprFor(span, child.start);
-            const code = source.slice(span.start, span.end).trim();
-            if (isFunctionLiteral(code))
+            if (loneFunctionChild(children) !== undefined)
             {
                 // The param is captured on the pass-through path too: a <For> row rooted at a
                 // COMPONENT (`(item) => <Card item={ item } />`) still reads its params as

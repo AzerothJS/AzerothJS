@@ -15,6 +15,8 @@
  *   - isFunctionLiteral / isBareReference / isCollectionLiteral - the expression-shape predicates the
  *                     reactive-wrapping heuristic is built from (shared by codegen, the IR lowerer, and
  *                     the type projection so all three classify `{expr}` identically);
+ *   - loneFunctionChild - the child the IR lowerer passes through as a tag's children function
+ *                     (shared with the diagnostics so the refusal matches the lowering);
  *   - quoteString   - string-literal quoting;
  *   - objectKey     - object-key quoting;
  *   - alreadyImports - whether a module already names-imports a symbol (used by both emitters before they
@@ -26,7 +28,9 @@
  */
 
 import type {
+    MarkupChild,
     MarkupElement,
+    MarkupExpression,
     MarkupFragment
 } from './types.ts';
 
@@ -48,6 +52,22 @@ export function isFunctionLiteral(code: string): boolean
     }
     // Arrow: `x => ...`, `(...) => ...`, `async x => ...`, `async (...) => ...`.
     return /^(async\s+)?(\([^]*?\)|[A-Za-z_$][\w$]*)\s*=>/.test(t);
+}
+
+/**
+ * The child a component tag receives as its children function: the only child, when it is a
+ * function literal. Whitespace text counts, so a same-line padded function is not lone.
+ *
+ * @example
+ * ```ts
+ * loneFunctionChild(parseMarkup('<Show>{ () => <p/> }</Show>', 0).node.children); // the expression
+ * loneFunctionChild(parseMarkup('<Show> { () => <p/> } </Show>', 0).node.children); // undefined
+ * ```
+ */
+export function loneFunctionChild(children: MarkupChild[]): MarkupExpression | undefined
+{
+    const only = children[0];
+    return children.length === 1 && only?.kind === 'expression' && isFunctionLiteral(only.code) ? only : undefined;
 }
 
 /**

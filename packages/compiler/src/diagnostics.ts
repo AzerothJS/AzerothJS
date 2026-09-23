@@ -89,7 +89,7 @@ import {
     refreshRefusal,
     executableScriptMessage
 } from 'azerothjs/semantics';
-import { isFunctionLiteral } from './markup-util.ts';
+import { isFunctionLiteral, loneFunctionChild } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
 import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
@@ -2669,6 +2669,12 @@ const RESERVED_BINDING_NAMES: ReadonlySet<string> = new Set([
     'void', 'while', 'with', 'yield', 'await'
 ]);
 
+/** True when `name` can be declared by a binding attribute: a plain, non-reserved identifier. */
+function isBindingName(name: string): boolean
+{
+    return /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_BINDING_NAMES.has(name);
+}
+
 /**
  * The binding-attribute rules (`let=` / `index=`, vocabulary-gated by tag): the value
  * must be a bare, non-reserved identifier (it becomes a callback parameter), the
@@ -2697,7 +2703,7 @@ function bindingAttrRules(el: MarkupElement, out: AzerothDiagnostic[]): void
             continue;
         }
         const name = attr.value.code.trim();
-        if (!/^[A-Za-z_$][\w$]*$/.test(name) || RESERVED_BINDING_NAMES.has(name))
+        if (!isBindingName(name))
         {
             out.push({
                 code: 'azeroth/binding-value',
@@ -2735,9 +2741,12 @@ function bindingAttrRules(el: MarkupElement, out: AzerothDiagnostic[]): void
 /**
  * A render-callback child does not exist on a tag that declares binding attributes:
  * names are declared with `let=` / `index=`, read bare, and infer their types. A
- * zero-arg thunk child is the plain lazy form, not a binding, and stays legal. The
- * runtime's callback contract is untouched - it is what the binding attrs compile TO,
+ * zero-arg thunk child is the plain lazy form and stays legal where no name is declared.
+ * The runtime's callback contract is untouched - it is what the binding attrs compile TO,
  * and the manual API; user components keep render-prop children.
+ *
+ * Beside a declared name the lone function child never receives it, so it is refused at any arity;
+ * a <For> child that is not lone is left to for-row-shape, so no child gets two errors.
  *
  * The tag set and the names in the message both come from BINDING_ATTRS, so a tag
  * added to the vocabulary is covered here the same day rather than silently skipped.
@@ -2749,21 +2758,50 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     {
         return;
     }
+    const names: { name: string; attr: string }[] = [];
+    for (const attr of el.attributes)
+    {
+        if (!attr.spread && attr.name !== null && isBindingAttr(el.tag, attr.name)
+            && attr.value.kind === 'expression' && isBindingName(attr.value.code.trim()))
+        {
+            names.push({ name: attr.value.code.trim(), attr: attr.name });
+        }
+    }
+    const lone = loneFunctionChild(el.children);
     const only = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
     const solo = only[0];
-    if (only.length === 1 && solo !== undefined && solo.kind === 'expression'
-        && isFunctionLiteral(solo.code.trim()) && !/^\(\s*\)/.test(solo.code.trim()))
+    const takesParams = only.length === 1 && solo !== undefined && solo.kind === 'expression'
+        && isFunctionLiteral(solo.code.trim()) && !/^\(\s*\)/.test(solo.code.trim());
+    const child = names.length > 0 && lone !== undefined
+        ? lone
+        : takesParams && (el.tag !== 'For' || lone !== undefined) ? solo : undefined;
+    if (child === undefined)
+    {
+        return;
+    }
+    let message: string;
+    if (names.length > 0)
+    {
+        const bare = names.map(n => `\`${ n.name }\``).join(' and ');
+        const declares = names.length === 1
+            ? `${ bare }, the name its \`${ names[0]?.attr }=\` declares`
+            : `${ names.map(n => `\`${ n.name }\` (${ n.attr }=)`).join(' and ') }, the names it declares`;
+        message = `A function child of this <${ el.tag }> does not receive ${ declares }: `
+            + `put the markup directly inside <${ el.tag }> and read ${ bare } bare.`;
+    }
+    else
     {
         const form = [...declared].map(name => `${ name }={ ${ name === 'index' ? 'i' : 'name' } }`).join(' ');
-        out.push({
-            code: 'azeroth/callback-children-removed',
-            severity: 'error',
-            message: `A render-callback child does not exist on <${ el.tag }>: declare the name with `
-                + `\`${ form }\` and read it bare inside, like state.`,
-            start: solo.start,
-            end: solo.end
-        });
+        message = `A render-callback child does not exist on <${ el.tag }>: declare the name with `
+            + `\`${ form }\` and read it bare inside, like state.`;
     }
+    out.push({
+        code: 'azeroth/callback-children-removed',
+        severity: 'error',
+        message,
+        start: child.start,
+        end: child.end
+    });
 }
 
 /**
@@ -2847,16 +2885,17 @@ function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     const solo = real[0];
 
     // A callback/thunk child is the manual API's own form and is judged by its own rule - but
-    // only a function LITERAL is that form. The exemption used to admit ANY expression child,
-    // which let two shapes through that the runtime cannot render:
+    // only the lone function LITERAL the lowerer passes through as the row is that form. Any
+    // other expression child cannot render as a row:
     //   `<For ...>{renderRow}</For>` - a function REFERENCE. SSR renders it correctly and the
     //     client throws inside insertBefore, the same serve-then-die split as a keyless <For>.
     //   `<For ... let={item}>{ item.n }</For>` - a bare hole. `let=` binds a row name for a row
     //     ELEMENT, so this throws "item is not defined" in both modes.
-    // Neither is one host element, which is what a row must be, so both fall through to the
+    //   `<For ...> { () => <li/> } </For>` - a function padded with same-line whitespace lowers
+    //     as a fragment row, and the reconciler throws on it.
+    // None is one host element, which is what a row must be, so all fall through to the
     // existing azeroth/for-row-shape arms below and are named there.
-    if (real.length === 1 && solo !== undefined && solo.kind === 'expression'
-        && isFunctionLiteral(solo.code.trim()))
+    if (loneFunctionChild(el.children) !== undefined)
     {
         return;
     }

@@ -617,6 +617,24 @@ describe('diagnoseModule - a <For> row must be an element, not any expression', 
         expect(found).not.toContain('azeroth/for-row-shape');
     });
 
+    it('rejects a function child padded on the same line once, as a row that is not an element', () =>
+    {
+        // Same-line whitespace makes it one of three children, so it lowers as a fragment row.
+        const shapes = [
+            '<For each={x} key={(i) => i.n} let={row}> { () => <li>{row.n}</li> } </For>',
+            '<For each={x} key={(i) => i.n} index={i}> { () => <li>{i}</li> } </For>',
+            '<For each={x} key={(i) => i.n}> { () => <li>x</li> } </For>',
+            '<For each={x} key={(i) => i.n}> { (r) => <li>{r.n}</li> } </For>',
+            '<For each={x} key={(i) => i.n} let={row}>&nbsp;{ () => <li>{row.n}</li> }</For>'
+        ];
+        for (const shape of shapes)
+        {
+            const src = `component C { state x = [{ n: 1 }]; <ul>${ shape }</ul> }`;
+            const found = diagnoseModule(src).map(d => [d.code, src.slice(d.start, d.end)]);
+            expect(found).toEqual([['azeroth/for-row-shape', expect.stringMatching(/^\{ .*=> <li>.* \}$/)]]);
+        }
+    });
+
     it('accepts the element row', () =>
     {
         expect(codes('component C { state x = [{ n: 1 }]; <For each={x} key={(i) => i} let={item}><li>{item.n}</li></For> }'))

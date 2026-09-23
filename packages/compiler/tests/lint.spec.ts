@@ -72,6 +72,22 @@ describe('lintMarkup - unsafe-narrow-in-show', () =>
         expect(warnings.map((w) => w.code)).toContain('azeroth/unsafe-narrow-in-show');
     });
 
+    it('tells the author to unwrap a lone thunk child before declaring the name', () =>
+    {
+        // A function child never receives a declared name, so `let=` beside it would not compile.
+        const warnings = lint('<Show when={ config() }>{ () => <p>{ config()!.name }</p> }</Show>');
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.message).toContain('Unwrap the lone `{ () => ... }` child so its content sits directly inside the <Show>');
+        expect(warnings[0]!.message).toContain('let={ value }');
+    });
+
+    it('does not tell the author to unwrap anything when the child is plain markup', () =>
+    {
+        const warnings = lint('<Show when={ config() }><p>{ config()!.name }</p></Show>');
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.message).not.toContain('Unwrap');
+    });
+
     it('does not flag optional chaining (no runtime crash, left to a future rule)', () =>
     {
         expect(lint('<Show when={ config() }><p>{ config()?.name }</p></Show>')).toEqual([]);

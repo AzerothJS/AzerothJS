@@ -37,6 +37,7 @@ import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute } from
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { isBindingAttr } from 'azerothjs/semantics';
+import { loneFunctionChild } from './markup-util.ts';
 
 /** A machine-applicable fix: replace `[start, end)` of the ORIGINAL source with `text`. */
 export interface LintFix
@@ -423,11 +424,10 @@ function isNarrowedBindingForm(el: MarkupElement): boolean
 }
 
 /**
- * azeroth/unsafe-narrow-in-show: flags `guard()!.x` inside a `<Show when={ guard() }>` whose
- * children are plain (not the callback form) - see the module doc comment for why this is a
- * real bug pattern, not a style nit. Reports the whole offending attribute/expression span
- * (no `source` dependency, no auto-fix: rewriting the branch into the callback form is a
- * structural change, not a mechanical one).
+ * azeroth/unsafe-narrow-in-show: flags `guard()!.x` inside a `<Show when={ guard() }>` that
+ * declares no name - see the module doc comment for why this is a real bug pattern, not a style
+ * nit. Reports the whole offending attribute/expression span (no `source` dependency, no
+ * auto-fix: declaring the name, and unwrapping a lone thunk child, is a structural change).
  * @internal
  */
 function lintShowNarrowing(el: MarkupElement, warnings: LintWarning[]): void
@@ -442,18 +442,18 @@ function lintShowNarrowing(el: MarkupElement, warnings: LintWarning[]): void
     {
         return;
     }
-    scanForUnsafeNarrowing(el.children, guarded, warnings);
+    scanForUnsafeNarrowing(el.children, guarded, warnings, loneFunctionChild(el.children) !== undefined);
 }
 
 /** @internal */
-function scanForUnsafeNarrowing(children: MarkupChild[], guarded: string, warnings: LintWarning[]): void
+function scanForUnsafeNarrowing(children: MarkupChild[], guarded: string, warnings: LintWarning[], thunk: boolean): void
 {
     const needle = `${ guarded }!.`;
     for (const child of children)
     {
         if (child.kind === 'expression' && child.code.includes(needle))
         {
-            warnings.push(unsafeNarrowWarning(guarded, child.start, child.end));
+            warnings.push(unsafeNarrowWarning(guarded, thunk, child.start, child.end));
         }
         if (child.kind === 'element')
         {
@@ -461,28 +461,34 @@ function scanForUnsafeNarrowing(children: MarkupChild[], guarded: string, warnin
             {
                 if (!attr.spread && attr.value.kind === 'expression' && attr.value.code.includes(needle))
                 {
-                    warnings.push(unsafeNarrowWarning(guarded, attr.start, attr.end));
+                    warnings.push(unsafeNarrowWarning(guarded, thunk, attr.start, attr.end));
                 }
             }
-            scanForUnsafeNarrowing(child.children, guarded, warnings);
+            scanForUnsafeNarrowing(child.children, guarded, warnings, thunk);
         }
         if (child.kind === 'fragment')
         {
-            scanForUnsafeNarrowing(child.children, guarded, warnings);
+            scanForUnsafeNarrowing(child.children, guarded, warnings, thunk);
         }
     }
 }
 
-/** @internal */
-function unsafeNarrowWarning(guarded: string, start: number, end: number): LintWarning
+/**
+ * The warning for one `guard()!` read. `thunk` is true when the Show's only child is a function,
+ * which never receives a declared name, so the advice unwraps it first.
+ * @internal
+ */
+function unsafeNarrowWarning(guarded: string, thunk: boolean, start: number, end: number): LintWarning
 {
+    const fix = thunk
+        ? 'Unwrap the lone `{ () => ... }` child so its content sits directly inside the <Show>, then '
+            + `declare the checked value: <Show when={ ${ guarded } } let={ value }>...</Show>, and read `
+        : `Declare the checked value instead: <Show when={ ${ guarded } } let={ value }>...</Show>, and read `;
     return {
         code: 'azeroth/unsafe-narrow-in-show',
         message: `\`${ guarded }!\` re-reads the value this <Show>'s \`when\` already checked - a second, `
             + 'independent read that can observe null even while the branch is mounted, and `!` is erased '
-            + 'at compile time so it gives no runtime protection. Declare the checked value instead: '
-            + `<Show when={ ${ guarded } } let={ value }>...</Show>, and read \`value\` bare instead `
-            + `of \`${ guarded }!\`.`,
+            + `at compile time so it gives no runtime protection. ${ fix }\`value\` bare instead of \`${ guarded }!\`.`,
         start,
         end
     };
