@@ -78,6 +78,42 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   next regeneration. A prerendered page whose parameter holds `%`, `?` or `#` carries hreflang
   hrefs with those characters escaped, so each link names the page itself.
 
+- **A hole whose value held another live hole or a `<For>` left nodes behind or threw on its next
+  change.** `{ ready && <For ...> }`, or a component whose fragment root starts or ends with its own
+  `{ expr }`, was cleared from the node list the outer hole saved at its last change, so rows the
+  `<For>` added since then survived a hide (`1 > 123 > 23 > 23123`), and a component whose inner
+  hole had swapped its first node threw on its next change. The same happened to a `<Portal>` in a
+  hole after hydration. A hole clears everything between its own anchors, whatever the inner hole or
+  `<For>` did in between, in `render`, in client-only output and after `hydrate`. The same change
+  covers a hole that moved from an array starting with text (`["a", <b/>]`) to plain text, which
+  kept the array's other nodes, and a fragment component made only of holes, which hydrated as
+  `[object Object]` instead of adopting the server markup. After hydration, a route outlet in a
+  condition at the end of a `<Show>` branch or of a component inside a hole puts its other value
+  where the outlet was, not after the content that follows. A hole that follows a row in a `<table>`
+  with no `<tbody>` hydrates and updates when its value is rows, or holds a table section when the
+  page loads, such as a `<tfoot>`, a `<For>` of `<tbody>` groups or a row followed by a `<tfoot>`; a
+  row value there threw on its first change. A route outlet there, plain or conditional, adopts a
+  server-rendered page of rows or of its own sections, and a navigation replaces that page instead
+  of leaving it beside the next one. When nothing follows such a hole in the `<tbody>` the browser
+  inserted but the ends of the `<Show>` branch, `<Match>`, component or layout around it, or a hole,
+  `<For>` or `<Show>` that shows nothing, a table section the hole shows later, as its value or in
+  an array, lands in the table after that `<tbody>` instead of inside it, and once a conditional
+  outlet there has changed its value, the pages it shows land in the table, so a section page it
+  navigates to lands there too. This holds only for the hole the page hydrated: a range the client
+  builds again inside that `<tbody>`, such as a `<Show>` hidden and shown again before its hole
+  shows a section, puts later sections in the `<tbody>`, as before. The range around the hole and
+  the empty ranges after it move into the table with it, so their rows, and rows they show later,
+  sit in the table. A hole, `<For>` or `<Show>` after it that already shows rows keeps a later
+  section inside the `<tbody>`; write the rows before the hole in an explicit `<tbody>` to keep the
+  section out. A value or page that starts with rows and then holds a table section, written in a
+  table with no `<tbody>`, has those rows moved out of the `<tbody>` the browser inserted when the
+  page hydrates, and rows shown after a section in such a hole sit in the table too, so write an
+  explicit `<tbody>` when a rule like `tbody > tr` must match them. In a browser that supports
+  `moveBefore`, the moved rows keep their focus and scroll position, and an iframe in them does not
+  reload. A hole that returns the element it already shows leaves it in place, so an `<input>` keeps
+  its focus, apart from an element the component built while the page was hydrating. Server markup
+  is unchanged and the runtime contract stays at v5.
+
 ### Security
 
 - **A server process running two copies of `azerothjs` refuses to serve instead of sharing state

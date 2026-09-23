@@ -30,7 +30,7 @@ import { DEV } from '../reactivity/dev.ts';
 import { describeArg } from '../reactivity/validate.ts';
 import { serializeChild, wrapContentsAnchored, hydrationNode } from '../reactivity/internal.ts';
 import { destroyComponent, type CoTarget, type MountNode, createCoMarkers, adoptCoRange } from '../component/index.ts';
-import { hydrateChild, resolveReactive } from './h.ts';
+import { hydrateChild, resolveReactive, isEmptyText } from './h.ts';
 
 /**
  * Props for {@link For}.
@@ -447,6 +447,43 @@ function driveFor<T>(props: ForProps<T>, renderItem: ForProps<T>['children'], ta
 }
 
 /**
+ * Whether the markers span their whole parent. One empty text node on either side, an enclosing
+ * hole's bound, does not count, so `{ ready && <For> }` alone in a tbody keeps the bulk clear.
+ *
+ * @internal
+ */
+function spansParent(start: ChildNode, end: ChildNode): boolean
+{
+    const before = start.previousSibling;
+    const after = end.nextSibling;
+    return (before === null || (isEmptyText(before) && before.previousSibling === null)) &&
+        (after === null || (isEmptyText(after) && after.nextSibling === null));
+}
+
+/**
+ * Empties a parent that {@link spansParent} accepted, keeping the markers and any empty text
+ * bounds.
+ *
+ * @internal
+ */
+function bulkClear(parent: Node, start: ChildNode, end: ChildNode): void
+{
+    const before = start.previousSibling;
+    const after = end.nextSibling;
+    parent.textContent = '';
+    if (before !== null)
+    {
+        parent.appendChild(before);
+    }
+    parent.appendChild(start);
+    parent.appendChild(end);
+    if (after !== null)
+    {
+        parent.appendChild(after);
+    }
+}
+
+/**
  * Makes the rows in `target`'s range equal `newOrder` with the minimum number
  * of insertBefore moves. Departed nodes are removed first; of the survivors,
  * those on the longest increasing subsequence of old positions keep their
@@ -482,11 +519,9 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
     // implementations; front-first would shift the whole child array every time.
     if (newOrder.length === 0)
     {
-        if (start.previousSibling === null && end.nextSibling === null)
+        if (spansParent(start, end))
         {
-            parent.textContent = '';
-            parent.appendChild(start);
-            parent.appendChild(end);
+            bulkClear(parent, start, end);
             return;
         }
         let node: ChildNode | null = end.previousSibling;
@@ -537,11 +572,9 @@ function reconcileChildren(target: CoTarget, newOrder: HTMLElement[]): void
 
     // Full replacement of a whole-parent range: bulk-clear, restore the
     // markers, and insert the new rows in order.
-    if (survivors.length === 0 && start.previousSibling === null && end.nextSibling === null)
+    if (survivors.length === 0 && spansParent(start, end))
     {
-        parent.textContent = '';
-        parent.appendChild(start);
-        parent.appendChild(end);
+        bulkClear(parent, start, end);
         for (const el of newOrder)
         {
             parent.insertBefore(el, end);

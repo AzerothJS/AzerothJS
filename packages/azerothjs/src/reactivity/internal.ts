@@ -27,7 +27,8 @@ export {
     hydrationNode,
     transferCarriedSymbols,
     HydrationCursor,
-    HydrationMismatchError
+    HydrationMismatchError,
+    isImpliedTbody
 } from './hydration.ts';
 export type { HydrationNode } from './hydration.ts';
 

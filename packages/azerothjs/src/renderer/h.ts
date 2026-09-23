@@ -23,7 +23,7 @@ import type { Props, Child } from './types.ts';
 import type { DisposeFn } from '../reactivity/index.ts';
 import type { HydrationNode, HydrationCursor as HydrationCursorType } from '../reactivity/internal.ts';
 import { createEffect, createRoot, isStringMode, isHydrating, onRootDispose, untrack } from '../reactivity/index.ts';
-import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError, transferCarriedSymbols, resolveThunks } from '../reactivity/internal.ts';
+import { hydrationNode, isHydrationNode, HydrationCursor, HydrationMismatchError, transferCarriedSymbols, resolveThunks, isImpliedTbody } from '../reactivity/internal.ts';
 import { destroyComponent } from '../component/index.ts';
 import { isSlotHandle, slotDriverOf, refuseSlotHandle } from '../reactivity/slot-handle.ts';
 import { serializeElement, assertSafeAttribute, assertSafeTag, isAriaBoolean } from './ssr.ts';
@@ -476,18 +476,18 @@ export function appendChild(parent: HTMLElement | DocumentFragment, child: Child
 }
 
 /**
- * Materialises a MULTI-NODE reactive value - an array (`{ items().map(...) }`) or a DocumentFragment
- * (a `<For>`, or a branch's node group) - as DIRECT siblings in front of `anchor`, never inside a
- * wrapper element. A `display:contents` wrapper would be ignored by `<select>`'s option model, break
- * `<table>` row parsing, and be invalid inside `<ul>`/`<svg>`, so the value's nodes must be direct
- * children of the real parent. The items are built into the live parent first (so any reactive binding
- * inside an item anchors to that real parent, not a throwaway fragment), then moved into place. A `null`
- * anchor appends (the anchor-free only-child case, where the element itself bounds the range). Returns
- * the inserted nodes in order - the ONE multi-node materialiser every reactive-hole driver shares.
+ * Materialises a MULTI-NODE reactive value - an array (`{ items().map(...) }`) or a
+ * DocumentFragment (a `<For>`, or a branch's node group) - as DIRECT siblings in front of `anchor`,
+ * never inside a wrapper element. A `display:contents` wrapper would be ignored by `<select>`'s
+ * option model, break `<table>` row parsing, and be invalid inside `<ul>`/`<svg>`, so the value's
+ * nodes must be direct children of the real parent. The items are built into the live parent first
+ * (so any reactive binding inside an item anchors to that real parent, not a throwaway fragment),
+ * then moved into place. A `null` anchor appends, for a static value that fills its element
+ * ({@link placeStatic}). The ONE multi-node materialiser every reactive-hole driver shares.
  *
  * @internal
  */
-function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null): ChildNode[]
+function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null): void
 {
     const start = parent.childNodes.length;
     if (value instanceof DocumentFragment)
@@ -506,19 +506,17 @@ function spliceMultiNode(parent: Node, value: unknown, anchor: ChildNode | null)
         refuseArraySlotMembers(value as readonly unknown[]);
         appendChildren(parent as HTMLElement, value as Child[]);
     }
-    const nodes = Array.prototype.slice.call(parent.childNodes, start) as ChildNode[];
     // Anchor-free (append) case: appendChildren already left the nodes in order at the parent's tail,
     // which IS where an anchor-free hole wants them - so skip the reposition loop, which would otherwise
     // re-append each node (N redundant insertBefore calls) for no change in order. A real anchor needs
     // the nodes moved into the range before it.
     if (anchor !== null)
     {
-        for (const node of nodes)
+        for (const node of Array.prototype.slice.call(parent.childNodes, start) as ChildNode[])
         {
             parent.insertBefore(node, anchor);
         }
     }
-    return nodes;
 }
 
 /** Refuses LITERAL slot handles among a reactive array's members, recursively. @internal */
@@ -538,15 +536,39 @@ function refuseArraySlotMembers(children: readonly unknown[]): void
     }
 }
 
-/** Runs component destroy hooks on each element in `nodes` (control-flow / array teardown). @internal */
-function destroyNodes(nodes: readonly ChildNode[]): void
+/**
+ * Removes every node strictly between `open` and `close`, read live, so nodes an inner hole or For
+ * added after the last swap go too.
+ *
+ * @internal
+ */
+function clearRange(parent: Node, open: ChildNode, close: ChildNode): void
 {
-    for (const node of nodes)
+    let node = open.nextSibling;
+    while (node !== null && node !== close)
+    {
+        const next = node.nextSibling;
+        parent.removeChild(node);
+        node = next;
+    }
+}
+
+/**
+ * Runs component destroy hooks on each element between the bounds, read live like
+ * {@link clearRange}.
+ *
+ * @internal
+ */
+function destroyRange(open: ChildNode, close: ChildNode): void
+{
+    let node = open.nextSibling;
+    while (node !== null && node !== close)
     {
         if (node instanceof HTMLElement)
         {
             destroyComponent(node);
         }
+        node = node.nextSibling;
     }
 }
 
@@ -561,10 +583,9 @@ function destroyNodes(nodes: readonly ChildNode[]): void
 function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
 {
     let currentNode: ChildNode = initialNode;
-    // Extra nodes when the value is an array: rendered as DIRECT siblings of `currentNode` (no wrapper),
-    // tracked so the next update removes them all. `currentNode` is always a real node (an empty array
-    // holds its slot with an empty text node), preserving this binding's single-anchor invariant.
-    let extras: ChildNode[] = [];
+    // Set while the value is an array or fragment: currentNode is then an empty text node opening
+    // the range and this closes it, so a swap clears what the value's holes and Fors put between.
+    let end: ChildNode | null = null;
 
     // A route slot handle this binding currently has PLACED (a hand-written conditional
     // outlet, `() => cond() ? props.children : <span/>`). Held OUTSIDE the per-run roots:
@@ -594,6 +615,13 @@ function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
             localDispose = d;
             return resolveReactive(child);
         });
+        const multi = Array.isArray(value) || value instanceof DocumentFragment;
+        if (end !== null && !multi)
+        {
+            clearRange(parent, currentNode, end);
+            parent.removeChild(end);
+            end = null;
+        }
 
         // Route slot handle resolved by a hand-written reactive child - the appendChild
         // analog of driveHoleRange's branded branch (EVERY writer carries
@@ -607,14 +635,6 @@ function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
             }
             placedSlot?.dispose();
             placedSlot = null;
-            for (const extra of extras)
-            {
-                if (extra.parentNode === parent)
-                {
-                    parent.removeChild(extra);
-                }
-            }
-            extras = [];
             // Reset the binding's anchor to an empty text node; the slot places its
             // marker pair (and content) immediately in front of it.
             if (currentNode.nodeType !== 3 || (currentNode as Text).data !== '')
@@ -658,51 +678,36 @@ function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
         // Only taken when the current node is already a text node, so
         // element/text transitions still take the full rebuild path below
         // (which tears down the old subtree).
-        if (currentNode.nodeType === 3 /* Node.TEXT_NODE */ && isPrimitiveValue(value) && extras.length === 0)
+        if (currentNode.nodeType === 3 /* Node.TEXT_NODE */ && isPrimitiveValue(value))
         {
             localDispose();
             (currentNode as Text).data = primitiveToText(value);
             return;
         }
 
-        // Drop any extra nodes a previous array render left as siblings.
-        for (const extra of extras)
+        // An array or fragment puts its nodes between the bounds as direct siblings, so a reactive
+        // list or `<For>` stays valid inside `<select>`, `<table>`, `<ul>` and `<svg>`.
+        if (multi)
         {
-            if (extra.parentNode === parent)
+            if (end === null)
             {
-                parent.removeChild(extra);
+                const start = document.createTextNode('');
+                end = document.createTextNode('');
+                parent.insertBefore(start, currentNode);
+                parent.replaceChild(end, currentNode);
+                currentNode = start;
             }
-        }
-        extras = [];
-
-        // Multi-node value (array OR fragment): render its nodes as DIRECT siblings of currentNode (no
-        // `display:contents` wrapper), so a reactive list or a reactively-returned `<For>` is valid
-        // inside `<select>`/`<table>`/`<ul>`/`<svg>`. An empty value still holds the slot with an empty
-        // text node so `currentNode` stays a real node.
-        if (Array.isArray(value) || value instanceof DocumentFragment)
-        {
-            // Render the nodes as direct siblings in this binding's slot. An empty value keeps the slot
-            // with an empty text node so `currentNode` stays a real node (this binding's invariant).
-            let nodes = spliceMultiNode(parent, value, currentNode);
-            let head = nodes[0];
-            if (head === undefined)
+            else
             {
-                const placeholder = document.createTextNode('');
-                parent.insertBefore(placeholder, currentNode);
-                nodes = [placeholder];
-                head = placeholder;
+                clearRange(parent, currentNode, end);
             }
-            if (currentNode instanceof HTMLElement)
-            {
-                destroyComponent(currentNode);
-            }
-            parent.removeChild(currentNode);
-            currentNode = head;
-            extras = nodes.slice(1);
+            spliceMultiNode(parent, value, end);
+            const open = currentNode;
+            const close = end;
             return () =>
             {
                 localDispose();
-                destroyNodes(nodes);
+                destroyRange(open, close);
             };
         }
 
@@ -711,8 +716,11 @@ function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
         // dispose, when the returned cleanup tears it (and the node's
         // components) down.
         const nextNode = buildNode(value);
-        parent.replaceChild(nextNode, currentNode);
-        currentNode = nextNode;
+        if (nextNode !== currentNode)
+        {
+            parent.replaceChild(nextNode, currentNode);
+            currentNode = nextNode;
+        }
 
         return () =>
         {
@@ -893,7 +901,7 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
 
     if (typeof child === 'function')
     {
-        driveHoleRange(parent, closeAnchor, [], child);
+        driveHoleRange(parent, openAnchor, closeAnchor, [], child);
         return;
     }
 
@@ -913,15 +921,15 @@ export function bindHole(openAnchor: ChildNode, child: Child): void
 }
 
 /**
- * Drives a hole that is its element's ONLY child (`<td>{ expr }</td>`): the element itself bounds the
- * content, so no anchor pair exists in the clone. A reactive child is driven by the shared
- * {@link driveHoleRange} with a `null` close anchor - the element IS the range (insert = append, clear =
- * the whole element) - so an only-child hole gets the exact same scalar fast-path, multi-node
- * direct-children rendering (arrays and `<For>` fragments, NO `display:contents` wrapper), swap
- * teardown, and component-destroy hooks as an anchored hole. A static (non-function) child is placed
- * once with no effect at all.
+ * Drives a hole that is its element's ONLY child (`<td>{ expr }</td>`): no anchor pair exists in
+ * the clone. A reactive child is driven by the shared {@link driveHoleRange} with `null` bounds,
+ * which it replaces with two empty text nodes the first time the value is not a primitive, so a
+ * primitive-only cell never pays for them and a Portal targeting the element keeps its content. It
+ * gets the exact same scalar fast-path, multi-node direct-children rendering (arrays and `<For>`
+ * fragments, NO `display:contents` wrapper), swap teardown, and component-destroy hooks as an
+ * anchored hole. A static (non-function) child is placed once with no effect at all.
  *
- * @param el - The element whose entire content the hole owns
+ * @param el - The element the hole fills
  * @param child - The hole's value: a getter for a reactive hole, or the value itself
  *
  * @internal Compiler-emitted runtime; not part of the application API.
@@ -930,7 +938,7 @@ export function bindContent(el: HTMLElement, child: Child): void
 {
     if (typeof child === 'function')
     {
-        driveHoleRange(el, null, [], child);
+        driveHoleRange(el, null, null, [], child);
         return;
     }
 
@@ -1011,31 +1019,61 @@ export function bindSlot(marker: ChildNode, result: Node | unknown[] | DocumentF
 
 /**
  * Whether a reactive value carries hydration descriptors: a {@link HydrationNode}, or an
- * array containing one (holes may return `[<a/>, 'text', count()]`). During a hydration
- * first run these must be ADOPTED against the server content, not coerced by buildNode -
+ * array containing one (holes may return `[<a/>, 'text', count()]`), or an array of inner-hole
+ * getters, arrays of them and empty members (fragment components made only of holes). During a
+ * hydration first run these must be ADOPTED against the server content, not coerced by buildNode -
  * which would stringify the descriptor to `[object Object]`.
  *
  * @internal
  */
 function containsHydrationNode(value: unknown): boolean
 {
-    if (isHydrationNode(value))
-    {
-        return true;
-    }
-
-    return Array.isArray(value) && value.some(containsHydrationNode);
+    // Holes adopt at any depth, but a primitive among them rebuilds the array in the hole: the
+    // server has no text node for '' and merges adjacent primitives into one.
+    return hasDescriptor(value) || (Array.isArray(value) && onlyHoles(value));
 }
 
 /**
- * Drives a reactive hole and patches its content in place as `child` re-runs. The range is bounded
- * by `closeAnchor`: a `<!--]-->` comment for an anchored hole, or `null` for the anchor-free only-child
- * case, where the ELEMENT itself bounds the content (insert = append, so the whole element is the
- * range). This is the ONE reactive-hole driver, shared by {@link bindHole} (fresh template clone -
- * range starts empty), {@link bindContent} (anchor-free, `closeAnchor` null), and
- * {@link adoptReactiveHole} (hydration - range starts filled with server content). Scalars patch the
- * existing text node in place (no flash, node identity preserved); multi-node values (arrays and
- * fragments) render as direct children via {@link spliceMultiNode}; single element/node values swap.
+ * Whether `value` holds a hole and otherwise only holes, arrays of them and empty members.
+ *
+ * @internal
+ */
+function onlyHoles(value: readonly unknown[]): boolean
+{
+    let found = false;
+    for (const item of value)
+    {
+        if (typeof item === 'function' || (Array.isArray(item) && onlyHoles(item)))
+        {
+            found = true;
+        }
+        else if (item !== null && item !== undefined && item !== false)
+        {
+            return false;
+        }
+    }
+    return found;
+}
+
+/** Whether `value` is a {@link HydrationNode} or an array holding one at any depth. @internal */
+function hasDescriptor(value: unknown): boolean
+{
+    return isHydrationNode(value) || (Array.isArray(value) && value.some(hasDescriptor));
+}
+
+/**
+ * Drives a reactive hole and patches its content in place as `child` re-runs. The range is
+ * everything strictly between `openAnchor` and `closeAnchor`: the `<!--[-->` and `<!--]-->`
+ * comments for an anchored hole, two empty text nodes for a slot-hole, or `null` and `null` for the
+ * anchor-free only-child case, which owns at most its text node until a non-primitive value gives
+ * it two empty text bounds. A swap clears whatever lies between the bounds, including nodes a
+ * value's own holes and Fors added. This is the ONE reactive-hole driver, shared by
+ * {@link bindHole} (fresh template clone - range starts empty), {@link bindContent} (anchor-free,
+ * `closeAnchor` null), {@link adoptReactiveHole} (hydration - range starts filled with server
+ * content) and {@link adoptSlotHole}. Scalars patch the existing text node in place (no flash, node
+ * identity preserved); multi-node values (arrays and fragments) render as direct children via
+ * {@link spliceMultiNode}; single element/node values swap. `parent` holds an only-child hole's
+ * text and bounds; a bounded range is found through its close bound, wherever the page moved it.
  *
  * When `hydrating`, the FIRST effect run adopts the server content: a hole that returns element/list
  * markup evaluates to hydration descriptors (h() runs in hydrate mode), which are claimed against the
@@ -1044,13 +1082,24 @@ function containsHydrationNode(value: unknown): boolean
  *
  * @internal
  */
-function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown, hydrating = false, adoptedSlot: unknown = null, adoptedSlotDispose: DisposeFn | null = null): void
+function driveHoleRange(parent: Node, openAnchor: ChildNode | null, closeAnchor: ChildNode | null, content: ChildNode[], child: () => unknown, hydrating = false, adoptedSlot: unknown = null, adoptedSlotDispose: DisposeFn | null = null): void
 {
-    // The hole's live anchor node: the single primitive text node in the common
-    // case. Extra nodes (an array-valued hole) are removed the first time the
-    // value is materialised as a real node.
-    let currentNode: ChildNode | null = content[0] ?? null;
-    let extras: ChildNode[] = content.slice(1);
+    // The range's lone text node while the hole shows a primitive, patched in place.
+    let textNode: Text | null = content.length === 1 && content[0]?.nodeType === 3 ? content[0] as Text : null;
+    // Whether the bounds are an only-child hole's own empty text nodes, which it drops again once
+    // the range is empty, as at an initially empty hole.
+    let lazyBounds = false;
+    const dropEmptyBounds = (): void =>
+    {
+        if (lazyBounds && openAnchor !== null && closeAnchor !== null && openAnchor.nextSibling === closeAnchor)
+        {
+            parent.removeChild(openAnchor);
+            parent.removeChild(closeAnchor);
+            openAnchor = null;
+            closeAnchor = null;
+            lazyBounds = false;
+        }
+    };
     let firstRun = hydrating;
 
     // A route slot handle the hole currently has PLACED. Held OUTSIDE the per-run root:
@@ -1095,12 +1144,41 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
                 // swap) rather than letting buildNode stringify the descriptor to `[object Object]`.
                 if (firstRun && containsHydrationNode(resolved))
                 {
-                    const cursor = new HydrationCursor(parent, content);
+                    const cursor = new HydrationCursor(closeAnchor?.parentNode ?? parent, content);
                     hydrateChild(resolved as Child, cursor);
                     cursor.assertExhausted('reactive hole');
                 }
                 return resolved;
             });
+
+            if (openAnchor === null || closeAnchor === null)
+            {
+                // An only-child hole shows a primitive in at most one text node, with no bounds.
+                if (isPrimitiveValue(value))
+                {
+                    const text = primitiveToText(value);
+                    if (textNode === null && value !== null && value !== undefined && value !== false)
+                    {
+                        textNode = parent.appendChild(document.createTextNode(text));
+                        return () => localDispose?.();
+                    }
+                    if (textNode !== null && textNode.data !== text)
+                    {
+                        textNode.data = text;
+                    }
+                    localDispose?.();
+                    return;
+                }
+                // Any other value gives it real bounds, around its text node if it has one, so the
+                // element's other children (a Portal's content) survive swaps.
+                openAnchor = document.createTextNode('');
+                closeAnchor = document.createTextNode('');
+                lazyBounds = true;
+                parent.insertBefore(openAnchor, textNode);
+                parent.insertBefore(closeAnchor, textNode === null ? null : textNode.nextSibling);
+            }
+            // Read live: a hole in a table can move this range out of the tbody the parser implied.
+            let host = closeAnchor.parentNode ?? parent;
 
             // Route slot handle resolved by the hole (a conditional outlet,
             // `{ cond() ? props.children : fallback }`). Same handle as the live
@@ -1131,28 +1209,15 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
                 }
                 placedSlot?.dispose();
                 placedSlot = null;
-                for (const extra of extras)
-                {
-                    if (extra.parentNode === parent)
-                    {
-                        parent.removeChild(extra);
-                    }
-                }
-                extras = [];
-                if (currentNode !== null)
-                {
-                    if (currentNode instanceof HTMLElement)
-                    {
-                        destroyComponent(currentNode);
-                    }
-                    parent.removeChild(currentNode);
-                    currentNode = null;
-                }
+                clearRange(host, openAnchor, closeAnchor);
+                textNode = null;
+                // The page may hold a table section, or navigate to one later.
+                host = leaveTbody(host, openAnchor, closeAnchor);
                 let slotDispose: DisposeFn = () => undefined;
                 createRoot((dispose) =>
                 {
                     slotDispose = dispose;
-                    slotDriverOf(value).place(parent, closeAnchor);
+                    slotDriverOf(value).place(host, closeAnchor);
                 });
                 placedSlot = { handle: value, dispose: slotDispose };
                 localDispose?.();
@@ -1179,15 +1244,14 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
                 firstRun = false;
                 if (containsHydrationNode(value))
                 {
-                    // The adopted server nodes ARE this binding's live range; later runs swap/patch
-                    // them. Teardown disposes the run's effects and fires destroy hooks; the next
-                    // run removes the nodes via the currentNode/extras logic (as the DOM path does).
-                    currentNode = content[0] ?? null;
-                    extras = content.slice(1);
+                    // The adopted server nodes ARE the live range; the next run clears it.
+                    textNode = null;
+                    const open = openAnchor;
+                    const close = closeAnchor;
                     return () =>
                     {
                         localDispose?.();
-                        destroyNodes(content);
+                        destroyRange(open, close);
                     };
                 }
             }
@@ -1195,91 +1259,63 @@ function driveHoleRange(parent: Node, closeAnchor: ChildNode | null, content: Ch
             // Primitive into the existing text node. The dominant case: a
             // `() => `Count: ${ n() }`` hole. Keep the node and only touch `.data`
             // when it differs, so an adopted run that already matches is a no-op.
-            if (currentNode !== null && currentNode.nodeType === 3 && isPrimitiveValue(value))
+            if (textNode !== null && isPrimitiveValue(value))
             {
                 const text = primitiveToText(value);
-                if ((currentNode as Text).data !== text)
+                if (textNode.data !== text)
                 {
-                    (currentNode as Text).data = text;
+                    textNode.data = text;
                 }
                 localDispose?.();
                 return;
             }
 
-            // Materialise and swap: element/array values, an initially-empty hole,
-            // or a text/element transition. Drop any extra adopted siblings first,
-            // then replace (or insert before the close anchor when the range is
-            // empty).
-            for (const extra of extras)
+            // Materialise and swap: the range is cleared and refilled, unless it holds exactly the
+            // node the value returned again.
+            const first = openAnchor.nextSibling;
+            const kept = first !== null && value === first && first.nextSibling === closeAnchor;
+            if (!kept)
             {
-                if (extra.parentNode === parent)
+                clearRange(host, openAnchor, closeAnchor);
+                textNode = null;
+                if (holdsSection(value))
                 {
-                    parent.removeChild(extra);
+                    host = leaveTbody(host, openAnchor, closeAnchor);
                 }
             }
-            extras = [];
 
-            // A multi-node value (array OR fragment) renders its nodes as DIRECT children before the
-            // close anchor (or appended, when closeAnchor is null - see spliceMultiNode) - the range
-            // holds any number of nodes, so unlike the single-node binding above no placeholder is
-            // needed for an empty value.
+            // A multi-node value renders its nodes as direct children before the close anchor.
             if (Array.isArray(value) || value instanceof DocumentFragment)
             {
-                const nodes = spliceMultiNode(parent, value, currentNode ?? closeAnchor);
-                if (currentNode !== null)
-                {
-                    if (currentNode instanceof HTMLElement)
-                    {
-                        destroyComponent(currentNode);
-                    }
-                    parent.removeChild(currentNode);
-                }
-                currentNode = nodes[0] ?? null;
-                extras = nodes.slice(1);
+                spliceMultiNode(host, value, closeAnchor);
+                const open = openAnchor;
+                const close = closeAnchor;
+                dropEmptyBounds();
                 return () =>
                 {
                     localDispose?.();
-                    destroyNodes(nodes);
+                    destroyRange(open, close);
                 };
             }
 
-            // A nullish value (null/undefined/false) renders NOTHING. Keep the range genuinely empty
-            // rather than inserting a stray empty text node: the element then matches its SSR/hydrated
-            // form (an empty marker range) and an anchor-free only-child stays `:empty`. Drop any current
-            // node; the next real value re-inserts. (The primitive fast-path above already handles the
-            // string->nullish case by reusing the existing text node, so this only fires when the current
-            // slot is empty or holds a non-text node.)
+            // A nullish value renders nothing, so the range matches its server form and an
+            // only-child hole drops its empty bounds.
             if (value === null || value === undefined || value === false)
             {
-                if (currentNode !== null)
-                {
-                    if (currentNode instanceof HTMLElement)
-                    {
-                        destroyComponent(currentNode);
-                    }
-                    parent.removeChild(currentNode);
-                    currentNode = null;
-                }
+                dropEmptyBounds();
                 localDispose?.();
                 return;
             }
 
             const nextNode = buildNode(value);
-
-            if (currentNode !== null)
+            if (!kept)
             {
-                parent.replaceChild(nextNode, currentNode);
-                if (currentNode instanceof HTMLElement)
-                {
-                    destroyComponent(currentNode);
-                }
+                host.insertBefore(nextNode, closeAnchor);
             }
-            else
+            if (nextNode.nodeType === 3)
             {
-                parent.insertBefore(nextNode, closeAnchor);
+                textNode = nextNode as Text;
             }
-
-            currentNode = nextNode;
 
             return () =>
             {
@@ -1467,6 +1503,163 @@ function peeksSlotRange(cursor: HydrationCursorType): boolean
 }
 
 /**
+ * The node a hole's marker sits in, which is not the cursor's parent when the cursor walked into a
+ * table's parser-inserted tbody.
+ *
+ * @internal
+ */
+function markerHost(marker: ChildNode | null): ParentNode
+{
+    const host = marker?.parentNode;
+    if (host === null || host === undefined)
+    {
+        throw new HydrationMismatchError('reactive hole: the server marker has no parent');
+    }
+    return host;
+}
+
+/**
+ * Moves the part of a hole range that sits in the parser's implied tbody, from its start to the end
+ * of that tbody, into `host` right after the tbody. Returns whether the start sits in `host`.
+ *
+ * @internal
+ */
+function joinTableRange(start: ChildNode, host: ParentNode): boolean
+{
+    const section = start.parentNode;
+    if (section !== host && section?.parentNode === host)
+    {
+        const after = section.nextSibling;
+        let node: ChildNode | null = start;
+        while (node !== null)
+        {
+            const next: ChildNode | null = node.nextSibling;
+            moveNode(host, node, after);
+            node = next;
+        }
+    }
+    return start.parentNode === host;
+}
+
+/** Moves a node, keeping its focus, iframe and scroll state where the browser can. @internal */
+function moveNode(host: ParentNode, node: ChildNode, before: ChildNode | null): void
+{
+    if ('moveBefore' in host)
+    {
+        try
+        {
+            host.moveBefore(node, before);
+            return;
+        }
+        catch
+        {
+            // The engine refuses this move, so a plain insert places the node.
+        }
+    }
+    host.insertBefore(node, before);
+}
+
+const TABLE_SECTIONS = new Set(['TBODY', 'THEAD', 'TFOOT', 'CAPTION', 'COLGROUP']);
+
+/** Whether a value places a table section, directly, in an array or in a fragment. @internal */
+function holdsSection(value: unknown): boolean
+{
+    if (Array.isArray(value))
+    {
+        return value.some(holdsSection);
+    }
+    if (value instanceof DocumentFragment)
+    {
+        return Array.from(value.childNodes).some(holdsSection);
+    }
+    return value instanceof Element && TABLE_SECTIONS.has(value.tagName);
+}
+
+/**
+ * Moves an empty range at the end of a tbody the parser implied into the table right after it,
+ * where the parser puts a table section. Ranges that enclose it and end with it, such as a Show
+ * branch, a component in a hole or an outer outlet, move whole with it, rows included, and so do
+ * empty ranges after it. Returns the node the range sits in.
+ *
+ * @internal
+ */
+function leaveTbody(host: Node, open: ChildNode, close: ChildNode): Node
+{
+    const table = host.parentNode;
+    if (table === null || !isImpliedTbody(host))
+    {
+        return host;
+    }
+    // Only empty ranges and the ends of enclosing ranges, with their bounds, may follow it.
+    let depth = 0;
+    let bound = false;
+    for (let node = close.nextSibling; node !== null; node = node.nextSibling)
+    {
+        if (isEndMarker(node))
+        {
+            depth++;
+            bound = false;
+        }
+        else if (depth > 0 && !bound && isEmptyText(node))
+        {
+            bound = true;
+        }
+        else if (node.nodeType === 8 && node.nextSibling !== null && isEndMarker(node.nextSibling))
+        {
+            // An empty sibling range (a hole, For or Show showing nothing) moves with the tail.
+            node = node.nextSibling;
+        }
+        else
+        {
+            return host;
+        }
+    }
+    // Back to the start of the outermost one, past whole ranges and rows inside it.
+    let first: ChildNode = open;
+    while (depth > 0 || bound)
+    {
+        const prev = first.previousSibling;
+        if (prev === null || (depth === 0 && !isEmptyText(prev)))
+        {
+            return host;
+        }
+        if (depth === 0)
+        {
+            bound = false;
+        }
+        else if (isEndMarker(prev))
+        {
+            depth++;
+        }
+        else if (prev.nodeType === 8)
+        {
+            depth--;
+        }
+        first = prev;
+    }
+    const after = host.nextSibling;
+    for (let node: ChildNode | null = first; node !== null;)
+    {
+        const next: ChildNode | null = node.nextSibling;
+        moveNode(table, node, after);
+        node = next;
+    }
+    return table;
+}
+
+/** Whether a node is the end marker of a hole or of a control-flow range. @internal */
+function isEndMarker(node: Node): boolean
+{
+    return node.nodeType === 8 && ((node as Comment).data === ']' || (node as Comment).data.startsWith('/'));
+}
+
+/** Whether a node is an empty text node, the bound a hole or a slot-hole brings. @internal */
+export function isEmptyText(node: Node): boolean
+{
+    return node.nodeType === 3 && (node as Text).data === '';
+}
+
+/**
  * Adopts a slot-hole: a reactive hole whose SERIALIZED value was a route slot handle.
  * The adoption walk claims the range inline through the handle's driver - obtained by an
  * UNTRACKED resolution, permitted for slot-holes only (a compiled children getter is
@@ -1484,6 +1677,11 @@ function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
         // The peek said slot, the resolution disagrees: SSR/CSR diverged.
         throw new HydrationMismatchError('slot hole: the serialized value was a route slot, the client value is not');
     }
+    // The server emits no [ ] anchors around a slot-hole, so the hole brings its own bounds. The
+    // cursor walks a snapshot of its nodes, so the inserts do not disturb the rest of the walk.
+    const at = cursor.peek();
+    const open = document.createTextNode('');
+    markerHost(at).insertBefore(open, at);
     // The adoption runs in its OWN root so the hole can dispose the placement on a
     // later handle -> non-handle transition (the slot's machinery registers its
     // teardown on the current owner).
@@ -1493,14 +1691,27 @@ function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
         slotDispose = dispose;
         slotDriverOf(resolved).adopt(cursor);
     });
-    // A stable position for LATER handle <-> non-handle transitions: the server emits no
-    // [ ] anchors around a slot-hole, and the slot's own markers leave with its disposal,
-    // so without an anchor of the hole's OWN a toggled-away value would land at the
-    // parent's tail (document position lost). The cursor's node list is a construction
-    // snapshot, so the insert does not disturb the remaining walk.
-    const anchor = document.createTextNode('');
-    cursor.parent.insertBefore(anchor, cursor.peek());
-    driveHoleRange(cursor.parent, anchor, [], child, false, resolved, slotDispose);
+    const last = cursor.lastClaimed();
+    const host = last?.parentNode ?? null;
+    const split = last !== null && host !== null && !joinTableRange(open, host);
+    // A range the hole cannot close is a mismatch, and the adopted page must not run beside it.
+    if (last === null || host === null || split)
+    {
+        try
+        {
+            slotDispose();
+        }
+        catch
+        {
+            // Tearing down a split range can throw, and the mismatch is the error to report.
+        }
+        const reason = split ? 'the server markers sit in different table sections' : 'the slot claimed no server node in the page';
+        throw new HydrationMismatchError(`slot hole: ${ reason }`);
+    }
+    // Right after the slot's end marker: at the end of a nested range the cursor has no next node.
+    const close = document.createTextNode('');
+    host.insertBefore(close, last.nextSibling);
+    driveHoleRange(cursor.parent, open, close, [], child, false, resolved, slotDispose);
 }
 
 /**
@@ -1514,7 +1725,12 @@ function adoptSlotHole(child: () => unknown, cursor: HydrationCursorType): void
  */
 function adoptReactiveHole(child: () => unknown, cursor: HydrationCursorType): void
 {
-    cursor.takeOpenAnchor();
+    const openAnchor = cursor.takeOpenAnchor();
     const { content, closeAnchor } = cursor.takeUntilCloseAnchor();
-    driveHoleRange(cursor.parent, closeAnchor, content, child, true);
+    const host = markerHost(closeAnchor);
+    if (!joinTableRange(openAnchor, host))
+    {
+        throw new HydrationMismatchError('reactive hole: the server markers sit in different table sections');
+    }
+    driveHoleRange(cursor.parent, openAnchor, closeAnchor, content, child, true);
 }

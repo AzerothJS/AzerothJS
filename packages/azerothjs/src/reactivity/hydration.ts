@@ -89,6 +89,15 @@ export function transferCarriedSymbols(from: object, to: object): void
     }
 }
 
+// The tbodies the HTML parser put around server rows, which the client's DOM never builds.
+const impliedBodies = new WeakSet<Node>();
+
+/** Whether `node` is a tbody the HTML parser implied around server rows. */
+export function isImpliedTbody(node: Node): boolean
+{
+    return impliedBodies.has(node);
+}
+
 /**
  * A read cursor over a parent's children, adopting server-rendered DOM in source order.
  *
@@ -134,6 +143,12 @@ export class HydrationCursor
         return this.#nodes[this.#index] ?? null;
     }
 
+    /** The node the last take claimed, or null before the first. */
+    public lastClaimed(): ChildNode | null
+    {
+        return this.#nodes[this.#index - 1] ?? null;
+    }
+
     /** The next unclaimed node if it is an element, otherwise null. Does not advance. */
     public peekElement(): HTMLElement | null
     {
@@ -159,6 +174,7 @@ export class HydrationCursor
             const at = this.#nodes[this.#index];
             if (at && at.nodeType === 1 && (at as HTMLElement).tagName === 'TBODY')
             {
+                impliedBodies.add(at);
                 this.#nodes.splice(this.#index, 1, ...Array.from(at.childNodes));
             }
         }
@@ -202,9 +218,10 @@ export class HydrationCursor
     /**
      * Claims the opening reactive-hole anchor, the comment `<!--[-->`.
      *
+     * @returns The anchor, which bounds the hole's range from then on.
      * @throws {@link HydrationMismatchError} If the next node is not that anchor.
      */
-    public takeOpenAnchor(): void
+    public takeOpenAnchor(): Comment
     {
         const node = this.#nodes[this.#index];
 
@@ -214,6 +231,7 @@ export class HydrationCursor
         }
 
         this.#index++;
+        return node as Comment;
     }
 
     /**

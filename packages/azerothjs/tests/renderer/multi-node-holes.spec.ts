@@ -278,4 +278,21 @@ describe('lifecycle: node-bound destroy hooks fire when a multi-node hole swaps 
         expect(destroyed).toBe(2);
         container.remove();
     });
+
+    it('runs them for a hand-written array hole too', () =>
+    {
+        const [items, setItems] = createSignal([1, 2]);
+        let destroyed = 0;
+        const container = mount(() => h('div', {}, () => items().map((n) =>
+        {
+            const row = h('div', { class: 'row' }, String(n));
+            setDestroyHooks(row, [() => destroyed++]);
+            return row;
+        })));
+        expect(destroyed).toBe(0);
+
+        setItems([]);
+        expect(destroyed).toBe(2);
+        container.remove();
+    });
 });
