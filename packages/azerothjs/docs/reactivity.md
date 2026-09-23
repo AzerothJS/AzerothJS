@@ -47,7 +47,8 @@ than declared.
 Ownership is explicit. `createRoot` establishes a disposal scope; effects, memos,
 and `onCleanup` callbacks created inside it are torn down together when the root
 is disposed. This is what lets a component (or a route, or a store) clean up all
-of its reactive state at once.
+of its reactive state at once. During a server render, an `onCleanup` outside an
+effect or memo registers nothing.
 
 Batching coalesces synchronous writes: inside `batch`, dependent effects run once
 at the end rather than after each write. `untrack` reads a signal without

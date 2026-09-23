@@ -188,6 +188,9 @@ Normative rules:
   required in both forms.
 - **Wrapper blocks** lower to `batch(() => {...})`, `untrack(...)`,
   `onCleanup(...)`, `onRootDispose(...)`, `onMount(...)` respectively. Block required.
+  During a server render a `cleanup` outside an effect or memo does not run;
+  `dispose` runs at the end of the render, as does a `cleanup` inside a memo or a
+  `derived` value.
 
 ### 5.1 The `with { }` clause
 

@@ -10,6 +10,17 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
+  Since 2.1.0-beta.2 a `cleanup { }` block, or `onCleanup()` called in a component or composable
+  outside an effect or memo, ran at the end of a server render, so a cleanup such as
+  `window.clearTimeout(timer)` threw a bare `ReferenceError` and a `renderToString` page answered
+  500 (a streamed page swallowed the error at the end of the stream). During the render it is
+  skipped again, as in 2.0, and it runs on the client and after hydration as before.
+  `dispose { }`, `onRootDispose()` and a cleanup inside a memo or a `derived` value still run at
+  the end of a server render, so they must not need a DOM; move any server-side release there.
+
 ### Security
 
 - **A server process running two copies of `azerothjs` refuses to serve instead of sharing state

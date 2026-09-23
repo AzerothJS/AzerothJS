@@ -67,7 +67,14 @@ What renders on the server, and how it behaves:
   `<table>` / `<select>` / `<ul>`.
 - **Suspense** - resources cannot settle during a synchronous render, so the
   fallback is emitted (wrapped in a hydration marker) and the client swaps in the
-  resolved children after hydration. There is no streaming/async SSR.
+  resolved children after hydration. To stream the resolved content instead, use
+  [`renderToStream`](../README.md#streaming-ssr-and-suspense).
+- **Lifecycle** - a `cleanup` block, or an `onCleanup` call outside an effect or
+  memo, does not run during a server render. `dispose` / `onRootDispose` do, at
+  the end of the render, as does a cleanup inside a memo or a `derived` value, so
+  they must not need a DOM. Code resumed with `runWithOwner` after an await runs
+  outside the render, so its effects and cleanups run on the server and must not
+  need a DOM either.
 
 ### Escaping and XSS
 

@@ -93,7 +93,7 @@ function renderBody(component: () => MountNode, markers: boolean, hostFrame?: Re
                     finally
                     {
                         // Dispose FIRST, release SECOND - the same order the stream host's
-                        // finalizers run: a root cleanup (onCleanup) may read a cached
+                        // finalizers run: onRootDispose or a memo's cleanup may read a cached
                         // family during dispose, and it must see the settled entries, not
                         // a released cache that double-invokes the fetcher. The release
                         // then follows, HERE, because the scope is unreachable after

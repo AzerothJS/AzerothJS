@@ -289,7 +289,7 @@ export function runWithOwner<T>(owner: Owner | null, fn: () => T): T
  * is rethrown once the drain completes.
  *
  * `onCleanup` called directly in the body attaches to THIS root, not to any effect that
- * happens to be running around it.
+ * happens to be running around it. During a server render it registers nothing.
  *
  * @typeParam T - `fn`'s return type.
  * @param fn - Receives this scope's `dispose`.

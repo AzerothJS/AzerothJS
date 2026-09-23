@@ -1,13 +1,18 @@
-// @vitest-environment node
+// @vitest-environment happy-dom
 //
 // Full behavioral coverage for onCleanup (on-cleanup.ts): teardown that fires before
-// each effect re-run and once on disposal, registration order, and multiple callbacks.
+// each effect re-run and once on disposal, registration order, multiple callbacks, and
+// component-body cleanups on a client mount and a hydrated mount.
 import { describe, it, expect } from 'vitest';
 import {
     createSignal,
     createEffect,
     createRoot,
-    onCleanup
+    onCleanup,
+    h,
+    render,
+    hydrate,
+    renderToString
 } from 'azerothjs';
 
 describe('onCleanup', () =>
@@ -82,5 +87,46 @@ describe('onCleanup', () =>
     it('is a no-op (does not throw) when called outside any reactive scope', () =>
     {
         expect(() => onCleanup(() => undefined)).not.toThrow();
+    });
+});
+
+describe('onCleanup in a component body', () =>
+{
+    let ran = 0;
+    const Flag = (): HTMLElement =>
+    {
+        onCleanup(() =>
+        {
+            ran++;
+        });
+        return h('p', {}, 'a');
+    };
+
+    function unmount(container: HTMLElement): void
+    {
+        render(() => h('i', {}), container);
+    }
+
+    it('runs once when a client mount is disposed', () =>
+    {
+        ran = 0;
+        const container = document.createElement('div');
+        render(() => Flag(), container);
+        expect(ran).toBe(0);
+        unmount(container);
+        expect(ran).toBe(1);
+    });
+
+    it('runs once when a mount hydrated from server html is disposed', () =>
+    {
+        ran = 0;
+        const container = document.createElement('div');
+        container.innerHTML = renderToString(() => Flag());
+        expect(ran).toBe(0);
+        const serverNode = container.firstChild;
+        hydrate(() => Flag(), container);
+        expect(container.firstChild).toBe(serverNode);
+        unmount(container);
+        expect(ran).toBe(1);
     });
 });

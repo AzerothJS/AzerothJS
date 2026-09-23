@@ -14,6 +14,7 @@
 import type { CleanupFn } from './types.ts';
 import { currentCleanups } from './graph.ts';
 import { registerDisposer } from './create-root.ts';
+import { isStringMode } from './render-mode.ts';
 
 /**
  * Registers a cleanup function with the enclosing reactive scope. Where it attaches, and
@@ -22,8 +23,9 @@ import { registerDisposer } from './create-root.ts';
  * - Inside an effect run, it joins that run's cleanups and fires before the effect's NEXT
  *   run as well as on disposal. Each run starts from a clean slate, so a cleanup must undo
  *   exactly what its own run set up.
- * - Inside a createRoot body or a component body, with no effect running, it attaches to
- *   that scope and fires when the scope is disposed.
+ * - Inside a createRoot body or a component body, with no effect or memo running, it attaches to
+ *   that scope and fires when the scope is disposed. That holds on the client and during
+ *   hydration; during a server render it registers nothing.
  * - Outside every scope it is a no-op rather than a throw, so a component that calls it
  *   does not explode when rendered in a bare unit test.
  *
@@ -57,5 +59,10 @@ export function onCleanup(fn: CleanupFn): void
     // No run in progress, but there may still be a scope: a createRoot body, or a component body
     // executing inside one. Registering with the owner makes the callback fire when that scope
     // is disposed. Falling through instead left the documented pattern silently doing nothing.
+    // A server render has nothing to tear down on the client's behalf; onRootDispose runs there.
+    if (isStringMode())
+    {
+        return;
+    }
     registerDisposer(fn);
 }

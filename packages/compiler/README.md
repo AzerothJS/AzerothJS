@@ -158,8 +158,8 @@ idle priority. Compiles to `createDeferred(() => (expr), options?)`; reads are b
 |---|---|---|
 | `batch { ... }` | `batch` | coalesce a burst of writes into one effect flush |
 | `untrack { ... }` | `untrack` | run without subscribing the active effect |
-| `cleanup { ... }` | `onCleanup` | teardown registered inside an effect (runs before re-run/dispose) |
-| `dispose { ... }` | `onRootDispose` | teardown for the surrounding scope (runs once on dispose) |
+| `cleanup { ... }` | `onCleanup` | teardown registered inside an effect (runs before re-run/dispose); outside an effect or memo it does not run during a server render |
+| `dispose { ... }` | `onRootDispose` | teardown for the surrounding scope (runs once on dispose, including at the end of a server render) |
 
 ```azeroth
 effect {
@@ -172,6 +172,10 @@ batch { firstName = 'Ada'; lastName = 'Lovelace'; }   // -> batch(() => { setFir
 All of these work at the component top level **and** in nested scopes (render callbacks, IIFEs, and
 module-level composable functions). For hand-written `.ts`, the same runtime functions are imported and
 called directly - `createEffect`/`on`/`batch`/`untrack`/`onCleanup`/`onRootDispose`/`createDeferred`.
+
+During a server render, a `cleanup` block or an `onCleanup` call outside an effect or memo does not run.
+`dispose` / `onRootDispose` do run, at the end of the render, as does a cleanup inside a memo or a
+`derived` value, so their bodies must not need a DOM.
 
 How the compiler emits each dynamic `{expr}` decides whether it is reactive:
 

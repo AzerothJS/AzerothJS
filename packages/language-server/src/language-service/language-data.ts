@@ -289,12 +289,13 @@ export const KEYWORD_DOCS: Record<string, string> =
     cleanup:
         '**`cleanup`** - teardown hook\n\n' +
         'Registers a callback that runs before the enclosing effect re-runs (on a dependency change) and when it is ' +
-        'disposed. For releasing subscriptions, timers, and listeners.\n\n' +
+        'disposed. For releasing subscriptions, timers, and listeners. Outside an effect or a `derived` value it ' +
+        'does not run during a server render.\n\n' +
         '```azeroth\neffect\n{\n    const id = setInterval(tick, 1000);\n    cleanup { clearInterval(id); }\n}\n```',
     dispose:
         '**`dispose`** - root-disposal hook\n\n' +
         'Registers a callback that runs exactly once, when the surrounding root scope is disposed - the scope-level ' +
-        'sibling of `cleanup`.\n\n' +
+        'sibling of `cleanup`. It also runs at the end of a server render, so its body must not need a DOM.\n\n' +
         '```azeroth\ndispose\n{\n    socket.close();\n}\n```',
     resource:
         '**`resource`** - async data\n\n' +
