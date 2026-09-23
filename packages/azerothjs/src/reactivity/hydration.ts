@@ -218,6 +218,7 @@ export class HydrationCursor
 
     /**
      * Claims everything up to and including the closing reactive-hole anchor `<!--]-->`.
+     * A hole whose value holds another hole nests a whole `[` `]` pair inside its own range.
      *
      * @returns The content between the anchors, plus the close anchor itself.
      * @throws {@link HydrationMismatchError} If no close anchor is found.
@@ -225,6 +226,7 @@ export class HydrationCursor
     public takeUntilCloseAnchor(): { content: ChildNode[]; closeAnchor: Comment }
     {
         const content: ChildNode[] = [];
+        let depth = 0;
 
         while (this.#index < this.#nodes.length)
         {
@@ -234,10 +236,23 @@ export class HydrationCursor
                 break; // falls through to the unterminated-anchor error below
             }
 
-            if (node.nodeType === 8 && (node as Comment).data === ']')
+            if (node.nodeType === 8)
             {
-                this.#index++;
-                return { content, closeAnchor: node as Comment };
+                const data = (node as Comment).data;
+
+                if (data === '[')
+                {
+                    depth++;
+                }
+                else if (data === ']')
+                {
+                    if (depth === 0)
+                    {
+                        this.#index++;
+                        return { content, closeAnchor: node as Comment };
+                    }
+                    depth--;
+                }
             }
 
             content.push(node);

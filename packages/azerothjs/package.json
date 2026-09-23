@@ -1,6 +1,6 @@
 {
     "name": "azerothjs",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "engines": {
         "node": ">=22"
     },
@@ -40,7 +40,7 @@
         "prepack": "node ../../scripts/prepack.mjs"
     },
     "dependencies": {
-        "@azerothjs/schema": "^2.1.0"
+        "@azerothjs/schema": "^2.1.1"
     },
     "keywords": [
         "framework",

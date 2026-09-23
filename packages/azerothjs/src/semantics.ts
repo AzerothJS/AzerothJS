@@ -320,6 +320,22 @@ export function isBindingAttr(tag: string, name: string): boolean
 }
 
 /**
+ * The positions a builtin builds as a branch, under untrack. A markup hole there lowers as a hole
+ * inside the branch so it tracks under its own effect; an explicit arrow stays the branch itself.
+ */
+const BRANCH_POSITIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+    ['Show', new Set(['children', 'fallback'])],
+    ['Match', new Set(['children'])],
+    ['Switch', new Set(['fallback'])]
+]);
+
+/** True when `tag` builds its `name` prop as an untracked branch. */
+export function isBranchPosition(tag: string, name: string): boolean
+{
+    return BRANCH_POSITIONS.get(tag)?.has(name) ?? false;
+}
+
+/**
  * djb2 to base36 over CSS rule text: the scope suffix appended to every class name the text
  * defines. Deterministic across runs and across processes, which is the whole mechanism -
  * identical rules dedupe to one stylesheet, and the server and the client independently

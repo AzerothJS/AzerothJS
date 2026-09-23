@@ -34,7 +34,7 @@ import { SPLIT_RUNTIME } from './reactivity/store-scope.ts';
  * Bump ONLY with an incompatible emit-vocabulary or helper-semantics change, together
  * with the compiler's EMITTED_CONTRACT_VERSION (the drift spec welds them).
  */
-export const RUNTIME_CONTRACT_VERSION = 4;
+export const RUNTIME_CONTRACT_VERSION = 5;
 
 /** The global slot naming the copy the latest compiled module bound to; unbound on evaluation. */
 const RUNTIME = Symbol.for('azerothjs.runtime');

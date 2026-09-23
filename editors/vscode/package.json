@@ -2,7 +2,7 @@
     "name": "azerothjs-vscode",
     "displayName": "AzerothJS",
     "description": "Official AzerothJS language support - completion, hover docs, diagnostics, cross-file rename across the .ts/.azeroth boundary, semantic highlighting. Compiler-powered.",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "icon": "icon.png",
     "publisher": "azerothjs",
     "author": {

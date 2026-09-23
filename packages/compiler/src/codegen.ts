@@ -33,7 +33,7 @@
 
 import { findMarkupStart } from './scanner.ts';
 import { parseMarkup, CompileError, MAX_MARKUP_DEPTH, markupDepthError } from './markup-parser.ts';
-import { isFactoryProp, bindWriteBack, canonicalHandlerName, VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from 'azerothjs/semantics';
+import { isFactoryProp, isBranchPosition, bindWriteBack, canonicalHandlerName, VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from 'azerothjs/semantics';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollectionLiteral, objectKey, alreadyImports } from './markup-util.ts';
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
@@ -64,7 +64,7 @@ const RUNTIME_MODULE = 'azerothjs/internal';
  * RUNTIME_CONTRACT_VERSION (azerothjs/internal) must move with it in lockstep, and a drift
  * spec fails the build if the two disagree.
  */
-export const EMITTED_CONTRACT_VERSION = 4;
+export const EMITTED_CONTRACT_VERSION = 5;
 
 /** Empty reactive-source set, for compiling markup in module scope (no component state in scope). */
 const NO_SOURCES: ReactiveSources = { names: new Set(), hasProps: false };
@@ -898,7 +898,11 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
                 // make the component's `fallback(error, reset)` call hit the wrapper and discard
                 // the arguments. A bare markup value (`fallback={<p/>}`) is wrapped so it stays lazy.
                 const raw = source.slice(prop.expr.span.start, prop.expr.span.end).trim();
-                parts.push(`${ objectKey(prop.name) }: ${ isFunctionLiteral(raw) ? value : `() => (${ value })` }`);
+                // A branch fallback that is neither an arrow nor plain markup is a hole in the branch.
+                const factory = isBranchPosition(binding.tag, prop.name) && !raw.startsWith('<')
+                    ? `() => [${ exprValue(source, prop.expr, sources, emit) }]`
+                    : `() => (${ value })`;
+                parts.push(`${ objectKey(prop.name) }: ${ isFunctionLiteral(raw) ? value : factory }`);
             }
             else
             {
@@ -1020,7 +1024,7 @@ function letNames(source: string, lets: readonly LetBinding[], outer: ReadonlySe
 
 /**
  * Emits a markup children plan (a `fragment` of children) as an h()-built value:
- * a single child directly, or an array of children. Each child is emitted with
+ * a single non-hole child directly, otherwise an array of children. Each child is emitted with
  * {@link emitNode} (elements -> h(), holes -> reactive thunks, slots ->
  * component calls), so nested control flow composes.
  */
@@ -1030,7 +1034,8 @@ function emitMarkupChildren(source: string, plan: RenderPlan, sources: ReactiveS
     const children = root.kind === 'fragment' ? root.children : [root];
     const items = children.map(child => emitNode(source, child, plan, sources, emit));
     const solo = items[0];
-    return items.length === 1 && solo !== undefined ? solo : `[${ items.join(', ') }]`;
+    // A sole hole stays an array item, or resolving the children would read it once.
+    return items.length === 1 && solo !== undefined && children[0]?.kind !== 'hole' ? solo : `[${ items.join(', ') }]`;
 }
 
 /**

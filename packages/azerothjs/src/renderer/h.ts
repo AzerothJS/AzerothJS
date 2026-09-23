@@ -447,7 +447,7 @@ export function appendChild(parent: HTMLElement | DocumentFragment, child: Child
     {
         const textNode = document.createTextNode('');
         parent.appendChild(textNode);
-        driveReactiveChild(parent, textNode, child);
+        driveReactiveChild(textNode, child);
         return;
     }
 
@@ -553,12 +553,12 @@ function destroyNodes(nodes: readonly ChildNode[]): void
 /**
  * Wires the reactive-child effect onto an existing node: evaluates `child`
  * per run inside a per-run root and patches `initialNode` (or its
- * replacement) in place. Shared by appendChild's function-child branch and
- * the template path's bindHole().
+ * replacement) in place. The parent is read from the current node on every
+ * run, because a branch builds into a DocumentFragment that then moves.
  *
  * @internal
  */
-function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode: ChildNode, child: () => unknown): void
+function driveReactiveChild(initialNode: ChildNode, child: () => unknown): void
 {
     let currentNode: ChildNode = initialNode;
     // Extra nodes when the value is an array: rendered as DIRECT siblings of `currentNode` (no wrapper),
@@ -581,6 +581,8 @@ function driveReactiveChild(parent: HTMLElement | DocumentFragment, initialNode:
     /** One update of this reactive child; returns this run's cleanup, if it registered one. */
     function update(): (() => void) | undefined
     {
+        const parent = currentNode.parentNode as Node;
+
         // Evaluate the child inside a per-run root. This is critical:
         // building an element here (e.g. `h('span', {}, () => count())`)
         // creates nested effects, and they must be owned by THIS root so

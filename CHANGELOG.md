@@ -10,6 +10,16 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
 
 ## [Unreleased]
 
+### Changed
+
+- **The runtime contract moves to v5.** Compiled output changes shape for a sole `{ expr }` in a
+  `<Show>` or `<Match>` branch and for a `fallback` on `<Show>` or `<Switch>` that is not an arrow
+  or a bare markup literal, and the new output needs the new runtime, so `EMITTED_CONTRACT_VERSION` and `RUNTIME_CONTRACT_VERSION` both move 4 -> 5. What this
+  affects is PREBUILT compiled output: a library shipped as `.js` compiled by an earlier compiler
+  fails at load against this runtime with a message naming both versions, and output from this
+  compiler fails the same way on an older runtime. Rebuild against a matched set: `azerothjs` and
+  `@azerothjs/compiler` from one version.
+
 ### Fixed
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
@@ -20,6 +30,26 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   skipped again, as in 2.0, and it runs on the client and after hydration as before.
   `dispose { }`, `onRootDispose()` and a cleanup inside a memo or a `derived` value still run at
   the end of a server render, so they must not need a DOM; move any server-side release there.
+
+- **A reactive value inside a `<Show>`, `<Match>` or `<Switch>` branch froze or threw.** A sole
+  `{ expr }` child of `<Show>` or `<Match>`, or a `fallback={ expr }` on `<Show>` or `<Switch>`, was
+  read once when the branch was built and never updated. A hole in a branch with two or more
+  children, or in a component or fragment placed in a branch, threw NotFoundError the first time
+  its value changed to or from an element, including on the `when` flip that mounted it.
+  `<Dynamic>` over a fragment-rooted component with its own state threw the same way, outside any
+  branch too. Each of these updates when the signals it reads change. `{ () => expr }` and
+  `fallback={ () => expr }` are still read once when the branch is built. A sole hole under `let=`
+  threw `ReferenceError: <name> is not defined` at mount and in a server render; its `let=` names
+  reach it. `<Show when={ user }>{ props.children }</Show>` and a hole whose value holds another
+  hole (a list of Shows that hold a hole, `<Card><>{ x }</></Card>`) hydrate in place instead of
+  falling back to a client render. A component built inside a sole branch hole rebuilds when a
+  signal it reads during setup changes, as it already does in a hole outside a branch. A branch
+  that reads its `when` value directly (`<Show when={ user }>{ user.name }</Show>`) throws when
+  one `batch` writes another signal the branch reads and then clears `user`; declare the name
+  with `let={ u }` and read `u.name`, which keeps the last value. The server markup of a branch
+  whose sole hole or `fallback` is anything but a bare name in markup position or an arrow gains
+  one `<!--[-->` and `<!--]-->` pair, so re-prerender cached pages: a page rendered by 2.1.0 still
+  hydrates, through a client render with a development warning.
 
 ### Security
 

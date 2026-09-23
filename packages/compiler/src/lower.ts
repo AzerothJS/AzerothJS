@@ -38,7 +38,7 @@
 
 import { isWhitespace, findMarkupStart } from './scanner.ts';
 import { parseMarkup } from './markup-parser.ts';
-import { hostEventType, bindWriteBack, isBindingAttr, isChildResolvedProperty, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
+import { hostEventType, bindWriteBack, isBindingAttr, isBranchPosition, isChildResolvedProperty, CONTENT_PROPERTIES, BUILTIN_SET as BUILTINS } from 'azerothjs/semantics';
 import { isFunctionLiteral } from './markup-util.ts';
 import type { MarkupElement, MarkupFragment, MarkupChild, MarkupAttribute, Span } from './types.ts';
 import type { ComponentDecl } from './ast.ts';
@@ -390,7 +390,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
             }
         }
 
-        let children = lowerComponentChildren(node.children);
+        let children = lowerComponentChildren(node.children, node.tag);
 
         // Binding attributes only make sense over markup children: the plan is emitted
         // wrapped in a callback whose parameters are the declared names. Other children
@@ -486,7 +486,7 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
         return { kind: 'render', param, body: { template, bindings: subCtx.bindings } };
     };
 
-    const lowerComponentChildren = (children: MarkupChild[]): ComponentChildren | null =>
+    const lowerComponentChildren = (children: MarkupChild[], tag: string): ComponentChildren | null =>
     {
         if (children.length === 0)
         {
@@ -507,7 +507,11 @@ function createLowerer(source: string, scopeByStart: Map<number, ReactiveScope>,
                 // child receives the raw row getter.
                 return tryLowerRenderClone(span) ?? { kind: 'render', param: renderParamSpan(source, span), body: expr };
             }
-            return { kind: 'dynamic', expr };
+            // A branch builds its children untracked, so a sole hole there stays a hole.
+            if (!isBranchPosition(tag, 'children'))
+            {
+                return { kind: 'dynamic', expr };
+            }
         }
         // Markup children: a self-contained nested plan with its own id space.
         const ctx: Ctx = { next: 0, bindings: [] };
