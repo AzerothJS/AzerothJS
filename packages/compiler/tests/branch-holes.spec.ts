@@ -48,6 +48,34 @@ const ZW = [
     }),
     () => hook.setUser?.({ name: 'bob' })
 ];
+const ZL = [
+    () => runtime.batch(() =>
+    {
+        hook.set?.(true);
+        hook.setList?.([]);
+    }),
+    () => hook.setList?.([5])
+];
+const ZE = [
+    () => runtime.batch(() =>
+    {
+        hook.setReady?.(false);
+        hook.set?.(true);
+    }),
+    () => runtime.batch(() =>
+    {
+        hook.setReady?.(true);
+        hook.setUser?.({ name: 'bob' });
+    })
+];
+const ZO = [
+    () => hook.set?.(true),
+    () => runtime.batch(() =>
+    {
+        hook.set?.(false);
+        hook.setUser?.({ name: 'bob' });
+    })
+];
 const FLIP = [() => hook.set?.(true), () => hook.set?.(false), () => hook.setReady?.(false), () => hook.set?.(true)];
 const KH = [() => hook.set?.(true), () => hook.setReady?.(false), () => hook.setReady?.(true), () => hook.set?.(false)];
 const L = [() => hook.setList?.([1, 2, 3]), () => hook.setReady?.(false), () => hook.setReady?.(true)];
@@ -122,6 +150,26 @@ const PAGE = `${ K2 }
 component Page(props: { on: boolean }) {
     <><K2 on={ props.on }/><K2 on={ !props.on }/></>
 }`;
+const KIDE = `component KidE(props: { u: any; r: boolean }) {
+    effect { hook.reads += props.u.name.length + (props.r ? 1 : 0); }
+    <i>k</i>
+}`;
+const KIDM = `component KidM(props: { u: any; r: boolean }) {
+    derived label = props.u.name + (props.r ? "!" : "");
+    <i>{ label }</i>
+}`;
+const CLEAR = `component Clear(props: { r: boolean }) {
+    effect { if (!props.r) { hook.setUser?.(null); } }
+    <u></u>
+}`;
+const CLEARON = `component ClearOn(props: { r: boolean }) {
+    effect { if (props.r) { hook.setUser?.(null); } }
+    <u></u>
+}`;
+const SYNC = `component Sync(props: { u: any }) {
+    effect { hook.setReady?.(props.u !== null); }
+    <u></u>
+}`;
 
 const SHAPES = {
     soleTernary: { markup: '<Show when={ true }>{ returning ? <b>in</b> : <i>out</i> }</Show>' },
@@ -160,6 +208,24 @@ const SHAPES = {
     batchWhenFirst: { markup: '<Show when={ user }>{ user.name + (returning ? "!" : "") }</Show>', steps: ZW },
     batchMulti: { markup: '<Show when={ user }><i>x</i>{ user.name + (returning ? "!" : "") }</Show>', steps: ZB },
     batchLet: { markup: '<Show when={ user } let={ u }>{ u.name + (returning ? "!" : "") }</Show>', steps: ZB },
+    batchMatch: { markup: '<Switch><Match when={ user }>{ user.name + (returning ? "!" : "") }</Match></Switch>', steps: ZB },
+    batchNested: { markup: '<Show when={ user }><Show when={ user.name }>{ user.name + (returning ? "!" : "") }</Show></Show>', steps: ZB },
+    batchNestedOuter: { markup: '<Show when={ user }><Show when={ true }>{ user.name + (returning ? "!" : "") }</Show></Show>', steps: ZB },
+    batchHoleInHole: { markup: '<Show when={ user }>{ ready ? <b>{ user.name + (returning ? "!" : "") }</b> : "" }</Show>', steps: ZB },
+    batchTernary: { markup: '{ user ? <b>{ user.name + (returning ? "!" : "") }</b> : "" }', steps: ZB },
+    batchKidEffect: { markup: '<Show when={ user }><KidE u={ user } r={ returning }/></Show>', extra: KIDE, steps: ZB },
+    batchKidMemo: { markup: '<Show when={ user }><KidM u={ user } r={ returning }/></Show>', extra: KIDM, steps: ZB },
+    batchDynamic: { markup: '<Dynamic component={ user ? KidM : null } props={ () => ({ u: user, r: returning }) }/>', extra: KIDM, steps: ZB },
+    batchForIndex: { markup: '<ul><For each={ list } key={ (x) => x } let={ x } index={ i }><li>{ list[i].toFixed(0) + (returning ? "!" : "") }</li></For></ul>', steps: ZL },
+    effectClearsOld: { markup: '<Clear r={ ready }/><Show when={ user }>{ user.name + (returning ? "!" : "") }</Show>', extra: CLEAR, steps: ZE },
+    effectClearsYoung: { markup: '<Show when={ user }>{ user.name + (returning ? "!" : "") }</Show><Clear r={ ready }/>', extra: CLEAR, steps: ZE },
+    innerOpensOuterClosesYoung: { markup: '<Show when={ user }>o<Show when={ returning }>{ user.name }</Show></Show><ClearOn r={ returning }/>', extra: CLEARON, steps: ZO },
+    innerOpensOuterClosesOld: { markup: '<ClearOn r={ returning }/><Show when={ user }>o<Show when={ returning }>{ user.name }</Show></Show>', extra: CLEARON, steps: ZO },
+    youngerWriter: { markup: '<Show when={ ready }>{ user.name + (returning ? "!" : "") }</Show><Sync u={ user }/>', extra: SYNC, steps: ZB },
+    batchMatchMulti: { markup: '<Switch><Match when={ user }><i>x</i>{ user.name + (returning ? "!" : "") }</Match></Switch>', steps: ZB },
+    batchShowFallbackMarkup: { markup: '<Show when={ !user } fallback={ <b>{ user.name + (returning ? "!" : "") }</b> }>none</Show>', steps: ZB },
+    batchSwitchFallbackMarkup: { markup: '<Switch fallback={ <b>{ user.name + (returning ? "!" : "") }</b> }><Match when={ !user }>none</Match></Switch>', steps: ZB },
+    batchShowFallbackExpr: { markup: '<Show when={ !user } fallback={ user.name + (returning ? "!" : "") }>none</Show>', steps: ZB },
     rawMode: { markup: '{ [1].map((n) => { return <Show when={ true }>{ returning ? <b>in</b> : <i>out</i> }</Show>; }) }' },
     rawMulti: { markup: '{ [1].map((n) => { return <Show when={ true }><i>x</i>{ returning ? <b>in</b> : <i>out</i> }</Show>; }) }' },
     exprMapSole: { markup: '{ [1].map((n) => <Show when={ true }>{ returning ? <b>in</b> : <i>out</i> }</Show>) }' },
@@ -630,8 +696,8 @@ describe('a branch closed by a single write never runs its read on the null', ()
 
 describe('a batch that writes another signal the branch reads, then clears when', () =>
 {
-    // The queued hole runs before the branch closes, so a read of `when` itself sees the null;
-    // a let= name keeps the last truthy value.
+    // The queued hole reads `when` itself as null before the swap closes the branch, which drops
+    // its error; a let= name keeps the last truthy value.
     it('the let= form follows the value without throwing', () =>
     {
         expect(sequences('batchLet')).toEqual(everywhere('ann >  > bob!'));
@@ -642,10 +708,48 @@ describe('a batch that writes another signal the branch reads, then clears when'
         expect(sequences('batchWhenFirst')).toEqual(everywhere('ann >  > bob!'));
     });
 
-    it('a sole or multi-child read of when throws TypeError', () =>
+    it('a sole or multi-child read of when does not throw, and the branch closes', () =>
     {
-        expect(sequences('batchSole')).toEqual(everywhere('ann > threw TypeError > bob!'));
-        expect(sequences('batchMulti')).toEqual(everywhere('xann > threw TypeError > xbob!'));
+        expect(sequences('batchSole')).toEqual(everywhere('ann >  > bob!'));
+        expect(sequences('batchMulti')).toEqual(everywhere('xann >  > xbob!'));
+    });
+});
+
+describe('a read on the value the same flush clears, in a branch that flush closes', () =>
+{
+    // The read may see the cleared value before the branch closes; its unhandled error is dropped.
+    // The reader is a hole, a fallback, a kid's effect or derived value, a Dynamic or a For row.
+    const cases: Array<[ShapeName, string]> = [
+        ['batchMatch', 'ann >  > bob!'],
+        ['batchNested', 'ann >  > bob!'],
+        ['batchNestedOuter', 'ann >  > bob!'],
+        ['batchHoleInHole', 'ann >  > bob!'],
+        ['batchTernary', 'ann >  > bob!'],
+        ['batchKidEffect', 'k >  > k'],
+        ['batchKidMemo', 'ann >  > bob!'],
+        ['batchDynamic', 'ann >  > bob!'],
+        ['batchForIndex', '1 >  > 5!'],
+        ['effectClearsOld', 'ann >  > bob!'],
+        ['effectClearsYoung', 'ann >  > bob!'],
+        ['innerOpensOuterClosesYoung', 'o >  > o'],
+        ['youngerWriter', 'ann >  > bob!'],
+        ['batchMatchMulti', 'xann >  > xbob!'],
+        ['batchShowFallbackMarkup', 'ann > none > bob!'],
+        ['batchSwitchFallbackMarkup', 'ann > none > bob!'],
+        ['batchShowFallbackExpr', 'ann > none > bob!']
+    ];
+
+    for (const [name, seq] of cases)
+    {
+        it(`${ name } does not throw from the clearing write`, () =>
+        {
+            expect(sequences(name)).toEqual(everywhere(seq));
+        });
+    }
+
+    it('innerOpensOuterClosesOld, whose older writer closes the outer branch first, closes without an error', () =>
+    {
+        expect(sequences('innerOpensOuterClosesOld')).toEqual(everywhere('o >  > o'));
     });
 });
 

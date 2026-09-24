@@ -191,6 +191,14 @@ markup: `Show`, `For`, `Switch`/`Match`, `Dynamic`, `Suspense`, `Portal`, and `E
 its `on` list load, and `Portal` renders its children into a target elsewhere in the document
 (default `document.body`).
 
+Inside a `Show` or `Match`, read the value through the `let=` name, as `{ user.name }` does above:
+the name keeps the last value until the branch closes. A read through the signal instead, such as
+`{ user()!.name + count() }` in `<Show when={ user() }>`, can run on the cleared value when one
+`batch` changes `count` and then clears `user`; its error is dropped with the branch, but an
+`ErrorBoundary` around the `Show` still receives it. In a `For`, the `let=` name is the row's own
+item; a row that reads the list by index can still throw when one `batch` or effect writes another
+value the row reads and then removes an item before it.
+
 ### Stores & resources
 
 `createStore` is a lazily-built singleton with per-request isolation under SSR; `createResource`

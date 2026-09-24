@@ -192,6 +192,7 @@ export function createEffect(fn: EffectFn, options?: EffectOptions): DisposeFn
         execute: schedule,
         // runScheduled() is the ungated body the batch flush invokes directly.
         runScheduled: runBody,
+        owner,
         isDisposed: false,
         deps: [],
         cursor: -1,

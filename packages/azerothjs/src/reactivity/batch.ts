@@ -23,6 +23,7 @@
  */
 
 import type { Producer, Subscriber } from './types.ts';
+import type { Owner } from './create-root.ts';
 import { notify } from './graph.ts';
 import { assertFunction } from './validate.ts';
 
@@ -48,6 +49,190 @@ let solo: Subscriber | null = null;
  */
 const MAX_FLUSH_ROUNDS = 1000;
 
+/** One unhandled effect error of the flush; a dropped one is marked dead. */
+interface Thrown
+{
+    error: unknown;
+    live: boolean;
+}
+
+/** A failed effect's scope, its error, and the stamp the failure took. */
+interface Failure
+{
+    scope: Owner;
+    slot: Thrown;
+    at: number;
+}
+
+/**
+ * The multi-effect round being drained, the index of the effect running in it, and how many
+ * effects were queued for the next round when that effect began.
+ */
+let round: Subscriber[] | null = null;
+let roundAt = 0;
+let roundQueued = 0;
+
+/** The flush's unhandled effect errors in throw order; null until one fails. */
+let thrown: Thrown[] | null = null;
+
+/**
+ * Set by the first error of the flush nothing can drop: no later error can be thrown ahead of it.
+ */
+let decided = false;
+
+/**
+ * Failures an ancestor effect was waiting to run past when they threw; settled after each round.
+ */
+let held: Failure[] = [];
+
+/**
+ * Failures nothing holds: dropped when the flush ends if an ancestor effect ran after them
+ * and they were disposed.
+ */
+let late: Failure[] = [];
+
+/** Once the flush has failed: a counter, and its value at each watched scope's latest run. */
+let stamp = 0;
+let lastRun: Map<Owner, number> | null = null;
+
+/** The scopes above held and late failures, the only ones whose runs are stamped. */
+let watched: Set<Owner> | null = null;
+
+/** Watches the scopes above a failure; the walk stops at a watched one, whose parents are too. */
+function watch(scope: Owner): void
+{
+    const set = watched ??= new Set();
+    for (let s = scope.parent; s !== null && !set.has(s); s = s.parent)
+    {
+        set.add(s);
+    }
+}
+
+/**
+ * By scope: the effects still ahead in this round and those queued for the next, with their
+ * positions. Built on a round's first failure; queueEffect adds to `queuedAt` while it lives.
+ */
+let ahead: Map<Owner, number> | null = null;
+let queuedAt: Map<Owner, number> | null = null;
+
+const NONE = 0;
+const WAITED = 1;
+const QUEUED = 2;
+
+/**
+ * The nearest ancestor effect of `scope` still due to run decides: WAITED if it was due
+ * before the failed run began (ahead in the round, or among the first `since` queued), QUEUED
+ * if that run queued it.
+ */
+function ancestorWaits(scope: Owner, since: number): number
+{
+    let inRound = ahead;
+    let next = queuedAt;
+    if (inRound === null || next === null)
+    {
+        inRound = ahead = new Map();
+        next = queuedAt = new Map();
+        if (round !== null)
+        {
+            for (let i = roundAt + 1; i < round.length; i++)
+            {
+                const owner = round[i]?.owner;
+                if (owner !== undefined)
+                {
+                    inRound.set(owner, i);
+                }
+            }
+        }
+        if (solo?.owner !== undefined)
+        {
+            next.set(solo.owner, 0);
+        }
+        let at = 0;
+        for (const subscriber of queue)
+        {
+            if (subscriber.owner !== undefined)
+            {
+                next.set(subscriber.owner, at);
+            }
+            at++;
+        }
+    }
+    for (let s = scope.parent; s !== null; s = s.parent)
+    {
+        if ((inRound.get(s) ?? -1) > roundAt)
+        {
+            return WAITED;
+        }
+        const at = next.get(s);
+        if (at !== undefined)
+        {
+            return at < since ? WAITED : QUEUED;
+        }
+    }
+    return NONE;
+}
+
+/**
+ * After a round: drops the errors of failed effects that were disposed, keeps those an
+ * ancestor still waits past, and sends the rest to the end of the flush.
+ */
+function settleHeld(): void
+{
+    const entries = held;
+    held = [];
+    for (const entry of entries)
+    {
+        if (entry.scope.disposed)
+        {
+            entry.slot.live = false;
+        }
+        else if (ancestorWaits(entry.scope, Infinity) !== NONE)
+        {
+            held.push(entry);
+        }
+        else
+        {
+            late.push(entry);
+        }
+    }
+}
+
+/** Stamps a watched scope's run whose body ran; a run its sources net out of is not stamped. */
+function stampRun(subscriber: Subscriber, before: number): void
+{
+    if (subscriber.activeRun !== before && subscriber.owner !== undefined && watched !== null && watched.has(subscriber.owner))
+    {
+        (lastRun ??= new Map()).set(subscriber.owner, ++stamp);
+    }
+}
+
+/** Clears the failure state at the end of a flush. */
+function clearFailure(): void
+{
+    thrown = null;
+    decided = false;
+    held = [];
+    late = [];
+    lastRun = null;
+    watched = null;
+    ahead = null;
+    queuedAt = null;
+    round = null;
+}
+
+/** Whether an ancestor effect of the failure's scope ran after it failed. */
+function ancestorRanSince(failure: Failure): boolean
+{
+    for (let s = failure.scope.parent; s !== null; s = s.parent)
+    {
+        if ((lastRun?.get(s) ?? -1) > failure.at)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** Whether a batch is open; createEffect reads it to decide run-now vs queue. @internal */
 export function isBatching(): boolean
 {
@@ -57,6 +242,10 @@ export function isBatching(): boolean
 /** Queues an effect to run when the current batch flushes. @internal */
 export function queueEffect(subscriber: Subscriber): void
 {
+    if (queuedAt !== null && subscriber.owner !== undefined && !queuedAt.has(subscriber.owner))
+    {
+        queuedAt.set(subscriber.owner, solo === null ? queue.size : 1);
+    }
     if (solo === null && queue.size === 0)
     {
         solo = subscriber;
@@ -97,6 +286,20 @@ export function notifyWrite(producer: Producer): void
         notify(producer);
         drainQueue();
     }
+    catch (error)
+    {
+        // Inline, not a call: the throw may be stack exhaustion, and a call could overflow again.
+        thrown = null;
+        decided = false;
+        held = [];
+        late = [];
+        lastRun = null;
+        watched = null;
+        ahead = null;
+        queuedAt = null;
+        round = null;
+        throw error;
+    }
     finally
     {
         batching = false;
@@ -110,12 +313,10 @@ export function notifyWrite(producer: Producer): void
 function drainQueue(): void
 {
     let guard = 0;
-    let firstError: unknown;
-    let failed = false;
 
     // Run one queued effect in ISOLATION: an effect whose body throws with no error handler
     // (no catchError, no uncaught handler) must not strand the rest of THIS flush - the other
-    // affected effects still run on settled state. The first such error is captured and
+    // affected effects still run on settled state. The first such error that is not dropped is
     // surfaced after the queue drains, so the write/batch still throws, just not mid-flush.
     const run = (subscriber: Subscriber): void =>
     {
@@ -132,22 +333,56 @@ function drainQueue(): void
         }
         catch (error)
         {
-            if (!failed)
+            if (decided)
             {
-                failed = true;
-                firstError = error;
+                return;
+            }
+            const slot = { error, live: true };
+            (thrown ??= []).push(slot);
+            const scope = subscriber.owner;
+            // An effect whose own run disposed it closed itself: a real failure.
+            if (scope === undefined || scope.disposed)
+            {
+                decided = true;
+                return;
+            }
+            const wait = ancestorWaits(scope, round === null ? 0 : roundQueued);
+            if (wait === WAITED)
+            {
+                watch(scope);
+                held.push({ scope, slot, at: ++stamp });
+            }
+            else if (wait === QUEUED)
+            {
+                decided = true;
+            }
+            else
+            {
+                watch(scope);
+                late.push({ scope, slot, at: ++stamp });
             }
         }
     };
 
     while (solo !== null || queue.size > 0)
     {
+        ahead = null;
+        queuedAt = null;
         if (solo !== null && queue.size === 0)
         {
             // Fast lane: the round's one effect, no Set traffic at all.
             const only = solo;
             solo = null;
-            run(only);
+            if (watched === null)
+            {
+                run(only);
+            }
+            else
+            {
+                const before = only.activeRun;
+                run(only);
+                stampRun(only, before);
+            }
         }
         else
         {
@@ -160,10 +395,30 @@ function drainQueue(): void
             const effects = Array.from(queue);
             queue.clear();
 
+            round = effects;
+            roundAt = -1;
             for (const subscriber of effects)
             {
-                run(subscriber);
+                roundAt++;
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- an earlier run() in this loop can queue the solo; the rule narrows it from the spill above
+                roundQueued = solo === null ? queue.size : 1;
+                if (watched === null)
+                {
+                    run(subscriber);
+                }
+                else
+                {
+                    const before = subscriber.activeRun;
+                    run(subscriber);
+                    stampRun(subscriber, before);
+                }
             }
+            round = null;
+        }
+
+        if (held.length > 0)
+        {
+            settleHeld();
         }
 
         // A flush that never settles means an effect keeps writing a signal it (transitively)
@@ -180,11 +435,24 @@ function drainQueue(): void
         }
     }
 
-    // The whole queue drained; now surface the first effect error (if any).
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `failed` is set inside the run() closure; the rule's flow analysis cannot see the mutation and narrows it to its initial false
-    if (failed)
+    // The whole queue drained; surface the first effect error that was not dropped (if any).
+    const errors = thrown;
+    if (errors === null)
     {
-        throw firstError;
+        return;
+    }
+    for (const failure of late)
+    {
+        if (failure.scope.disposed && ancestorRanSince(failure))
+        {
+            failure.slot.live = false;
+        }
+    }
+    clearFailure();
+    const first = errors.find((slot) => slot.live);
+    if (first !== undefined)
+    {
+        throw first.error;
     }
 }
 
@@ -266,6 +534,20 @@ export function batch<T>(fn: () => T): T
     try
     {
         drainQueue();
+    }
+    catch (error)
+    {
+        // Inline for the same reason as in notifyWrite.
+        thrown = null;
+        decided = false;
+        held = [];
+        late = [];
+        lastRun = null;
+        watched = null;
+        ahead = null;
+        queuedAt = null;
+        round = null;
+        throw error;
     }
     finally
     {

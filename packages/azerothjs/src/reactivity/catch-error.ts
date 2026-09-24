@@ -19,8 +19,10 @@
  * Resource.error() and would otherwise double-report; errors in DOM event handlers, which
  * run in browser-driven scope; and anything thrown outside every catchError call.
  *
- * Handlers nest. The innermost catches first, and an outer one sees only what the inner
- * rethrew.
+ * Handlers nest. The innermost catches first. A rethrow from it reaches the next enclosing
+ * handler when it escapes before the guarded function returns; from a run after that, including
+ * the first run of an effect created while a batch or a write's flush is open, it is an unhandled
+ * error of that run, as `handler` below describes.
  */
 
 /**
@@ -111,8 +113,20 @@ export function onUncaughtError(
  *
  * @typeParam T - `fn`'s return type.
  * @param fn - The scope to guard.
- * @param handler - Receives any caught error. Rethrowing from it propagates to the next
- *                  enclosing catchError.
+ * @param handler - Receives any caught error. A rethrow from it reaches the next enclosing
+ *                  catchError when it escapes before `fn` returns: a synchronous throw, an
+ *                  effect's first run, or a run that a write or batch inside `fn` flushes. An
+ *                  effect created while a batch or a write's flush is open, as in a branch or row
+ *                  a write mounts, first runs after `fn` returns. From a run after `fn` returns
+ *                  it is an unhandled error of that run: the write that flushed the run throws
+ *                  it, or a resource or stream settle routes it to the handler that resource or
+ *                  stream was created under, if any. A flushed run's error is dropped when the
+ *                  same flush disposes the effect while an effect above it waits to run or after
+ *                  one ran, as a closing branch, a removed row or a rebuilt hole does. The write
+ *                  still throws it when the nearest effect above the failed one that waits to run
+ *                  was not yet waiting when its run began, as when the failed effect closes its
+ *                  own branch and neither that branch nor an effect between them was already
+ *                  waiting, or when the failed run disposed its effect or a root that holds it.
  * @returns `fn`'s return value, or `undefined` when a synchronous error was caught - the
  *          handler has already run by then, so there is no value to return.
  * @example

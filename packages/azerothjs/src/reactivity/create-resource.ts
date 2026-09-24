@@ -336,7 +336,7 @@ export function createResource<T, S>(
         }
 
         // The terminal catch is load-bearing: both settle arms run batch(), whose flush rethrows
-        // the first error a queued subscriber threw, and here that lands in a promise reaction
+        // the first subscriber error it does not drop, and here that lands in a promise reaction
         // with nothing downstream - an unhandled rejection, which kills the process on Node. It
         // never swallows a FETCHER failure; the arm above has already captured that in error().
         return pending.then(

@@ -527,7 +527,7 @@ export function createStream<S = void>(
     const hasSource = source !== undefined;
 
     // Captured at construction, matching how an effect captures its catchError scope: a
-    // subscriber that throws while a settle propagates (the batch flush rethrows it) is
+    // subscriber that throws while a settle propagates (the flush rethrows one it does not drop) is
     // otherwise an unhandled rejection, since the settle runs in a promise reaction.
     const settleErrorHandler = currentErrorHandler;
 
@@ -701,7 +701,7 @@ export function createStream<S = void>(
             .catch((err: unknown) =>
             {
                 // Both settle arms write signals (setDone / the error batch), and a
-                // SUBSCRIBER throwing during that flush rethrows here - a promise
+                // SUBSCRIBER error the flush does not drop rethrows here - a promise
                 // reaction with nothing downstream. Route it through the effect error
                 // ladder; a FETCHER failure never reaches this (captured in error()
                 // by the arm above).

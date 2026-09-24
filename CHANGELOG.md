@@ -59,13 +59,52 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   reach it. `<Show when={ user }>{ props.children }</Show>` and a hole whose value holds another
   hole (a list of Shows that hold a hole, `<Card><>{ x }</></Card>`) hydrate in place instead of
   falling back to a client render. A component built inside a sole branch hole rebuilds when a
-  signal it reads during setup changes, as it already does in a hole outside a branch. A branch
-  that reads its `when` value directly (`<Show when={ user }>{ user.name }</Show>`) throws when
-  one `batch` writes another signal the branch reads and then clears `user`; declare the name
-  with `let={ u }` and read `u.name`, which keeps the last value. The server markup of a branch
-  whose sole hole or `fallback` is anything but a bare name in markup position or an arrow gains
-  one `<!--[-->` and `<!--]-->` pair, so re-prerender cached pages: a page rendered by 2.1.0 still
-  hydrates, through a client render with a development warning.
+  signal it reads during setup changes, as it already does in a hole outside a branch. The server
+  markup of a branch whose sole hole or `fallback` is anything but a bare name in markup position
+  or an arrow gains one `<!--[-->` and `<!--]-->` pair, so re-prerender cached pages: a page
+  rendered by 2.1.0 still hydrates, through a client render with a development warning.
+
+- **A read in a branch that the same write closes threw from the write.**
+  `<Show when={ user }><i>Hi</i>{ user.name + x }</Show>` with `batch { x = 1; user = null; }`
+  read `user.name` on the null before the branch closed, and the batch threw TypeError. The same
+  happened in a `<Match>` with more than one child, a `fallback` on `<Show>` or `<Switch>` that
+  holds markup, a nested `<Show>`, a ternary hole, a `<Dynamic>` whose component goes null, a
+  component, `derived` value, effect or resource inside the branch, and a `<For>` row reading
+  `list[i]` that the batch removed; on a single write as well as a batch; when an effect cleared
+  `when` during the flush, including one created after the branch; and on a route page the client
+  rendered when one batch logs out and navigates to a page that renders at once. A sole `{ expr }`
+  child or a `fallback={ expr }`, which froze in 2.1.0 and tracks now (above), runs its read on the
+  cleared value on such a write and drops the error the same way. The read can still run on the
+  cleared value, once or more, before the branch closes. Its error is now dropped when the effect
+  that threw is disposed in the same flush and an effect above it (through any `createRoot` or
+  component scope between) either ran after it failed, or is the nearest effect above it that was
+  waiting to run and was queued before its run began, and the disposal comes before that round
+  ends or before the end of a later round an effect above it is still queued for (an effect
+  disposed while queued still counts). That covers any effect that creates effects, not only a
+  branch: a keyed `<For>` removing a row, a hole rebuilding its content, a plain effect whose
+  re-run replaces its children. The drop does not look at the error, so a genuine bug in such an
+  effect is lost with it, including an error a `catchError` or `onUncaughtError` handler rethrew
+  and one a cleanup threw when its effect re-ran; the write throws the first error that was not
+  dropped. When the nearest effect above it that is waiting to run was not yet waiting when its run
+  began, as when it closes its own branch and neither that branch nor an effect between them was
+  already waiting, the failure is real and still throws, even when an outer effect also waits; so
+  does an effect that disposes itself, or a root that holds it, during its own run and then fails,
+  whatever the error. A handler around the read is still called in place, so an `<ErrorBoundary>`
+  around a sole `{ expr }` child of `<Show>` or `<Match>`, or around a `fallback={ expr }`, that
+  reads the value the batch clears shows its fallback on such a batch and stays on it, where 2.1.0,
+  which read these once, switched branches. Code that caught the write no longer sees a dropped
+  error: a `try`/`catch` around it, the `catchError` or `<ErrorBoundary>` a resource or stream was
+  created under when its settle closes a branch outside it, a stream's `error()` after a chunk,
+  `createForm`'s `submitError()`, and a mutation's `run`, which answers `{ ok: true }` where it
+  answered `{ ok: false }` and set `error()` though the server had committed. These still throw: a
+  read outside the branch; a `<For>` row the write keeps that reads `list[i]` by its old index after
+  the write changed another value the row reads and then removed an item before it; a cleanup that
+  reads the value when the branch is disposed; a read in a branch whose closing effect throws from a
+  cleanup as it re-runs; a route page that the navigation keeps open while a lazy page loads or an
+  async guard runs; a route page hydration adopted from the server markup, when the batch logs out
+  before it navigates to a page that renders at once; and the leave of a named `<Transition>` or
+  `<TransitionGroup>`. Read the value through `let={ u }` inside the branch, as the control flow
+  section of the `azerothjs` README shows.
 
 - **A function child beside `let=` or `index=` compiled clean and threw on first render.** A
   `<Show>`, `<Match>` or `<For>` that declared `let=` or `index=` beside a lone function child

@@ -15,6 +15,8 @@
  * primitive modules pass them between themselves.
  */
 
+import type { Owner } from './create-root.ts';
+
 /**
  * A cleanup function returned from an effect, or registered with onCleanup. Runs before the
  * effect's next run and again when it is disposed, so every run tears down what the
@@ -98,6 +100,12 @@ export interface Subscriber
 
     /** Present on effect nodes: run the body NOW, bypassing the batch/flush queue gate. The batch flush calls this to execute queued effects while writes they make are still deferred. @internal */
     runScheduled?: () => void;
+
+    /**
+     * Present on effect nodes: the scope the effect's runs own. The flush reads it to tell
+     * that an ancestor effect of a failed effect still waits to run. @internal
+     */
+    owner?: Owner;
 
     /** Whether this subscriber has been disposed. */
     isDisposed: boolean;
