@@ -49,7 +49,7 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
     {
         name: 'For',
         detail: '<For each={...} key={...} let={ item } index={ i }>...</For>',
-        doc: 'Keyed list rendering. Re-uses DOM elements across updates by `key`, so only changed rows touch the DOM. `let=`/`index=` declare the row names, read bare like state.',
+        doc: 'Keyed list rendering. Re-uses DOM elements across updates by `key`, so only changed rows touch the DOM. `let=`/`index=` declare the row names, read bare like state. A row is one host element, or one function literal when no name is declared: spaces beside it on the same line are dropped with a warning, and other text beside it is refused.',
         props: [
             { name: 'each', doc: 'Reactive getter returning the array of items: `() => T[]`.', required: true },
             { name: 'key', doc: 'Returns a stable unique key per item: `(item, index) => string | number`.', required: true },
@@ -80,7 +80,7 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
     {
         name: 'Portal',
         detail: '<Portal target={...}>...</Portal>',
-        doc: 'Renders its children into a different DOM node (defaults to `document.body`). Useful for modals, tooltips, and overlays.',
+        doc: 'Renders its children into a different DOM node (defaults to `document.body`). Useful for modals, tooltips, and overlays. Spaces beside its child on the same line are dropped; beside a host element that comes with a warning, and other text there is refused.',
         props: [
             { name: 'target', doc: 'Destination element. Defaults to `document.body`. Optional.', required: false },
             { name: 'children', doc: 'Content portaled into `target`: `() => element`.', required: true }
@@ -108,7 +108,7 @@ export const BUILTIN_COMPONENTS: BuiltinComponent[] =
     {
         name: 'Transition',
         detail: '<Transition when={...} name="...">...</Transition>',
-        doc: 'Animated show/hide. With a `name`, auto-generates the 6-class enter/leave family; without one, falls back to an instant swap.',
+        doc: 'Animated show/hide. With a `name`, auto-generates the 6-class enter/leave family; without one, falls back to an instant swap. Spaces beside its child on the same line are dropped; beside a host element that comes with a warning, and other text there is refused.',
         props: [
             { name: 'when', doc: 'Reactive boolean (`() => boolean`): true to show, false to hide.', required: true },
             { name: 'children', doc: 'Element built when entering: `() => element`.', required: true },

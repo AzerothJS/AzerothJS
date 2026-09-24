@@ -87,12 +87,14 @@ import {
     srcdocMessage,
     refusedTagMessage,
     refreshRefusal,
-    executableScriptMessage
+    executableScriptMessage,
+    BUILTIN_SET,
+    ONE_ELEMENT_COMPONENTS
 } from 'azerothjs/semantics';
-import { isFunctionLiteral, loneFunctionChild } from './markup-util.ts';
+import { isFunctionLiteral, loneFunctionChild, withoutSpacing } from './markup-util.ts';
 import { analyzeComponent } from './analyze.ts';
 import { parseStatementsSlice, parseExpressionSlice, parseDeclarationSlice } from './ts-slice.ts';
-import { findMarkupStart, isIdentStart, isIdentPart, scanTypeParams, skipBalanced } from './scanner.ts';
+import { findMarkupStart, isIdentStart, isIdentPart, isWhitespace, scanTypeParams, skipBalanced } from './scanner.ts';
 import { traverseReactive } from './walk.ts';
 import { isSetupHandler, setupHandlerMessage } from './handler.ts';
 import { assignToDerivedMessage } from './rewrite.ts';
@@ -140,7 +142,7 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
     // Imports and module-scope variables, resolved once: a bind target that names one is a
     // silent half-dead binding (or a TypeError on the first keystroke, for an import).
     const moduleScope = moduleBindScope(source, items);
-    const userOutlet = hasUserOutletImport(source, items);
+    const shadowed = shadowedBuiltins(source, items);
     diagnoseStyleSections(source, items, diagnostics);
     for (const item of items)
     {
@@ -152,14 +154,14 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
         }
         if (item.kind === 'component')
         {
-            diagnoseComponent(source, item, diagnostics, moduleScope, userOutlet);
+            diagnoseComponent(source, item, diagnostics, moduleScope, shadowed);
         }
         else
         {
             diagnoseMalformedComponents(source, item.start, item.end, diagnostics);
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
-            walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(diagnostics, userOutlet));
+            walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(source, diagnostics, shadowed));
             // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
             // per-component pass and compiled to the same silent half-dead binding. A synthetic
             // one-item body reuses the whole resolver with module scope only.
@@ -939,7 +941,7 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
     return -1;
 }
 
-function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope, userOutlet = false): void
+function diagnoseComponent(source: string, component: ComponentDecl, out: AzerothDiagnostic[], moduleScope: ModuleBindScope, shadowed: ReadonlySet<string>): void
 {
     diagnoseKeywordShadows(source, component, out);
     const malformedSpans = diagnoseDeclarationSlips(source, component, out);
@@ -1034,10 +1036,10 @@ function diagnoseComponent(source: string, component: ComponentDecl, out: Azerot
         if (item.kind === 'markup')
         {
             diagnoseEventHandlers(source, item.node, out);
-            walkMarkupDeep(source, item.node, markupRuleVisitor(out, userOutlet));
+            walkMarkupDeep(source, item.node, markupRuleVisitor(source, out, shadowed));
         }
     }
-    const embeddedRules = embeddedRuleVisitor(out, userOutlet);
+    const embeddedRules = embeddedRuleVisitor(source, out, shadowed);
     for (const [start, end] of embeddedSpans(source, component))
     {
         walkEmbeddedMarkup(source, start, end, embeddedRules);
@@ -2157,14 +2159,13 @@ interface ModuleBindScope
     vars: ReadonlySet<string>;
 }
 
-/** Collects imported names and module-scope variable names from the opaque module regions. */
 /**
- * True when the module imports a VALUE binding named `Outlet` from anywhere other than
- * 'azerothjs' - a user override the compiler honors over the auto-import, so the bare-outlet
- * rule must not fire on it (the user's component may well accept a no-props call).
+ * Builtin names the module value-imports from anywhere but 'azerothjs': the tag is the user's own.
+ * Outlet and Transition/Portal rules skip them; a user For is judged and lowered as written.
  */
-function hasUserOutletImport(source: string, items: readonly { kind: string; start: number; end: number }[]): boolean
+export function shadowedBuiltins(source: string, items: readonly { kind: string; start: number; end: number }[]): ReadonlySet<string>
 {
+    const names = new Set<string>();
     for (const item of items)
     {
         if (item.kind === 'component' || item.kind === 'style')
@@ -2182,20 +2183,26 @@ function hasUserOutletImport(source: string, items: readonly { kind: string; sta
                 continue;
             }
             const clause = statement.importClause;
-            if (clause.name?.text === 'Outlet')
+            if (clause.name !== undefined && BUILTIN_SET.has(clause.name.text))
             {
-                return true;
+                names.add(clause.name.text);
             }
-            if (clause.namedBindings !== undefined && !ts.isNamespaceImport(clause.namedBindings)
-                && clause.namedBindings.elements.some(el => !el.isTypeOnly && el.name.text === 'Outlet'))
+            if (clause.namedBindings !== undefined && !ts.isNamespaceImport(clause.namedBindings))
             {
-                return true;
+                for (const el of clause.namedBindings.elements)
+                {
+                    if (!el.isTypeOnly && BUILTIN_SET.has(el.name.text))
+                    {
+                        names.add(el.name.text);
+                    }
+                }
             }
         }
     }
-    return false;
+    return names;
 }
 
+/** Collects imported names and module-scope variable names from the opaque module regions. */
 function moduleBindScope(source: string, items: readonly { kind: string; start: number; end: number }[]): ModuleBindScope
 {
     const imports = new Set<string>();
@@ -2750,13 +2757,14 @@ function bindingAttrRules(el: MarkupElement, out: AzerothDiagnostic[]): void
  *
  * The tag set and the names in the message both come from BINDING_ATTRS, so a tag
  * added to the vocabulary is covered here the same day rather than silently skipped.
+ * Returns whether the child was refused.
  */
-function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[], shadowed: boolean): boolean
 {
     const declared = BINDING_ATTRS.get(el.tag);
     if (declared === undefined)
     {
-        return;
+        return false;
     }
     const names: { name: string; attr: string }[] = [];
     for (const attr of el.attributes)
@@ -2767,7 +2775,8 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
             names.push({ name: attr.value.code.trim(), attr: attr.name });
         }
     }
-    const lone = loneFunctionChild(el.children);
+    // A builtin <For> row is judged without the spacing beside it, as the lowerer drops it.
+    const lone = loneFunctionChild(el.tag === 'For' && !shadowed ? withoutSpacing(el.children) : el.children);
     const only = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
     const solo = only[0];
     const takesParams = only.length === 1 && solo !== undefined && solo.kind === 'expression'
@@ -2777,7 +2786,7 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
         : takesParams && (el.tag !== 'For' || lone !== undefined) ? solo : undefined;
     if (child === undefined)
     {
-        return;
+        return false;
     }
     let message: string;
     if (names.length > 0)
@@ -2802,18 +2811,9 @@ function callbackChildRule(el: MarkupElement, out: AzerothDiagnostic[]): void
         start: child.start,
         end: child.end
     });
+    return true;
 }
 
-/**
- * A `<For>` row must be exactly ONE host element. The reconciler tracks and moves rows by
- * element identity, so a row rooted at a component or at control flow hands it a
- * DocumentFragment: the fragment empties itself into the DOM on first insert, and every
- * later reconcile diffs against an empty detached node - the list blanks itself. That is
- * silent data loss at run time, so the shape is rejected here instead.
- *
- * Wrapping is always available and costs one element (`<li>`, `<g>`); the wrapper is what
- * the reconciler moves.
- */
 /**
  * `<For>` requires `key`. Its props type declares `key` non-optional and the runtime calls
  * `props.key(item, i)` unconditionally on both the reconcile and the hydrate path, so a keyless
@@ -2875,34 +2875,79 @@ function bareOutletRule(el: MarkupElement, out: AzerothDiagnostic[]): void
     });
 }
 
-function forRowRule(el: MarkupElement, out: AzerothDiagnostic[]): void
+/**
+ * A `<For>` row is one host element or one function literal, as rows move by element identity.
+ * Spacing beside it or a builtin Transition/Portal element child warns; other text is refused.
+ */
+function forRowRule(el: MarkupElement, source: string, out: AzerothDiagnostic[], shadowed: boolean, refused: boolean): void
 {
+    if (!ONE_ELEMENT_COMPONENTS.has(el.tag))
+    {
+        return;
+    }
+    const real = shadowed
+        ? el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''))
+        : withoutSpacing(el.children);
+    const solo = real[0];
+    const manual = el.tag === 'For' ? loneFunctionChild(shadowed ? el.children : real) : undefined;
+    if (real.length === 1 && solo !== undefined && (solo === manual || (solo.kind === 'element' && !solo.isComponent)))
+    {
+        const spacing = el.children.find(child => child !== solo);
+        if (spacing !== undefined && !shadowed && !refused)
+        {
+            const element = solo.kind === 'element';
+            const inside = element ? `<${ solo.tag }>` : 'the element it returns';
+            out.push({
+                code: 'azeroth/for-row-shape',
+                severity: 'warning',
+                message: `The spaces beside the ${ element ? inside : 'function' } in this <${ el.tag }> are dropped: `
+                    + `${ el.tag === 'For' ? 'a row' : 'its child' } is the ${ element ? 'element' : 'function' } alone. `
+                    + `Remove them, or put the space inside ${ inside }${ el.tag === 'For' ? ' or use CSS if it separates the rows' : '' }.`,
+                start: spacing.start,
+                end: spacing.end
+            });
+        }
+        return;
+    }
+    const nodes = real.filter(child => child.kind !== 'text');
+    const lone = nodes[0];
+    const text = real.find(child => child.kind === 'text');
+    if (!shadowed && nodes.length === 1 && lone?.kind === 'element' && !lone.isComponent && text !== undefined)
+    {
+        // Anchored at the text the author wrote, without the line break or indent around it.
+        let start = text.start;
+        let end = text.end;
+        while (start < end && isWhitespace(source[start]))
+        {
+            start++;
+        }
+        while (end > start && isWhitespace(source[end - 1]))
+        {
+            end--;
+        }
+        // A line break reads as a space; only an invisible character is spelled by code point.
+        const quoted = source.slice(start, end)
+            .replace(/[ \t\n\f\v\r]+/g, run => run.includes('\n') ? ' ' : run)
+            .replace(/(?! )[\p{White_Space}\p{Cc}\p{Cf}]/gu, c => `U+${ (c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0') }`);
+        const role = el.tag === 'For' ? 'row' : 'child';
+        out.push({
+            code: 'azeroth/for-row-shape',
+            severity: 'error',
+            message: `A <${ el.tag }> ${ role } must be exactly one ${ el.tag === 'For' ? 'host ' : '' }element - this ${ role } has `
+                + `text beside its <${ lone.tag }>: \`${ quoted }\`. Move the text inside <${ lone.tag }> or remove it: plain `
+                + 'spaces beside the element are dropped, but a character reference or any other text is not.',
+            start,
+            end
+        });
+        return;
+    }
     if (el.tag !== 'For')
     {
         return;
     }
-    const real = el.children.filter(child => !(child.kind === 'text' && child.value.trim() === ''));
-    const solo = real[0];
 
-    // A callback/thunk child is the manual API's own form and is judged by its own rule - but
-    // only the lone function LITERAL the lowerer passes through as the row is that form. Any
-    // other expression child cannot render as a row:
-    //   `<For ...>{renderRow}</For>` - a function REFERENCE. SSR renders it correctly and the
-    //     client throws inside insertBefore, the same serve-then-die split as a keyless <For>.
-    //   `<For ... let={item}>{ item.n }</For>` - a bare hole. `let=` binds a row name for a row
-    //     ELEMENT, so this throws "item is not defined" in both modes.
-    //   `<For ...> { () => <li/> } </For>` - a function padded with same-line whitespace lowers
-    //     as a fragment row, and the reconciler throws on it.
-    // None is one host element, which is what a row must be, so all fall through to the
-    // existing azeroth/for-row-shape arms below and are named there.
-    if (loneFunctionChild(el.children) !== undefined)
-    {
-        return;
-    }
-    if (real.length === 1 && solo !== undefined && solo.kind === 'element' && !solo.isComponent)
-    {
-        return;
-    }
+    // Any other expression child is not a row: a function reference renders on the server but
+    // throws on the client, and a bare hole beside let= reads a name that only a row element binds.
     const offender = solo ?? el;
     const what = real.length === 0
         ? 'has no element to render'
@@ -3024,7 +3069,7 @@ function hostAttributeRules(el: MarkupElement, out: AzerothDiagnostic[]): void
  * authored handler may share that callback key (codegen composes them, write-back first).
  * Markup children emit `children` too, so an explicit children= prop alongside them collides.
  */
-function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[], userOutlet = false): void
+function componentPropRules(el: MarkupElement, source: string, out: AzerothDiagnostic[], shadowed: ReadonlySet<string>): void
 {
     const emitted = new Set<string>();
     const claim = (key: string, start: number, end: number): void =>
@@ -3044,12 +3089,13 @@ function componentPropRules(el: MarkupElement, out: AzerothDiagnostic[], userOut
     };
 
     bindingAttrRules(el, out);
-    callbackChildRule(el, out);
-    if (!userOutlet)
+    const own = shadowed.has(el.tag);
+    const refused = callbackChildRule(el, out, own);
+    if (!own)
     {
         bareOutletRule(el, out);
     }
-    forRowRule(el, out);
+    forRowRule(el, source, out, own, refused);
     forKeyRule(el, out);
 
     for (const attr of el.attributes)
@@ -3290,7 +3336,7 @@ function bindExpressionRule(el: MarkupElement, out: AzerothDiagnostic[]): void
 }
 
 /** Dispatches one element to its name-domain's rule set. */
-function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: MarkupElement) => void
+function markupRuleVisitor(source: string, out: AzerothDiagnostic[], shadowed: ReadonlySet<string>): (el: MarkupElement) => void
 {
     return (el) =>
     {
@@ -3303,7 +3349,7 @@ function markupRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: M
 
         if (el.isComponent)
         {
-            componentPropRules(el, out, userOutlet);
+            componentPropRules(el, source, out, shadowed);
         }
         else
         {
@@ -3346,9 +3392,9 @@ function diagnoseEventHandlers(source: string, node: MarkupElement | MarkupFragm
  * check. In markup position those two run as separate walks, so only the embedded spans compose
  * them here.
  */
-function embeddedRuleVisitor(out: AzerothDiagnostic[], userOutlet = false): (el: MarkupElement) => void
+function embeddedRuleVisitor(source: string, out: AzerothDiagnostic[], shadowed: ReadonlySet<string>): (el: MarkupElement) => void
 {
-    const rules = markupRuleVisitor(out, userOutlet);
+    const rules = markupRuleVisitor(source, out, shadowed);
     const handlers = setupHandlerRule(out);
     return (el) =>
     {

@@ -39,7 +39,7 @@ import { quoteString, wrapDynamic, isFunctionLiteral, isBareReference, isCollect
 import { buildLineStarts, locationFor, encodeMappings, type SourceMapV3, type RawSegment } from './sourcemap.ts';
 import type { MarkupElement, MarkupFragment, Span } from './types.ts';
 import { parseModule } from './parser.ts';
-import { diagnoseModule } from './diagnostics.ts';
+import { diagnoseModule, shadowedBuiltins } from './diagnostics.ts';
 import { analyzeComponent } from './analyze.ts';
 import { lowerComponent, lowerMarkup } from './lower.ts';
 import { styleScopeOf } from './style-section.ts';
@@ -157,6 +157,9 @@ interface Emit
      * markup class in the module resolves against the one stylesheet.
      */
     classes: Readonly<Record<string, string>> | null;
+
+    /** Builtin names the module imports from elsewhere: those tags keep their children. */
+    shadowed: ReadonlySet<string>;
 }
 
 /** Interns a template HTML string, returning its hoisted const name. */
@@ -237,7 +240,7 @@ export function generateModule(source: string, filename = 'module.azeroth', opti
 
     const module = parseModule(source);
     const style = styleScopeOf(source, module);
-    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null };
+    const emit: Emit = { used: new Set(), templates: new Map(), clientOnly: options.ssr === false, dev: options.dev === true, raw: false, holeDepth: 0, regionStart: 0, classes: style?.classes ?? null, shadowed: shadowedBuiltins(source, module.items) };
 
     interface Piece { outStart: number; sourceStart: number; verbatim: boolean; }
     const pieces: Piece[] = [];
@@ -394,7 +397,7 @@ interface ComponentEmit { code: string; spans: { genOffset: number; sourceOffset
 function generateComponent(source: string, component: ComponentDecl, emit: Emit): ComponentEmit
 {
     const analysis = analyzeComponent(source, component);
-    const lowered = lowerComponent(source, component, analysis, emit.classes);
+    const lowered = lowerComponent(source, component, analysis, emit.classes, emit.shadowed);
     const plan = lowered === null ? null : optimize(source, lowered);
     if (plan !== null)
     {
@@ -1578,7 +1581,7 @@ function projectMarkup(code: string, emit: Emit, sources: ReactiveSources, base 
  */
 function emitMarkupExpr(source: string, node: MarkupElement | MarkupFragment, sources: ReactiveSources, emit: Emit): string
 {
-    const plan = lowerMarkup(source, node, emit.classes);
+    const plan = lowerMarkup(source, node, emit.classes, emit.shadowed);
     const previous = emit.raw;
     emit.raw = true;
     emit.holeDepth++;

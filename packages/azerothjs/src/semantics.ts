@@ -268,6 +268,12 @@ export const BUILTIN_COMPONENTS: readonly string[] = [
 export const BUILTIN_SET: ReadonlySet<string> = new Set(BUILTIN_COMPONENTS);
 
 /**
+ * Builtins that take one markup child: a `<For>` row, moved by element identity, and the child
+ * `<Transition>` animates or `<Portal>` relocates. Same-line spacing beside that child is dropped.
+ */
+export const ONE_ELEMENT_COMPONENTS: ReadonlySet<string> = new Set(['For', 'Transition', 'Portal']);
+
+/**
  * The tag-domain rule: a capitalized or dotted tag is a COMPONENT reference (attributes
  * are verbatim props keys); anything else is a host element (attributes follow the DOM
  * rules above).

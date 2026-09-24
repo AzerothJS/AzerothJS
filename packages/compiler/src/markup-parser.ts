@@ -578,7 +578,10 @@ class MarkupParser
         {
             return null;
         }
-        return { kind: 'text', value, start, end: this.pos };
+        // Only ASCII spacing is marked: a character reference or a non-ASCII space is text.
+        return /^[ \t\f\v\r]+$/.test(raw)
+            ? { kind: 'text', value, start, end: this.pos, spacing: true }
+            : { kind: 'text', value, start, end: this.pos };
     }
 
     /**

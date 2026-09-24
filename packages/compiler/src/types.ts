@@ -57,6 +57,8 @@ export interface MarkupText extends Span
 {
     kind: 'text';
     value: string;
+    /** Set on the ' ' the parser keeps for a same-line run of space, tab, FF, VT or CR. */
+    spacing?: true;
 }
 
 /**

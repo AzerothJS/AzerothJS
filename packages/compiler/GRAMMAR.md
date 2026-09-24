@@ -232,13 +232,26 @@ Spread          := `{` `...` TS expression `}`
 - **Void elements** (`br`, `img`, `input`, ...) may be written self-closed
   (`<br/>`) or HTML-style (`<br>`); both are childless.
 - **Text** carries no expression syntax - an apostrophe in text is text - and is
-  normalized in exactly two ways, both HTML's own:
+  normalized in two ways, both HTML's own, and beside a one-element child (below)
+  in one more:
   - **Entities are decoded**: the named set (`&amp;`, `&nbsp;`, ...) plus numeric
     decimal and hex refs (`&#65;`, `&#x42;`). An unrecognized `&foo;` stays literal.
   - **Newline whitespace collapses**: a whitespace-only run containing a newline is
     dropped (so indentation between tags emits no text node), and inside a run that
     has real text each `\s*\n\s*` sequence becomes a single space. Same-line spacing
-    is authored spacing and is preserved - `a <b>x</b> c` keeps both spaces.
+    is authored spacing and is preserved - `a <b>x</b> c` keeps both spaces - except
+    beside a one-element child (below).
+- **One-element children**: a row of the built-in `<For>` is ONE host element,
+  because the list moves it by identity; it may instead be one function literal (the
+  manual form). A same-line run of ASCII spacing (space, tab, form feed, vertical
+  tab, carriage return) beside the row is dropped, and the compiler warns that it
+  is. Any other text beside the row is refused as `azeroth/for-row-shape`: a word, a
+  character reference (`&nbsp;`, `&#32;`), or a non-ASCII space typed literally on
+  the row's own line. A whitespace-only run that holds a line break is formatting
+  and is dropped, whatever spaces it holds. A row that is a component, a fragment,
+  control flow or more than one child is refused too; wrap it in an element. The
+  built-in `<Transition>` and `<Portal>` drop same-line spacing beside their child;
+  when that child is a host element, the text beside it follows the same rule.
 - **Holes** capture their interior as a RAW TypeScript span; nested markup inside a
   hole is compiled recursively. A hole containing only comments/whitespace is
   dropped.
@@ -431,8 +444,9 @@ nothing and disposes nothing.
 - **No syntax plugins.** The grammar is closed; there is no compiler plugin API and
   no user-extensible syntax.
 - **No HTML compatibility promises** beyond §6: no doctype, no comments-in-markup
-  (`<!-- -->`) - a hole with a TS comment serves that need. Entity decoding and
-  newline-whitespace collapsing are in §6 and are the whole of it.
+  (`<!-- -->`) - a hole with a TS comment serves that need. Entity decoding,
+  newline-whitespace collapsing and the spacing dropped beside a one-element child
+  are in §6 and are the whole of it.
 - **No angle-bracket casts, no comma-less generic arrows in body positions** (§3.3).
 - **No new keywords without the §7 rubric** - and the current keyword set is
   settled; additions follow the syntax-stability policy, not ad-hoc need.

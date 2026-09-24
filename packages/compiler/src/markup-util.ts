@@ -17,6 +17,8 @@
  *                     the type projection so all three classify `{expr}` identically);
  *   - loneFunctionChild - the child the IR lowerer passes through as a tag's children function
  *                     (shared with the diagnostics so the refusal matches the lowering);
+ *   - withoutSpacing - the children of a one-element builtin once the same-line spacing beside its
+ *                     child is dropped (shared with the diagnostics the same way);
  *   - quoteString   - string-literal quoting;
  *   - objectKey     - object-key quoting;
  *   - alreadyImports - whether a module already names-imports a symbol (used by both emitters before they
@@ -68,6 +70,20 @@ export function loneFunctionChild(children: MarkupChild[]): MarkupExpression | u
 {
     const only = children[0];
     return children.length === 1 && only?.kind === 'expression' && isFunctionLiteral(only.code) ? only : undefined;
+}
+
+/**
+ * `children` without the same-line spacing the parser marked. A character reference or a
+ * non-ASCII space is text and stays.
+ *
+ * @example
+ * ```ts
+ * withoutSpacing(parseMarkup('<For> { () => <li/> } </For>', 0).node.children); // [the expression]
+ * ```
+ */
+export function withoutSpacing(children: MarkupChild[]): MarkupChild[]
+{
+    return children.filter(child => !(child.kind === 'text' && child.spacing === true));
 }
 
 /**

@@ -617,22 +617,30 @@ describe('diagnoseModule - a <For> row must be an element, not any expression', 
         expect(found).not.toContain('azeroth/for-row-shape');
     });
 
-    it('rejects a function child padded on the same line once, as a row that is not an element', () =>
+    it('judges a function child padded on the same line like the unpadded one', () =>
     {
-        // Same-line whitespace makes it one of three children, so it lowers as a fragment row.
+        // The spacing is dropped before the row is judged and lowered.
         const shapes = [
             '<For each={x} key={(i) => i.n} let={row}> { () => <li>{row.n}</li> } </For>',
             '<For each={x} key={(i) => i.n} index={i}> { () => <li>{i}</li> } </For>',
-            '<For each={x} key={(i) => i.n}> { () => <li>x</li> } </For>',
-            '<For each={x} key={(i) => i.n}> { (r) => <li>{r.n}</li> } </For>',
-            '<For each={x} key={(i) => i.n} let={row}>&nbsp;{ () => <li>{row.n}</li> }</For>'
+            '<For each={x} key={(i) => i.n}> { (r) => <li>{r.n}</li> } </For>'
         ];
         for (const shape of shapes)
         {
             const src = `component C { state x = [{ n: 1 }]; <ul>${ shape }</ul> }`;
             const found = diagnoseModule(src).map(d => [d.code, src.slice(d.start, d.end)]);
-            expect(found).toEqual([['azeroth/for-row-shape', expect.stringMatching(/^\{ .*=> <li>.* \}$/)]]);
+            expect(found).toEqual([['azeroth/callback-children-removed', expect.stringMatching(/^\{ .*=> <li>.* \}$/)]]);
         }
+        // The thunk row is accepted, so only the dropped spacing is reported.
+        const thunk = diagnoseModule('component C { state x = [{ n: 1 }]; <ul><For each={x} key={(i) => i.n}> { () => <li>x</li> } </For></ul> }');
+        expect(thunk.map(d => [d.code, d.severity])).toEqual([['azeroth/for-row-shape', 'warning']]);
+    });
+
+    it('rejects a character reference beside a function child as text in the row', () =>
+    {
+        const src = 'component C { state x = [{ n: 1 }]; <ul><For each={x} key={(i) => i.n} let={row}>&nbsp;{ () => <li>{row.n}</li> }</For></ul> }';
+        const found = diagnoseModule(src).map(d => [d.code, src.slice(d.start, d.end)]);
+        expect(found).toEqual([['azeroth/for-row-shape', '&nbsp;']]);
     });
 
     it('accepts the element row', () =>

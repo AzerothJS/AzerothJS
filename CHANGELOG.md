@@ -114,11 +114,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   declared name as `azeroth/callback-children-removed`, and the message names the declared name and
   says to write the content directly inside the tag and read the name bare. A lone function child
   that never reads the name rendered before and is refused too: unwrap it, or drop the unused
-  `let=` or `index=`. A `<For>` whose only child is a
-  `{ () => ... }` written with spaces around it on the same line compiled clean and threw when the
-  list rendered; it is refused as `azeroth/for-row-shape`, a row that is not an element. The
-  `azeroth/unsafe-narrow-in-show` warning on a `<Show>` with a lone `{ () => ... }` child tells the
-  author to unwrap it before declaring the name.
+  `let=` or `index=`. A `<For>` with no `let=` or `index=` whose only child is a
+  `{ () => ... }` with spaces or tabs beside it on the same line compiled clean and threw when the
+  list rendered; the spaces are dropped with an `azeroth/for-row-shape` warning, so it renders like
+  the unpadded row. Beside `let=` or `index=` the padded function is refused as
+  `azeroth/callback-children-removed`, like the unpadded one. The `azeroth/unsafe-narrow-in-show`
+  warning on a `<Show>` with a lone `{ () => ... }` child tells the author to unwrap it before
+  declaring the name.
 
 - **An ISR page under `routing: 'prefix'` lost its hreflang links at runtime.** A `render: 'static'`
   page with `revalidate` rendered at runtime, on a miss or a regeneration, carried no
@@ -207,6 +209,31 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   null) and carries that value as `cause`. A prerendered page that calls the in-process api names
   the fixes: leave the page's params out of `staticParams` so a request renders it, read its data
   without the client, or use `render: 'server'`.
+
+- **A `<For>` row or a `<Transition>` or `<Portal>` child with spaces beside it compiled clean and
+  threw in the browser.** A `<For>` that declared no `let=` or `index=`, a `<Transition>` or a
+  `<Portal>`, each the builtin written under its own name, whose child had spaces or tabs beside
+  it on the same line, as in `<For each={ list } key={ (r) => r.id }> <li>x</li> </For>` or
+  `<Portal> <Modal /> </Portal>`, passed the compiler, the language server, eslint and
+  azeroth-tsc. The server rendered the spaces, and the browser threw
+  `TypeError: Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'`
+  (`'appendChild'` for `<Portal>`) on mount, or on a later change to the list after hydration (a
+  later toggle, for `<Transition>`). The child is now alone in every mode: the spaces are dropped.
+  A `<For>` row, named or not, and a host element that is the child of `<Transition>` or
+  `<Portal>` get an `azeroth/for-row-shape` warning for them; beside a row that declares a name
+  they were already dropped, without one, and beside any other child of `<Transition>` or
+  `<Portal>`, such as the `<Modal />` above, they are dropped without one. A server render of such
+  a list, and a hydrated list that never changed, showed a space between rows; inline rows such as
+  `<a>` or `<span>` now sit flush with the warning (an islands shell that read `Rated: * * *` reads
+  `Rated: ***`), so put the space inside the element or use CSS. Other text beside a row element,
+  or beside a host element that is the child of `<Transition>` or `<Portal>`, is refused as
+  `azeroth/for-row-shape`, and the message quotes it and says to move it inside the element or
+  remove it. Newly refused beside a row that declares `let=` or `index=`, where it rendered with
+  the text dropped: a character reference such as `&nbsp;`, `&#160;`, `&#32;` (alone or in a
+  run), `&ensp;`, `&emsp;`, `&#9;` or `&#10;`, and a non-breaking or other Unicode space typed
+  literally on the element's line. Beside a row that declares neither, and beside a
+  `<Transition>` or `<Portal>` child, the same text threw in the browser. GRAMMAR.md now states
+  the rule.
 
 ### Security
 
