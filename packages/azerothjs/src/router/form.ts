@@ -22,7 +22,8 @@
  * The token comes from the handoff when the server rendered this page, because a render has no
  * `document.cookie` to read and, on a visitor's first load, no cookie exists yet - the host
  * mints one for that response and the form must carry that same value. After a client
- * navigation there IS a cookie, and it is read directly.
+ * navigation there IS a cookie, and it is read directly. A page a shared cache may store carries
+ * neither, so the enhanced submit asks `/__azeroth/csrf` for the cookie first.
  */
 
 import type { MountNode } from '../component/index.ts';
@@ -35,6 +36,12 @@ import { isAbsoluteAppPath } from '../semantics.ts';
 
 /** The hidden field a page action reads its CSRF token from; mirrors the server's `CSRF_FIELD`. */
 const CSRF_FIELD = '_csrf';
+
+/** Where `csrfCookie` hands out a token for a page a shared cache served without one. */
+const CSRF_TOKEN_PATH = '/__azeroth/csrf';
+
+/** The header in which that answer names the cookie `csrfCookie` compares and its token. */
+const CSRF_PAIR_HEADER = 'x-azeroth-csrf-cookie';
 
 /** Props for {@link Form}. */
 export interface FormProps
@@ -66,24 +73,133 @@ export interface FormProps
     [key: string]: unknown;
 }
 
-/** @internal Reads the CSRF cookie a browser holds; empty on the server, where there is none. */
-function cookieToken(): string
+/** @internal The cookie `csrfCookie` compares and its token, as its answer named them. */
+export interface CsrfPair
 {
-    const cookies = (globalThis as { document?: { cookie?: string } }).document?.cookie;
-    if (cookies === undefined)
-    {
-        return '';
-    }
-    for (const pair of cookies.split(';'))
+    cookie: string;
+    token: string;
+    /** Named to another caller's ask this one joined, which may have reached another server. */
+    joined?: boolean;
+}
+
+/**
+ * @internal Every value the browser shows under `name`, in `document.cookie` order, decoded as the
+ * server's cookie parser decodes it.
+ */
+function jarValues(name: string): string[]
+{
+    const cookies = (globalThis as { document?: { cookie?: string } }).document?.cookie ?? '';
+    return cookies.split(';').flatMap((pair) =>
     {
         const at = pair.indexOf('=');
-        const name = pair.slice(0, at).trim();
-        if (name === 'azcsrf' || name === '__Host-azcsrf')
+        if (at <= 0 || pair.slice(0, at).trim() !== name)
         {
-            return pair.slice(at + 1);
+            return [];
         }
+        try
+        {
+            return [decodeURIComponent(pair.slice(at + 1))];
+        }
+        catch
+        {
+            return [pair.slice(at + 1)];
+        }
+    });
+}
+
+/**
+ * @internal The token a write posts, `sure` when it may skip the ask (with the default names only
+ * a lone `__Host-azcsrf` equal to any `seed`), and `gone` once the cookie `told` named has left.
+ */
+export function heldCsrfToken(told: CsrfPair | undefined, seed = '', cookie?: string): { token: string; sure: boolean; gone: boolean }
+{
+    if (told !== undefined && (cookie === undefined || cookie === told.cookie))
+    {
+        // The answer's token until the browser shows the cookie; another value there is a rotation.
+        const values = jarValues(told.cookie);
+        const sure = values.includes(told.token);
+        return { token: sure || values.length === 0 ? told.token : values[0] ?? '', sure, gone: values.length === 0 };
     }
-    return '';
+    if (cookie !== undefined)
+    {
+        const token = jarValues(cookie)[0] ?? '';
+        return { token, sure: token !== '', gone: false };
+    }
+    const own = jarValues('__Host-azcsrf')[0] ?? '';
+    const plain = jarValues('azcsrf')[0] ?? '';
+    return { token: own || plain, sure: own !== '' && plain === '' && (seed === '' || seed === own), gone: false };
+}
+
+/** @internal The pair a token answer named, when it named one. */
+function pairOf(answer: unknown): CsrfPair | undefined
+{
+    const named = (answer as { headers?: Headers } | undefined)?.headers?.get(CSRF_PAIR_HEADER) ?? '';
+    const at = named.indexOf('=');
+    return at > 0 && at < named.length - 1 ? { cookie: named.slice(0, at), token: named.slice(at + 1) } : undefined;
+}
+
+/** @internal The token request in flight, one per page, and the pair its answer named. */
+let asking: Promise<CsrfPair | undefined> | undefined;
+
+/** @internal How long a tab holds the lock over an ask that has not settled. */
+const LOCK_HOLD = 5000;
+
+/** @internal How long an ask waits for the lock before it runs without it. */
+const LOCK_WAIT = 10000;
+
+/**
+ * @internal Runs `ask` under the origin-wide lock, held at most LOCK_HOLD ms so a hung ask hands
+ * it on in order. A lock not granted within LOCK_WAIT ms, or refused, runs the ask without it.
+ */
+function lockedAsk(locks: LockManager, ask: () => Promise<unknown>): Promise<unknown>
+{
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), LOCK_WAIT);
+    let run: Promise<unknown> | undefined;
+    return locks.request('azeroth-csrf-ask', { signal: stop.signal }, () =>
+    {
+        clearTimeout(timer);
+        run = ask();
+        let hold: ReturnType<typeof setTimeout> | undefined;
+        return Promise.race([run, new Promise((resolve) =>
+        {
+            hold = setTimeout(resolve, LOCK_HOLD);
+        })]).finally(() => clearTimeout(hold));
+    }).then(() => run, () =>
+    {
+        clearTimeout(timer);
+        return run ?? ask();
+    });
+}
+
+/**
+ * @internal Asks for the cookie a write to `target` needs unless `held`: one request per page, one
+ * tab at a time under Web Locks. False for another origin; a joined pair comes back `joined`.
+ */
+export async function askCsrfCookie(target: string, held: boolean, ask: () => Promise<unknown>): Promise<CsrfPair | undefined | false>
+{
+    // Resolved the way fetch resolves it. With no location there is no origin to compare, and the
+    // write goes wherever the caller's own transport sends it.
+    const here = (globalThis as { location?: Location }).location;
+    const base = (globalThis as { document?: { baseURI?: string } }).document?.baseURI;
+    if (here !== undefined && new URL(target, base).origin !== here.origin)
+    {
+        return false;
+    }
+    if (held)
+    {
+        return undefined;
+    }
+    const joined = asking !== undefined;
+    // Under Web Locks one ask at a time across this origin's tabs: a later one carries the cookie
+    // the first set, so the server mints no rival token.
+    const locks = (globalThis as { navigator?: { locks?: LockManager | null } }).navigator?.locks;
+    asking ??= (locks ? lockedAsk(locks, ask) : ask()).then(pairOf, () => undefined).finally(() =>
+    {
+        asking = undefined;
+    });
+    const pair = await asking;
+    return joined && pair !== undefined ? { ...pair, joined } : pair;
 }
 
 /**
@@ -113,7 +229,10 @@ export function Form(props: FormProps): MountNode
     };
     // The server's token while it is the one that rendered this page, the browser's cookie
     // after a client navigation. The seeded value is the only one that exists on a first load.
-    const token = (): string => router.csrfToken() || cookieToken();
+    const token = (): string => router.csrfToken() || heldCsrfToken(undefined).token;
+    // Once per form: a server that answered and set nothing has no token to hand out.
+    let answered = false;
+    let told: CsrfPair | undefined;
 
     /**
      * The submit did not reach the action's own answer - a guard, the CSRF check, a fault, or a
@@ -136,12 +255,34 @@ export function Form(props: FormProps): MountNode
         setSubmitting(true);
         try
         {
-            const response = await fetch(target(), {
+            const url = target();
+            const body = new URLSearchParams(new FormData(element) as unknown as Record<string, string>);
+            // A page a shared cache may store minted no cookie, so the first submit asks for one,
+            // even over a rendered token whose cookie never arrived, and posts the token it names.
+            const now = heldCsrfToken(told, router.csrfToken());
+            // Asked once, unless the cookie that answer named has since gone (a logout).
+            const answer = await askCsrfCookie(url, (answered && !now.gone) || now.sure, async () =>
+            {
+                const response = await fetch(router.href(CSRF_TOKEN_PATH), { credentials: 'same-origin', cache: 'no-store' });
+                answered = true;
+                return response;
+            });
+            if (answer !== false)
+            {
+                // A joined ask may have reached another server: its pair rides this write only.
+                told = answer && answer.joined !== true ? answer : told;
+                const held = heldCsrfToken(answer ?? told).token;
+                if (held !== '')
+                {
+                    body.set(CSRF_FIELD, held);
+                }
+            }
+            const response = await fetch(url, {
                 method: 'POST',
                 // Asking for JSON is what selects the enhanced representation: the same action
                 // answers a value here and a redirect-or-rendered-page to a native submit.
                 headers: { accept: 'application/json' },
-                body: new URLSearchParams(new FormData(element) as unknown as Record<string, string>),
+                body,
                 credentials: 'same-origin'
             });
             // Exactly three answers are the action's own; everything else is a refusal by the

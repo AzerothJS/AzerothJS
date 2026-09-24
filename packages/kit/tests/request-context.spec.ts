@@ -353,11 +353,18 @@ describe('the private stamp', () =>
 
     it('CONTROL: a page that never reads identity answers with the headers it answered with before', async () =>
     {
-        const quiet = await get(serve(), '/quiet');
+        const quiet = await get(serve(), '/quiet', { cookie: `__Host-azcsrf=${ csrfToken() }` });
         expect(quiet.status).toBe(200);
         expect(quiet.headers.get('cache-control')).toBeNull();
         // By EQUALITY, so an over-eager stamp adds a name here and is caught rather than missed.
-        expect([...quiet.headers.keys()].sort()).toEqual(['content-length', 'content-type', 'set-cookie']);
+        expect([...quiet.headers.keys()].sort()).toEqual(['content-length', 'content-type']);
+    });
+
+    it('the token minted on a first visit makes the page private, not no-store', async () =>
+    {
+        const first = await get(serve(), '/quiet');
+        expect(first.headers.get('cache-control')).toBe('private');
+        expect([...first.headers.keys()].sort()).toEqual(['cache-control', 'content-length', 'content-type', 'set-cookie']);
     });
 
     it('PAIR: an ISR page\'s loader sees null, and two visitors are served one anonymous copy', async () =>

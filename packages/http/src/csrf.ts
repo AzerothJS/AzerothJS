@@ -57,10 +57,45 @@ const MIN_TOKEN_LENGTH = 16;
 /** @internal Methods that must stay side-effect-free by HTTP contract; the guard passes them. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/**
+ * @internal The path `csrfCookie` answers with a token cookie, under any prefix. A page a
+ * shared cache may store carries no token, so `<Form>` and the typed client ask here first.
+ */
+const CSRF_TOKEN_PATH = '/__azeroth/csrf';
+
+/** @internal The answer header naming the cookie this layer compares and its token. */
+const CSRF_PAIR_HEADER = 'x-azeroth-csrf-cookie';
+
 /** @internal The effective cookie name for the options. */
 function cookieNameOf(options: CsrfOptions): string
 {
     return options.cookie ?? (options.secure === false ? 'azcsrf' : '__Host-azcsrf');
+}
+
+/**
+ * @internal Whether a request came from a page of this origin: `Sec-Fetch-Site: same-origin`, or
+ * none over plain http off loopback, where browsers send none, and no other `Origin`.
+ */
+function fromOwnPage(request: Request): boolean
+{
+    const site = request.headers.get('sec-fetch-site');
+    const origin = request.headers.get('origin');
+    const url = new URL(request.url);
+    // Browsers send Sec-Fetch-Site only to a trustworthy origin; there, none gets no pair.
+    const trustworthy = url.protocol === 'https:' || /^(localhost|127(\.\d+){3}|\[::1\])$|\.localhost$/.test(url.hostname);
+    return (site === 'same-origin' || (site === null && !trustworthy)) && (origin === null || origin === url.origin);
+}
+
+/**
+ * @internal Whether the request carries two values under `name`. This layer sets one host-only
+ * cookie, so the other came from another host, and nothing says which is this visitor's own.
+ */
+function heldTwice(request: Request, name: string): boolean
+{
+    const values = (request.headers.get('cookie') ?? '').split(';')
+        .filter((pair) => pair.includes('=') && pair.slice(0, pair.indexOf('=')).trim() === name)
+        .map((pair) => pair.slice(pair.indexOf('=') + 1).trim());
+    return new Set(values).size > 1;
 }
 
 /** Mints one token: 32 random bytes as base64url. */
@@ -95,21 +130,124 @@ function tokensEqual(a: string, b: string): boolean
     return diff === 0;
 }
 
+/** @internal Whether a cache directive list keeps the response out of the cache it addresses. */
+function keepsOut(control: string): boolean
+{
+    return control.toLowerCase().split(',').some((directive) => ['private', 'no-store'].includes(directive.trim()));
+}
+
+/**
+ * @internal `private` when no shared cache may store the response, `shared` when one may (a CDN
+ * obeys its own `*-Cache-Control`, `Surrogate-Control` or `Edge-Control` first), else `unstated`.
+ */
+function cachePolicyOf(headers: Headers): 'private' | 'shared' | 'unstated'
+{
+    for (const [name, value] of headers)
+    {
+        if ((name.endsWith('-cache-control') || name === 'surrogate-control' || name === 'edge-control') && !keepsOut(value))
+        {
+            return 'shared';
+        }
+    }
+    const control = headers.get('cache-control');
+    if (control === null)
+    {
+        return headers.has('expires') ? 'shared' : 'unstated';
+    }
+    return keepsOut(control) ? 'private' : 'shared';
+}
+
+/**
+ * @internal Appends `token` as the CSRF cookie unless a shared cache may store the response, and
+ * marks one that names no policy `private`. `csrfCookie` and the kit's first-visit render share it.
+ */
+export function withCsrfCookie(response: Response, token: string, options: CsrfOptions = {}): Response
+{
+    const policy = cachePolicyOf(response.headers);
+    if (policy === 'shared')
+    {
+        return response;
+    }
+    const cookie = serializeCookie(cookieNameOf(options), token, { secure: options.secure !== false, httpOnly: false, sameSite: 'lax', path: '/' });
+    // APPEND, never set: a handler's own Set-Cookie must survive the minting.
+    const minted = withSetCookies(response, [...response.headers.getSetCookie(), cookie]);
+    if (policy === 'unstated')
+    {
+        minted.headers.set('cache-control', 'private');
+    }
+    return minted;
+}
+
+/** @internal A copy of `response` whose Set-Cookie lines are exactly `cookies`. */
+function withSetCookies(response: Response, cookies: readonly string[]): Response
+{
+    const headers = new Headers();
+    response.headers.forEach((value, key) =>
+    {
+        if (key !== 'set-cookie')
+        {
+            headers.set(key, value);
+        }
+    });
+    for (const cookie of cookies)
+    {
+        headers.append('set-cookie', cookie);
+    }
+    // 204/205/304 forbid a body - Response() throws on any stream for them, and the
+    // kernel's lazy response materializes a stream even for an empty payload.
+    const body = response.status === 204 || response.status === 205 || response.status === 304
+        ? null
+        : response.body;
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+}
+
 /**
  * Edge middleware minting the token cookie on GET responses that arrive without one. The
  * cookie is deliberately readable (httpOnly false): double submit works BECAUSE the page's
  * own JS can read it and a cross-site attacker cannot.
+ *
+ * It never mints on a response a shared cache may store (`public`, `max-age`, `s-maxage`,
+ * `no-cache`, `Expires`, or a CDN's own `*-Cache-Control`, `Surrogate-Control` or
+ * `Edge-Control`): a CDN would replay that one visitor's token to every visitor. A response that
+ * names no policy is marked `private` before it carries the cookie. A GET to `/__azeroth/csrf`,
+ * under any prefix, answers 204 `private, no-store` with the cookie, for a visitor whose page
+ * came from a shared cache. To a request from this origin's own page the answer also names the
+ * cookie this layer compares and its token, `x-azeroth-csrf-cookie: <name>=<token>`, so a write
+ * posts the right token before `document.cookie` shows it and beside another server's cookies.
+ * A token already held is named only when it is made only of letters, digits, `-` and `_` and
+ * is the one value under the name, and it is then set again beside it.
+ *
+ * It judges only the headers set by the layers inside it, so list it before every layer that
+ * sets `Cache-Control` or a CDN field (any `*-Cache-Control`, `Surrogate-Control`,
+ * `Edge-Control`); the first one listed runs outermost. A `pipeline()` layer runs outside every
+ * `app.use` layer, so when a `pipeline()` layer sets one, put `csrfCookie` in `pipeline()` ahead
+ * of it.
  */
 export function csrfCookie(options: CsrfOptions = {}): EdgeMiddleware
 {
     const name = cookieNameOf(options);
-    const secure = options.secure !== false;
     return edge((next) => ({
         handle: async (request: Request): Promise<Response> =>
         {
+            const held = parseCookies(request)[name];
+            const fresh = held === undefined;
+            if (request.method === 'GET' && !isSharedDispatch(request) && new URL(request.url).pathname.endsWith(CSRF_TOKEN_PATH))
+            {
+                const token = held ?? csrfToken();
+                const headers: Record<string, string> = { 'cache-control': 'private, no-store' };
+                // Only to this origin's own page, never for a name held twice (one may be a plant),
+                // and always beside its Set-Cookie: a cache that drops those drops the token too.
+                const named = fromOwnPage(request) && /^[\w-]+$/.test(token) && !heldTwice(request, name);
+                if (named)
+                {
+                    headers[CSRF_PAIR_HEADER] = `${ name }=${ token }`;
+                }
+                const answer = new Response(null, { status: 204, headers });
+                return fresh || named ? withCsrfCookie(answer, token, options) : answer;
+            }
             const response = await next.handle(request);
             // A shared render's in-process call reaches no browser, so a token would have no reader.
-            if (request.method !== 'GET' || isSharedDispatch(request) || parseCookies(request)[name] !== undefined)
+            if (request.method !== 'GET' || isSharedDispatch(request) || !fresh)
             {
                 return response;
             }
@@ -117,31 +255,15 @@ export function csrfCookie(options: CsrfOptions = {}): EdgeMiddleware
             // layer ever sees the response - so `mountPages` mints one itself for those. Minting
             // a second here would append a rival Set-Cookie, the browser would keep the last,
             // and the form would carry the other: every first submit would fail its own check.
-            if (response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${ name }=`)))
+            const cookies = response.headers.getSetCookie();
+            if (cookies.some((cookie) => cookie.startsWith(`${ name }=`)))
             {
-                return response;
+                // A layer between the kit and here can still have made that answer shared.
+                return cachePolicyOf(response.headers) === 'shared'
+                    ? withSetCookies(response, cookies.filter((cookie) => !cookie.startsWith(`${ name }=`)))
+                    : response;
             }
-            const cookie = serializeCookie(name, csrfToken(), { secure, httpOnly: false, sameSite: 'lax', path: '/' });
-            // APPEND, never set: a handler's own Set-Cookie must survive the minting.
-            const headers = new Headers();
-            response.headers.forEach((value, key) =>
-            {
-                if (key !== 'set-cookie')
-                {
-                    headers.set(key, value);
-                }
-            });
-            for (const existing of response.headers.getSetCookie())
-            {
-                headers.append('set-cookie', existing);
-            }
-            headers.append('set-cookie', cookie);
-            // 204/205/304 forbid a body - Response() throws on any stream for them, and the
-            // kernel's lazy response materializes a stream even for an empty payload.
-            const body = response.status === 204 || response.status === 205 || response.status === 304
-                ? null
-                : response.body;
-            return new Response(body, { status: response.status, statusText: response.statusText, headers });
+            return withCsrfCookie(response, csrfToken(), options);
         }
     }));
 }

@@ -450,6 +450,56 @@ const handler = pipeline(app, requestId(), securityHeaders(), csrfCookie(csrf));
 // then guard any mutating route: feature('/x', [csrfProtect(csrf)], ...) or routes.with(...)
 ```
 
+`csrfCookie` never puts the token on a response a shared cache may store - `public`,
+`max-age`, `s-maxage`, `no-cache` or `Expires`, which covers ISR pages, prerendered files,
+hashed assets and streamed pages, and any response whose CDN field lets a CDN store it:
+`CDN-Cache-Control`, any vendor `*-Cache-Control` (`Cloudflare-CDN-Cache-Control`,
+`Akamai-Cache-Control`), `Surrogate-Control` or `Edge-Control` - because a CDN that stored it
+would hand that one visitor's token to every visitor. It mints on a response marked `private`
+or `no-store`, and marks a response that names no cache policy `private` as it mints. It judges
+only what the layers inside it set, so list it before every layer that sets `Cache-Control` or a
+CDN field (any `*-Cache-Control`, `Surrogate-Control`, `Edge-Control`); the first layer listed
+runs outermost. A `pipeline()` layer runs outside every `app.use` layer, so when a `pipeline()`
+layer sets one, put `csrfCookie` in `pipeline()` ahead of it.
+
+A visitor who lands on a cached page gets the token from `GET /__azeroth/csrf`, which `csrfCookie`
+answers under any path prefix with `204 private, no-store`; keep every cache off that path, since a
+stored answer names the token of the visitor who asked. To a request from the page's own origin
+(`Sec-Fetch-Site: same-origin`, or none over plain http on a host other than loopback, where
+browsers send none; and `Origin` absent or its own) the answer also names the cookie `csrfCookie`
+compares and its token, `x-azeroth-csrf-cookie: <name>=<token>`. A token the request already holds
+is named only when it is made only of letters, digits, `-` and `_` and is the only value under that
+name (a second one came from another host), and is then set again beside it, so a cache that keeps
+no answer carrying `Set-Cookie` keeps no token either. `<Form>` and the typed client ask it before a
+write when the browser holds no token cookie, sharing one request, once per form and once per
+client, and post the token the answer names, so the first write needs no `document.cookie` read and
+a cookie another server left on the same host never rides. A form or client asks again once the
+cookie that answer named has gone, as after a logout, and one that only joined another's ask posts
+that answer's token once and does not keep it, since two servers on one origin can read two names.
+Where the browser has Web Locks, one ask runs at a time across the origin's tabs, so two tabs that
+write at once post one token; a tab holds that lock at most five seconds over an ask that has not
+settled, and one that waits ten seconds for it, or is refused it, asks without it. With the default
+names only a lone `__Host-azcsrf` equal to any token the page rendered counts as held, so a plain
+`azcsrf` a sibling subdomain planted, one a `secure: false` run left on the same host, or a
+`__Host-azcsrf` a secure run left beside the `azcsrf` a `secure: false` server reads, does not stop
+the ask; under `secure: false` that is one extra request per form and per client. Where no pair is
+named, behind a proxy that drops the header or in a browser that sends no `Sec-Fetch-Site` over
+https or on loopback (Safari before 16.4, Firefox before 90), they post the cookie they hold,
+`__Host-azcsrf` first. No ask runs for a write to another origin and nothing is filled into it,
+though a token the page already holds still rides `<Form>`'s rendered field and the typed client's
+header. A client of your own that mirrors the cookie by hand asks it once too, and posts the token
+that answer's `x-azeroth-csrf-cookie` names, or the cookie it set when it names none: WebKit over
+plain http can show the new cookie too late for that write.
+
+`csrfCookie` is required for a write from such a page: `mountPages` mints only on the pages it
+renders for one visitor, and nothing else answers `/__azeroth/csrf`. The typed client asks under
+its `baseUrl` and, when nothing answers there, under the page's own path on the page's own origin,
+so `csrfCookie` on the server that sends the pages is enough. A `fetch` transport given to
+`createClient` carries the ask: where the test has a `document`, the `baseUrl` is on the page's
+origin and no token cookie counts as held, a test double sees `GET <baseUrl>/__azeroth/csrf` before
+the first action, and `GET <page path>/__azeroth/csrf` after it when it answers that with an error.
+Answer by path rather than by position, or create the client with `csrf: false`.
+
 The decision rules, spelled out because "checks the Origin" leaves the interesting cases open:
 
 | Request | Outcome |

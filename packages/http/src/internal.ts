@@ -9,3 +9,4 @@
 
 export { lendApiRegistration } from './api/registry.ts';
 export { insideRequestRoot } from './request-root.ts';
+export { withCsrfCookie } from './csrf.ts';

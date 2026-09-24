@@ -17,7 +17,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { RouterProvider, Routes, createMemoryHistory, createRouter, h, redirect } from 'azerothjs';
 import type { LoaderHandoff, Route } from 'azerothjs';
 import { guardedMatch } from 'azerothjs/internal';
-import { App } from '@azerothjs/http';
+import { App, csrfToken } from '@azerothjs/http';
 import { mountPages, type PageCache, type PageEntry, type PageRoute } from '@azerothjs/kit';
 import { prerender } from '@azerothjs/kit/prerender';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
@@ -1315,7 +1315,8 @@ describe('the default observer and the header closure beyond ISR', () =>
         const guarded = await as('alice', rig.app, '/s');
         expect(guarded.status).toBe(200);
         expect(guarded.headers.get('cache-control')).toBe('private, no-store');
-        const open = await as('anon', rig.app, '/open');
+        // A returning visitor, so no minted cookie stamps the answer private.
+        const open = await identity.run('anon', () => rig.app.handle(new Request('http://local/open', { headers: { cookie: `__Host-azcsrf=${ csrfToken() }` } })));
         expect(open.status).toBe(200);
         expect(open.headers.get('cache-control')).toBeNull();
     });

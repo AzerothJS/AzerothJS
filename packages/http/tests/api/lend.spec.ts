@@ -84,8 +84,8 @@ describe('lendApiRegistration', () =>
         const internal = Object.keys(await import('@azerothjs/http/internal'));
         const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { exports: Record<string, unknown> };
 
-        expect(root.filter((name) => name === 'lendApiRegistration' || name === 'insideRequestRoot')).toEqual([]);
-        expect(internal.sort()).toEqual(['insideRequestRoot', 'lendApiRegistration']);
+        expect(root.filter((name) => ['lendApiRegistration', 'insideRequestRoot', 'withCsrfCookie'].includes(name))).toEqual([]);
+        expect(internal.sort()).toEqual(['insideRequestRoot', 'lendApiRegistration', 'withCsrfCookie']);
         expect(manifest.exports['./internal']).toEqual({ types: './dist/internal.d.ts', import: './dist/internal.js', default: './dist/internal.js' });
     });
 });

@@ -48,6 +48,13 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   with any other extension or none (`/uploads/9f8a2c`), which it passed through or handed to the
   adapter, answers 404: rename or convert it.
 
+- **A client that mirrors the CSRF cookie by hand asks `GET /__azeroth/csrf` before its first
+  write.** `csrfCookie` no longer puts the token on a response a shared cache may store, so a client
+  whose every answer from `csrfCookie` was one of those (such as a cached page, an `sse()` stream,
+  or JSON whose `Cache-Control` has neither `private` nor `no-store`, or that carries `Expires` or
+  a CDN field) holds no cookie, and its write is refused 403 until it asks. `<Form>` and the typed
+  client ask on their own. See Security.
+
 ### Fixed
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
@@ -305,6 +312,87 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   directory is served as before, a non-ISR page's own file under an ISR pattern
   (`/about/index.html` beside `/:slug`) included, apart from the `index.html` copies and
   `/_image` sources the Changed entry above names.
+
+- **`csrfCookie` no longer hands one visitor's CSRF token to every visitor through a shared
+  cache.** It minted the token cookie on every GET that arrived without one, including ISR pages
+  (`public, max-age=0, must-revalidate`, on the miss and the hit), prerendered files, hashed
+  assets and streamed pages (`no-cache`), so a CDN that stored one of those responses replayed
+  that visitor's `Set-Cookie` to everyone after, and the double-submit token stopped telling
+  visitors apart. It now mints only on a response no shared cache may store (`private` or
+  `no-store`), marks a response that names no cache policy `private` as it mints, and leaves every
+  other response without a cookie (`public`, `max-age`, `s-maxage`, `no-cache` or `Expires`
+  alone). A CDN's own field counts too: `CDN-Cache-Control`, any vendor `*-Cache-Control` field
+  (`Cloudflare-CDN-Cache-Control`, `Akamai-Cache-Control`), `Surrogate-Control` or
+  `Edge-Control` without `private` or `no-store` means shared, whatever `Cache-Control` says.
+  The page `mountPages` renders for a first visit mints by the same rule, on a GET only, and when
+  a layer inside `csrfCookie` makes that page shared, `csrfCookie` drops the page's token cookie
+  and keeps any other. It judges only what the layers inside it set, so list it before every
+  layer that sets `Cache-Control` or a CDN field (any `*-Cache-Control`, `Surrogate-Control`,
+  `Edge-Control`). A `pipeline()` layer runs outside every `app.use` layer, so when a
+  `pipeline()` layer sets one, put `csrfCookie` in `pipeline()` ahead of it.
+
+  A visitor who lands on a cached page gets the token from `GET /__azeroth/csrf`, which `csrfCookie`
+  answers under any path prefix with `204 private, no-store`; keep every cache off that path. To a
+  request from the page's own origin (`Sec-Fetch-Site: same-origin`, or none over plain http on a
+  host other than loopback, where browsers send none; and `Origin` absent or its own) the answer
+  also names the cookie `csrfCookie` compares and its token, `x-azeroth-csrf-cookie:
+  <name>=<token>`; a request another site or origin sends gets no such header. A token the request
+  already holds is named only when it is made only of letters, digits, `-` and `_` and is the only
+  value under that name (a second one came from another host), and is then set again beside it, so a
+  cache that keeps no answer carrying `Set-Cookie` keeps no token either. `<Form>` and the typed
+  client ask it before a write when the browser holds no token cookie, sharing one request, once per
+  form and once per client, and post the token the answer names: the first write lands before the
+  browser shows the new cookie (WebKit can show it late), and a cookie another server left on the
+  same host never rides. A form or client asks again once the cookie that answer named has gone, as
+  after a logout, and one that only joined another's ask posts that answer's token once and does not
+  keep it, since two servers on one origin can read two names. Where the browser has Web Locks, one
+  ask runs at a time across the origin's tabs, so two tabs that write at once post one token; a tab
+  holds that lock at most five seconds over an ask that has not settled, and one that waits ten
+  seconds for it, or is refused it, asks without it. With the default names only a lone
+  `__Host-azcsrf` equal to any token the page rendered counts as held, so a plain `azcsrf` a sibling
+  subdomain planted, one a `secure: false` run such as `azeroth dev` left on the same host, or a
+  `__Host-azcsrf` a local production run left beside the `azcsrf` `azeroth dev` reads, cannot stop
+  the ask; under `secure: false` that is one extra request per form and per client. Where no pair is
+  named, behind a proxy that drops the header or in a browser that sends no `Sec-Fetch-Site` over
+  https or on loopback (Safari before 16.4, Firefox before 90), they post the cookie they hold,
+  `__Host-azcsrf` first. No ask runs for a write to another origin and nothing is filled into it; a
+  token the page already holds still rides `<Form>`'s rendered field and the typed client's header.
+  The typed client asks under its `baseUrl` and, when nothing answers there, under the page's own
+  path on the page's own origin, so a server that answers that `baseUrl` apart from the pages (one
+  origin, two servers behind a proxy) needs no `csrfCookie` of its own. A `fetch` transport given to
+  `createClient` carries that ask: where the test has a `document`, the `baseUrl` is on the page's
+  origin and no token cookie counts as held, a test double sees `GET <baseUrl>/__azeroth/csrf`
+  before the first action, and `GET <page path>/__azeroth/csrf` after it when it answers that with
+  an error. Answer by path rather than by position, or create the client with `csrf: false`.
+  `csrfCookie` is required for a write from a cached page: `mountPages` does not answer the ask, so
+  without `csrfCookie` that write stays refused 403. `csrfProtect` and the form check are unchanged.
+
+  **This breaks a client of your own that mirrors the cookie by hand** when every answer
+  `csrfCookie` gave it before its first write was one a shared cache may store (such as a cached
+  page, an `sse()` stream, or JSON whose `Cache-Control` has neither `private` nor `no-store`, or
+  that carries `Expires` or a CDN field): it posted the token that answer's `Set-Cookie` handed
+  out, which is the leak, and it is now refused 403. Have it send `GET /__azeroth/csrf` once
+  before its first write and post the token that answer's
+  `x-azeroth-csrf-cookie` names, or the cookie it set when it names none: WebKit over plain http can
+  show the new cookie too late for that write. A write can also be refused 403 in rare setups. Where
+  no pair is named, behind a proxy that drops that header or in a browser that sends no
+  `Sec-Fetch-Site` over https or on loopback: a `<Form>` in `azeroth dev` after a local production
+  run on the same host, one whose renamed cookie sits beside a default-named one, and, in WebKit
+  without Web Locks, a first write right after the ask. On one origin served by two `csrfCookie`
+  servers that read different cookie names: the first write of a `<Form>` or typed client that joins
+  the other server's ask, once. Behind a cache that stores `/__azeroth/csrf` against its `private,
+  no-store`: a later visitor's first write; over plain http on a host other than loopback that
+  stored answer also names the token of the visitor who filled it. In a browser without Web Locks
+  (Safari before 15.4, or plain http on a host other than loopback): one of two first writes two
+  tabs start at the same instant.
+
+  After upgrading, purge everything your CDN stored for the site, not only the HTML: a copy
+  stored before the upgrade keeps replaying the old `Set-Cookie` until it expires, which for a
+  hashed asset (`immutable`, a year) outlives any redeploy that keeps its name, and a prerendered
+  or `public/` file revalidated with a 304 keeps it for as long as its ETag holds. A token a cache
+  already handed out stays valid for the browser session that holds it, because the check is
+  stateless; the origin check still refuses it from another site in every browser that sends
+  `Origin` or `Sec-Fetch-Site`.
 
 - **An ISR page could cache a value the triggering visitor's request put in an async-context
   store.** ISR's first render and every regeneration ran in the async context of the request that

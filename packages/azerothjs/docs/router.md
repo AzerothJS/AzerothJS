@@ -234,7 +234,8 @@ Pass `mountPages` the SAME options you gave `csrfCookie` (`csrf: { ... }`); the 
 already agree, and a mismatch fails closed with a 403 rather than silently accepting. Rendering
 the token into the form is still the application's job - note that `csrfCookie` mints it on the
 RESPONSE, so a visitor's very first page load has no cookie yet and its form would carry an
-empty token.
+empty token. It never mints on a page a shared cache may store (an ISR or prerendered page), so
+a form there renders an empty token too.
 
 ### `<Form>`
 
@@ -244,7 +245,13 @@ revalidates the page in place - same scroll, same focus, no reload. An action th
 answers the enhanced submit with `{ ok: true, redirect }`, and `<Form>` navigates there. A
 refusal that never reached your action - a guard, the CSRF check, a fault - settles
 `onSettled({ ok: false })` with no result, leaves the previous validation verdict on screen, and
-logs the status once.
+logs the status once. When the browser holds no token cookie it can count on (an ISR page
+posting to a server page's action, or a jar that also holds another server's token cookie), the
+enhanced submit first asks `/__azeroth/csrf` under the router base, once per form, and posts the
+token that answer names, and asks again once that cookie has gone, as after a logout. A form
+whose action is another origin never asks, so its field carries only the token the page
+rendered. That ask is answered by `csrfCookie`, so a page that can come from a shared cache posts
+only when `csrfCookie` runs in front of `mountPages`.
 
 ```azeroth
 // todo-page.azeroth

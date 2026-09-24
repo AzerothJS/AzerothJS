@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { forbidden, h, useLocale } from 'azerothjs';
-import { App } from '@azerothjs/http';
+import { App, csrfToken } from '@azerothjs/http';
 import { mountPages, type PageRoute } from '@azerothjs/kit';
 import { prerender } from '@azerothjs/kit/prerender';
 import { createPageRenderer } from '@azerothjs/kit/ssr';
@@ -89,6 +89,10 @@ function mount(verdict: Verdict, options: { renderer?: boolean; artifacts?: bool
 
 const get = (app: App, path: string): Promise<Response> =>
     app.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html' } }));
+
+/** A visitor who already holds a CSRF token, so no minted cookie stamps the answer private. */
+const returning = (app: App, path: string): Promise<Response> =>
+    app.handle(new Request(`http://local${ path }`, { headers: { accept: 'text/html', cookie: `__Host-azcsrf=${ csrfToken() }` } }));
 
 describe('a static url a guarded chain wins, with a renderer', () =>
 {
@@ -191,7 +195,9 @@ describe('the bare shell for a guarded url is never heuristically cacheable', ()
         expect(guarded.status).toBe(200);
         expect(guarded.headers.get('cache-control')).toBe('private, no-store');
         // Control: an unguarded shell carries no such stamp.
-        expect((await get(app, '/plain')).headers.get('cache-control')).toBeNull();
+        expect((await returning(app, '/plain')).headers.get('cache-control')).toBeNull();
+        // A first visitor's shell carries the token minted for them, so it is private.
+        expect((await get(app, '/plain')).headers.get('cache-control')).toBe('private');
     });
 
     it('the enumerated mount falling through to the shell with no file and no renderer', async () =>
@@ -221,7 +227,9 @@ describe('the bare shell for a guarded url is never heuristically cacheable', ()
         expect(response.status).toBe(404);
         expect(response.headers.get('cache-control')).toBe('private, no-store');
         // Control: an unrouted url is a plain 404 shell.
-        expect((await get(app, '/nowhere')).headers.get('cache-control')).toBeNull();
+        expect((await returning(app, '/nowhere')).headers.get('cache-control')).toBeNull();
+        // A first visitor's 404 carries the token minted for them, so it is private.
+        expect((await get(app, '/nowhere')).headers.get('cache-control')).toBe('private');
     });
 });
 

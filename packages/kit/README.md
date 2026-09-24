@@ -313,6 +313,14 @@ throwing `redirect(...)` goes elsewhere, judged by the same off-origin rule as e
 An action is refused on a `render: 'static'` page, which has no request to mint a token for, and
 on a route with children. The router guide covers the page side and `<Form>`.
 
+A page a shared cache may store (ISR, prerendered, streamed) carries no CSRF token, and `<Form>`
+gets one from `csrfCookie`'s `GET /__azeroth/csrf` before its first submit. `mountPages` does
+not answer that path, so an app that posts from such a page must run `csrfCookie` in its
+pipeline; without it that submit is refused 403. `mountPages` mints its first-visit token on a
+GET only and judges it by its own answer, so when a layer around the pages sets
+`Cache-Control` or a CDN field, run `csrfCookie` ahead of that layer: it drops the token from
+an answer that layer made shared.
+
 ## ISR - `revalidate`
 
 A static page with `revalidate` serves from a page cache: fresh within the window, past it

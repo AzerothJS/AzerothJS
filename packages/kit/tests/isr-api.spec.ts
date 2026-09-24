@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { RouterProvider, Routes, createMemoryHistory, createRouter, h, useLoader, useRequest } from 'azerothjs';
 import type { LoaderHandoff, MountNode, RouteLoaderArgs } from 'azerothjs';
 import { object, string } from '@azerothjs/schema';
-import { App, UnauthorizedError, csrfCookie, edge, parseCookies, pipeline } from '@azerothjs/http';
+import { App, UnauthorizedError, csrfCookie, csrfProtect, edge, parseCookies, pipeline } from '@azerothjs/http';
 import { lendApiRegistration } from '@azerothjs/http/internal';
 import { serve } from '@azerothjs/http/node';
 import { ApiError, createClient, feature, manifestOf, register, reply } from '@azerothjs/http/api';
@@ -761,6 +761,151 @@ describe('csrfCookie and an ISR page\'s api call', () =>
 
         expect(await read(front, '/b/1')).toMatch(/^200 public.* miss N=pub-data\|R0$/);
         expect(await read(front, '/b/1')).toMatch(/^200 public.* hit N=pub-data\|R0$/);
+    });
+
+    it('in the pipeline it puts no Set-Cookie on the public miss or hit, and the server page mints a private one', async () =>
+    {
+        const app = new App();
+        register(app, api);
+        pages(app, async () => (await client.stats.read()).n);
+        const front = pipeline(app, csrfCookie({ secure: false }));
+
+        for (const verdict of ['miss', 'hit'])
+        {
+            const response = await front.handle(new Request('http://site.test/b/1', { headers: { accept: 'text/html' } }));
+            expect(response.headers.get('x-azeroth-cache')).toBe(verdict);
+            expect(response.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
+            expect(response.headers.getSetCookie()).toEqual([]);
+        }
+        const server = await front.handle(new Request('http://site.test/s', { headers: { accept: 'text/html' } }));
+        expect(server.headers.get('cache-control')).toMatch(/^private/);
+        expect(server.headers.getSetCookie().filter((line) => line.startsWith('azcsrf='))).toHaveLength(1);
+    });
+
+    it('in the pipeline it puts no Set-Cookie on a hashed asset or a public file', async () =>
+    {
+        const dir = clientDir();
+        writeFileSync(join(dir, 'assets', 'app-3f9a1c.js'), 'export {};');
+        writeFileSync(join(dir, 'robots.txt'), 'User-agent: *');
+        const app = new App();
+        pages(app, async () => 'x', { dir });
+        const front = pipeline(app, csrfCookie({ secure: false }));
+
+        for (const [path, policy] of [['/assets/app-3f9a1c.js', 'public, max-age=31536000, immutable'], ['/robots.txt', 'public, max-age=0, must-revalidate']])
+        {
+            const response = await front.handle(new Request(`http://site.test${ path }`, { headers: { accept: '*/*' } }));
+            expect(response.status, path).toBe(200);
+            expect(response.headers.get('cache-control'), path).toBe(policy);
+            expect(response.headers.getSetCookie(), path).toEqual([]);
+        }
+    });
+
+    /** An app layer that asks a CDN to keep every answer for a minute. */
+    const edgeCached = edge((next) => ({
+        handle: async (request: Request): Promise<Response> =>
+        {
+            const response = await next.handle(request);
+            const headers = new Headers(response.headers);
+            headers.set('cdn-cache-control', 'max-age=60');
+            return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+    }));
+
+    it('when a layer inside it makes the first-visit server page CDN-storable, the token the kit minted never rides it', async () =>
+    {
+        const used = new App();
+        used.use(edgeCached);
+        register(used, api);
+        pages(used, async () => (await client.stats.read()).n);
+        const listed = new App();
+        register(listed, api);
+        pages(listed, async () => (await client.stats.read()).n);
+
+        for (const front of [pipeline(used, csrfCookie()), pipeline(listed, csrfCookie(), edgeCached)])
+        {
+            const response = await front.handle(new Request('http://site.test/s', { headers: { accept: 'text/html' } }));
+            expect(response.status).toBe(200);
+            expect(response.headers.get('cdn-cache-control')).toBe('max-age=60');
+            expect(response.headers.getSetCookie()).toEqual([]);
+        }
+    });
+
+    it('a HEAD of that page carries no token either', async () =>
+    {
+        const app = new App();
+        app.use(edgeCached);
+        register(app, api);
+        pages(app, async () => (await client.stats.read()).n);
+        const response = await pipeline(app, csrfCookie()).handle(new Request('http://site.test/s', { method: 'HEAD', headers: { accept: 'text/html' } }));
+        expect(response.status).toBe(200);
+        expect(response.headers.get('cdn-cache-control')).toBe('max-age=60');
+        expect(response.headers.getSetCookie()).toEqual([]);
+    });
+
+    it('CONTROL: with no such layer the first-visit server page carries the one token the kit minted', async () =>
+    {
+        const app = new App();
+        register(app, api);
+        pages(app, async () => (await client.stats.read()).n);
+        const response = await pipeline(app, csrfCookie()).handle(new Request('http://site.test/s', { headers: { accept: 'text/html' } }));
+        expect(response.headers.getSetCookie().map((line) => line.split('=')[0])).toEqual(['__Host-azcsrf']);
+    });
+
+    it('a kit-only app answers neither ask, so a typed write from an ISR page stays 403', async () =>
+    {
+        const book = feature('/book', (routes) => ({
+            sign: routes.with(csrfProtect()).action('/sign', { input: object({ text: string() }) }, () => ({ text: 'signed' }))
+        }));
+        const write = async (front: { handle(request: Request): Promise<Response> }): Promise<string[]> =>
+        {
+            const jar = new Map<string, string>();
+            const wire: string[] = [];
+            const cookies = (): string => [...jar].map(([name, value]) => `${ name }=${ value }`).join('; ');
+            const send = async (request: Request): Promise<Response> =>
+            {
+                const headers = new Headers(request.headers);
+                headers.set('cookie', cookies());
+                headers.set('accept', headers.get('accept') ?? '*/*');
+                headers.set('sec-fetch-site', 'same-origin');
+                headers.set('origin', 'http://site.test');
+                const body = request.method === 'GET' ? null : await request.arrayBuffer();
+                const response = await front.handle(new Request(request.url, { method: request.method, headers, body }));
+                for (const line of response.headers.getSetCookie())
+                {
+                    const pair = line.split(';')[0] ?? '';
+                    jar.set(pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1));
+                }
+                wire.push(`${ request.method } ${ new URL(request.url).pathname } ${ response.status }`);
+                return response;
+            };
+            await send(new Request('http://site.test/b/1', { headers: { accept: 'text/html' } }));
+            vi.stubGlobal('location', new URL('http://site.test/b/1'));
+            vi.stubGlobal('document', Object.defineProperty({ baseURI: 'http://site.test/b/1' }, 'cookie', { get: cookies }));
+            try
+            {
+                await createClient<{ book: typeof book }>(manifestOf({ book }), { baseUrl: '/api', fetch: send }).book.sign({ text: 'x' });
+                wire.push('write 200');
+            }
+            catch (error)
+            {
+                wire.push(`write ${ (error as ApiError).status }`);
+            }
+            finally
+            {
+                vi.unstubAllGlobals();
+            }
+            return wire;
+        };
+        const kitOnly = new App();
+        register(kitOnly, { book });
+        pages(kitOnly, async () => 'x');
+        expect(await write(kitOnly))
+            .toEqual(['GET /b/1 200', 'GET /api/__azeroth/csrf 404', 'GET /b/1/__azeroth/csrf 404', 'POST /api/book/sign 403', 'write 403']);
+        const withCookie = new App();
+        register(withCookie, { book });
+        pages(withCookie, async () => 'x');
+        expect(await write(pipeline(withCookie, csrfCookie())))
+            .toEqual(['GET /b/1 200', 'GET /api/__azeroth/csrf 204', 'POST /api/book/sign 200', 'write 200']);
     });
 
     it('under app.use an endpoint that sets its own cookie is still refused by name', async () =>

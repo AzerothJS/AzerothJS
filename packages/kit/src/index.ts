@@ -36,8 +36,9 @@ import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError } from '@azerothjs/http';
+import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
+import { withCsrfCookie } from '@azerothjs/http/internal';
 import { containedFile, staticFiles } from '@azerothjs/http/node';
 import type { ContainedFile } from '@azerothjs/http/node';
 import { manifestScript, type Manifest } from '@azerothjs/http/api';
@@ -1058,7 +1059,8 @@ function tokenFor(request: Request, options: KitOptions): { token: string; minte
 {
     const name = options.csrf?.cookie ?? (options.csrf?.secure === false ? 'azcsrf' : '__Host-azcsrf');
     const existing = parseCookies(request)[name];
-    return existing === undefined ? { token: csrfToken(), minted: true } : { token: existing, minted: false };
+    // GET only, as csrfCookie: a cache can freshen a stored GET from a HEAD answer's headers.
+    return existing === undefined ? { token: csrfToken(), minted: request.method === 'GET' } : { token: existing, minted: false };
 }
 
 /**
@@ -1351,36 +1353,6 @@ function withVary(response: Response, context: RequestContext, options: KitOptio
     return mergeVary(response, varyFor(options, context.url.pathname));
 }
 
-/** @internal Attaches a freshly minted CSRF cookie without disturbing the response's own. */
-function withMintedToken(response: Response, token: string, options: KitOptions): Response
-{
-    const name = options.csrf?.cookie ?? (options.csrf?.secure === false ? 'azcsrf' : '__Host-azcsrf');
-    const cookie = serializeCookie(name, token, {
-        secure: options.csrf?.secure !== false,
-        httpOnly: false,
-        sameSite: 'lax',
-        path: '/'
-    });
-    const headers = new Headers();
-    response.headers.forEach((value, key) =>
-    {
-        if (key !== 'set-cookie')
-        {
-            headers.set(key, value);
-        }
-    });
-    for (const existing of response.headers.getSetCookie())
-    {
-        headers.append('set-cookie', existing);
-    }
-    headers.append('set-cookie', cookie);
-    // 204/205/304 forbid a body, and the kernel materializes one even when empty.
-    const body = response.status === 204 || response.status === 205 || response.status === 304
-        ? null
-        : response.body;
-    return new Response(body, { status: response.status, statusText: response.statusText, headers });
-}
-
 /**
  * @internal Whether the client EXPLICITLY asked for JSON, which is what selects a page action's
  * enhanced representation. Asked positively, not as the absence of an HTML accept: a client
@@ -1467,7 +1439,7 @@ async function renderOrShell(
             : withVary(
                 pageResponse(result.kind === 'html' ? { ...result, status: shellStatus } : result, shell, {}, document.base),
                 context, options);
-        return csrf.minted ? withMintedToken(answered, csrf.token, options) : answered;
+        return csrf.minted ? withCsrfCookie(answered, csrf.token, options.csrf) : answered;
     }
     // The client-rendered page has no render to carry the language, and needs it just as much:
     // the shell IS the served document, and its `<html lang>` is what a crawler reads and what
@@ -1479,7 +1451,7 @@ async function renderOrShell(
             applyDocumentContext(shell, document),
             { status: shellStatus, ...(guardedMatch(options.routes, url) ? { headers: { 'cache-control': 'private, no-store' } } : {}) }),
         context, options);
-    return csrf.minted ? withMintedToken(bare, csrf.token, options) : bare;
+    return csrf.minted ? withCsrfCookie(bare, csrf.token, options.csrf) : bare;
 }
 
 /** @internal Stamps a response as produced for this reader alone. */

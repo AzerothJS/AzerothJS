@@ -36,6 +36,8 @@
  */
 
 import { useRequest } from 'azerothjs';
+import { askCsrfCookie, heldCsrfToken } from 'azerothjs/internal';
+import type { CsrfPair } from 'azerothjs/internal';
 import type { Issue } from '@azerothjs/schema';
 import type { Decl, Feature, Manifest, ManifestEntry, PathParams } from './declare.ts';
 import { apiBridgeOf, bridgeMethodRefusal, sharedApiBridge, SHARED_ORIGIN } from './bridge.ts';
@@ -167,8 +169,11 @@ export interface ClientOptions
 
     /**
      * CSRF auto-header for ACTION calls: in a browser the client mirrors the readable token
-     * cookie (`__Host-azcsrf`, then `azcsrf`) into `x-azeroth-csrf` automatically. Pass
-     * names to match a renamed `csrfCookie`/`csrfProtect` pair, or `false` to disable.
+     * cookie (`__Host-azcsrf`, then `azcsrf`) into `x-azeroth-csrf` automatically. When the
+     * browser holds none it can be sure of, the first action asks `<baseUrl>/__azeroth/csrf` for
+     * it, and the page's own path when nothing answers there, through `fetch` when one is given,
+     * and mirrors the token that answer names. Pass names to match a renamed
+     * `csrfCookie`/`csrfProtect` pair, or `false` to disable both.
      */
     csrf?: false | { cookie?: string; header?: string };
 }
@@ -367,30 +372,40 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             + `location to resolve against. ${ TRANSPORT_CAUSES }`);
     };
 
+    // Once per client: a server that answered and set nothing has no token to hand out.
+    let answered = false;
+    let told: CsrfPair | undefined;
     // The double-submit mirror for action calls: read the token cookie the page's own JS is
     // meant to read (that readability IS the defense) and echo it in the header. Outside a
     // browser there is no document and no ambient cookie jar - nothing to mirror.
-    const readCsrfToken = (): string | undefined =>
+    const ensureCsrfToken = async (): Promise<string | undefined> =>
     {
-        if (options.csrf === false)
+        if (options.csrf === false || (globalThis as { document?: { cookie?: string } }).document?.cookie === undefined)
         {
             return undefined;
         }
-        const jar = (globalThis as { document?: { cookie?: string } }).document?.cookie;
-        if (jar === undefined)
+        const cookie = options.csrf?.cookie;
+        // A page a shared cache stored carries no cookie, so the first action asks csrfCookie.
+        const selected = select('GET', `${ baseUrl }/__azeroth/csrf`);
+        const now = heldCsrfToken(told, '', cookie);
+        // Asked once, unless the cookie that answer named has since gone (a logout).
+        const answer = await askCsrfCookie(selected.url, (answered && !now.gone) || now.sure, async () =>
         {
-            return undefined;
-        }
-        const names = options.csrf?.cookie !== undefined ? [options.csrf.cookie] : ['__Host-azcsrf', 'azcsrf'];
-        for (const name of names)
-        {
-            const part = jar.split('; ').find((candidate) => candidate.startsWith(`${ name }=`));
-            if (part !== undefined)
+            let response = await selected.transport(new Request(selected.url, { cache: 'no-store' }));
+            // csrfCookie answers the path under any prefix, so ask under the page's own path too,
+            // on its own origin: a path that starts with `//` would otherwise name another host.
+            const page = (globalThis as { location?: Location }).location;
+            if (!response.ok && page !== undefined)
             {
-                return decodeURIComponent(part.slice(name.length + 1));
+                const own = select('GET', `${ page.origin }${ page.pathname.replace(/\/+$/, '') }/__azeroth/csrf`);
+                response = await own.transport(new Request(own.url, { cache: 'no-store' }));
             }
-        }
-        return undefined;
+            answered = true;
+            return response;
+        });
+        // A joined ask may have reached another server: its pair rides this write only.
+        told = answer && answer.joined !== true ? answer : told;
+        return heldCsrfToken(answer || told, '', cookie).token || undefined;
     };
 
     const call = async (method: string, template: string, args: RawArgs, action = false): Promise<unknown> =>
@@ -433,18 +448,18 @@ export function createClient<Features extends Record<string, Feature>>(manifest:
             init.body = JSON.stringify(args.input);
             init.headers = { ...init.headers as Record<string, string>, 'content-type': 'application/json' };
         }
+        // The transport only ever sees the absolute form, exactly as a server would. Selected
+        // before the token ask, so a missing origin is reported against this call.
+        const selected = select(method, `${ baseUrl }${ path }${ queryString }`);
         if (action)
         {
-            const token = readCsrfToken();
+            const token = await ensureCsrfToken();
             if (token !== undefined)
             {
                 const header = (options.csrf !== false ? options.csrf?.header : undefined) ?? 'x-azeroth-csrf';
                 init.headers = { ...init.headers as Record<string, string>, [header]: token };
             }
         }
-
-        // The transport only ever sees the absolute form, exactly as a server would.
-        const selected = select(method, `${ baseUrl }${ path }${ queryString }`);
         const response = await selected.transport(new Request(selected.url, init));
 
         if (!response.ok)
