@@ -498,6 +498,20 @@ describe('an ISR page through the session', () =>
         expect(errors).toEqual([]);
         await closeSession(session);
     });
+
+    it('a guard only the renderer\'s table declares answers live from the first request, and no shared render meets it', async () =>
+    {
+        const scope = globalThis as { __azerothSharedGuardCalls?: number };
+        scope.__azerothSharedGuardCalls = 0;
+        const session = await open({ entry: 'src/entry.renderer-guarded.ts' });
+        const line = (response: Response): string =>
+            `${ response.status } ${ response.headers.get('x-azeroth-cache') } ${ response.headers.get('cache-control') }`;
+
+        expect(line(await get(session, '/fresh', { cookie: 'who=alice' }))).toBe('200 live private, no-store');
+        expect(line(await get(session, '/fresh'))).toBe('401 live private, no-store');
+        expect(scope.__azerothSharedGuardCalls).toBe(0);
+        await closeSession(session);
+    });
 });
 
 describe('locale prefixes', () =>

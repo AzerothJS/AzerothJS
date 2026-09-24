@@ -24,8 +24,9 @@
  * request identity), so a guarded URL is gated ahead of the cache read, the seed, and the
  * in-flight map: it renders per request and answers `private, no-store`. Own-chain guards
  * are refused earlier still (mountPages and the prerender pass both throw); the gate here
- * covers the chain shapes only the per-URL walk can see, and the result stamp backs the
- * whole thing up when the renderer was built over a different table.
+ * covers the chain shapes only the per-URL walk can see, in the mount's table and in the
+ * renderer's, and what a shared render finds backs it up for a renderer that cannot answer
+ * for its own table.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -40,8 +41,8 @@ import type { ContainedFile } from '@azerothjs/http/node';
 
 import { isAbsoluteAppPath, joinBase } from 'azerothjs/internal';
 import { alternatesOf, hrefPathOf } from './alternates.ts';
-import type { DocumentContext, PageResult } from './ssr.ts';
-import type { PageRenderer } from './ssr.ts';
+import type { DocumentContext, PageRenderer, PageResult } from './ssr.ts';
+import { threwUnderGuard } from './ssr.ts';
 import { mergeVary } from './vary.ts';
 
 /** The frame this module loaded in: the fallback for a mount that runs inside a request. */
@@ -395,14 +396,18 @@ export interface IsrRegistration
 
     /**
      * Whether this URL's matched route chain carries a guard - `mountPages` builds it on
-     * the route table's own selection walk. A guarded render is a function of (URL,
-     * request identity), so the handler must answer it per-request: never from the cache,
-     * never from a seed file, never from a shared in-flight production. Mount-time
-     * refusal already rejects a page whose OWN chain is guarded; this predicate catches
-     * the shape mount cannot see - a foreign guarded chain winning the route table's
-     * order-first match for some URLs under this unguarded page pattern.
+     * the route table's own selection walk, and on the renderer's when the renderer exposes
+     * one. A guarded render is a function of (URL, request identity), so the handler must
+     * answer it per-request: never from the cache, never from a seed file, never from a
+     * shared in-flight production. Mount-time refusal already rejects a page whose OWN chain
+     * is guarded; this predicate catches the shapes mount cannot see - a foreign guarded
+     * chain winning the route table's order-first match for some URLs under this unguarded
+     * page pattern, and a guard only the renderer's table declares.
      */
     guarded: (url: string) => boolean;
+
+    /** The page paths observed guarded, shared by the registrations of one page's languages. */
+    learned?: Set<string>;
     onError: KitErrorObserver;
 
     /**
@@ -449,7 +454,13 @@ export interface IsrRegistration
     buildId: Promise<string>;
 }
 
-/** @internal What one cold-miss production yields: a cacheable entry or a live outcome. */
+/** How many page paths one page keeps as observed guarded; a full set keeps what it has. */
+const LEARNED_CAP = 1000;
+
+/**
+ * @internal What one cold-miss production yields: a cacheable entry, a live outcome, or neither
+ * when the shared render found a guard and so answers no visitor.
+ */
 interface Produced
 {
     entry?: PageEntry;
@@ -713,15 +724,17 @@ export function registerIsr(registration: IsrRegistration): void
     const holds = new Map<string, { until: number; fingerprint: string }>();
     const holdCeiling = registration.holdCeiling ?? 1000;
 
-    // Pathnames OBSERVED guarded: fed by produce's stamped live result and regenerate's
-    // stamp-drop, checked beside the `guarded` predicate before the cache, the seed, and
-    // the in-flight map. This is the defense-in-depth leg for a renderer built over a
-    // DIFFERENT route table than the predicate's: there the predicate is blind, and the
-    // stamp alone stops caching but not seeding-before-render or flight-sharing. The unit
-    // is the PATHNAME, never the cache key - guardedness is decided by segment matching,
-    // so the query cannot affect it, one learned pathname covers every query variant, and
-    // a key-based set would let junk queries mint unbounded permanent entries. Capped,
-    // oldest-out: eviction (like a restart) merely re-opens one discovery window.
+    // Page paths OBSERVED guarded: fed by any shared render that found a guard, in produce and in
+    // regenerate, checked beside the `guarded` predicate before the cache, the seed, and
+    // the in-flight map. This is the leg for a renderer that cannot answer the predicate
+    // itself (a wrapped or hand-written one) built over a DIFFERENT route table than the
+    // mount's: there the predicate is blind, and the stamp alone stops caching but not
+    // seeding-before-render or flight-sharing. The unit is the decoded page path the seed
+    // file is named after, never the raw pathname (every spelling that reaches the file
+    // shares it) nor the cache key - guardedness is decided by segment matching, so the
+    // query cannot affect it, and a key-based set would let junk queries mint unbounded
+    // permanent entries. Capped and never evicted, so a flood cannot make it forget a path,
+    // and a full set vouches for no seed.
     /**
      * Query-bearing keys seen ONCE and not yet admitted to the shared cache.
      *
@@ -737,8 +750,7 @@ export function registerIsr(registration: IsrRegistration): void
      * once. It does NOT bound the render itself; a cold key must either render or be
      * refused, and refusing is a rate decision that belongs at the HTTP edge.
      *
-     * Bounded oldest-out, the same discipline `learned` uses below: evicting merely
-     * re-opens the discovery window for that key.
+     * Bounded oldest-out: evicting merely re-opens the discovery window for that key.
      */
     const provisional = new Set<string>();
     const admitToCache = (target: Target): boolean =>
@@ -764,22 +776,42 @@ export function registerIsr(registration: IsrRegistration): void
         return false;
     };
 
-    const learned = new Set<string>();
-    const learn = (pathname: string): void =>
+    const learned = registration.learned ?? new Set<string>();
+
+    /**
+     * Whether a shared render found a guard, whatever it answered: it has no visitor, so a guard
+     * that reads one vetoes or redirects and a loader that needs one fails.
+     */
+    const discovered = (result: PageResult): boolean => result.kind === 'blocked' || result.guarded === true;
+
+    /**
+     * Whether the prerendered file may answer for this page path: never once learned, marked, or
+     * the set is full.
+     */
+    const seedAllowed = (target: Target): boolean =>
+        !learned.has(target.path) && learned.size < LEARNED_CAP && markedAt(target.pathname) === undefined;
+
+    /**
+     * A shared render's throw from a guarded chain, as the `undefined` discovery; any other throw
+     * propagates.
+     */
+    const guardedThrow = (url: string) => (error: unknown): undefined =>
     {
-        if (learned.has(pathname))
+        if (threwUnderGuard(error, url))
         {
-            return;
+            return undefined;
         }
-        if (learned.size >= 1000)
+        throw error;
+    };
+
+    // Never evicts: a forgotten path would let a copy cached under another spelling answer again.
+    // A path found past the cap is answered live by the flight that found it, and seeds nothing.
+    const learn = (path: string): void =>
+    {
+        if (learned.size < LEARNED_CAP)
         {
-            const oldest = learned.values().next().value;
-            if (oldest !== undefined)
-            {
-                learned.delete(oldest);
-            }
+            learned.add(path);
         }
-        learned.add(pathname);
     };
 
     // Once per registration: the situation is a standing policy, not a per-request event,
@@ -891,8 +923,9 @@ export function registerIsr(registration: IsrRegistration): void
     interface Target
     {
         /**
-         * The DECODED pathname, used ONLY to find a prerendered file and to name the page in an
-         * error report. The build writes decoded filenames (`prerenderFileFor` over the static
+         * The DECODED pathname, used ONLY to find a prerendered file, to key the learned-guarded
+         * set (every spelling that reaches one file shares it) and to name the page in an error
+         * report. The build writes decoded filenames (`prerenderFileFor` over the static
          * path list), so a `staticParams` value of `café` lands at `a/café/index.html` while the
          * request arrives as `/a/caf%C3%A9`. Decoded one segment at a time, never re-joined: when
          * no file can be named this is the raw pathname and `seedable` is false.
@@ -905,7 +938,7 @@ export function registerIsr(registration: IsrRegistration): void
          */
         canonical: string;
 
-        /** The RAW pathname alone - the unit the learned-guarded set stores. */
+        /** The RAW pathname alone - the unit a write's mark stores. */
         pathname: string;
 
         /** The language this copy is produced in, when the site publishes more than one. */
@@ -966,13 +999,11 @@ export function registerIsr(registration: IsrRegistration): void
     async function produce(target: Target, startedAt: number): Promise<Produced>
     {
         // Seeding is keyed on the PATHNAME: a prerendered file has no query component, so a seed
-        // is only ever the no-query representation of the page. A learned pathname never seeds:
+        // is only ever the no-query representation of the page. A learned path never seeds:
         // the file was written by a build whose refusal did not yet exist (or whose table
         // differed), and a seed involves no render, so no stamp could ever refuse it here. A
         // MARKED pathname never seeds either: the build predates the write by construction.
-        const seed = target.seedable && !learned.has(target.pathname) && markedAt(target.pathname) === undefined
-            ? await seedFile(target.path, target.locale)
-            : null;
+        const seed = target.seedable && seedAllowed(target) ? await seedFile(target.path, target.locale) : null;
         if (seed !== null)
         {
             let html: string | undefined;
@@ -996,9 +1027,9 @@ export function registerIsr(registration: IsrRegistration): void
                     throw error;
                 }
                 const entry: PageEntry = { html, status: 200, createdAt: seed.stats.mtimeMs, build: await buildId };
-                // Re-checked at the write: a stamped discovery, or a write's mark, can land
-                // while the file reads.
-                if (!learned.has(target.pathname) && markedAt(target.pathname) === undefined)
+                // Re-checked at the write: a discovery, or a write's mark, can land while the
+                // file reads.
+                if (seedAllowed(target))
                 {
                     await writeCache(target.key, entry);
                     return { entry, seeded: true };
@@ -1015,21 +1046,21 @@ export function registerIsr(registration: IsrRegistration): void
         const buildValue = await buildId;
         const result = await outside(() => runInWorkUnit(
             () => renderer(target.url, shellText, renderOptions(target, buildValue, [], true)),
-            { sharedApi: createSharedApiBridge(app, target.locale) }));
-        if (result.kind === 'html' && result.guarded === true)
+            { sharedApi: createSharedApiBridge(app, target.locale) })).catch(guardedThrow(target.url));
+        if (result === undefined || discovered(result))
         {
-            // The renderer's own table says this chain is guarded: the body belongs to the
-            // visitor whose request produced it, and the pathname is learned HERE - the
-            // earliest site - so no later request seeds, caches, or coalesces on it.
-            learn(target.pathname);
-            return { live: result };
+            // The renderer's own table says this chain is guarded, so the result answers no
+            // visitor, and the path is learned HERE - the earliest site - so no later request
+            // seeds, caches, or coalesces on it.
+            learn(target.path);
+            return {};
         }
         if (result.kind === 'html' && result.status === 200)
         {
             const entry: PageEntry = { html: result.html, status: 200, createdAt: Date.now(), build: await buildId };
             // A render that read the data before the write is served to the waiters who asked
             // for it and cached for nobody.
-            if (!learned.has(target.pathname) && !superseded(target, startedAt) && admitToCache(target))
+            if (!learned.has(target.path) && !superseded(target, startedAt) && admitToCache(target))
             {
                 await writeCache(target.key, entry);
             }
@@ -1047,12 +1078,12 @@ export function registerIsr(registration: IsrRegistration): void
      * aborts only when EVERY waiter has gone, which is a composite-signal design, not a
      * parameter. `guardedLive` takes the request signal precisely because it shares nothing.
      */
-    function produceOnce(target: Target): { task: Promise<Produced>; created: boolean }
+    function produceOnce(target: Target): Promise<Produced>
     {
         const existing = inflight.get(target.key);
         if (existing !== undefined && !superseded(target, existing.startedAt))
         {
-            return { task: existing.task, created: false };
+            return existing.task;
         }
         const startedAt = Date.now();
         const task = produce(target, startedAt).finally(() =>
@@ -1065,7 +1096,7 @@ export function registerIsr(registration: IsrRegistration): void
         });
         const record = { task, startedAt };
         inflight.set(target.key, record);
-        return { task, created: true };
+        return task;
     }
 
     /**
@@ -1097,14 +1128,14 @@ export function registerIsr(registration: IsrRegistration): void
                 const startedAt = Date.now();
                 const result = await outside(() => runInWorkUnit(
                     () => renderer(target.url, shellText, renderOptions(target, buildValue, reasons, false)),
-                    { sharedApi: createSharedApiBridge(app, target.locale) }));
-                if (result.kind === 'html' && result.guarded === true)
+                    { sharedApi: createSharedApiBridge(app, target.locale) })).catch(guardedThrow(target.url));
+                if (result === undefined || discovered(result))
                 {
                     // The refresh proved the chain guarded. Learn FIRST, then drop: requests
                     // between the two go live and never read the stale entry, whereas
                     // drop-then-learn leaves a window in which a miss re-seeds from a
                     // still-on-disk pre-fix file.
-                    learn(target.pathname);
+                    learn(target.path);
                     await dropCache(target.key);
                     reportGuarded(target.pathname);
                     return;
@@ -1113,7 +1144,7 @@ export function registerIsr(registration: IsrRegistration): void
                 {
                     // A refresh that raced a write loses: writing it would undo the mark, which
                     // is the shape a purge issued mid-flight has always had.
-                    if (!learned.has(target.pathname) && !superseded(target, startedAt))
+                    if (!learned.has(target.path) && !superseded(target, startedAt))
                     {
                         await writeCache(target.key, { html: result.html, status: 200, createdAt: Date.now(), build: await buildId });
                     }
@@ -1127,8 +1158,8 @@ export function registerIsr(registration: IsrRegistration): void
                     return;
                 }
                 // The page stopped being static content: keeping the stale copy would mask
-                // a deletion (or a newly-blocking guard) indefinitely. Drop it; the next
-                // request goes live.
+                // a deletion indefinitely. Drop it; the next request produces the page again, from
+                // its prerendered file when one exists.
                 await dropCache(target.key);
                 onError(new Error(`ISR regeneration of "${ target.url }" produced ${ result.kind }`
                     + `${ result.kind === 'html' ? ` status ${ result.status }` : '' } - entry dropped.`),
@@ -1165,7 +1196,7 @@ export function registerIsr(registration: IsrRegistration): void
         const target = targetOf(context);
         // The guarded gate, BEFORE the cache, the seed, and the in-flight map: guarded
         // traffic must never populate, read, or coalesce on shared state.
-        if (guarded(target.url) || learned.has(target.pathname))
+        if (guarded(target.url) || learned.has(target.path))
         {
             return varied(await guardedLive(target, context.request), context.request);
         }
@@ -1187,21 +1218,18 @@ export function registerIsr(registration: IsrRegistration): void
         let verdict: 'hit' | 'miss' = 'hit';
         if (entry === undefined)
         {
-            const { task, created } = produceOnce(target);
-            const produced = await task;
+            const produced = await produceOnce(target);
             if (produced.entry === undefined)
             {
-                const live = produced.live as PageResult;
-                if (!created && live.kind === 'html' && live.guarded === true)
+                if (produced.live === undefined)
                 {
-                    // A coalesced JOINER on the flight that DISCOVERED the chain guarded:
-                    // the shared body was rendered under the creator's identity, so this
-                    // request re-renders under its own. Direct - never produceOnce, which
-                    // would coalesce resuming joiners into a second shared flight. The
-                    // pathname is learned by now, so later requests skip flights entirely.
+                    // The flight DISCOVERED the chain guarded. It rendered for no visitor, so
+                    // its creator and every joiner re-render under their own identity. Direct -
+                    // never produceOnce, which would coalesce resuming waiters into a second
+                    // shared flight. Later requests skip flights entirely.
                     return varied(await guardedLive(target, context.request), context.request);
                 }
-                return varied(pageResponse(live, await shell, {}, target.base), context.request);
+                return varied(pageResponse(produced.live, await shell, {}, target.base), context.request);
             }
             entry = produced.entry;
             // A prerendered seed IS cache content already on disk; only a live render is a miss.

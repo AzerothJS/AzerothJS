@@ -17,10 +17,10 @@
  * passthrough (original bytes, negotiated nothing). A broken adapter degrades to the
  * original bytes uncached - a page with a heavy image beats a page with a blank one.
  *
- * Local sources resolve under `root` with the same two-step containment static file
- * serving uses (logical prefix + realpath); remote sources need an exact-origin
- * allowlist, must declare an image content type, and are fetched with a byte cap
- * and timeout.
+ * Local sources must carry an image extension and resolve under `root` with the same
+ * two-step containment static file serving uses (logical prefix + realpath); remote
+ * sources need an exact-origin allowlist, must declare an image content type, and are
+ * fetched with a byte cap and timeout.
  */
 
 import { createHash } from 'node:crypto';
@@ -145,6 +145,22 @@ const CONTENT_TYPES: Record<string, string> = {
 /** @internal Content types the endpoint serves. Remote bytes declaring anything else are refused. */
 const IMAGE_TYPES: ReadonlySet<string> = new Set(Object.values(CONTENT_TYPES));
 
+/** @internal A local source's extension -> content type, with the rasters an adapter may read. */
+const LOCAL_TYPES: ReadonlyMap<string, string> = new Map([
+    ...Object.entries(CONTENT_TYPES),
+    ['apng', 'image/apng'],
+    ['bmp', 'image/bmp'],
+    ['cur', 'image/x-icon'],
+    ['heic', 'image/heic'],
+    ['heif', 'image/heif'],
+    ['jfif', 'image/jpeg'],
+    ['jxl', 'image/jxl'],
+    ['pjp', 'image/jpeg'],
+    ['pjpeg', 'image/jpeg'],
+    ['tif', 'image/tiff'],
+    ['tiff', 'image/tiff']
+]);
+
 /** @internal The smallest ladder width >= value; null when the request is out of range. */
 function snapWidth(raw: string | null): number | null | undefined
 {
@@ -187,6 +203,14 @@ export function imageHandler(options: ImageHandlerOptions): Handler
 
     async function readLocal(source: string): Promise<{ bytes: Uint8Array; hash: string; contentType: string }>
     {
+        // Only an image, as a remote source must declare: a page (an ISR page's prerendered file
+        // among them) is not a source, and this endpoint would cache it publicly, for a year by
+        // default.
+        const contentType = LOCAL_TYPES.get(source.slice(source.lastIndexOf('.') + 1).toLowerCase());
+        if (contentType === undefined)
+        {
+            throw new NotFoundError();
+        }
         // The same containment decision the static server takes, and only the decision: the
         // stat it took is deliberately NOT reused below. This stays BEFORE the open: a handle
         // proves the bytes match the size that was checked, not that the path was ever
@@ -224,8 +248,7 @@ export function imageHandler(options: ImageHandlerOptions): Handler
                 hash = createHash('sha256').update(bytes).digest('hex');
                 sourceHashes.set(identity, hash);
             }
-            const extension = target.slice(target.lastIndexOf('.') + 1).toLowerCase();
-            return { bytes, hash, contentType: CONTENT_TYPES[extension] ?? 'application/octet-stream' };
+            return { bytes, hash, contentType };
         }
         finally
         {

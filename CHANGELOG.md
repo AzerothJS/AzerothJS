@@ -36,6 +36,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   in a handler) carries that request's stores into every shared page. Import the kit at the top
   of the server entry and mount the pages at startup.
 
+- **The file handler and `/_image` refuse more than a page's own file.** An `index.html` or
+  `index.<name>.html` in a directory an ISR page answers for, or a guarded page owns, answers 404
+  whatever wrote it, a copy from `public/` included (`/storybook/index.html` beside `/:slug`,
+  `/m/index.v2.html` beside an ISR `/m`, `/docs/a/index.html` under a guarded `/docs/:slug`),
+  and `/index.html` of an ISR or guarded home answers 404 where it served the built shell;
+  `azeroth dev` still serves such a `public/` copy through vite. A case or 8.3 spelling of an
+  enumerated static page's url (`/q/Open` for `/q/open`) renders live instead of serving the
+  file. `/_image` takes a local source only with an image extension: png, jpg, jpeg, gif, webp,
+  avif, svg, ico, apng, bmp, cur, heic, heif, jfif, jxl, pjp, pjpeg, tif or tiff. A local source
+  with any other extension or none (`/uploads/9f8a2c`), which it passed through or handed to the
+  adapter, answers 404: rename or convert it.
+
 ### Fixed
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
@@ -236,6 +248,63 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   the rule.
 
 ### Security
+
+- **An ISR page whose renderer guarded it kept serving its prerendered file to every visitor.**
+  When the renderer's route table guarded a page that the table given to `mountPages` did not (a
+  server-only upgrade against an older dist, or a renderer built over a different table), ISR's
+  first render and every regeneration met the guard with no visitor, and only a render the guard
+  let through marked the page guarded. A guard that vetoed, redirected or threw, or a loader under
+  it that failed, left the page unmarked: the next request put the prerendered file back,
+  answered 200 `public` and `stale` to anonymous and signed-in visitors alike for as long as the
+  process ran, a failed regeneration kept a cached copy for every visitor, and with no
+  prerendered file a signed-in visitor got the anonymous 401, 403 or redirect. A renderer from
+  `createPageRenderer` now tells `mountPages` which urls its own table guards
+  (`PageRenderer.guarded`), so such a url answers per request with `private, no-store` and
+  `x-azeroth-cache: live` from the first request after every start, in every language, under each
+  visitor's own identity, and its prerendered file and cached copy never answer, whatever the
+  guard does. A plain or enumerated static page that table guards answers live the same way
+  instead of serving its file, and the dev session forwards `guarded` to the pages it mounts. A
+  wrapper that does not forward `guarded` but passes `createPageRenderer`'s results and throws
+  through unchanged is caught at the page's first shared render in each process: a veto, a
+  redirect, a refused off-origin redirect, a throw or a loader failure under a guard counts as
+  finding the guard, as a render that passes it already did, and a throw counts for up to 64
+  pages whose shared renders threw one object from one wait. The cached copy is dropped, every
+  visitor waiting on that render renders again as themselves, and the page answers live from
+  then on. Until that render, and again after a restart, its prerendered file, or a copy a
+  persistent cache kept from an earlier process, still answers, for up to one `revalidate` window
+  when it is younger than that. A renderer written by hand is caught only by a veto or by an
+  outcome it stamps `guarded` itself, never by a throw: expose `guarded` on it. What such a page
+  learns covers every spelling of its url (`/m/`, `/%6D`) and is kept for the life of the
+  process, and a page that has learned 1000 guarded paths stops seeding from its prerendered
+  files, so a flood of vetoed urls cannot bring back a learned page's file or a copy cached under
+  another spelling. A prerendered file seeds only the url that names it exactly, so on a
+  case-insensitive disk `/q/VIP`, an 8.3 name or a `::$INDEX_ALLOCATION` spelling of a
+  parameterised ISR page's url no longer answers with the file of a guarded `/q/vip`.
+  `PageResult`'s `redirect`, `error` and `refused-redirect` arms now carry `guarded` under the
+  same rule as `html` and `stream`, and `PageRenderer.guarded` and every arm's `guarded` take
+  `undefined`, so a wrapper passes them on as they are under `exactOptionalPropertyTypes`. Build
+  the renderer and `mountPages` from one table, and make a guarded page `render: 'server'`.
+
+- **A page's prerendered file was served by its file url.** The catch-all file handler served an
+  ISR page's `index.html` or `index.<lang>.html` to any request that named it, with no guard
+  gate and no revalidation, and on Windows through case, 8.3 and NTFS stream spellings too
+  (`/m/INDEX.HTML`, `/M`, `/m/index.html::$DATA`). It also served the file an older build left
+  for a page that a guard in either table now covers, whatever the page renders now,
+  `render: 'server'` included, so the page url answered 403 while `/report/index.html` answered
+  200 `public`. The `/assets` mount served a page's file under it as `immutable` for a year, an
+  enumerated static page served a guarded url's file to a case, 8.3 or stream spelling of that
+  url (`/q/VIP` for a guarded `/q/vip`), and the image endpoint (`images: true`, on in the
+  fullstack template) served it, like any file under the client directory, to
+  `/_image?src=/m/index.html` with `public, max-age=31536000, immutable`. A request the
+  filesystem resolves to such a file now gets the 404 a missing file gets there (JSON under
+  `/assets`, elsewhere the app's 404 page for a navigation), `/index.html` of an ISR or guarded
+  home included, judged on the client directory as it resolves at that request, so one
+  re-pointed while the process runs is judged too. An enumerated static page serves its file
+  only to the url that names it exactly, and `/_image` answers 404 for a local source that is
+  not an image. The page still answers at its own url. Every other file under the client
+  directory is served as before, a non-ISR page's own file under an ISR pattern
+  (`/about/index.html` beside `/:slug`) included, apart from the `index.html` copies and
+  `/_image` sources the Changed entry above names.
 
 - **An ISR page could cache a value the triggering visitor's request put in an async-context
   store.** ISR's first render and every regeneration ran in the async context of the request that

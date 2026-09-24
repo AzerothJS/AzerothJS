@@ -432,20 +432,25 @@ export async function devPages(options: DevPagesOptions): Promise<DevSession>
     };
 
     /** A render error unwinds through vite's own source maps before anything reports it. */
-    const readable = (render: PageRenderer): PageRenderer => async (url, shell, renderOptions) =>
+    const readable = (render: PageRenderer): PageRenderer =>
     {
-        try
+        const wrapped: PageRenderer = async (url, shell, renderOptions) =>
         {
-            return await render(url, shell, renderOptions);
-        }
-        catch (error)
-        {
-            if (error instanceof Error)
+            try
             {
-                server.ssrFixStacktrace(error);
+                return await render(url, shell, renderOptions);
             }
-            throw error;
-        }
+            catch (error)
+            {
+                if (error instanceof Error)
+                {
+                    server.ssrFixStacktrace(error);
+                }
+                throw error;
+            }
+        };
+        // The renderer's guard predicate, so the mount gates what its table guards.
+        return Object.assign(wrapped, { guarded: render.guarded });
     };
 
     // The pages mount inside the first request, so they mount in this frame instead, as production does.

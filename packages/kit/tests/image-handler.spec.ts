@@ -271,6 +271,46 @@ describe('mountPages image wiring', () =>
         const shell = await app.handle(new Request('http://local/'));
         expect(await shell.text()).toContain('<div id="root">');
     });
+
+    it('a local source that is not an image answers 404, a prerendered page included', async () =>
+    {
+        const { app, root } = serve();
+        mkdirSync(join(root, 'report'));
+        writeFileSync(join(root, 'report', 'index.html'), '<html><body>PRERENDERED</body></html>');
+        writeFileSync(join(root, 'notes.txt'), 'PRERENDERED-NOTES');
+        for (const src of ['/report/index.html', '/REPORT/INDEX.HTML', '/report/index.html::$DATA', '/notes.txt'])
+        {
+            const response = await app.handle(new Request(`http://local/_image?src=${ encodeURIComponent(src) }`));
+            expect(response.status).toBe(404);
+            expect(await response.text()).not.toContain('PRERENDERED');
+        }
+    });
+
+    it('a local raster a browser or an adapter reads is served typed, and a name with no image extension answers 404', async () =>
+    {
+        const { app, root } = serve();
+        const names = ['photo.bmp', 'scan.TIF', 'scan.tiff', 'shot.jxl', 'anim.apng', 'photo.jfif', 'img.heic', 'pointer.cur', 'uploads/9f8a2c', 'page.constructor', 'page.__proto__'];
+        // Distinct bytes per file: the transform cache is keyed by content.
+        names.forEach((name, i) =>
+        {
+            mkdirSync(join(root, name, '..'), { recursive: true });
+            writeFileSync(join(root, name), new Uint8Array([...PNG, i]));
+        });
+        const typeOf = async (src: string): Promise<string> =>
+        {
+            const response = await get(app, `src=${ encodeURIComponent(src) }`);
+            return `${ response.status } ${ response.status === 200 ? response.headers.get('content-type') : '-' }`;
+        };
+        const expected: Array<[string, string]> = [
+            ['/photo.bmp', '200 image/bmp'], ['/scan.TIF', '200 image/tiff'], ['/scan.tiff', '200 image/tiff'], ['/shot.jxl', '200 image/jxl'],
+            ['/anim.apng', '200 image/apng'], ['/photo.jfif', '200 image/jpeg'], ['/img.heic', '200 image/heic'], ['/pointer.cur', '200 image/x-icon'],
+            ['/uploads/9f8a2c', '404 -'], ['/page.constructor', '404 -'], ['/page.__proto__', '404 -']
+        ];
+        for (const [src, answer] of expected)
+        {
+            expect(await typeOf(src), src).toBe(answer);
+        }
+    });
 });
 
 describe('the source size limit is enforced against the file that is actually read', () =>

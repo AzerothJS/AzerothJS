@@ -26,7 +26,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { open, readFile } from 'node:fs/promises';
+import { open, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { NavigateTarget, Route } from 'azerothjs';
@@ -36,7 +36,7 @@ import { alternatesOf } from './alternates.ts';
 import { mergeVary } from './vary.ts';
 import { acceptRedirectTarget, assertOneRuntime, evaluateGuards, evaluateGuardsForPattern, flattenRoutesFor, guardedMatch, isAbsoluteAppPath, isExternalUrl, isLanguageTag, isRedirect, joinBase, stripBasePrefix, targetToFullPath } from 'azerothjs/internal';
 import type { App, Handler, RequestContext } from '@azerothjs/http';
-import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, UnauthorizedError } from '@azerothjs/http';
+import { attachApiBridge, html as htmlResponse, json as jsonResponse, readForm, verifyCsrfField, csrfToken, serializeCookie, parseCookies, CSRF_FIELD, ForbiddenError, NotFoundError, RadixRouter, UnauthorizedError } from '@azerothjs/http';
 import type { CsrfOptions } from '@azerothjs/http';
 import { containedFile, staticFiles } from '@azerothjs/http/node';
 import type { ContainedFile } from '@azerothjs/http/node';
@@ -481,10 +481,28 @@ export function mountPages(app: App, options: KitOptions): void
         }
         return response;
     };
+    // The client dir's real path, resolved once. A check that uses it fails safe when the dir is
+    // re-pointed while the process runs: the file it finds is named differently.
+    let realClientDir: Promise<string> | undefined;
+    const realClient = (): Promise<string> => (realClientDir ??= realpath(clientDirOf(options)).catch(() => clientDirOf(options)));
+    // Whether the file found for `file` is named exactly so, not a case, 8.3 or stream alias of
+    // another page's file.
+    const exactly = async (found: ContainedFile, file: string): Promise<boolean> =>
+        await realpath(found.path).catch(() => '') === join(await realClient(), file);
     // The prerendered artifact for a page in one language, under the same containment rule
     // the asset handler applies: a dist whose junction points outside itself seeds nothing.
-    const seedFile = (path: string, locale?: string): Promise<ContainedFile | null> =>
-        (shellText !== undefined ? Promise.resolve(null) : containedFile(clientDirOf(options), prerenderFileFor(path, locale)));
+    const seedFile = async (path: string, locale?: string): Promise<ContainedFile | null> =>
+    {
+        const file = prerenderFileFor(path, locale);
+        const found = shellText !== undefined ? null : await containedFile(clientDirOf(options), file);
+        return found !== null && await exactly(found, file) ? found : null;
+    };
+    // An enumerated page's file answers only the url that names it exactly.
+    const aliased = async (file: string): Promise<boolean> =>
+    {
+        const found = await containedFile(clientDirOf(options), file);
+        return found !== null && !await exactly(found, file);
+    };
     let isrCache: PageCache | undefined;
 
     // In prefix mode a page exists once per language and the bare path redirects to the
@@ -565,13 +583,19 @@ export function mountPages(app: App, options: KitOptions): void
             // The APP-SPACE pattern, never the prefixed path handed to registerIsr: a write
             // arrives with its language prefix already stripped.
             isrPatterns.add(page.path);
+            // One page's languages share what was learned about its chain, which no language
+            // changes.
+            const learned = new Set<string>();
             for (const mounted of mountPaths(page.path))
             {
                 registerIsr({
                     app,
                     path: mounted,
                     revalidate: page.revalidate,
-                    guarded: (url) => guardedMatch(options.routes, url),
+                    // The renderer's own table too: a guard only it declares answers live before
+                    // any seed or shared render.
+                    guarded: (url) => guardedMatch(options.routes, url) || options.renderer?.guarded?.(url) === true,
+                    learned,
                     cache: pages,
                     renderer: options.renderer,
                     shell: shellPromise,
@@ -606,7 +630,7 @@ export function mountPages(app: App, options: KitOptions): void
                     // params first, live-render anything the enumeration did not list.
                     for (const mounted of mountPaths(page.path))
                     {
-                        registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise, stamped);
+                        registerStaticFirst(app, mounted, options, shellPromise, assets, buildIdPromise, stamped, aliased);
                     }
                 }
                 registerLocaleRedirect(app, page.path, options);
@@ -701,6 +725,46 @@ export function mountPages(app: App, options: KitOptions): void
         }
     }
 
+    // The router hands a directory to its most specific page (static > param > wildcard), so a
+    // non-ISR page's own file under an ISR pattern belongs to that page, not to the ISR one.
+    let owners: RadixRouter<boolean> | undefined;
+    const ownerOf = (url: string): 'isr' | 'plain' | undefined =>
+    {
+        if (owners === undefined)
+        {
+            owners = new RadixRouter<boolean>();
+            for (const page of flattenPages(options.routes))
+            {
+                owners.insert('GET', page.path, page.revalidate !== undefined);
+            }
+        }
+        const owner = owners.match('GET', url);
+        return owner.kind !== 'match' ? undefined : owner.value ? 'isr' : 'plain';
+    };
+    // A page's prerendered file answers only through the page when the page is ISR or a guard in
+    // either table covers its url, whatever its render mode. Judged on the name the filesystem
+    // resolves under the client dir's real path at this request, which case, an 8.3 alias or a
+    // stream suffix cannot respell.
+    const pageArtifact = async (relative: string): Promise<boolean> =>
+    {
+        const root = await realpath(clientDirOf(options)).catch(() => clientDirOf(options));
+        const found = await containedFile(clientDirOf(options), relative, { index: 'index.html', realRoot: root });
+        if (found === null)
+        {
+            return false;
+        }
+        const real = await realpath(found.path).catch(() => found.path);
+        const file = /^(.*)[/\\]index(?:\.[^/\\.]+)?\.html$/.exec(real.slice(root.length));
+        if (file === null)
+        {
+            return false;
+        }
+        const url = (file[1] ?? '').split(/[/\\]/).map(encodeURIComponent).join('/') || '/';
+        const owner = ownerOf(url);
+        return (marksIsrPage(url) && owner !== 'plain')
+            || (owner !== undefined && (guardedMatch(options.routes, url) || options.renderer?.guarded?.(url) === true));
+    };
+
     if (options.images !== undefined)
     {
         if (shellText !== undefined)
@@ -722,7 +786,18 @@ export function mountPages(app: App, options: KitOptions): void
         const assetsDir = join(clientDirOf(options), 'assets');
         if (existsSync(assetsDir))
         {
-            app.get('/assets/*path', staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' }));
+            const hashed = staticFiles(assetsDir, { cacheControl: 'public, max-age=31536000, immutable' });
+            // Only a page whose first segment is `assets`, a param or a wildcard can own a file
+            // here.
+            const pagesHere = flattenPages(options.routes).some((page) => /^\/(?:assets(?:\/|$)|[:*])/.test(page.path));
+            app.get('/assets/*path', !pagesHere ? hashed : async (context) =>
+            {
+                if (await pageArtifact(`assets/${ context.params.path }`))
+                {
+                    throw new NotFoundError();
+                }
+                return hashed(context);
+            });
         }
     }
 
@@ -735,9 +810,10 @@ export function mountPages(app: App, options: KitOptions): void
     // fetch() still gets the JSON its caller can read.
     app.get('/*path', async (context) =>
     {
-        if (assets === undefined)
+        // Under `shell`, or for a page's own file, there is no file to serve, so only a navigation
+        // has an answer here: a refused file answers as a missing one does.
+        if (assets === undefined || await pageArtifact(context.params.path))
         {
-            // Under `shell` there is no file to try, so only a navigation has an answer here.
             if (!acceptsHtml(context.request))
             {
                 throw new NotFoundError();
@@ -1458,7 +1534,7 @@ async function guardedAnswer(
 /** @internal Gates a static handler: a url a guarded chain wins never serves a file unguarded. */
 function gated(handler: Handler, options: KitOptions, shellPromise: Promise<string>, buildId: Promise<string>): Handler
 {
-    return async (context) => (guardedMatch(options.routes, appPath(context, options))
+    return async (context) => (guardedMatch(options.routes, appPath(context, options)) || options.renderer?.guarded?.(appPath(context, options)) === true
         ? guardedAnswer(context, options, await shellPromise, buildId, async () => handler(context))
         : await handler(context));
 }
@@ -1548,10 +1624,21 @@ function registerStaticFirst(
     shellPromise: Promise<string>,
     assets: Handler,
     buildId: Promise<string>,
-    stamped: (response: Response, file: string, context: RequestContext) => Promise<Response>
+    stamped: (response: Response, file: string, context: RequestContext) => Promise<Response>,
+    aliased: (file: string) => Promise<boolean>
 ): void
 {
     const dynamicMode: PageRoute['render'] = options.renderer !== undefined ? 'server' : 'client';
+    // Only the file named exactly so: a case, 8.3 or stream alias of another page's file is not
+    // one.
+    const serve = async (context: RequestContext, file: string): Promise<Response> =>
+    {
+        if (await aliased(file))
+        {
+            throw new NotFoundError();
+        }
+        return withVary(await assets({ ...context, params: { path: file } }), context, options);
+    };
     app.get(path, gated(async (context) =>
     {
         // The artifact is named from the raw remainder one segment at a time; no name means the
@@ -1569,7 +1656,7 @@ function registerStaticFirst(
                 const file = prerenderFileFor(artifact, tag);
                 try
                 {
-                    const served = withVary(await assets({ ...context, params: { path: file } }), context, options);
+                    const served = await serve(context, file);
                     return prefix === undefined ? served : await stamped(served, file, context);
                 }
                 catch (error)
@@ -1584,7 +1671,7 @@ function registerStaticFirst(
             {
                 try
                 {
-                    return withVary(await assets({ ...context, params: { path: prerenderFileFor(artifact) } }), context, options);
+                    return await serve(context, prerenderFileFor(artifact));
                 }
                 catch (error)
                 {

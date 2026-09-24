@@ -257,7 +257,10 @@ answers 403 for the client script, your modules and the stylesheet.
   again by a page render fetches twice.
 - The seam registers GET and POST catch-alls, so a routed page with no `action` answers
   `Allow: GET, HEAD, POST` where production answers `GET, HEAD`.
-- `/index.html` answers your app's 404; production serves the built shell.
+- `/index.html` answers your app's 404; production serves the built `index.html`, unless the home
+  page is ISR or guarded, whose file answers the 404 there too.
+- A `public/` file named `index.html` or `index.<name>.html` in a directory an ISR page answers
+  for, or a guarded page owns, is served by vite; production answers the 404.
 - An api route registered at a page's own path (in the `routes` callback) wins over the page,
   silently: the api routes live on the outer App and the pages behind its catch-all, where a
   production mount registers both on one App and refuses the conflict at startup.
@@ -325,11 +328,32 @@ ISR is refused outright, and a URL that reaches an ISR or a static-file handler 
 guarded chain elsewhere in the table renders live per request with `cache-control: private,
 no-store` and `x-azeroth-cache: live` (without a renderer, the guard walk itself answers).
 The prerender pass refuses to write a file for such a url, and a bare shell for one is never
-cacheable. A guard makes the page a function of the request's
-identity, and an identity-dependent page in a shared cache serves one visitor's data to
-the next - so the combination does not exist. Note the boundary: a LOADER that reads
-request identity without a guard is invisible to this rule; keep personalized loaders off
-ISR pages.
+cacheable. When the renderer's own table guards a page the mounted table does not, a
+renderer from `createPageRenderer` tells `mountPages` so (`PageRenderer.guarded`): the url
+renders live per request from the first request, in every language, and its prerendered file and
+cached copy never answer, whatever the guard does. A plain or enumerated static page that table
+guards renders live the same way, a case, 8.3 or stream spelling of an enumerated page's url
+renders live rather than serve another page's file, and the dev session forwards `guarded` too.
+`PageRenderer.guarded` and `PageResult`'s `guarded` take `undefined`, so a wrapper can pass
+them on as they are. A wrapper that
+does not forward `guarded` but passes `createPageRenderer`'s results and throws through unchanged
+is caught at an ISR page's first shared render in each process instead: whether the guard passes,
+vetoes, redirects or throws, or a loader under it fails, the url renders live per request from
+then on and its cached copy is dropped. Until that render, and again after a restart, its
+prerendered file, or a copy a persistent cache kept from an earlier process, still answers, for
+up to one `revalidate` window when it is younger than that. A renderer written by hand is caught
+only by a veto or by an outcome it stamps `guarded` itself, never by a throw, so expose `guarded`
+on it. An ISR page's prerendered file is never served by its file url or through `/_image`, only
+through the page, and neither is the file of a page a guard in either table covers, whatever its
+render mode: any `index.html` or `index.<name>.html` in a directory an ISR page answers for or
+such a page owns answers as a missing file does (the app's 404 page for a navigation, JSON
+otherwise), a `public/` copy included (`/storybook/index.html` beside `/:slug`), and so does
+`/index.html` of an ISR or guarded home. A file seeds only the url that names it exactly. Build
+the renderer and `mountPages` from one table. A guard makes the page
+a function of the request's identity, and an identity-dependent page in a shared cache serves one
+visitor's data to the next - so the combination does not exist.
+Note the boundary: a LOADER that reads request identity without a guard is invisible to this
+rule; keep personalized loaders off ISR pages.
 
 ```ts
 { path: '/', component: Home, render: 'static', revalidate: 300 }
@@ -511,7 +535,11 @@ not govern.
 `KitOptions.images: true` serves `<Image optimize>`'s URLs over the client dist:
 content-hash cache keys, a year of immutable caching, ETag revalidation, and the same
 path containment static serving uses (one shared rule: a hidden name is refused under every
-spelling the filesystem answers to, an 8.3 alias included, and `.well-known` is public). The framework ships NO codec: without an adapter
+spelling the filesystem answers to, an 8.3 alias included, and `.well-known` is public). A
+local source must be a png, jpg, jpeg, gif, webp, avif, svg or ico file, or a raster only a
+browser or an adapter reads (apng, bmp, cur, heic, heif, jfif, jxl, pjp, pjpeg, tif, tiff);
+anything else, a prerendered page or a name with no extension included, answers 404. The
+framework ships NO codec: without an adapter
 the endpoint is a caching passthrough of original bytes; implement `ImageAdapter` (one
 `transform` method) with whatever you trust to add resizing and AVIF/WebP negotiation.
 A throwing adapter degrades to original bytes - never a blank image. One consequence

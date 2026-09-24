@@ -41,7 +41,7 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *   - `html`     - rendered markup to serve with `status` (defaults to 200; a not-found
  *                  page renders the app's fallback UI at 404).
  *
- * The `html` and `stream` arms carry `guarded: true` when the matched chain has any route
+ * Every arm but `blocked` carries `guarded: true` when the matched chain has any route
  * guard, and when this render CONSULTED the request it was given - a guard or loader that
  * read `args.request`, a component that called `useRequest()`, or an in-process api call
  * made with the visitor's identity. Either way the render is a function of (URL, request
@@ -52,7 +52,8 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *   - `blocked`  - a guard VETOED; serve `status` (401 or 403) with `html`, the app's own
  *                  blocked UI. The protected component is never in it: the render is pinned
  *                  to the blocked state, which is what stops the guard-veto authorization
- *                  bypass. Never cache or prerender this arm - it is identity-dependent.
+ *                  bypass. Never cache or prerender this arm - it is identity-dependent, and
+ *                  it needs no stamp: only a guard vetoes.
  *   - `error`    - a LOADER failed. The page still renders - the ancestors that loaded keep
  *                  their data and their DOM, and the failed level shows its own failure UI,
  *                  which is what the client already does for the same fault - but the status
@@ -64,12 +65,12 @@ export type PageApp = (props: { url?: string; handoff?: LoaderHandoff }) => Moun
  *                  any byte exists).
  */
 export type PageResult =
-    | { kind: 'html'; html: string; status: number; guarded?: boolean }
-    | { kind: 'redirect'; to: string; replace: boolean }
+    | { kind: 'html'; html: string; status: number; guarded?: boolean | undefined }
+    | { kind: 'redirect'; to: string; replace: boolean; guarded?: boolean | undefined }
     | { kind: 'blocked'; status: 401 | 403; html: string }
-    | { kind: 'error'; status: 500; html: string }
-    | { kind: 'refused-redirect'; target: string }
-    | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean };
+    | { kind: 'error'; status: 500; html: string; guarded?: boolean | undefined }
+    | { kind: 'refused-redirect'; target: string; guarded?: boolean | undefined }
+    | { kind: 'stream'; status: number; stream: ReadableStream<Uint8Array>; guarded?: boolean | undefined };
 
 /** How one render is asked to behave; omitted entirely for the buffered default. */
 export interface PageRenderOptions
@@ -170,7 +171,23 @@ export interface PageRenderOptions
 }
 
 /** The per-url renderer `createPageRenderer` returns and `mountPages`/`prerender` consume. */
-export type PageRenderer = (url: string, shell: string, options?: PageRenderOptions) => Promise<PageResult>;
+export type PageRenderer = ((url: string, shell: string, options?: PageRenderOptions) => Promise<PageResult>) & {
+    /** Whether this renderer's table guards the chain `url` selects; set by createPageRenderer. */
+    readonly guarded?: ((url: string) => boolean) | undefined;
+};
+
+/**
+ * What a guarded chain's shared render threw, and for which urls, in one process-wide slot the SSR
+ * bundle's own copy of this module shares. The urls keep a failure another page rethrows from
+ * marking it.
+ */
+const guardedThrows = ((globalThis as unknown as Record<symbol, WeakMap<object, Set<string>> | undefined>)[Symbol.for('azeroth.kit.guarded-throw-urls')] ??= new WeakMap<object, Set<string>>());
+
+/** @internal Whether a render of `url`'s guarded chain threw `error`. */
+export function threwUnderGuard(error: unknown, url: string): boolean
+{
+    return typeof error === 'object' && error !== null && guardedThrows.get(error)?.has(url) === true;
+}
 
 /** @internal The shell marker the rendered markup replaces. */
 const ROOT_MARKER = '<div id="root"></div>';
@@ -389,7 +406,7 @@ function drainFrames(scriptNonce: string | undefined, frame: RenderFrame): Drain
 export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
 {
     assertOneRuntime('kit createPageRenderer');
-    return stampRuntime<PageRenderer>(async (url, rawShell, options) =>
+    const render: PageRenderer = async (url, rawShell, options) =>
     {
         if (options?.scriptNonce !== undefined && !CSP_NONCE.test(options.scriptNonce))
         {
@@ -422,6 +439,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // render identity-dependent too, whether or not the chain declares a guard. Read after
         // the loaders and after the main pass, which is where every such read has landed.
         const identityRead = (): boolean => options?.request !== undefined && requestWasRead(options.request);
+        const stamp = (): { guarded?: true } => (guarded || identityRead() ? { guarded: true } : {});
 
         // An OFF-ORIGIN guard/loader redirect is refused at the router boundary and arrives
         // here as its own terminal outcome. It is never rendered and never written to a
@@ -429,7 +447,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         // is the open redirect itself.
         if (loaded !== null && 'refusedRedirect' in loaded)
         {
-            return { kind: 'refused-redirect', target: loaded.target };
+            return { kind: 'refused-redirect', target: loaded.target, ...stamp() };
         }
 
         // A guard/loader redirect -> a real 302; never render the target.
@@ -441,7 +459,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             const to = typeof loaded.redirect === 'string'
                 ? loaded.redirect
                 : targetToFullPath(loaded.redirect);
-            return { kind: 'redirect', to, replace: loaded.replace };
+            return { kind: 'redirect', to, replace: loaded.replace, ...stamp() };
         }
 
         // A guard VETO -> serve the status with the app's OWN blocked UI. The render runs
@@ -564,7 +582,7 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
             // Read after the main pass, which renderToStream ran synchronously inside the call
             // above, and before the first byte leaves in `start()`. A read inside a Suspense
             // continuation arrives after the headers and cannot reach this.
-            return { kind: 'stream', status: notFound ? 404 : 200, stream, ...(guarded || identityRead() ? { guarded: true } : {}) };
+            return { kind: 'stream', status: notFound ? 404 : 200, stream, ...stamp() };
         }
 
         // The drain rides a `finally` on the render, so nothing can execute between the two
@@ -608,8 +626,33 @@ export function createPageRenderer(app: PageApp, routes: Route[]): PageRenderer
         }
         if (failedLevels.length > 0)
         {
-            return { kind: 'error', status: 500, html };
+            return { kind: 'error', status: 500, html, ...stamp() };
         }
-        return { kind: 'html', html, status: notFound ? 404 : 200, ...(guarded || identityRead() ? { guarded: true } : {}) };
-    });
+        return { kind: 'html', html, status: notFound ? 404 : 200, ...stamp() };
+    };
+    return Object.assign(stampRuntime<PageRenderer>(async (url, shell, options) =>
+    {
+        try
+        {
+            return await render(url, shell, options);
+        }
+        catch (error)
+        {
+            // A throw is an outcome of the chain too: a guard or a component that needs the visitor
+            // throws in a render that has none, and only such a shared render is asked about it.
+            if (options?.request === undefined && typeof error === 'object' && error !== null && guardedMatch(routes, url))
+            {
+                // ponytail: 64 urls per thrown object, oldest out; a wider collision on one wait
+                // leaves its oldest pages stale for one more revalidate window.
+                const urls = guardedThrows.get(error) ?? new Set<string>();
+                urls.delete(url);
+                if (urls.size >= 64)
+                {
+                    urls.delete(urls.values().next().value as string);
+                }
+                guardedThrows.set(error, urls.add(url));
+            }
+            throw error;
+        }
+    }), { guarded: (url: string) => guardedMatch(routes, url) });
 }
