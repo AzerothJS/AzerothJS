@@ -46,7 +46,9 @@ export { walkComponentTags } from './markup-util.ts';
 export { azeroth, type AzerothPluginOptions } from './vite.ts';
 
 // The component pipeline: the parser/analysis/codegen for `component` syntax.
-export { parseModule } from './parser.ts';
+export { parseModule, declaredName } from './parser.ts';
+// The keyword-construct scan every writer shares; the keyword hover asks it too.
+export { findConstructs } from './lower-reactive.ts';
 export type { Module, ModuleItem, OpaqueRegion, ComponentDecl, StateDecl, DerivedDecl, MarkupOutput, OpaqueStatements } from './ast.ts';
 // NOTE: this pipeline (and `diagnoseModule`) pulls the TypeScript-backed analysis
 // into this index; the compiler requires `typescript` as a peer dep.

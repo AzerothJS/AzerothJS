@@ -10,13 +10,18 @@ policy (see the compiler README).
 ## 1. Model
 
 A `.azeroth` file is a TypeScript module augmented with ONE construct: the
-`component` declaration. Everything outside a component declaration is **opaque
-TypeScript** - the compiler passes it through verbatim and never interprets it.
+`component` declaration. Code outside a component declaration is TypeScript: the
+compiler reads it only for the `style` section (section 4), for markup (section 6) and
+for the keyword statements section 7 lists, and passes the rest through as written.
 Inside a component body, a small set of *shape-gated contextual keywords* introduces
 reactive declarations and blocks, and `<`-delimited **markup** may appear in
-statement position. All expression interiors (initializers, hole contents, handler
-bodies, the props parameter) remain ordinary TypeScript, delegated to the TypeScript
-language itself - this grammar never parses inside them.
+statement position. All expression interiors (initializers, hole contents, attribute
+and directive values, handler bodies) remain ordinary TypeScript, delegated to the
+TypeScript language itself - this grammar reads inside them only for nested markup and
+for a keyword statement nested in them (section 7), which is lowered where it stands:
+in a hole, an attribute, a directive value or a handler as in a function declared in
+the component body. The props parameter is TypeScript too and is copied as written: a
+keyword statement in a default value there is not lowered.
 
 Parsing is TOTAL: malformed input still produces a module (unrecognized text falls
 into opaque regions). The one hard error is malformed markup the parser has committed
@@ -83,7 +88,8 @@ A `<` in expression position, followed by `>` or an identifier-start character, 
    `<...>` region is followed (after trivia) by `(`, whose balanced close is followed
    by `:` (return-type annotation) or `=>`, the `<...>` is the type-parameter list of
    a generic arrow function and NOT markup. Markup can never have this shape
-   (`<div>(x)</div>` fails the probe: no `:`/`=>` after the parenthesis).
+   (`<div>(x)</div>` fails the probe: no `:`/`=>` after the parenthesis). The probe
+   runs inside a markup expression; 3.3 says how a statement reads the same text.
 3. Otherwise the `<` opens **markup**, and the markup parser commits per §6.5.
 
 ### 3.3 The TSX rules (author-facing consequences)
@@ -92,9 +98,19 @@ A `<` in expression position, followed by `>` or an identifier-start character, 
 
 - **No angle-bracket type assertions.** Write `value as Foo`. A `<Foo>value` is read
   as markup, and its missing `</Foo>` is reported as an unclosed tag.
-- **Generic arrows: write the trailing comma.** `<T,>(v: T) => v`. A comma-less
-  `<T>(v: T) => v` is read as markup and reported as an unclosed `<T>` tag - in every
-  position. The trailing comma is required, exactly as in `.tsx`.
+- **Generic arrows: write the trailing comma.** Inside a markup expression (a hole, an
+  attribute or directive value, a handler) rule 2 of 3.2 applies: `<T>(v: T) => v` is a
+  generic arrow there, with or without the comma, and so is one whose type parameter
+  has a constraint, a default or a `const` modifier. In a statement of the module or
+  of a component body, in a declaration value and inside a keyword block, the list is
+  an arrow's when a comma or a default follows its first name: `<T,>(v: T) => v`,
+  `<T, U>(v: T, u: U) => v`, `<T = unknown>(v: T) => v`. A comma-less
+  `<T>(v: T) => v` is read there as markup and reported as an unclosed `<T>` tag, and
+  a type parameter with a constraint or a `const` modifier is refused there with or
+  without the comma, as `<T extends object,>(v: T) => v` is. A declaration value or a
+  keyword block written in a markup expression needs the comma as well, and so do the
+  expressions of markup written in a value or a block that is not itself a statement of
+  a component body.
 - **Type arguments in call position are unaffected**: `foo<Bar>(x)`, `new C<Bar>()`.
 
 ## 4. Module grammar
@@ -184,8 +200,9 @@ Normative rules:
   (`createEffect`). With an immediate `(` after the keyword: the
   explicit-dependency form - `effect (a, b) (values, prev) with { ... } { body }` -
   where `(Deps)` is a comma-list of dependency expressions and the optional second
-  parenthesis names the callback's parameters. Top-level only; the body brace is
-  required in both forms.
+  parenthesis names the callback's parameters. Either form is recognized at a
+  statement position in the component or at module scope, nested scopes included,
+  apart from the places section 7 names; the body brace is required in both forms.
 - **Wrapper blocks** lower to `batch(() => {...})`, `untrack(...)`,
   `onCleanup(...)`, `onRootDispose(...)`, `onMount(...)` respectively. Block required.
   During a server render a `cleanup` outside an effect or memo does not run;
@@ -201,9 +218,9 @@ string, a nested lambda, an object literal - is at depth > 0 or not the recogniz
 word, and is never mistaken for the clause.
 
 **TC39 import-attributes note.** ES modules use `import ... with { type: "json" }`.
-No collision exists: import statements live at module level, which is opaque
-TypeScript (§1) - the `.azeroth` `with` clause exists ONLY inside component bodies,
-attached to a reactive declaration's value or an `effect` header. The legacy
+No collision exists: the `.azeroth` `with` clause is read only where it is attached
+to a reactive declaration's value or an `effect` header, in a component body or
+wherever section 7 lowers one, and an import statement is neither. The legacy
 `with (obj) { }` *statement* is syntactically excluded in module code (strict mode)
 and, inside bodies, is not followed by `{` immediately after the word (it takes a
 parenthesis), so the depth-0 rule cannot capture it.
@@ -411,11 +428,132 @@ contextual, active only in its exact position and shape:
 | Word(s) | Active position | Gate |
 | --- | --- | --- |
 | `component` | module statement position | followed by `Identifier` and eventually `{` |
-| `state` `derived` `deferred` `resource` `stream` `store` `selector` `form` | body statement position | followed by an identifier (the name) |
-| `effect` | body statement position | followed by `(`, `with {`, or `{` |
-| `batch` `untrack` `cleanup` `dispose` `mount` | body statement position | followed by `{` |
+| `state` `derived` `deferred` | statement position in the component body, at module scope, or in any function or markup expression nested in either | followed by an identifier (the name) |
+| `resource` `stream` `store` `selector` `form` | body statement position | followed by an identifier (the name) |
+| `effect` | statement position in the component body, at module scope, or in any function or markup expression nested in either | followed by `(`, `with {`, or `{` |
+| `batch` `untrack` `cleanup` `dispose` `mount` | statement position in the component body, at module scope, or in any function or markup expression nested in either | followed by `{` |
 | `with` | after a declaration value / effect header, depth 0 | followed by `{` |
 | `style` | module statement position | followed by `{` |
+
+A statement position is the start of the module or of a block, or the point after a `;`
+or a `}` that is not directly inside an object literal or a class body (comments in
+between are skipped). A line break alone does not end the statement before it: after
+`const a = 1` with no `;` the keyword stays a plain name, as it does in the body of an
+`if`, `else`, `for`, `while` or `do` written without braces and after a `case` or label
+colon. Write the `;` or the braces. A keyword statement is not lowered inside a template
+literal's substitution, the props parameter, an `effect (deps)` list or the
+callback-parameter list after it, or a `with` clause, unless the clause belongs to a
+declaration or `effect` that is itself a statement of the component body (not one at
+module scope, in a nested block, in a function, in a handler or in another markup
+expression).
+
+A declaration keyword followed by `in` or `instanceof` is a plain name before that
+operator, as in `store instanceof Map`: the two words are reserved and name nothing.
+Followed by `as` or `satisfies` it is a plain name too, as in `state as Row`, unless a
+well-formed declaration follows the word: an `=` that is not `==` or `=>`, `:`, `!:`,
+`with {` or `;`, or the array suffix `[]` before one of the first four, and after
+`form`, the one keyword that takes the suffix, before `;` as well. So `state as = 1;`
+declares a state named `as`, on one line or with `as = 1;` on the line after the
+keyword, and `form as[];` declares an array form, while `state as [] && run();` and
+`state as [];` are casts and `state as! = 1;` is left as the expression TypeScript
+reads, with TypeScript's error. The operator word is the whole name: `state inedit = 0;`
+declares a state, and a name that goes on with a non-ASCII letter right after the word
+is read as any other name that holds one: as a statement of the component body it is
+refused as `azeroth/non-ascii-name`.
+
+A `{` opens a block after `)`, `=>`, `;`, a `{` or `}`, `else`, `do`, `try`, `finally`,
+`catch`, a `case` or label colon, a return type (`): void {` included), or the end of an
+expression: a name, a literal, a regular expression, or a postfix `++`, `--` or `!`. It
+opens an object literal after an expression lead (`(`, `[`, `,`, `=`, `?`, `...`, an
+operator other than `>`, `>>`, `>>>` or `void`, or `return`, `typeof`, `yield`, `await`,
+`new`, `delete`, `in`, `instanceof`, `throw`, `default`, `extends`, `with`, and `of` in a
+`for` head) and after a property colon or a conditional colon. After `>`, `>>`, `>>>` or
+`void` it opens a block, as it does after `=>` and after the `>` that closes a type
+argument, so an object literal there needs parentheses. A word ends an expression
+instead when it is a member name (`mod.default`), the tail of a name that holds a
+non-ASCII character, or a value named `of` outside a `for` head, and after `return` or
+`yield` and a line break a `{` opens a block. After `class Name`, `class Name<T>`, an
+anonymous `class` with no type parameters, or a heritage such as `extends Base` or
+`extends mix(Base)`, a `{` opens a class body; a `{` inside a class header's type
+arguments is a type literal, so `class Box<T extends { a: string }>` keeps its body. A
+markup expression and a declaration value start in expression position, so a `{` that
+opens one is an object literal. The members of such an object literal or class body are
+not statements, so `{ effect(v) { return v; } }` and `class K { effect(v) { return v; } }`
+keep their methods as written, while a keyword statement inside a method's own body is
+lowered.
+
+Four forms are known limits: the `{` is read as a block there, so a method named like a
+keyword is rewritten as that keyword and the module does not parse. They are the body of
+a class whose heritage holds a class expression, as in
+`class B extends mix(class {}) { }`; the body of an anonymous class with type parameters,
+`class<T> { }`, and of a class expression that a class field holds after `=>` or `new`;
+an object after a conditional whose first branch has a return type, as in
+`c ? (v: number): number => v : { }`; and an object after `>`, `>>`, `>>>` or `void`.
+Declare the class in a statement of its own, or put the object in parentheses.
+
+Where keyword statements are looked for, `/` and `<` are read more closely than section 3
+states. A `/` opens a regular expression right after the `)` that closes an `if`,
+`while` or `for` head, after `throw` or `export default`, and after the `...` of a
+spread. It divides after a regular expression, after a postfix `++`, `--` or `!`, after
+a member name and after a value named `of`; in a `for` head `of` is the operator and a
+regular expression may follow it. A `!` at the start of a line is a prefix. A regular
+expression closes on its line, so a `/` whose text does not is a division. So is one
+whose closing `/` would stand right before one `/` that neither a `/` nor a `*` follows:
+the first `/` of a `//` closes no regular expression. In
+`size as Box<number> / 2; // it's half` the first `/` divides and the comment stays a
+comment. A regular expression that is itself divided, with the `/` of the division right
+after its closing `/` as in `/re// 2`, falls under the same rule: its first `/` is read
+as a division, its text as code and the rest of its line as a comment. A `<` that rule 2
+of 3.2 reads as a generic arrow's type parameters is an operator. At a `;` the scan
+drops a parenthesis, a bracket, a conditional and a class header that the text before it
+left open; the `;` of a `for` head is exempt. A closer closes only its own kind: a `}`
+closes nothing where a parenthesis or a bracket is the innermost thing open, and a `)`
+or `]` closes the nearest of the two, through an object literal left open in it, and
+never a block or a class body. So after `let a: boolean` with no `;`, the `)` and `]` of
+`/[)]/` on the next line close its `[` and nothing around it. The module and body scans
+of sections 4 and 5 keep the rule of section 3.
+
+Three readings go wrong where keyword statements are looked for, and they are known
+limits. A line break creates no expression position and a no-break space is a
+punctuator, not whitespace, so a regular expression that starts a statement on the line
+after `let a: boolean` with no `;`, or one that follows a no-break space, is read as a
+division and its text as code. A `>` creates expression position, so a division right
+after the `>` that closes a type argument list, as in `size as Box<number> / 2` after
+`as` or `satisfies`, is taken for the start of a regular expression. And a regular
+expression divided by a `/` right after its closing `/`, as in `/re// 2`, is read by the
+rule above as a division, code and a comment.
+
+More of the line can then be read wrongly. A `/` taken for the start of a regular
+expression is corrected by the two rules above when nothing closes it on its line, or
+when what would close it is the first `/` of a `//` as the second rule reads one.
+Otherwise it closes on a later `/` of the line, be that a second division, a `/` in a
+string or the `/*` of a block comment: the code between the two is read as its text, and
+the rest of that string or comment as code. So it goes after the cast in
+`if (size as Box<number> / 2 > 1) { rest = size / 4; }`, and at the closing `/` of a
+regular expression read as a division when its text ends in an operator character or in
+a word such as `throw`, as in `/\d+/.test(s) && paths.push('/items/' + s);`. Text read
+as code can change what the braces after it are taken for: when it does not balance, as
+`/[)}]/` does not, and when its statement ends with no `;` either, where a labeled block
+after `/a?b/` is read as an object literal and a block after `/class Foo/` as a class
+body. The comment that `/re// 2 / 3;` ends in holds its `;`, so the statement goes on
+into the next line.
+
+A keyword statement after such a line, in the same function, method or block and at
+times past its end, can then be left as written, and a method named like a keyword after
+it can be rewritten as that keyword, as in the four forms above. A declaration with its
+name on the keyword's line, or a block keyword with its `{` on the keyword's line, is
+not JavaScript, and the module does not parse. A block keyword with its `{` on the next
+line and no `with` clause is an expression, a line break and a block, and a declaration
+keyword with its name on the next line is an expression, a line break and, where that
+line is a statement by itself as `extra = k;` is, a statement: both are JavaScript, so
+the module builds and the keyword is a plain name at run time. The page throws that
+`batch` or `state` is not defined, or, in a module that lowers another `batch` or
+`untrack` and so imports the helper of that name, the block runs with no error, its
+writes not batched or its reads tracked. The editor reports the unknown name in both
+spellings; the build's type check does not. Write the `;` that `let a: boolean` lacks,
+put the regular expression in parentheses, which reads it right after a no-break space
+and before a glued `/` too, or put the cast in parentheses, as in
+`(size as Box<number>) / 2`.
 
 Everything else - including `ref`, `class:`/`style:`/`bind:` directives and event
 names - is an ordinary identifier or a markup-layer attribute name.

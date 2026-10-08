@@ -448,6 +448,129 @@ export interface WithClauseContext
     atOptionKey: boolean;
 }
 
+/** A span of source that findConstructs scans, and whether it starts in expression position. */
+export interface ConstructRegion
+{
+    start: number;
+    end: number;
+    expression: boolean;
+}
+
+/**
+ * The region the compiler scans for keyword constructs around `offset`: the innermost markup
+ * expression holding it, else the component body item or module region holding it.
+ */
+export function constructRegion(source: string, offset: number): ConstructRegion
+{
+    let region: ConstructRegion = { start: 0, end: source.length, expression: false };
+    try
+    {
+        for (const item of parseModule(source).items)
+        {
+            if (offset < item.start || offset >= item.end)
+            {
+                continue;
+            }
+            if (item.kind !== 'component')
+            {
+                region = { start: item.start, end: item.end, expression: false };
+                continue;
+            }
+            // The compiler lowers a component body one item at a time, so the item is the region;
+            // an offset between items takes the whole body.
+            const part = item.body.find((b) => offset >= b.start && offset < b.end);
+            if (part?.kind === 'markup')
+            {
+                // The parser read this markup: its expressions are the regions, its text is none.
+                return nodeExpressionRegion(source, part.node, offset) ?? { start: offset, end: offset, expression: true };
+            }
+            region = {
+                start: part?.start ?? item.bodyStart,
+                end: part?.end ?? item.bodyEnd,
+                expression: false
+            };
+        }
+    }
+    catch
+    {
+        return region;
+    }
+    return expressionRegion(source, region.start, region.end, offset) ?? region;
+}
+
+/** Whether the parser reads a `form` declaration at `offset`, a statement of a component body. */
+export function startsFormDeclaration(source: string, offset: number): boolean
+{
+    try
+    {
+        return parseModule(source).items.some((item) => item.kind === 'component'
+            && item.body.some((part) => part.kind === 'form' && part.start === offset));
+    }
+    catch
+    {
+        return true;
+    }
+}
+
+/** The innermost markup expression in `[lo, hi)` that holds `offset`, or null. */
+function expressionRegion(source: string, lo: number, hi: number, offset: number): ConstructRegion | null
+{
+    let i = lo;
+    for (;;)
+    {
+        const m = findMarkupStart(source, i);
+        if (m === -1 || m >= hi || m > offset)
+        {
+            return null;
+        }
+        let parsed: { node: MarkupElement | MarkupFragment; end: number };
+        try
+        {
+            parsed = parseMarkup(source, m);
+        }
+        catch
+        {
+            return null;
+        }
+        if (offset < parsed.end)
+        {
+            return nodeExpressionRegion(source, parsed.node, offset);
+        }
+        i = parsed.end;
+    }
+}
+
+/** The markup expression in `node` that holds `offset`, or null. */
+function nodeExpressionRegion(source: string, node: MarkupElement | MarkupFragment, offset: number): ConstructRegion | null
+{
+    const inner = (start: number, end: number): ConstructRegion =>
+        expressionRegion(source, start, end, offset) ?? { start, end, expression: true };
+    if (node.kind === 'element')
+    {
+        for (const attr of node.attributes)
+        {
+            const brace = source.indexOf('{', attr.start);
+            if ((attr.value.kind === 'expression' || attr.spread) && offset > brace && offset < attr.end)
+            {
+                return inner(brace + 1, attr.end - 1);
+            }
+        }
+    }
+    for (const child of node.children)
+    {
+        if (offset < child.start || offset >= child.end)
+        {
+            continue;
+        }
+        if (child.kind === 'expression')
+        {
+            return inner(child.start + 1, child.end - 1);
+        }
+        return child.kind === 'element' || child.kind === 'fragment' ? nodeExpressionRegion(source, child, offset) : null;
+    }
+    return null;
+}
+
 /** The `with { ... }` clause whose braces enclose `offset`, or null. */
 export function withClauseAt(source: string, offset: number): WithClauseContext | null
 {

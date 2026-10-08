@@ -18,9 +18,9 @@
 
 import ts from 'typescript';
 import { hostEventType, isComponentTag } from 'azerothjs/semantics';
-import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart, DECLARATION_KEYWORDS } from '@azerothjs/compiler';
+import { skipBalanced, skipString, skipTemplate, isWhitespace, isIdentPart, findConstructs, declaredName, DECLARATION_KEYWORDS, WRAPPER_FN } from '@azerothjs/compiler';
 import type { Hover, Range } from '../protocol.ts';
-import { classifyPosition, enclosingElement, withClauseKeyword } from '../markup-model.ts';
+import { classifyPosition, constructRegion, enclosingElement, startsFormDeclaration, withClauseKeyword } from '../markup-model.ts';
 import { BUILTIN_COMPONENT_MAP, attributeDocumentation, directiveDocumentation, keywordDocumentation, keywordOptions, keywordWithExample, type BuiltinComponent } from '../language-data.ts';
 import { htmlHover, eventDocumentation } from './html-service.ts';
 import { cssHover, stylesheetHover, inStylesheet } from './css-service.ts';
@@ -447,6 +447,23 @@ function withOptionHover(ctx: RequestContext, offset: number): Hover | null
     };
 }
 
+/** Keywords findConstructs reports. The parser answers for `form`; the rest are read lexically. */
+const SCANNED_KEYWORDS = new Set<string>([...DECLARATION_KEYWORDS, 'effect', ...Object.keys(WRAPPER_FN)].filter(word => word !== 'form'));
+
+/** Whether the compiler's scan of the region holding `at` reports a construct starting there. */
+function startsConstruct(source: string, at: number): boolean
+{
+    const region = constructRegion(source, at);
+    try
+    {
+        return findConstructs(source.slice(region.start, region.end), region.expression).some(c => c.start + region.start === at);
+    }
+    catch
+    {
+        return true;
+    }
+}
+
 /** Keywords a declared NAME follows: the declaration keywords plus `component`. */
 const NAME_KEYWORDS = new Set<string>([...DECLARATION_KEYWORDS, 'component']);
 
@@ -501,10 +518,13 @@ function keywordHover(ctx: RequestContext, offset: number): Hover | null
     // `effect with { ... } { }`: the keyword is followed by its options clause, not the body brace.
     const followedByWith = ctx.source.startsWith('with', after) && !isIdentPart(ctx.source[after + 4] ?? '');
     const opensCorrectly = NAME_KEYWORDS.has(word)
-        ? /[_$A-Za-z]/.test(next)
+        // Whether a declaration keyword declares a name is the parser's own test.
+        ? (word === 'component' ? /[_$A-Za-z]/.test(next) : declaredName(ctx.source, end, ctx.source.length, word === 'form') !== null)
         // `effect` opens either form: `effect (deps)` (explicit) or `effect { }` / `effect with { }` (auto).
         : word === 'effect' ? (next === '(' || next === '{' || followedByWith) : (next === '{' || followedByWith);
-    if (!opensCorrectly)
+    // A member or a value named like a keyword is left to TypeScript's hover.
+    if (!opensCorrectly || (SCANNED_KEYWORDS.has(word) && !startsConstruct(ctx.source, start))
+        || (word === 'form' && !startsFormDeclaration(ctx.source, start)))
     {
         return null;
     }

@@ -46,7 +46,7 @@ import { styleScopeOf } from './style-section.ts';
 import { optimize } from './optimize.ts';
 import { parseDeclarationSlice, factoryPlan, parseValueEnd } from './ts-slice.ts';
 import { RUNTIME_FN, RUNTIME_FN_FIELD_ARRAY, isFactoryItem, LOWERABLE_WORDS } from './keyword-spec.ts';
-import { rewriteReactive, setterName } from './rewrite.ts';
+import { setterName } from './rewrite.ts';
 import { MARKER_ROW } from './markers.ts';
 import { lowerStatements, lowerExpression, watchDepGetters } from './lower-reactive.ts';
 import type { ReactiveSources } from './dep.ts';
@@ -752,7 +752,7 @@ function emitTemplatePath(source: string, plan: RenderPlan, sources: ReactiveSou
                 // listener (matching the bindProps path); non-bubbling types fall
                 // back to a per-element listener inside the helper.
                 emit.used.add('bindEvent');
-                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ modeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) });`);
+                binds.push(`bindEvent(${ nodeVar(target) }, ${ quoteString(binding.event) }, ${ markupRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) });`);
             }
             else if (binding.kind === 'bind')
             {
@@ -864,7 +864,7 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
             {
                 continue;
             }
-            const handler = maybeRewrite(emit, handlerSource(source, prop.handler), sources, prop.handler.start);
+            const handler = markupRewrite(emit, handlerSource(source, prop.handler), sources, prop.handler.start);
             // objectKey because the classifier admits any non-lowercase third character, so an
             // authored name like `on-retry` must emit as a QUOTED accessor, not invalid JS.
             // Parens guard against ASI when the user-authored handler starts on its own line.
@@ -877,13 +877,13 @@ function emitComponentCall(source: string, binding: ComponentBinding, sources: R
             // the value directly (not a DOM event), and the `state = $value` assignment is run through the
             // reactive rewrite so it becomes the state's setter - a non-writable target is rejected there.
             const bound = source.slice(prop.expr.start, prop.expr.end);
-            const value = modeRewrite(emit, bound, sources, prop.expr.start);
-            const writeBack = `($event) => ${ modeRewrite(emit, `${ bound } = $event`, sources, prop.expr.start) }`;
+            const value = markupRewrite(emit, bound, sources, prop.expr.start);
+            const writeBack = `($event) => ${ markupRewrite(emit, `${ bound } = $event`, sources, prop.expr.start) }`;
             const callbackName = bindWriteBack(prop.prop).callback;
             const authored = binding.props
                 .filter((entry): entry is Extract<PropEntry, { kind: 'event' }> =>
                     entry.kind === 'event' && entry.name === callbackName)
-                .map(entry => `(${ maybeRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`);
+                .map(entry => `(${ markupRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`);
             const handler = authored.length === 0
                 ? writeBack
                 : `($event) => { (${ writeBack })($event); ${ authored.join('; ') }; }`;
@@ -1084,8 +1084,8 @@ function emitNode(source: string, node: TemplateNode, plan: RenderPlan, sources:
 }
 
 /**
- * Rewrites `code`'s reactive reads to getter/setter calls - UNLESS we are emitting
- * embedded markup (`emit.raw`), where the enclosing `rewriteExpr` does the single
+ * Lowers `code`'s nested keywords and rewrites its reactive reads to getter/setter calls - UNLESS
+ * we are emitting embedded markup (`emit.raw`), where the enclosing `rewriteExpr` does the single
  * rewrite (the rewrite is not idempotent, so it must run exactly once).
  */
 function maybeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset = 0): string
@@ -1100,18 +1100,6 @@ function maybeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset
         emit.used.add(name);
     }
     return out;
-}
-
-/**
- * {@link rewriteReactive} gated on raw mode. Markup EMBEDDED in a hole or a statement is projected
- * first and then rewritten ONCE by the outer expression/statement pass; an eager rewrite here runs
- * that pass twice over the same text, turning a state read `d` into `d()()` - a value that never
- * updates and a write-back that throws. The bind/class/style emitters were the only markup sites
- * still rewriting eagerly, which is why `bind:` only worked in the component's markup position.
- */
-function modeRewrite(emit: Emit, code: string, sources: ReactiveSources, offset = 0): string
-{
-    return emit.raw ? code : rewriteReactive(code, sources, offset);
 }
 
 /**
@@ -1134,10 +1122,19 @@ function projectedSpan(source: string, start: number, end: number, sources: Reac
     return maybeRewrite(emit, value, sources, start);
 }
 
-/** The rewritten source of a binding expression (nested markup projected, R2-rewritten). */
+/**
+ * One markup expression at `offset`: nested markup compiled, keywords lowered, reads rewritten.
+ * Every markup-expression writer goes through here, so the clone and h() paths emit the same text.
+ */
+function markupRewrite(emit: Emit, code: string, sources: ReactiveSources, offset: number): string
+{
+    return maybeRewrite(emit, projectMarkup(code, emit, sources, offset), sources, offset);
+}
+
+/** The rewritten source of a binding expression. */
 function rewriteExpr(source: string, expr: ReactiveExpr, sources: ReactiveSources, emit: Emit): string
 {
-    return maybeRewrite(emit, projectMarkup(source.slice(expr.span.start, expr.span.end), emit, sources, expr.span.start), sources, expr.span.start);
+    return markupRewrite(emit, source.slice(expr.span.start, expr.span.end), sources, expr.span.start);
 }
 
 /**
@@ -1189,7 +1186,7 @@ function exprValue(source: string, expr: ReactiveExpr, sources: ReactiveSources,
 /** The bound state read for a `bind:` directive (`state()` after the reactive rewrite). */
 function bindValue(source: string, binding: BindBinding, sources: ReactiveSources, emit: Emit): string
 {
-    return modeRewrite(emit, source.slice(binding.expr.start, binding.expr.end), sources, binding.expr.start);
+    return markupRewrite(emit, source.slice(binding.expr.start, binding.expr.end), sources, binding.expr.start);
 }
 
 /**
@@ -1223,7 +1220,7 @@ function bindHandler(source: string, binding: BindBinding, sources: ReactiveSour
             + ' ? [].map.call($event.target.selectedOptions, function (o) { return o.value; })'
             + ' : $event.target.value)'
         : `$event.target.${ binding.prop }`;
-    return `($event) => ${ modeRewrite(emit, `${ target } = ${ read }`, sources, binding.expr.start) }`;
+    return `($event) => ${ markupRewrite(emit, `${ target } = ${ read }`, sources, binding.expr.start) }`;
 }
 
 /**
@@ -1248,7 +1245,7 @@ function composedBindHandler(
     }
 
     const calls = authored
-        .map(entry => `(${ modeRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`)
+        .map(entry => `(${ markupRewrite(emit, handlerSource(source, entry.handler), sources, entry.handler.start) })($event)`)
         .join('; ');
     return `($event) => { (${ writeBack })($event); ${ calls }; }`;
 }
@@ -1267,11 +1264,11 @@ function classCombined(source: string, binding: ClassBinding, sources: ReactiveS
     }
     if (binding.dynamic !== null)
     {
-        parts.push(modeRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
+        parts.push(markupRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
     }
     for (const toggle of binding.toggles)
     {
-        const cond = modeRewrite(emit, source.slice(toggle.expr.start, toggle.expr.end), sources, toggle.expr.start);
+        const cond = markupRewrite(emit, source.slice(toggle.expr.start, toggle.expr.end), sources, toggle.expr.start);
         parts.push(`(${ cond }) ? ${ quoteString(toggle.name) } : ''`);
     }
     // A single toggle is already a plain string expression - the array/filter/
@@ -1298,11 +1295,11 @@ function styleCombined(source: string, binding: StyleBinding, sources: ReactiveS
     }
     if (binding.dynamic !== null)
     {
-        parts.push(modeRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
+        parts.push(markupRewrite(emit, source.slice(binding.dynamic.start, binding.dynamic.end), sources, binding.dynamic.start));
     }
     for (const entry of binding.props)
     {
-        const value = modeRewrite(emit, source.slice(entry.expr.start, entry.expr.end), sources, entry.expr.start);
+        const value = markupRewrite(emit, source.slice(entry.expr.start, entry.expr.end), sources, entry.expr.start);
         parts.push(`${ quoteString(`${ entry.name }: `) } + (${ value })`);
     }
     return `[${ parts.join(', ') }].filter(Boolean).join('; ')`;
@@ -1341,7 +1338,7 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     {
         // The wire format is the language's canonical handler-form key (`onClick:`), never the
         // lowercase spelling - the runtime reserves non-handler-form on* names and refuses them.
-        return `${ objectKey(canonicalHandlerName(binding.event)) }: ${ maybeRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) }`;
+        return `${ objectKey(canonicalHandlerName(binding.event)) }: ${ markupRewrite(emit, handlerSource(source, binding.handler), sources, binding.handler.start) }`;
     }
     if (binding.kind === 'bind')
     {
@@ -1360,11 +1357,11 @@ function propEntry(source: string, binding: Binding, sources: ReactiveSources, e
     }
     if (binding.kind === 'spread')
     {
-        return `...${ maybeRewrite(emit, projectMarkup(source.slice(binding.expr.span.start, binding.expr.span.end), emit, sources, binding.expr.span.start), sources) }`;
+        return `...${ rewriteExpr(source, binding.expr, sources, emit) }`;
     }
     if (binding.kind === 'ref')
     {
-        return `ref: ${ maybeRewrite(emit, source.slice(binding.ref.start, binding.ref.end), sources) }`;
+        return `ref: ${ markupRewrite(emit, source.slice(binding.ref.start, binding.ref.end), sources, binding.ref.start) }`;
     }
     return '';
 }

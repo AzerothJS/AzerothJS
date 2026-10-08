@@ -254,6 +254,117 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   `<Transition>` or `<Portal>` child, the same text threw in the browser. GRAMMAR.md now states
   the rule.
 
+- **A keyword block inside an inline event handler, or inside a `class:` or `style:` value, broke
+  the component's module.** `<button onClick={ () => { batch { a = 1; b = 2; } } }>` was emitted
+  with `batch { ... }` left as written, which is not JavaScript, so `vite build` and the dev server
+  failed on it with
+  `[PARSE_ERROR] Expected a semicolon or an implicit semicolon after a statement, but found none`,
+  while the editor showed no problem. The same held for `untrack`, `effect`, `effect (deps)`,
+  `cleanup`, `dispose`, `mount` and a nested `state`, `derived` or `deferred` declaration, on a
+  `<For>` row and in an arrow nested in such a handler; a handler on an element under `<Show>`,
+  `<Match>`, a fragment or a component already compiled. A handler for the same event as a `bind:`,
+  a `class:` or `style:` value, and a `class` or `style` value on an element that also has such a
+  directive failed the same way, under those four too. Markup written in a hole compiled in each
+  case. The keywords are lowered there as in a function declared in the component body. An
+  event handler runs outside the component's scope, so an `effect` there is not disposed with the
+  component, and a `cleanup` or `dispose` written directly in the handler never runs (one inside an
+  `effect` there runs when that effect re-runs), the same as in a handler declared in the body.
+  Markup written inside an event handler, a component's event or `bind:` handler, a `ref`, a
+  `class:` or `style:` value, or such a `class` or `style` value was left as written too and failed
+  the build with a parse error such as `[PARSE_ERROR] Unterminated regular expression`; it is
+  compiled where it stands. A malformed declaration in a markup expression or at module scope, such
+  as `state open[] = true;` in a handler, a hole, an attribute or a module-level function, is
+  refused with `azeroth/array-suffix` or `azeroth/malformed-declaration`, as the same declaration in
+  a function in the component body already was. In a hole, an attribute, a `ref` or at module scope
+  `state open[] = true;` was not refused by name before: the type check reported
+  `azeroth/syntax: Syntax error: ',' expected.` or the module did not parse, and where the type
+  check was off it could compile with its value silently dropped. `derived d = = 1;` compiled into a
+  module that did not parse. The exception is the `with` clause of a declaration or an `effect` of
+  the component body: a malformed declaration in it, also in a markup expression written in it, is
+  not refused by name, and `state open[] = true;` in the `with` clause of a `state`, a `derived`, a
+  `deferred` or an `effect` builds with its value dropped, as it did before. Code without these
+  keywords compiles as before, apart from a method named like a keyword, such as
+  `{ effect(v) { return v; } }`. In an object literal after `=`, `(`, `,`, `return` or another
+  expression lead, after a property colon or a conditional colon, or opening a markup expression, a
+  value or a `with` option, and in the body of `class Name`, `class Name<T>`, an anonymous `class`
+  with no type parameters or a class with a heritage such as `extends Base` or `extends mix(Base)`,
+  it is left as written instead of being rewritten into an effect that broke the module, in the
+  component body, in markup and in the editor, and hovering it shows the method, except in a `with`
+  option of a `state`, `derived`, `deferred`, `resource`, `stream`, `store`, `selector` or `effect`,
+  where the hover shows nothing. Four forms are still rewritten and still break the module: a class
+  whose heritage holds a class expression, an anonymous class with type parameters or one that a
+  class field holds after `=>` or `new`, an object after a conditional whose first branch has a
+  return type, and an object after `>`, `>>`, `>>>` or `void`. GRAMMAR.md lists them. A generic
+  arrow written without the trailing comma, such as `<T>(v: T) => v`, is read as an arrow in a
+  markup expression, the statements of a handler included. In a hole, an attribute, a `ref`, a
+  `class:` or `style:` value or a handler for the same event as a `bind:` it was refused as an
+  unclosed `<T>` tag before, in some positions by the dev server alone while `vite build` passed. In
+  a statement of the module or of the component body, in a declaration value and inside a keyword
+  block it still needs the comma, `<T,>(v: T) => v`, as GRAMMAR.md states, also where the value or
+  the block stands in a markup expression. Markup written in a value or a block goes by where that
+  value or block stands: where it is itself a statement of the component body the markup's holes,
+  attributes and handlers read the arrow without the comma, and where it is nested in a function, a
+  handler, a hole or another block, or stands at module scope, they need the comma too. A value
+  named like a declaration keyword and followed by `as`, `satisfies`, `instanceof` or `in` is read
+  as a value in every writer: `store instanceof Map && load();` as a statement of the component body
+  was refused as `azeroth/malformed-declaration`,
+  `derived kind = store instanceof Map ? 'map' : 'other';` was refused as
+  `azeroth/unterminated-declaration`, and `{ state as T }` in a hole compiled into a module that did
+  not parse while the editor showed no problem. GRAMMAR.md now states when such a word names a
+  declaration instead, as in `state as = 1;`. A malformed declaration named `as` or `satisfies` used
+  to compile, sometimes by dropping code: one with a stray `!` or `,` after the name, as in
+  `form as! = { qty: 1 };` or `state as, spare;`, and one whose name ran into the next statement, as
+  in `state as` with no `;` and `mark();` on the next line, which dropped `mark();`. Each of the
+  three is a syntax error now.
+
+- **A keyword statement on the line after a statement whose `/` the scanner misread was left as
+  written.** In a function, an object method, a class method or a class field arrow, `batch { ... }`
+  on the line after `const half = width! / 2;` was emitted unchanged and the build failed with the
+  same `[PARSE_ERROR]`, because the `/` after the `!` was read as the start of a regular expression.
+  The same held after `count++ / 2` and `count-- / 2`, after a member named `in` or `of`, as in
+  `stats.in / 2`, after a value named `of`, as in `of / 2`, after a regular expression, and after a
+  name whose letters after a non-ASCII letter spell `in` or `of`. The `/` divides there and the
+  statement is lowered. The opposite misreading is gone as well: in
+  `if (ready) /\d+/.test(text) && mark();`, where a regular expression starts the statement of an
+  `if`, a `while` or a `for` written without braces, and in `throw /\d+/;`, the first `/` was read
+  as a division and the keyword statement on the next line was left as written; it opens a regular
+  expression there. Both hold for a statement and a keyword statement that are each on a line of
+  their own in the same body. The entry does not cover a `/` in a markup hole or attribute, in a
+  template literal's substitution or at the top level of the component body, nor one whose line goes
+  on to close a bracket opened before it, as in `Math.round(width! / 2)`. In a function, a method or
+  an arrow written in the component body it does not cover a line that goes on to a second `/` in a
+  string or a comment either: `const label = width! / 2 + ' km/h';` and
+  `const half = width! / 2; /* it's half */` still fail the build there, because the scan that
+  splits the component body reads the first `/` as the start of a regular expression, as before.
+  Three readings are known limits, which GRAMMAR.md states. A regular expression that starts a
+  statement on the line after `let seen: boolean` with no `;`, or one that follows a no-break space,
+  is read as a division. A division right after the `>` that closes a type argument list, as in
+  `size as Box<number> / 2` after `as` or `satisfies`, is read as the start of a regular expression
+  where a second `/` on its line closes it: a second division, a `/` in a string or a block comment,
+  but not a `//` that no `/` or `*` follows. A regular expression divided by a `/` written right
+  after its closing `/`, as in `/re// 2`, is read as a division and the rest of its line as a
+  comment. Text on that line is then read wrongly, the text of a regular expression as code or code
+  as the text of one, so a keyword statement after it, in the same function, method or block and at
+  times past its end, can be left as written, and a method named like a keyword can be rewritten.
+  After a regular expression read as a division that can happen when its text is not balanced as
+  code, as in `/[)}]/`, when its statement ends with no `;` either, or when a second `/` follows
+  later on its line and its text ends in an operator character, as in `/\d+/`, or in a word such as
+  `throw`. In a method of an object or a class written after the component, `let seen: boolean`,
+  `/[)}]/.test(text) && mark();` and `batch { ... }` on three lines are one such case. A declaration
+  with its name on the keyword's line, or a block keyword with its `{` on the keyword's line, fails
+  the build with the same `[PARSE_ERROR]`. A block keyword with its `{` on the next line and no
+  `with` clause builds, because an expression, a line break and a block is JavaScript, and so does a
+  declaration whose name stands on the line after the keyword where that line is a statement by
+  itself, as `extra = k;` after `state` is. The keyword is then a plain name at run time: the page
+  throws that `batch` or `state` is not defined, or, where the module lowers another `batch` or
+  `untrack` and so imports the helper of that name, the block runs with no error, its writes not
+  batched or its reads tracked. The editor reports the unknown name; the build's type check does
+  not. Code that built before can end up this way in three cases: after the cast with such a second
+  `/`, after the divided regular expression, and after a regular expression that is read as a
+  division. Write the `;` that `let seen: boolean` lacks, put the regular expression in parentheses,
+  as in `(/[)}]/).test(text) && mark();`, which reads it right after a no-break space and before a
+  glued `/` too, or put the cast in parentheses, as in `(size as Box<number>) / 2`.
+
 ### Security
 
 - **An ISR page whose renderer guarded it kept serving its prerendered file to every visitor.**

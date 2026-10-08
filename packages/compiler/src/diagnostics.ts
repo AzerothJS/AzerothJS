@@ -62,7 +62,7 @@ import type { ComponentDecl, ModuleItem } from './ast.ts';
 import type { ReactiveAnalysis } from './analyze.ts';
 import type { ReactiveSources } from './dep.ts';
 
-import { parseModule, step, skipTrivia } from './parser.ts';
+import { parseModule, step, skipTrivia, declaredName } from './parser.ts';
 import { parseMarkup } from './markup-parser.ts';
 import { findConstructs } from './lower-reactive.ts';
 import { evalConstant } from './optimize.ts';
@@ -162,6 +162,8 @@ export function diagnoseModule(source: string): AzerothDiagnostic[]
             // Module-scope markup (`const row = () => <li/>`) compiles through the same
             // lowerer, so it answers to the same GRAMMAR 6.6 rules.
             walkEmbeddedMarkup(source, item.start, item.end, embeddedRuleVisitor(source, diagnostics, shadowed));
+            // ...to the declaration shape rules, since its keywords are lowered too...
+            shapeDeclarations(source.slice(item.start, item.end), item.start, false, diagnostics);
             // ...and to the bind-target rule: a bind in module-scope markup was invisible to the
             // per-component pass and compiled to the same silent half-dead binding. A synthetic
             // one-item body reuses the whole resolver with module scope only.
@@ -617,6 +619,9 @@ const DECLARATION_KINDS: ReadonlySet<string> = new Set([
     'state', 'derived', 'deferred', 'resource', 'stream', 'store', 'selector', 'form'
 ]);
 
+/** Text without one of these words holds no declaration for the shape rules to check. */
+const DECLARATION_WORD = new RegExp(`\\b(?:${ [...DECLARATION_KINDS].join('|') })\\b`);
+
 /**
  * Every span of a component body that holds TypeScript the compiler may find markup in: opaque
  * statement runs, effect/watch/wrapper bodies, a declaration's value together with its
@@ -752,14 +757,18 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
         }
     }
 
-    // Nested declarations (an effect body, an opaque statement run, an initializer arrow)
-    // lower through the same slice machinery and share the same silent discard, so the
-    // shape rules walk every span that can hold one. NOT this walk's scope: markup-hole
-    // callbacks and module-scope composables. The slice is passed as the rules' source so
-    // findConstructs' slice-relative offsets stay internally consistent; the shift rebases
-    // the emitted positions.
+    // Nested declarations lower through the same slice machinery, so the shape rules walk every
+    // span and every markup expression that can hold one.
     for (const item of component.body)
     {
+        if (item.kind === 'markup')
+        {
+            for (const expr of collectMarkupExpressions(source, item.node))
+            {
+                flagged.push(...shapeDeclarations(expr.code, expr.codeStart, true, out));
+            }
+            continue;
+        }
         const spans: Array<[number, number]> = [];
         if (item.kind === 'effect' || item.kind === 'watch' || item.kind === 'wrapper')
         {
@@ -777,20 +786,38 @@ function diagnoseDeclarationSlips(source: string, component: ComponentDecl, out:
         }
         for (const [from, to] of spans)
         {
-            const slice = source.slice(from, to);
-            for (const construct of findConstructs(slice))
-            {
-                if (!DECLARATION_KINDS.has(construct.kind))
-                {
-                    continue;
-                }
-                const span = diagnoseDeclarationShape(slice, construct as Parameters<typeof parseDeclarationSlice>[1], from, out);
-                if (span !== null)
-                {
-                    flagged.push(span);
-                }
-            }
+            flagged.push(...shapeDeclarations(source.slice(from, to), from, false, out));
         }
+    }
+    return flagged;
+}
+
+/**
+ * The declaration shape rules over one code region and its embedded markup; returns the flagged
+ * spans. `base` rebases positions; `expression` says the region starts in expression position.
+ */
+function shapeDeclarations(code: string, base: number, expression: boolean, out: AzerothDiagnostic[]): Array<[number, number]>
+{
+    const flagged: Array<[number, number]> = [];
+    if (!DECLARATION_WORD.test(code))
+    {
+        return flagged;
+    }
+    for (const construct of findConstructs(code, expression))
+    {
+        if (!DECLARATION_KINDS.has(construct.kind))
+        {
+            continue;
+        }
+        const span = diagnoseDeclarationShape(code, construct as Parameters<typeof parseDeclarationSlice>[1], base, out);
+        if (span !== null)
+        {
+            flagged.push(span);
+        }
+    }
+    for (const expr of embeddedMarkupExpressions(code))
+    {
+        flagged.push(...shapeDeclarations(expr.code, base + expr.codeStart, true, out));
     }
     return flagged;
 }
@@ -907,7 +934,7 @@ function findAbsorbedMarkup(source: string, from: number, to: number): number
  * @internal Scans `[from, to)` for a declaration keyword at bracket depth 0 that is followed by an
  * identifier name (the parser's own declaration-intent rule) - i.e. a swallowed declaration. Returns
  * its offset, or -1. A member access (`store.foo`) or a value use (`x ? state : y`) is excluded
- * because the keyword is either preceded by `.` or not followed by a name.
+ * because the keyword is either preceded by `.` or declares no name there.
  */
 function findAbsorbedDeclaration(source: string, from: number, to: number): number
 {
@@ -926,13 +953,10 @@ function findAbsorbedDeclaration(source: string, from: number, to: number): numb
         {
             depth--;
         }
-        else if (s.kind === 'identifier' && depth === 0 && prevChar !== '.' && DECLARATION_KEYWORDS.has(s.text))
+        else if (s.kind === 'identifier' && depth === 0 && prevChar !== '.' && DECLARATION_KEYWORDS.has(s.text)
+            && declaredName(source, s.next, to, s.text === 'form') !== null)
         {
-            const nameAt = skipTrivia(source, s.next);
-            if (nameAt < to && isIdentStart(source[nameAt] ?? ''))
-            {
-                return i;
-            }
+            return i;
         }
         i = s.next;
         prevChar = s.prevChar;
@@ -2529,29 +2553,9 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
             ? parseStatementsSlice(blanked, base)
             : parseExpressionSlice(blanked, base);
         flag(sourceFile, mapPos, seen);
-
-        let pos = 0;
-        while (pos < code.length)
+        for (const expr of embeddedMarkupExpressions(code))
         {
-            const at = findMarkupStart(code, pos);
-            if (at === -1 || at >= code.length)
-            {
-                return;
-            }
-            let parsed: { node: MarkupElement | MarkupFragment; end: number };
-            try
-            {
-                parsed = parseMarkup(code, at);
-            }
-            catch
-            {
-                return;
-            }
-            for (const expr of collectMarkupExpressions(code, parsed.node))
-            {
-                flagCode(expr.code, base + expr.codeStart, seen);
-            }
-            pos = parsed.end;
+            flagCode(expr.code, base + expr.codeStart, seen);
         }
     };
 
@@ -2568,6 +2572,34 @@ function diagnoseDerivedWrites(source: string, component: ComponentDecl, analysi
                 flagCode(expr.code, expr.codeStart, new Set<string>());
             }
         }
+    }
+}
+
+/**
+ * Yields the expressions of every markup region embedded in `code`, each with its offset inside
+ * `code`. Scanning stops at the first region that does not parse.
+ */
+function* embeddedMarkupExpressions(code: string): Generator<{ code: string; codeStart: number }>
+{
+    let pos = 0;
+    while (pos < code.length)
+    {
+        const at = findMarkupStart(code, pos);
+        if (at === -1 || at >= code.length)
+        {
+            return;
+        }
+        let parsed: { node: MarkupElement | MarkupFragment; end: number };
+        try
+        {
+            parsed = parseMarkup(code, at);
+        }
+        catch
+        {
+            return;
+        }
+        yield* collectMarkupExpressions(code, parsed.node);
+        pos = parsed.end;
     }
 }
 

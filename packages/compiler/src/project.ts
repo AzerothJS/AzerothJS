@@ -271,11 +271,12 @@ export function generateVirtualCode(source: string): VirtualCode
      * level) to its type-equivalent TS, and copies the gaps between them - expanding any markup they
      * contain - verbatim. Recurses into each construct's body, so nested keywords (composables, render
      * callbacks, effect bodies) lower exactly like top-level ones. This is the single entry every body,
-     * initializer, hole, and opaque region flows through.
+     * initializer, hole, and opaque region flows through. `statements` marks a statement span (an
+     * effect, wrapper or watch body, opaque statements); other spans start in expression position.
      */
-    const emitCode = (start: number, end: number, kind: MappingKind = 'script'): void =>
+    const emitCode = (start: number, end: number, kind: MappingKind = 'script', statements = false): void =>
     {
-        const found = findConstructs(source.slice(start, end)).map((c) => shiftConstruct(c, start));
+        const found = findConstructs(source.slice(start, end), !statements).map((c) => shiftConstruct(c, start));
         // Keep only the constructs at THIS level; ones nested inside another are emitted by the recursive
         // emitCode over that construct's body.
         const top = found.filter((c) => !found.some((o) => o !== c && o.start <= c.start && c.end <= o.end));
@@ -1009,7 +1010,7 @@ export function generateVirtualCode(source: string): VirtualCode
                 // callback exactly as the runtime wraps it (`createEffect(() => {...})`), and never leaks into
                 // the component function's own return type.
                 builder.emit('void (() => {');
-                emitCode(c.bodyStart, c.bodyEnd);
+                emitCode(c.bodyStart, c.bodyEnd, 'script', true);
                 builder.emit('});\n');
                 return;
             case 'watch':
@@ -1035,7 +1036,7 @@ export function generateVirtualCode(source: string): VirtualCode
                     builder.copy(c.paramsStart, c.paramsEnd, 'script');
                 }
                 builder.emit(') => {');
-                emitCode(c.bodyStart, c.bodyEnd);
+                emitCode(c.bodyStart, c.bodyEnd, 'script', true);
                 builder.emit('});\n');
                 return;
             }
@@ -1104,7 +1105,7 @@ export function generateVirtualCode(source: string): VirtualCode
         {
             if (item.kind === 'opaque-statements')
             {
-                emitCode(item.start, item.end);
+                emitCode(item.start, item.end, 'script', true);
                 builder.emit('\n');
                 return;
             }
@@ -1142,7 +1143,7 @@ export function generateVirtualCode(source: string): VirtualCode
             }
             if (item.kind === 'opaque')
             {
-                emitCode(item.start, item.end);
+                emitCode(item.start, item.end, 'script', true);
             }
             else
             {

@@ -757,16 +757,12 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
     // `selector(x)` (a value named like a keyword) falls through unchanged.
     if (DECLARATION_KEYWORDS.has(word))
     {
-        const nameAt = skipTrivia(source, j);
-        if (nameAt >= limit || !isIdentStart(source[nameAt]))
+        const named = declaredName(source, j, limit, word === 'form');
+        if (named === null)
         {
             return null;
         }
-        let n = nameAt + 1;
-        while (n < limit && isIdentPart(source[n]))
-        {
-            n++;
-        }
+        const [nameAt, n] = named;
         const name = source.slice(nameAt, n);
         // `form NAME[] = ...` is an ARRAY-form (a list of repeated sub-forms). The `[]` sits between the
         // name and `=`; detect it and resume scanning past it. The name span itself stays `nameAt..n`.
@@ -799,6 +795,62 @@ export function tryParseConstruct(source: string, p: number, limit: number): Bod
     }
 
     return null;
+}
+
+/**
+ * The name a declaration keyword that ends at `j` declares, as `[start, end)`, or null where the
+ * keyword is a value: no name follows it, or an operator word that continues no declaration.
+ */
+export function declaredName(source: string, j: number, limit: number, form: boolean): [number, number] | null
+{
+    const nameAt = skipTrivia(source, j);
+    if (nameAt >= limit || !isIdentStart(source[nameAt]))
+    {
+        return null;
+    }
+    let n = nameAt + 1;
+    while (n < limit && isIdentPart(source[n]))
+    {
+        n++;
+    }
+    const name = source.slice(nameAt, n);
+    // A non-ASCII letter right after an operator word makes it the start of a longer name.
+    const operator = !identifierCharAt(source, n) && (RESERVED_OPERATORS.has(name)
+        || (NAMING_OPERATORS.has(name) && !declarationFollows(source, skipTrivia(source, n), form)));
+    return operator ? null : [nameAt, n];
+}
+
+/** Reserved operator words: they name nothing, so a keyword before one is a value. */
+const RESERVED_OPERATORS: ReadonlySet<string> = new Set(['instanceof', 'in']);
+
+/** Operator words that are valid names: one names a declaration when a declaration follows it. */
+const NAMING_OPERATORS: ReadonlySet<string> = new Set(['as', 'satisfies']);
+
+/**
+ * Whether a declaration continues at `at`: `;`, or a value, a type or options. After the array
+ * suffix `[]` a `;` counts for a `form` alone: `state as [];` is a cast to the empty tuple.
+ */
+function declarationFollows(source: string, at: number, form: boolean): boolean
+{
+    if (source[at] === '[')
+    {
+        const close = skipTrivia(source, at + 1);
+        const after = skipTrivia(source, close + 1);
+        return source[close] === ']' && (continues(source, after) || (form && source[after] === ';'));
+    }
+    return source[at] === ';' || continues(source, at);
+}
+
+/**
+ * Whether a value, a type or options stand at `at`: `=`, `:`, `!:` or `with {`. The `=` is a plain
+ * one, not `==` or `=>`.
+ */
+function continues(source: string, at: number): boolean
+{
+    const c = source[at];
+    return c === ':' || (c === '!' && source[skipTrivia(source, at + 1)] === ':')
+        || (c === '=' && source[at + 1] !== '=' && source[at + 1] !== '>')
+        || (source.startsWith('with', at) && source[skipTrivia(source, at + 4)] === '{');
 }
 
 /**
@@ -900,6 +952,19 @@ function tryConsumeMarkup(source: string, at: number): number
 function isTagOrFragmentStart(ch: string | undefined): boolean
 {
     return ch === '>' || (ch !== undefined && isIdentStart(ch));
+}
+
+const ID_CONTINUE = /\p{ID_Continue}/u;
+
+/**
+ * Whether a non-ASCII identifier character stands at `i`. The ASCII scanner reports one as
+ * punctuation, a code unit at a time, so either half of an astral one answers for its code point.
+ */
+export function identifierCharAt(code: string, i: number): boolean
+{
+    const unit = code.charCodeAt(i);
+    const point = code.codePointAt(unit >= 0xdc00 && unit <= 0xdfff ? i - 1 : i) ?? 0;
+    return point > 0x7f && ID_CONTINUE.test(String.fromCodePoint(point));
 }
 
 /** Skips whitespace and comments from `i`, returning the next significant index. */
