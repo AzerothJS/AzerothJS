@@ -8,7 +8,7 @@
 // No mocks: the real reactivity core (signals, memos, render-mode stack), the real renderer
 // (h, control-flow), and the real string emitter run end to end.
 import { describe, it, expect } from 'vitest';
-import { renderToString, h, Show, For, Switch, Match, Dynamic, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag } from 'azerothjs';
+import { renderToString, h, Show, For, Switch, Match, Dynamic, ErrorBoundary, Portal, Suspense, Transition, Routes, createRouter, createMemoryHistory, island, createSignal, createMemo, createContext, provideContext, useContext, unsafeTag, ssr } from 'azerothjs';
 
 describe('renderToString - the no-DOM contract', () =>
 {
@@ -473,6 +473,121 @@ describe('renderToString - escaping / XSS', () =>
             .toBe('<script>if (a < b && c > d) run();</script>');
         expect(renderToString(() => h('style', {}, '.a{color:red}')))
             .toBe('<style>.a{color:red}</style>');
+    });
+
+    // Each position serializes the value itself, so a position that skips the shared serializer
+    // writes the text row raw, and one that trusts a property writes the JSON row raw.
+    it('escapes JSON data carrying __ssr, and markup text, in these child positions and at the root', () =>
+    {
+        const values = {
+            json: { make: (): never => JSON.parse('{"__ssr":true,"html":"<img src=x onerror=alert(1)>"}') as never, shown: '[object Object]' },
+            text: { make: (): never => '<img src=x onerror=alert(1)>' as never, shown: '&lt;img src=x onerror=alert(1)&gt;' }
+        };
+        for (const [kind, { make, shown }] of Object.entries(values))
+        {
+            const positions = {
+                child: () => h('div', {}, make()),
+                hole: () => h('div', {}, () => make()),
+                array: () => h('div', {}, [make()]),
+                option: () => h('select', {}, h('option', {}, make())),
+                forRow: () => h('ul', {}, For({ each: [1], key: (i) => i, children: () => make() })),
+                show: () => h('div', {}, Show({ when: true, children: () => make() })),
+                fallback: () => h('div', {}, Show({ when: false, fallback: () => make(), children: () => h('p', {}) })),
+                match: () => h('div', {}, Switch({ children: [Match({ when: () => true, children: () => make() })] })),
+                switchFallback: () => h('div', {}, Switch({ fallback: () => make(), children: [] })),
+                boundary: () => h('div', {}, ErrorBoundary({ fallback: () => h('i', {}), children: () => make() })),
+                portal: () => h('div', {}, Portal({ children: () => make() })),
+                dynamic: () => h('div', {}, Dynamic({ component: () => () => make() })),
+                suspense: () => h('div', {}, Suspense({ on: [], fallback: () => make(), children: () => h('p', {}) })),
+                transition: () => h('div', {}, Transition({ when: true, children: () => make() })),
+                routed: () => h('div', {}, Routes({ router: createRouter({ routes: [{ path: '/', component: () => make() }], history: createMemoryHistory('/') }) })),
+                root: () => make(),
+                fragmentRoot: () => [h('b', {}, 'x'), make()] as never
+            };
+            const rendered = Object.entries(positions).map(([key, app]): [string, string] => [key, renderToString(app)]);
+            expect({ kind, raw: rendered.filter(([, html]) => html.includes('<img')).map(([key]) => key) }).toEqual({ kind, raw: [] });
+            expect({ kind, unshown: rendered.filter(([, html]) => !html.includes(shown)).map(([key]) => key) }).toEqual({ kind, unshown: [] });
+        }
+    });
+
+    it('refuses JSON data carrying __ssr as the root of an island', () =>
+    {
+        const forged = (): never => JSON.parse('{"__ssr":true,"html":"<img src=x onerror=alert(1)>"}') as never;
+        expect(() => renderToString(() => h('div', {}, island('/counter', () => forged(), {})))).toThrow('single ELEMENT root');
+    });
+
+    it('is not fooled by Object.prototype.__ssr', () =>
+    {
+        const proto = Object.prototype as Record<string, unknown>;
+        proto.__ssr = true;
+        try
+        {
+            expect(renderToString(() => h('div', {}, { html: '<img src=x onerror=alert(1)>' } as never)))
+                .toBe('<div>[object Object]</div>');
+        }
+        finally
+        {
+            delete proto.__ssr;
+        }
+    });
+
+    it('CONTROL: a node ssr() made stays finished markup', () =>
+    {
+        expect(renderToString(() => h('div', {}, ssr('<b>x</b>') as never))).toBe('<div><b>x</b></div>');
+    });
+});
+
+describe('renderToString - the root', () =>
+{
+    it('serializes a fragment root as it serializes the same members nested', () =>
+    {
+        const members = (): never[] => ['a<b', () => 'v<', null, undefined, false, [h('i', {}, 'n'), 't'], ssr('<u>k</u>')] as never[];
+        for (const markers of [true, false])
+        {
+            const root = renderToString(() => members(), { markers });
+            const nested = renderToString(() => h('div', {}, ...members()), { markers });
+            expect(`<div>${ root }</div>`).toBe(nested);
+        }
+    });
+
+    it('escapes a string root and a string member of a fragment root', () =>
+    {
+        const text = '<img src=x onerror=alert(1)>';
+        expect(renderToString(() => text as never)).toBe('&lt;img src=x onerror=alert(1)&gt;');
+        expect(renderToString(() => [h('b', {}, 'x'), text])).toBe('<b>x</b>&lt;img src=x onerror=alert(1)&gt;');
+    });
+
+    it('renders an empty root as nothing', () =>
+    {
+        expect(renderToString(() => null as never)).toBe('');
+        expect(renderToString(() => [null, undefined, false] as never)).toBe('');
+    });
+
+    it('serializes a single-value root as it serializes the same value nested', () =>
+    {
+        const values: (() => never)[] = [
+            () => (() => 'v<') as never,
+            () => 'a<b' as never,
+            () => undefined as never,
+            () => false as never,
+            () => JSON.parse('{"__ssr":true,"html":"<img src=x>"}') as never,
+            () => [[h('i', {}, 'n')], 't'] as never
+        ];
+        for (const markers of [true, false])
+        {
+            for (const value of values)
+            {
+                const root = renderToString(() => value(), { markers });
+                const nested = renderToString(() => h('div', {}, value()), { markers });
+                expect(`<div>${ root }</div>`).toBe(nested);
+            }
+        }
+    });
+
+    it('CONTROL: element roots and finished-markup roots are written verbatim', () =>
+    {
+        expect(renderToString(() => h('p', {}, 'x'))).toBe('<p>x</p>');
+        expect(renderToString(() => [ssr('<i>k</i>'), h('p', {}, 'x')] as never)).toBe('<i>k</i><p>x</p>');
     });
 });
 

@@ -5,7 +5,7 @@
 // The comment-anchor walk methods are exercised end-to-end by the server package's
 // SSR -> hydrate tests; here we cover the element/text claiming and exhaustion checks.
 import { describe, it, expect } from 'vitest';
-import { HydrationCursor, HydrationMismatchError, isHydrationNode, hydrationNode } from 'azerothjs/internal';
+import { HydrationCursor, HydrationMismatchError, isHydrationNode, hydrationNode, transferCarriedSymbols } from 'azerothjs/internal';
 
 function container(html: string): HTMLElement
 {
@@ -38,6 +38,31 @@ describe('hydrationNode / isHydrationNode', () =>
         expect(isHydrationNode({})).toBe(false);
         expect(isHydrationNode(null)).toBe(false);
         expect(isHydrationNode(document.createElement('div'))).toBe(false);
+    });
+
+    it('trusts only the descriptor hydrationNode() made: data, copies and wrappers are not one', () =>
+    {
+        const node = hydrationNode(() => undefined);
+        const lookalikes: unknown[] = [
+            JSON.parse('{"__hydrate":true}'),
+            // eslint-disable-next-line @typescript-eslint/no-misused-spread -- a spread copy is the case under test
+            { ...node },
+            Object.assign({}, node),
+            new Proxy(node, {}),
+            Object.create(node)
+        ];
+        expect(lookalikes.map((x) => isHydrationNode(x))).toEqual([false, false, false, false, false]);
+    });
+
+    it('moves carried hooks onto the adopted element without making it a descriptor', () =>
+    {
+        const node = hydrationNode(() => undefined);
+        const hook = Symbol('destroy');
+        (node as unknown as Record<symbol, unknown>)[hook] = 'ran';
+        const el = document.createElement('div');
+        transferCarriedSymbols(node, el);
+        expect((el as unknown as Record<symbol, unknown>)[hook]).toBe('ran');
+        expect(isHydrationNode(el)).toBe(false);
     });
 });
 

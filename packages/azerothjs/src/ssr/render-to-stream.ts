@@ -19,12 +19,12 @@
  * timeout, caller abort, or transport cancel.
  */
 
-import { createRoot, isSSRNode, runInMode, runInStoreScope } from '../reactivity/index.ts';
+import { createRoot, runInMode, runInStoreScope } from '../reactivity/index.ts';
 import { markSelectedOption, markSelectedOptions } from '../renderer/ssr.ts';
 import { StreamSession, getStoreScope, runInExistingStoreScope } from '../reactivity/internal.ts';
 import type { PendingBoundary } from '../reactivity/internal.ts';
 import { streamRuntimeScript } from '../renderer/stream-swap.ts';
-import { escapeAttr, inertJson } from '../reactivity/ssr.ts';
+import { escapeAttr, inertJson, serializeChild } from '../reactivity/ssr.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeContinuationWindow, closeRenderWindow, openContinuationWindow, openRenderWindow } from '../renderer/frame.ts';
 import { renderWithLocale } from '../i18n/current-locale.ts';
@@ -192,10 +192,9 @@ export function renderToStream(
                 // retain window on every SSR error page). Late continuations find the cache
                 // released and are gated in drive besides.
                 session.onFinalize(() => releaseDataCache(session.storeScope as object));
-                const node = component() as unknown;
-                mainHtml = Array.isArray(node)
-                    ? (node as unknown[]).map(n => (isSSRNode(n) ? n.html : String(n))).join('')
-                    : (isSSRNode(node) ? node.html : String(node));
+                // The root serializes as any child does, so a fragment root's holes, text and
+                // empty members match the buffered render.
+                mainHtml = serializeChild(component());
             });
             closeRenderWindow(mainWindow.current, 'success');
             mainWindow.current = null;

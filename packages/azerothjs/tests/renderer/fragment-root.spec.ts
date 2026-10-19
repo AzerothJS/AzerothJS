@@ -16,7 +16,7 @@
 //
 // These arms pin the root going through the shared routines, which is what makes the three modes
 // agree by construction (invariant 2) rather than by coincidence.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { h, hydrate, render, renderToString } from 'azerothjs';
 import type { MountNode } from 'azerothjs';
 
@@ -102,6 +102,24 @@ describe('a fragment-rooted component hydrates', () =>
         const serverMain = container.querySelector('main')!;
         hydrate(singleRoot, container);
         expect(container.querySelector('main')).toBe(serverMain);
+        container.remove();
+    });
+
+    // A root hole must serialize as it does nested, or the pass falls back.
+    it('adopts a fragment holding a hole and text, with no warning', () =>
+    {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() =>
+        {});
+        const holeFragment = (): (string | HTMLElement | (() => string))[] => [h('b', {}, 'x'), () => 'v<', 'tail'];
+        const container = ssrInto(holeFragment);
+        const serverBold = container.querySelector('b')!;
+
+        hydrate(holeFragment, container);
+
+        expect(container.querySelector('b')).toBe(serverBold);
+        expect(container.textContent).toBe('xv<tail');
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
         container.remove();
     });
 });

@@ -11,9 +11,9 @@
  * names, void elements, attribute rules - lives in the renderer; what sits here is what the
  * component layer needs too, which is why it lives beneath both.
  *
- * In string mode h() returns an {@link SSRNode} rather than a real element. It carries
- * already-serialized, already-escaped HTML plus a brand, so a serializer can tell finished
- * markup from user text that still needs escaping.
+ * In string mode h() returns an {@link SSRNode} rather than a real element: already-serialized,
+ * already-escaped HTML that only {@link ssr} makes, so a serializer can tell finished markup from
+ * user text that still needs escaping.
  *
  * With markers on, reactive holes are wrapped in paired comment anchors
  * `<!--[-->...<!--]-->` and control-flow output in `<!--azc:type-->...<!--/azc-->`, so the
@@ -31,29 +31,51 @@ const MAX_CHILD_DEPTH = 512;
 
 /**
  * A serialized node produced in string render mode. `html` is finished and already
- * escaped; the brand is what lets {@link isSSRNode} tell it from raw user text.
+ * escaped. Only {@link ssr} makes one, and {@link isSSRNode} recognizes exactly those.
  */
-export interface SSRNode
+export class SSRNode
 {
-    readonly __ssr: true;
-    html: string;
+    // The brand: no literal, copy or JSON value can hold a private field.
+    readonly #brand = true;
+
+    public html: string;
+
+    /** Use {@link ssr}. */
+    constructor(html: string)
+    {
+        this.html = html;
+    }
+
+    /** Whether `x` was built by this class. */
+    public static is(x: unknown): x is SSRNode
+    {
+        return typeof x === 'object' && x !== null && #brand in x;
+    }
+
+    /** Plain data, so the data cache takes the node, or a copy of it, as a key part. */
+    public toJSON(): { html: string }
+    {
+        return { html: this.html };
+    }
 }
 
-/** Whether `x` is finished markup rather than a primitive child that still needs escaping. */
+/** Whether `x` is finished markup that {@link ssr} made, not a value that still needs escaping. */
 export function isSSRNode(x: unknown): x is SSRNode
 {
-    return typeof x === 'object' && x !== null && (x as { __ssr?: unknown }).__ssr === true;
+    return SSRNode.is(x);
 }
 
 /**
- * Brands a string as finished markup, exempting it from escaping downstream.
+ * Brands a string as finished markup, exempting it from escaping downstream. This is the
+ * only way to make an {@link SSRNode}: an object that merely looks like one, or a copy of
+ * one, is escaped.
  *
  * @param html - Must already be serialized AND escaped. Passing unescaped user input here
  *               is an injection.
  */
 export function ssr(html: string): SSRNode
 {
-    return { __ssr: true, html };
+    return new SSRNode(html);
 }
 
 /**

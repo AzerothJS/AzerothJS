@@ -27,20 +27,33 @@ import { getOwner, runWithOwner } from './create-root.ts';
 /**
  * A hydration descriptor returned by h()/control-flow components while 'hydrate' mode is
  * active (cast to HTMLElement so it composes like a real element). Its hydrate() method
- * adopts the matching server node(s) from a cursor.
+ * adopts the matching server node(s) from a cursor. Only {@link hydrationNode} makes one.
  */
-export interface HydrationNode
+export class HydrationNode
 {
-    readonly __hydrate: true;
+    // The brand: data cannot hold a private field, and transferCarriedSymbols never copies one.
+    readonly #brand = true;
 
     /** Adopts this node's DOM from `cursor`, advancing it past the consumed nodes. */
-    hydrate(cursor: HydrationCursor): void;
+    public readonly hydrate: (cursor: HydrationCursor) => void;
+
+    /** Use {@link hydrationNode}. */
+    constructor(hydrate: (cursor: HydrationCursor) => void)
+    {
+        this.hydrate = hydrate;
+    }
+
+    /** Whether `x` was built by this class. */
+    public static is(x: unknown): x is HydrationNode
+    {
+        return typeof x === 'object' && x !== null && #brand in x;
+    }
 }
 
-/** Whether `x` is a {@link HydrationNode} descriptor. */
+/** Whether `x` is a descriptor {@link hydrationNode} made. */
 export function isHydrationNode(x: unknown): x is HydrationNode
 {
-    return typeof x === 'object' && x !== null && (x as { __hydrate?: unknown }).__hydrate === true;
+    return HydrationNode.is(x);
 }
 
 /**
@@ -59,7 +72,7 @@ export function isHydrationNode(x: unknown): x is HydrationNode
 export function hydrationNode(hydrate: (cursor: HydrationCursor) => void): HydrationNode
 {
     const owner = getOwner();
-    return { __hydrate: true, hydrate: (cursor: HydrationCursor): void => runWithOwner(owner, () => hydrate(cursor)) };
+    return new HydrationNode((cursor: HydrationCursor): void => runWithOwner(owner, () => hydrate(cursor)));
 }
 
 /**

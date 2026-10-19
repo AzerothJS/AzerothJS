@@ -20,7 +20,8 @@
  * renderToString(() => new MyComponent(props).element).
  */
 
-import { createRoot, runInMode, runInStoreScope, isSSRNode } from '../reactivity/index.ts';
+import { createRoot, runInMode, runInStoreScope } from '../reactivity/index.ts';
+import { serializeChild } from '../reactivity/ssr.ts';
 import { getStoreScope } from '../reactivity/store-scope.ts';
 import { latchServerData, releaseDataCache } from '../reactivity/data-cache.ts';
 import { closeRenderWindow, openRenderWindow } from '../renderer/frame.ts';
@@ -79,16 +80,9 @@ function renderBody(component: () => MountNode, markers: boolean, hostFrame?: Re
                 {
                     try
                     {
-                    // In string mode, h()/components return an SSRNode cast to HTMLElement.
-                    // Read its serialized html back out. A fragment-root component returns an ARRAY
-                    // of SSRNodes; concatenate each one's html so a multi-node root serializes as its
-                    // children (not the array's `[object Object],...` string form).
-                        const node = component() as unknown;
-                        if (Array.isArray(node))
-                        {
-                            return (node as unknown[]).map(n => isSSRNode(n) ? n.html : String(n)).join('');
-                        }
-                        return isSSRNode(node) ? node.html : String(node);
+                        // The root is a child like any other: an element's SSRNode, or a
+                        // fragment root's array, whose members serialize as they do nested.
+                        return serializeChild(component());
                     }
                     finally
                     {

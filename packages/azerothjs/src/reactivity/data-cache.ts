@@ -26,6 +26,7 @@ import { createStore } from './create-store.ts';
 import { getStoreScope, isDefaultScope } from './store-scope.ts';
 import { getRenderMode, isStringMode } from './render-mode.ts';
 import { untrack } from './untrack.ts';
+import { isSSRNode } from './ssr.ts';
 import { DEV } from './dev.ts';
 
 /** Brands a fetcher wrapped by {@link cached}; createResource dispatches on its presence. */
@@ -252,6 +253,11 @@ export function stableSerialize(value: unknown): string
         const withToJson = value as { toJSON?: () => unknown };
         if (typeof withToJson.toJSON === 'function')
         {
+            // A node ssr() made keys apart from data with the same html, which renders as text.
+            if (isSSRNode(value))
+            {
+                return `ssr:${ JSON.stringify(value.html) }`;
+            }
             return stableSerialize(withToJson.toJSON());
         }
         // A Map, Set, or class instance without toJSON has no enumerable identity: walking

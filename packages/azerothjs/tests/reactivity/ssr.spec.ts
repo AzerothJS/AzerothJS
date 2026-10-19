@@ -7,6 +7,7 @@
 // there is no marker global to set, leak, or restore.
 import { describe, it, expect } from 'vitest';
 import { ssr, isSSRNode, escapeText, escapeAttr, runInMode } from 'azerothjs';
+import type { SSRNode } from 'azerothjs';
 import { serializeChild, wrapContentsAnchored } from 'azerothjs/internal';
 
 /** Runs `fn` in a string-mode window with markers on - the renderToString shape. */
@@ -51,6 +52,56 @@ describe('ssr / isSSRNode', () =>
         expect(isSSRNode('<b>x</b>')).toBe(false);
         expect(isSSRNode(null)).toBe(false);
         expect(isSSRNode({})).toBe(false);
+    });
+
+    it('trusts only the node ssr() made: data, copies and wrappers are not finished markup', () =>
+    {
+        const node = ssr('<b>x</b>');
+        const lookalikes: Record<string, unknown> = {
+            json: JSON.parse('{"__ssr":true,"html":"<img src=x onerror=alert(1)>"}'),
+            roundTrip: JSON.parse(JSON.stringify(node)),
+            // eslint-disable-next-line @typescript-eslint/no-misused-spread -- a spread copy is the case under test
+            spread: { ...node },
+            assign: Object.assign({}, node),
+            clone: structuredClone(node),
+            proxy: new Proxy(node, {}),
+            derived: Object.create(node),
+            reproto: Object.setPrototypeOf({ html: '<i>y</i>' }, Object.getPrototypeOf(node) as object)
+        };
+        expect(Object.keys(lookalikes).filter((key) => isSSRNode(lookalikes[key]))).toEqual([]);
+        expect(isSSRNode(Object.freeze(ssr('<b>f</b>')))).toBe(true);
+    });
+
+    it('is not fooled by Object.prototype.__ssr', () =>
+    {
+        const proto = Object.prototype as Record<string, unknown>;
+        proto.__ssr = true;
+        try
+        {
+            expect(isSSRNode({ html: '<b>x</b>' })).toBe(false);
+            expect(serializeChild({ html: '<b>x</b>' })).toBe('[object Object]');
+        }
+        finally
+        {
+            delete proto.__ssr;
+        }
+    });
+
+    it('only the private brand makes an SSRNode, which has no __ssr member', () =>
+    {
+        const members: Pick<SSRNode, keyof SSRNode> = ssr('x');
+        // @ts-expect-error the public members without the private brand are not an SSRNode
+        const picked: SSRNode = members;
+        // @ts-expect-error a literal is not finished markup
+        const literal: SSRNode = { __ssr: true, html: 'x' };
+        // @ts-expect-error SSRNode has no __ssr member
+        const member: unknown = ssr('x').__ssr;
+        expect([isSSRNode(picked), isSSRNode(literal), member]).toEqual([true, false, undefined]);
+    });
+
+    it('serializes as plain data', () =>
+    {
+        expect(JSON.stringify(ssr('<b>x</b>'))).toBe('{"html":"<b>x</b>"}');
     });
 });
 
@@ -98,6 +149,14 @@ describe('serializeChild', () =>
     it('escapes the resolved hole value as text', () =>
     {
         expect(serializeChild(() => '<script>')).toBe('&lt;script&gt;');
+    });
+
+    it('escapes an object carrying __ssr instead of writing its html', () =>
+    {
+        const forged: unknown = JSON.parse('{"__ssr":true,"html":"<img src=x onerror=alert(1)>"}');
+        expect(serializeChild(forged)).toBe('[object Object]');
+        expect(serializeChild([forged])).toBe('[object Object]');
+        expect(serializeChild(() => forged)).toBe('[object Object]');
     });
 });
 

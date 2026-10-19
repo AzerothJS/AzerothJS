@@ -55,6 +55,15 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   a CDN field) holds no cookie, and its write is refused 403 until it asks. `<Form>` and the typed
   client ask on their own. See Security.
 
+- **`SSRNode` is a class type with a private brand.** It no longer has an `__ssr` member and gains
+  `toJSON()`, so `keyof SSRNode` is `'html' | 'toJSON'`. An object literal, a spread copy, a class
+  that implements `SSRNode` and an `SSRNode` from a second install of `azerothjs` no longer
+  type-check as one, and a node a second install made is written as the text `[object Object]`;
+  build finished markup with `ssr()` from the one installed copy. `JSON.stringify` of a node, which
+  the loader handoff, the stream seeds and JSON-LD use, gives `{"html":...}`. A node is a class
+  instance now, so `@azerothjs/logger`'s redact rules, which walk plain objects and arrays only, no
+  longer reach a logged node's `html`; redact the key that holds the node.
+
 ### Fixed
 
 - **A `cleanup` block that touched a browser global turned a server-rendered page into a 500.**
@@ -365,6 +374,18 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   as in `(/[)}]/).test(text) && mark();`, which reads it right after a no-break space and before a
   glued `/` too, or put the cast in parentheses, as in `(size as Box<number>) / 2`.
 
+- **Data carrying `__hydrate: true` no longer stops hydration.** A hydration descriptor was
+  recognized by an `__hydrate` field, so such data in a hole or as a child made `hydrate()` throw
+  `child.hydrate is not a function` and stop there, and no element after it got its handlers or
+  updates. Descriptors carry a private brand now, and the data shows as the text the server wrote.
+
+- **The server root renders as any child does.** `renderToString` and `renderToStream` wrote the
+  root with `String()`: a hole as its function source, `null`, `undefined` and `false` as words and
+  a nested array as comma-joined text, and hydration then discarded the server nodes, silently in
+  production. A component whose body has no markup was served as the text `null`. The root now goes
+  through the child serializer, so a hole renders its value, an empty value renders nothing and a
+  nested array is walked. Element roots and arrays of elements render byte-identical.
+
 ### Security
 
 - **An ISR page whose renderer guarded it kept serving its prerendered file to every visitor.**
@@ -540,6 +561,19 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   too.** Add `external: ['azerothjs']` beside `noExternal: true` under `ssr` in
   `application/vite.config.ts`. Vite checks `external` before `noExternal`, so this works with the
   boolean and the array form.
+
+- **Data shaped like finished markup was written as raw HTML.** `isSSRNode` trusted any object
+  carrying `__ssr: true`, so an object from `JSON.parse`, a database column or an external API,
+  rendered in any child position (for example a static child, a hole, an array, an `<option>`, a
+  `<For>` row, a `<Show>`, `<Switch>` or `<ErrorBoundary>` branch, a `<Portal>`'s or an island's
+  content, or a Suspense boundary, buffered or streamed) or as the server root, was written
+  unescaped, and stored or reflected JSON could run script in the page. Only the object `ssr()`
+  returned is finished markup now. Every other object, including a copy, a clone, a Proxy or a JSON
+  round trip of an `ssr()` node, is escaped like any other value, and its `html` is never written,
+  as markup or as text. To mark a copy of a node your own code made, call `ssr(copy.html)`; never
+  call it on data. A string returned as the server root or as a member of a fragment root
+  (`renderToString(() => [header, text])`, or a component that returns one) was also written
+  unescaped and is now escaped.
 
 ## [2.1.0] - 2026-09-19
 

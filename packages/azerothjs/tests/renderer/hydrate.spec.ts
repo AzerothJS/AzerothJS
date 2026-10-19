@@ -281,3 +281,45 @@ describe('hydrate - mismatch fallback', () =>
         container.remove();
     });
 });
+
+describe('hydrate - data shaped like a descriptor', () =>
+{
+    it('shows JSON carrying __hydrate as the text the server wrote, and what follows it stays live', () =>
+    {
+        const onClick = vi.fn();
+        const forged = (): never => JSON.parse('{"__hydrate":true}') as never;
+        const App = (): HTMLElement => h('div', {}, forged(), () => forged(), h('button', { onClick }, 'b'));
+        const container = ssrInto(App);
+        const serverText = container.firstElementChild!.firstChild;
+        const serverButton = container.querySelector('button')!;
+
+        hydrate(App, container);
+
+        expect(container.firstElementChild!.firstChild).toBe(serverText);
+        expect(container.querySelector('button')).toBe(serverButton);
+        expect(container.textContent).toBe('[object Object][object Object]b');
+        serverButton.click();
+        expect(onClick).toHaveBeenCalledTimes(1);
+        container.remove();
+    });
+
+    it('boots when Object.prototype carries __hydrate', () =>
+    {
+        const onClick = vi.fn();
+        const App = (): HTMLElement => h('div', {}, { k: 1 } as never, h('button', { onClick }, 'b'));
+        const container = ssrInto(App);
+        const proto = Object.prototype as Record<string, unknown>;
+        proto.__hydrate = true;
+        try
+        {
+            hydrate(App, container);
+        }
+        finally
+        {
+            delete proto.__hydrate;
+        }
+        container.querySelector('button')!.click();
+        expect(onClick).toHaveBeenCalledTimes(1);
+        container.remove();
+    });
+});

@@ -83,10 +83,17 @@ Text content and attribute values are always escaped (`escapeText` /
 `styleMap`, and the `renderToDocument` `title`/`lang`. Attacker-controlled signal
 values therefore cannot break out of an attribute or open a tag.
 
-The deliberate escape hatches, with the same trust model as their client
-counterparts, are **not** escaped and must be sanitized by the caller: the
-`innerHTML` prop (like `el.innerHTML = x`) and the raw `head` / `bodyAttrs`
-options of `renderToDocument`.
+The deliberate escape hatches are **not** escaped and must be sanitized by the
+caller: the `innerHTML` prop (like `el.innerHTML = x`), the raw `head` /
+`bodyAttrs` options of `renderToDocument`, and `ssr(html)`, which marks a string
+as finished markup. Only the object `ssr()` returned is trusted. Data that looks
+like one, such as an object with an `html` field from JSON, and a copy, clone or
+JSON round trip of one are escaped like any other value, and their `html` is
+never written, as markup or as text. `ssr()` has no client counterpart: the
+browser never treats the node as markup, and hydration can replace its server
+markup with the text `[object Object]` without a warning, as it does in a hole.
+Keep it to output that is never hydrated, such as an email or a static page, and
+use `innerHTML` in a hydrated tree.
 
 ### Hydration mismatch
 

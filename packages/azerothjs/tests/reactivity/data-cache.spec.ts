@@ -10,7 +10,7 @@
 // error rows, the revalidate await contract, settlement carry-over under force, the server
 // latch, retention, and the untouched plain-fetcher island path.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createRoot, createResource, cached, revalidate } from 'azerothjs';
+import { createRoot, createResource, cached, revalidate, ssr } from 'azerothjs';
 import type { Resource } from 'azerothjs';
 import { resetDataCache, latchServerData, stableSerialize } from 'azerothjs/internal';
 
@@ -607,6 +607,17 @@ describe('cache key derivation refuses what it cannot distinguish', () =>
     {
         expect(stableSerialize(1n)).not.toBe(stableSerialize(2n));
         expect(stableSerialize(1n)).not.toBe(stableSerialize('1'));
+    });
+
+    // A node ssr() made is finished markup, while data with the same html renders as text, so
+    // the two never share an entry; a copy of a node is data and keys as data.
+    it('keys a node ssr() made apart from data with the same html, and a copy as that data', () =>
+    {
+        const node = ssr('<b>x</b>');
+        expect(stableSerialize([node])).not.toBe(stableSerialize([{ html: '<b>x</b>' }]));
+        expect(stableSerialize([node])).not.toBe(stableSerialize([ssr('<b>y</b>')]));
+        expect(stableSerialize([new Proxy(node, {})])).toBe(stableSerialize([{ html: '<b>x</b>' }]));
+        expect(stableSerialize([Object.create(node)])).toBe(stableSerialize([{ html: '<b>x</b>' }]));
     });
 });
 

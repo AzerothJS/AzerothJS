@@ -10,7 +10,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Suspense, createResource, h, onRootDispose, renderToStream, renderToString } from 'azerothjs';
+import { Suspense, createResource, h, onRootDispose, renderToStream, renderToString, ssr } from 'azerothjs';
 import type { Resource } from 'azerothjs';
 
 interface Deferred<T>
@@ -103,6 +103,53 @@ describe('renderToStream - the synchronous shell', () =>
         {
             throw new Error('boom at the top');
         })).toThrow('boom at the top');
+    });
+
+    it('a fragment root streams byte-identical to the buffered render', async () =>
+    {
+        const members = (): never[] => ['a<b', () => 'v<', null, false, [h('i', {}, 'n'), 't'], ssr('<u>k</u>')] as never[];
+        const chunks = await readAll(renderToStream(() => members()));
+        expect(chunks.join('')).toBe(renderToString(() => members()));
+        expect(chunks.join('')).toContain('a&lt;b');
+    });
+
+    it('streams a single-value root as the same value renders nested', async () =>
+    {
+        const values: (() => never)[] = [
+            () => (() => 'v<') as never,
+            () => '<img src=x>' as never,
+            () => null as never,
+            () => undefined as never,
+            () => false as never,
+            () => JSON.parse('{"__ssr":true,"html":"<img src=x>"}') as never,
+            () => [[h('i', {}, 'n')], 't'] as never
+        ];
+        for (const value of values)
+        {
+            const chunks = await readAll(renderToStream(() => value()));
+            expect(`<div>${ chunks.join('') }</div>`).toBe(renderToString(() => h('div', {}, value())));
+        }
+    });
+
+    it('escapes JSON data carrying __ssr in the shell and in a streamed boundary', async () =>
+    {
+        const forged = (): never => JSON.parse('{"__ssr":true,"html":"<img src=x onerror=alert(1)>"}') as never;
+        const gate = deferred<string>();
+        const app = (): HTMLElement =>
+        {
+            const resource = createResource<string>(() => gate.promise);
+            return h('main', {}, forged(), Suspense({
+                fallback: () => h('p', {}, 'loading'),
+                on: [resource],
+                children: () => forged()
+            }));
+        };
+        const stream = readAll(renderToStream(app));
+        gate.resolve('ready');
+        const html = (await stream).join('');
+        expect(html).toContain('<template data-azs="0">');
+        expect(html).not.toContain('<img');
+        expect(html.match(/\[object Object\]/g)).toHaveLength(2);
     });
 });
 
