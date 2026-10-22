@@ -28,7 +28,7 @@ import type { LogLevel, LogRecord, LogSink } from './record.ts';
 import type { ColorTier, Palette, Style, TtyLike } from './color.ts';
 import { colorTier, palette, supportsUnicode } from './color.ts';
 import type { ErrorShape } from './serialize.ts';
-import { MAX_CAUSE_DEPTH, jsonText, ndjsonLine } from './serialize.ts';
+import { MAX_CAUSE_DEPTH, jsonText, keysOf, ndjsonLine, read } from './serialize.ts';
 
 /** The subset of a writable stream sinks need. */
 export interface WritableLike extends TtyLike
@@ -99,11 +99,18 @@ interface RequestShape
 /** @internal A record whose fields carry a complete request story - and nothing guessed. */
 function requestShape(fields: Record<string, unknown>): RequestShape | null
 {
-    const { method, path, status, durationMs } = fields;
-    if (typeof method === 'string' && typeof path === 'string'
-        && typeof status === 'number' && typeof durationMs === 'number')
+    try
     {
-        return { method, path, status, durationMs };
+        const { method, path, status, durationMs } = fields;
+        if (typeof method === 'string' && typeof path === 'string'
+            && typeof status === 'number' && typeof durationMs === 'number')
+        {
+            return { method, path, status, durationMs };
+        }
+    }
+    catch
+    {
+        // A throwing getter or Proxy trap: no sentence, the pairs render what can be read.
     }
     return null;
 }
@@ -138,7 +145,15 @@ function plain(text: string): string
  */
 function styleValue(key: string, value: unknown, paint: Palette): string
 {
-    const text = plain(String(value));
+    let text = '[unserializable]';
+    try
+    {
+        text = plain(String(value));
+    }
+    catch
+    {
+        // A function Proxy whose trap throws, or a throwing toString: the pair still renders.
+    }
     if (key === 'url' || (typeof value === 'string' && /^https?:\/\//.test(value)))
     {
         return paint.brand(text);
@@ -160,13 +175,13 @@ function styleValue(key: string, value: unknown, paint: Palette): string
 function inlineFields(fields: Record<string, unknown>, paint: Palette, hidden: ReadonlySet<string>, joint: string): string
 {
     let out = '';
-    for (const key of Object.keys(fields))
+    for (const key of keysOf(fields))
     {
         if (hidden.has(key))
         {
             continue;
         }
-        const value = fields[key];
+        const value = read(fields, key);
         if (value !== null && typeof value === 'object')
         {
             continue; // structures render on their own lines (errors) or as JSON below
@@ -220,6 +235,19 @@ function errorBlock(shape: ErrorShape, paint: Palette, indent: string): string
         cause = cause.cause;
     }
     return out;
+}
+
+/** @internal An error block, or undefined when a value only looks like one and cannot render. */
+function blockOf(shape: ErrorShape, paint: Palette): string | undefined
+{
+    try
+    {
+        return errorBlock(shape, paint, '    ');
+    }
+    catch
+    {
+        return undefined;
+    }
 }
 
 /**
@@ -313,25 +341,19 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
 
         // Structured values (already shaped by the logger) each get their own treatment:
         // an error renders as a block; other objects as compact JSON on the line.
-        for (const key of Object.keys(fields))
+        for (const key of keysOf(fields))
         {
             if (consumed.has(key))
             {
                 continue;
             }
-            const value = fields[key];
+            const value = read(fields, key);
             if (value === null || typeof value !== 'object')
             {
                 continue;
             }
-            if (isErrorShape(value))
-            {
-                line += errorBlock(value, paint, '    ');
-            }
-            else
-            {
-                line += joint + paint.dim(key + '=') + (jsonText(value) ?? '[unserializable]');
-            }
+            const block = isErrorShape(value) ? blockOf(value, paint) : undefined;
+            line += block ?? joint + paint.dim(key + '=') + (jsonText(value) ?? '[unserializable]');
         }
 
         const target = record.level === 'warn' || record.level === 'error' || record.level === 'fatal' ? err : out;
@@ -346,9 +368,16 @@ export function prettySink(options: TerminalSinkOptions = {}): LogSink
  */
 function isErrorShape(value: object): value is ErrorShape
 {
-    const shape = value as Partial<ErrorShape>;
-    return typeof shape.name === 'string' && typeof shape.message === 'string'
-        && (typeof shape.stack === 'string' || shape.cause !== undefined);
+    try
+    {
+        const shape = value as Partial<ErrorShape>;
+        return typeof shape.name === 'string' && typeof shape.message === 'string'
+            && (typeof shape.stack === 'string' || shape.cause !== undefined);
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 /**

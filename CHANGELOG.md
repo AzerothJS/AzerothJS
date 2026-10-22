@@ -60,9 +60,26 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   that implements `SSRNode` and an `SSRNode` from a second install of `azerothjs` no longer
   type-check as one, and a node a second install made is written as the text `[object Object]`;
   build finished markup with `ssr()` from the one installed copy. `JSON.stringify` of a node, which
-  the loader handoff, the stream seeds and JSON-LD use, gives `{"html":...}`. A node is a class
-  instance now, so `@azerothjs/logger`'s redact rules, which walk plain objects and arrays only, no
-  longer reach a logged node's `html`; redact the key that holds the node.
+  the loader handoff, the stream seeds and JSON-LD use, gives `{"html":...}`.
+
+- **Under a redact rule, a custom sink can receive a value's `toJSON()` result or a plain copy in
+  its place.** Wherever a rule reaches (every position under a bare name; under a dotted path, the
+  field and each object along the path), a sink, `shapeFields` and `createRedactor().apply` get a
+  value's `toJSON()` result in its place, so a `URL`, a dayjs, moment or luxon date, a decimal.js
+  `Decimal` or a bson `ObjectId` arrives as its string, and an object with such a value or a
+  redacted key below it arrives as a plain copy of its own enumerable keys. Context bound with
+  `child()` or `createLogger({ fields })` is copied wherever the rule reaches (under a bare name
+  all of it: a class instance as its own fields, a `Map` as `{}`). A sink that calls a value's own
+  methods (`format()`, `hostname`, `getTimestamp()`) reads `undefined` or throws, and the logger
+  drops the line of a sink that throws. A platform `Date`, and a `Buffer` unless a rule names
+  `type` or `data`, arrive as they are, and so does every other value, a member a copy left
+  untouched included: a boxed primitive, and among the call fields a class instance, a nested
+  error, a `Map` or a `Headers` object. A rule reads only what JSON writes, so a sink that formats
+  a record other than as JSON (`util.inspect`, a console) prints a `Map`'s or a `Headers` object's
+  entries, a nested error's `cause` and keys under a symbol as they are, none of which
+  `ndjsonLine(record)` writes. With no rule every field value but an error arrives as it is, and a
+  fields object that has a `toJSON()` is read through it either way (see Security). A field that is
+  itself an error arrives as its name, message and stack, with a rule or without, as before.
 
 ### Fixed
 
@@ -386,6 +403,29 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   through the child serializer, so a hole renders its value, an empty value renders nothing and a
   nested array is walked. Element roots and arrays of elements render byte-identical.
 
+- **A redact rule now reaches class instances, `toJSON()` results, nested errors and an error's
+  cause, at any depth.** A rule stopped at plain objects six levels down, although a bare name was
+  documented to match at any depth, so a class instance's own fields, a `toJSON()` result, an error
+  nested inside a field (an undici `ResponseError`'s response headers, an `HttpError`'s `headers`)
+  and an error's `cause` holding data were written in cleartext. Each value is now read as JSON
+  writes it, a rule naming the cause slot (`cause`, `err.cause`) hides the whole cause, and a cause
+  that is data is matched where it sits (`err.cause.token`); a field that is itself an error is
+  still written as its name, message and stack. Under a rule, bound context is read once, when it is
+  bound, as far as the rule reaches, as the NDJSON face always held it, so under a bare-name rule a
+  context object changed after `child()` is never written with a key no rule read, and a sink
+  receives a `toJSON()` result in place of a value the rule reaches (see Changed).
+
+- **A field value no longer makes a log call throw, and a cyclic value under a rule is given up at
+  its first cycle.** A throwing getter among the fields or nested under a redact rule, a
+  revoked Proxy, and `log.info('m', null)` threw out of the log call; the field is now written as
+  `[unserializable]`, as it is when JSON cannot write it, the other fields are kept, and `null`
+  logs no fields. Under a rule a cyclic value was walked along every path six levels deep, so a
+  densely linked graph cost seconds per line, and the record kept the original object below the
+  cycle, which the console face printed with its secrets; the field is now given up at the first
+  cycle, where JSON gives it up. A field is given up the same way when what a rule reaches in it is
+  nested more than 4096 levels deep, is built as it is read, or holds more than 1048576 objects (a
+  shared object counted once per path, as JSON writes it).
+
 ### Security
 
 - **An ISR page whose renderer guarded it kept serving its prerendered file to every visitor.**
@@ -574,6 +614,14 @@ follow [Semantic Versioning](https://semver.org) under the release contract in
   call it on data. A string returned as the server root or as a member of a fragment root
   (`renderToString(() => [header, text])`, or a component that returns one) was also written
   unescaped and is now escaped.
+
+- **A config object's secrets were written in cleartext by `@azerothjs/logger`.** `loadConfig`
+  hides a `{ secret: true }` value from `JSON.stringify` and `util.inspect`, but the logger wrote a
+  fields object key by key and never asked its `toJSON`, so `log.info('boot', config)`,
+  `log.child(config)` and `createLogger({ fields: config })` wrote every secret with no redact rule
+  at all, and `log.info('boot', { config })` wrote the other secrets as soon as a redact rule named
+  any one config key. A fields object is now read as JSON reads it, `toJSON()` result included,
+  and redaction reads the same form, so the config's secrets stay `[redacted]`.
 
 ## [2.1.0] - 2026-09-19
 

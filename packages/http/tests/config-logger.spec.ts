@@ -5,7 +5,7 @@
 // function application - typed end to end, no registration graph).
 
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
-import { createLogger, type LogRecord } from '@azerothjs/logger';
+import { createLogger, ndjsonLine, type Logger, type LoggerOptions, type LogRecord } from '@azerothjs/logger';
 import { loadConfig, str, num, flag, oneOf } from '../src/config.ts';
 import { logRequests } from '../src/logger.ts';
 import { App } from '../src/app.ts';
@@ -106,6 +106,64 @@ describe('loadConfig: typed, loud, all-at-once', () =>
         expect(shown).toContain('[redacted]');
         expect(shown).toContain('example.com'); // non-secret still visible
         expect(config.dbUrl).toBe('postgres://user:SUPERSECRETpw@host/db'); // code still reads real value
+    });
+});
+
+describe('a loadConfig object handed to the logger keeps its secrets', () =>
+{
+    const env = { API_KEY: 'sk-SECRET-1', DATABASE_URL: 'postgres://u:SECRET-2@db/app', HOST: 'example.com', PORT: '8080' };
+    const config = (): Record<string, unknown> => loadConfig({
+        apiKey: str('API_KEY', { secret: true }),
+        databaseUrl: str('DATABASE_URL', { secret: true }),
+        host: str('HOST'),
+        port: num('PORT')
+    }, env);
+
+    // The text one face writes: a sink via ndjsonLine, the fused NDJSON stream, the pretty face.
+    function written(face: 'sink' | 'fused' | 'pretty', options: LoggerOptions, act: (log: Logger) => void): string
+    {
+        let text = '';
+        const stream = {
+            isTTY: false,
+            write: (chunk: string): boolean =>
+            {
+                text += chunk;
+                return true;
+            }
+        };
+        act(face === 'sink'
+            ? createLogger({ ...options, sink: (record) => stream.write(ndjsonLine(record)) })
+            : createLogger({ ...options, face: face === 'fused' ? 'ndjson' : 'pretty', stream }));
+        return text;
+    }
+
+    it('as the call fields, the bindings or the createLogger fields, with no rule', () =>
+    {
+        for (const face of ['sink', 'fused', 'pretty'] as const)
+        {
+            const lines = [
+                written(face, {}, (log) => log.info('boot', config())),
+                written(face, {}, (log) => log.child(config()).info('boot')),
+                written(face, { fields: config() }, (log) => log.info('boot'))
+            ];
+            for (const line of lines)
+            {
+                expect(line, face).not.toMatch(/SECRET-1|SECRET-2/);
+                expect(line, face).toContain('example.com');
+            }
+        }
+    });
+
+    it('nested under a rule that names one of its keys', () =>
+    {
+        for (const rule of ['port', 'apiKey', 'config.host'])
+        {
+            for (const face of ['sink', 'fused', 'pretty'] as const)
+            {
+                const line = written(face, { redact: [rule] }, (log) => log.info('boot', { config: config() }));
+                expect(line, `${ face } ${ rule }`).not.toMatch(/SECRET-1|SECRET-2/);
+            }
+        }
     });
 });
 

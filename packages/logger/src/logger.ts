@@ -22,16 +22,16 @@
  *     can repoint pretty prose into a machine-read file. The level component always
  *     applies.
  *
- * Redaction happens in the logger, not the sink: a redacted field never reaches ANY
- * sink, so no formatter can leak what the application declared secret.
+ * Redaction happens in the logger: a value a rule reaches and names is replaced before any sink
+ * runs, so the NDJSON, file and pretty faces never write it; an error field keeps its own text.
  */
 
 import type { LevelThreshold, Logger, LogLevel, LogRecord, LogSink } from './record.ts';
 import { LEVEL_RANK } from './record.ts';
 import type { WritableLike } from './sinks.ts';
 import { consoleSink, ndjsonSink, prettySink } from './sinks.ts';
-import type { Redactor } from './serialize.ts';
-import { createRedactor, fieldsFragment, quotedString, shapeFields } from './serialize.ts';
+import type { Plan } from './serialize.ts';
+import { createPlan, fieldsFragment, fieldsOf, keysOf, mergeFields, quotedString, shapeWith } from './serialize.ts';
 
 /** Which face renders records; `auto` picks by TTY/NODE_ENV/runtime. */
 export type LoggerFace = 'auto' | 'pretty' | 'ndjson' | 'console';
@@ -52,10 +52,10 @@ export interface LoggerOptions
     fields?: Record<string, unknown> | undefined;
 
     /**
-     * Field paths whose VALUES never reach a sink (replaced with '[redacted]'). Matching is
-     * case-insensitive, a bare name matches that key at ANY depth (`authorization` covers
-     * `{ headers: req.headers }`), a dotted path matches exactly that position
-     * (`user.password`), and an array is transparent (`items.token` covers every element).
+     * Field paths whose values become '[redacted]' before any sink runs, in what JSON writes; an
+     * error field keeps its own text. Case-insensitive; a bare name matches at any depth
+     * (`authorization` covers a node:http `{ headers: req.headers }`), a dotted path matches only
+     * that position (`user.password`), and an array is transparent (`items.token`, every element).
      */
     redact?: readonly string[] | undefined;
 
@@ -121,9 +121,9 @@ export function createLogger(options: LoggerOptions = {}): Logger
 {
     const override = envOverride();
     const threshold = LEVEL_RANK[override.level ?? options.level ?? 'info'];
-    const redact = options.redact === undefined ? undefined : createRedactor(options.redact);
+    const plan = options.redact === undefined ? undefined : createPlan(options.redact);
 
-    const bound = shapeFields(options.fields ?? {}, redact);
+    const bound = shapeWith(fieldsOf(options.fields), plan, true);
 
     if (options.sink === undefined)
     {
@@ -137,15 +137,15 @@ export function createLogger(options: LoggerOptions = {}): Logger
             // re-serialization of bound context - a child's bindings become one cached
             // string fragment, the pino trick that makes contextual logging near-free.
             const stream = options.stream ?? (typeof process === 'undefined' ? undefined : process.stdout);
-            return buildFused(stream, threshold, bound, redact);
+            return buildFused(stream, threshold, bound, plan);
         }
         const sink = face === 'pretty' ? prettySink({ stream: options.stream }) : consoleSink();
-        return build(sink, threshold, bound, redact);
+        return build(sink, threshold, bound, plan);
     }
 
     // Bound fields are shaped ONCE here (and again per child()); emit can then pass
     // them through untouched on the no-call-fields fast path.
-    return build(options.sink, threshold, bound, redact);
+    return build(options.sink, threshold, bound, plan);
 }
 
 /**
@@ -169,6 +169,14 @@ export function terminalSink(stream?: WritableLike): LogSink
             : ndjsonSink({ stream });
 }
 
+/** @internal A child's bound context: its bindings shaped and redacted once, over its parent's. */
+function bind(bound: Record<string, unknown>, fields: Record<string, unknown> | undefined, plan: Plan | undefined): Record<string, unknown>
+{
+    return plan === undefined
+        ? shapeWith(mergeFields(bound, fieldsOf(fields)), undefined, true)
+        : mergeFields(bound, shapeWith(fieldsOf(fields), plan, true));
+}
+
 /** @internal The one shared no-op for every disabled level - a call site pays a plain call. */
 const NOOP = (): void => undefined;
 
@@ -187,7 +195,7 @@ function buildFused(
     stream: { write(chunk: string): unknown } | undefined,
     threshold: number,
     bound: Record<string, unknown>,
-    redact: Redactor | undefined
+    plan: Plan | undefined
 ): Logger
 {
     const boundFragment = fieldsFragment(bound);
@@ -197,7 +205,7 @@ function buildFused(
         let line = '{"level":"' + level + '","time":' + String(Date.now()) + ',"msg":' + quotedString(message) + boundFragment;
         if (fields !== undefined)
         {
-            line += fieldsFragment(shapeFields(fields, redact));
+            line += fieldsFragment(shapeWith(fieldsOf(fields), plan, false));
         }
         stream?.write(line + '}\n');
     }
@@ -209,15 +217,15 @@ function buildFused(
         warn: gate(40, threshold, (message, fields) => emit('warn', message, fields)),
         error: gate(50, threshold, (message, fields) => emit('error', message, fields)),
         fatal: gate(60, threshold, (message, fields) => emit('fatal', message, fields)),
-        child: (fields) => buildFused(stream, threshold, shapeFields({ ...bound, ...fields }, redact), redact),
+        child: (fields) => buildFused(stream, threshold, bind(bound, fields, plan), plan),
         enabled: (level) => LEVEL_RANK[level] >= threshold
     };
 }
 
 /** @internal The recursive core: one closure set per logger/child. */
-function build(sink: LogSink, threshold: number, bound: Record<string, unknown>, redact: Redactor | undefined): Logger
+function build(sink: LogSink, threshold: number, bound: Record<string, unknown>, plan: Plan | undefined): Logger
 {
-    const hasBound = Object.keys(bound).length > 0;
+    const hasBound = keysOf(bound).length > 0;
 
     function emit(level: LogLevel, rank: number, message: string, fields?: Record<string, unknown>): void
     {
@@ -225,18 +233,20 @@ function build(sink: LogSink, threshold: number, bound: Record<string, unknown>,
         {
             return;
         }
-        const merged = fields === undefined
-            ? bound
-            : hasBound ? { ...bound, ...fields } : fields;
-        const record: LogRecord =
+        // Bound context is shaped and redacted when it is bound. With no rule the merged
+        // object is shaped; under a rule the call fields are, then merged over it.
+        let merged = bound;
+        if (fields !== undefined && plan === undefined)
         {
-            level,
-            message,
-            time: Date.now(),
-            // Bound context is pre-shaped and pre-redacted at construction; only a
-            // merge that brought NEW call fields needs shaping here.
-            fields: merged === bound ? merged : shapeFields(merged, redact)
-        };
+            const given = fieldsOf(fields);
+            merged = shapeWith(hasBound ? mergeFields(bound, given) : given, undefined, false);
+        }
+        else if (fields !== undefined)
+        {
+            const shaped = shapeWith(fieldsOf(fields), plan, false);
+            merged = hasBound ? mergeFields(bound, shaped) : shaped;
+        }
+        const record: LogRecord = { level, message, time: Date.now(), fields: merged };
         try
         {
             sink(record);
@@ -255,7 +265,7 @@ function build(sink: LogSink, threshold: number, bound: Record<string, unknown>,
         warn: gate(40, threshold, (message, fields) => emit('warn', 40, message, fields)),
         error: gate(50, threshold, (message, fields) => emit('error', 50, message, fields)),
         fatal: gate(60, threshold, (message, fields) => emit('fatal', 60, message, fields)),
-        child: (fields) => build(sink, threshold, shapeFields({ ...bound, ...fields }, redact), redact),
+        child: (fields) => build(sink, threshold, bind(bound, fields, plan), plan),
         enabled: (level) => LEVEL_RANK[level] >= threshold
     };
 }

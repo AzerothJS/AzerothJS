@@ -246,12 +246,12 @@ describe('redaction covers what applications actually log', () =>
         expect(JSON.parse(out.lines()[0] ?? '{}')).toMatchObject({ msg: 'req', path: '/x' });
     });
 
-    it('a cyclic fields object does not hang the walk', () =>
+    it('a cyclic field is written as [unserializable] and the others are kept', () =>
     {
         const nested: Record<string, unknown> = { token: 'secret' };
         nested.self = nested;
-        const fields = record({ redact: ['token'], fields: { nested } });
-        expect((fields.nested as { token: string }).token).toBe('[redacted]');
+        const fields = record({ redact: ['token'], fields: { nested, keep: 1 } });
+        expect(fields).toEqual({ nested: '[unserializable]', keep: 1 });
     });
 
     it('a deep structure with nothing configured passes through untouched', () =>

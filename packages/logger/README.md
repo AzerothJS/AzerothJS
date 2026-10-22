@@ -82,7 +82,14 @@ map onto styled `console` methods.
   NDJSON line, so contextual logging (request ids, job ids) costs about what one extra
   string concat costs - not a re-serialization on every line.
 - **Redaction happens before any sink.** `redact: ['authorization', 'cookie']` replaces
-  values at the logger, so no formatter, transport, or adapter can leak them.
+  values at the logger, so the NDJSON, file and pretty faces never write them. A bare name
+  matches at any depth, and each value is read as JSON writes it: a `toJSON()` result (a
+  `loadConfig` object keeps its secrets hidden this way, even as the whole fields object), a
+  class instance's own fields and an error nested in a field are redacted too. A rule naming an
+  error's `cause` hides it, and a cause that is data is matched where it sits
+  (`err.cause.token`). A value a rule reaches that redaction cannot finish, a cyclic one, one
+  nested more than 4096 levels deep or one of more than 1048576 objects, is written as
+  `[unserializable]`.
 - **Errors are first-class.** Any `Error` field serializes as `{ name, message, stack }`
   with the full `cause` chain (depth-capped against cycles).
 - **The color social contract is honored.** `NO_COLOR` always wins; `FORCE_COLOR` colors a
@@ -238,6 +245,23 @@ The record - `{ level, message, time, fields }` - is the whole contract; an Open
 adapter, a test spy, or `@azerothjs/http`'s request logging all consume it structurally.
 For files, prefer `fileStream`/`fileSink` above - they add the batching, rotation, and
 crash-safety a bare write stream does not have.
+
+Redaction reads each value when the line is made (under a rule, bound context when it is
+bound), and may read a value more than once: a getter or Proxy that answers differently the
+next time it is read is outside what a rule can see, and a sink that keeps records to write
+later should serialize them first. Wherever a rule reaches (every position under a bare name;
+under a dotted path, the field and each object along it) a sink receives the `toJSON()` result
+of a value that has one in its place: a `URL`, a date-library value, a `Decimal` or an `ObjectId`
+arrives as its string. An object with such a value or a redacted key below it arrives as a plain
+copy of its own enumerable keys, and so does bound context wherever the rule reaches, so a sink
+that calls a value's own methods reads that data instead. A platform `Date`, and a `Buffer` unless
+a rule names `type` or `data`, arrive as they are, and so does every other value, a member a copy
+left untouched included: a boxed primitive, and among the call fields a class instance, a nested
+error, a `Map` or a `Headers` object. A rule reads only what JSON writes, so a sink that formats
+records other than as JSON, the console face included, prints a `Map`'s or a `Headers` object's
+entries, a nested error's `cause` and keys under a symbol as they are, none of which
+`ndjsonLine(record)` writes. A field that is itself an error arrives as its name, message and stack,
+with a rule or without.
 
 ---
 
